@@ -38,7 +38,7 @@ client among several, not the product.
 
 The design of this harness is grounded in a close reading of a working
 commercial system. The following were directly observed and are adopted here
-(see `docs/00-architecture.md` for the full evidence-to-decision mapping):
+(see `architecture.md` for the full evidence-to-decision mapping):
 
 - Parametric scripts in build123d, one script per part, with a
   bounded-parameter block (`PARAMS`) that drives generated UI controls.
@@ -78,16 +78,15 @@ Three capabilities with no observed equivalent in the reference product:
 ```
 hephaestus/
 ├── README.md                  ← you are here
-├── docs/
-│   ├── 00-architecture.md     system architecture and evidence base
-│   ├── 01-script-contract.md  the part-script authoring contract
-│   ├── 02-tool-schema.md      agent tool definitions
-│   ├── 03-verification.md     verification harness: tiers, corpus, CI
-│   ├── 04-mission-plan.md     phased droid mission with verifiable gates
-│   └── 05-repo-conventions.md packaging, layout, licensing, naming
+├── architecture.md            system architecture and evidence base
+├── script_contract.md         the part-script authoring contract
+├── tool_schema.md             agent tool definitions
+├── verification.md            verification harness: tiers, corpus, CI
+├── mission_plan.md            phased droid mission with verifiable gates
+├── repo_conventions.md        packaging, layout, licensing, naming
 ├── core/                      Python: executor, kernel services, render, checks
-├── agent/                     Python: harness, tool dispatch, model adapters
-├── server/                    Python: MCP server + HTTP API
+├── agent/                     TypeScript: Pi SDK runtime + thread-phase workflows
+├── server/                    Python: MCP/HTTP API + Node agent bridge
 ├── web/                       TypeScript: React + three.js client
 ├── registries/                skills/, parts/, materials/, dfm/
 └── corpus/                    golden prompts + expected assertions
@@ -95,8 +94,10 @@ hephaestus/
 
 ## Status
 
-Pre-implementation. `docs/04-mission-plan.md` is the operative document: a
+Pre-implementation. `mission_plan.md` is the operative document: a
 staged droid mission in which every stage gates on machine-checkable evidence
-(pytest exit codes, deterministic render comparisons, Playwright/computer-use
-screenshot assertions, and benchmark success rates). No stage advances on
-human vibes.
+(pytest/pnpm exit codes, deterministic render comparisons,
+Playwright/computer-use screenshot assertions, and benchmark success rates).
+The agent layer embeds Pi for individual sessions and uses thread-phase only
+for deterministic multi-session workflows; the Python CAD engine remains
+independent. No stage advances on human vibes.

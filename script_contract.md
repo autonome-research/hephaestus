@@ -4,7 +4,7 @@ The contract every Hephaestus part script is written against, and the contract
 the executor MUST implement. It is deliberately source-compatible with the two
 recovered Smith scripts (`cat_step_shelf`, `cat_step_gusset`) except where
 noted EXTENSION; those scripts are held as private CI fixtures (see
-`05-repo-conventions.md`) fetched into `corpus/reference/` and MUST execute
+`repo_conventions.md`) fetched into `corpus/reference/` and MUST execute
 under this contract unmodified (Stage 0 gate).
 
 ## 1. Execution model
@@ -129,7 +129,8 @@ part.feature("tread_top").surface_finish = (
 )
 ```
 
-`tag(topology, name)` attaches a stable semantic name to a face/edge/solid.
+`tag(topology, name)` attaches a recomputed semantic name to a
+face/edge/solid; it is not a guarantee of stable topological identity.
 Tags are the join key for: per-feature metadata (`part.feature(name).*`),
 measurement tools (`measure(part, "tread_top", …)`), face-mode mask renders,
 selection resolution, and checks. The executor records tag → (solid, topology
@@ -141,18 +142,27 @@ topological-naming problem's hard failure (dangling references) but inherits
 its soft failure: after an edit, a selector like
 `.faces().sort_by(Axis.Z)[-1]` resolves successfully yet may select a
 *different* face, and nothing in the resolution itself detects the drift.
-The executor therefore fingerprints every tagged topology at build time
-(area, centroid, unit normal for faces; length and midpoint for edges) and
-stores fingerprints in the build artifact; on rebuild it compares against the
-previous fingerprint and emits a `tag_drift` warning when the tag's identity
-moved beyond tolerance while its selector still resolved (default: centroid
-moved > 1 mm or normal rotated > 5° *more than the geometry change itself
-explains* — implemented as: drift is warned when the tagged face's
-fingerprint changed but the part's overall bbox/volume delta is below the
-same proportional threshold). Warnings surface in the build result, Results
-panel, and the agent's context; skills packs teach selectors that survive
-edits (filter by normal + position window rather than bare sort-order
-indexing).
+The executor therefore fingerprints every tagged topology at build time and
+emits a **descriptor-change heuristic**, not an identity verdict. Defaults are
+explicit: a face warns when centroid Euclidean displacement exceeds 1.0 mm,
+normal angle exceeds 5.0°, or relative area delta exceeds 2%; an edge warns
+when midpoint displacement exceeds 1.0 mm or relative length delta exceeds 2%;
+a solid warns when centroid displacement exceeds 1.0 mm or relative volume
+delta exceeds 2%. Relative delta uses `abs(new-old)/max(abs(old), 1e-9)`.
+There is no suppression based on overall bbox/volume change. The comparison
+baseline is the successful current artifact captured when the build invocation
+freezes its inputs; its opaque artifact ref is included in warning evidence.
+If no successful current artifact exists, no drift warning is emitted. Failed,
+preview, raced, and superseded builds never advance the baseline, so warning
+results do not depend on completion order.
+
+This heuristic intentionally has false positives (an intended edit to the same
+face) and false negatives (a selector swap to a symmetric/equal-descriptor
+neighbor). The warning text says `tag_descriptor_changed`, lists each measured
+delta/threshold, and recommends inspection or a stronger persistent CHECK; it
+MUST NOT claim topology identity changed. Warnings surface in the build result,
+Results panel, and agent context. Skills teach selectors that survive edits
+(filter by normal + position window rather than bare sort-order indexing).
 
 ## 6. Persistent checks — EXTENSION
 
@@ -168,7 +178,7 @@ CHECKS = {
 
 `CHECKS` maps names to predicates over a measurement facade `m` bound to the
 built geometry (backed by core kernel services; full facade API in
-`02-tool-schema.md` §measure). Checks run on every build of the part and on
+`tool_schema.md` §measure). Checks run on every build of the part and on
 `heph check` project-wide; results are part of the build artifact and surface
 in Results, CI, and the agent's context. A failing check does not abort the
 build; it fails the report. Cross-part checks live in `checks/*.py` with the
@@ -213,13 +223,21 @@ record:
 {
   "part": "cat_step_shelf",
   "status": "ok" | "failed",
+  "current": true,
+  "artifact_ref": "artifact:build:sha256:…",
+  "project_snapshot_ref": "artifact:project-snapshot:sha256:…" | null,
+  "input_hashes": { "script": "sha256:…",
+                    "hc_dependencies": "sha256:…", "part_params": "sha256:…",
+                    "effective_params": "sha256:…", "toolchain": "sha256:…" },
+  "audit_hashes": { "globals_source": "sha256:…",
+                    "project_param_state": "sha256:…" },
   "metrics": { "solids": 25, "faces": 438, "bbox_mm": [380.0, 280.0, 250.0],
                "volume_mm3": ..., "sealed": true, "genus": 0 },
   "checks": { "splines_clear_middle_panels": {"pass": true, "measured": 0.0}, … },
   "geometries": [ {"label": "outer_top_panel", "solids": 1, …}, … ],
   "params": { "groove_count": 5, … },
-  "source_map": ".heph/cat_step_shelf/srcmap.json",
-  "warnings": [ {"kind": "tag_drift", "tag": "tread_top", "detail": "…"} ],
+  "source_map_ref": "artifact:source-map:sha256:…",
+  "warnings": [ {"kind": "tag_descriptor_changed", "tag": "tread_top", "detail": "…"} ],
   "error": null | {
       "line": 46, "col": 14, "type": "ValueError",
       "message": "Failed creating a fillet with radius of 6, try a smaller value or use max_fillet() to find the largest valid fillet radius",
@@ -227,10 +245,26 @@ record:
       "built_through": {"line": 44, "statement": "tread_shelf = slotted_shelf - groove_cutter"},
       "last_good": { "bodies": 1, "solids": 1, "size_mm": [250.0, 200.0, 18.0],
                      "volume_mm3": 868892.28, "sealed": true, "genus": 0 },
-      "hint": "inspect_part(name, last_good=true) renders this snapshot"
+      "last_good_artifact_ref": "artifact:build-checkpoint:sha256:…",
+      "hint": "inspect_part(name, artifact_ref=last_good_artifact_ref) renders this exact snapshot"
   }
 }
 ```
+
+`input_hashes` identify the immutable snapshot used by the build, including
+canonical effective values after request-local overrides, the exact consumed
+`hc` name/value projection, and the pinned toolchain. Full `globals.py` and
+project-param state are audit hashes, not invalidators when the consumed
+projection is unchanged. `current` is true only when `status="ok"`, persisted
+script/part-param/toolchain hashes and the consumed-`hc` projection still match
+live project state at publication, and the request supplied no transient
+overrides. Failed builds and transient
+parameter previews have `current=false`; failed/preview/raced builds may remain
+available as evidence but MUST NOT clear stale markers or replace the prior
+successful current artifact. A trusted invocation id freezes these inputs so a
+lost-response retry returns the original result rather than rebuilding newer
+state. `artifact_ref`, `source_map_ref`, and `last_good_artifact_ref` are opaque
+project-scoped capabilities, never mutable filesystem paths.
 
 The failed-build text rendering MUST carry the same fields as the captured
 Smith error (line/col, type, source frame, built-through statement, last-good
