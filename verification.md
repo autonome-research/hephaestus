@@ -8,16 +8,23 @@ command with an exit code or a metric with a threshold.
 
 ## Tier 1 — Geometric assertion tests (pytest)
 
-`tests/` contains pytest suites that exercise core/ directly. Categories:
+`opstore/tests/` exercises the standalone durability package; `tests/`
+exercises CAD/core adapters and product surfaces. Categories:
 
-- **Contract tests.** The two recovered Smith scripts (private fixtures —
-  see the provenance policy in `repo_conventions.md`; fetched into
-  `corpus/reference/` from the private fixtures repo in CI, absent from the
-  public tree pending legal review) build unmodified; their published metrics match: `cat_step_gusset` produces
-  3 labeled solids; `cat_step_shelf` produces 25 labeled geometries, bbox
-  380×280×250 ±0.5 mm, all solids sealed, genus 0, and pairwise interference
-  among panels/splines/collar = 0 within 1e-6 mm³ (the assembled clearance-fit
-  claim in its own comments).
+- **Opstore tests.** Property/state-machine and subprocess crash tests cover
+  generic WAL recovery, idempotency/key rotation, CAS blobs, leases, admission/
+  suspension/terminal acknowledgment, reachability, retention, and GC without
+  importing CAD/core. Import-graph tests enforce the package boundary; its
+  README examples are executable tests.
+- **Contract tests.** Required PR checks build independently authored projects
+  under `corpus/public_fixtures/` and assert the complete script/result/check/
+  render contracts without private credentials. Separately, the two recovered
+  reference scripts are mounted only in the isolated private verifier and build
+  unmodified; its hidden assertions confirm the published metrics (3 and 25
+  labeled geometries, 380×280×250 ±0.5 mm shelf bbox, sealed/genus 0, and the
+  stated panel/spline/collar clearance). It returns only a signed aggregate
+  pass/fail attestation—never source, dimensions beyond already-public facts,
+  logs, coverage, cache, or artifacts.
 - **Executor tests.** Statement splitting, checkpointing, param bounds
   enforcement, `hc` dependency tracking, language-whitelist checks plus
   OS-sandbox denial of introspection-driven host filesystem/symlink/process/
@@ -169,14 +176,21 @@ render of the shelf ≤ 10 s; `measure interference` across all shelf pairs
 
 GitHub Actions on the autonome-research org:
 
-- `ci.yml`: lint (ruff + pyright strict on core/server; eslint + tsc strict on
-  agent/web), Python and Node unit suites, schema/bridge drift checks, Tier 1,
+- `ci.yml`: lint (ruff + pyright strict on opstore/core/server; eslint + tsc
+  strict on agent/web), Python and Node unit suites, opstore import-boundary and
+  schema/bridge drift checks, Tier 1,
   and Tier 2 render goldens — every PR.
 - `e2e.yml`: Playwright suite — PRs touching server/, agent/, or web/.
 - `bench.yml`: Tier 3 corpus — manual dispatch + weekly schedule (API cost
   control), publishing the results artifact.
-- Stage gates are encoded as required checks per the mission plan; a stage's
-  PR cannot merge until its gate workflow is green.
+- Public stage checks are ordinary `pull_request` workflows and require no
+  private credentials, including for forks. `private-reference.yml` is not
+  `pull_request_target`: it runs a fixed verifier on a protected trusted stage
+  SHA in a networkless worker, mounts fixtures without exposing repository
+  credentials, suppresses worker output/caches/coverage, leak-scans its boundary,
+  and publishes only a signed aggregate status. A stage cannot advance until
+  both its public gate and any named private attestation are green; ordinary
+  external PRs are never required or permitted to fetch private fixtures.
 - A docs-layout/link check verifies every repository path and section reference
   in the normative root documents.
 
@@ -194,21 +208,41 @@ and cancellation acknowledgements and MUST fail closed. Isolation tests place
 hostile fake global Pi extensions, thread-phase executables, provider
 environment variables, traversal paths, and symlink escapes on the machine and
 prove the packaged runtime loads only explicitly approved resources and
-credentials and never writes outside project roots. Scheduler tests prove
-stateful/interactive tools execute sequentially. Mutation tests cover unique invocation derivation despite repeated provider
+credentials and never writes outside project roots. SBOM/import-graph tests
+prove the exact Pi/thread-phase pins have no native addon and that thread-
+phase's transitive `openai` package is absent from the bundle or proven inert
+(no import, credential, or request path). Provider fixtures exercise a non-
+Anthropic OpenAI-compatible endpoint and a local endpoint through `ModelRuntime`.
+Scheduler tests prove stateful/interactive tools execute sequentially and that
+16 synchronously waiting parents enter durable suspension, admit 16 children,
+and resume without starvation. Mutation tests cover unique invocation derivation despite repeated provider
 tool-call IDs, lost-response idempotency, crash injection at every PREPARED/
 rename/fsync/COMMITTED boundary, detected external-save conflicts, exact
 attempted-snapshot recovery, project-parameter/`globals.py` build races without
 deadlock, coherent project-manifest rejection/acceptance, distinct failed-build
-checkpoint refs, transient-parameter artifact identity, create-only export
-retry, and dirty-preimage journals. Manual/automatic GC races against leased
+checkpoint refs, transient-preview measurement targeting, artifact-bound solid/untagged-face/edge selection with exact source refs and
+round-trip acceptance of every returned per-view bundle/pass ref after current
+changes, focus-invariant mask
+ID domains and wrong-mode rejection, atomic/provenance-bearing check-set
+generations with fail-closed invalid-import diagnostics, typed globals/check
+validation, immutable byte-cursor paging, behavioral parity for Pi/bridge and
+FastMCP direct dispatch, normalized high-water-marked Pi-history paging, scoped/
+object-authorized delegation with every terminal/rejection/interruption
+variant, create-only
+export retry, and dirty-preimage journals. Manual/automatic GC races against leased
 artifact inspection return either a complete hash-valid artifact or structured
 `artifact_expired`, never partial bytes. Bridge boundary tests include JSON
-and base64 overhead, 1–4-view schema bounds, terminal-event reserve,
-per-session cancellation isolation, image dimension/pixel bombs, and generic
-UTF-8-safe artifact paging
-(including a single >50 KiB line). Parameter mutation tests assert mixed-valid/
+and base64 overhead, 1–4-view schema bounds, a restart-reconstructed 16-run durable admission/terminal-ack channel plus
+seventeenth-run refusal under stalled consumption, priority reacquisition for
+suspended parents, progress-delta coalescing without audit loss, per-session
+cancellation isolation, discriminated vision capability outcomes, image
+dimension/pixel bombs, and generic
+UTF-8-safe artifact paging (including explicit oversized-line signaling, a
+single >50 KiB line, and rejection of every interior byte offset of multibyte
+code points), plus bounded/readable oversized selection legends. Parameter mutation tests assert mixed-valid/
 invalid updates are atomic. Packaging tests audit away required native
 Node addons and initialize the Python-backed workflow JobStore across the
-supported OS/architecture matrix. The private gate split is itself
+supported OS/architecture matrix. Executor escape suites run natively under
+Linux bubblewrap and on macOS through the approved OCI backend; absent/failed
+backends produce explicit fail-closed results. The private gate split is itself
 CI-validated by its reference solutions on every rotation.

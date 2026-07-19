@@ -23,7 +23,7 @@ and the decision each one drives:
 
 ## 2. System overview
 
-Five components, strictly layered. Calls within the Python engine are
+Six components, strictly layered. Calls within the Python engine are
 in-process; the TypeScript agent runtime is an isolated local sidecar reached
 through a versioned JSON-RPC-over-stdio bridge. Nothing in a lower layer knows
 about a higher one.
@@ -38,11 +38,14 @@ about a higher one.
 └──────────────▲─────────────────┬───────────────────────┘
                │ Python API      │ JSON-RPC/stdio
 ┌──────────────┴──────────────┐  ▼
-│  core/   executor · kernel  │  ┌───────────────────────┐
-│  render · checks · git store│◄─┤ agent/  TypeScript    │
-└─────────────────────────────┘  │ Pi sessions + tools    │
-                                 │ thread-phase workflows │
-                                 └───────────────────────┘
+│ core/ executor · kernel     │  ┌───────────────────────┐
+│ render · checks · CAD store │◄─┤ agent/  TypeScript    │
+└──────────────┬──────────────┘  │ Pi sessions + tools    │
+               ▼                 │ thread-phase workflows │
+┌─────────────────────────────┐  └───────────────────────┘
+│ opstore/ WAL · leases · CAS │
+│ admission · retention / GC  │
+└─────────────────────────────┘
 ```
 
 The agent sidecar never imports or reimplements geometry logic. Its custom
@@ -51,7 +54,8 @@ those requests to `core/` and returns text, structured data, and image blocks.
 `core/` MUST be importable and fully functional with no server, no agent, no
 Node runtime, and no network: `heph build`, `heph render`, `heph check`, and
 `heph export` are thin wrappers over it. This is the engine-first invariant
-and the mission's Stage 0.
+and the mission's Stage 0B; the CAD-independent durability substrate lands
+first in Stage 0A.
 
 ## 3. core/
 
@@ -68,8 +72,8 @@ Runs a part script in a sandboxed subprocess with the injected namespace from
 - **Failure semantics.** On exception, the build result MUST include: the
   failing line and column, exception type, a source frame (±2 lines), the last
   successfully executed statement, the last-good metrics snapshot, and a
-  machine-readable pointer that `inspect_part(part, last_good=True)` will
-  render. This reproduces (and is acceptance-tested against) the observed
+  machine-readable `last_good_artifact_ref`; canonical replay uses
+  `inspect_part(part, artifact_ref=last_good_artifact_ref)`. This reproduces (and is acceptance-tested against) the observed
   Smith error shape.
 - **Determinism.** Same script + params + hephaestus version ⇒ identical
   geometry (bit-stable STEP is not required; metric-stable within 1e-6 mm is).
@@ -79,10 +83,14 @@ Runs a part script in a sandboxed subprocess with the injected namespace from
   require a probed OS isolation backend that exposes no project/host files,
   gives the worker an empty writable tmpfs, mounts only the pinned runtime
   read-only, creates a network namespace with no interfaces, drops privileges,
-  and enforces CPU, memory, process, and wall-clock limits. The v0.1 secure
-  backend is Linux bubblewrap/container isolation and is mutation-tested for
-  filesystem and network escapes. On a platform without a passing secure
-  backend, agent/server execution fails closed; an explicit
+  and enforces CPU, memory, process, and wall-clock limits. The v0.1 native
+  backend is Linux bubblewrap isolation. macOS agent execution requires a
+  detected Docker, Podman, or OrbStack-compatible OCI backend running the
+  pinned Linux executor image with read-only root, no network, dropped
+  capabilities, bounded resources, and only protocol pipes exposed; Stage S
+  must prove this profile rather than trusting backend presence. Both paths are
+  mutation-tested for filesystem/network escapes. On a platform without a
+  passing backend, agent/server execution fails closed; an explicit
   `--unsafe-local-executor` exists only for user-invoked core debugging, prints
   a warning, may not execute registry content, and is refused by `heph serve`.
   This is local single-user isolation, not hardened multi-tenant containment;
@@ -122,9 +130,18 @@ produce:
 
 - **rgb** — shaded render honoring `.color`, from named cameras (`iso`, `+X`,
   `-X`, `+Y`, `-Y`, `+Z`, `-Z`, `front`, custom azimuth/elevation).
-- **mask** — flat-shaded ID render where each solid (or each tagged face, in
-  face mode) has a unique color from a published bijective palette; the
-  color↔id table ships with the image so the model and tests can decode it.
+- **mask** — flat-shaded ID render. `solid` mode has one solid-ID pass.
+  `selection` mode is an artifact bundle with **three separate non-antialiased
+  integer/palette passes** (`solid`, `face`, `edge`); no pixel encodes multiple
+  domains, and edge rasterization cannot overwrite face/solid pixels because it
+  is a separate layer. The bundle publishes one global `selection_id → {kind,
+  solid_id, topology_index, tag?}` table, per-pass palettes, and exact source
+  build ref. Each requested view returns a typed per-view `bundle_ref` plus
+  `{solid, face, edge}` pass refs; every pass links immutably back to its bundle.
+  ID passes are artifact-only; one non-decodable composite preview per view may
+  be inline, preserving the four-image bridge cap. GLTF primitives/
+  edge overlays carry the same IDs and link the bundle, so model, web raycast,
+  and tests share one namespace.
 - **section** — rgb with a section plane applied.
 - **explode(t)** — per-solid translation along assembly axes, t ∈ [0, 1].
 
@@ -140,10 +157,50 @@ Executes `CHECKS` blocks (see `script_contract.md` §6) against a build:
 each check is a named predicate over kernel-service results with a tolerance.
 Output is a machine-readable report (pass/fail per check, measured values).
 Checks are re-run on every build of the part and on every build of any part
-whose shared constants it consumes. DECISION(ours) — no observed equivalent;
-this is Hephaestus's persistent verification layer.
+whose shared constants it consumes. Cooperating project-check create/edit increments a check-set generation under
+a dedicated check-set lock. A project-check run holds that lock while
+atomically enumerating and snapshotting the complete,
+lexically ordered authorized `checks/*.py` set into one immutable bundle, then
+releases it before execution. CheckReport includes generation,
+`check_bundle_ref`, and per-file hashes alongside geometry
+`project_snapshot_ref`. A concurrent edit/create belongs wholly to the old or
+new generation, never a mixed in-flight report. Check mutations use a typed
+WAL containing old/new generation and file hashes: after candidate rename,
+generation publication is compare-and-swapped before COMMITTED; recovery after
+any crash completes exactly one generation advance or restores/conflicts the
+file. Changed content is never visible under the prior cooperative generation.
+Every check-set lock acquisition—read, capture, create, or edit—first resolves
+all relevant `PREPARED` check WAL rows while holding the lock, before exposing
+generation or files. Thus a surviving process cannot observe renamed content
+under the old generation. On every lock acquisition, the stored tree hash is
+also compared with the live check tree. A stable direct-filesystem change with
+no matching WAL is reconciled under the lock into exactly one new
+`external_import` generation before list/run proceeds. If sandbox parse/
+contract validation fails, the generation is persisted as invalid with an
+opaque diagnostics artifact; discovery returns only the discriminated invalid-
+generation result and project check execution fails closed—malformed checks are
+never omitted. An edit still changing during capture returns `check_set_drift`. Thus changed content is never reported under an old
+generation, while atomicity guarantees remain limited to cooperating writers. DECISION(ours) — no observed
+equivalent; this is Hephaestus's persistent verification layer.
 
-### 3.5 Project store
+### 3.5 Project store and `opstore` boundary
+
+The generic durability substrate is a separate top-level Python workspace
+package, `opstore/`. It owns operation-key verification/tombstones, generic WAL
+transactions and recovery hooks, content-addressed blob publication, leases,
+admission/terminal acknowledgment (including suspension), and reachability/GC
+primitives over SQLite plus the filesystem. It has its own README, public typed
+interfaces, crash/property tests, and **must not import build123d, OCP, Pi,
+thread-phase, or `core/`**.
+
+`core/project_store` is the Hephaestus adapter and policy layer. It defines CAD-
+specific payloads and state transitions, project authorization and lock order,
+git/source semantics, dependency projections, artifact provenance edges, and
+typed build/check/export/delegation publication using `opstore` primitives.
+Thus extracting durability does not let generic storage decide what constitutes
+a current build, coherent project, valid check, or authorized artifact. The
+package remains in this monorepo and ships inside the Hephaestus wheel for v0.1;
+a separate repository/public release is deferred until its API stabilizes.
 
 A Hephaestus project is a directory in a git repository:
 
@@ -166,8 +223,8 @@ DECISION(ours), replacing Smith's opaque session/version model.
 **Concurrency.** Single-writer per part: builds and script writes serialize
 on a per-part advisory lock in `.heph/locks/`; project-scoped parameter writes
 use a project-config lock, then acquire affected part locks in lexical order
-when updating stale markers. The global order is project-config → lexical part
-locks; no code may wait for the project lock while holding a part lock. Builds
+when updating stale markers. The global order is project-config → check-set → lexical part locks; no code
+may wait for an earlier lock while holding a later one. Builds
 briefly acquire project + target-part locks in that order to capture a snapshot,
 release both during geometry computation, then reacquire them in the same order
 for publication. The agent's mutations and a human's editor save go through
@@ -195,8 +252,8 @@ record the key ID. Backup/restore treats the keyring and `.heph/state.db` as one
 unit. A missing/corrupt keyring with existing state fails closed and requires
 explicit restore/recovery — it is never silently regenerated. A non-Pi client
 uses the bounded idempotency contract described in `tool_schema.md`; the model
-never invents the key. The Python store uses a
-crash-recoverable operation state machine in `.heph/state.db`: (1) write and
+never invents the key. The `core/project_store` adapter uses `opstore`'s crash-recoverable operation
+state machine in `.heph/state.db`: (1) write and
 fsync content-addressed preimage/candidate blobs and a same-directory candidate
 temp file; (2) transactionally record `PREPARED` with operation id, canonical
 payload hash, before/after hashes, paths, and intended outcome; (3) atomically
@@ -221,6 +278,33 @@ are content-addressed bundles whose live pointer is compare-and-swapped while
 all addressed projection validations/locks hold. Recovery inspects bundle and
 pointer/pin state and completes or marks conflict; no partial bundle, unpinned
 delivered export, or half-published manifest is reported successful.
+
+Delegation uses a non-filesystem WAL state machine keyed by the trusted parent
+invocation: `PREPARED → ADMITTED → DISPATCHED → TERMINAL`, with one stable child
+run ID persisted at ADMITTED. Dispatch and queueing are idempotent on that ID.
+At ADMITTED the coordinator persists absolute `deadline_at = admitted_at + D`;
+queued time counts. For synchronous `delivery="prompt"`, the waiting parent is
+transactionally moved to durable `SUSPENDED_WAIT` while the child admission is
+reserved; that parent does not consume an active run slot. Child and resumed-
+parent admissions have FIFO priority over new external prompts, and the parent
+must reacquire a slot before processing the child result. This prevents 16
+waiting orchestrators from starving all 16 children. Follow-up parents are not
+waiting and retain their ordinary slot; thread-phase fanout derives its bound
+from currently available child admissions rather than an independent constant. Child terminal ingestion and delegation-row terminal
+projection occur in one Python `state.db` transaction. Cancellation, deadline,
+and recovery each start that same coordinator transaction by checking the
+child terminal table; an existing child terminal wins. Otherwise they CAS the
+nonterminal delegation row: cancellation to `CANCEL_REQUESTED`, elapsed
+`deadline_at` to terminal `timed_out`, or recovery ownership to the same child.
+Only the transaction winning that CAS may abort/dispatch/insert its terminal.
+Recovery precedence is therefore: (1) project existing child/delegation
+terminal; (2) finish CANCEL_REQUESTED as `cancelled`; (3) deadline as
+`timed_out`; (4) resume PREPARED (allocating its first child ID) or recover
+ADMITTED/DISPATCHED with the persisted ID; (5) unrecoverable owner/process loss
+as `interrupted`. Any terminal forbids dispatch and has precedence
+over generic interruption synthesis. Crashes at enqueue, dispatch ack,
+cancellation, terminal insertion, or parent response therefore produce at most
+one child and exactly one semantically distinct terminal.
 
 A build invocation freezes immutable script, part params, request-effective
 params, pinned toolchain, and the part's consumed-`hc` projection (the exact
@@ -256,7 +340,10 @@ artifact and one most-recent-failure last-good pointer per part are protected;
 older failed-build/checkpoint refs follow the normal 30-day evidence retention
 unless user/job-pinned. Active session branches, uncommitted recovery journal entries, operation WAL
 rows needed for idempotency, live job checkpoints, every successful
-manufacturing export, and user-pinned evidence are protected. Exports remain
+manufacturing export, every check bundle referenced by a retained CheckReport,
+and user-pinned evidence are protected. Pins are transitive across artifact
+links: pinning a GLTF or selection layer retains its selection bundle/table and
+source build; pinning the bundle retains every pass and source build. Exports remain
 GC roots until explicit `heph export unpin/delete`; this applies to explicit
 and content-addressed targets. Accepted-overwrite preimage journals are kept
 for at least 30 days and can be pinned longer. By default, unpinned superseded
@@ -276,8 +363,8 @@ raises the quota or explicitly unpins/deletes data; nothing protected is
 silently removed. Session deletion is explicit; Pi compaction does not delete
 JSONL history.
 
-Artifact reads acquire project-wide, cross-process shared leases recorded in
-`state.db`; manual and automatic GC use the same coordinator and require an
+Artifact reads acquire `opstore` project-wide, cross-process shared leases
+recorded in `state.db`; manual and automatic GC use the same coordinator and require an
 exclusive per-ref deletion lease, then recheck reachability before unlinking.
 Lease expiry is heartbeat/liveness checked. A reader either opens and validates
 the complete immutable artifact under lease or receives `artifact_expired`; GC
@@ -351,13 +438,20 @@ Hephaestus auth/model paths. The Python supervisor starts the sidecar with a
 minimal environment and forwards only provider credential variables explicitly
 approved in Hephaestus configuration; ambient provider keys, project/global Pi
 resources, and generic coding tools MUST NOT silently affect a run. Exact Pi
-and Node versions are pinned and compatibility-tested in Stage S.
+and Node versions are exact-pinned (no caret/tilde ranges) and compatibility-
+tested in Stage S. The spike inventories Pi `ModelRuntime` providers and proves
+one non-Anthropic OpenAI-compatible endpoint plus one local endpoint through
+fake servers; unsupported provider classes narrow the README claim before
+Stage 0.
 
 ### 4.2 Agent scoping
 
 One persistent Pi session exists per part (matching observed per-part tabs),
 plus a separate project-orchestrator session that can create parts and
-delegate. Scoped quick-edit agents (§4.4) are child sessions seeded with a
+delegate through a constrained `delegate_part_agent` tool. Part sessions cannot
+delegate or edit project-global/check files; the orchestrator alone receives
+those scoped tools. Scoped quick-edit agents (§4.4) are child sessions seeded
+with a
 bounded provenance and image context. The server grants one process a leased,
 heartbeat-backed lock for each persistent session under `.heph/locks/`; a
 second process MUST route through the owning server or fail with a structured
@@ -373,11 +467,15 @@ widget. The loop suspends until an answer event arrives.
 
 ### 4.4 Selection → scoped agent
 
-A client sends a selection reference: `{part, kind: solid|face|edge, mask_id}`.
-The harness resolves it through the source map to `{label?, tag?, statement,
-source span}` and spawns a child Pi session whose context contains the part
-script, the resolved provenance, and a crop of the current render centered on
-the selection. This reproduces Smith's "Quick edit — 1 face → Ask a new
+A client sends `{part, build_artifact_ref, selection_artifact_ref,
+selection_id}`. `selection_artifact_ref` may name a returned per-view bundle,
+one of its solid/face/edge pass layers, or a GLTF whose immutable metadata links
+that bundle. The server follows immutable pass/GLTF links and validates the
+bundle association, exact source build, ID kind/table entry, and layer before
+provenance/crop lookup. RGB, unlinked GLTF, and unrelated mask refs are rejected. It never falls back to current geometry; an
+expired/mismatched ref returns `stale_selection`. The harness spawns a child Pi
+session whose context contains the artifact-bound part source, resolved
+provenance, and crop centered on the selected topology. This reproduces Smith's "Quick edit — 1 face → Ask a new
 agent" with strictly more context than Smith demonstrates.
 
 ### 4.5 Thread-phase orchestration
@@ -396,7 +494,10 @@ depending on the separately versioned/internal `AgentAdapter` or Pi-adapter
 surface. The pinned thread-phase distribution MUST expose phases, patterns,
 and `JobRunner` without a required native Node addon; Stage S rejects older
 package layouts that eagerly require `better-sqlite3` even when a custom store
-is supplied.
+is supplied. Its transitive `openai` package is not an approved Hephaestus
+provider path: Stage S records an SBOM/import graph and either excludes it from
+the compiled sidecar or explicitly allowlists it as inert, proving it is never
+loaded, receives no credentials, and cannot initiate runtime requests.
 
 Jobs carry owner leases, heartbeats, and resumable phase checkpoints. On
 startup, the supervisor classifies orphaned `RUNNING` jobs as interrupted,
@@ -421,7 +522,11 @@ git stores authored design state, and `.heph/` stores generated CAD artifacts.
   with no Hephaestus UI can run the entire loop; this is Stage 3's gate.
   HTTP transports bind to localhost and require a generated bearer token by
   default; binding beyond localhost requires an explicit flag whose help text
-  points at the threat model.
+  points at the threat model. Historical conversation reads are owned by the
+  sidecar: a private bounded bridge method reads Pi JSONL via Pi's session API,
+  normalizes it to public Hephaestus events, and freezes a first-page high-water
+  mark into opaque cursors. HTTP serves that normalized snapshot; Python/web
+  never parse Pi JSONL directly.
 - **HTTP + WebSocket API** for the web client: project CRUD mapped to git,
   build/render artifact serving (GLTF, PNGs), agent event stream, selection
   and answer events. Same bind/token defaults.
@@ -437,19 +542,52 @@ git stores authored design state, and `.heph/` stores generated CAD artifacts.
   four images per result. Images are PNG/JPEG only, at most 4096×4096 each and
   32 megapixels total per result; dimensions/pixel budget are checked with a
   bounded header parser before full decode, and the decoder enforces its own
-  allocation cap. The incremental framer aborts as soon as the wire cap is exceeded. There are at most 64
-  pending RPC requests, 32 queued prompts per session, 1024 ordinary buffered
-  events, and 16 reserved terminal/control slots. Request/queue overflow
-  returns `busy`; ordinary-event overflow cancels only the affected run and a
-  reserved slot records its terminal error rather than silently dropping audit
-  state. Protocol stdout never carries logs.
+  allocation cap. The incremental framer aborts as soon as the wire cap is
+  exceeded. There are at most 64 pending RPC requests, **16 admitted run
+  slots**, 32 queued prompts per session, and 1024 ordinary buffered events. An
+  active run—including an admitted queued delegation—reserves one slot at
+  ADMITTED, before sidecar execution/queueing, and retains it through terminal
+  acknowledgment unless it durably enters `SUSPENDED_WAIT`. Queued, running,
+  and completed-but-unacknowledged active runs together can never exceed 16.
+  The dedicated backpressured terminal channel has the same 16 slots and accepts exactly one terminal record per run. The Python event/
+  JobStore durably records a terminal before its slot is acknowledged/reused; a
+  seventeenth run returns `busy`. Request/queue overflow returns `busy`.
+  Explicitly droppable progress deltas are first coalesced to the latest event
+  per `(run_id, event_kind, tool_call_id)`; audit events, tool calls/results,
+  questions/answers, and terminals are never coalesced or dropped. Only if the
+  bounded queue still cannot progress after coalescing does backpressure cancel
+  the affected run and route its final error through the terminal channel.
+  Protocol stdout never carries logs.
 
-  Tool requests default to 120 s with an explicit 300 s CAD-build class;
-  prompt hard/idle timeouts are capped by configuration. Each run has its own
+  Python transactionally allocates a stable run ID and durable admission row
+  before prompting/queueing the sidecar; every event carries it. Admission rows
+  persist state, terminal ID, and `terminal_acked_at`. Reserving a slot counts
+  active rows without a durable terminal acknowledgment and succeeds only when
+  fewer than 16 exist; durable `SUSPENDED_WAIT` parents are excluded until they
+  reacquire a prioritized active slot. A project terminal table has unique
+  `(run_id, "terminal")` key/payload hash, covering direct Pi runs and workflows. Terminal insertion
+  and operation-specific terminal projection share a transaction; bridge
+  acknowledgment names the terminal ID and durably/idempotently sets
+  `terminal_acked_at` before slot release. Startup reconstructs occupancy as
+  the **union of run IDs** in admitted-nonterminal and terminal-unacknowledged
+  rows (never their sum), resolves persisted terminals/acknowledgments, then
+  admits new runs. Restart recovery checks the terminal
+  table plus operation-specific recovery state.
+  Generic direct runs with no recoverable coordinator get one `interrupted`
+  terminal when owner loss is confirmed; delegation follows §3.5 precedence.
+  A crash after terminal insertion or acknowledgment creates none.
+
+  Tool requests default to 120 s with an explicit 300 s CAD-build class.
+  Synchronous delegation supplies child deadline `D` (default 600 s, maximum
+  1200 s); its bridge deadline is always `D + 60 s`, reserving cleanup/terminal
+  persistence grace. The outer timeout never races the child deadline and
+  remains cancellable. Prompt hard/idle timeouts are capped by
+  configuration. Each run has its own
   abort controller: cancelling one session terminates only its owned tool child
   processes and leaves other multiplexed sessions healthy. The supervisor
   kills the whole sidecar only after an unresponsive-process watchdog fires,
-  then marks every affected run interrupted. A crashed sidecar cannot corrupt
+  then marks affected generic runs interrupted and hands recoverable delegation/
+  workflow runs to their coordinators before any terminal synthesis. A crashed sidecar cannot corrupt
   a completed build artifact and is restartable from verified Pi session and
   workflow state. The bridge is private implementation, never a remotely
   exposed transport.
@@ -457,7 +595,7 @@ git stores authored design state, and `.heph/` stores generated CAD artifacts.
 ## 6. web/
 
 React + TypeScript. Vite. three.js viewport consuming GLTF with per-solid
-metadata (id ↔ mask palette ↔ tree row). Monaco for scripts. Panels: file
+metadata plus artifact-bound face/edge selection IDs and linked selection bundle (id ↔ mask palette ↔ tree row). Monaco for scripts. Panels: file
 tree / script / results (geometry list with visibility, properties, check
 status) / agent stream. Viewport affordances: view cube, grid with scale
 readout, explode slider, measure mode, section plane, selection with quick-edit

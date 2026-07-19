@@ -22,7 +22,7 @@ Hephaestus inverts each of those decisions:
 
 | Axis | Closed products | Hephaestus |
 |---|---|---|
-| Model | Locked to a house model | Any API or local model; the benchmark corpus measures which are good at CAD |
+| Model | Locked to a house model | API and local-model endpoints compatibility-tested through the pinned Pi runtime; the benchmark corpus measures which are good at CAD |
 | Surface | Browser-only webapp | Engine-first: CLI and MCP server are the product; the web UI is a client |
 | Versioning | Opaque `v1*` badge | Plain files in git; branches, PRs, blame, CI |
 | Verification | Transient, in-loop only | Persistent geometric spec tests re-run on every build |
@@ -84,7 +84,8 @@ hephaestus/
 ├── verification.md            verification harness: tiers, corpus, CI
 ├── mission_plan.md            phased droid mission with verifiable gates
 ├── repo_conventions.md        packaging, layout, licensing, naming
-├── core/                      Python: executor, kernel services, render, checks
+├── opstore/                   Python: reusable WAL/idempotency/lease/GC substrate
+├── core/                      Python: CAD executor, kernel, render, checks + opstore adapters
 ├── agent/                     TypeScript: Pi SDK runtime + thread-phase workflows
 ├── server/                    Python: MCP/HTTP API + Node agent bridge
 ├── web/                       TypeScript: React + three.js client
@@ -100,4 +101,8 @@ staged droid mission in which every stage gates on machine-checkable evidence
 Playwright/computer-use screenshot assertions, and benchmark success rates).
 The agent layer embeds Pi for individual sessions and uses thread-phase only
 for deterministic multi-session workflows; the Python CAD engine remains
-independent. No stage advances on human vibes.
+independent. The Python CAD CLI works without Node on every supported Python
+platform. v0.1 agent/server script execution requires either native Linux
+bubblewrap isolation or a capability-tested Docker/Podman/OrbStack-compatible
+OCI backend (including on macOS); it fails closed when neither is available.
+No stage advances on human vibes.

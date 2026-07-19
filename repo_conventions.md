@@ -6,8 +6,12 @@ Monorepo at `github.com/autonome-research/hephaestus` (single repo keeps the
 tool schema, core, and clients atomically versioned through the mission):
 
 ```
+opstore/    Python ≥3.11 workspace package: generic WAL/idempotency, leases,
+            admission, CAS blobs, and reachability/GC. No CAD/agent imports;
+            separately tested and bundled in the wheel, not published in v0.1.
 core/       Python ≥3.11. Deps: build123d, ocp, numpy, trimesh/pyrender (render),
-            ezdxf (dxf), pygltflib. Managed with uv; strict pyright.
+            ezdxf (dxf), pygltflib. Consumes opstore through typed adapters;
+            managed with uv and strict pyright.
 agent/      TypeScript on Node ≥22.19. Embedded Pi SDK sessions, generated CAD
             tools, Python JSON-RPC bridge client, and thread-phase workflows.
             Managed with pnpm; strict tsc and eslint.
@@ -16,13 +20,14 @@ server/     Python. FastMCP + FastAPI + websockets; supervises the packaged
 web/        TypeScript, React 18, Vite, three.js, Monaco. pnpm workspace.
 registries/ skills/ parts/ materials/ dfm/ — content, versioned in-repo for
             now; splits out post-v0.1 once the registry format stabilizes.
-corpus/     tasks/ (public split), solutions/. reference/ is fetched in CI
-            from autonome-research/hephaestus-fixtures (private: recovered
-            scripts + reconstructed globals.py, pending legal review) and is
-            gitignored here; the private gate split of the bench corpus
-            lives in autonome-research/hephaestus-corpus-private.
-tests/      stage0…stage7 mirrors mission gates; render/ goldens with
-            provenance sidecars.
+corpus/     public_fixtures/ contains clean-room CAD contract/e2e projects;
+            tasks/ + solutions/ are the public benchmark split. reference/ is
+            fetched only inside the isolated private verifier from
+            autonome-research/hephaestus-fixtures (recovered scripts + globals,
+            pending legal review) and remains gitignored. Private benchmark
+            tasks live in autonome-research/hephaestus-corpus-private.
+tests/      stage0a, stage0b, stage1…stage7 mirror mission gates; opstore also
+            has package-local tests; render/ goldens carry provenance sidecars.
 *.md        normative design/mission documents live at repo root in v0.1.
 docs/       generated/site-only mkdocs content and assets; links to root docs.
 ```
@@ -34,25 +39,31 @@ docs/       generated/site-only mkdocs content and assets; links to root docs.
   checked at Stage 7; the import package is `hephaestus` regardless, with the
   distribution name only differing if squatted). npm (web components, if ever
   published separately): `@autonome/hephaestus-web`.
-- Python namespaces: `hephaestus.core`, `hephaestus.server`, and the private
-  bridge/supervisor under `hephaestus.agent_bridge`. The TypeScript agent is a
+- Python namespaces: internal workspace package `opstore`; product namespaces
+  `hephaestus.core`, `hephaestus.server`, and the private bridge/supervisor under
+  `hephaestus.agent_bridge`. `opstore` has no separate PyPI release in v0.1 and
+  is bundled as an internal wheel component. The TypeScript agent is a
   private workspace package compiled into a bounded sidecar artifact and
   bundled in the Python wheel; it is not a second public product package in
   v0.1.
-- `heph build/check/render/export` MUST work without Node. The v0.1 secure
-  agent/server execution platform is Linux x86_64 with the probed isolation
-  backend; other packaging lanes run core-only tests and MUST fail closed for
-  agent/server script execution unless an approved secure container backend is
-  detected. `heph agent` and agent-enabled serving require Node ≥22.19,
+- `heph build/check/render/export` MUST work without Node. The v0.1 native
+  secure agent/server platform is Linux x86_64 with probed bubblewrap
+  isolation. macOS is supported for agent execution only through a capability-
+  tested Docker/Podman/OrbStack-compatible OCI backend running the pinned Linux
+  executor profile. Other packaging lanes run core-only tests and MUST fail
+  closed for agent/server script execution unless that approved backend passes
+  its escape/resource probes. `heph agent` and agent-enabled serving require Node ≥22.19,
   perform an explicit startup
   compatibility check, and execute the wheel's integrity-checked sidecar —
   never a global `pi` or `thread-phase` binary. The supervisor supplies a
   minimal environment and only explicitly approved provider credentials. A
   standalone bundled sidecar may replace the Node prerequisite later without
   changing the bridge.
-- Product dependencies are pinned as a tested set in `pnpm-lock.yaml`. Stage S
-  records exact versions for Node, `@earendil-works/pi-coding-agent`,
-  and `@autonome-research/thread-phase`. Production phases call the Hephaestus
+- Product dependencies are exact-pinned in `package.json` (no caret/tilde) and
+  `pnpm-lock.yaml`; the initial spike candidates are
+  `@earendil-works/pi-coding-agent@0.80.10` and
+  `@autonome-research/thread-phase@6.0.0`. Stage S records the accepted exact
+  versions and Node runtime here. Production phases call the Hephaestus
   Pi session service directly through free-runner phase/pattern APIs; no
   thread-phase AgentAdapter package is a runtime dependency. Upgrades require
   the same bridge, session-resume, event-shape, cancellation, and isolation
@@ -63,7 +74,10 @@ docs/       generated/site-only mkdocs content and assets; links to root docs.
   `better-sqlite3` are not eligible even when a custom store is supplied.
   Persistence uses an application-owned async `JobStore` backed by Python
   SQLite over the bridge. CI audits install-time dependencies, import graphs,
-  and the built artifact.
+  and the built artifact. In particular, thread-phase 6.0.0's transitive
+  `openai` dependency must be absent from the compiled sidecar or explicitly
+  allowlisted as inert after proving it is not loaded, receives no credentials,
+  and has no runtime request path.
 
 ## Versioning and git discipline
 
@@ -99,9 +113,14 @@ docs/       generated/site-only mkdocs content and assets; links to root docs.
   the product's terms of service have not yet been reviewed and may speak to
   reverse engineering or output rights, the scripts are held as **private CI
   fixtures**, not published, until the Stage 7 legal review
-  (`LEGAL-REVIEW.md`) clears them — and all acceptance tests assert error/
-  result *fields and information content*, never the reference product's
-  verbatim message text or UX copy. `CONTRIBUTING.md` states this boundary
+  (`LEGAL-REVIEW.md`) clears them. Ordinary/fork PR gates use only independently
+  authored `corpus/public_fixtures/`. Private-reference parity runs only in an
+  isolated verifier against a protected trusted SHA: no `pull_request_target`,
+  no PR-code access to repository credentials, no network from the test worker,
+  and no logs, coverage, cache, or artifacts containing fixture bytes. The
+  verifier emits only a signed aggregate status/leak-scan attestation. All
+  acceptance tests assert error/result *fields and information content*, never
+  the reference product's verbatim message text or UX copy. `CONTRIBUTING.md` states this boundary
   and CI license-checks dependencies.
 - Trademark hygiene: no "Smith"/"Arche" naming in code identifiers or
   packages; the reference product is named only in docs, factually.
@@ -118,12 +137,18 @@ geometries (reviewed).
 
 ## Quality bars
 
+- opstore/: ruff + pyright strict, 90% line coverage, property/state-machine
+  tests, subprocess crash injection, no import dependency on core/CAD/agent,
+  and a package README specifying transaction/recovery contracts.
 - core/ and server/: ruff + pyright strict, 90% line coverage on core/
-  (enforced), property-based tests (hypothesis) for kernel services.
+  (enforced), property-based tests (hypothesis) for kernel services and adapter-
+  contract tests proving `core/project_store` supplies CAD policy above
+  `opstore` rather than duplicating its durability machinery.
 - agent/: eslint + tsc strict; unit tests cover Pi resource/credential
   isolation, bridge framing, event normalization, session lifecycle, context
-  policy, sequential mutation/interaction tools, optimistic hashes, crash-
-  recoverable mutation WAL/idempotency, dirty-preimage journaling, effective-
+  policy, sequential mutation/interaction tools, optimistic hashes, opstore-
+  backed mutation replay/recovery integration, dirty-preimage journaling,
+  effective-
   parameter build identity, create-only exports, path confinement,
   cross-process session leases, direct
   Pi-session phase invocation, Python-backed JobStore interruption/recovery,

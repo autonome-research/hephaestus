@@ -4,8 +4,10 @@ The contract every Hephaestus part script is written against, and the contract
 the executor MUST implement. It is deliberately source-compatible with the two
 recovered Smith scripts (`cat_step_shelf`, `cat_step_gusset`) except where
 noted EXTENSION; those scripts are held as private CI fixtures (see
-`repo_conventions.md`) fetched into `corpus/reference/` and MUST execute
-under this contract unmodified (Stage 0 gate).
+`repo_conventions.md`) mounted at `corpus/reference/` only inside the isolated
+private verifier and MUST execute under this contract unmodified in the
+restricted reference-parity portion of
+Gate G0B; ordinary PRs use public clean-room fixtures.
 
 ## 1. Execution model
 
@@ -26,7 +28,8 @@ communicates its output by assigning to `part.*`.
 - **`hc`** — project-shared constants (§4).
 - **`part`** — the output object (§5).
 - **`tag`** — topology tagging (§5.3).
-- **`check`, `CHECKS`** — EXTENSION, persistent assertions (§6).
+- **`check`, `CHECKS`, `approx`** — EXTENSION, persistent assertions and the
+  deterministic numeric comparison helper used by those assertions (§6).
 - Nothing else. `open`, `__import__`, filesystem and network access are
   absent; attempting them is a build error.
 
@@ -132,8 +135,8 @@ part.feature("tread_top").surface_finish = (
 `tag(topology, name)` attaches a recomputed semantic name to a
 face/edge/solid; it is not a guarantee of stable topological identity.
 Tags are the join key for: per-feature metadata (`part.feature(name).*`),
-measurement tools (`measure(part, "tread_top", …)`), face-mode mask renders,
-selection resolution, and checks. The executor records tag → (solid, topology
+measurement tools (`measure(part, "tread_top", …)`), artifact-bound selection
+bundle face/edge tables, selection resolution, and checks. The executor records tag → (solid, topology
 index, creating statement) in the source map.
 
 Tags are *recomputed by re-running the tagging statement's selector* on each
@@ -269,7 +272,8 @@ project-scoped capabilities, never mutable filesystem paths.
 The failed-build text rendering MUST carry the same fields as the captured
 Smith error (line/col, type, source frame, built-through statement, last-good
 metrics, inspect hint) — that error shape is demonstrably sufficient for an
-agent to self-repair, and Stage 0 acceptance-tests our rendering against it.
+agent to self-repair; G0B validates its structural failure contract and G1
+acceptance-tests rendering.
 
 ## 9. Style conventions (lint, not law)
 

@@ -16,8 +16,8 @@ the Python bridge, and validate outputs before returning them to the model.
 Registry reference content is returned inside explicit provenance delimiters;
 it is never installed as an ambient Pi extension or privileged skill.
 
-Conventions: `part` and new-part `name` arguments are normalized identifiers
-matching `^[a-z][a-z0-9_]{0,63}$`; separators, absolute paths, `..`, Unicode
+Conventions: part, new-part, and project-check `name` arguments are normalized
+identifiers matching `^[a-z][a-z0-9_]{0,63}$`; separators, absolute paths, `..`, Unicode
 lookalike separators, and encoded traversal are rejected before filesystem
 access. Every model-selected output path is relative to a declared project
 root (exports use `.heph/exports/`) and rejected on traversal. Confinement is
@@ -35,8 +35,9 @@ rejected contender bytes from the `attempted_snapshot_ref` in the conflict.
 Source/config/output mutations carry an idempotency key in trusted invocation
 metadata, not in model-visible arguments. The Pi proxy derives it from stable
 session UUID + persisted assistant-message entry ID + tool-call ordinal +
-provider tool-call ID. HTTP callers MUST send a UUIDv7 `Idempotency-Key`. MCP
-callers MAY send `_meta["hephaestus.dev/idempotency-key"]`; otherwise the server
+provider tool-call ID. Hephaestus **REST API** callers MUST send a UUIDv7
+`Idempotency-Key`. MCP calls—including MCP over HTTP—follow the MCP rule below
+rather than the REST header rule. MCP callers MAY send `_meta["hephaestus.dev/idempotency-key"]`; otherwise the server
 derives the key from the authenticated/local MCP session plus canonical JSON-
 RPC request-id type/value. Hephaestus advertises that mutating request IDs must
 be unique within an MCP session: same-id/same-payload is a replay and same-id/
@@ -52,8 +53,13 @@ without repeating the freshness check. Thus creation time
 remains verifiable from the key after metadata GC. The Python store durably
 caches normalized key + canonical payload hash + final outcome. The payload
 hash covers protocol/schema version, project UUID, tool name, normalized target
-identity, and canonical JSON arguments (sorted keys, normalized numbers and
-Unicode, excluding invocation metadata). HMAC keys come from the durable
+identity, and canonical JSON arguments (sorted object keys and normalized
+numeric syntax, excluding invocation metadata). String values are **not**
+Unicode-normalized: source/check/globals/prompt content hashes preserve the
+exact decoded code-point sequence encoded as UTF-8, so NFC/NFD-different bytes
+are different payloads. All validators reject unpaired UTF-16 surrogates as
+`invalid_unicode_scalar` before UTF-8 sizing/hashing; JavaScript must not apply
+replacement-character coercion, and Python/TypeScript/MCP parity is CI-tested. HMAC keys come from the durable
 project keyring specified in architecture §3.5; operation rows record key IDs
 and retired verification keys outlive the 30-day horizon plus 7-day safety
 margin. Retrying the same key/payload returns that outcome after a lost response or restart; key
@@ -63,14 +69,26 @@ keys return `key_expired` without execution. After expiry, GC keeps a compact
 key/payload/terminal-state/commit-hash tombstone for a 7-day safety margin and
 may then remove it because the HMAC-verified embedded timestamp still rejects
 execution. Clients reconcile uncertain completion with the same key. Read-only tools are freely retryable. Tolerances
-are in mm. Mutating tools are `create_part`, `edit_part`, `write_part`,
-`set_params`, `build_part`, and `export_part`; none may silently discard bytes.
+are in mm. Source/artifact mutations and stateful delegation tools use this
+contract: `create_part`, `edit_part`, `write_part`, `edit_globals`,
+`create_project_check`, `edit_project_check`, `set_params`, `build_part`,
+`export_part`, `delegate_part_agent`, and `cancel_delegation`; none may silently
+duplicate work or
+discard bytes.
 
 Pi tool execution is parallel by default, but `ask_user`, `create_part`,
-`edit_part`, `write_part`, `set_params`, `build_part`, and `export_part` MUST
-declare sequential execution. Any future stateful or mutating tool does the
+`edit_part`, `write_part`, `edit_globals`, `create_project_check`,
+`edit_project_check`, `set_params`, `build_part`, `export_part`, and
+`delegate_part_agent` and `cancel_delegation` MUST declare sequential
+execution. Any future stateful or mutating tool does the
 same. Read-only render and measurement calls MAY run concurrently against the
-last completed artifact. A Hephaestus preflight hook inspects the complete
+last completed artifact. Pi tool proxies enforce object scope in addition to
+tool visibility: a part or quick-edit session is bound to one normalized part ID, and any name/
+artifact/snapshot resolving outside it is rejected `scope_denied`. Project-
+scoped `set_params` and `run_checks` are orchestrator-only even though they have
+no foreign part name; part sessions may use only their own part scope. Only the
+project orchestrator may create parts or address multiple parts; MCP/REST
+authorization is enforced independently. A Hephaestus preflight hook inspects the complete
 assistant tool-call message: if `ask_user` appears with any sibling stateful or
 mutating call, every sibling is blocked with `ask_user_must_be_alone` while the
 question proceeds. The model may issue mutations only in a later turn after the
@@ -104,13 +122,20 @@ Observed equivalent: `Create cat_step_shelf (part)`.
 read_part(name: str, offset_line: int = 1, limit_lines: int = 2000)
     -> {script, numbered_script, params, line_count, content_hash, snapshot_ref,
         part_param_state_hash, project_param_state_hash,
-        truncated, next_offset_line?}
+        truncated, oversized_line, oversized_line_offset_bytes?,
+        next_offset_bytes?}
 ```
 Returns separate raw and numbered chunks (the raw chunk is suitable for exact
 edits), registers an immutable full-file content-addressed snapshot, and
 returns the hashes/refs required for optimistic writes and exact conflict
-reconstruction. `limit_lines` is bounded to 1–2000 and the 50 KiB result cap
-may shorten a page with `next_offset_line`. Snapshot refs are bound to project
+reconstruction. `offset_line`/`limit_lines` select only the first human-friendly
+page. Any truncated response returns snapshot-bound absolute
+`next_offset_bytes`; all continuation uses `read_artifact(snapshot_ref,
+offset_bytes=...)`, never another mutable source read. When
+`oversized_line=true`, `oversized_line_offset_bytes` gives that line's absolute
+UTF-8 start (including when the first page starts after line 1), and
+`next_offset_bytes` advances from the returned prefix.
+Snapshot refs are bound to project
 UUID, normalized part path, creating principal/session, and content hash;
 `expected_hash` is accepted only with a matching authorized snapshot. Snapshots
 are retained for at least 30 days and while referenced by a live operation,
@@ -125,7 +150,9 @@ snapshot ref; the model continues losslessly by byte cursor through
 edit_part(name: str, expected_hash: str, old_str: str, new_str: str)
     -> {applied, diff?, line?, content_hash?, snapshot_ref?, journal_ref?,
         conflict?: {current_hash, current_script, current_truncated,
-                    next_offset_line?, current_snapshot_ref,
+                    current_oversized_line,
+                    current_oversized_line_offset_bytes?,
+                    current_next_offset_bytes?, current_snapshot_ref,
                     base_snapshot_ref, attempted_snapshot_ref}}
 ```
 Exact-match string replacement; `old_str` must match exactly once (widen with
@@ -136,15 +163,21 @@ the immutable snapshot registered for `expected_hash` to materialize the exact
 attempted candidate before returning a stale conflict. An exact-match failure
 returns closest candidates. Multiple edits are separate invocations with
 distinct trusted idempotency metadata. Every accepted overwrite returns the
-new snapshot and preimage journal reference. Conflict `current_script` obeys
-the 50 KiB/2000-line cap; continue with paged `read_part` when truncated.
+new snapshot and preimage journal reference. Every stale-conflict
+`current_script` is a conflict-time snapshot, obeys the 50 KiB/2000-line cap,
+and MUST be continued from `current_snapshot_ref` at
+`current_next_offset_bytes` with `read_artifact` when truncated or
+`current_oversized_line=true`. `read_part`
+intentionally requests newer live state and is never conflict continuation.
 
 ### write_part
 ```
 write_part(name: str, expected_hash: str, script: str)
     -> {applied, diff?, content_hash?, snapshot_ref?, journal_ref?,
         conflict?: {current_hash, current_script, current_truncated,
-                    next_offset_line?, current_snapshot_ref,
+                    current_oversized_line,
+                    current_oversized_line_offset_bytes?,
+                    current_next_offset_bytes?, current_snapshot_ref,
                     base_snapshot_ref, attempted_snapshot_ref}}
 ```
 Whole-file replacement for templates or substantial rewrites. It has the same
@@ -173,7 +206,7 @@ failure with last-good stats.
 
 ### set_params
 ```
-set_params(values: dict, expected_state_hash: str,
+set_params(values: dict[str, number|null], expected_state_hash: str,
            scope: "part"|"project" = "part", name: str|null = null)
     -> {effective, rejected, stale_parts, state_hash?, journal_ref?,
         conflict?: {current_state_hash, current_values,
@@ -181,15 +214,86 @@ set_params(values: dict, expected_state_hash: str,
 ```
 Persists parameter overrides (bounds-validated) for a part or for the
 project-level Globals in `globals.py` (contract §4). The expected hash is the
-corresponding part/project parameter-state hash returned by `read_part` or
-`create_part`; stale state returns current values/hash without mutation.
+corresponding part hash from `read_part`/`create_part`, or the project hash from
+`read_globals`; stale state returns current values/hash without mutation.
 Rejected values return the violated bound; project-scope changes return the
 list of parts marked stale by dependency tracking. Accepted writes journal the
 previous override document. The update is all-or-nothing: if any supplied value
 is unknown, wrong-typed, or out of bounds, `rejected` describes every invalid
-entry and no value is persisted. `name` is required exactly when
+entry and no value is persisted. A null value explicitly clears a persisted
+override. `name` is required exactly when
 `scope="part"` and MUST be null/omitted for project scope; this conditional is
 enforced in the canonical JSON Schema.
+
+### read_globals / edit_globals
+```
+read_globals(offset_line: int = 1, limit_lines: int = 2000)
+    -> {script, numbered_script, content_hash, snapshot_ref,
+        project_param_state_hash, truncated, oversized_line,
+        oversized_line_offset_bytes?, next_offset_bytes?}
+edit_globals(expected_hash: str, old_str: str, new_str: str)
+    -> {status: "applied", diff, content_hash, snapshot_ref, journal_ref}
+     | {status: "validation_error",
+        kind: "syntax"|"contract"|"sandbox"|"evaluation"|"invalid_overrides",
+        diagnostics, invalid_overrides?}
+     | {status: "conflict", kind: "stale_hash", current_hash,
+        current_script, current_truncated, current_oversized_line,
+        current_oversized_line_offset_bytes?, current_next_offset_bytes?,
+        current_snapshot_ref, base_snapshot_ref, attempted_snapshot_ref}
+```
+Project-orchestrator-only tools for the existing `globals.py`. Paging—including
+single-line >50 KiB fallback to byte-cursored `read_artifact`—optimistic CAS,
+conflict snapshots, WAL/idempotency, context limits, and path confinement match
+`read_part`/`edit_part`. `edit_globals` and project-scoped
+`set_params` serialize on the project-config lock. The edited candidate must
+parse/evaluate in the secure globals sandbox against the current persisted
+overrides; removing a parameter or tightening bounds around an override returns
+a top-level `validation_error(kind="invalid_overrides")` and commits nothing
+until `set_params(..., null)` clears or replaces it. This is distinct from the
+`conflict(kind="stale_hash")` CAS response. Otherwise no bytes or dependency state change on failure. There is no model-visible arbitrary-path
+or force-write globals tool.
+
+### list_project_checks / create_project_check / read_project_check / edit_project_check
+```
+list_project_checks(cursor: str|null = null, limit: int = 100)
+    -> {status: "ok", items: [{name, content_hash, summary}], total,
+        check_set_generation, check_set_ref, next_cursor?}
+     | {status: "invalid_check_generation", check_set_generation,
+        check_set_ref, diagnostics_ref}
+create_project_check(name: str, description: str = "")
+    -> {path, initial_script, content_hash, snapshot_ref}
+read_project_check(name: str, offset_line: int = 1, limit_lines: int = 2000)
+    -> {script, numbered_script, content_hash, snapshot_ref,
+        truncated, oversized_line, oversized_line_offset_bytes?,
+        next_offset_bytes?}
+edit_project_check(name: str, expected_hash: str, old_str: str, new_str: str)
+    -> {status: "applied", diff, content_hash, snapshot_ref, journal_ref}
+     | {status: "validation_error",
+        kind: "syntax"|"contract"|"sandbox"|"evaluation", diagnostics}
+     | {status: "conflict", kind: "stale_hash", current_hash,
+        current_script, current_truncated, current_oversized_line,
+        current_oversized_line_offset_bytes?, current_next_offset_bytes?,
+        current_snapshot_ref, base_snapshot_ref, attempted_snapshot_ref}
+```
+Project-orchestrator-only, identifier-constrained APIs rooted at `checks/`.
+`list_project_checks` is the authoritative discovery path and returns no
+arbitrary filesystem entries. The first page freezes an immutable lexical check-
+set index (`check_set_ref`); opaque cursors bind its generation/ref and
+position, so concurrent
+mutation cannot alter later pages. `summary` is capped at 512 UTF-8 bytes per
+item with truncation at a valid code-point boundary and no embedded source; `limit` is 1–100 and the server may return fewer
+to stay within the global context cap while guaranteeing `next_cursor`
+progress. An invalid externally imported generation returns only the
+`invalid_check_generation` variant and diagnostics—never a partial normal
+listing. `check_set_ref` is the immutable discovery index; `check_bundle_ref`
+below is the separately frozen executable bundle for one run. Check reads use the same paging and oversized-
+line `read_artifact` fallback as `read_part`.
+Creation is no-replace from a safe cross-part CHECKS template; edits use the
+same CAS/WAL/journal contract as part edits and must parse in the secure check
+sandbox before commit. Check scripts receive the measurement facade and pure
+`approx` helper used by `script_contract.md` §6—no filesystem/network/import
+surface. Part and quick-edit sessions do not receive
+these tools.
 
 ## Grounded observation
 
@@ -197,11 +301,19 @@ enforced in the canonical JSON Schema.
 ```
 inspect_part(name: str, views: list[str] = ["iso", "+X"],  # maxItems=4
              channel: "rgb"|"mask"|"section" = "rgb",
+             mask_mode: "solid"|"selection" = "solid",
              section_plane: str|null = null,
              explode: float = 0.0,
              last_good: bool = false,
              artifact_ref: str|null = null,
-             focus: str|null = null) -> {images: [...], mask_legend?}
+             focus: str|null = null)
+    -> {status: "ok", source_artifact_ref, images, render_artifact_refs,
+        mask_legend?, mask_legend_ref?, mask_legend_truncated,
+        selection_table_ref?,
+        selection_bundles?: [{view, bundle_ref,
+                              pass_refs: {solid, face, edge}}]}
+     | {status: "capability_error", code: "image_model_required",
+        source_artifact_ref, render_artifact_refs, message}
 ```
 Renders the current build by default. `artifact_ref` renders an exact immutable
 build/checkpoint returned by `build_part`; canonical JSON Schema makes it
@@ -209,25 +321,53 @@ mutually exclusive with `last_good=true`. `last_good=true` is a convenience
 lookup for the most recent failed attempt's checkpoint at call time and the
 result always reports the resolved artifact ref; exact/replayed inspection MUST
 pass the `last_good_artifact_ref` from that BuildResult. `channel="section"` requires
-`section_plane`; other channels require that field to be null/omitted. `views`
-has `minItems=1` and
+`section_plane`; other channels require that field to be null/omitted.
+Canonical schema forbids non-default `mask_mode` unless `channel="mask"`.
+`solid` legend/domain is exactly one non-antialiased solid-ID pass.
+`selection` returns, per view, one bundle containing separate non-antialiased
+solid/face/edge ID layers plus a shared global table; pixels never combine
+kinds. Those three machine-ID layers are artifact-only. At most one composite
+human/model preview per requested view is inline (≤4 total); it is explicitly
+not palette-decodable. `selection_bundles` exposes a typed per-view
+`bundle_ref` and its solid/face/edge pass refs, so four views yield four inline
+previews and twelve unambiguous pass artifacts without violating the bridge
+image cap. `render_artifact_refs` remains the flat retention/download list. A
+successful `channel="mask", mask_mode="selection"` result requires
+`selection_table_ref`, `mask_legend_ref`, and one `selection_bundles` entry per
+view; other modes return none of them. A GLTF used for raycast carries the same
+selection IDs and an immutable linked bundle ref. A returned per-view bundle
+ref, any of its pass refs, or a linked GLTF is accepted as the client's
+`selection_artifact_ref`; pass resolution follows its immutable bundle link. Inline legends obey the
+50 KiB cap; `mask_legend_truncated` and the opaque readable
+`mask_legend_ref` provide lossless paging through `read_artifact`.
+`focus` changes only camera framing/visibility and never changes the mode's ID
+namespace. Every result variant reports the exact resolved
+`source_artifact_ref`, and each render/table is cryptographically bound to it.
+`views` has `minItems=1` and
 `maxItems=4` in the canonical schema and accepts named cameras or
-`"az45_el30"`. `channel="mask"` returns the id-color legend mapping every
-solid (or tagged face, with `focus`) to its palette color, so the model can
-name what it sees. `focus` centers and zooms on a labeled solid or tag.
+`"az45_el30"`. The channel's mode-specific id-color legend lets the model name
+what it sees. `focus` centers and zooms on a labeled solid or tag without
+altering legend semantics.
 Observed equivalent: `Inspect cat_step — mask, 2 views` with `iso`/`+X`
-thumbnails, and the `last_good` behavior from the error hint.
+thumbnails, and the `last_good` behavior from the error hint. In a Pi session,
+inline images require an image-capable active model; a text-only model receives
+artifact refs plus structured `image_model_required` rather than malformed
+image context.
 
 ### query_snapshot
 ```
 query_snapshot(name: str, question: str,
                views: list[str] = [...], artifact_ref: str|null = null)
-    -> {answer, render_artifacts}  # maxItems=4
+    -> {status: "ok", answer, render_artifacts, usage}  # maxItems=4
+     | {status: "capability_error", code: "capability_not_available", message}
 ```
-Runs an ephemeral child Pi vision session against 1–4 fresh renders. It uses a
-minimal ResourceLoader with `noTools="all"`, no extensions/skills, no session
-persistence, and no `query_snapshot`; it is one model turn, max 1024 output
-tokens, 60 s hard timeout, and cannot recurse or mutate. Model usage/cost and
+Runs an ephemeral child Pi vision session against 1–4 fresh renders. The child
+`AgentSession` is created with `noTools="all"`, an explicit minimal
+ResourceLoader containing no extensions/skills, and in-memory/no persistence.
+It is one model turn, max 1024 output tokens, 60 s hard timeout, and cannot
+recurse or mutate. The runtime uses the active model if image-capable,
+otherwise a configured image-capable vision model; if neither exists it returns
+structured `capability_not_available` without launching a child. Model usage/cost and
 time are charged to the parent session budget. Only text answer and artifact
 references return to the parent, so image blocks do not grow main context. The
 canonical schema enforces the bounds. Observed
@@ -238,14 +378,18 @@ equivalent: `Query Build Snapshot`.
 read_artifact(ref: str, offset_bytes: int = 0, max_bytes: int = 49152)
     -> {content, mime_type, offset_bytes, next_offset_bytes?, total_bytes,
         truncated}
+     | {error: "invalid_utf8_offset", offset_bytes, total_bytes}
 ```
 Pages model-readable text/JSON artifacts referenced by another tool result,
 including large BuildResult, CheckReport, geometry, mask-legend, skill, and
 conflict evidence. `ref` is an opaque capability scoped to the current project
 and authorized session, never a filesystem path; binary artifacts return
-metadata and must be consumed by their dedicated render/export path. Paging is
-UTF-8 boundary-safe, supports a single source line larger than the context cap,
-and guarantees cursor progress. `max_bytes` is 1–49152 and returned text still
+metadata and must be consumed by their dedicated render/export path. Paging is UTF-8 boundary-safe: `offset_bytes` must be zero, `total_bytes`, or an
+exact code-point boundary, otherwise the tool returns
+`invalid_utf8_offset` without normalizing it. The server shortens a page end to
+the preceding boundary and emits a boundary-aligned `next_offset_bytes`,
+supports a single source line larger than the context cap, and guarantees
+cursor progress. `max_bytes` is 1–49152 and returned text still
 obeys the 50 KiB/2000-line Pi cap.
 
 ## Measurement (the `m` facade from CHECKS, exposed as tools)
@@ -255,7 +399,9 @@ obeys the 50 KiB/2000-line Pi cap.
 measure(kind: "interference"|"clearance"|"distance"|"bbox"|"volume"|"mass"|
               "sealed"|"genus",
         a: str, b: str|null = null, part: str|null = null,
-        project_snapshot_ref: str|null = null) -> {value, units, detail}
+        artifact_ref: str|null = null,
+        project_snapshot_ref: str|null = null)
+    -> {value, units, detail, resolved_artifact_refs}
 ```
 `a`/`b` use the geometry addressing grammar of contract §7 (tags, labels
 with `#k`/`#*` dedup selectors, binding names, `"part"`, and
@@ -264,30 +410,48 @@ than guessing. `interference` returns overlap volume with
 per-pair breakdown (observed equivalent: `Measure Overlap`); `clearance`
 returns minimum separation; `distance` measures between tagged topology. The
 canonical schema requires `b` for interference/clearance/distance and forbids
-it for unary bbox/volume/mass/sealed/genus operations. Cross-part measurement uses one coherent current project-snapshot manifest or
-an explicit immutable `project_snapshot_ref`; stale/mismatched consumed-
+it for unary bbox/volume/mass/sealed/genus operations. A single-part operation
+may target an explicit successful current/historical/preview `artifact_ref`;
+default resolves current. Cross-part operations require current coherent or
+explicit `project_snapshot_ref`. The two selectors are mutually exclusive and
+the result reports exact resolved refs. Cross-part measurement uses one coherent
+project-snapshot manifest or an explicit immutable `project_snapshot_ref`; stale/mismatched consumed-
 dependency projections return `incoherent_project_snapshot` rather than
 comparing incompatible geometry.
 
 ### run_checks
 ```
 run_checks(scope: "part"|"project" = "part", name: str|null = null,
-           project_snapshot_ref: str|null = null) -> CheckReport
+           project_snapshot_ref: str|null = null)
+    -> CheckReport  # includes geometry/check source provenance
+     | {status: "invalid_check_generation", check_set_generation,
+        check_set_ref, diagnostics_ref}
 ```
 Re-runs persistent CHECKS (and cross-part checks for project scope). `name` is
 required exactly for part scope and null/omitted for project scope; JSON Schema
 enforces the conditional for MCP callers without implicit session context.
-Project scope requires a coherent current manifest or explicit immutable
+Project scope fails closed with the discriminated invalid-generation response
+before executing any predicate when the current check set is invalid. Otherwise
+it requires a coherent current manifest or explicit immutable
 `project_snapshot_ref` and rejects stale/mismatched consumed-dependency
-projections.
+projections. At invocation it freezes the lexically ordered authorized project-
+check source bundle; every project CheckReport includes
+`check_set_generation`, `project_snapshot_ref`, opaque `check_bundle_ref`, and
+`{check_path: sha256}` hashes, so concurrent edits
+produce a later bundle rather than ambiguous evidence.
 
 ### run_dfm
 ```
-run_dfm(name: str, process: str|null = null) -> DfmReport
+run_dfm(name: str, process: str|null = null,
+        artifact_ref: str|null = null) -> DfmReport
 ```
-Runs the DFM rule pack matching `part.process` (or an explicit process)
-against the geometry + material. Findings carry rule id, severity, offending
-topology reference (tag/mask id), and suggested bound. Powers the DFM mode
+Runs the DFM rule pack matching `part.process` (or an explicit process) against
+current geometry by default or an explicit successful current/historical/
+preview artifact, and reports the resolved artifact ref. Automatic DFM always
+receives the exact `artifact_ref` from the successful BuildResult that triggered
+it, never a mutable current lookup. Findings carry rule id, severity, suggested bound, resolved
+`source_artifact_ref`, and artifact-bound topology descriptor `{kind,
+solid_id, topology_index, tag?}`—never a bare mutable mask id. Powers the DFM mode
 toggle: when the mode is on, the harness auto-runs this after each successful
 build and injects findings.
 
@@ -296,12 +460,16 @@ build and injects findings.
 ### load_skill
 ```
 load_skill(name: str, offset_line: int = 1, limit_lines: int = 2000)
-    -> {content, artifact_ref, truncated, next_offset_line?}
+    -> {content, artifact_ref, truncated, oversized_line,
+        oversized_line_offset_bytes?, next_offset_bytes?}
 list_skills() -> [{name, summary, tokens}]
 ```
-Loads a bounded markdown skill page into context, wrapped in provenance-marked
-delimiters; skill text is reference material, never instructions (threat
-model, architecture §7). Observed equivalent: `Load Skill`.
+Loads the first bounded markdown skill page into context, wrapped in
+provenance-marked delimiters; skill text is reference material, never
+instructions (threat model, architecture §7). Any truncation—including a >50
+KiB single line—returns absolute snapshot-bound byte cursors; continuation uses
+only `read_artifact(artifact_ref, next_offset_bytes)`. Observed equivalent:
+`Load Skill`.
 
 ### search_parts_store
 ```
@@ -321,6 +489,66 @@ search_materials(query: str) -> [{id, name, density, forms, thicknesses, notes}]
 Observed equivalent: `Search Materials` returning a Baltic birch record.
 
 ## Interaction
+
+### delegate_part_agent / get_delegation_status
+```
+delegate_part_agent(part: str, prompt: str,  # x-hephaestus-maxUtf8Bytes=32768
+                    delivery: "prompt"|"follow_up" = "prompt",
+                    deadline_seconds: int = 600)
+    -> {status: "completed", part_session_id, child_run_id,
+        delegation_ref, result_artifact_ref}
+     | {status: "queued", part_session_id, child_run_id, delegation_ref}
+     | {status: "failed"|"cancelled"|"timed_out"|"interrupted",
+        part_session_id, child_run_id, delegation_ref, error}
+     | {status: "rejected", reason: "part_busy"|"queue_full"|"no_run_slot"|
+        "prompt_too_large"|"scope_denied"|"session_busy"|"invalid_part",
+        part_session_id?}
+get_delegation_status(delegation_ref: str)
+    -> {status: "queued"|"running", part_session_id, child_run_id,
+        delegation_ref}
+     | {status: "completed", part_session_id, child_run_id, delegation_ref,
+        result_artifact_ref}
+     | {status: "failed"|"cancelled"|"timed_out"|"interrupted",
+        part_session_id, child_run_id, delegation_ref, error}
+cancel_delegation(delegation_ref: str)
+    -> {status: "cancelled", part_session_id, child_run_id, delegation_ref}
+     | {status: "completed"|"failed"|"timed_out"|"interrupted",
+        part_session_id, child_run_id, delegation_ref,
+        result_artifact_ref?, error?}
+```
+Project-orchestrator-only delegation to an existing part. The canonical schema
+uses extension keyword `x-hephaestus-maxUtf8Bytes: 32768`; Python, generated
+TypeBox, MCP, and bridge validators all enforce it after ordinary JSON Schema
+validation and CI cross-checks boundary parity. `prompt` is measured as exact
+UTF-8 and rejected `prompt_too_large` above 32 KiB; it is never silently
+truncated before persistence. The trusted runtime
+creates/loads that part's leased Pi session. `delivery="prompt"` requires idle, waits for the stable child terminal, and
+returns completion/failure evidence. `deadline_seconds` is 1–1200 (default
+600); the bridge deadline is always `deadline_seconds + 60` for terminal/
+cleanup grace. Parent/tool cancellation propagates to the child run, persists one
+`cancelled` terminal, and returns that status rather than orphaning work. A
+sidecar/owner crash produces `interrupted` only when coordinator recovery with
+the same child ID is impossible; recoverable crashes resume the existing child,
+deadline expiry is `timed_out`, and durable cancellation intent is `cancelled`.
+All outcomes are replayable through the synchronous result/status tool.
+For synchronous `prompt`, the waiting parent durably enters `SUSPENDED_WAIT`
+and releases its active slot atomically with child reservation; child/resume
+admissions outrank new prompts, and the parent reacquires a slot before
+continuing. Thus 16 admitted parents can each delegate one child without slot
+starvation. `follow_up` persists the stable child ID and reserves one of the 16
+global active run slots before enqueue, then returns immediately; the slot remains held while
+queued/running and until terminal acknowledgment, with status observable through the opaque authorized
+`delegation_ref`. `cancel_delegation` idempotently removes a queued child or
+aborts a running child and waits for its one durable cancelled terminal; an
+already-terminal child returns its unchanged terminal state. Cancellation/
+timeout after admission is
+visible in both the synchronous result (when waiting) and status tool; rejection
+before admission has no child run/ref. Duplicate invocation metadata cannot
+enqueue twice; busy/queue overflow is `rejected`, not a fictitious child
+failure. It cannot target arbitrary sessions, change tools, bypass budgets, or
+self-delegate. Part/quick-edit sessions do not receive this tool. Thread-phase
+uses the same session service directly rather than recursively invoking the
+tool; its bounded fanout is clamped to available child-admission capacity.
 
 ### ask_user
 ```
