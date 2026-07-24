@@ -85,7 +85,29 @@ docs/       generated/site-only mkdocs content and assets; links to root docs.
   gate, cut by CI when the gate workflow first passes on main.
 - Toolchain pinning: exact build123d/OCP/OCCT versions in the uv lockfile,
   exact Pi/thread-phase versions in the pnpm lockfile, and the CI container
-  image tag are recorded here at Stage S. Kernel or renderer upgrades land
+  image tag are recorded here at Stage S.
+- **Stage S accepted versions** (local spike evidence 2026-07-24, see
+  `spikes/REPORT.md`; CI-image tag pending first CI run): CPython 3.13.12
+  (uv 0.11.3); Node v25.2.1 + pnpm 10.6.5 (engines: pi ≥22.19.0, thread-phase
+  ≥22.5.0); build123d 0.11.1; cadquery-ocp-novtk/proxy 7.9.3.1.1 (OCCT 7.9.3);
+  fastmcp 3.4.4 + mcp 1.28.1 (protocol 2025-11-25);
+  `@earendil-works/pi-coding-agent@0.80.10`;
+  `@autonome-research/thread-phase@6.0.0`; bubblewrap 0.11.2.
+  Spike dispositions, binding on later stages:
+  1. STEP hashing normalizes the `FILE_NAME` header timestamp
+     (`spikes/cad_kernel/box_build.py::normalize_step`); STL is hashed raw.
+  2. CI renderer: pyrender + surfaceless EGL pinned to Mesa llvmpipe via
+     `EGL_DEVICE_ID` (`LIBGL_ALWAYS_SOFTWARE` alone is insufficient); the CI
+     image must ship Mesa with the surfaceless EGL platform (osmesa not
+     required); matplotlib-Agg 3D is the proven byte-identical fallback.
+  3. MCP elicitation works over stdio and streamable HTTP; `ask_user` needs no
+     fallback (decline/cancel assertions land in Stage 3).
+  4. Production imports thread-phase ONLY via its `/session` and `/patterns`
+     subpaths (the root barrel eagerly loads the transitive `openai` SDK; the
+     subpaths load 13 modules with zero `openai` and zero native addons;
+     `better-sqlite3` is absent — JobStore uses `node:sqlite`-free injection).
+  5. Pi tool gating uses a `tools: [...]` allowlist or `noTools: 'builtin'` —
+     never `noTools: 'all'`, which also strips custom tools. Kernel or renderer upgrades land
   only as a dedicated **re-baseline PR type**: it may touch the lockfile/image
   tag, regenerate render goldens via `heph goldens --update` (which refuses on
   a dirty tree), and relax no thresholds; CI attaches before/after golden
