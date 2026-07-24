@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hephaestus.local/schemas/build_result.schema.json",
+  "title": "BuildResult",
+  "description": "Machine-readable build result per script_contract.md section 8.",
+  "type": "object",
+  "required": [
+    "part",
+    "status",
+    "current",
+    "artifact_ref",
+    "project_snapshot_ref",
+    "input_hashes",
+    "audit_hashes",
+    "metrics",
+    "checks",
+    "geometries",
+    "params",
+    "source_map_ref",
+    "warnings",
+    "error"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "part": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["ok", "failed"] },
+    "current": { "type": "boolean" },
+    "artifact_ref": {
+      "oneOf": [{ "$ref": "#/$defs/artifactRef" }, { "type": "null" }]
+    },
+    "project_snapshot_ref": {
+      "oneOf": [{ "$ref": "#/$defs/artifactRef" }, { "type": "null" }]
+    },
+    "input_hashes": {
+      "type": "object",
+      "required": [
+        "script",
+        "hc_dependencies",
+        "part_params",
+        "effective_params",
+        "toolchain"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "script": { "$ref": "#/$defs/sha256" },
+        "hc_dependencies": { "$ref": "#/$defs/sha256" },
+        "part_params": { "$ref": "#/$defs/sha256" },
+        "effective_params": { "$ref": "#/$defs/sha256" },
+        "toolchain": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "audit_hashes": {
+      "type": "object",
+      "required": ["globals_source", "project_param_state"],
+      "additionalProperties": false,
+      "properties": {
+        "globals_source": { "$ref": "#/$defs/sha256" },
+        "project_param_state": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "metrics": {
+      "oneOf": [{ "$ref": "#/$defs/metrics" }, { "type": "null" }]
+    },
+    "checks": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/checkResult" }
+    },
+    "geometries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["label", "solids"],
+        "properties": {
+          "label": { "type": "string", "minLength": 1 },
+          "solids": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "params": {
+      "type": "object",
+      "additionalProperties": { "type": "number" }
+    },
+    "source_map_ref": {
+      "oneOf": [{ "$ref": "#/$defs/artifactRef" }, { "type": "null" }]
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "detail"],
+        "properties": {
+          "kind": { "type": "string", "minLength": 1 },
+          "tag": { "type": "string" },
+          "detail": { "type": "string" },
+          "evidence": { "type": "object" }
+        }
+      }
+    },
+    "error": {
+      "oneOf": [{ "$ref": "#/$defs/errorRecord" }, { "type": "null" }]
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "artifactRef": {
+      "type": "string",
+      "pattern": "^artifact:[a-z0-9][a-z0-9-]*:sha256:[0-9a-f]{64}$"
+    },
+    "vector3": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "metrics": {
+      "type": "object",
+      "required": ["solids", "faces", "bbox_mm", "volume_mm3", "sealed", "genus"],
+      "additionalProperties": false,
+      "properties": {
+        "solids": { "type": "integer", "minimum": 0 },
+        "faces": { "type": "integer", "minimum": 0 },
+        "bbox_mm": { "$ref": "#/$defs/vector3" },
+        "volume_mm3": { "type": "number" },
+        "sealed": { "type": "boolean" },
+        "genus": { "type": "integer", "minimum": 0 },
+        "edges": { "type": "integer", "minimum": 0 },
+        "area_mm2": { "type": "number" }
+      }
+    },
+    "checkResult": {
+      "type": "object",
+      "required": ["pass", "measured"],
+      "additionalProperties": false,
+      "properties": {
+        "pass": { "type": "boolean" },
+        "measured": {}
+      }
+    },
+    "errorRecord": {
+      "type": "object",
+      "required": [
+        "line",
+        "col",
+        "type",
+        "message",
+        "frame",
+        "built_through",
+        "last_good",
+        "last_good_artifact_ref",
+        "hint"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "line": { "type": "integer", "minimum": 1 },
+        "col": { "type": "integer", "minimum": 0 },
+        "type": { "type": "string", "minLength": 1 },
+        "message": { "type": "string" },
+        "frame": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "built_through": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["line", "statement"],
+              "additionalProperties": false,
+              "properties": {
+                "line": { "type": "integer", "minimum": 1 },
+                "statement": { "type": "string" }
+              }
+            },
+            { "type": "null" }
+          ]
+        },
+        "last_good": {
+          "oneOf": [{ "$ref": "#/$defs/lastGood" }, { "type": "null" }]
+        },
+        "last_good_artifact_ref": {
+          "oneOf": [{ "$ref": "#/$defs/artifactRef" }, { "type": "null" }]
+        },
+        "hint": { "type": "string" }
+      }
+    },
+    "lastGood": {
+      "type": "object",
+      "required": ["bodies", "solids", "size_mm", "volume_mm3", "sealed", "genus"],
+      "additionalProperties": false,
+      "properties": {
+        "bodies": { "type": "integer", "minimum": 0 },
+        "solids": { "type": "integer", "minimum": 0 },
+        "size_mm": { "$ref": "#/$defs/vector3" },
+        "volume_mm3": { "type": "number" },
+        "sealed": { "type": "boolean" },
+        "genus": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "base": "base.py",
+  "tags": ["tread_top", "rib_crest"],
+  "thresholds": {
+    "face_centroid_mm": 1.0,
+    "face_normal_deg": 5.0,
+    "face_area_rel": 0.02
+  },
+  "variants": {
+    "displaced.py": {
+      "description": "rib height 4.0 -> 6.0 mm: the tagged rib crest face rises 2.0 mm, past the 1.0 mm centroid threshold",
+      "warn": ["rib_crest"],
+      "no_warn": ["tread_top"],
+      "expected_deltas": {
+        "rib_crest": {"centroid_displacement_mm": 2.0}
+      }
+    },
+    "refactor.py": {
+      "description": "no-op refactor (helper function, renamed bindings, list literal); identical geometry, identical descriptors",
+      "warn": [],
+      "no_warn": ["tread_top", "rib_crest"]
+    },
+    "swapped.py": {
+      "description": "selector swap to the symmetric twin ridge 0.8 mm away; all deltas below thresholds. Documented false negative: the heuristic reports descriptor drift, never topology identity, so this silent miss is the stated limit.",
+      "warn": [],
+      "no_warn": ["tread_top", "rib_crest"],
+      "expected_deltas": {
+        "rib_crest": {"centroid_displacement_mm": 0.8}
+      }
+    }
+  }
+}

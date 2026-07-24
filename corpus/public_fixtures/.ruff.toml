@@ -1,0 +1,11 @@
+# Fixture part scripts and check modules execute under the executor's
+# injected namespace (script contract §2/§6): Box, Pos, Axis, Compound,
+# fillet, Param, PARAMS, p, hc, part, tag, CHECKS, approx and friends are
+# provided at execution time, never imported — so undefined-name (F821) is
+# expected and disabled here. Everything else matches the root ruff config.
+line-length = 100
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["F821"]

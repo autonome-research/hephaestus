@@ -1,0 +1,19 @@
+{
+  "part": "broken",
+  "script": "parts/broken.py",
+  "fail_line": 9,
+  "error_type": "ValueError",
+  "built_through": {
+    "line": 8,
+    "statement": "notched = plate - slot"
+  },
+  "last_good": {
+    "bodies": 1,
+    "solids": 1,
+    "size_mm": [50.0, 30.0, 6.0],
+    "volume_mm3": 8040.0,
+    "sealed": true,
+    "genus": 1
+  },
+  "notes": "Hand-computed: volume = 50*30*6 - 20*8*6 = 9000 - 960 = 8040 mm3. The centered 20x8 slot passes through the full 6 mm thickness, so the last-good solid is sealed with genus 1. The fillet radius (40) exceeds the plate half-depth (15), so OCCT cannot build it."
+}

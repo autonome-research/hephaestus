@@ -1,0 +1,8 @@
+# Starter project manifest for the public assembly fixture (clean-room).
+[project]
+name = "assembly"
+description = "Open-frame shelf with a corner bracket (public clean-room fixture)"
+
+# Project-scope parameter overrides live under [params], e.g.:
+# [params]
+# sheet_t = 9.0
