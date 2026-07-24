@@ -242,10 +242,7 @@ class Keyring:
         now = self._clock.now()
         for key_id in self.key_ids():
             record = self._keys[key_id]
-            if (
-                record.retired_at is not None
-                and record.retired_at + self._retention_s <= now
-            ):
+            if record.retired_at is not None and record.retired_at + self._retention_s <= now:
                 continue
             expected = hmac.new(record.secret, data, "sha256").hexdigest()
             if hmac.compare_digest(expected, mac_hex):

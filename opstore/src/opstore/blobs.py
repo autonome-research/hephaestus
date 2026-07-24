@@ -92,9 +92,7 @@ class BlobStore:
 
     def has(self, blob_hash: str) -> bool:
         """True iff the blob is fully committed (accounting row and file both exist)."""
-        row = self._db.conn.execute(
-            "SELECT 1 FROM blobs WHERE hash = ?", (blob_hash,)
-        ).fetchone()
+        row = self._db.conn.execute("SELECT 1 FROM blobs WHERE hash = ?", (blob_hash,)).fetchone()
         return row is not None and self.path_for(blob_hash).exists()
 
     def get(self, blob_hash: str) -> bytes:
@@ -142,9 +140,7 @@ class BlobStore:
         ``ConflictedError`` without modifying anything.
         """
         with self._db.transaction() as conn:
-            row = conn.execute(
-                "SELECT blob_hash FROM pointers WHERE name = ?", (name,)
-            ).fetchone()
+            row = conn.execute("SELECT blob_hash FROM pointers WHERE name = ?", (name,)).fetchone()
             current: str | None = None if row is None else str(row["blob_hash"])
             if current != expected_hash:
                 raise ConflictedError(

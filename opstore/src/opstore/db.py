@@ -136,9 +136,7 @@ class Database:
             self.conn.execute("COMMIT")
 
     def schema_version(self) -> int:
-        row = self.conn.execute(
-            "SELECT value FROM meta WHERE key = 'schema_version'"
-        ).fetchone()
+        row = self.conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
         return 0 if row is None else int(row["value"])
 
     def _migrate(self) -> None:

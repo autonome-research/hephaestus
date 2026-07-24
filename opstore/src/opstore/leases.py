@@ -145,7 +145,9 @@ class LeaseManager:
                 "UPDATE leases SET heartbeat_at = ? WHERE lease_id = ?", (now, lease_id)
             )
             if cursor.rowcount == 0:
-                raise LeaseExpiredError(f"lease {lease_id} no longer exists (released or reclaimed)")
+                raise LeaseExpiredError(
+                    f"lease {lease_id} no longer exists (released or reclaimed)"
+                )
             row = conn.execute("SELECT * FROM leases WHERE lease_id = ?", (lease_id,)).fetchone()
         return _row_to_lease(row)
 
@@ -194,8 +196,8 @@ class LeaseManager:
         ref_exists: Callable[[str], bool] | None,
         force_stale: bool,
     ) -> Lease:
-        if ttl_s <= 0:
-            raise ValueError(f"ttl_s must be positive, got {ttl_s}")
+        if ttl_s < 0:
+            raise ValueError(f"ttl_s must be non-negative, got {ttl_s}")
         now = self._clock.now()
         lease_id = uuid.uuid4().hex
         with self._db.transaction() as conn:
