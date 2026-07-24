@@ -1,0 +1,12 @@
+{
+  "name": "agent-runtime-spike",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Spike D+G: pinned Pi SDK + thread-phase audit",
+  "dependencies": {
+    "@autonome-research/thread-phase": "6.0.0",
+    "@earendil-works/pi-coding-agent": "0.80.10",
+    "typebox": "1.1.38"
+  }
+}
