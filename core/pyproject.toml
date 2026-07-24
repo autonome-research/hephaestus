@@ -1,0 +1,24 @@
+[project]
+name = "hephaestus-core"
+version = "0.1.0"
+description = "Hephaestus CAD engine: executor, kernel services, checks, project store"
+requires-python = ">=3.11,<3.15"
+license = "Apache-2.0"
+dependencies = [
+    "build123d>=0.11.1,<0.12",
+    "numpy>=2.0",
+    "opstore",
+]
+
+[project.scripts]
+heph = "hephaestus.core.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hephaestus"]
+
+[tool.uv.sources]
+opstore = { workspace = true }

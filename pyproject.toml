@@ -10,17 +10,23 @@ package = false
 [tool.uv.workspace]
 members = [
     "opstore",
+    "core",
 ]
 
 [dependency-groups]
 dev = [
     "opstore",
+    "hephaestus-core",
     "pytest>=8.3",
     "pytest-cov>=6.0",
     "hypothesis>=6.115",
+    "jsonschema>=4.23",
     "ruff>=0.8",
     "pyright>=1.1.390",
 ]
+
+[tool.uv.sources.hephaestus-core]
+workspace = true
 
 [tool.uv.sources]
 opstore = { workspace = true }
@@ -33,9 +39,23 @@ target-version = "py311"
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.pyright]
-include = ["opstore"]
+include = ["opstore", "core"]
 typeCheckingMode = "strict"
 pythonVersion = "3.13"
+
+[[tool.pyright.executionEnvironments]]
+root = "core/src/hephaestus/core/kernel"
+reportUnknownMemberType = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
+reportMissingTypeStubs = false
+
+[[tool.pyright.executionEnvironments]]
+root = "core/src/hephaestus/core/executor"
+reportUnknownMemberType = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
+reportMissingTypeStubs = false
 
 [tool.pytest.ini_options]
 testpaths = ["opstore/tests", "tests"]
