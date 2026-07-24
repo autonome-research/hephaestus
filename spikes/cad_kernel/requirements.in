@@ -1,0 +1,7 @@
+# Top-level deps for the cad_kernel spike (exact resolution in requirements.lock.txt)
+build123d==0.11.1
+trimesh==4.12.2
+pyrender==0.1.45
+matplotlib==3.11.1
+scikit-image==0.26.0
+numpy==2.5.1
