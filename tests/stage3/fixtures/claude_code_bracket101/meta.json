@@ -1,0 +1,136 @@
+{
+ "task_id": "bracket-101",
+ "client": "claude-code (claude-fable-5)",
+ "recorded": "2026-07-25",
+ "tool_calls": 18,
+ "graded_passed": true,
+ "calls": [
+  {
+   "tool": "open_project",
+   "arguments": {
+    "path": "/tmp/claude-1000/-home-solarmonk-Desktop-autonome-hephaestus/c8489675-3dbb-444a-98de-c6a470c4bcb1/scratchpad/cc_fixture/project"
+   }
+  },
+  {
+   "tool": "read_globals",
+   "arguments": {}
+  },
+  {
+   "tool": "read_part",
+   "arguments": {
+    "name": "hole_gauge"
+   }
+  },
+  {
+   "tool": "list_skills",
+   "arguments": {}
+  },
+  {
+   "tool": "create_part",
+   "arguments": {
+    "name": "bracket",
+    "template": "solid",
+    "description": "L-bracket 101: 60x40x6 base plate with 6 mm wall to 40 mm height"
+   }
+  },
+  {
+   "tool": "write_part",
+   "arguments": {
+    "name": "bracket",
+    "expected_hash": "sha256:657d7bf5df67bdf1e3108e81bddc26b9cf414b24931504485e2396a09f07897f",
+    "script": "# Bracket 101: L-profile bracket. All stock/envelope numbers come from the\n# project namespace (hc.*) so this part never restates them.\n_t = hc.plate_t              # plate + wall thickness\n_len = hc.bracket_len        # X extent of both plate and wall\n_width = hc.bracket_width    # Y extent of the base plate\n_height = hc.bracket_height  # overall height, plate underside to wall top\n\n_fillet_r = 4.0\n_hole_d = 6.0\n_hole_inset_x = 12.0   # from each end of the plate\n_hole_inset_y = 14.0   # from the plate's +Y edge\n\n_hx = _len / 2.0 - _hole_inset_x\n_hy = _width / 2.0 - _hole_inset_y\n\n# Base plate: footprint centred on the origin, underside on z = 0.\nbase = Pos(0, 0, _t / 2.0) * Box(_len, _width, _t)\n\n# Wall standing on the plate's -Y edge, rising to the overall height.\n_wall_y = -_width / 2.0 + _t / 2.0\nwall = Pos(0, _wall_y, _height / 2.0) * Box(_len, _t, _height)\n\nbody = base + wall\n\n# Blend the inner corner: the along-X edge where the wall's inner face\n# (y = -width/2 + t) meets the top of the base plate (z = t).\n_inner_y = -_width / 2.0 + _t\n_inner_edge = (\n    body.edges()\n    .filter_by(Axis.X)\n    .filter_by_position(Axis.Y, _inner_y - 0.01, _inner_y + 0.01)\n    .filter_by_position(Axis.Z, _t - 0.01, _t + 0.01)\n)\nbody = fillet(_inner_edge, radius=_fillet_r)\n\n# Two through-holes in the base plate.\n_drill = Cylinder(radius=_hole_d / 2.0, height=4.0 * _t)\nbody -= Pos(-_hx, _hy, _t / 2.0) * _drill\nbody -= Pos(_hx, _hy, _t / 2.0) * _drill\n\npart.geometry = body\n\nCHECKS = {\n    \"envelope\": lambda m: m.bbox(\"part\") <= (_len + 0.01, _width + 0.01, _height + 0.01),\n    \"through_holes\": lambda m: m.genus(\"part\") == 2,\n    \"solid_sealed\": lambda m: m.sealed(\"part\"),\n}\n\npart.description = \"L-bracket 101: 60x40x6 base plate, 6 mm wall to 40 mm, 4 mm inner fillet, two 6 mm holes\"\npart.material_spec = \"Aluminium 6061-T6\"\npart.process = \"cnc_router\"\n"
+   }
+  },
+  {
+   "tool": "build_part",
+   "arguments": {
+    "name": "bracket"
+   }
+  },
+  {
+   "tool": "run_checks",
+   "arguments": {
+    "name": "bracket"
+   }
+  },
+  {
+   "tool": "measure",
+   "arguments": {
+    "kind": "bbox",
+    "a": "part",
+    "part": "bracket"
+   }
+  },
+  {
+   "tool": "run_checks",
+   "arguments": {
+    "scope": "project"
+   }
+  },
+  {
+   "tool": "inspect_part",
+   "arguments": {
+    "name": "bracket",
+    "views": [
+     "iso",
+     "+X",
+     "+Z"
+    ]
+   }
+  },
+  {
+   "tool": "build_part",
+   "arguments": {
+    "name": "hole_gauge"
+   }
+  },
+  {
+   "tool": "run_checks",
+   "arguments": {
+    "scope": "project"
+   }
+  },
+  {
+   "tool": "measure",
+   "arguments": {
+    "kind": "interference",
+    "a": "bracket",
+    "b": "hole_gauge"
+   }
+  },
+  {
+   "tool": "measure",
+   "arguments": {
+    "kind": "clearance",
+    "a": "bracket",
+    "b": "hole_gauge",
+    "part": "bracket"
+   }
+  },
+  {
+   "tool": "measure",
+   "arguments": {
+    "kind": "clearance",
+    "a": "bracket/part",
+    "b": "hole_gauge/pin_a",
+    "project_snapshot_ref": "artifact:project-snapshot:sha256:98d4a7aeea320e85d2c68d556a981686873585b99557c445f10dfd9302c9122a"
+   }
+  },
+  {
+   "tool": "measure",
+   "arguments": {
+    "kind": "clearance",
+    "a": "bracket/part",
+    "b": "hole_gauge/part",
+    "project_snapshot_ref": "artifact:project-snapshot:sha256:98d4a7aeea320e85d2c68d556a981686873585b99557c445f10dfd9302c9122a"
+   }
+  },
+  {
+   "tool": "export_part",
+   "arguments": {
+    "name": "bracket",
+    "format": "step"
+   }
+  }
+ ]
+}
