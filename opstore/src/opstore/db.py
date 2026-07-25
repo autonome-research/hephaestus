@@ -5,12 +5,15 @@ Contract (DESIGN.md): WAL journal mode, ``busy_timeout=5000``,
 IMMEDIATE``. This module owns the COMPLETE schema — no other module may issue
 ``CREATE TABLE``. Migrations are a versioned list applied under ``BEGIN
 IMMEDIATE`` with the current version stored in ``meta['schema_version']``.
-Cross-process correctness relies on SQLite transactions, not in-process locks.
+Cross-process correctness relies on SQLite transactions; in-process, threads
+share one connection and its transactions serialize on a re-entrant lock (see
+``Database.transaction``).
 """
 
 from __future__ import annotations
 
 import sqlite3
+import threading
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -91,6 +94,16 @@ class Database:
     def __init__(self, conn: sqlite3.Connection, path: Path) -> None:
         self.conn = conn
         self.path = path
+        # One connection is shared by every thread in this process
+        # (``check_same_thread=False``). Transactions must serialize in-process:
+        # without this lock a second thread's BEGIN/COMMIT interleaves with an
+        # open transaction on the same connection — its COMMIT durably commits
+        # the other thread's half-finished work while that thread's own COMMIT
+        # then fails ("cannot commit - no transaction is active"), e.g. leaking
+        # a committed-but-untracked lease row. Re-entrant so that same-thread
+        # nesting still reaches BEGIN and raises OperationalError (the
+        # documented programming-error behaviour) instead of deadlocking.
+        self._txn_lock = threading.RLock()
 
     @classmethod
     def connect(cls, path: Path) -> Database:
@@ -124,16 +137,19 @@ class Database:
     def transaction(self) -> Generator[sqlite3.Connection]:
         """``BEGIN IMMEDIATE`` transaction: commits on success, rolls back on error.
 
-        Nesting is a programming error and raises ``sqlite3.OperationalError``.
+        Serialized in-process (threads share this one connection); nesting on
+        the same thread is a programming error and raises
+        ``sqlite3.OperationalError``.
         """
-        self.conn.execute("BEGIN IMMEDIATE")
-        try:
-            yield self.conn
-        except BaseException:
-            self.conn.execute("ROLLBACK")
-            raise
-        else:
-            self.conn.execute("COMMIT")
+        with self._txn_lock:
+            self.conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield self.conn
+            except BaseException:
+                self.conn.execute("ROLLBACK")
+                raise
+            else:
+                self.conn.execute("COMMIT")
 
     def schema_version(self) -> int:
         row = self.conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()

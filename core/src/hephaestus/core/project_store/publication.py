@@ -241,9 +241,11 @@ class Publisher:
                 record_blob=record_blob,
                 evidence_refs=evidence_refs,
             )
-        self.locks.acquire(PROJECT_CONFIG_LOCK)
-        self.locks.acquire(part_lock(part))
-        try:
+        # ``holding`` releases every lock actually acquired on all exit paths —
+        # in particular, a part-lock acquisition failure must not leak the
+        # already-acquired project-config lock (a leaked exclusive lease from a
+        # live process is unreclaimable until the process dies).
+        with self.locks.holding(PROJECT_CONFIG_LOCK, part_lock(part)):
             mismatches = self._revalidate(build)
             if mismatches:
                 # Raced: inputs moved since the frozen snapshot. The
@@ -265,9 +267,6 @@ class Publisher:
                 evidence_refs=evidence_refs,
                 evidence_blobs=evidence_blobs,
             )
-        finally:
-            self.locks.release(part_lock(part))
-            self.locks.release(PROJECT_CONFIG_LOCK)
 
     def _set_last_failure(self, part: str, record_blob: str) -> None:
         """Advance ``part``'s most-recent-failure pointer to ``record_blob``."""

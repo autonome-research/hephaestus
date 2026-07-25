@@ -317,7 +317,7 @@ def test_bench_run_bracket_101_with_a_scripted_model(
     assert run.passed, run.reasons
     # create_part + write_part + build_part, counted from the normalized stream.
     assert run.tool_calls == 3
-    assert run.tool_calls <= run.budget_tool_calls == 15
+    assert run.tool_calls <= run.budget_tool_calls == 20
 
     grade = cast("dict[str, Any]", run.grade)
     assert grade["within_budget"] is True

@@ -138,13 +138,32 @@ class LockManager:
         self._store.leases.release(lease_id)
 
     def release_all(self) -> None:
-        """Release every held lock in reverse acquisition order."""
-        for ref in reversed(list(self._held)):
-            self.release(ref)
+        """Release every held lock in reverse acquisition order.
+
+        Best-effort: a failing release never abandons the remaining locks; the
+        first failure is re-raised after every held lock has been attempted.
+        """
+        self._release_each(reversed(list(self._held)))
+
+    def _release_each(self, refs: Iterable[str]) -> None:
+        failure: Exception | None = None
+        for ref in refs:
+            try:
+                self.release(ref)
+            except Exception as exc:  # re-raised after the sweep
+                if failure is None:
+                    failure = exc
+        if failure is not None:
+            raise failure
 
     @contextmanager
     def holding(self, *refs: str) -> Generator[None]:
-        """Acquire ``refs`` in canonical order, yield, release in reverse order."""
+        """Acquire ``refs`` in canonical order, yield, release in reverse order.
+
+        Every lock actually acquired is released on all exit paths, including a
+        failure while acquiring a later lock; a failing release never abandons
+        the remaining locks (the first failure is re-raised after the sweep).
+        """
         seq = ordered(refs)
         acquired: list[str] = []
         try:
@@ -153,5 +172,4 @@ class LockManager:
                 acquired.append(ref)
             yield
         finally:
-            for ref in reversed(acquired):
-                self.release(ref)
+            self._release_each(reversed(acquired))
