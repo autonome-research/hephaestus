@@ -256,12 +256,21 @@ def _fill_labels_and_rows(root: Any, bindings: list[tuple[str, Any]]) -> list[tu
 
     rows: list[tuple[str, int]] = []
 
+    def safe_wrapped(obj: Any) -> Any:
+        # build123d's .wrapped property ASSERTS on an unset shape (e.g. a bare
+        # Compound() a script bound but never populated) instead of returning
+        # None — never let a script-authored empty shape crash indexing.
+        try:
+            return getattr(obj, "wrapped", None)
+        except (AssertionError, AttributeError):
+            return None
+
     def binding_name_for(shape: Any) -> str | None:
-        wrapped = getattr(shape, "wrapped", None)
+        wrapped = safe_wrapped(shape)
         if wrapped is None:
             return None
         for name, candidate in bindings:
-            candidate_wrapped = getattr(candidate, "wrapped", None)
+            candidate_wrapped = safe_wrapped(candidate)
             if candidate_wrapped is not None and wrapped.IsSame(candidate_wrapped):
                 return name
         return None

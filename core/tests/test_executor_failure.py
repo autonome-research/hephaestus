@@ -244,3 +244,20 @@ class TestDuplicateBindingLastGood:
         assert error.built_through.line == 4
         assert error.last_good is not None
         assert error.last_good_artifact_ref is not None
+
+
+class TestEmptyShapeBindingIndexing:
+    """A bound-but-empty shape must not crash success-path geometry indexing.
+
+    Regression: a bench model bound a bare Compound() it never populated;
+    build123d's .wrapped property asserts on unset shapes, and the label/
+    binding indexer crashed the worker (exit 3) on an otherwise successful
+    build instead of producing a result.
+    """
+
+    SCRIPT = "leftover = Compound()\nplate = Box(30, 20, 5)\npart.geometry = plate\n"
+
+    def test_build_succeeds_with_empty_bound_shape(self, tmp_path: Path) -> None:
+        result = build(self.SCRIPT, tmp_path)
+        assert result.result.status == "ok"
+        assert result.result.metrics is not None
