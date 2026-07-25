@@ -58,6 +58,12 @@ reportUnknownVariableType = false
 reportUnknownArgumentType = false
 reportMissingTypeStubs = false
 
+[[tool.pyright.executionEnvironments]]
+root = "core/src/hephaestus/core/render"
+reportUnknownMemberType = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
+
 [tool.pytest.ini_options]
 testpaths = ["opstore/tests", "tests"]
 addopts = "-ra"

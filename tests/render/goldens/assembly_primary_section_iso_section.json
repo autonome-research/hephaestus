@@ -1,0 +1,18 @@
+{
+  "angular_deflection_rad": 0.5,
+  "channel": "section",
+  "explode": 0.0,
+  "fixture": "assembly",
+  "gl_renderer": "llvmpipe (LLVM 22.1.5, 256 bits)",
+  "golden": "assembly_primary_section",
+  "goldens_script_sha256": "sha256:ea89c9e2d1c392280bf269f9783b7f7798dd6b402ae0e1109ebd519cd7357087",
+  "height": 360,
+  "linear_deflection_mm": 0.1,
+  "mask_mode": "solid",
+  "part": "primary",
+  "png_sha256": "sha256:6d7d413a7b354b260a008a0aa3e541e63de86386e142123986ca5c2d98df9d58",
+  "section_plane": "+Z@c",
+  "source_artifact_ref": "artifact:build:sha256:8be53e4b2d66a33618ea33696e1b8289e732c2287bc414e00aa787621f19a2d2",
+  "view": "iso",
+  "width": 480
+}

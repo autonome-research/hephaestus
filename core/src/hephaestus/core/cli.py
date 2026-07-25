@@ -476,6 +476,13 @@ def build_parser() -> argparse.ArgumentParser:
     lint.add_argument("path", help="path to the part script")
     lint.add_argument("--json", action="store_true", help="emit findings as JSON")
     lint.set_defaults(func=_cmd_lint)
+
+    # Stage 1 render verbs (heph render / heph goldens) live in a separate module
+    # so the render stack is imported only when those verbs run; every verb above
+    # is untouched. See hephaestus.core.cli_render.
+    from hephaestus.core import cli_render
+
+    cli_render.add_subparsers(sub)
     return parser
 
 
