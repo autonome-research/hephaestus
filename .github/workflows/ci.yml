@@ -43,9 +43,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
+      # The no-node gate test builds through the secure executor: bubblewrap +
+      # unrestricted unprivileged user namespaces (Ubuntu 24.04 restricts them
+      # via AppArmor by default).
+      - run: |
+          sudo apt-get update -q && sudo apt-get install -y -q bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: uv sync --dev
-      # Sandbox (bwrap) and render (pinned-Mesa goldens) suites are excluded
-      # until the pinned CI image lands; see scope note above.
+      # Sandbox escape-probe and render-golden suites are excluded until the
+      # pinned CI image lands; see scope note above.
       - run: >
           uv run pytest core/tests tests/stage0b -q
           -k "not sandbox and not bwrap and not render"
@@ -77,6 +83,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22.19.0"
+      # inspect_part/query_snapshot render through surfaceless EGL; Mesa's
+      # software (llvmpipe) driver satisfies it on GPU-less runners.
+      - run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q bubblewrap libegl1 libgl1-mesa-dri libglx-mesa0
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: uv sync --dev
       - run: pnpm --dir agent install --frozen-lockfile
       - run: pnpm --dir agent build
