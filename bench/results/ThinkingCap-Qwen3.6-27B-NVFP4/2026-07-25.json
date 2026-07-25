@@ -1,53 +1,53 @@
 {
-  "aggregate": 0.08333333333333333,
+  "aggregate": 0.16666666666666666,
   "date": "2026-07-25",
   "meets_gate": false,
   "model": "ThinkingCap-Qwen3.6-27B-NVFP4",
   "n": 24,
-  "passes": 2,
+  "passes": 4,
   "per_task": {
     "bracket-101": {
-      "budget_tool_calls": 15,
+      "budget_tool_calls": 20,
       "mean_tokens": null,
-      "mean_tool_calls": 16.0,
+      "mean_tool_calls": 21.0,
       "n": 3,
       "pass_rate": 0.0,
       "passes": 0
     },
     "cat-step": {
-      "budget_tool_calls": 40,
+      "budget_tool_calls": 52,
       "mean_tokens": null,
-      "mean_tool_calls": 41.333333333333336,
+      "mean_tool_calls": 37.666666666666664,
       "n": 3,
-      "pass_rate": 0.0,
-      "passes": 0
+      "pass_rate": 0.3333333333333333,
+      "passes": 1
     },
     "enclosure-bosses": {
-      "budget_tool_calls": 30,
+      "budget_tool_calls": 38,
       "mean_tokens": null,
-      "mean_tool_calls": 31.666666666666668,
+      "mean_tool_calls": 37.333333333333336,
       "n": 3,
       "pass_rate": 0.0,
       "passes": 0
     },
     "knob-loft": {
-      "budget_tool_calls": 20,
+      "budget_tool_calls": 26,
       "mean_tokens": null,
-      "mean_tool_calls": 21.333333333333332,
+      "mean_tool_calls": 27.0,
       "n": 3,
       "pass_rate": 0.0,
       "passes": 0
     },
     "param-retune": {
-      "budget_tool_calls": 6,
+      "budget_tool_calls": 10,
       "mean_tokens": null,
-      "mean_tool_calls": 7.333333333333333,
+      "mean_tool_calls": 12.0,
       "n": 3,
       "pass_rate": 0.0,
       "passes": 0
     },
     "repair-fillet": {
-      "budget_tool_calls": 8,
+      "budget_tool_calls": 12,
       "mean_tokens": null,
       "mean_tool_calls": 8.0,
       "n": 3,
@@ -55,20 +55,20 @@
       "passes": 2
     },
     "sheet-box": {
-      "budget_tool_calls": 25,
+      "budget_tool_calls": 32,
       "mean_tokens": null,
-      "mean_tool_calls": 18.666666666666668,
+      "mean_tool_calls": 33.333333333333336,
       "n": 3,
       "pass_rate": 0.0,
       "passes": 0
     },
     "store-hardware": {
-      "budget_tool_calls": 20,
+      "budget_tool_calls": 27,
       "mean_tokens": null,
-      "mean_tool_calls": 22.0,
+      "mean_tool_calls": 26.0,
       "n": 3,
-      "pass_rate": 0.0,
-      "passes": 0
+      "pass_rate": 0.3333333333333333,
+      "passes": 1
     }
   },
   "perfect_task_failures": [
@@ -78,6 +78,6 @@
     "repair-fillet"
   ],
   "threshold": 0.6,
-  "wilson_lower_90": 0.03515492207509972,
+  "wilson_lower_90": 0.09131303982118258,
   "z": 1.281552
 }
