@@ -40,8 +40,10 @@ opstore = { workspace = true }
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-# spikes/ is frozen Stage S evidence, not product code.
-extend-exclude = ["spikes"]
+# spikes/ is frozen Stage S evidence; corpus/ and registries/ hold part
+# scripts written against the executor's injected namespace, not importable
+# Python modules.
+extend-exclude = ["spikes", "corpus", "registries"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
