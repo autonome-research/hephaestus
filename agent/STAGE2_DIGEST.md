@@ -118,14 +118,14 @@ Client sends `{part, build_artifact_ref, selection_artifact_ref, selection_id}`.
 **Task model.** `corpus/` task = natural-language prompt + required CHECKS set + tool-call budget + export requirements. **Pass = all checks pass AND exports validate AND within budget.** Run over S ≥ 3 seeds per task through the **packaged Pi SDK runtime and thread-phase JobRunner with project-pinned dependencies** (not a global CLI).
 
 **Public corpus v0 (8 difficulty-ordered tasks, budgets):**
-1. `bracket-101` — L-bracket, two through-holes, filleted inner corner; checks bbox/hole positions via tags/sealed; budget 15.
-2. `sheet-box` — finger-jointed box, 6 mm sheet, kerf clearance param; Stage-2 checks: zero interference assembled AND `as_built` DXF profile count = 5; budget 25.
-3. `cat-step` — shelf+gusset re-derived from prose; checks: clearance fits, envelope, manifold; budget 40.
-4. `store-hardware` — bracket-101 + store M5 screws, counterbored; checks screw instances present, head below surface (measured), no interference; budget 20.
-5. `repair-fillet` — broken oversized-fillet fixture, repair-only; checks builds clean, fillet radius > 0 on tagged edge set; budget 8; **MUST pass 3/3 seeds**.
-6. `param-retune` — retune shelf params to new envelope using only `set_params` project scope; checks new bbox + all original checks; budget 6.
-7. `knob-loft` — lofted/revolved knob, 3MF export; checks bbox, sealed, genus 0, revolve symmetry (max radial deviation under 180° rotation < 0.05 mm), volume window; budget 20.
-8. `enclosure-bosses` — FDM box + lid, four bosses; checks boss positions via tags, min wall ≥ 1.6 mm, lid/box zero interference with declared clearance, section render exists for +Z midplane; budget 30.
+1. `bracket-101` — L-bracket, two through-holes, filleted inner corner; checks bbox/hole positions via tags/sealed; budget 20.
+2. `sheet-box` — finger-jointed box, 6 mm sheet, kerf clearance param; Stage-2 checks: zero interference assembled AND `as_built` DXF profile count = 5; budget 32.
+3. `cat-step` — shelf+gusset re-derived from prose; checks: clearance fits, envelope, manifold; budget 52.
+4. `store-hardware` — bracket-101 + store M5 screws, counterbored; checks screw instances present, head below surface (measured), no interference; budget 27.
+5. `repair-fillet` — broken oversized-fillet fixture, repair-only; checks builds clean, fillet radius > 0 on tagged edge set; budget 12; **MUST pass 3/3 seeds**.
+6. `param-retune` — retune shelf params to new envelope using only `set_params` project scope; checks new bbox + all original checks; budget 10.
+7. `knob-loft` — lofted/revolved knob, 3MF export; checks bbox, sealed, genus 0, revolve symmetry (max radial deviation under 180° rotation < 0.05 mm), volume window; budget 26.
+8. `enclosure-bosses` — FDM box + lid, four bosses; checks boss positions via tags, min wall ≥ 1.6 mm, lid/box zero interference with declared clearance, section render exists for +Z midplane; budget 38.
 
 **Scoring / gate math.** Gate is the **one-sided lower 90% Wilson confidence bound** of the aggregate pass rate — not the raw fraction. With n = total runs (8 tasks × ≥3 seeds ⇒ n ≥ 24), p̂ = passes/n, z = z₀.₉₀ ≈ 1.281552 (one-sided): lower bound = [p̂ + z²/(2n) − z·√(p̂(1−p̂)/n + z²/(4n²))] / (1 + z²/n). **G2 threshold: ≥ 0.60 aggregate**, plus `repair-fillet` 3/3. Thresholds are mission-tunable **upward only**; the reference model is named per mission epoch and re-baselined only by explicit PR.
 

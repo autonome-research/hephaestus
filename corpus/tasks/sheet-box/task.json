@@ -1,10 +1,18 @@
 {
   "id": "sheet-box",
   "prompt": "Design a tabbed open tray to be cut from 6 mm sheet on the CNC router. It needs three parts: `base`, `walls` and `flat_layout`.\n\nThe stock thickness, the kerf clearance and the tray's interface dimensions are already in the project's `globals.py` - read them through `hc` rather than repeating the numbers.\n\nGeometry, all in millimetres:\n\n- `base` is the base panel: a 110 x 90 blank, one sheet thick, centred on the origin and lying under the tray with its top face on z = 0 (so it spans z = -6 to 0). It carries eight through slots, two for each wall (below).\n- `walls` is the four assembled walls. They stand on the base's top face and rise 40 mm (z = 0 to 40). Each wall is one sheet thick. The two long walls run the full 100 mm along X with their outer faces at y = -40 and y = +40. The two short walls run along Y between the long walls' inner faces (68 mm long) with their outer faces at x = -50 and x = +50.\n- Every wall carries two tabs on its bottom edge: one sheet thick, 12 mm long, hanging one sheet thickness below the wall (z = -6 to 0), centred a quarter of that wall's length in from each end - so the long walls' tabs sit at x = -25 and x = +25, and the short walls' tabs at y = -17 and y = +17.\n- The base's eight slots are the tab footprints grown by the kerf on every side: each slot is (tab length + kerf) by (sheet thickness + kerf), cut all the way through, centred on its tab. The tabs must pass through without touching the slot walls, while the walls' bottom edges rest on the base.\n- `flat_layout` is the cut file: the same five panels laid out flat on the sheet, all of them spanning z = 0 to 6 and none of them overlapping. This is the part the shop cuts, so its as-built DXF must show exactly five outer profiles (the base panel's slots are interior cut-outs of its profile).\n\nBuild all three parts and export `flat_layout` as DXF when the geometry is right.",
-  "budget_tool_calls": 25,
-  "required_checks": ["sheet_box"],
+  "budget_tool_calls": 32,
+  "required_checks": [
+    "sheet_box"
+  ],
   "export_requirements": [
-    {"part": "flat_layout", "format": "dxf", "layout": "as_built", "profile_count": 5, "min_bytes": 512}
+    {
+      "part": "flat_layout",
+      "format": "dxf",
+      "layout": "as_built",
+      "profile_count": 5,
+      "min_bytes": 512
+    }
   ],
   "render_requirements": [],
   "protected_paths": [],

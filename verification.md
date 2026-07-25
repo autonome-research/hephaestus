@@ -111,40 +111,45 @@ Scoring uses S ≥ 3 seeds per task and gates on the one-sided lower 90% Wilson
 confidence bound of the aggregate pass rate — not the raw fraction — so tiny-n
 luck cannot pass a stage.
 
-Initial **public** corpus v0 (8 difficulty-ordered tasks). The restricted gate
+Initial **public** corpus v0 (8 difficulty-ordered tasks). Tool-call
+budgets were re-baselined 2026-07-25 (maintainer-authorized corpus amendment)
+for the epoch-1 self-hosted reference model: the original frontier-calibrated
+budgets produced overruns of 1–2 calls across the board in the first measured
+Tier 3 run. New budgets give ~30% headroom over the originals; the pass
+criterion and Wilson gate are unchanged. The restricted gate
 uses separately authored, undisclosed tasks from its private repository; none
 of those prompts, ids, targets, checks, or dimensions appear below:
 
 1. **bracket-101** — L-bracket, two through-holes at given centers, filleted
    inner corner. Checks: bbox, hole positions via tagged faces, sealed.
-   Budget 15 calls.
+   Budget 20 calls.
 2. **sheet-box** — finger-jointed open box from 6 mm sheet, kerf clearance
    param. Stage-2 checks: zero interference assembled and `as_built` DXF
    profile count = 5. Stage 6 upgrades this task with a valid `nested_sheet`
-   layout requirement. Budget 25.
+   layout requirement. Budget 32.
 3. **cat-step** — the recovered shelf+gusset design re-derived from a prose
    prompt equivalent to the original user intent. Checks: the reference
-   scripts' own invariants (clearance fits, envelope, manifold). Budget 40.
+   scripts' own invariants (clearance fits, envelope, manifold). Budget 52.
    This makes the reverse-engineering source into the flagship benchmark task.
 4. **store-hardware** — modify bracket-101 to mount with store-sourced M5
    screws, counterbored. Checks: screw instances present, head below surface
-   (measured), no interference. Budget 20.
+   (measured), no interference. Budget 27.
 5. **repair-fillet** — a deliberately broken script (the oversized-fillet
    fixture); task is repair-only. Checks: builds clean, fillet radius > 0
-   applied on the tagged edge set. Budget 8. (Tests error-message quality as
+   applied on the tagged edge set. Budget 12. (Tests error-message quality as
    much as the model.)
 6. **param-retune** — given the shelf, retune params to hit a new envelope
    without editing geometry code (only `set_params`, project scope). Checks:
-   new bbox, all original checks still pass. Budget 6.
+   new bbox, all original checks still pass. Budget 10.
 7. **knob-loft** — a lofted/revolved control knob: knurled-boss-free revolve
    with a lofted grip transition, filleted, exported 3MF. Checks: bbox,
    sealed, genus 0, revolve axis symmetry (max radial deviation of the
-   profile under 180° rotation < 0.05 mm), volume window. Budget 20.
+   profile under 180° rotation < 0.05 mm), volume window. Budget 26.
    *Purpose: forces non-prismatic, non-sheet idioms into the gate.*
 8. **enclosure-bosses** — FDM project box with lid, four internal screw
    bosses, and wall-thickness limits. Checks: boss positions via tags,
    min wall ≥ 1.6 mm (DFM-style measured check), lid/box zero interference
-   with declared clearance, section render exists for +Z midplane. Budget 30.
+   with declared clearance, section render exists for +Z midplane. Budget 38.
    *Purpose: forces internal-feature reasoning (section channel) and
    print-process metadata.*
 

@@ -112,9 +112,18 @@ def _write_brep(shape: Any, path: Path) -> None:
 def _as_compound(shapes: list[Any]) -> Any:
     from build123d import Compound
 
-    if len(shapes) == 1:
-        return shapes[0]
-    return Compound(children=list(shapes))
+    # A script may bind one shape object under several names, so the checkpoint
+    # shape list can contain duplicates; anytree refuses to parent the same
+    # node twice. Deduplicate by identity, preserving first-seen order.
+    unique: list[Any] = []
+    seen: set[int] = set()
+    for shape in shapes:
+        if id(shape) not in seen:
+            seen.add(id(shape))
+            unique.append(shape)
+    if len(unique) == 1:
+        return unique[0]
+    return Compound(children=unique)
 
 
 def _failure_location(exc: BaseException, filename: str, fallback_line: int) -> tuple[int, int]:

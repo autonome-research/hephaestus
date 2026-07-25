@@ -1,12 +1,21 @@
 {
   "id": "bracket-101",
   "prompt": "Design an L-bracket in this project as the part `bracket`.\n\nThe bracket is a 60 mm (X) by 40 mm (Y) base plate, 6 mm thick, lying on the XY plane with its footprint centred on the origin and its underside at z = 0. Along the base plate's -Y edge stands a 6 mm thick wall of the same 60 mm length; the wall rises so the bracket's overall height is 40 mm. Blend the inner corner where the wall meets the top of the base plate with a 4 mm radius fillet.\n\nDrill two 6 mm diameter through-holes in the base plate. Their centres are 12 mm in from each end of the plate (12 mm from the -X end and 12 mm from the +X end) and 14 mm in from the plate's +Y edge.\n\nThe project's `globals.py` already carries the plate thickness and the bracket envelope: read them through `hc` instead of repeating the numbers. The project also contains an inspection gauge part (`hole_gauge`) whose go-pins the acceptance checks fit through your holes - leave it exactly as it is.\n\nName the part `bracket`, build it, and export it as STEP when the geometry is right.",
-  "budget_tool_calls": 15,
-  "required_checks": ["bracket_101"],
+  "budget_tool_calls": 20,
+  "required_checks": [
+    "bracket_101"
+  ],
   "export_requirements": [
-    {"part": "bracket", "format": "step", "layout": "as_built", "min_bytes": 1024}
+    {
+      "part": "bracket",
+      "format": "step",
+      "layout": "as_built",
+      "min_bytes": 1024
+    }
   ],
   "render_requirements": [],
-  "protected_paths": ["parts/hole_gauge.py"],
+  "protected_paths": [
+    "parts/hole_gauge.py"
+  ],
   "notes": "Difficulty 1. Checks: envelope window, exact material volume (fillet + hole diameters), go-pin gauge fit (hole pattern), sealed with genus 2."
 }

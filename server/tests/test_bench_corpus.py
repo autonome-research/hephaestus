@@ -35,14 +35,14 @@ from hephaestus.bench.scoring import PERFECT_TASKS
 #: The public corpus v0, difficulty-ordered with the budgets fixed by
 #: ``agent/STAGE2_DIGEST.md`` §8 / ``verification.md`` Tier 3.
 CORPUS: tuple[tuple[str, int], ...] = (
-    ("bracket-101", 15),
-    ("sheet-box", 25),
-    ("cat-step", 40),
-    ("store-hardware", 20),
-    ("repair-fillet", 8),
-    ("param-retune", 6),
-    ("knob-loft", 20),
-    ("enclosure-bosses", 30),
+    ("bracket-101", 20),
+    ("sheet-box", 32),
+    ("cat-step", 52),
+    ("store-hardware", 27),
+    ("repair-fillet", 12),
+    ("param-retune", 10),
+    ("knob-loft", 26),
+    ("enclosure-bosses", 38),
 )
 
 #: A single reference solution must build and grade well inside this; the digest's

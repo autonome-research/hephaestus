@@ -216,3 +216,31 @@ class TestUnsafeRefusal:
         build("part.geometry = Box(1, 1, 1)\n", tmp_path)
         captured = capfd.readouterr()
         assert "WITHOUT OS sandboxing" in captured.err
+
+
+class TestDuplicateBindingLastGood:
+    """A shape bound under two names must not crash last-good assembly.
+
+    Regression: a bench model authored a script aliasing one shape object to a
+    second name; the checkpoint shape list then held the same object twice and
+    Compound(children=...) raised anytree TreeError (worker exit 3) instead of
+    producing the §8 error record.
+    """
+
+    SCRIPT = (
+        "plate = Box(30, 20, 5)\n"
+        "alias = plate\n"
+        "hole = Cylinder(4, 5)\n"
+        "opened = plate - hole\n"
+        "bad = fillet(opened.edges().filter_by(Axis.Z), radius=50)\n"
+        "part.geometry = bad\n"
+    )
+
+    def test_error_record_with_last_good(self, tmp_path: Path) -> None:
+        result = build(self.SCRIPT, tmp_path)
+        error = error_of(result)
+        assert error.line == 5
+        assert error.built_through is not None
+        assert error.built_through.line == 4
+        assert error.last_good is not None
+        assert error.last_good_artifact_ref is not None

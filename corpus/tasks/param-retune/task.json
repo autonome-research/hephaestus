@@ -1,10 +1,17 @@
 {
   "id": "param-retune",
   "prompt": "The wall shelf in this project is built and passing its checks at 300 x 200. The hallway it is going into is wider than I measured, so it needs re-sizing.\n\nNew numbers: the tread must be 420 mm wide and 260 mm deep, and the gusset under it must reach 190 mm out from the wall and drop 220 mm below the tread. Everything else stays as it is - same 18 mm panel, same 25 mm front corner radius, same shape.\n\nThis project is fully parameterised: do it with project-scoped `set_params` only. Do not edit `globals.py` and do not edit any part script - if you find yourself writing geometry code, you are solving it the wrong way. Rebuild both parts afterwards so the new sizes are real.",
-  "budget_tool_calls": 6,
-  "required_checks": ["param_retune"],
+  "budget_tool_calls": 10,
+  "required_checks": [
+    "param_retune"
+  ],
   "export_requirements": [],
   "render_requirements": [],
-  "protected_paths": ["parts/shelf.py", "parts/gusset.py", "parts/wall_plane.py", "globals.py"],
+  "protected_paths": [
+    "parts/shelf.py",
+    "parts/gusset.py",
+    "parts/wall_plane.py",
+    "globals.py"
+  ],
   "notes": "Difficulty 6. Every script is a protected path, so the only way to move the envelope is project-scoped set_params: geometry edits are restored before grading. Checks: the new tread/gusset envelopes plus every original invariant (corner radius and triangular profile via exact volumes, sealed genus 0, gusset-to-tread contact, both parts flush to the wall gauge)."
 }

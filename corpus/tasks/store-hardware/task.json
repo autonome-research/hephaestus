@@ -1,10 +1,14 @@
 {
   "id": "store-hardware",
   "prompt": "The `bracket` part in this project is the finished L-bracket: 60 x 40 base plate, 6 mm thick, upstanding wall, two 6 mm through-holes 12 mm in from each end and 14 mm in from the +Y edge. It now has to mount with M5 socket-head cap screws, and the mating part sits flat on the plate's top face, so no screw head may stand proud of it.\n\nRe-detail the two mounting holes for M5 socket-head cap screws: a 5.5 mm clearance hole through the plate, and a 10 mm diameter counterbore 5 mm deep cut down from the plate's top face. Keep the hole centres, the envelope, the wall and the corner fillet exactly as they are.\n\nThen add a second part called `screws` holding the hardware itself: two M5 socket-head cap screws from the parts store (`screw_socket_head_m5`) with a 16 mm shank, one seated in each counterbore. The store's envelope is a 8.5 mm diameter head 5 mm high, a 5 mm diameter shank hanging below it, and a 4 mm across-flats hex socket 3 mm deep in the head; its origin sits on the head bearing face with the head above and the shank below, so a screw seated on the counterbore floor has its head exactly flush with the plate's top face.\n\nThe project also contains a `head_gauge` part - reference geometry for the acceptance checks. Leave it exactly as it is.\n\nBuild both parts when the geometry is right.",
-  "budget_tool_calls": 20,
-  "required_checks": ["store_hardware"],
+  "budget_tool_calls": 27,
+  "required_checks": [
+    "store_hardware"
+  ],
   "export_requirements": [],
   "render_requirements": [],
-  "protected_paths": ["parts/head_gauge.py"],
+  "protected_paths": [
+    "parts/head_gauge.py"
+  ],
   "notes": "Difficulty 4. Checks: bracket envelope/topology unchanged, exact bracket volume (pins clearance hole + counterbore together), screw instances present by exact store-envelope volume and extents, zero interference plus bearing-face contact, and heads below the mounting surface via the seeded clearance gauge. The reference solution models the store envelope inline because instance_store_part requires a secure execution backend (it refuses under the unsafe local backend used by the corpus tests); a model with a working store tool pastes the equivalent fragment."
 }
