@@ -23,10 +23,10 @@ from typing import Any, cast
 
 import pytest
 from _g2b import build_agent_dist, scaffold_project
-from fake_openai import FakeOpenAI, RequestInfo, start_fake_openai
 from hephaestus.agent_bridge.app import BridgeRuntime
 from hephaestus.agent_bridge.delegation import PROMPT_MAX_UTF8_BYTES
 from hephaestus.agent_bridge.supervisor import pid_alive
+from hephaestus.testing.fake_openai import FakeOpenAI, RequestInfo, start_fake_openai
 
 
 class RecordingRuntime(BridgeRuntime):

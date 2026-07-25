@@ -49,9 +49,9 @@ from hephaestus.agent_bridge.delegation import (
 )
 from hephaestus.agent_bridge.dispatch import DispatchError, ToolDispatcher
 from hephaestus.core.project_store.store import ProjectStore
+from hephaestus.testing.tools_fixture import Project, make_project
 from opstore.errors import BusyError
 from opstore.types import TerminalState
-from tools_fixture import Project, make_project
 
 CHILD_ARTIFACT = "artifact:build:sha256:" + "c" * 64
 

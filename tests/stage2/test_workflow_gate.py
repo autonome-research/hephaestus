@@ -18,8 +18,8 @@ real ``node agent/dist/workflows/runner.js`` process:
   with ``verified: false`` — never loop, and never report success from a
   partially repaired assembly.
 
-Both reuse the package-local harnesses (``Wiring`` / ``RunnerHarness``) rather
-than re-deriving them.
+Both reuse the shared harnesses (:mod:`hephaestus.testing.workflow_harness`,
+``Wiring`` / ``RunnerHarness``) rather than re-deriving them.
 """
 
 from __future__ import annotations
@@ -28,16 +28,16 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from _g2b import build_agent_dist
 from hephaestus.agent_bridge.workflows import CHECKPOINTS_NAMESPACE, JOBS_NAMESPACE
-from opstore.types import TerminalState
-from test_workflows import (
+from hephaestus.testing.sidecar import build_agent_dist
+from hephaestus.testing.workflow_harness import (
     SHELF_INTERFERING_SRC,
     RunnerHarness,
     completing_prompter,
     request_for,
-    scaffold_project,
+    scaffold_workflow_project,
 )
+from opstore.types import TerminalState
 
 #: An extra part that participates in no check — fan-out ballast.
 BALLAST_SRC = """body = Pos(0.0, 0.0, {z}) * Box(8.0, 8.0, 4.0)
@@ -59,7 +59,7 @@ def runner_main() -> Path:
 
 
 def four_part_project(root: Path) -> Path:
-    scaffold_project(root)
+    scaffold_workflow_project(root)
     for index, name in enumerate(("gusset", "plate")):
         (root / "parts" / f"{name}.py").write_text(
             BALLAST_SRC.format(z=40.0 + 10.0 * index), encoding="utf-8"
@@ -122,7 +122,7 @@ def test_workflow_repair_cap_stops_without_claiming_verification(
     root = tmp_path / "proj"
     # The shelf interferes and the scripted part agent never fixes it, so the
     # cross-part check can never go green.
-    scaffold_project(root, shelf=SHELF_INTERFERING_SRC)
+    scaffold_workflow_project(root, shelf=SHELF_INTERFERING_SRC)
     harness = RunnerHarness(root, runner_main, completing_prompter())
     harness.wiring.build("bracket", "shelf")
     try:

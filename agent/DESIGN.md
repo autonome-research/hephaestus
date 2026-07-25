@@ -1,5 +1,14 @@
 # agent/ + agent_bridge — Design Contract (Stage 2)
 
+> **STATUS — historical implementation contract.** This file was the
+> implementation-time contract for Stage 2 (`agent/` sidecar + `agent_bridge`)
+> and is kept for the reasoning it records. It is **not** normative today: the
+> root documents (`architecture.md`, `mission_plan.md`, `script_contract.md`,
+> `tool_schema.md`, `verification.md`, `repo_conventions.md`) are. Where this
+> file and a root document disagree, the root document wins. Known drift: the
+> Tier 3 corpus budgets these stage docs were written against were re-baselined
+> in `verification.md` on 2026-07-25.
+
 Binding for every Stage 2 implementation agent. Semantics live in
 `agent/STAGE2_DIGEST.md` (distilled from architecture §4–§5, mission Stage 2/G2,
 tool_schema, verification) — read it FIRST, then the root-doc sections for your

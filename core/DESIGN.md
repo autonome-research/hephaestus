@@ -1,5 +1,14 @@
 # core — Design Contract (Stage 0B)
 
+> **STATUS — historical implementation contract.** This file was the
+> implementation-time contract for Stage 0B (`core/`) and is kept for the
+> reasoning it records. It is **not** normative today: the root documents
+> (`architecture.md`, `mission_plan.md`, `script_contract.md`, `tool_schema.md`,
+> `verification.md`, `repo_conventions.md`) are. Where this file and a root
+> document disagree, the root document wins. Known drift: the Tier 3 corpus
+> budgets these stage docs were written against were re-baselined in
+> `verification.md` on 2026-07-25.
+
 Normative for every implementation agent. The *semantic* contracts live in the
 root docs — `script_contract.md` (entire part-script contract, §1–§9),
 `architecture.md` (§2 engine-first, §3.1 executor, §3.2 kernel, §3.4 checks,

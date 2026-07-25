@@ -5,17 +5,18 @@ modules. The rule of this file is that it adds no product behaviour — it only
 composes what ``server/`` already ships so a gate test can drive the REAL
 Node sidecar over the REAL private bridge into the REAL core.
 
-It reuses the Stage-2A package-local harnesses verbatim (``server/tests``):
+It reuses the shipped-but-private test-support package verbatim
+(:mod:`hephaestus.testing`):
 
-* :mod:`fake_openai` — the scripted OpenAI-compatible provider the sidecar talks
-  to (``start_fake_openai``, ``RequestInfo``);
-* :mod:`tools_fixture` — the scaffolded project + principals used by the
-  dispatcher-level tests;
-* :mod:`test_e2e_fake_model` — the scripting/assertion helpers (``tool_call``,
-  ``last_tool_result``, ``assert_stream_shape``, …);
-* ``server/tests/conftest.py`` — ``FakeClock`` / ``FakeLiveness`` / ``owner``
-  (loaded under an alias so it can never collide with this suite's own
-  ``conftest`` module name).
+* :mod:`~hephaestus.testing.fake_openai` — the scripted OpenAI-compatible
+  provider the sidecar talks to (``start_fake_openai``, ``RequestInfo``);
+* :mod:`~hephaestus.testing.tools_fixture` — the scaffolded project + principals
+  used by the dispatcher-level tests;
+* :mod:`~hephaestus.testing.stream_assertions` — the scripting/assertion helpers
+  (``tool_call``, ``last_tool_result``, ``assert_stream_shape``, …);
+* :mod:`~hephaestus.testing.doubles` — ``FakeClock`` / ``FakeLiveness`` /
+  ``owner``;
+* :mod:`~hephaestus.testing.sidecar` — the one-per-process ``agent/dist`` build.
 
 The one thing it *adds* is :class:`G2Runtime`: ``BridgeRuntime`` with the tool
 families Stage 2A left unwired for the runtime slice — registries, delegation
@@ -27,55 +28,30 @@ and clauses about scheduling/idempotency need to observe *what Python saw*.
 
 from __future__ import annotations
 
-import importlib.util
 import json
-import os
-import shutil
-import subprocess
-import sys
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from types import ModuleType
 from typing import Any, cast
 
 import pytest
-
-REPO = Path(__file__).resolve().parents[2]
-SERVER_TESTS = REPO / "server" / "tests"
-REGISTRIES = REPO / "registries"
-FIXTURES = REPO / "corpus" / "public_fixtures"
-
-if str(SERVER_TESTS) not in sys.path:
-    sys.path.insert(0, str(SERVER_TESTS))
-
-from fake_openai import (  # noqa: E402
-    FakeOpenAI,
-    RequestInfo,
-    TurnResolver,
-    start_fake_openai,
-)
-from fake_openai import _chunk as fake_openai_chunk  # noqa: E402
-from fake_openai import _parse_body as fake_openai_parse  # noqa: E402
-from hephaestus.agent_bridge.app import BridgeRuntime, PromptResult  # noqa: E402
-from hephaestus.agent_bridge.delegation import (  # noqa: E402
-    DelegationRow,
-    DelegationService,
-)
-from hephaestus.agent_bridge.dispatch import Principal, ToolDispatcher  # noqa: E402
-from hephaestus.agent_bridge.protocol import ErrorCode, ProtocolError  # noqa: E402
-from hephaestus.agent_bridge.query_snapshot import (  # noqa: E402
-    SnapshotRequest,
-    SnapshotResult,
-    SnapshotUsage,
-)
-from hephaestus.agent_bridge.supervisor import pid_alive  # noqa: E402
-from hephaestus.core.registry import RegistryOps, RegistrySet, load_registry  # noqa: E402
-from opstore.types import TerminalState  # noqa: E402
-from test_e2e_fake_model import (  # noqa: E402
+from hephaestus.agent_bridge.app import BridgeRuntime, PromptResult
+from hephaestus.agent_bridge.delegation import DelegationRow, DelegationService
+from hephaestus.agent_bridge.dispatch import Principal, ToolDispatcher
+from hephaestus.agent_bridge.protocol import ErrorCode, ProtocolError
+from hephaestus.agent_bridge.query_snapshot import SnapshotRequest, SnapshotResult, SnapshotUsage
+from hephaestus.agent_bridge.supervisor import pid_alive
+from hephaestus.core.registry import RegistryOps, RegistrySet, load_registry
+from hephaestus.testing.doubles import FakeClock, FakeLiveness, owner
+from hephaestus.testing.fake_openai import FakeOpenAI, RequestInfo, TurnResolver, start_fake_openai
+from hephaestus.testing.fake_openai import _chunk as fake_openai_chunk
+from hephaestus.testing.fake_openai import _parse_body as fake_openai_parse
+from hephaestus.testing.projects import scaffold_project as _scaffold_project
+from hephaestus.testing.sidecar import build_agent_dist, node_available
+from hephaestus.testing.stream_assertions import (
     assert_stream_shape,
     events_of,
     kinds_of,
@@ -84,7 +60,7 @@ from test_e2e_fake_model import (  # noqa: E402
     text,
     tool_call,
 )
-from tools_fixture import (  # noqa: E402
+from hephaestus.testing.tools_fixture import (
     ORCH,
     PART_WIDGET,
     QUICK_WIDGET,
@@ -92,6 +68,11 @@ from tools_fixture import (  # noqa: E402
     make_project,
     scaffold,
 )
+from opstore.types import TerminalState
+
+REPO = Path(__file__).resolve().parents[2]
+REGISTRIES = REPO / "registries"
+FIXTURES = REPO / "corpus" / "public_fixtures"
 
 __all__ = [
     "FIXTURES",
@@ -128,59 +109,23 @@ __all__ = [
 ]
 
 
-def _load_aliased(alias: str, path: Path) -> ModuleType:
-    """Import a file under an explicit module name (avoids ``conftest`` clashes)."""
-    spec = importlib.util.spec_from_file_location(alias, path)
-    if spec is None or spec.loader is None:  # pragma: no cover - defensive
-        raise ImportError(f"cannot load {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[alias] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-_server_conftest = _load_aliased("g2_server_conftest", SERVER_TESTS / "conftest.py")
-FakeClock = _server_conftest.FakeClock
-FakeLiveness = _server_conftest.FakeLiveness
-owner = _server_conftest.owner
-
-
 # --------------------------------------------------------------------------
 # environment
 
 
-def node_available() -> bool:
-    return bool(os.environ.get("HEPHAESTUS_NODE") or shutil.which("node"))
-
-
 def build_sidecar() -> Path:
     """Build the packaged sidecar once; skip cleanly when Node/pnpm are absent."""
-    if not node_available():
-        pytest.skip("node is not available; the G2 bridge tests need the packaged sidecar")
-    pnpm = shutil.which("pnpm")
-    if pnpm is None:
-        pytest.skip("pnpm is not available; cannot build the sidecar")
-    agent_dir = REPO / "agent"
-    build = subprocess.run(
-        [pnpm, "--dir", str(agent_dir), "build"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    dist_main = agent_dir / "dist" / "main.js"
-    if build.returncode != 0 or not dist_main.exists():
-        pytest.fail(f"sidecar build failed:\n{build.stdout}\n{build.stderr}")
-    return dist_main
+    built = build_agent_dist()
+    if built is None:
+        pytest.skip("node/pnpm unavailable; the G2 bridge tests need the packaged sidecar")
+    return built[0]
 
 
 def scaffold_project(root: Path, *, name: str = "g2") -> Path:
     """A minimal but real project: manifest + globals + empty parts/ and checks/."""
-    root.mkdir(parents=True, exist_ok=True)
-    (root / "hephaestus.toml").write_text(f'[project]\nname = "{name}"\n', encoding="utf-8")
-    (root / "globals.py").write_text("# Project-shared namespace.\nPARAMS = {}\n", encoding="utf-8")
-    (root / "parts").mkdir(exist_ok=True)
-    (root / "checks").mkdir(exist_ok=True)
-    return root
+    return _scaffold_project(
+        root, name=name, globals_src="# Project-shared namespace.\nPARAMS = {}\n"
+    )
 
 
 def registry_ops(store: Any, *, sandbox: bool = False) -> RegistryOps:

@@ -36,16 +36,12 @@ import socket
 import subprocess
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from fake_openai import FakeOpenAI, RequestInfo, TurnResolver, start_fake_openai
-from hephaestus.agent_bridge.admission import BridgeAdmission
-from hephaestus.agent_bridge.cad_ops import CadOps
-from hephaestus.agent_bridge.delegation import DelegationService
-from hephaestus.agent_bridge.dispatch import DispatchError, Principal, ToolDispatcher
+from hephaestus.agent_bridge.dispatch import DispatchError, Principal
 from hephaestus.agent_bridge.jobstore import JobStore
 from hephaestus.agent_bridge.protocol import ErrorCode, ProtocolError
 from hephaestus.agent_bridge.supervisor import (
@@ -62,8 +58,6 @@ from hephaestus.agent_bridge.workflows import (
     CadWorkflowRequest,
     JobRow,
     PartPromptOutcome,
-    PromptRegistry,
-    SessionDelegationRunner,
     WorkflowBridge,
     WorkflowError,
     WorkflowRun,
@@ -71,133 +65,24 @@ from hephaestus.agent_bridge.workflows import (
     WorkflowService,
     default_workflow_runner_main,
 )
-from hephaestus.core.project_store.layout import ProjectLayout, load_project, open_store
-from hephaestus.core.project_store.store import ProjectStore
+from hephaestus.testing.fake_openai import (
+    FakeOpenAI,
+    RequestInfo,
+    TurnResolver,
+    start_fake_openai,
+)
+from hephaestus.testing.sidecar import node_executable
+from hephaestus.testing.workflow_harness import (
+    ORCH,
+    SHELF_CLEAR_SRC,
+    SHELF_INTERFERING_SRC,
+    RunnerHarness,
+    Wiring,
+    completing_prompter,
+    request_for,
+    scaffold_workflow_project,
+)
 from opstore.types import TerminalState
-
-from opstore import OpStore
-
-ORCH = Principal(session_id="wf-orch", profile="orchestrator", part=None)
-
-# --------------------------------------------------------------------------
-# the project: two parts and one cross-part check that the shelf can violate
-
-BRACKET_SRC = """body = Box(40.0, 20.0, 6.0)
-body.label = "bracket_body"
-part.geometry = body
-part.description = "Base bracket"
-"""
-
-#: The shelf as first authored: it sits inside the bracket's envelope.
-SHELF_INTERFERING_SRC = """body = Box(30.0, 10.0, 4.0)
-body.label = "shelf_body"
-part.geometry = body
-part.description = "Shelf (interfering placement)"
-"""
-
-#: The repaired shelf: lifted clear of the bracket.
-SHELF_CLEAR_SRC = """body = Pos(0.0, 0.0, 20.0) * Box(30.0, 10.0, 4.0)
-body.label = "shelf_body"
-part.geometry = body
-part.description = "Shelf (clear of the bracket)"
-"""
-
-#: A cross-part check. Its name carries "shelf", so a failure attributes the
-#: repair to the shelf alone (cad_workflow.ts `repairTargets`).
-CROSS_CHECK_SRC = """CHECKS = {
-    "shelf_placement": lambda m: m.interference("bracket/part", "shelf/part")
-    == approx(0.0, abs=1e-6),
-}
-"""
-
-
-def scaffold_project(root: Path, *, shelf: str = SHELF_CLEAR_SRC) -> Path:
-    """A real two-part project with one cross-part check."""
-    (root / "parts").mkdir(parents=True, exist_ok=True)
-    (root / "checks").mkdir(parents=True, exist_ok=True)
-    (root / "hephaestus.toml").write_text('[project]\nname = "wf"\n', encoding="utf-8")
-    (root / "globals.py").write_text("PARAMS = {}\n", encoding="utf-8")
-    (root / "parts" / "bracket.py").write_text(BRACKET_SRC, encoding="utf-8")
-    (root / "parts" / "shelf.py").write_text(shelf, encoding="utf-8")
-    (root / "checks" / "assembly.py").write_text(CROSS_CHECK_SRC, encoding="utf-8")
-    return root
-
-
-# --------------------------------------------------------------------------
-# composition helpers
-
-
-class Wiring:
-    """One project's opstore plus every Python half the workflow layer needs."""
-
-    def __init__(self, root: Path, *, prompter: Callable[[str, str, str], PartPromptOutcome]):
-        self.root = root
-        self.layout: ProjectLayout = load_project(root)
-        self.store: OpStore = open_store(self.layout)
-        self.cad = CadOps(self.layout, self.store)
-        self.jobs = JobStore(self.store.db)
-        self.admission = BridgeAdmission(self.store.admission)
-        self.delegation = DelegationService(self.store.admission, self.store.db)
-        self.prompts = PromptRegistry()
-        self.dispatcher = ToolDispatcher(
-            ProjectStore(self.layout, self.store),
-            cad=self.cad,
-            delegation=self.delegation,
-            delegation_runner=SessionDelegationRunner(prompter, self.prompts),
-        )
-
-    def bridge(self) -> RecordingBridge:
-        return RecordingBridge(
-            self.jobs,
-            self.admission,
-            dispatcher=self.dispatcher,
-            principal=ORCH,
-            prompts=self.prompts,
-        )
-
-    def build(self, *parts: str) -> None:
-        """Build parts directly (the pre-state a workflow run starts from)."""
-        for index, name in enumerate(parts):
-            out = self.dispatcher.dispatch(
-                ORCH,
-                {
-                    "session_id": ORCH.session_id,
-                    "run_id": "setup",
-                    "tool": "build_part",
-                    "arguments": {"name": name},
-                    "invocation": {
-                        "session_id": ORCH.session_id,
-                        "entry_id": f"setup-{index}",
-                        "ordinal": 1,
-                        "provider_call_id": "c0",
-                    },
-                },
-            )
-            assert out["status"] == "ok", out
-
-    def close(self) -> None:
-        self.store.close()
-
-
-class RecordingBridge(WorkflowBridge):
-    """The real bridge plus a log of the capacities it reported.
-
-    The fan-out bound is derived from ``py.admission_capacity`` *at fan-out time*
-    (digest §5); recording each answer is what lets a test prove the bound never
-    exceeded the capacity that produced it.
-    """
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self.capacities: list[int] = []
-        self.methods: list[str] = []
-
-    def handle(self, method: str, params: dict[str, Any]) -> Any:
-        self.methods.append(method)
-        result = super().handle(method, params)
-        if method == "py.admission_capacity":
-            self.capacities.append(int(cast("dict[str, Any]", result)["capacity"]))
-        return result
 
 
 class ScriptedTransport:
@@ -221,18 +106,9 @@ class ScriptedTransport:
         self.notifications.append((method, dict(params or {})))
 
 
-def completing_prompter(artifact: str = "artifact:build:sha256:" + "b" * 64) -> Any:
-    """A part prompter that completes immediately (no session, no geometry)."""
-
-    def prompt(part: str, text: str, child_run_id: str) -> PartPromptOutcome:
-        return PartPromptOutcome(TerminalState.COMPLETED, result_artifact_ref=artifact)
-
-    return prompt
-
-
 @pytest.fixture
 def wiring(tmp_path: Path) -> Iterator[Wiring]:
-    scaffold_project(tmp_path / "proj")
+    scaffold_workflow_project(tmp_path / "proj")
     w = Wiring(tmp_path / "proj", prompter=completing_prompter())
     try:
         yield w
@@ -436,7 +312,7 @@ def store_event(jobs: JobStore, job_id: str, event_id: int, kind: str) -> None:
 
 
 def test_replay_is_ordered_and_survives_a_store_restart(tmp_path: Path) -> None:
-    root = scaffold_project(tmp_path / "proj")
+    root = scaffold_workflow_project(tmp_path / "proj")
     first = Wiring(root, prompter=completing_prompter())
     # The sidecar wrote its job + event log through the bridge…
     bridge = first.bridge()
@@ -630,10 +506,6 @@ def test_cad_workflow_request_builds_the_runner_payload() -> None:
 # 3. through the REAL Node workflow-runner process
 
 
-def node_executable() -> str | None:
-    return os.environ.get("HEPHAESTUS_NODE") or shutil.which("node")
-
-
 @pytest.fixture(scope="session")
 def agent_dist() -> Path:
     """Build the packaged sidecar once; skip cleanly when Node/pnpm are absent."""
@@ -651,59 +523,10 @@ def agent_dist() -> Path:
     return runner
 
 
-class RunnerHarness:
-    """A supervised workflow-runner process over one wired project."""
-
-    def __init__(self, root: Path, runner_main: Path, prompter: Any) -> None:
-        node = node_executable()
-        assert node is not None
-        self.wiring = Wiring(root, prompter=prompter)
-        self.bridge = self.wiring.bridge()
-        self.process = WorkflowRunnerProcess(
-            self.bridge,
-            node=node,
-            runner_main=runner_main,
-            cwd=root,
-            default_timeout_s=900.0,
-        )
-        self.process.start()
-        self.pids = [self.process.child_pid]
-        self.service = WorkflowService(self.wiring.jobs, self.process, self.wiring.admission)
-
-    def restart(self) -> None:
-        self.process.supervisor.restart(reason="test")
-        self.pids.append(self.process.child_pid)
-
-    def close(self) -> None:
-        try:
-            self.process.close()
-        finally:
-            self.wiring.close()
-
-    def assert_no_orphans(self) -> None:
-        for pid in self.pids:
-            assert not pid_alive(pid), f"workflow runner pid {pid} outlived its supervisor"
-
-
-def request_for(root: Path, **overrides: Any) -> dict[str, Any]:
-    base: dict[str, Any] = {
-        "project_root": str(root),
-        "session_id": ORCH.session_id,
-        "parts": [
-            ("bracket", "PART bracket: build the bracket.", "REPAIR PART bracket: fix it."),
-            ("shelf", "PART shelf: build the shelf.", "REPAIR PART shelf: move it clear."),
-        ],
-        "max_repair_rounds": 2,
-        "max_concurrency": 2,
-    }
-    base.update(overrides)
-    return CadWorkflowRequest(**base).payload()
-
-
 def test_workflow_runs_to_a_durable_terminal_and_replays_after_both_processes_die(
     tmp_path: Path, agent_dist: Path
 ) -> None:
-    root = scaffold_project(tmp_path / "proj")
+    root = scaffold_workflow_project(tmp_path / "proj")
     harness = RunnerHarness(root, agent_dist, completing_prompter())
     harness.wiring.build("bracket", "shelf")
     try:
@@ -761,7 +584,7 @@ def test_workflow_runs_to_a_durable_terminal_and_replays_after_both_processes_di
 def test_cooperative_cancellation_stops_a_running_workflow(
     tmp_path: Path, agent_dist: Path
 ) -> None:
-    root = scaffold_project(tmp_path / "proj")
+    root = scaffold_workflow_project(tmp_path / "proj")
     started = threading.Event()
     delegated: list[str] = []
     parts = [(f"p{i}", f"PART p{i}: build it.", f"REPAIR p{i}") for i in range(6)]
@@ -809,7 +632,7 @@ def test_cooperative_cancellation_stops_a_running_workflow(
 def test_orphaned_run_is_interrupted_then_resumes_from_verified_checkpoints(
     tmp_path: Path, agent_dist: Path
 ) -> None:
-    root = scaffold_project(tmp_path / "proj")
+    root = scaffold_workflow_project(tmp_path / "proj")
     released = threading.Event()
     started = threading.Event()
 
@@ -1049,7 +872,7 @@ class G2Harness:
     def __init__(self, root: Path, runner_main: Path, *, shelf: str) -> None:
         node = node_executable()
         assert node is not None
-        scaffold_project(root, shelf=shelf)
+        scaffold_workflow_project(root, shelf=shelf)
         script: list[TurnResolver] = [part_agent_turn] * 64
         self.fake = start_fake_openai(script)
         holder: dict[str, PartAgents] = {}

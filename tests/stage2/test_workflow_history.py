@@ -30,9 +30,9 @@ from typing import Any, cast
 
 import pytest
 from _g2b import REPO_ROOT, build_agent_dist, scaffold_project
-from fake_openai import FakeOpenAI, start_fake_openai
 from hephaestus.agent_bridge.app import BridgeRuntime
 from hephaestus.agent_bridge.supervisor import pid_alive
+from hephaestus.testing.fake_openai import FakeOpenAI, start_fake_openai
 
 WIDGET_SRC = """body = Box(20.0, 10.0, 4.0)
 body.label = "widget_body"

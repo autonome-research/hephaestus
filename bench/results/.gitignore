@@ -1,4 +1,15 @@
 # Per-run archives — seeded projects, event JSONL, grades, transcripts — are
-# ordinary CI artifacts, not repository history. The per-model/date scoring JSON
-# (bench/results/<model>/<date>.json) is the committed leaderboard deliverable.
-*/*/
+# ordinary CI artifacts, not repository history, so everything inside a
+# `<model>/<date>/` run directory is ignored by default.
+#
+# Two things are deliberately trackable:
+#   * `<model>/<date>.json` — the scoring artifact verification.md names as the
+#     leaderboard row (the rules below never match it: it sits one level up);
+#   * `<model>/<date>/runs.jsonl` — the RunRecord index `heph bench score`
+#     reads, small enough to keep and the only way to re-derive a score.
+#
+# The run directory itself is left un-ignored on purpose: git cannot re-include
+# a path whose parent directory is excluded, so the exclusion starts one level
+# deeper.
+*/*/*
+!*/*/runs.jsonl

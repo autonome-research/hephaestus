@@ -49,9 +49,14 @@ bench/results/<model>/<date>/                run archive for one `heph bench run
 bench/results/<model>/<date>.json            the scoring artifact / leaderboard row
 ```
 
-Per-run archives (`<model>/<date>/`) are ordinary CI artifacts and are not kept
-in git — see `bench/results/.gitignore`. The `<model>/<date>.json` scoring
-artifacts are the committed deliverable.
+## What gets committed
+
+Two artifacts, and only those: `<model>/<date>.json` — the scoring artifact
+`verification.md` names as the leaderboard row — and `<model>/<date>/runs.jsonl`,
+the RunRecord index a score can be re-derived from. Everything else inside a run
+directory (`prompt.txt`, `events.jsonl`, `grade.json`, `result.json`, `project/`)
+is an ordinary CI artifact: large, per-machine, and ignored. `bench/results/.gitignore`
+encodes exactly that split; do not commit a run directory's contents by force.
 
 ## What a pass means
 

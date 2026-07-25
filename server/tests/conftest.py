@@ -1,4 +1,9 @@
-"""Shared fixtures/helpers for agent_bridge tests: real opstore on tmp roots."""
+"""Pytest fixtures for the agent_bridge tests: a real opstore on a tmp root.
+
+The clock/liveness doubles themselves live in
+:mod:`hephaestus.testing.doubles` so ``tests/stage2`` can use the same ones;
+this file only binds them to fixture names.
+"""
 
 from __future__ import annotations
 
@@ -7,48 +12,9 @@ from pathlib import Path
 
 import pytest
 from hephaestus.agent_bridge.admission import bridge_store_config
-from opstore.types import OwnerId
+from hephaestus.testing.doubles import FakeClock, FakeLiveness
 
 from opstore import OpStore
-
-
-class FakeClock:
-    """A manually-advanced clock (unix seconds)."""
-
-    def __init__(self, start: float = 1_000_000.0) -> None:
-        self._t = start
-
-    def now(self) -> float:
-        return self._t
-
-    def advance(self, seconds: float) -> None:
-        self._t += seconds
-
-    def set(self, t: float) -> None:
-        self._t = t
-
-
-class FakeLiveness:
-    """A liveness oracle whose per-owner verdicts are set by the test."""
-
-    def __init__(self, *, default: bool = True) -> None:
-        self._default = default
-        self._dead: set[tuple[int, int]] = set()
-
-    def kill(self, owner: OwnerId) -> None:
-        self._dead.add((owner.pid, owner.pid_start_ns))
-
-    def revive(self, owner: OwnerId) -> None:
-        self._dead.discard((owner.pid, owner.pid_start_ns))
-
-    def is_alive(self, owner: OwnerId) -> bool:
-        if (owner.pid, owner.pid_start_ns) in self._dead:
-            return False
-        return self._default
-
-
-def owner(pid: int, start: int = 1) -> OwnerId:
-    return OwnerId(pid=pid, pid_start_ns=start)
 
 
 @pytest.fixture

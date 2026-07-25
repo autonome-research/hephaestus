@@ -2,7 +2,8 @@
 
 Every test here drives the *packaged* sidecar (``node agent/dist/main.js``, built
 by ``pnpm --dir agent build``) through the private framed JSON-RPC bridge, with a
-scripted OpenAI-compatible fake model (:mod:`fake_openai`) standing in for the
+scripted OpenAI-compatible fake model
+(:mod:`hephaestus.testing.fake_openai`) standing in for the
 provider. Nothing is stubbed between the model and the CAD engine: tool calls
 travel model -> Pi loop -> ToolProxy -> ``py.tool_dispatch`` -> ``hephaestus.core``
 and back, and the normalized event stream is asserted on the Python side exactly
@@ -27,20 +28,27 @@ Every scenario asserts zero orphan sidecar processes afterwards.
 
 from __future__ import annotations
 
-import json
 import os
-import shutil
-import subprocess
 import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
-from fake_openai import FakeOpenAI, RequestInfo, start_fake_openai
-from hephaestus.agent_bridge.app import BridgeRuntime, PromptResult, repo_root
+from hephaestus.agent_bridge.app import BridgeRuntime, repo_root
 from hephaestus.agent_bridge.supervisor import build_minimal_env, pid_alive
+from hephaestus.testing.fake_openai import FakeOpenAI, RequestInfo, start_fake_openai
+from hephaestus.testing.projects import scaffold_project
+from hephaestus.testing.sidecar import build_agent_dist
+from hephaestus.testing.stream_assertions import (
+    assert_stream_shape,
+    events_of,
+    last_tool_result,
+    payload_of,
+    text,
+    tool_call,
+)
 from opstore.types import TerminalState
 
 FIXTURES = repo_root() / "corpus" / "public_fixtures"
@@ -62,41 +70,22 @@ part.description = "Scripted end-to-end widget"
 # environment / fixtures
 
 
-def _node_available() -> bool:
-    return bool(os.environ.get("HEPHAESTUS_NODE") or shutil.which("node"))
-
-
 @pytest.fixture(scope="session")
 def sidecar_dist() -> Path:
     """Build the real sidecar once per session; skip cleanly when Node is absent."""
-    if not _node_available():
-        pytest.skip("node is not available; the e2e bridge needs the packaged sidecar")
-    pnpm = shutil.which("pnpm")
-    if pnpm is None:
-        pytest.skip("pnpm is not available; cannot build the sidecar")
-    agent_dir = repo_root() / "agent"
-    build = subprocess.run(
-        [pnpm, "--dir", str(agent_dir), "build"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    dist_main = agent_dir / "dist" / "main.js"
-    if build.returncode != 0 or not dist_main.exists():
-        pytest.fail(f"sidecar build failed:\n{build.stdout}\n{build.stderr}")
-    return dist_main
+    built = build_agent_dist()
+    if built is None:
+        pytest.skip("node/pnpm unavailable; the e2e bridge needs the packaged sidecar")
+    return built[0]
 
 
-def scaffold_project(root: Path, *, name: str = "e2e") -> Path:
-    """A minimal but real Hephaestus project (manifest + globals + parts/checks)."""
-    root.mkdir(parents=True, exist_ok=True)
-    (root / "hephaestus.toml").write_text(f'[project]\nname = "{name}"\n', encoding="utf-8")
-    (root / "globals.py").write_text(
-        "# Project-shared namespace for the e2e project.\nPARAMS = {}\n", encoding="utf-8"
+def e2e_project(root: Path) -> Path:
+    """The empty-but-real project the e2e scenarios author parts into."""
+    return scaffold_project(
+        root,
+        name="e2e",
+        globals_src="# Project-shared namespace for the e2e project.\nPARAMS = {}\n",
     )
-    (root / "parts").mkdir(exist_ok=True)
-    (root / "checks").mkdir(exist_ok=True)
-    return root
 
 
 class Harness:
@@ -129,96 +118,13 @@ class Harness:
 
 @pytest.fixture
 def harness(tmp_path: Path, sidecar_dist: Path) -> Iterator[Harness]:
-    project = scaffold_project(tmp_path / "proj")
+    project = e2e_project(tmp_path / "proj")
     h = Harness(project, sidecar_dist)
     try:
         yield h
     finally:
         h.close()
         h.assert_no_orphans()
-
-
-# --------------------------------------------------------------------------
-# scripting helpers
-
-
-def tool_call(name: str, arguments: dict[str, Any], call_id: str = "c0") -> dict[str, Any]:
-    return {
-        "kind": "tool_calls",
-        "calls": [{"name": name, "arguments": arguments, "id": call_id}],
-    }
-
-
-def text(*chunks: str) -> dict[str, Any]:
-    return {"kind": "text", "chunks": list(chunks)}
-
-
-def last_tool_result(info: RequestInfo) -> dict[str, Any]:
-    """The JSON body of the most recent tool result in the request transcript.
-
-    This is exactly what a real model would read: the proxy's bounded text
-    rendering of the tool result (base64 image bytes are stripped from the text
-    and ride as separate image content blocks).
-    """
-    body = cast("dict[str, Any]", json.loads(info.body_text))
-    messages = cast("list[Any]", body.get("messages", []))
-    for message in reversed(messages):
-        if not isinstance(message, dict):
-            continue
-        entry = cast("dict[str, Any]", message)
-        if entry.get("role") != "tool":
-            continue
-        content = entry.get("content")
-        raw = content if isinstance(content, str) else json.dumps(content)
-        try:
-            # raw_decode: the rendering may be followed by provider-side notes.
-            parsed, _end = json.JSONDecoder().raw_decode(raw.lstrip())
-        except json.JSONDecodeError:
-            return {"_text": raw}
-        if isinstance(parsed, dict):
-            return cast("dict[str, Any]", parsed)
-        return {"_value": parsed}
-    return {}
-
-
-def kinds_of(result: PromptResult) -> list[str]:
-    return result.kinds()
-
-
-def events_of(result: PromptResult, kind: str) -> list[dict[str, Any]]:
-    return [ev for ev in result.events if ev.get("kind") == kind]
-
-
-def payload_of(event: dict[str, Any]) -> dict[str, Any]:
-    payload = event.get("payload")
-    return cast("dict[str, Any]", payload) if isinstance(payload, dict) else {}
-
-
-def assert_stream_shape(result: PromptResult) -> None:
-    """Every streamed record is a well-formed public Hephaestus event."""
-    allowed = {
-        "text_delta",
-        "thought",
-        "tool_call",
-        "tool_result",
-        "image",
-        "question",
-        "answer",
-        "audit",
-        "progress",
-        "terminal",
-    }
-    seqs: list[int] = []
-    for ev in result.events:
-        assert set(ev) <= {"run_id", "seq", "kind", "tool_call_id", "payload"}, ev
-        assert ev["run_id"] == result.run_id
-        assert ev["kind"] in allowed, ev["kind"]
-        assert isinstance(ev["seq"], int)
-        seqs.append(int(ev["seq"]))
-        # No bridge/JSON-RPC vocabulary may leak into a public event.
-        assert "jsonrpc" not in ev and "hv" not in ev and "method" not in ev
-    assert seqs == sorted(seqs), "event sequence numbers must be monotonic per run"
-    assert len(set(seqs)) == len(seqs), "event sequence numbers must be unique per run"
 
 
 # --------------------------------------------------------------------------

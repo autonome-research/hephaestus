@@ -22,7 +22,8 @@ import pytest
 from hephaestus.agent_bridge import cli as agent_cli
 from hephaestus.agent_bridge.app import PromptResult
 from hephaestus.core.cli import build_parser
-from test_e2e_fake_model import Harness, text, tool_call
+from hephaestus.testing.stream_assertions import text, tool_call
+from test_e2e_fake_model import Harness
 
 pytest_plugins = ["test_e2e_fake_model"]
 
@@ -272,7 +273,7 @@ def test_console_renders_a_real_run_end_to_end(harness: Harness, tmp_path: Path)
 
 def test_heph_agent_subprocess_streams_and_answers(tmp_path: Path, sidecar_dist: Path) -> None:
     """Drive the actual verb: stdin prompts in, rendered stream + answers out."""
-    from fake_openai import start_fake_openai
+    from hephaestus.testing.fake_openai import start_fake_openai
     from test_e2e_fake_model import scaffold_project
 
     project = scaffold_project(tmp_path / "proj", name="cli")

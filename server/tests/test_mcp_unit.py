@@ -3,7 +3,7 @@
 Everything here drives the app the way a stock MCP client does — ``list_tools``
 plus ``call_tool`` over the in-memory transport, with no Hephaestus code on the
 client side other than the assertions. The project underneath is the same real
-scaffold the dispatch tests use (``tools_fixture``), so calls land in the real
+scaffold the dispatch tests use (``hephaestus.testing.tools_fixture``), so calls land in the real
 :class:`~hephaestus.agent_bridge.dispatch.ToolDispatcher` /
 :class:`~hephaestus.agent_bridge.cad_ops.CadOps` over a real opstore.
 
@@ -28,8 +28,8 @@ from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.core.tools_decl import TOOLS_BY_NAME
 from hephaestus.mcp.app import EXTRA_TOOL_NAMES, HephaestusMCP, build_app
 from hephaestus.mcp.idempotency import IDEMPOTENCY_META_KEY
+from hephaestus.testing.tools_fixture import scaffold
 from mcp.types import ImageContent, TextContent
-from tools_fixture import scaffold
 
 AnyClient = Client[Any]
 

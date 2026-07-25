@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from conftest import FakeClock
 from hephaestus.agent_bridge.admission import bridge_store_config
 from hephaestus.agent_bridge.jobstore import JobStore
+from hephaestus.testing.doubles import FakeClock
 
 from opstore import OpStore
 

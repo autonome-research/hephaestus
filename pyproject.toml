@@ -42,8 +42,9 @@ line-length = 100
 target-version = "py311"
 # spikes/ is frozen Stage S evidence; corpus/ and registries/ hold part
 # scripts written against the executor's injected namespace, not importable
-# Python modules.
-extend-exclude = ["spikes", "corpus", "registries", "*.md"]
+# Python modules. tests/stage3/fixtures/ is recorded session evidence in the
+# same category: verbatim model-authored part scripts, not project source.
+extend-exclude = ["spikes", "corpus", "registries", "tests/stage3/fixtures", "*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]

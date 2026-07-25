@@ -6,7 +6,6 @@ from __future__ import annotations
 import unicodedata
 
 import pytest
-from conftest import FakeClock, FakeLiveness, owner
 from hephaestus.agent_bridge.delegation import (
     DEADLINE_DEFAULT_S,
     PROMPT_MAX_UTF8_BYTES,
@@ -19,6 +18,7 @@ from hephaestus.agent_bridge.delegation import (
     Rejected,
     RejectionReason,
 )
+from hephaestus.testing.doubles import FakeClock, FakeLiveness, owner
 from opstore.types import TerminalState
 
 from opstore import OpStore

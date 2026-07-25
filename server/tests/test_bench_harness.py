@@ -4,7 +4,7 @@ These tests run :func:`hephaestus.bench.harness.run_task` exactly as
 ``heph bench run`` does — a fresh project seeded from the corpus task, a real
 :class:`~hephaestus.agent_bridge.app.BridgeRuntime` orchestrator session against
 the *packaged* Node sidecar, and a scripted OpenAI-compatible fake model
-(:mod:`fake_openai`) standing in for the provider. The model earns its pass by
+(:mod:`hephaestus.testing.fake_openai`) standing in for the provider. The model earns its pass by
 calling real tools: ``create_part``/``write_part``/``build_part`` for
 ``bracket-101``, ``read_part``/``edit_part``/``build_part`` for the broken
 ``repair-fillet`` fixture.
@@ -35,7 +35,6 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from fake_openai import FakeOpenAI, RequestInfo, start_fake_openai
 from hephaestus.agent_bridge.app import BridgeRuntime, repo_root
 from hephaestus.bench import harness
 from hephaestus.bench.harness import (
@@ -49,6 +48,7 @@ from hephaestus.bench.harness import (
     validate_export_bytes,
 )
 from hephaestus.bench.scoring import RUNS_FILENAME, score_directory
+from hephaestus.testing.fake_openai import FakeOpenAI, RequestInfo, start_fake_openai
 
 SOLUTIONS = repo_root() / "corpus" / "solutions"
 

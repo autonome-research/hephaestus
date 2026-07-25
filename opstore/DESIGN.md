@@ -1,5 +1,14 @@
 # opstore — Design Contract (Stage 0A)
 
+> **STATUS — historical implementation contract.** This file was the
+> implementation-time contract for Stage 0A (`opstore/`) and is kept for the
+> reasoning it records. It is **not** normative today: the root documents
+> (`architecture.md`, `mission_plan.md`, `script_contract.md`, `tool_schema.md`,
+> `verification.md`, `repo_conventions.md`) are. Where this file and a root
+> document disagree, the root document wins. Known drift: the Tier 3 corpus
+> budgets these stage docs were written against were re-baselined in
+> `verification.md` on 2026-07-25.
+
 Normative for every implementation agent. Derived from `architecture.md` §3.5/§5,
 `mission_plan.md` Stage 0A/G0A, `verification.md`, `repo_conventions.md`. Where this
 file is silent, those documents govern. Do not contradict them.

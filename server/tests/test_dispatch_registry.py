@@ -34,7 +34,7 @@ from hephaestus.core.registry import (
     RegistrySet,
     load_registry,
 )
-from tools_fixture import ORCH, PART_WIDGET, QUICK_WIDGET, scaffold
+from hephaestus.testing.tools_fixture import ORCH, PART_WIDGET, QUICK_WIDGET, scaffold
 
 from opstore import OpStore
 

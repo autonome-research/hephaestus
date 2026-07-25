@@ -23,7 +23,7 @@ from typing import Any
 
 import pytest
 from hephaestus.core.project_store.locks import PROJECT_CONFIG_LOCK, LockManager, part_lock
-from tools_fixture import Project, make_project
+from hephaestus.testing.tools_fixture import Project, make_project
 
 from opstore import LeaseHeldError
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-from conftest import FakeClock, FakeLiveness, owner
 from hephaestus.agent_bridge.sessions import (
     QuickEditRequest,
     ResolvedSelection,
@@ -14,6 +13,7 @@ from hephaestus.agent_bridge.sessions import (
     profile_for,
     session_ref,
 )
+from hephaestus.testing.doubles import FakeClock, FakeLiveness, owner
 
 from opstore import OpStore
 

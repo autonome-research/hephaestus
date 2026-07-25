@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import FakeClock
 from hephaestus.agent_bridge.delegation import (
     DelegationRow,
     DelegationService,
@@ -23,8 +22,9 @@ from hephaestus.agent_bridge.delegation import (
 )
 from hephaestus.agent_bridge.dispatch import DispatchError, ToolDispatcher
 from hephaestus.core.project_store.store import ProjectStore
+from hephaestus.testing.doubles import FakeClock
+from hephaestus.testing.tools_fixture import ORCH, PART_WIDGET, Project, make_project
 from opstore.types import TerminalState
-from tools_fixture import ORCH, PART_WIDGET, Project, make_project
 
 CHILD_ARTIFACT = "artifact:build:sha256:" + "a" * 64
 

@@ -27,10 +27,10 @@ from typing import Any, cast
 
 import pytest
 from _g2b import build_agent_dist, scaffold_project
-from fake_openai import FakeOpenAI, RequestInfo, start_fake_openai
 from hephaestus.agent_bridge.limits import MAX_IMAGES_PER_RESULT
 from hephaestus.agent_bridge.protocol import ErrorCode, ProtocolError
 from hephaestus.agent_bridge.supervisor import Supervisor, SupervisorConfig, pid_alive
+from hephaestus.testing.fake_openai import FakeOpenAI, RequestInfo, start_fake_openai
 
 ARTIFACT = "artifact:render:sha256:" + "e" * 64
 
@@ -106,7 +106,7 @@ class Sidecar:
 
 @pytest.fixture(scope="module")
 def sidecar_main() -> tuple[Path, str]:
-    from _g2b import node_executable
+    from hephaestus.testing.sidecar import node_executable
 
     built = build_agent_dist()
     node = node_executable()

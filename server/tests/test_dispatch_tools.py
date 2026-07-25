@@ -19,13 +19,13 @@ from typing import Any
 import pytest
 from hephaestus.agent_bridge.cad_ops import EXPORT_FORMATS, CadOps
 from hephaestus.agent_bridge.dispatch import DispatchError
-from opstore.errors import KeyPayloadMismatchError
-from tools_fixture import (
+from hephaestus.testing.tools_fixture import (
     ORCH,
     PART_WIDGET,
     Project,
     make_project,
 )
+from opstore.errors import KeyPayloadMismatchError
 
 
 @pytest.fixture
@@ -885,7 +885,7 @@ def test_tools_report_not_implemented_without_the_cad_core(tmp_path: Path) -> No
     from hephaestus.agent_bridge.dispatch import CAD_TOOLS, ToolDispatcher
     from hephaestus.core.project_store.layout import load_project, open_store
     from hephaestus.core.project_store.store import ProjectStore
-    from tools_fixture import scaffold
+    from hephaestus.testing.tools_fixture import scaffold
 
     root = scaffold(tmp_path / "bare")
     layout = load_project(root)
@@ -955,7 +955,7 @@ def test_part_session_scope_holds_for_every_newly_wired_tool(built: Project) -> 
 
 def test_cad_ops_param_state_hash_is_stable_for_an_unset_scope(tmp_path: Path) -> None:
     from hephaestus.core.project_store.layout import load_project, open_store
-    from tools_fixture import scaffold
+    from hephaestus.testing.tools_fixture import scaffold
 
     root = scaffold(tmp_path / "hashes")
     layout = load_project(root)
