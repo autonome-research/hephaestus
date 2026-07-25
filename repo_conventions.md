@@ -107,7 +107,14 @@ docs/       generated/site-only mkdocs content and assets; links to root docs.
      subpaths load 13 modules with zero `openai` and zero native addons;
      `better-sqlite3` is absent — JobStore uses `node:sqlite`-free injection).
   5. Pi tool gating uses a `tools: [...]` allowlist or `noTools: 'builtin'` —
-     never `noTools: 'all'`, which also strips custom tools. Kernel or renderer upgrades land
+     never `noTools: 'all'`, which also strips custom tools.
+- **Tier 3 reference model (mission epoch 1, designated 2026-07-25):**
+  `ThinkingCap-Qwen3.6-27B-NVFP4` (qwen3.6:27b) served over an
+  OpenAI-compatible vLLM endpoint on the maintainer's workstation
+  (self-hosted; endpoint supplied via local provider config, never committed).
+  Rationale: the harness must clear its gates with a self-hosted open model.
+  Changing the reference model re-baselines thresholds only by explicit PR
+  (mission rule 3). Kernel or renderer upgrades land
   only as a dedicated **re-baseline PR type**: it may touch the lockfile/image
   tag, regenerate render goldens via `heph goldens --update` (which refuses on
   a dirty tree), and relax no thresholds; CI attaches before/after golden
