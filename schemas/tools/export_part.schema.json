@@ -1,0 +1,121 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/export_part.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Export a frozen successful build artifact (Stage 2: as_built layout only).",
+  "parameters": {
+    "additionalProperties": false,
+    "allOf": [
+      {
+        "if": {
+          "properties": {
+            "layout": {
+              "const": "nested_sheet"
+            }
+          },
+          "required": [
+            "layout"
+          ]
+        },
+        "then": {
+          "properties": {
+            "format": {
+              "enum": [
+                "dxf",
+                "svg"
+              ]
+            }
+          }
+        }
+      }
+    ],
+    "properties": {
+      "artifact_ref": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "format": {
+        "enum": [
+          "step",
+          "dxf",
+          "svg",
+          "gltf",
+          "3mf",
+          "stl"
+        ],
+        "type": "string"
+      },
+      "layout": {
+        "default": "as_built",
+        "enum": [
+          "as_built",
+          "nested_sheet"
+        ],
+        "type": "string"
+      },
+      "name": {
+        "pattern": "^[a-z][a-z0-9_]{0,63}$",
+        "type": "string"
+      },
+      "target": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      }
+    },
+    "required": [
+      "name",
+      "format"
+    ],
+    "type": "object"
+  },
+  "result": {
+    "additionalProperties": true,
+    "properties": {
+      "export_hashes": {
+        "type": "object"
+      },
+      "paths": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "source_artifact_ref": {
+        "type": "string"
+      },
+      "source_input_hashes": {
+        "type": "object"
+      }
+    },
+    "required": [
+      "paths",
+      "source_artifact_ref"
+    ],
+    "type": "object"
+  },
+  "title": "export_part",
+  "x-hephaestus-tool": {
+    "idempotent": true,
+    "maxUtf8Fields": {},
+    "name": "export_part",
+    "profiles": [
+      "part",
+      "orchestrator",
+      "quick_edit"
+    ],
+    "sequential": true
+  }
+}

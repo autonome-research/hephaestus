@@ -1,0 +1,71 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/read_globals.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Read globals.py with paging and optimistic hashes (orchestrator only).",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "limit_lines": {
+        "default": 2000,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "offset_line": {
+        "default": 1,
+        "minimum": 1,
+        "type": "integer"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "result": {
+    "additionalProperties": true,
+    "properties": {
+      "content_hash": {
+        "type": "string"
+      },
+      "next_offset_bytes": {
+        "type": "integer"
+      },
+      "numbered_script": {
+        "type": "string"
+      },
+      "oversized_line": {
+        "type": "boolean"
+      },
+      "oversized_line_offset_bytes": {
+        "type": "integer"
+      },
+      "project_param_state_hash": {
+        "type": "string"
+      },
+      "script": {
+        "type": "string"
+      },
+      "snapshot_ref": {
+        "type": "string"
+      },
+      "truncated": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "script",
+      "content_hash",
+      "snapshot_ref",
+      "truncated"
+    ],
+    "type": "object"
+  },
+  "title": "read_globals",
+  "x-hephaestus-tool": {
+    "idempotent": false,
+    "maxUtf8Fields": {},
+    "name": "read_globals",
+    "profiles": [
+      "orchestrator"
+    ],
+    "sequential": false
+  }
+}

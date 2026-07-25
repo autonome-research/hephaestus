@@ -1,0 +1,152 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/measure.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Metric facade: interference/clearance/distance/bbox/volume/mass/sealed/genus.",
+  "parameters": {
+    "additionalProperties": false,
+    "allOf": [
+      {
+        "else": {
+          "properties": {
+            "b": {
+              "type": "null"
+            }
+          }
+        },
+        "if": {
+          "properties": {
+            "kind": {
+              "enum": [
+                "interference",
+                "clearance",
+                "distance"
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        "then": {
+          "properties": {
+            "b": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "b"
+          ]
+        }
+      },
+      {
+        "not": {
+          "required": [
+            "artifact_ref",
+            "project_snapshot_ref"
+          ]
+        }
+      }
+    ],
+    "properties": {
+      "a": {
+        "type": "string"
+      },
+      "artifact_ref": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "b": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "kind": {
+        "enum": [
+          "interference",
+          "clearance",
+          "distance",
+          "bbox",
+          "volume",
+          "mass",
+          "sealed",
+          "genus"
+        ],
+        "type": "string"
+      },
+      "part": {
+        "anyOf": [
+          {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "project_snapshot_ref": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      }
+    },
+    "required": [
+      "kind",
+      "a"
+    ],
+    "type": "object"
+  },
+  "result": {
+    "additionalProperties": true,
+    "properties": {
+      "detail": {},
+      "resolved_artifact_refs": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "units": {
+        "type": "string"
+      },
+      "value": {}
+    },
+    "required": [
+      "value",
+      "units"
+    ],
+    "type": "object"
+  },
+  "title": "measure",
+  "x-hephaestus-tool": {
+    "idempotent": false,
+    "maxUtf8Fields": {},
+    "name": "measure",
+    "profiles": [
+      "part",
+      "orchestrator",
+      "quick_edit"
+    ],
+    "sequential": false
+  }
+}

@@ -1,0 +1,6 @@
+{"hv":1,"id":1,"jsonrpc":"2.0","method":"echo","params":{"a":2,"m":[3,2,1],"z":1}}
+{"hv":1,"id":2,"jsonrpc":"2.0","result":{"count":0,"nothing":null,"ok":true}}
+{"error":{"code":-32601,"message":"method not found: bogus"},"hv":1,"id":3,"jsonrpc":"2.0"}
+{"hv":1,"jsonrpc":"2.0","method":"event","params":{"kind":"text_delta","run_id":"r-7","seq":12,"text":"café ☕ 日本語 — mixed BMP"}}
+{"hv":1,"id":"str-id","jsonrpc":"2.0","method":"py.tool_dispatch","params":{"arguments":{"a":"part","kind":"bbox","nested":{"deep":{"deeper":[true,false,null]}}},"tool":"measure"}}
+{"hv":1,"jsonrpc":"2.0","method":"terminal","params":{"payload":{"arr":[],"unicode_keys_中":1},"run_id":"r-9","state":"completed","terminal_id":"t-1"}}

@@ -1,0 +1,63 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/search_materials.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Search the materials registry (density, forms, thicknesses, notes).",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "query": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "query"
+    ],
+    "type": "object"
+  },
+  "result": {
+    "items": {
+      "additionalProperties": true,
+      "properties": {
+        "density": {
+          "type": "number"
+        },
+        "forms": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "thicknesses": {
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "type": "array"
+  },
+  "title": "search_materials",
+  "x-hephaestus-tool": {
+    "idempotent": false,
+    "maxUtf8Fields": {},
+    "name": "search_materials",
+    "profiles": [
+      "part",
+      "orchestrator",
+      "quick_edit"
+    ],
+    "sequential": false
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/load_skill.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Load a bounded skill page inside provenance delimiters (reference only).",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "limit_lines": {
+        "default": 2000,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "name": {
+        "type": "string"
+      },
+      "offset_line": {
+        "default": 1,
+        "minimum": 1,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "type": "object"
+  },
+  "result": {
+    "additionalProperties": true,
+    "properties": {
+      "artifact_ref": {
+        "type": "string"
+      },
+      "content": {
+        "type": "string"
+      },
+      "next_offset_bytes": {
+        "type": "integer"
+      },
+      "oversized_line": {
+        "type": "boolean"
+      },
+      "oversized_line_offset_bytes": {
+        "type": "integer"
+      },
+      "truncated": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "content",
+      "artifact_ref",
+      "truncated"
+    ],
+    "type": "object"
+  },
+  "title": "load_skill",
+  "x-hephaestus-tool": {
+    "idempotent": false,
+    "maxUtf8Fields": {},
+    "name": "load_skill",
+    "profiles": [
+      "part",
+      "orchestrator",
+      "quick_edit"
+    ],
+    "sequential": false
+  }
+}

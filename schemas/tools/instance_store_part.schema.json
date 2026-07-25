@@ -1,0 +1,56 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/instance_store_part.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Instance a store generator, returning a placed script fragment.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "type": "string"
+      },
+      "params": {
+        "type": "object"
+      },
+      "pos": {
+        "anyOf": [
+          {
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      }
+    },
+    "required": [
+      "id",
+      "params"
+    ],
+    "type": "object"
+  },
+  "result": {
+    "additionalProperties": true,
+    "properties": {
+      "script_fragment": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "script_fragment"
+    ],
+    "type": "object"
+  },
+  "title": "instance_store_part",
+  "x-hephaestus-tool": {
+    "idempotent": false,
+    "maxUtf8Fields": {},
+    "name": "instance_store_part",
+    "profiles": [
+      "part",
+      "orchestrator",
+      "quick_edit"
+    ],
+    "sequential": false
+  }
+}

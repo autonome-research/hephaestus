@@ -1,0 +1,71 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/create_part.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Create parts/<name>.py from a template; fails without mutation if it exists.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "description": {
+        "default": "",
+        "type": "string"
+      },
+      "name": {
+        "pattern": "^[a-z][a-z0-9_]{0,63}$",
+        "type": "string"
+      },
+      "template": {
+        "default": "blank",
+        "enum": [
+          "blank",
+          "sheet",
+          "solid",
+          "from_store"
+        ],
+        "type": "string"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "type": "object"
+  },
+  "result": {
+    "additionalProperties": true,
+    "properties": {
+      "content_hash": {
+        "type": "string"
+      },
+      "initial_script": {
+        "type": "string"
+      },
+      "part_param_state_hash": {
+        "type": "string"
+      },
+      "path": {
+        "type": "string"
+      },
+      "project_param_state_hash": {
+        "type": "string"
+      },
+      "snapshot_ref": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "path",
+      "content_hash",
+      "snapshot_ref"
+    ],
+    "type": "object"
+  },
+  "title": "create_part",
+  "x-hephaestus-tool": {
+    "idempotent": true,
+    "maxUtf8Fields": {},
+    "name": "create_part",
+    "profiles": [
+      "orchestrator"
+    ],
+    "sequential": true
+  }
+}

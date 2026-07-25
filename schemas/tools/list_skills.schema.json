@@ -1,0 +1,46 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/list_skills.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "List available skills with summaries and token estimates.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {},
+    "required": [],
+    "type": "object"
+  },
+  "result": {
+    "items": {
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "tokens": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "summary",
+        "tokens"
+      ],
+      "type": "object"
+    },
+    "type": "array"
+  },
+  "title": "list_skills",
+  "x-hephaestus-tool": {
+    "idempotent": false,
+    "maxUtf8Fields": {},
+    "name": "list_skills",
+    "profiles": [
+      "part",
+      "orchestrator",
+      "quick_edit"
+    ],
+    "sequential": false
+  }
+}

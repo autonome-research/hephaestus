@@ -1,0 +1,54 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/ask_user.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Structured question; suspends the loop until answered.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "allow_free_text": {
+        "default": true,
+        "type": "boolean"
+      },
+      "multi": {
+        "default": false,
+        "type": "boolean"
+      },
+      "options": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "question": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "question",
+      "options"
+    ],
+    "type": "object"
+  },
+  "result": {
+    "additionalProperties": true,
+    "properties": {
+      "selection": {}
+    },
+    "required": [
+      "selection"
+    ],
+    "type": "object"
+  },
+  "title": "ask_user",
+  "x-hephaestus-tool": {
+    "idempotent": false,
+    "maxUtf8Fields": {},
+    "name": "ask_user",
+    "profiles": [
+      "part",
+      "orchestrator",
+      "quick_edit"
+    ],
+    "sequential": true
+  }
+}

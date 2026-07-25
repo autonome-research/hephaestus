@@ -1,0 +1,96 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/write_part.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Whole-file replacement with the same optimistic-CAS/journal contract.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "expected_hash": {
+        "type": "string"
+      },
+      "name": {
+        "pattern": "^[a-z][a-z0-9_]{0,63}$",
+        "type": "string"
+      },
+      "script": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "expected_hash",
+      "script"
+    ],
+    "type": "object"
+  },
+  "result": {
+    "additionalProperties": true,
+    "properties": {
+      "applied": {
+        "type": "boolean"
+      },
+      "conflict": {
+        "additionalProperties": true,
+        "properties": {
+          "attempted_snapshot_ref": {
+            "type": "string"
+          },
+          "base_snapshot_ref": {
+            "type": "string"
+          },
+          "current_hash": {
+            "type": "string"
+          },
+          "current_next_offset_bytes": {
+            "type": "integer"
+          },
+          "current_oversized_line": {
+            "type": "boolean"
+          },
+          "current_oversized_line_offset_bytes": {
+            "type": "integer"
+          },
+          "current_script": {
+            "type": "string"
+          },
+          "current_snapshot_ref": {
+            "type": "string"
+          },
+          "current_truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "content_hash": {
+        "type": "string"
+      },
+      "diff": {
+        "type": "string"
+      },
+      "journal_ref": {
+        "type": "string"
+      },
+      "snapshot_ref": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "applied"
+    ],
+    "type": "object"
+  },
+  "title": "write_part",
+  "x-hephaestus-tool": {
+    "idempotent": true,
+    "maxUtf8Fields": {},
+    "name": "write_part",
+    "profiles": [
+      "part",
+      "orchestrator",
+      "quick_edit"
+    ],
+    "sequential": true
+  }
+}

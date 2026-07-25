@@ -1,0 +1,84 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/cancel_delegation.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Idempotently cancel a queued/running delegation (orchestrator).",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "delegation_ref": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "delegation_ref"
+    ],
+    "type": "object"
+  },
+  "result": {
+    "oneOf": [
+      {
+        "additionalProperties": true,
+        "properties": {
+          "child_run_id": {
+            "type": "string"
+          },
+          "delegation_ref": {
+            "type": "string"
+          },
+          "part_session_id": {
+            "type": "string"
+          },
+          "status": {
+            "const": "cancelled"
+          }
+        },
+        "required": [
+          "status",
+          "delegation_ref"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": true,
+        "properties": {
+          "child_run_id": {
+            "type": "string"
+          },
+          "delegation_ref": {
+            "type": "string"
+          },
+          "error": {},
+          "part_session_id": {
+            "type": "string"
+          },
+          "result_artifact_ref": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "completed",
+              "failed",
+              "timed_out",
+              "interrupted"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "delegation_ref"
+        ],
+        "type": "object"
+      }
+    ]
+  },
+  "title": "cancel_delegation",
+  "x-hephaestus-tool": {
+    "idempotent": true,
+    "maxUtf8Fields": {},
+    "name": "cancel_delegation",
+    "profiles": [
+      "orchestrator"
+    ],
+    "sequential": true
+  }
+}

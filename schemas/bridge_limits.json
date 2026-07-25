@@ -1,0 +1,51 @@
+{
+  "_about": "Single source of truth for every architecture §5 numeric limit of the Stage 2 agent bridge. Loaded verbatim by server/hephaestus/agent_bridge/limits.py and agent/src/limits.ts; NO limit literal may be duplicated in code on either side. Byte counts are exact; *_mib comments name the human unit only.",
+  "version": 1,
+  "wire": {
+    "frame_version": 1,
+    "max_frame_bytes": 67108864
+  },
+  "json": {
+    "max_depth": 64,
+    "max_members": 10000,
+    "max_array_items": 10000,
+    "max_string_bytes": 16777216
+  },
+  "binary": {
+    "max_binary_bytes": 33554432
+  },
+  "image": {
+    "max_image_bytes": 8388608,
+    "max_width": 4096,
+    "max_height": 4096,
+    "max_total_pixels": 33554432,
+    "max_images_per_result": 4
+  },
+  "rpc": {
+    "max_pending": 64
+  },
+  "admission": {
+    "run_slots": 16,
+    "queued_prompts": 32
+  },
+  "events": {
+    "buffered_events": 1024
+  },
+  "timeouts": {
+    "tool_seconds": 120,
+    "cad_build_seconds": 300,
+    "delegation": {
+      "deadline_default_seconds": 600,
+      "deadline_min_seconds": 1,
+      "deadline_max_seconds": 1200,
+      "grace_seconds": 60
+    }
+  },
+  "prompt": {
+    "max_utf8_bytes": 32768
+  },
+  "text_result": {
+    "max_bytes": 51200,
+    "max_lines": 2000
+  }
+}

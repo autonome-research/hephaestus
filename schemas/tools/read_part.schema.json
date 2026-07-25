@@ -1,0 +1,88 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/read_part.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Read a part script (raw + numbered chunks) with optimistic hashes.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "limit_lines": {
+        "default": 2000,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "name": {
+        "pattern": "^[a-z][a-z0-9_]{0,63}$",
+        "type": "string"
+      },
+      "offset_line": {
+        "default": 1,
+        "minimum": 1,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "type": "object"
+  },
+  "result": {
+    "additionalProperties": true,
+    "properties": {
+      "content_hash": {
+        "type": "string"
+      },
+      "line_count": {
+        "type": "integer"
+      },
+      "next_offset_bytes": {
+        "type": "integer"
+      },
+      "numbered_script": {
+        "type": "string"
+      },
+      "oversized_line": {
+        "type": "boolean"
+      },
+      "oversized_line_offset_bytes": {
+        "type": "integer"
+      },
+      "params": {
+        "type": "object"
+      },
+      "part_param_state_hash": {
+        "type": "string"
+      },
+      "project_param_state_hash": {
+        "type": "string"
+      },
+      "script": {
+        "type": "string"
+      },
+      "snapshot_ref": {
+        "type": "string"
+      },
+      "truncated": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "script",
+      "content_hash",
+      "snapshot_ref",
+      "truncated"
+    ],
+    "type": "object"
+  },
+  "title": "read_part",
+  "x-hephaestus-tool": {
+    "idempotent": false,
+    "maxUtf8Fields": {},
+    "name": "read_part",
+    "profiles": [
+      "part",
+      "orchestrator",
+      "quick_edit"
+    ],
+    "sequential": false
+  }
+}

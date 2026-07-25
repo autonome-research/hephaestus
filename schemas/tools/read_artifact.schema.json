@@ -1,0 +1,93 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/read_artifact.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Byte-cursor paging over model-readable text/JSON artifacts.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "max_bytes": {
+        "default": 49152,
+        "maximum": 49152,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "offset_bytes": {
+        "default": 0,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "ref": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "ref"
+    ],
+    "type": "object"
+  },
+  "result": {
+    "oneOf": [
+      {
+        "additionalProperties": true,
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "next_offset_bytes": {
+            "type": "integer"
+          },
+          "offset_bytes": {
+            "type": "integer"
+          },
+          "total_bytes": {
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "content",
+          "mime_type",
+          "offset_bytes",
+          "total_bytes",
+          "truncated"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": true,
+        "properties": {
+          "error": {
+            "const": "invalid_utf8_offset"
+          },
+          "offset_bytes": {
+            "type": "integer"
+          },
+          "total_bytes": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      }
+    ]
+  },
+  "title": "read_artifact",
+  "x-hephaestus-tool": {
+    "idempotent": false,
+    "maxUtf8Fields": {},
+    "name": "read_artifact",
+    "profiles": [
+      "part",
+      "orchestrator",
+      "quick_edit"
+    ],
+    "sequential": false
+  }
+}

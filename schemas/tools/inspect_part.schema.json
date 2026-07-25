@@ -1,0 +1,244 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/inspect_part.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Render current/immutable geometry to inline images + artifact refs.",
+  "parameters": {
+    "additionalProperties": false,
+    "allOf": [
+      {
+        "else": {
+          "properties": {
+            "section_plane": {
+              "type": "null"
+            }
+          }
+        },
+        "if": {
+          "properties": {
+            "channel": {
+              "const": "section"
+            }
+          },
+          "required": [
+            "channel"
+          ]
+        },
+        "then": {
+          "properties": {
+            "section_plane": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "section_plane"
+          ]
+        }
+      },
+      {
+        "if": {
+          "not": {
+            "properties": {
+              "channel": {
+                "const": "mask"
+              }
+            },
+            "required": [
+              "channel"
+            ]
+          }
+        },
+        "then": {
+          "properties": {
+            "mask_mode": {
+              "const": "solid"
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "last_good": {
+              "const": true
+            }
+          },
+          "required": [
+            "last_good"
+          ]
+        },
+        "then": {
+          "properties": {
+            "artifact_ref": {
+              "type": "null"
+            }
+          }
+        }
+      }
+    ],
+    "properties": {
+      "artifact_ref": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "channel": {
+        "default": "rgb",
+        "enum": [
+          "rgb",
+          "mask",
+          "section"
+        ],
+        "type": "string"
+      },
+      "explode": {
+        "default": 0.0,
+        "type": "number"
+      },
+      "focus": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "last_good": {
+        "default": false,
+        "type": "boolean"
+      },
+      "mask_mode": {
+        "default": "solid",
+        "enum": [
+          "solid",
+          "selection"
+        ],
+        "type": "string"
+      },
+      "name": {
+        "pattern": "^[a-z][a-z0-9_]{0,63}$",
+        "type": "string"
+      },
+      "section_plane": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "views": {
+        "default": [
+          "iso",
+          "+X"
+        ],
+        "items": {
+          "type": "string"
+        },
+        "maxItems": 4,
+        "minItems": 1,
+        "type": "array"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "type": "object"
+  },
+  "result": {
+    "oneOf": [
+      {
+        "additionalProperties": true,
+        "properties": {
+          "images": {
+            "type": "array"
+          },
+          "mask_legend": {
+            "type": "string"
+          },
+          "mask_legend_ref": {
+            "type": "string"
+          },
+          "mask_legend_truncated": {
+            "type": "boolean"
+          },
+          "render_artifact_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "selection_bundles": {
+            "type": "array"
+          },
+          "selection_table_ref": {
+            "type": "string"
+          },
+          "source_artifact_ref": {
+            "type": "string"
+          },
+          "status": {
+            "const": "ok"
+          }
+        },
+        "required": [
+          "status",
+          "source_artifact_ref",
+          "render_artifact_refs"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": true,
+        "properties": {
+          "code": {
+            "const": "image_model_required"
+          },
+          "message": {
+            "type": "string"
+          },
+          "render_artifact_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "source_artifact_ref": {
+            "type": "string"
+          },
+          "status": {
+            "const": "capability_error"
+          }
+        },
+        "required": [
+          "status",
+          "code"
+        ],
+        "type": "object"
+      }
+    ]
+  },
+  "title": "inspect_part",
+  "x-hephaestus-tool": {
+    "idempotent": false,
+    "maxUtf8Fields": {},
+    "name": "inspect_part",
+    "profiles": [
+      "part",
+      "orchestrator",
+      "quick_edit"
+    ],
+    "sequential": false
+  }
+}

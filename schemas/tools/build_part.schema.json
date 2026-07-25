@@ -1,0 +1,61 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/build_part.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Run the incremental executor against an immutable snapshot; re-run CHECKS.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "pattern": "^[a-z][a-z0-9_]{0,63}$",
+        "type": "string"
+      },
+      "params": {
+        "default": {},
+        "type": "object"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "type": "object"
+  },
+  "result": {
+    "additionalProperties": true,
+    "properties": {
+      "artifact_ref": {
+        "type": "string"
+      },
+      "current": {
+        "type": "boolean"
+      },
+      "effective_params": {
+        "type": "object"
+      },
+      "project_snapshot_ref": {
+        "type": "string"
+      },
+      "status": {
+        "type": "string"
+      },
+      "toolchain_hashes": {
+        "type": "object"
+      }
+    },
+    "required": [
+      "status"
+    ],
+    "type": "object"
+  },
+  "title": "build_part",
+  "x-hephaestus-tool": {
+    "idempotent": true,
+    "maxUtf8Fields": {},
+    "name": "build_part",
+    "profiles": [
+      "part",
+      "orchestrator",
+      "quick_edit"
+    ],
+    "sequential": true
+  }
+}

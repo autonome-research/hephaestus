@@ -1,0 +1,59 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/search_parts_store.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Search parametric hardware generators in the pinned parts store.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "max_results": {
+        "default": 5,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "query": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "query"
+    ],
+    "type": "object"
+  },
+  "result": {
+    "items": {
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "type": "object"
+        },
+        "preview": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "type": "array"
+  },
+  "title": "search_parts_store",
+  "x-hephaestus-tool": {
+    "idempotent": false,
+    "maxUtf8Fields": {},
+    "name": "search_parts_store",
+    "profiles": [
+      "part",
+      "orchestrator",
+      "quick_edit"
+    ],
+    "sequential": false
+  }
+}

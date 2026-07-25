@@ -1,0 +1,138 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/run_checks.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Re-run persistent CHECKS (part) or cross-part checks (project).",
+  "parameters": {
+    "additionalProperties": false,
+    "allOf": [
+      {
+        "if": {
+          "not": {
+            "properties": {
+              "scope": {
+                "const": "project"
+              }
+            },
+            "required": [
+              "scope"
+            ]
+          }
+        },
+        "then": {
+          "properties": {
+            "name": {
+              "pattern": "^[a-z][a-z0-9_]{0,63}$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ]
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "scope": {
+              "const": "project"
+            }
+          },
+          "required": [
+            "scope"
+          ]
+        },
+        "then": {
+          "properties": {
+            "name": {
+              "type": "null"
+            }
+          }
+        }
+      }
+    ],
+    "properties": {
+      "name": {
+        "anyOf": [
+          {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "project_snapshot_ref": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "scope": {
+        "default": "part",
+        "enum": [
+          "part",
+          "project"
+        ],
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "result": {
+    "oneOf": [
+      {
+        "additionalProperties": true,
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": true,
+        "properties": {
+          "check_set_generation": {
+            "type": "string"
+          },
+          "check_set_ref": {
+            "type": "string"
+          },
+          "diagnostics_ref": {
+            "type": "string"
+          },
+          "status": {
+            "const": "invalid_check_generation"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      }
+    ]
+  },
+  "title": "run_checks",
+  "x-hephaestus-tool": {
+    "idempotent": false,
+    "maxUtf8Fields": {},
+    "name": "run_checks",
+    "profiles": [
+      "part",
+      "orchestrator",
+      "quick_edit"
+    ],
+    "sequential": false
+  }
+}

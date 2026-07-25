@@ -127,8 +127,13 @@ class TestCrossClientExclusion:
         finally:
             holder.release_all()
 
-    def test_release_hands_the_lock_to_the_contender(self, store: OpStore) -> None:
-        holder = LockManager(store, owner=_owner(1))
+    def test_release_hands_the_lock_to_the_contender(
+        self, layout: ProjectLayout, store: OpStore
+    ) -> None:
+        # One OpStore handle wraps one SQLite connection and is not thread-safe;
+        # the releasing thread must use its own handle on the shared store root.
+        holder_store = open_store(layout)
+        holder = LockManager(holder_store, owner=_owner(1))
         contender = LockManager(store, owner=_owner(2), timeout_s=5.0)
         holder.acquire(part_lock("widget"))
         release_timer = threading.Timer(0.05, holder.release_all)
@@ -139,6 +144,7 @@ class TestCrossClientExclusion:
         finally:
             release_timer.cancel()
             contender.release_all()
+            holder_store.close()
 
 
 class TestNoInversionRace:

@@ -1,0 +1,156 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/set_params.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Persist bounds-validated parameter overrides (part or project scope).",
+  "parameters": {
+    "additionalProperties": false,
+    "allOf": [
+      {
+        "if": {
+          "not": {
+            "properties": {
+              "scope": {
+                "const": "project"
+              }
+            },
+            "required": [
+              "scope"
+            ]
+          }
+        },
+        "then": {
+          "properties": {
+            "name": {
+              "pattern": "^[a-z][a-z0-9_]{0,63}$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ]
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "scope": {
+              "const": "project"
+            }
+          },
+          "required": [
+            "scope"
+          ]
+        },
+        "then": {
+          "properties": {
+            "name": {
+              "type": "null"
+            }
+          }
+        }
+      }
+    ],
+    "properties": {
+      "expected_state_hash": {
+        "type": "string"
+      },
+      "name": {
+        "anyOf": [
+          {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "scope": {
+        "default": "part",
+        "enum": [
+          "part",
+          "project"
+        ],
+        "type": "string"
+      },
+      "values": {
+        "additionalProperties": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": "object"
+      }
+    },
+    "required": [
+      "values",
+      "expected_state_hash"
+    ],
+    "type": "object"
+  },
+  "result": {
+    "additionalProperties": true,
+    "properties": {
+      "conflict": {
+        "additionalProperties": true,
+        "properties": {
+          "attempted_snapshot_ref": {
+            "type": "string"
+          },
+          "base_snapshot_ref": {
+            "type": "string"
+          },
+          "current_state_hash": {
+            "type": "string"
+          },
+          "current_values": {
+            "type": "object"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "effective": {
+        "type": "object"
+      },
+      "journal_ref": {
+        "type": "string"
+      },
+      "rejected": {
+        "type": "array"
+      },
+      "stale_parts": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "state_hash": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "effective",
+      "rejected"
+    ],
+    "type": "object"
+  },
+  "title": "set_params",
+  "x-hephaestus-tool": {
+    "idempotent": true,
+    "maxUtf8Fields": {},
+    "name": "set_params",
+    "profiles": [
+      "part",
+      "orchestrator",
+      "quick_edit"
+    ],
+    "sequential": true
+  }
+}

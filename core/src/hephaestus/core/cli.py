@@ -483,6 +483,15 @@ def build_parser() -> argparse.ArgumentParser:
     from hephaestus.core import cli_render
 
     cli_render.add_subparsers(sub)
+
+    # Stage 2 agent verb (heph agent) ships with the server package; the engine
+    # CLI stays Node-free and fully functional when it is not installed.
+    try:
+        from hephaestus.agent_bridge import cli as agent_cli
+    except ImportError:
+        pass
+    else:
+        agent_cli.add_subparsers(sub)
     return parser
 
 

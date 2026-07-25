@@ -1,0 +1,552 @@
+"""Sidecar supervisor: spawn + framed JSON-RPC + watchdog + orphan-free restart.
+
+The supervisor owns the private bridge to the packaged Node sidecar
+(``node agent/dist/main.js``). It is the *client* for the frozen ``session.*``/
+``history.*``/``query.*`` request methods and the *server* for the ``py.*``
+requests the sidecar originates; ``event``/``terminal`` notifications from the
+sidecar are handed to an injected sink (the :mod:`events` pump).
+
+Design points (architecture §5, digest §6):
+
+* **Minimal environment.** :func:`build_minimal_env` forwards only
+  ``PATH``/``HOME``/``LANG``/``TMPDIR`` plus credential variables named in an
+  explicit allowlist. Ambient provider keys (``ANTHROPIC_API_KEY`` …) are never
+  forwarded unless allowlisted (mission rule 7).
+* **Framing.** Uses :mod:`framing` (LF-delimited, incremental 64 MiB cap) and
+  :mod:`protocol` (``hv`` negotiation, frozen method sets, error codes). A
+  ``FrameTooLargeError`` on the sidecar's stdout fails the bridge closed.
+* **Correlation + timeouts.** Each outbound request gets a monotonic id and a
+  per-call deadline; the default is the ``tool_seconds`` bridge limit and the
+  ``cad_build`` class the ``cad_build_seconds`` limit.
+* **Watchdog.** A background thread kills the *whole* sidecar once a pending
+  call passes its deadline by ``watchdog_grace_s`` (unresponsive process), then
+  hands the set of tracked run ids to the injected recovery hook **before** any
+  terminal synthesis, and restarts.
+* **Orphan-free.** On Linux the child gets ``PR_SET_PDEATHSIG=SIGKILL`` so it
+  dies with the supervisor; an ``atexit`` hook and ``close()`` also kill it. No
+  sidecar survives the supervisor.
+"""
+
+from __future__ import annotations
+
+import atexit
+import contextlib
+import ctypes
+import json
+import os
+import signal
+import subprocess
+import sys
+import threading
+import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from io import BufferedReader
+from typing import Any, cast
+
+from .framing import FrameDecoder, FrameTooLargeError, encode_frame
+from .limits import LIMITS
+from .protocol import (
+    ErrorCode,
+    ProtocolError,
+    make_error,
+    make_notification,
+    make_request,
+    make_response,
+    validate_frame,
+)
+
+__all__ = [
+    "BASE_ENV_VARS",
+    "ProcessLossEvent",
+    "PyRequestHandler",
+    "Supervisor",
+    "SupervisorConfig",
+    "SupervisorError",
+    "build_minimal_env",
+]
+
+#: The non-credential environment variables the sidecar is always given.
+BASE_ENV_VARS: tuple[str, ...] = ("PATH", "HOME", "LANG", "TMPDIR")
+
+_TOOL_SECONDS: float = float(LIMITS["timeouts"]["tool_seconds"])
+_CAD_BUILD_SECONDS: float = float(LIMITS["timeouts"]["cad_build_seconds"])
+
+# Linux prctl option to receive a signal when the parent thread dies.
+_PR_SET_PDEATHSIG = 1
+
+#: Sync handler for a ``py.*`` request: ``(method, params) -> result``.
+#: Raising :class:`ProtocolError` maps to its code; any other exception maps to
+#: ``INTERNAL_ERROR``.
+PyRequestHandler = Callable[[str, dict[str, Any]], Any]
+
+#: Sink for a sidecar-originated notification (``event``/``terminal``):
+#: ``(method, params) -> None``.
+NotificationSink = Callable[[str, dict[str, Any]], None]
+
+
+class SupervisorError(Exception):
+    """A supervisor-layer failure (spawn, or a call against a dead sidecar)."""
+
+
+def build_minimal_env(
+    allowlist: frozenset[str] | set[str] | tuple[str, ...] = (),
+    *,
+    source: dict[str, str] | None = None,
+    extra: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Construct the sidecar's minimal environment.
+
+    Includes each present :data:`BASE_ENV_VARS` variable plus each *allowlisted*
+    credential variable that exists in ``source`` (default ``os.environ``).
+    Nothing else — an ambient provider key not in ``allowlist`` is dropped.
+
+    ``extra`` carries **app-owned, non-secret** settings the supervisor itself
+    computes (currently only ``HEPHAESTUS_AGENT_DIR``); it is applied last and
+    never read from the ambient environment, so it cannot smuggle a credential.
+    """
+    src = os.environ if source is None else source
+    env: dict[str, str] = {}
+    for name in BASE_ENV_VARS:
+        value = src.get(name)
+        if value is not None:
+            env[name] = value
+    for name in allowlist:
+        value = src.get(name)
+        if value is not None:
+            env[name] = value
+    env.update(extra or {})
+    return env
+
+
+def _pdeathsig_preexec() -> None:  # pragma: no cover - exercised in a subprocess
+    """Ask the kernel to SIGKILL this child when the parent dies (Linux only)."""
+    if sys.platform != "linux":
+        return
+    try:
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        libc.prctl(_PR_SET_PDEATHSIG, signal.SIGKILL)
+    except OSError:
+        pass
+
+
+@dataclass(frozen=True)
+class SupervisorConfig:
+    """Static configuration for one supervised sidecar."""
+
+    argv: list[str]
+    credential_allowlist: frozenset[str] = frozenset()
+    default_timeout_s: float = _TOOL_SECONDS
+    cad_build_timeout_s: float = _CAD_BUILD_SECONDS
+    watchdog_interval_s: float = 0.1
+    watchdog_grace_s: float = 5.0
+    env_source: dict[str, str] | None = None
+    #: App-owned non-secret settings injected verbatim (e.g. HEPHAESTUS_AGENT_DIR).
+    extra_env: dict[str, str] | None = None
+    #: Working directory for the sidecar process (default: the supervisor's).
+    cwd: str | None = None
+
+
+@dataclass
+class ProcessLossEvent:
+    """Handed to the recovery hook when the sidecar is lost, before synthesis."""
+
+    reason: str  # "watchdog" | "crash"
+    returncode: int | None
+    tracked_run_ids: frozenset[str]
+    restart_generation: int
+
+
+@dataclass
+class _Call:
+    """One in-flight outbound request."""
+
+    id: int
+    method: str
+    deadline: float
+    done: threading.Event = field(default_factory=threading.Event)
+    result: Any | None = None
+    error: dict[str, Any] | None = None
+
+    def complete_ok(self, result: Any) -> None:
+        if not self.done.is_set():
+            self.result = result
+            self.done.set()
+
+    def complete_err(self, error: dict[str, Any]) -> None:
+        if not self.done.is_set():
+            self.error = error
+            self.done.set()
+
+
+class Supervisor:
+    """Supervises one sidecar process over the private framed JSON-RPC bridge."""
+
+    def __init__(
+        self,
+        config: SupervisorConfig,
+        *,
+        py_handler: PyRequestHandler | None = None,
+        notification_sink: NotificationSink | None = None,
+        recovery_hook: Callable[[ProcessLossEvent], None] | None = None,
+    ) -> None:
+        self.config = config
+        self._py_handler = py_handler
+        self._sink = notification_sink
+        self._recovery_hook = recovery_hook
+
+        self.proc: subprocess.Popen[bytes] | None = None
+        self._next_id = 0
+        self._pending: dict[int, _Call] = {}
+        self._tracked_runs: set[str] = set()
+        self._plock = threading.RLock()
+        self._wlock = threading.Lock()
+        self._reader: threading.Thread | None = None
+        self._watchdog: threading.Thread | None = None
+        self._closing = threading.Event()
+        self._restart_generation = 0
+        self.last_exit: int | None = None
+        self.frame_errors: list[str] = []
+
+        self._atexit = self._kill_now
+        atexit.register(self._atexit)
+
+    # -- lifecycle ---------------------------------------------------------
+
+    def start(self) -> None:
+        """Spawn the sidecar and start the reader + watchdog threads."""
+        with self._plock:
+            if self.proc is not None and self.proc.poll() is None:
+                raise SupervisorError("sidecar already running")
+            env = build_minimal_env(
+                self.config.credential_allowlist,
+                source=self.config.env_source,
+                extra=self.config.extra_env,
+            )
+            try:
+                self.proc = subprocess.Popen(
+                    self.config.argv,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=env,
+                    cwd=self.config.cwd,
+                    preexec_fn=_pdeathsig_preexec if sys.platform == "linux" else None,
+                )
+            except OSError as exc:
+                raise SupervisorError(f"failed to spawn sidecar: {exc}") from exc
+            proc = self.proc
+            self._reader = threading.Thread(target=self._read_loop, args=(proc,), daemon=True)
+            self._reader.start()
+            threading.Thread(target=self._drain_stderr, args=(proc,), daemon=True).start()
+            if self._watchdog is None or not self._watchdog.is_alive():
+                self._watchdog = threading.Thread(target=self._watchdog_loop, daemon=True)
+                self._watchdog.start()
+
+    def restart(self, *, reason: str = "manual") -> None:
+        """Kill the whole sidecar, fire recovery, and respawn.
+
+        The recovery hook is invoked with the tracked run ids **before** any
+        pending call is failed (so coordinators own recoverable runs before a
+        terminal is synthesized for them).
+        """
+        with self._plock:
+            proc = self.proc
+            tracked = frozenset(self._tracked_runs)
+            self._restart_generation += 1
+            generation = self._restart_generation
+        returncode: int | None = None
+        if proc is not None:
+            if proc.poll() is None:
+                proc.kill()
+            returncode = proc.wait()
+        self.last_exit = returncode
+        self._fire_recovery(
+            ProcessLossEvent(
+                reason=reason,
+                returncode=returncode,
+                tracked_run_ids=tracked,
+                restart_generation=generation,
+            )
+        )
+        self._fail_all_pending(
+            make_error(None, ErrorCode.PROCESS_DOWN, "sidecar restarted")["error"]
+        )
+        if self._reader is not None:
+            self._reader.join(timeout=5)
+        if not self._closing.is_set():
+            self.start()
+
+    def close(self, *, timeout: float = 5.0) -> int | None:
+        """Graceful shutdown: close stdin, escalate, reap, leave no orphan."""
+        self._closing.set()
+        proc = self.proc
+        if proc is None:
+            self._safe_unregister_atexit()
+            return None
+        try:
+            if proc.stdin is not None:
+                proc.stdin.close()
+        except OSError:
+            pass
+        try:
+            rc = proc.wait(timeout)
+        except subprocess.TimeoutExpired:
+            proc.terminate()
+            try:
+                rc = proc.wait(2)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                rc = proc.wait()
+        self.last_exit = rc
+        self._fail_all_pending(
+            make_error(None, ErrorCode.PROCESS_DOWN, "sidecar shut down")["error"]
+        )
+        if self._reader is not None:
+            self._reader.join(timeout=5)
+        self._safe_unregister_atexit()
+        return rc
+
+    def _kill_now(self) -> None:  # pragma: no cover - atexit path
+        proc = self.proc
+        if proc is not None and proc.poll() is None:
+            with contextlib.suppress(OSError):
+                proc.kill()
+
+    def _safe_unregister_atexit(self) -> None:
+        # unregister must never raise, whatever atexit's internal state.
+        with contextlib.suppress(Exception):
+            atexit.unregister(self._atexit)
+
+    def __enter__(self) -> Supervisor:
+        self.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    # -- run tracking (for recovery handoff) -------------------------------
+
+    def track_run(self, run_id: str) -> None:
+        """Register a run id so a process-loss recovery hook receives it."""
+        with self._plock:
+            self._tracked_runs.add(run_id)
+
+    def untrack_run(self, run_id: str) -> None:
+        """Drop a run id once its terminal is durably recorded/acked."""
+        with self._plock:
+            self._tracked_runs.discard(run_id)
+
+    @property
+    def child_pid(self) -> int:
+        if self.proc is None:
+            raise SupervisorError("no sidecar process")
+        return self.proc.pid
+
+    def is_running(self) -> bool:
+        return self.proc is not None and self.proc.poll() is None
+
+    # -- outbound requests -------------------------------------------------
+
+    def call(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        timeout: float | None = None,
+    ) -> Any:
+        """Send a request and block for the response; structured on failure.
+
+        Returns the ``result`` on success; raises :class:`SupervisorError`
+        carrying the JSON-RPC error envelope on timeout / error / process loss.
+        """
+        deadline_s = timeout if timeout is not None else self.config.default_timeout_s
+        with self._plock:
+            proc = self.proc
+            if proc is None or proc.poll() is not None:
+                raise SupervisorError("sidecar is not running")
+            self._next_id += 1
+            call = _Call(
+                id=self._next_id,
+                method=method,
+                deadline=time.monotonic() + deadline_s,
+            )
+            self._pending[call.id] = call
+        frame = make_request(call.id, method, params or {})
+        try:
+            self._write_frame(frame)
+        except (FrameTooLargeError, BrokenPipeError, OSError) as exc:
+            with self._plock:
+                self._pending.pop(call.id, None)
+            raise SupervisorError(f"failed to send {method}: {exc}") from exc
+        call.done.wait()
+        if call.error is not None:
+            raise SupervisorError(f"{method} failed: {call.error}")
+        return call.result
+
+    def notify(self, method: str, params: dict[str, Any] | None = None) -> None:
+        """Fire-and-forget notification to the sidecar (``cancel``, acks, …)."""
+        if not self.is_running():
+            return
+        with contextlib.suppress(FrameTooLargeError, BrokenPipeError, OSError):
+            self._write_frame(make_notification(method, params or {}))
+
+    def _write_frame(self, frame: dict[str, Any]) -> None:
+        payload = encode_frame(frame)
+        with self._wlock:
+            proc = self.proc
+            if proc is None or proc.stdin is None:
+                raise BrokenPipeError("sidecar stdin unavailable")
+            proc.stdin.write(payload)
+            proc.stdin.flush()
+
+    # -- reader ------------------------------------------------------------
+
+    def _read_loop(self, proc: subprocess.Popen[bytes]) -> None:
+        assert proc.stdout is not None
+        stdout = cast("BufferedReader", proc.stdout)
+        decoder = FrameDecoder()
+        try:
+            while True:
+                chunk = stdout.read1(65536)
+                if not chunk:
+                    break
+                for raw in decoder.push(chunk):
+                    self._on_frame(raw)
+        except FrameTooLargeError as exc:
+            # Fail closed: an oversized inbound frame tears the bridge down.
+            self.frame_errors.append(exc.message)
+            self._on_child_exit(proc, crash=True)
+            return
+        self._on_child_exit(proc, crash=not self._closing.is_set())
+
+    def _drain_stderr(self, proc: subprocess.Popen[bytes]) -> None:
+        assert proc.stderr is not None
+        for _line in proc.stderr:
+            pass  # logs are the sidecar's; the supervisor does not surface them
+
+    def _on_frame(self, raw: bytes) -> None:
+        try:
+            obj = json.loads(raw)
+        except json.JSONDecodeError:
+            self.frame_errors.append("parse_error")
+            return
+        try:
+            frame = validate_frame(obj)
+        except ProtocolError as exc:
+            self.frame_errors.append(exc.message)
+            return
+        msg_id = frame.get("id")
+        method = frame.get("method")
+        if method is not None and msg_id is None:
+            self._dispatch_notification(str(method), frame.get("params") or {})
+            return
+        if method is not None:
+            self._dispatch_py_request(msg_id, str(method), frame.get("params") or {})
+            return
+        # A response to one of our outbound requests.
+        if msg_id is None:
+            return
+        with self._plock:
+            call = self._pending.pop(msg_id, None)
+        if call is None:
+            return  # late response after timeout/restart
+        if "error" in frame:
+            call.complete_err(frame["error"])
+        else:
+            call.complete_ok(frame.get("result"))
+
+    def _dispatch_notification(self, method: str, params: dict[str, Any]) -> None:
+        if self._sink is not None:
+            self._sink(method, params)
+
+    def _dispatch_py_request(self, msg_id: Any, method: str, params: dict[str, Any]) -> None:
+        if self._py_handler is None:
+            self._write_frame(
+                make_error(msg_id, ErrorCode.METHOD_NOT_FOUND, f"no handler: {method}")
+            )
+            return
+        try:
+            result = self._py_handler(method, params)
+        except ProtocolError as exc:
+            # Structured refusals (DispatchError and friends) carry a stable
+            # machine `reason` in `.data`; forward it so the model sees the
+            # discriminated code, not only prose.
+            data = getattr(exc, "data", None)
+            self._safe_send(make_error(msg_id, exc.code, exc.message, data))
+            return
+        except Exception as exc:
+            self._safe_send(
+                make_error(msg_id, ErrorCode.INTERNAL_ERROR, f"{type(exc).__name__}: {exc}")
+            )
+            return
+        self._safe_send(make_response(msg_id, result))
+
+    def _safe_send(self, frame: dict[str, Any]) -> None:
+        with contextlib.suppress(FrameTooLargeError, BrokenPipeError, OSError):
+            self._write_frame(frame)
+
+    def _on_child_exit(self, proc: subprocess.Popen[bytes], *, crash: bool) -> None:
+        rc = proc.wait()
+        self.last_exit = rc
+        if crash and not self._closing.is_set():
+            with self._plock:
+                tracked = frozenset(self._tracked_runs)
+                self._restart_generation += 1
+                generation = self._restart_generation
+            self._fire_recovery(
+                ProcessLossEvent(
+                    reason="crash",
+                    returncode=rc,
+                    tracked_run_ids=tracked,
+                    restart_generation=generation,
+                )
+            )
+        self._fail_all_pending(
+            make_error(None, ErrorCode.PROCESS_DOWN, f"sidecar exited (rc={rc})")["error"]
+        )
+
+    def _fail_all_pending(self, error: dict[str, Any]) -> None:
+        with self._plock:
+            pending = list(self._pending.values())
+            self._pending.clear()
+        for call in pending:
+            call.complete_err(error)
+
+    def _fire_recovery(self, event: ProcessLossEvent) -> None:
+        # A recovery-hook fault must not wedge the restart path.
+        if self._recovery_hook is not None:
+            with contextlib.suppress(Exception):
+                self._recovery_hook(event)
+
+    # -- watchdog ----------------------------------------------------------
+
+    def _watchdog_loop(self) -> None:
+        while not self._closing.is_set():
+            time.sleep(self.config.watchdog_interval_s)
+            if self._closing.is_set():
+                return
+            if not self.is_running():
+                continue
+            now = time.monotonic()
+            overdue = False
+            with self._plock:
+                for call in self._pending.values():
+                    if now > call.deadline + self.config.watchdog_grace_s:
+                        overdue = True
+                        break
+            if overdue:
+                self.restart(reason="watchdog")
+
+
+# -- orphan verification helpers (used by tests) ---------------------------
+
+
+def pid_alive(pid: int) -> bool:
+    """True if ``pid`` exists and is not a zombie (per ``ps``)."""
+    r = subprocess.run(
+        ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False
+    )
+    if r.returncode != 0 or not r.stdout.strip():
+        return False
+    return "Z" not in r.stdout.strip()

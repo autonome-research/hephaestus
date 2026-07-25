@@ -1,0 +1,55 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/create_project_check.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Create checks/<name>.py from a safe cross-part template (orchestrator).",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "description": {
+        "default": "",
+        "type": "string"
+      },
+      "name": {
+        "pattern": "^[a-z][a-z0-9_]{0,63}$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "type": "object"
+  },
+  "result": {
+    "additionalProperties": true,
+    "properties": {
+      "content_hash": {
+        "type": "string"
+      },
+      "initial_script": {
+        "type": "string"
+      },
+      "path": {
+        "type": "string"
+      },
+      "snapshot_ref": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "path",
+      "content_hash",
+      "snapshot_ref"
+    ],
+    "type": "object"
+  },
+  "title": "create_project_check",
+  "x-hephaestus-tool": {
+    "idempotent": true,
+    "maxUtf8Fields": {},
+    "name": "create_project_check",
+    "profiles": [
+      "orchestrator"
+    ],
+    "sequential": true
+  }
+}

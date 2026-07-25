@@ -1,0 +1,112 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/list_project_checks.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Authoritative cursor-paged discovery of project checks (orchestrator).",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "cursor": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "limit": {
+        "default": 100,
+        "maximum": 100,
+        "minimum": 1,
+        "type": "integer"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "result": {
+    "oneOf": [
+      {
+        "additionalProperties": true,
+        "properties": {
+          "check_set_generation": {
+            "type": "string"
+          },
+          "check_set_ref": {
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "additionalProperties": true,
+              "properties": {
+                "content_hash": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "content_hash"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": "string"
+          },
+          "status": {
+            "const": "ok"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status",
+          "items",
+          "check_set_ref"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": true,
+        "properties": {
+          "check_set_generation": {
+            "type": "string"
+          },
+          "check_set_ref": {
+            "type": "string"
+          },
+          "diagnostics_ref": {
+            "type": "string"
+          },
+          "status": {
+            "const": "invalid_check_generation"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      }
+    ]
+  },
+  "title": "list_project_checks",
+  "x-hephaestus-tool": {
+    "idempotent": false,
+    "maxUtf8Fields": {},
+    "name": "list_project_checks",
+    "profiles": [
+      "orchestrator"
+    ],
+    "sequential": false
+  }
+}

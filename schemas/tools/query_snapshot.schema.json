@@ -1,0 +1,104 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/query_snapshot.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Ephemeral vision child answers a question over 1-4 fresh renders.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "artifact_ref": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "name": {
+        "pattern": "^[a-z][a-z0-9_]{0,63}$",
+        "type": "string"
+      },
+      "question": {
+        "type": "string"
+      },
+      "views": {
+        "default": [
+          "iso"
+        ],
+        "items": {
+          "type": "string"
+        },
+        "maxItems": 4,
+        "minItems": 1,
+        "type": "array"
+      }
+    },
+    "required": [
+      "name",
+      "question"
+    ],
+    "type": "object"
+  },
+  "result": {
+    "oneOf": [
+      {
+        "additionalProperties": true,
+        "properties": {
+          "answer": {
+            "type": "string"
+          },
+          "render_artifacts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "status": {
+            "const": "ok"
+          },
+          "usage": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "status",
+          "answer"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": true,
+        "properties": {
+          "code": {
+            "const": "capability_not_available"
+          },
+          "message": {
+            "type": "string"
+          },
+          "status": {
+            "const": "capability_error"
+          }
+        },
+        "required": [
+          "status",
+          "code"
+        ],
+        "type": "object"
+      }
+    ]
+  },
+  "title": "query_snapshot",
+  "x-hephaestus-tool": {
+    "idempotent": false,
+    "maxUtf8Fields": {},
+    "name": "query_snapshot",
+    "profiles": [
+      "part",
+      "orchestrator",
+      "quick_edit"
+    ],
+    "sequential": false
+  }
+}

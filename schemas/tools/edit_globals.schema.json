@@ -1,0 +1,137 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/edit_globals.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Exact-match edit of globals.py; validates in the secure sandbox (orchestrator).",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "expected_hash": {
+        "type": "string"
+      },
+      "new_str": {
+        "type": "string"
+      },
+      "old_str": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "expected_hash",
+      "old_str",
+      "new_str"
+    ],
+    "type": "object"
+  },
+  "result": {
+    "oneOf": [
+      {
+        "additionalProperties": true,
+        "properties": {
+          "content_hash": {
+            "type": "string"
+          },
+          "diff": {
+            "type": "string"
+          },
+          "journal_ref": {
+            "type": "string"
+          },
+          "snapshot_ref": {
+            "type": "string"
+          },
+          "status": {
+            "const": "applied"
+          }
+        },
+        "required": [
+          "status",
+          "content_hash",
+          "snapshot_ref"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": true,
+        "properties": {
+          "diagnostics": {
+            "type": "string"
+          },
+          "invalid_overrides": {
+            "type": "array"
+          },
+          "kind": {
+            "enum": [
+              "syntax",
+              "contract",
+              "sandbox",
+              "evaluation",
+              "invalid_overrides"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "const": "validation_error"
+          }
+        },
+        "required": [
+          "status",
+          "kind"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": true,
+        "properties": {
+          "attempted_snapshot_ref": {
+            "type": "string"
+          },
+          "base_snapshot_ref": {
+            "type": "string"
+          },
+          "current_hash": {
+            "type": "string"
+          },
+          "current_next_offset_bytes": {
+            "type": "integer"
+          },
+          "current_oversized_line": {
+            "type": "boolean"
+          },
+          "current_oversized_line_offset_bytes": {
+            "type": "integer"
+          },
+          "current_script": {
+            "type": "string"
+          },
+          "current_snapshot_ref": {
+            "type": "string"
+          },
+          "current_truncated": {
+            "type": "boolean"
+          },
+          "kind": {
+            "const": "stale_hash"
+          },
+          "status": {
+            "const": "conflict"
+          }
+        },
+        "required": [
+          "status",
+          "kind"
+        ],
+        "type": "object"
+      }
+    ]
+  },
+  "title": "edit_globals",
+  "x-hephaestus-tool": {
+    "idempotent": true,
+    "maxUtf8Fields": {},
+    "name": "edit_globals",
+    "profiles": [
+      "orchestrator"
+    ],
+    "sequential": true
+  }
+}
