@@ -1,0 +1,85 @@
+# ci.yml — every-PR gate per verification.md §CI contract.
+#
+# Scope note (v1, stock ubuntu runners): render goldens are valid only inside
+# the pinned CI container image (exact Mesa/llvmpipe — Stage S disposition), and
+# the bubblewrap escape suites need unrestricted user namespaces; both run
+# locally today and move here when the pinned image lands. Every other Tier 1
+# suite runs in full.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  UV_PYTHON: "3.13"
+
+jobs:
+  lint-type:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --dev
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pyright opstore core server
+
+  opstore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --dev
+      - run: >
+          uv run pytest opstore/tests tests/stage0a -q
+          --cov=opstore/src/opstore --cov-fail-under=90
+
+  engine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --dev
+      # Sandbox (bwrap) and render (pinned-Mesa goldens) suites are excluded
+      # until the pinned CI image lands; see scope note above.
+      - run: >
+          uv run pytest core/tests tests/stage0b -q
+          -k "not sandbox and not bwrap and not render"
+
+  agent-node:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.19.0"
+      - run: pnpm --dir agent install --frozen-lockfile
+      - run: pnpm --dir agent typecheck
+      - run: pnpm --dir agent lint
+      - run: pnpm --dir agent test
+
+  server-bridge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.19.0"
+      - run: uv sync --dev
+      - run: pnpm --dir agent install --frozen-lockfile
+      - run: pnpm --dir agent build
+      - run: >
+          uv run pytest server/tests -q
+          -k "not sandbox and not bwrap"
