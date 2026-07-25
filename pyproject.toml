@@ -11,12 +11,14 @@ package = false
 members = [
     "opstore",
     "core",
+    "server",
 ]
 
 [dependency-groups]
 dev = [
     "opstore",
     "hephaestus-core",
+    "hephaestus-server",
     "pytest>=8.3",
     "pytest-cov>=6.0",
     "hypothesis>=6.115",
@@ -27,6 +29,9 @@ dev = [
 ]
 
 [tool.uv.sources.hephaestus-core]
+workspace = true
+
+[tool.uv.sources.hephaestus-server]
 workspace = true
 
 [tool.uv.sources]
@@ -40,7 +45,7 @@ target-version = "py311"
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.pyright]
-include = ["opstore", "core"]
+include = ["opstore", "core", "server"]
 typeCheckingMode = "strict"
 pythonVersion = "3.13"
 

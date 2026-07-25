@@ -9,6 +9,7 @@ resolution-markers = [
 [manifest]
 members = [
     "hephaestus-core",
+    "hephaestus-server",
     "hephaestus-workspace",
     "opstore",
 ]
@@ -462,6 +463,21 @@ requires-dist = [
 ]
 
 [[package]]
+name = "hephaestus-server"
+version = "0.1.0"
+source = { editable = "server" }
+dependencies = [
+    { name = "hephaestus-core" },
+    { name = "opstore" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "hephaestus-core", editable = "core" },
+    { name = "opstore", editable = "opstore" },
+]
+
+[[package]]
 name = "hephaestus-workspace"
 version = "0.0.0"
 source = { virtual = "." }
@@ -469,6 +485,7 @@ source = { virtual = "." }
 [package.dev-dependencies]
 dev = [
     { name = "hephaestus-core" },
+    { name = "hephaestus-server" },
     { name = "hypothesis" },
     { name = "jsonschema" },
     { name = "opstore" },
@@ -484,6 +501,7 @@ dev = [
 [package.metadata.requires-dev]
 dev = [
     { name = "hephaestus-core", editable = "core" },
+    { name = "hephaestus-server", editable = "server" },
     { name = "hypothesis", specifier = ">=6.115" },
     { name = "jsonschema", specifier = ">=4.23" },
     { name = "opstore", editable = "opstore" },
