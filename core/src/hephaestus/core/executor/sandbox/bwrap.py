@@ -70,17 +70,22 @@ def find_bwrap() -> str | None:
 def interpreter_ro_binds() -> tuple[Path, ...]:
     """Read-only binds required to run the *current* interpreter in the sandbox.
 
-    Returns the resolved venv prefix (``sys.prefix``) and the underlying
-    interpreter install root (``sys.base_prefix`` — e.g. the uv-managed
-    CPython directory the venv symlinks into), deduplicated. Callers building
-    a :class:`SandboxSpec` for a worker running under this interpreter must
-    include these in ``ro_binds``.
+    Returns the venv prefix (``sys.prefix``) and the underlying interpreter
+    install root (``sys.base_prefix`` — e.g. the uv-managed CPython directory
+    the venv symlinks into), each in BOTH its stated and fully resolved form,
+    plus the resolved real interpreter root. The sandbox root is an empty
+    tmpfs, so every path a symlink chain traverses must itself be bound: a
+    venv ``bin/python`` pointing through an unresolved uv path dangles if only
+    the resolved terminal directory is mounted (observed on GitHub runners).
     """
+    candidates = [Path(sys.prefix), Path(sys.base_prefix)]
+    real_exe_root = Path(sys.executable).resolve().parent.parent
+    candidates.append(real_exe_root)
     binds: list[Path] = []
-    for prefix in (sys.prefix, sys.base_prefix):
-        resolved = Path(prefix).resolve()
-        if resolved not in binds:
-            binds.append(resolved)
+    for prefix in candidates:
+        for form in (prefix, prefix.resolve()):
+            if form not in binds:
+                binds.append(form)
     return tuple(binds)
 
 
