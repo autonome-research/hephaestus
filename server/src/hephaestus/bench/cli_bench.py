@@ -84,6 +84,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         seeds=seeds,
         results_dir=None if results_dir is None else Path(results_dir),
         on_record=None if bool(args.json) else _print_record,
+        parallel=int(args.parallel),
     )
     if bool(args.json):
         print(json.dumps(run.to_json(), indent=2, sort_keys=True))
@@ -145,6 +146,12 @@ def add_subparsers(
     run.add_argument("--model", help="model id declared by the provider config")
     run.add_argument("--tasks", help="comma-separated task ids (default: the whole corpus)")
     run.add_argument("--seeds", type=int, default=3, help="seeds per task (default 3)")
+    run.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        help="concurrent (task, seed) runs; each run is fully isolated (default 1)",
+    )
     run.add_argument("--results-dir", help="archive root (default bench/results)")
     run.add_argument("--dry-run", action="store_true", help="list planned runs; no model calls")
     run.add_argument("--json", action="store_true", help="emit JSON")

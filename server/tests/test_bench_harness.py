@@ -465,3 +465,58 @@ def test_bench_task_json_round_trips() -> None:
     assert payload["id"] == "enclosure-bosses"
     assert payload["render_requirements"][0]["section_plane"] == "+Z@c"
     assert isinstance(task, BenchTask)
+
+
+def stateless_bracket_resolver() -> Any:
+    """One request-derived turn resolver, safe under interleaved parallel sessions.
+
+    Unlike the cursor-based script, every decision is derived from the request's
+    own conversation history, so two concurrent runs consuming resolvers from
+    one FakeOpenAI cannot cross wires.
+    """
+    script = solution_script("bracket-101", "bracket")
+
+    def resolve(info: RequestInfo) -> dict[str, Any]:
+        last = last_tool_result(info)
+        if not last:  # {} = no tool result yet in this session's transcript
+            return tool_call("create_part", {"name": "bracket"}, "c0")
+        if "content_hash" in last and "applied" not in last and "status" not in last:
+            return tool_call(
+                "write_part",
+                {"name": "bracket", "expected_hash": last["content_hash"], "script": script},
+                "c1",
+            )
+        if last.get("applied") is True:
+            return tool_call("build_part", {"name": "bracket"}, "c2")
+        assert last.get("status") == "ok", last
+        return {"kind": "text", "chunks": ["bracket built"]}
+
+    return resolve
+
+
+def test_bench_run_parallel_seeds_are_isolated_and_indexed(
+    tmp_path: Path,
+    fake_model: FakeOpenAI,
+    provider: ProviderConfig,
+    runtime_factory: harness.RuntimeFactory,
+) -> None:
+    (task,) = load_tasks(["bracket-101"])
+    fake_model.set_script([stateless_bracket_resolver()] * 12)
+
+    run = harness.run_bench(
+        [task],
+        provider=provider,
+        seeds=2,
+        results_dir=tmp_path / "results",
+        runtime_factory=runtime_factory,
+        prompt_timeout=PROMPT_TIMEOUT,
+        date="2026-07-24",
+        parallel=2,
+    )
+
+    assert [(r.task_id, r.seed) for r in run.records] == [("bracket-101", 1), ("bracket-101", 2)]
+    assert all(r.passed for r in run.records), [r.reasons for r in run.records]
+    index_lines = (run.archive_dir / "runs.jsonl").read_text().splitlines()
+    assert len(index_lines) == 2
+    dirs = {r.project_dir for r in run.records}
+    assert len(dirs) == 2, "parallel runs must use distinct project roots"

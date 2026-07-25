@@ -14,6 +14,7 @@ import json
 import os
 import threading
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
@@ -364,33 +365,55 @@ def run_bench(
     before_prompt: Callable[[RunContext], None] | None = None,
     prompt_timeout: float = DEFAULT_PROMPT_TIMEOUT,
     on_record: Callable[[RunRecord], None] | None = None,
+    parallel: int = 1,
 ) -> BenchRun:
-    """Run every (task, seed) pair, archiving each run and the ``runs.jsonl`` index."""
+    """Run every (task, seed) pair, archiving each run and the ``runs.jsonl`` index.
+
+    ``parallel`` runs that many (task, seed) pairs concurrently. Each run is
+    fully isolated (its own scratch project, BridgeRuntime, sidecar, and store),
+    so concurrency is safe; against a local vLLM endpoint continuous batching
+    turns the extra in-flight requests into real throughput. The ``runs.jsonl``
+    index and ``on_record`` callback are serialized under a lock; the returned
+    ``BenchRun.records`` keep deterministic (task, seed) order regardless of
+    completion order.
+    """
     if seeds < 1:
         raise ValueError(f"seeds must be >= 1, got {seeds}")
+    if parallel < 1:
+        raise ValueError(f"parallel must be >= 1, got {parallel}")
     run_date = date or today()
     root = results_dir or results_root()
     archive_dir = root / provider.model_slug / run_date
     archive_dir.mkdir(parents=True, exist_ok=True)
     index = archive_dir / RUNS_FILENAME
-    records: list[RunRecord] = []
-    for task in tasks:
-        for seed in range(1, seeds + 1):
-            record = run_task(
-                task,
-                seed,
-                provider=provider,
-                archive_dir=archive_dir,
-                runtime_factory=runtime_factory,
-                before_prompt=before_prompt,
-                prompt_timeout=prompt_timeout,
-                date=run_date,
-            )
-            records.append(record)
+    pairs = [(task, seed) for task in tasks for seed in range(1, seeds + 1)]
+
+    emit_lock = threading.Lock()
+
+    def execute(pair: tuple[BenchTask, int]) -> RunRecord:
+        task, seed = pair
+        record = run_task(
+            task,
+            seed,
+            provider=provider,
+            archive_dir=archive_dir,
+            runtime_factory=runtime_factory,
+            before_prompt=before_prompt,
+            prompt_timeout=prompt_timeout,
+            date=run_date,
+        )
+        with emit_lock:
             with index.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(record.to_json(), sort_keys=True) + "\n")
             if on_record is not None:
                 on_record(record)
+        return record
+
+    if parallel == 1:
+        records = [execute(pair) for pair in pairs]
+    else:
+        with ThreadPoolExecutor(max_workers=parallel, thread_name_prefix="bench") as pool:
+            records = list(pool.map(execute, pairs))
     return BenchRun(
         model=provider.model_id, date=run_date, archive_dir=archive_dir, records=tuple(records)
     )
