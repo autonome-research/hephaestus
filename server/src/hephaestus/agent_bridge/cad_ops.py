@@ -101,6 +101,7 @@ from opstore.types import JSONValue
 
 from opstore import (
     Fresh,
+    LeaseHeldError,
     OpStore,
     PendingRecovery,
     Replay,
@@ -806,7 +807,13 @@ class CadOps:
         transient = {k: str(v) for k, v in (params or {}).items()}
         preview = bool(transient)
         publisher = self._publisher()
-        inputs = publisher.freeze_inputs(name)
+        try:
+            inputs = publisher.freeze_inputs(name)
+        except LeaseHeldError as exc:
+            # Another build (possibly a just-cancelled run's worker still tearing
+            # down) holds the part lock: surface the contractual busy refusal
+            # instead of an internal crash. The caller may retry.
+            raise CadOpError("part_busy", f"part {name!r} is being built: {exc}") from exc
         part_overrides: dict[str, int | float | str] = dict(self.params.read("part", name).values)
         part_overrides.update(transient)
         with self._build_dir(name) as out_dir:

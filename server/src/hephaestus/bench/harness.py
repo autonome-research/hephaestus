@@ -36,6 +36,7 @@ import shutil
 import struct
 import tempfile
 import threading
+import time
 import uuid
 import zipfile
 from collections.abc import Callable, Generator, Mapping, Sequence
@@ -45,7 +46,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from hephaestus.agent_bridge.app import BridgeRuntime, ProviderSpec, repo_root
-from hephaestus.agent_bridge.cad_ops import EXPORT_FORMATS, CadOps
+from hephaestus.agent_bridge.cad_ops import EXPORT_FORMATS, CadOpError, CadOps
 from hephaestus.core.project_store.layout import (
     GLOBALS_FILENAME,
     ProjectLayout,
@@ -633,6 +634,28 @@ class GradeReport:
         }
 
 
+_LEASE_RETRY_ATTEMPTS = 18
+_LEASE_RETRY_DELAY_S = 5.0
+
+
+def _build_with_lease_retry(cad: CadOps, part: str) -> dict[str, Any] | None:
+    """Build one part for grading, waiting out a live part lock.
+
+    A run cancelled at its budget can leave its build worker tearing down with
+    the part lock still heartbeat-live; grading starts immediately after. Wait
+    for the lease to clear (liveness reclaim covers a dead owner) instead of
+    failing the grade on a transient. Returns None when the lock never clears.
+    """
+    for attempt in range(_LEASE_RETRY_ATTEMPTS):
+        try:
+            return cad.build_part(part, op_id=f"bench-build-{uuid.uuid4().hex}")
+        except CadOpError as exc:
+            if exc.reason != "part_busy" or attempt == _LEASE_RETRY_ATTEMPTS - 1:
+                raise
+            time.sleep(_LEASE_RETRY_DELAY_S)
+    return None
+
+
 def _build_all(cad: CadOps, layout: ProjectLayout) -> tuple[dict[str, Any], list[str]]:
     """Build every part; return the per-part results and failure reasons."""
     builds: dict[str, Any] = {}
@@ -641,7 +664,10 @@ def _build_all(cad: CadOps, layout: ProjectLayout) -> tuple[dict[str, Any], list
     if not parts:
         return builds, ["no_parts_authored"]
     for part in parts:
-        result = cad.build_part(part, op_id=f"bench-build-{uuid.uuid4().hex}")
+        result = _build_with_lease_retry(cad, part)
+        if result is None:
+            reasons.append(f"build_lease_busy:{part}")
+            continue
         builds[part] = result
         if result.get("status") != "ok":
             reasons.append(f"build_failed:{part}")
@@ -1169,7 +1195,24 @@ def run_task(
         extra.append(f"run_{status}")
     if error is not None:
         extra.append("run_error")
-    report = grade(task, project, tool_calls=tool_calls, extra_reasons=extra)
+    try:
+        report = grade(task, project, tool_calls=tool_calls, extra_reasons=extra)
+    except Exception as exc:  # a grading crash fails THIS run, never the bench
+        report = GradeReport(
+            task_id=task.id,
+            passed=False,
+            reasons=tuple([*extra, f"harness_error:{type(exc).__name__}:{exc}"]),
+            builds={},
+            check_status="not_run",
+            checks={},
+            other_checks={},
+            exports=(),
+            renders=(),
+            tool_calls=tool_calls,
+            budget_tool_calls=task.budget_tool_calls,
+            within_budget=tool_calls <= task.budget_tool_calls,
+            restored_protected=(),
+        )
     (run_dir / "grade.json").write_text(
         json.dumps(report.to_json(), indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
