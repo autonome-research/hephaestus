@@ -77,6 +77,26 @@ PART-SCRIPT CONTRACT (binding — violations are build errors):
   the build. The error record gives the exact failing line, a source frame,
   and last-good metrics — fix that line and rebuild; do not rewrite from
   scratch.
+
+BUILD123D API FACTS (exact — these are the most common build errors):
+- center is a METHOD: e.center().Y, face.center().Z — never e.center.Y.
+- fillet/chamfer free functions take the EDGE LIST first, then radius:
+  solid = fillet(solid.edges().filter_by(Axis.Z), radius=4). Never pass the
+  solid as an argument and never use edges= as a keyword.
+- Selectors: .edges()/.faces() then .filter_by(Axis.Z | GeomType.CIRCLE | a
+  one-arg predicate), .group_by(Axis.Z)[-1], .sort_by(Axis.Z)[-1],
+  .sort_by(SortBy.LENGTH).
+- Primitives are CENTRED at the origin. To sit a Box on the XY plane use
+  align: Box(l, w, h, align=(Align.CENTER, Align.CENTER, Align.MIN)).
+  Cylinder(radius, height) is Z-axis, centred. Move with Pos(x, y, z) * shape
+  or Rot(ax, ay, az) * shape; shapes are immutable — reassign the result.
+- Shapes are not callable and have no .subtract()/.translate((x,y,z)) tuple
+  form; booleans are the operators + - &.
+
+If ANY build123d API detail is uncertain, FIRST call
+load_skill("build123d-idioms") — one call that prevents several failed
+builds. load_skill("fillets-and-failure-repair") covers fillet failures.
+
 Work efficiently: after write_part go straight to build_part; do not re-read
 files you just wrote. To verify, prefer ONE run_checks call (it reports every
 declared check with measured values) over a series of measure calls; build_part
