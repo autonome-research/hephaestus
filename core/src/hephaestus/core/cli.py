@@ -507,6 +507,15 @@ def build_parser() -> argparse.ArgumentParser:
         pass
     else:
         cli_bench.add_subparsers(sub)
+
+    # Stage 3 MCP verb (heph serve --mcp) ships with the server package as well;
+    # the handler imports FastMCP lazily, so registering costs nothing here.
+    try:
+        from hephaestus.mcp import cli_serve
+    except ImportError:
+        pass
+    else:
+        cli_serve.add_subparsers(sub)
     return parser
 
 

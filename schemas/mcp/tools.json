@@ -1,0 +1,2766 @@
+{
+  "tools": [
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "content_hash": {
+              "type": "string"
+            },
+            "initial_script": {
+              "type": "string"
+            },
+            "part_param_state_hash": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "project_param_state_hash": {
+              "type": "string"
+            },
+            "snapshot_ref": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "content_hash",
+            "snapshot_ref"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": true,
+          "maxUtf8Fields": {},
+          "name": "create_part",
+          "profiles": [
+            "orchestrator"
+          ],
+          "sequential": true
+        }
+      },
+      "description": "Create parts/<name>.py from a template; fails without mutation if it exists.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "default": "",
+            "type": "string"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "template": {
+            "default": "blank",
+            "enum": [
+              "blank",
+              "sheet",
+              "solid",
+              "from_store"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "create_part"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "content_hash": {
+              "type": "string"
+            },
+            "line_count": {
+              "type": "integer"
+            },
+            "next_offset_bytes": {
+              "type": "integer"
+            },
+            "numbered_script": {
+              "type": "string"
+            },
+            "oversized_line": {
+              "type": "boolean"
+            },
+            "oversized_line_offset_bytes": {
+              "type": "integer"
+            },
+            "params": {
+              "type": "object"
+            },
+            "part_param_state_hash": {
+              "type": "string"
+            },
+            "project_param_state_hash": {
+              "type": "string"
+            },
+            "script": {
+              "type": "string"
+            },
+            "snapshot_ref": {
+              "type": "string"
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "script",
+            "content_hash",
+            "snapshot_ref",
+            "truncated"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": false,
+          "maxUtf8Fields": {},
+          "name": "read_part",
+          "profiles": [
+            "part",
+            "orchestrator",
+            "quick_edit"
+          ],
+          "sequential": false
+        }
+      },
+      "description": "Read a part script (raw + numbered chunks) with optimistic hashes.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit_lines": {
+            "default": 2000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "offset_line": {
+            "default": 1,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "read_part"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "applied": {
+              "type": "boolean"
+            },
+            "conflict": {
+              "additionalProperties": true,
+              "properties": {
+                "attempted_snapshot_ref": {
+                  "type": "string"
+                },
+                "base_snapshot_ref": {
+                  "type": "string"
+                },
+                "current_hash": {
+                  "type": "string"
+                },
+                "current_next_offset_bytes": {
+                  "type": "integer"
+                },
+                "current_oversized_line": {
+                  "type": "boolean"
+                },
+                "current_oversized_line_offset_bytes": {
+                  "type": "integer"
+                },
+                "current_script": {
+                  "type": "string"
+                },
+                "current_snapshot_ref": {
+                  "type": "string"
+                },
+                "current_truncated": {
+                  "type": "boolean"
+                }
+              },
+              "required": [],
+              "type": "object"
+            },
+            "content_hash": {
+              "type": "string"
+            },
+            "diff": {
+              "type": "string"
+            },
+            "journal_ref": {
+              "type": "string"
+            },
+            "line": {
+              "type": "integer"
+            },
+            "snapshot_ref": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "applied"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": true,
+          "maxUtf8Fields": {},
+          "name": "edit_part",
+          "profiles": [
+            "part",
+            "orchestrator",
+            "quick_edit"
+          ],
+          "sequential": true
+        }
+      },
+      "description": "Exact-match string replacement under optimistic CAS with conflict payload.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_hash": {
+            "type": "string"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "new_str": {
+            "type": "string"
+          },
+          "old_str": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "expected_hash",
+          "old_str",
+          "new_str"
+        ],
+        "type": "object"
+      },
+      "name": "edit_part"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "applied": {
+              "type": "boolean"
+            },
+            "conflict": {
+              "additionalProperties": true,
+              "properties": {
+                "attempted_snapshot_ref": {
+                  "type": "string"
+                },
+                "base_snapshot_ref": {
+                  "type": "string"
+                },
+                "current_hash": {
+                  "type": "string"
+                },
+                "current_next_offset_bytes": {
+                  "type": "integer"
+                },
+                "current_oversized_line": {
+                  "type": "boolean"
+                },
+                "current_oversized_line_offset_bytes": {
+                  "type": "integer"
+                },
+                "current_script": {
+                  "type": "string"
+                },
+                "current_snapshot_ref": {
+                  "type": "string"
+                },
+                "current_truncated": {
+                  "type": "boolean"
+                }
+              },
+              "required": [],
+              "type": "object"
+            },
+            "content_hash": {
+              "type": "string"
+            },
+            "diff": {
+              "type": "string"
+            },
+            "journal_ref": {
+              "type": "string"
+            },
+            "snapshot_ref": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "applied"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": true,
+          "maxUtf8Fields": {},
+          "name": "write_part",
+          "profiles": [
+            "part",
+            "orchestrator",
+            "quick_edit"
+          ],
+          "sequential": true
+        }
+      },
+      "description": "Whole-file replacement with the same optimistic-CAS/journal contract.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_hash": {
+            "type": "string"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "script": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "expected_hash",
+          "script"
+        ],
+        "type": "object"
+      },
+      "name": "write_part"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact_ref": {
+              "type": "string"
+            },
+            "current": {
+              "type": "boolean"
+            },
+            "effective_params": {
+              "type": "object"
+            },
+            "project_snapshot_ref": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "toolchain_hashes": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": true,
+          "maxUtf8Fields": {},
+          "name": "build_part",
+          "profiles": [
+            "part",
+            "orchestrator",
+            "quick_edit"
+          ],
+          "sequential": true
+        }
+      },
+      "description": "Run the incremental executor against an immutable snapshot; re-run CHECKS.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "params": {
+            "default": {},
+            "type": "object"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "build_part"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "conflict": {
+              "additionalProperties": true,
+              "properties": {
+                "attempted_snapshot_ref": {
+                  "type": "string"
+                },
+                "base_snapshot_ref": {
+                  "type": "string"
+                },
+                "current_state_hash": {
+                  "type": "string"
+                },
+                "current_values": {
+                  "type": "object"
+                }
+              },
+              "required": [],
+              "type": "object"
+            },
+            "effective": {
+              "type": "object"
+            },
+            "journal_ref": {
+              "type": "string"
+            },
+            "rejected": {
+              "type": "array"
+            },
+            "stale_parts": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "state_hash": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "effective",
+            "rejected"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": true,
+          "maxUtf8Fields": {},
+          "name": "set_params",
+          "profiles": [
+            "part",
+            "orchestrator",
+            "quick_edit"
+          ],
+          "sequential": true
+        }
+      },
+      "description": "Persist bounds-validated parameter overrides (part or project scope).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "not": {
+                "properties": {
+                  "scope": {
+                    "const": "project"
+                  }
+                },
+                "required": [
+                  "scope"
+                ]
+              }
+            },
+            "then": {
+              "properties": {
+                "name": {
+                  "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "scope": {
+                  "const": "project"
+                }
+              },
+              "required": [
+                "scope"
+              ]
+            },
+            "then": {
+              "properties": {
+                "name": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        ],
+        "properties": {
+          "expected_state_hash": {
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "scope": {
+            "default": "part",
+            "enum": [
+              "part",
+              "project"
+            ],
+            "type": "string"
+          },
+          "values": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "values",
+          "expected_state_hash"
+        ],
+        "type": "object"
+      },
+      "name": "set_params"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "content_hash": {
+              "type": "string"
+            },
+            "next_offset_bytes": {
+              "type": "integer"
+            },
+            "numbered_script": {
+              "type": "string"
+            },
+            "oversized_line": {
+              "type": "boolean"
+            },
+            "oversized_line_offset_bytes": {
+              "type": "integer"
+            },
+            "project_param_state_hash": {
+              "type": "string"
+            },
+            "script": {
+              "type": "string"
+            },
+            "snapshot_ref": {
+              "type": "string"
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "script",
+            "content_hash",
+            "snapshot_ref",
+            "truncated"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": false,
+          "maxUtf8Fields": {},
+          "name": "read_globals",
+          "profiles": [
+            "orchestrator"
+          ],
+          "sequential": false
+        }
+      },
+      "description": "Read globals.py with paging and optimistic hashes (orchestrator only).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit_lines": {
+            "default": 2000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset_line": {
+            "default": 1,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "read_globals"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "oneOf": [
+            {
+              "additionalProperties": true,
+              "properties": {
+                "content_hash": {
+                  "type": "string"
+                },
+                "diff": {
+                  "type": "string"
+                },
+                "journal_ref": {
+                  "type": "string"
+                },
+                "snapshot_ref": {
+                  "type": "string"
+                },
+                "status": {
+                  "const": "applied"
+                }
+              },
+              "required": [
+                "status",
+                "content_hash",
+                "snapshot_ref"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": true,
+              "properties": {
+                "diagnostics": {
+                  "type": "string"
+                },
+                "invalid_overrides": {
+                  "type": "array"
+                },
+                "kind": {
+                  "enum": [
+                    "syntax",
+                    "contract",
+                    "sandbox",
+                    "evaluation",
+                    "invalid_overrides"
+                  ],
+                  "type": "string"
+                },
+                "status": {
+                  "const": "validation_error"
+                }
+              },
+              "required": [
+                "status",
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": true,
+              "properties": {
+                "attempted_snapshot_ref": {
+                  "type": "string"
+                },
+                "base_snapshot_ref": {
+                  "type": "string"
+                },
+                "current_hash": {
+                  "type": "string"
+                },
+                "current_next_offset_bytes": {
+                  "type": "integer"
+                },
+                "current_oversized_line": {
+                  "type": "boolean"
+                },
+                "current_oversized_line_offset_bytes": {
+                  "type": "integer"
+                },
+                "current_script": {
+                  "type": "string"
+                },
+                "current_snapshot_ref": {
+                  "type": "string"
+                },
+                "current_truncated": {
+                  "type": "boolean"
+                },
+                "kind": {
+                  "const": "stale_hash"
+                },
+                "status": {
+                  "const": "conflict"
+                }
+              },
+              "required": [
+                "status",
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": true,
+          "maxUtf8Fields": {},
+          "name": "edit_globals",
+          "profiles": [
+            "orchestrator"
+          ],
+          "sequential": true
+        }
+      },
+      "description": "Exact-match edit of globals.py; validates in the secure sandbox (orchestrator).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_hash": {
+            "type": "string"
+          },
+          "new_str": {
+            "type": "string"
+          },
+          "old_str": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_hash",
+          "old_str",
+          "new_str"
+        ],
+        "type": "object"
+      },
+      "name": "edit_globals"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "oneOf": [
+            {
+              "additionalProperties": true,
+              "properties": {
+                "check_set_generation": {
+                  "type": "string"
+                },
+                "check_set_ref": {
+                  "type": "string"
+                },
+                "items": {
+                  "items": {
+                    "additionalProperties": true,
+                    "properties": {
+                      "content_hash": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "summary": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "content_hash"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "next_cursor": {
+                  "type": "string"
+                },
+                "status": {
+                  "const": "ok"
+                },
+                "total": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "status",
+                "items",
+                "check_set_ref"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": true,
+              "properties": {
+                "check_set_generation": {
+                  "type": "string"
+                },
+                "check_set_ref": {
+                  "type": "string"
+                },
+                "diagnostics_ref": {
+                  "type": "string"
+                },
+                "status": {
+                  "const": "invalid_check_generation"
+                }
+              },
+              "required": [
+                "status"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": false,
+          "maxUtf8Fields": {},
+          "name": "list_project_checks",
+          "profiles": [
+            "orchestrator"
+          ],
+          "sequential": false
+        }
+      },
+      "description": "Authoritative cursor-paged discovery of project checks (orchestrator).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "limit": {
+            "default": 100,
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "list_project_checks"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "content_hash": {
+              "type": "string"
+            },
+            "initial_script": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "snapshot_ref": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "content_hash",
+            "snapshot_ref"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": true,
+          "maxUtf8Fields": {},
+          "name": "create_project_check",
+          "profiles": [
+            "orchestrator"
+          ],
+          "sequential": true
+        }
+      },
+      "description": "Create checks/<name>.py from a safe cross-part template (orchestrator).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "default": "",
+            "type": "string"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "create_project_check"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "content_hash": {
+              "type": "string"
+            },
+            "next_offset_bytes": {
+              "type": "integer"
+            },
+            "numbered_script": {
+              "type": "string"
+            },
+            "oversized_line": {
+              "type": "boolean"
+            },
+            "oversized_line_offset_bytes": {
+              "type": "integer"
+            },
+            "script": {
+              "type": "string"
+            },
+            "snapshot_ref": {
+              "type": "string"
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "script",
+            "content_hash",
+            "snapshot_ref",
+            "truncated"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": false,
+          "maxUtf8Fields": {},
+          "name": "read_project_check",
+          "profiles": [
+            "orchestrator"
+          ],
+          "sequential": false
+        }
+      },
+      "description": "Read a project check with paging and optimistic hashes (orchestrator).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit_lines": {
+            "default": 2000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "offset_line": {
+            "default": 1,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "read_project_check"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "oneOf": [
+            {
+              "additionalProperties": true,
+              "properties": {
+                "content_hash": {
+                  "type": "string"
+                },
+                "diff": {
+                  "type": "string"
+                },
+                "journal_ref": {
+                  "type": "string"
+                },
+                "snapshot_ref": {
+                  "type": "string"
+                },
+                "status": {
+                  "const": "applied"
+                }
+              },
+              "required": [
+                "status",
+                "content_hash",
+                "snapshot_ref"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": true,
+              "properties": {
+                "diagnostics": {
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "syntax",
+                    "contract",
+                    "sandbox",
+                    "evaluation"
+                  ],
+                  "type": "string"
+                },
+                "status": {
+                  "const": "validation_error"
+                }
+              },
+              "required": [
+                "status",
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": true,
+              "properties": {
+                "attempted_snapshot_ref": {
+                  "type": "string"
+                },
+                "base_snapshot_ref": {
+                  "type": "string"
+                },
+                "current_hash": {
+                  "type": "string"
+                },
+                "current_next_offset_bytes": {
+                  "type": "integer"
+                },
+                "current_oversized_line": {
+                  "type": "boolean"
+                },
+                "current_oversized_line_offset_bytes": {
+                  "type": "integer"
+                },
+                "current_script": {
+                  "type": "string"
+                },
+                "current_snapshot_ref": {
+                  "type": "string"
+                },
+                "current_truncated": {
+                  "type": "boolean"
+                },
+                "kind": {
+                  "const": "stale_hash"
+                },
+                "status": {
+                  "const": "conflict"
+                }
+              },
+              "required": [
+                "status",
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": true,
+          "maxUtf8Fields": {},
+          "name": "edit_project_check",
+          "profiles": [
+            "orchestrator"
+          ],
+          "sequential": true
+        }
+      },
+      "description": "Exact-match edit of a project check; validates in the check sandbox.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_hash": {
+            "type": "string"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "new_str": {
+            "type": "string"
+          },
+          "old_str": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "expected_hash",
+          "old_str",
+          "new_str"
+        ],
+        "type": "object"
+      },
+      "name": "edit_project_check"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "oneOf": [
+            {
+              "additionalProperties": true,
+              "properties": {
+                "images": {
+                  "type": "array"
+                },
+                "mask_legend": {
+                  "type": "string"
+                },
+                "mask_legend_ref": {
+                  "type": "string"
+                },
+                "mask_legend_truncated": {
+                  "type": "boolean"
+                },
+                "render_artifact_refs": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "selection_bundles": {
+                  "type": "array"
+                },
+                "selection_table_ref": {
+                  "type": "string"
+                },
+                "source_artifact_ref": {
+                  "type": "string"
+                },
+                "status": {
+                  "const": "ok"
+                }
+              },
+              "required": [
+                "status",
+                "source_artifact_ref",
+                "render_artifact_refs"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": true,
+              "properties": {
+                "code": {
+                  "const": "image_model_required"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "render_artifact_refs": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "source_artifact_ref": {
+                  "type": "string"
+                },
+                "status": {
+                  "const": "capability_error"
+                }
+              },
+              "required": [
+                "status",
+                "code"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": false,
+          "maxUtf8Fields": {},
+          "name": "inspect_part",
+          "profiles": [
+            "part",
+            "orchestrator",
+            "quick_edit"
+          ],
+          "sequential": false
+        }
+      },
+      "description": "Render current/immutable geometry to inline images + artifact refs.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "else": {
+              "properties": {
+                "section_plane": {
+                  "type": "null"
+                }
+              }
+            },
+            "if": {
+              "properties": {
+                "channel": {
+                  "const": "section"
+                }
+              },
+              "required": [
+                "channel"
+              ]
+            },
+            "then": {
+              "properties": {
+                "section_plane": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "section_plane"
+              ]
+            }
+          },
+          {
+            "if": {
+              "not": {
+                "properties": {
+                  "channel": {
+                    "const": "mask"
+                  }
+                },
+                "required": [
+                  "channel"
+                ]
+              }
+            },
+            "then": {
+              "properties": {
+                "mask_mode": {
+                  "const": "solid"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "last_good": {
+                  "const": true
+                }
+              },
+              "required": [
+                "last_good"
+              ]
+            },
+            "then": {
+              "properties": {
+                "artifact_ref": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        ],
+        "properties": {
+          "artifact_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "channel": {
+            "default": "rgb",
+            "enum": [
+              "rgb",
+              "mask",
+              "section"
+            ],
+            "type": "string"
+          },
+          "explode": {
+            "default": 0.0,
+            "type": "number"
+          },
+          "focus": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "last_good": {
+            "default": false,
+            "type": "boolean"
+          },
+          "mask_mode": {
+            "default": "solid",
+            "enum": [
+              "solid",
+              "selection"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "section_plane": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "views": {
+            "default": [
+              "iso",
+              "+X"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 4,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "inspect_part"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "oneOf": [
+            {
+              "additionalProperties": true,
+              "properties": {
+                "answer": {
+                  "type": "string"
+                },
+                "render_artifacts": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "status": {
+                  "const": "ok"
+                },
+                "usage": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "status",
+                "answer"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": true,
+              "properties": {
+                "code": {
+                  "const": "capability_not_available"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "status": {
+                  "const": "capability_error"
+                }
+              },
+              "required": [
+                "status",
+                "code"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": false,
+          "maxUtf8Fields": {},
+          "name": "query_snapshot",
+          "profiles": [
+            "part",
+            "orchestrator",
+            "quick_edit"
+          ],
+          "sequential": false
+        }
+      },
+      "description": "Ephemeral vision child answers a question over 1-4 fresh renders.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          },
+          "views": {
+            "default": [
+              "iso"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 4,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "question"
+        ],
+        "type": "object"
+      },
+      "name": "query_snapshot"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "oneOf": [
+            {
+              "additionalProperties": true,
+              "properties": {
+                "content": {
+                  "type": "string"
+                },
+                "mime_type": {
+                  "type": "string"
+                },
+                "next_offset_bytes": {
+                  "type": "integer"
+                },
+                "offset_bytes": {
+                  "type": "integer"
+                },
+                "total_bytes": {
+                  "type": "integer"
+                },
+                "truncated": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "content",
+                "mime_type",
+                "offset_bytes",
+                "total_bytes",
+                "truncated"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": true,
+              "properties": {
+                "error": {
+                  "const": "invalid_utf8_offset"
+                },
+                "offset_bytes": {
+                  "type": "integer"
+                },
+                "total_bytes": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": false,
+          "maxUtf8Fields": {},
+          "name": "read_artifact",
+          "profiles": [
+            "part",
+            "orchestrator",
+            "quick_edit"
+          ],
+          "sequential": false
+        }
+      },
+      "description": "Byte-cursor paging over model-readable text/JSON artifacts.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "max_bytes": {
+            "default": 49152,
+            "maximum": 49152,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset_bytes": {
+            "default": 0,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ref": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref"
+        ],
+        "type": "object"
+      },
+      "name": "read_artifact"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "detail": {},
+            "resolved_artifact_refs": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "units": {
+              "type": "string"
+            },
+            "value": {}
+          },
+          "required": [
+            "value",
+            "units"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": false,
+          "maxUtf8Fields": {},
+          "name": "measure",
+          "profiles": [
+            "part",
+            "orchestrator",
+            "quick_edit"
+          ],
+          "sequential": false
+        }
+      },
+      "description": "Metric facade: interference/clearance/distance/bbox/volume/mass/sealed/genus.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "else": {
+              "properties": {
+                "b": {
+                  "type": "null"
+                }
+              }
+            },
+            "if": {
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "interference",
+                    "clearance",
+                    "distance"
+                  ]
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "properties": {
+                "b": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "b"
+              ]
+            }
+          },
+          {
+            "not": {
+              "required": [
+                "artifact_ref",
+                "project_snapshot_ref"
+              ]
+            }
+          }
+        ],
+        "properties": {
+          "a": {
+            "type": "string"
+          },
+          "artifact_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "b": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "kind": {
+            "enum": [
+              "interference",
+              "clearance",
+              "distance",
+              "bbox",
+              "volume",
+              "mass",
+              "sealed",
+              "genus"
+            ],
+            "type": "string"
+          },
+          "part": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "project_snapshot_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "kind",
+          "a"
+        ],
+        "type": "object"
+      },
+      "name": "measure"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "oneOf": [
+            {
+              "additionalProperties": true,
+              "properties": {
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": true,
+              "properties": {
+                "check_set_generation": {
+                  "type": "string"
+                },
+                "check_set_ref": {
+                  "type": "string"
+                },
+                "diagnostics_ref": {
+                  "type": "string"
+                },
+                "status": {
+                  "const": "invalid_check_generation"
+                }
+              },
+              "required": [
+                "status"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": false,
+          "maxUtf8Fields": {},
+          "name": "run_checks",
+          "profiles": [
+            "part",
+            "orchestrator",
+            "quick_edit"
+          ],
+          "sequential": false
+        }
+      },
+      "description": "Re-run persistent CHECKS (part) or cross-part checks (project).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "not": {
+                "properties": {
+                  "scope": {
+                    "const": "project"
+                  }
+                },
+                "required": [
+                  "scope"
+                ]
+              }
+            },
+            "then": {
+              "properties": {
+                "name": {
+                  "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "scope": {
+                  "const": "project"
+                }
+              },
+              "required": [
+                "scope"
+              ]
+            },
+            "then": {
+              "properties": {
+                "name": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        ],
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "project_snapshot_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "scope": {
+            "default": "part",
+            "enum": [
+              "part",
+              "project"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "run_checks"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact_ref": {
+              "type": "string"
+            },
+            "content": {
+              "type": "string"
+            },
+            "next_offset_bytes": {
+              "type": "integer"
+            },
+            "oversized_line": {
+              "type": "boolean"
+            },
+            "oversized_line_offset_bytes": {
+              "type": "integer"
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "content",
+            "artifact_ref",
+            "truncated"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": false,
+          "maxUtf8Fields": {},
+          "name": "load_skill",
+          "profiles": [
+            "part",
+            "orchestrator",
+            "quick_edit"
+          ],
+          "sequential": false
+        }
+      },
+      "description": "Load a bounded skill page inside provenance delimiters (reference only).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit_lines": {
+            "default": 2000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "offset_line": {
+            "default": 1,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "load_skill"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "items": {
+            "additionalProperties": true,
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "tokens": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "name",
+              "summary",
+              "tokens"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": false,
+          "maxUtf8Fields": {},
+          "name": "list_skills",
+          "profiles": [
+            "part",
+            "orchestrator",
+            "quick_edit"
+          ],
+          "sequential": false
+        }
+      },
+      "description": "List available skills with summaries and token estimates.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "name": "list_skills"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "items": {
+            "additionalProperties": true,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "params": {
+                "type": "object"
+              },
+              "preview": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": false,
+          "maxUtf8Fields": {},
+          "name": "search_parts_store",
+          "profiles": [
+            "part",
+            "orchestrator",
+            "quick_edit"
+          ],
+          "sequential": false
+        }
+      },
+      "description": "Search parametric hardware generators in the pinned parts store.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "max_results": {
+            "default": 5,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "name": "search_parts_store"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "oneOf": [
+            {
+              "additionalProperties": true,
+              "properties": {
+                "script_fragment": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "script_fragment"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": true,
+              "properties": {
+                "code": {
+                  "const": "capability_not_available"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "status": {
+                  "const": "capability_error"
+                }
+              },
+              "required": [
+                "status",
+                "code"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": false,
+          "maxUtf8Fields": {},
+          "name": "instance_store_part",
+          "profiles": [
+            "part",
+            "orchestrator",
+            "quick_edit"
+          ],
+          "sequential": false
+        }
+      },
+      "description": "Instance a store generator, returning a placed script fragment.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "params": {
+            "type": "object"
+          },
+          "pos": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "id",
+          "params"
+        ],
+        "type": "object"
+      },
+      "name": "instance_store_part"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "items": {
+            "additionalProperties": true,
+            "properties": {
+              "density": {
+                "type": "number"
+              },
+              "forms": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "notes": {
+                "type": "string"
+              },
+              "thicknesses": {
+                "type": "array"
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": false,
+          "maxUtf8Fields": {},
+          "name": "search_materials",
+          "profiles": [
+            "part",
+            "orchestrator",
+            "quick_edit"
+          ],
+          "sequential": false
+        }
+      },
+      "description": "Search the materials registry (density, forms, thicknesses, notes).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "name": "search_materials"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "oneOf": [
+            {
+              "additionalProperties": true,
+              "properties": {
+                "child_run_id": {
+                  "type": "string"
+                },
+                "delegation_ref": {
+                  "type": "string"
+                },
+                "part_session_id": {
+                  "type": "string"
+                },
+                "result_artifact_ref": {
+                  "type": "string"
+                },
+                "status": {
+                  "const": "completed"
+                }
+              },
+              "required": [
+                "status",
+                "part_session_id",
+                "child_run_id",
+                "delegation_ref"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": true,
+              "properties": {
+                "child_run_id": {
+                  "type": "string"
+                },
+                "delegation_ref": {
+                  "type": "string"
+                },
+                "part_session_id": {
+                  "type": "string"
+                },
+                "status": {
+                  "const": "queued"
+                }
+              },
+              "required": [
+                "status",
+                "part_session_id",
+                "child_run_id",
+                "delegation_ref"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": true,
+              "properties": {
+                "child_run_id": {
+                  "type": "string"
+                },
+                "delegation_ref": {
+                  "type": "string"
+                },
+                "error": {},
+                "part_session_id": {
+                  "type": "string"
+                },
+                "status": {
+                  "enum": [
+                    "failed",
+                    "cancelled",
+                    "timed_out",
+                    "interrupted"
+                  ]
+                }
+              },
+              "required": [
+                "status",
+                "part_session_id",
+                "child_run_id",
+                "delegation_ref"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": true,
+              "properties": {
+                "part_session_id": {
+                  "type": "string"
+                },
+                "reason": {
+                  "enum": [
+                    "part_busy",
+                    "queue_full",
+                    "no_run_slot",
+                    "prompt_too_large",
+                    "scope_denied",
+                    "session_busy",
+                    "invalid_part"
+                  ],
+                  "type": "string"
+                },
+                "status": {
+                  "const": "rejected"
+                }
+              },
+              "required": [
+                "status",
+                "reason"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": true,
+          "maxUtf8Fields": {
+            "prompt": 32768
+          },
+          "name": "delegate_part_agent",
+          "profiles": [
+            "orchestrator"
+          ],
+          "sequential": true
+        }
+      },
+      "description": "Delegate a prompt to an existing part's leased session (orchestrator only).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "deadline_seconds": {
+            "default": 600,
+            "maximum": 1200,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "delivery": {
+            "default": "prompt",
+            "enum": [
+              "prompt",
+              "follow_up"
+            ],
+            "type": "string"
+          },
+          "part": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string",
+            "x-hephaestus-maxUtf8Bytes": 32768
+          }
+        },
+        "required": [
+          "part",
+          "prompt"
+        ],
+        "type": "object"
+      },
+      "name": "delegate_part_agent"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "oneOf": [
+            {
+              "additionalProperties": true,
+              "properties": {
+                "child_run_id": {
+                  "type": "string"
+                },
+                "delegation_ref": {
+                  "type": "string"
+                },
+                "part_session_id": {
+                  "type": "string"
+                },
+                "status": {
+                  "enum": [
+                    "queued",
+                    "running"
+                  ]
+                }
+              },
+              "required": [
+                "status",
+                "delegation_ref"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": true,
+              "properties": {
+                "child_run_id": {
+                  "type": "string"
+                },
+                "delegation_ref": {
+                  "type": "string"
+                },
+                "part_session_id": {
+                  "type": "string"
+                },
+                "result_artifact_ref": {
+                  "type": "string"
+                },
+                "status": {
+                  "const": "completed"
+                }
+              },
+              "required": [
+                "status",
+                "delegation_ref"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": true,
+              "properties": {
+                "child_run_id": {
+                  "type": "string"
+                },
+                "delegation_ref": {
+                  "type": "string"
+                },
+                "error": {},
+                "part_session_id": {
+                  "type": "string"
+                },
+                "status": {
+                  "enum": [
+                    "failed",
+                    "cancelled",
+                    "timed_out",
+                    "interrupted"
+                  ]
+                }
+              },
+              "required": [
+                "status",
+                "delegation_ref"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": false,
+          "maxUtf8Fields": {},
+          "name": "get_delegation_status",
+          "profiles": [
+            "orchestrator"
+          ],
+          "sequential": false
+        }
+      },
+      "description": "Observe a delegation's queued/running/terminal state (orchestrator).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "delegation_ref": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "delegation_ref"
+        ],
+        "type": "object"
+      },
+      "name": "get_delegation_status"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "oneOf": [
+            {
+              "additionalProperties": true,
+              "properties": {
+                "child_run_id": {
+                  "type": "string"
+                },
+                "delegation_ref": {
+                  "type": "string"
+                },
+                "part_session_id": {
+                  "type": "string"
+                },
+                "status": {
+                  "const": "cancelled"
+                }
+              },
+              "required": [
+                "status",
+                "delegation_ref"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": true,
+              "properties": {
+                "child_run_id": {
+                  "type": "string"
+                },
+                "delegation_ref": {
+                  "type": "string"
+                },
+                "error": {},
+                "part_session_id": {
+                  "type": "string"
+                },
+                "result_artifact_ref": {
+                  "type": "string"
+                },
+                "status": {
+                  "enum": [
+                    "completed",
+                    "failed",
+                    "timed_out",
+                    "interrupted"
+                  ]
+                }
+              },
+              "required": [
+                "status",
+                "delegation_ref"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": true,
+          "maxUtf8Fields": {},
+          "name": "cancel_delegation",
+          "profiles": [
+            "orchestrator"
+          ],
+          "sequential": true
+        }
+      },
+      "description": "Idempotently cancel a queued/running delegation (orchestrator).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "delegation_ref": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "delegation_ref"
+        ],
+        "type": "object"
+      },
+      "name": "cancel_delegation"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "selection": {}
+          },
+          "required": [
+            "selection"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": false,
+          "maxUtf8Fields": {},
+          "name": "ask_user",
+          "profiles": [
+            "part",
+            "orchestrator",
+            "quick_edit"
+          ],
+          "sequential": true
+        }
+      },
+      "description": "Structured question; suspends the loop until answered.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_free_text": {
+            "default": true,
+            "type": "boolean"
+          },
+          "multi": {
+            "default": false,
+            "type": "boolean"
+          },
+          "options": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "question": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "question",
+          "options"
+        ],
+        "type": "object"
+      },
+      "name": "ask_user"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "oneOf": [
+            {
+              "additionalProperties": true,
+              "properties": {
+                "export_hashes": {
+                  "type": "object"
+                },
+                "paths": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "source_artifact_ref": {
+                  "type": "string"
+                },
+                "source_input_hashes": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "paths",
+                "source_artifact_ref"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": true,
+              "properties": {
+                "code": {
+                  "const": "capability_not_available"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "status": {
+                  "const": "capability_error"
+                }
+              },
+              "required": [
+                "status",
+                "code"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": true,
+          "maxUtf8Fields": {},
+          "name": "export_part",
+          "profiles": [
+            "part",
+            "orchestrator",
+            "quick_edit"
+          ],
+          "sequential": true
+        }
+      },
+      "description": "Export a frozen successful build artifact (Stage 2: as_built layout only).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "layout": {
+                  "const": "nested_sheet"
+                }
+              },
+              "required": [
+                "layout"
+              ]
+            },
+            "then": {
+              "properties": {
+                "format": {
+                  "enum": [
+                    "dxf",
+                    "svg"
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "properties": {
+          "artifact_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "format": {
+            "enum": [
+              "step",
+              "dxf",
+              "svg",
+              "gltf",
+              "3mf",
+              "stl"
+            ],
+            "type": "string"
+          },
+          "layout": {
+            "default": "as_built",
+            "enum": [
+              "as_built",
+              "nested_sheet"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "name",
+          "format"
+        ],
+        "type": "object"
+      },
+      "name": "export_part"
+    }
+  ],
+  "version": 1
+}

@@ -68,8 +68,15 @@ Full outcomes remain protected throughout the horizon, and older normalized
 keys return `key_expired` without execution. After expiry, GC keeps a compact
 key/payload/terminal-state/commit-hash tombstone for a 7-day safety margin and
 may then remove it because the HMAC-verified embedded timestamp still rejects
-execution. Clients reconcile uncertain completion with the same key. Read-only tools are freely retryable. Tolerances
-are in mm. Source/artifact mutations and stateful delegation tools use this
+execution. Clients reconcile uncertain completion with the same key. Read-only tools are freely retryable.
+Reconciliation shape is transport-specific for `edit_part` and is pinned by
+the Stage 3 parity suite: an MCP same-id retry replays the recorded
+`{applied: true, ...}` outcome (the request-id ledger sits in front of the
+CAS gate), while a Pi-bridge retry of a committed edit reports
+`{applied: false, conflict: {current_hash: <the hash that edit wrote>}}`
+(the live-hash read precedes the WAL claim, making ambiguous completion
+detectable). Both mutate exactly once and both surface the live hash.
+Tolerances are in mm. Source/artifact mutations and stateful delegation tools use this
 contract: `create_part`, `edit_part`, `write_part`, `edit_globals`,
 `create_project_check`, `edit_project_check`, `set_params`, `build_part`,
 `export_part`, `delegate_part_agent`, and `cancel_delegation`; none may silently

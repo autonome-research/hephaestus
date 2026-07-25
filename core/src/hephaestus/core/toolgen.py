@@ -1,4 +1,4 @@
-"""Deterministic code generator: tools_decl -> committed JSON Schema + TypeBox.
+"""Deterministic code generator: tools_decl -> committed JSON Schema + TypeBox + MCP.
 
 ``uv run python -m hephaestus.core.toolgen all`` regenerates every artifact from
 :mod:`hephaestus.core.tools_decl`:
@@ -9,6 +9,10 @@
   and the ``x-hephaestus-maxUtf8Bytes`` guarded fields).
 * ``agent/src/tools/schema.gen.ts`` — a single generated TypeBox module wrapping
   the identical schemas via ``Type.Unsafe`` plus a typed ``TOOLS`` registry.
+* ``schemas/mcp/tools.json`` — the MCP ``tools/list`` declaration document
+  (Stage 3). The FastMCP server registers exactly these declarations by calling
+  :func:`mcp_declarations` in-process, so an MCP client sees the canonical
+  parameter schema verbatim and no MCP tool surface is ever hand-written.
 
 Output is byte-deterministic: schemas are emitted with sorted keys and a fixed
 two-space indent, tools iterate in the fixed :data:`hephaestus.core.tools_decl.TOOLS`
@@ -28,9 +32,14 @@ from . import tools_decl
 from .tools_decl import TOOLS, ToolDecl
 
 __all__ = [
+    "MCP_META_RESULT_KEY",
+    "MCP_META_TOOL_KEY",
     "generate_json_schemas",
+    "generate_mcp_document",
     "generate_typebox_module",
     "main",
+    "mcp_declaration",
+    "mcp_declarations",
     "repo_root",
     "schema_document",
     "write_all",
@@ -38,6 +47,13 @@ __all__ = [
 
 _SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 _ID_BASE = "https://hephaestus.dev/schemas/tools"
+
+#: ``_meta`` key carrying the ``x-hephaestus-tool`` block on an MCP declaration.
+MCP_META_TOOL_KEY = "hephaestus.dev/tool"
+#: ``_meta`` key carrying the canonical result schema on an MCP declaration.
+#: The result schema is a discriminated union, so it is advertised as metadata
+#: rather than as an MCP ``outputSchema`` (which clients validate structurally).
+MCP_META_RESULT_KEY = "hephaestus.dev/result-schema"
 
 
 def repo_root() -> Path:
@@ -80,6 +96,30 @@ def generate_json_schemas() -> dict[str, str]:
         text = _canonical_json(schema_document(tool)) + "\n"
         out[f"schemas/tools/{tool.name}.schema.json"] = text
     return out
+
+
+def mcp_declaration(tool: ToolDecl) -> dict[str, Any]:
+    """One MCP tool declaration, derived from the canonical schema document."""
+    document = schema_document(tool)
+    return {
+        "name": tool.name,
+        "description": tool.summary,
+        "inputSchema": document["parameters"],
+        "_meta": {
+            MCP_META_TOOL_KEY: document["x-hephaestus-tool"],
+            MCP_META_RESULT_KEY: document["result"],
+        },
+    }
+
+
+def mcp_declarations() -> list[dict[str, Any]]:
+    """Every canonical tool's MCP declaration, in the fixed ``TOOLS`` order."""
+    return [mcp_declaration(tool) for tool in TOOLS]
+
+
+def generate_mcp_document() -> str:
+    """Return the full text of ``schemas/mcp/tools.json``."""
+    return _canonical_json({"version": 1, "tools": mcp_declarations()}) + "\n"
 
 
 def _camel(name: str) -> str:
@@ -263,14 +303,19 @@ def write_all(root: Path | None = None) -> list[Path]:
     ts_path.write_text(generate_typebox_module(), encoding="utf-8")
     written.append(ts_path)
 
+    mcp_path = base / "schemas" / "mcp" / "tools.json"
+    mcp_path.parent.mkdir(parents=True, exist_ok=True)
+    mcp_path.write_text(generate_mcp_document(), encoding="utf-8")
+    written.append(mcp_path)
+
     return written
 
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     what = args[0] if args else "all"
-    if what not in {"all", "json", "ts"}:
-        print(f"usage: toolgen [all|json|ts]; got {what!r}", file=sys.stderr)
+    if what not in {"all", "json", "ts", "mcp"}:
+        print(f"usage: toolgen [all|json|ts|mcp]; got {what!r}", file=sys.stderr)
         return 2
     base = repo_root()
     written: list[Path] = []
@@ -285,6 +330,11 @@ def main(argv: list[str] | None = None) -> int:
         ts_path.parent.mkdir(parents=True, exist_ok=True)
         ts_path.write_text(generate_typebox_module(), encoding="utf-8")
         written.append(ts_path)
+    if what in {"all", "mcp"}:
+        mcp_path = base / "schemas" / "mcp" / "tools.json"
+        mcp_path.parent.mkdir(parents=True, exist_ok=True)
+        mcp_path.write_text(generate_mcp_document(), encoding="utf-8")
+        written.append(mcp_path)
     for path in written:
         print(str(path.relative_to(base)))
     print(f"toolgen: wrote {len(written)} files from {len(TOOLS)} tools", file=sys.stderr)
