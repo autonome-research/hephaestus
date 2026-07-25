@@ -25,6 +25,7 @@ import type {
 import { DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import { profileDefinition, sessionDirFor, type SessionProfile } from "./profiles.js";
+import { hephaestusInlineExtension } from "./extension.js";
 import type { PiModel } from "./runtime.js";
 
 export interface SessionCreateRequest {
@@ -42,6 +43,8 @@ export interface ManagedSession {
   readonly session: AgentSession;
   /** Persistence dir, or undefined for in-memory (query_snapshot). */
   readonly sessionDir: string | undefined;
+  /** The resolved model driving this session (its `input` fixes image capability). */
+  readonly model: PiModel;
 }
 
 /** Everything the Pi wiring needs to build one AgentSession. */
@@ -85,13 +88,22 @@ interface RunEntry {
  * system prompt, the profile tool allowlist, and no ambient extensions. An empty
  * allowlist (query_snapshot) yields a toolless session — NOT noTools:"all", which
  * would also strip custom tools (Stage S finding).
+ *
+ * The one extension that DOES load is the shipped, trusted Hephaestus extension
+ * (`extensionFactories` survives `noExtensions`, which suppresses only ambient
+ * global/project extensions). It carries the in-loop policies Pi must enforce:
+ * `ask_user` tool-call preflight and K=3 image eviction. The ephemeral
+ * `query_snapshot` child is explicitly excluded — arch §4.4 requires it to run
+ * with no extensions at all.
  */
 export async function defaultSessionFactory(spec: SessionBuildSpec): Promise<AgentSession> {
+  const trusted = spec.profile === "query_snapshot" ? [] : [hephaestusInlineExtension()];
   const loader = new DefaultResourceLoader({
     cwd: spec.projectRoot,
     agentDir: spec.agentDir,
     systemPrompt: spec.systemPrompt,
     noExtensions: !spec.extensions,
+    extensionFactories: trusted,
     noSkills: true,
     noPromptTemplates: true,
     noThemes: true,
@@ -155,7 +167,14 @@ export class SessionService {
       runtime: this.deps.runtime,
     };
     const session = await this.factory(spec);
-    const managed: ManagedSession = { id, profile: request.profile, part: request.part, session, sessionDir };
+    const managed: ManagedSession = {
+      id,
+      profile: request.profile,
+      part: request.part,
+      session,
+      sessionDir,
+      model,
+    };
     this.sessions.set(id, managed);
     return managed;
   }

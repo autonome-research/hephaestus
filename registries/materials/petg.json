@@ -1,0 +1,33 @@
+{
+  "id": "petg",
+  "name": "PETG (glycol-modified PET)",
+  "density": 1270.0,
+  "forms": [
+    "filament",
+    "sheet"
+  ],
+  "thicknesses": [
+    1.0,
+    2.0,
+    3.0,
+    6.0
+  ],
+  "notes": "Tougher and more temperature-tolerant than PLA (usable to roughly 70 C) with far better impact and fatigue behaviour, at the cost of stringing, more elephant-foot on the first layer, and slightly worse dimensional repeatability. Good choice for enclosures that live outdoors, snap features that must survive cycling, and anything screwed into repeatedly. Layer adhesion is strong enough that vertical bosses hold heat-set inserts well; allow a little more radial clearance than PLA for press fits.",
+  "keywords": [
+    "petg",
+    "pet",
+    "filament",
+    "fdm",
+    "print",
+    "3d",
+    "printing",
+    "plastic",
+    "sheet",
+    "tough"
+  ],
+  "processes": [
+    "fdm"
+  ],
+  "cost_hint": "low-mid",
+  "sources": "published PETG bulk density 1.27 g/cm^3"
+}

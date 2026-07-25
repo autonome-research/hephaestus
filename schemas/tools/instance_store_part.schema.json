@@ -30,16 +30,39 @@
     "type": "object"
   },
   "result": {
-    "additionalProperties": true,
-    "properties": {
-      "script_fragment": {
-        "type": "string"
+    "oneOf": [
+      {
+        "additionalProperties": true,
+        "properties": {
+          "script_fragment": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "script_fragment"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": true,
+        "properties": {
+          "code": {
+            "const": "capability_not_available"
+          },
+          "message": {
+            "type": "string"
+          },
+          "status": {
+            "const": "capability_error"
+          }
+        },
+        "required": [
+          "status",
+          "code"
+        ],
+        "type": "object"
       }
-    },
-    "required": [
-      "script_fragment"
-    ],
-    "type": "object"
+    ]
   },
   "title": "instance_store_part",
   "x-hephaestus-tool": {

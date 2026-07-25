@@ -1,0 +1,26 @@
+[registry]
+name = "hephaestus-materials"
+kind = "materials"
+version = "0.1.0"
+license = "CC-BY-4.0"
+description = """
+Materials records: density, stock forms, sheet thicknesses, and process notes
+that design decisions actually turn on. Notes are contextual reference content
+and reach a model only inside provenance delimiters.
+"""
+
+[[materials]]
+id = "plywood-baltic-birch"
+file = "plywood-baltic-birch.json"
+
+[[materials]]
+id = "pla"
+file = "pla.json"
+
+[[materials]]
+id = "petg"
+file = "petg.json"
+
+[[materials]]
+id = "al-6061"
+file = "al-6061.json"

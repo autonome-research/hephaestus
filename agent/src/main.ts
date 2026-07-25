@@ -60,6 +60,8 @@ interface ActiveContext {
   readonly tracker: InvocationTracker;
   /** Run-monotonic event sequence shared by live + synthetic events. */
   readonly nextSeq: () => number;
+  /** Whether this session's model can read image blocks (arch §4.1 capability). */
+  readonly imagesSupported: boolean;
   ordinal: number;
 }
 let activeContext: ActiveContext | undefined;
@@ -85,7 +87,12 @@ function resolveContext(toolCallId: string): ProxyContext {
     ordinal,
     providerCallId: toolCallId,
   });
-  return { sessionId: active.sessionId, runId: active.runId, invocation };
+  return {
+    sessionId: active.sessionId,
+    runId: active.runId,
+    invocation,
+    imagesSupported: active.imagesSupported,
+  };
 }
 
 // The proxy's bridge transport is the peer's client-request path back to Python.
@@ -204,6 +211,7 @@ peer.on("session.prompt", async (params) => {
     runId,
     tracker: new InvocationTracker(),
     nextSeq: next,
+    imagesSupported: managed.model.input.includes("image"),
     ordinal: 0,
   };
   let state: "completed" | "cancelled" | "failed" = "completed";

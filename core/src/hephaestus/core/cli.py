@@ -484,6 +484,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     cli_render.add_subparsers(sub)
 
+    # Stage 2 registry verbs (heph registry pin/update/verify/list) likewise live
+    # in their own module; pinning needs no CAD stack at all.
+    from hephaestus.core import cli_registry
+
+    cli_registry.add_subparsers(sub)
+
     # Stage 2 agent verb (heph agent) ships with the server package; the engine
     # CLI stays Node-free and fully functional when it is not installed.
     try:
@@ -492,6 +498,15 @@ def build_parser() -> argparse.ArgumentParser:
         pass
     else:
         agent_cli.add_subparsers(sub)
+
+    # Stage 2 bench verbs (heph bench run/score) ship with the server package too;
+    # the handlers import the harness lazily, so registering costs nothing.
+    try:
+        from hephaestus.bench import cli_bench
+    except ImportError:
+        pass
+    else:
+        cli_bench.add_subparsers(sub)
     return parser
 
 

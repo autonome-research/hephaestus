@@ -1,0 +1,4 @@
+# param-retune bench task: the finished, fully parametric shelf project.
+[project]
+name = "shelfretune"
+description = "Parametric wall shelf: retune the project params to a new envelope"

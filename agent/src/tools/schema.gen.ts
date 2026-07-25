@@ -81,7 +81,7 @@ export const searchPartsStoreParams: TSchema = Type.Object({ "query": Type.Strin
 export const searchPartsStoreResult: TSchema = Type.Array(Type.Object({ "id": Type.String(), "name": Type.String(), "params": Type.Optional(Type.Record(Type.String(), Type.Unknown())), "preview": Type.Optional(Type.String()) }, {"additionalProperties": true}));
 
 export const instanceStorePartParams: TSchema = Type.Object({ "id": Type.String(), "params": Type.Record(Type.String(), Type.Unknown()), "pos": Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()], {"default": null})) }, {"additionalProperties": false});
-export const instanceStorePartResult: TSchema = Type.Object({ "script_fragment": Type.String() }, {"additionalProperties": true});
+export const instanceStorePartResult: TSchema = Type.Union([Type.Object({ "script_fragment": Type.String() }, {"additionalProperties": true}), Type.Object({ "status": Type.Literal("capability_error"), "code": Type.Literal("capability_not_available"), "message": Type.Optional(Type.String()) }, {"additionalProperties": true})]);
 
 export const searchMaterialsParams: TSchema = Type.Object({ "query": Type.String() }, {"additionalProperties": false});
 export const searchMaterialsResult: TSchema = Type.Array(Type.Object({ "id": Type.String(), "name": Type.String(), "density": Type.Optional(Type.Number()), "forms": Type.Optional(Type.Array(Type.String())), "thicknesses": Type.Optional(Type.Array(Type.Unknown())), "notes": Type.Optional(Type.String()) }, {"additionalProperties": true}));
@@ -99,7 +99,7 @@ export const askUserParams: TSchema = Type.Object({ "question": Type.String(), "
 export const askUserResult: TSchema = Type.Object({ "selection": Type.Unknown() }, {"additionalProperties": true});
 
 export const exportPartParams: TSchema = Type.Object({ "name": Type.String({"pattern": "^[a-z][a-z0-9_]{0,63}$"}), "format": Type.Union([Type.Literal("step"), Type.Literal("dxf"), Type.Literal("svg"), Type.Literal("gltf"), Type.Literal("3mf"), Type.Literal("stl")]), "artifact_ref": Type.Optional(Type.Union([Type.String(), Type.Null()], {"default": null})), "target": Type.Optional(Type.Union([Type.String(), Type.Null()], {"default": null})), "layout": Type.Optional(Type.Union([Type.Literal("as_built"), Type.Literal("nested_sheet")], {"default": "as_built"})) }, {"additionalProperties": false, "allOf": [{"if": {"properties": {"layout": {"const": "nested_sheet"}}, "required": ["layout"]}, "then": {"properties": {"format": {"enum": ["dxf", "svg"]}}}}]});
-export const exportPartResult: TSchema = Type.Object({ "paths": Type.Array(Type.String()), "source_artifact_ref": Type.String(), "source_input_hashes": Type.Optional(Type.Record(Type.String(), Type.Unknown())), "export_hashes": Type.Optional(Type.Record(Type.String(), Type.Unknown())) }, {"additionalProperties": true});
+export const exportPartResult: TSchema = Type.Union([Type.Object({ "paths": Type.Array(Type.String()), "source_artifact_ref": Type.String(), "source_input_hashes": Type.Optional(Type.Record(Type.String(), Type.Unknown())), "export_hashes": Type.Optional(Type.Record(Type.String(), Type.Unknown())) }, {"additionalProperties": true}), Type.Object({ "status": Type.Literal("capability_error"), "code": Type.Literal("capability_not_available"), "message": Type.Optional(Type.String()) }, {"additionalProperties": true})]);
 
 export const TOOLS: Readonly<Record<string, ToolSchema>> = {
   "create_part": {

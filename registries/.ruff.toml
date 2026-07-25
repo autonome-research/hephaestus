@@ -1,0 +1,15 @@
+# Parts-store generators are part scripts: they execute under the executor's
+# injected namespace (script contract §2), where Box, Cylinder, Pos, Plane,
+# Align, Color, RegularPolygon, extrude, math, Param, PARAMS, p and part are
+# provided at execution time and never imported. Undefined-name (F821) is
+# therefore expected here and disabled; everything else matches the root config.
+#
+# This file lives ABOVE the individual registry directories on purpose: a
+# dotfile is excluded from a registry's Merkle digest, but keeping tooling
+# config out of the hashed trees entirely leaves no doubt about it.
+line-length = 100
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["F821"]

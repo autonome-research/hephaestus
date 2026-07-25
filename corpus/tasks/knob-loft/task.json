@@ -1,0 +1,12 @@
+{
+  "id": "knob-loft",
+  "prompt": "Design a turned control knob as the part `knob`. It is a body of revolution about the Z axis, standing on z = 0, and it is printed in PETG - no knurling, no flats, nothing that breaks the revolve.\n\nProfile, bottom to top (the diameters and heights are in `globals.py`; read them through `hc`):\n\n- a base flange 40 mm in diameter and 8 mm tall, sitting on z = 0;\n- from the top of the flange at z = 8, a smooth lofted transition up to the 24 mm diameter grip at z = 14 - a straight taper between the two circles, not a step;\n- the 24 mm grip carries on up to the top of the knob at z = 30;\n- the top rim is rounded over with a 6 mm radius crown.\n\nThe project also contains two gauge parts, `core_gauge` and `sleeve_gauge` - reference geometry the acceptance checks measure the grip's form against. Leave them exactly as they are.\n\nBuild the knob and export it as 3MF for the printer when the geometry is right.",
+  "budget_tool_calls": 20,
+  "required_checks": ["knob_loft"],
+  "export_requirements": [
+    {"part": "knob", "format": "3mf", "layout": "as_built", "min_bytes": 2048}
+  ],
+  "render_requirements": [],
+  "protected_paths": ["parts/core_gauge.py", "parts/sleeve_gauge.py"],
+  "notes": "Difficulty 7. Checks: envelope, sealed genus 0, equal X/Y extents, grip form held inside a 0.05 mm radial band by the seeded go-plug/no-go sleeve gauges (the measured form of revolve symmetry), and a volume window pinning the loft and the R6 crown. Export: 3MF."
+}

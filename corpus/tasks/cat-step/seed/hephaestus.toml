@@ -1,0 +1,4 @@
+# cat-step bench task: a fresh wall-shelf project with the mounting-wall gauge.
+[project]
+name = "catstep"
+description = "Wall-mounted cat step: shelf plate on a triangular gusset"

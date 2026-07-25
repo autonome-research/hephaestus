@@ -1,0 +1,4 @@
+# enclosure-bosses bench task: a fresh FDM project with the DFM gauges.
+[project]
+name = "enclosurebosses"
+description = "Printed project box with lid and four internal screw bosses"

@@ -1,0 +1,10 @@
+{
+  "id": "repair-fillet",
+  "prompt": "The part `plate` in this project does not build: the corner blend statement fails. Repair it.\n\nThis is a repair-only task. Keep the plate blank, the notch and the rest of the script exactly as they are - the design intent is unchanged, only the blend radius is wrong. The inner corner of the notch needs a 5 mm radius blend.\n\nBuild the part to prove the repair works.",
+  "budget_tool_calls": 8,
+  "required_checks": ["repair_fillet"],
+  "export_requirements": [],
+  "render_requirements": [],
+  "protected_paths": [],
+  "notes": "Difficulty 5 in the digest ordering; MUST pass 3/3 seeds. Checks: builds clean and sealed, envelope unchanged, exact R5 blend volume (6600 + 32.19 mm^3)."
+}

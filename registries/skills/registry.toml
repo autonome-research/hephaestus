@@ -1,0 +1,43 @@
+[registry]
+name = "hephaestus-skills"
+kind = "skills"
+version = "0.1.0"
+license = "CC-BY-4.0"
+description = """
+Six CAD references for authoring Hephaestus part scripts: the injected namespace
+and its idioms, profile/extrusion construction, booleans and declared clearance,
+sheet goods and joinery, fillets and failure repair, and the parts store. Every
+code block is an executable part script, checked in CI. Skill text is contextual
+content: it reaches a model only inside provenance delimiters, as reference
+material and never as instructions.
+"""
+
+[[skills]]
+name = "build123d-idioms"
+file = "build123d-idioms.md"
+summary = "The injected namespace and the house style: algebra mode, PARAMS/p, hc, part.*, tags, CHECKS, and the one addressing grammar."
+
+[[skills]]
+name = "profiles-and-extrusion"
+file = "profiles-and-extrusion.md"
+summary = "Building solids from 2D profiles: extrude, revolve, loft and sweep, sketching on planes, mirror symmetry, and the ordering rules that avoid rebuilds."
+
+[[skills]]
+name = "booleans-and-clearances"
+file = "booleans-and-clearances.md"
+summary = "Fuse/cut/intersect without coincident-face failures, and clearance as a bounded parameter proved by a persistent check rather than by eye."
+
+[[skills]]
+name = "sheet-goods-and-joinery"
+file = "sheet-goods-and-joinery.md"
+summary = "Flat-stock design: sheet thickness and kerf in globals.py, finger joints, edge notches, tabs with corner relief, laminations, and cut-list metadata."
+
+[[skills]]
+name = "fillets-and-failure-repair"
+file = "fillets-and-failure-repair.md"
+summary = "Why fillets fail, how to read the failed-build record and its last-good snapshot, max_fillet, chamfer fallbacks, and a step-by-step repair procedure."
+
+[[skills]]
+name = "parts-store-usage"
+file = "parts-store-usage.md"
+summary = "Searching and instancing store hardware, pasting a provenance-marked fragment, cutting your own mating features, and checks that prove the fit."

@@ -159,6 +159,28 @@ def _ok(props: dict[str, JsonSchema], required: list[str]) -> JsonSchema:
     return _obj(props, required, additional=True)
 
 
+def _capability(code: str) -> JsonSchema:
+    """The discriminated ``capability_error`` result variant for one code.
+
+    A capability refusal is a *successful, discriminated* tool result the model
+    can branch on (``status == "capability_error"`` plus a stable ``code``) — it
+    is never a transport error, so every tool that can refuse must declare it.
+    """
+    return _ok(
+        {
+            "status": {"const": "capability_error"},
+            "code": {"const": code},
+            "message": _STR,
+        },
+        ["status", "code"],
+    )
+
+
+#: Stage-deferred capability refusal (``export_part`` nested_sheet, store
+#: generators without a probed sandbox).
+_CAPABILITY_NOT_AVAILABLE: Final[JsonSchema] = _capability("capability_not_available")
+
+
 # --- the paging fields shared by every read-family result ------------------
 
 _PAGING_FIELDS: Final[dict[str, JsonSchema]] = {
@@ -702,14 +724,7 @@ def _query_snapshot() -> ToolDecl:
                 },
                 ["status", "answer"],
             ),
-            _ok(
-                {
-                    "status": {"const": "capability_error"},
-                    "code": {"const": "capability_not_available"},
-                    "message": _STR,
-                },
-                ["status", "code"],
-            ),
+            _CAPABILITY_NOT_AVAILABLE,
         ),
         profiles=("part", "orchestrator", "quick_edit"),
         sequential=False,
@@ -932,7 +947,10 @@ def _instance_store_part() -> ToolDecl:
             },
             ["id", "params"],
         ),
-        result=_ok({"script_fragment": _STR}, ["script_fragment"]),
+        result=_result(
+            _ok({"script_fragment": _STR}, ["script_fragment"]),
+            _CAPABILITY_NOT_AVAILABLE,
+        ),
         profiles=("part", "orchestrator", "quick_edit"),
         sequential=False,
         idempotent=False,
@@ -1158,14 +1176,17 @@ def _export_part() -> ToolDecl:
             ["name", "format"],
             extra={"allOf": conditional},
         ),
-        result=_ok(
-            {
-                "paths": {"type": "array", "items": _STR},
-                "source_artifact_ref": _STR,
-                "source_input_hashes": _dict(),
-                "export_hashes": _dict(),
-            },
-            ["paths", "source_artifact_ref"],
+        result=_result(
+            _ok(
+                {
+                    "paths": {"type": "array", "items": _STR},
+                    "source_artifact_ref": _STR,
+                    "source_input_hashes": _dict(),
+                    "export_hashes": _dict(),
+                },
+                ["paths", "source_artifact_ref"],
+            ),
+            _CAPABILITY_NOT_AVAILABLE,
         ),
         profiles=("part", "orchestrator", "quick_edit"),
         sequential=True,

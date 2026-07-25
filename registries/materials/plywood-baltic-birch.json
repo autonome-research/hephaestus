@@ -1,0 +1,37 @@
+{
+  "id": "plywood-baltic-birch",
+  "name": "Baltic birch plywood (BB/BB)",
+  "density": 680.0,
+  "forms": [
+    "sheet"
+  ],
+  "thicknesses": [
+    3.0,
+    6.0,
+    12.0,
+    18.0
+  ],
+  "notes": "Void-free multi-ply birch; the standard sheet stock for laser-cut and CNC-routed joinery. Nominal thickness runs under size and varies batch to batch by roughly +/-0.3 mm, so drive every slot and finger width from one project-global sheet-thickness parameter and MEASURE the actual sheet before cutting a whole design. Laser kerf is about 0.15-0.25 mm per side at 6 mm; a 3 mm router bit removes its full width, so kerf compensation direction is opposite between the two processes. Edges char under laser cutting and want light sanding. Glue face-grain to face-grain with PVA for laminations; end-grain screwing splits.",
+  "keywords": [
+    "plywood",
+    "ply",
+    "birch",
+    "baltic",
+    "sheet",
+    "goods",
+    "laser",
+    "cut",
+    "cnc",
+    "router",
+    "wood",
+    "joinery",
+    "finger",
+    "joint"
+  ],
+  "processes": [
+    "laser_cut",
+    "cnc_router"
+  ],
+  "cost_hint": "mid; sold in 1525 x 1525 mm or 2500 x 1250 mm sheets",
+  "sources": "published nominal density range for birch plywood, 650-700 kg/m^3"
+}

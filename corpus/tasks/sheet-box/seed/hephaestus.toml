@@ -1,0 +1,4 @@
+# sheet-box bench task: a fresh CNC sheet-goods project.
+[project]
+name = "sheetbox"
+description = "Tabbed sheet-goods tray: base, four walls, and the flat cut layout"

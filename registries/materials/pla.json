@@ -1,0 +1,26 @@
+{
+  "id": "pla",
+  "name": "PLA (polylactic acid)",
+  "density": 1240.0,
+  "forms": [
+    "filament",
+    "sheet"
+  ],
+  "thicknesses": [],
+  "notes": "The default FDM filament: stiff, dimensionally accurate, low warp, and forgiving of thin walls. Poor above roughly 50 C (a closed car interior will sag a part) and brittle under repeated impact, so avoid it for living hinges, clamps under sustained load, or anything near a motor. Print walls in multiples of the nozzle width (1.6 mm = 4 x 0.4 mm is a solid default minimum) and expect roughly 0.1-0.2 mm of oversizing on outer contours, so clearance fits need real clearance, not zero. Heat-set inserts seat well because the melt temperature is low.",
+  "keywords": [
+    "pla",
+    "filament",
+    "fdm",
+    "print",
+    "3d",
+    "printing",
+    "polylactic",
+    "plastic"
+  ],
+  "processes": [
+    "fdm"
+  ],
+  "cost_hint": "low",
+  "sources": "published PLA bulk density 1.24 g/cm^3"
+}

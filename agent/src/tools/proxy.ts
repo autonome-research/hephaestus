@@ -44,6 +44,14 @@ export interface ProxyContext {
   readonly sessionId: string;
   readonly runId: string;
   readonly invocation: TrustedInvocation;
+  /**
+   * Whether the model that will read this tool result can consume image blocks.
+   * `false` turns an image-bearing result into the discriminated
+   * `image_model_required` refusal instead of shipping blocks the model would
+   * silently drop. Omitted (undefined) means "unknown" and is treated as capable
+   * — image capability is negotiated by the session layer, not guessed here.
+   */
+  readonly imagesSupported?: boolean;
 }
 
 export interface ProxyDetails {
@@ -196,6 +204,40 @@ export function checkConditionals(paramsSchema: SchemaNode, value: unknown): boo
 
 // ---------------------------------------------------------------------------
 
+/**
+ * Downgrade an image-bearing result to `image_model_required` when the reading
+ * model is text-only. Returns `undefined` when the result carries no images or
+ * the model can read them (the overwhelmingly common path).
+ *
+ * Stage 2 has no vision-model fallback wired: with a text-only active model and
+ * no configured image model the refusal IS the outcome, and it is discriminated
+ * so a client can branch on it. Routing to a configured vision model would land
+ * here as an alternative branch.
+ */
+function imageCapabilityRefusal(
+  result: JsonValue,
+  ctx: ProxyContext,
+): { [k: string]: JsonValue } | undefined {
+  if (ctx.imagesSupported !== false) return undefined;
+  if (result === null || typeof result !== "object" || Array.isArray(result)) return undefined;
+  const obj = result as { [k: string]: JsonValue };
+  if (!Array.isArray(obj.images) || obj.images.length === 0) return undefined;
+  const refusal: { [k: string]: JsonValue } = {
+    status: "capability_error",
+    code: "image_model_required",
+    message:
+      "the active model cannot read image blocks and no vision model is configured; " +
+      "the renders are on disk and readable by artifact ref",
+  };
+  if (typeof obj.source_artifact_ref === "string") {
+    refusal.source_artifact_ref = obj.source_artifact_ref;
+  }
+  if (Array.isArray(obj.render_artifact_refs)) {
+    refusal.render_artifact_refs = obj.render_artifact_refs;
+  }
+  return refusal;
+}
+
 export class ToolProxy {
   constructor(private readonly request: RpcRequest) {}
 
@@ -249,7 +291,14 @@ export class ToolProxy {
       );
     }
 
-    // 6. Render.
+    // 6. Capability negotiation: a result whose images the active model cannot
+    //    read becomes a discriminated refusal rather than a silently-dropped
+    //    payload (digest §1 "capability tests"). The render artifacts are still
+    //    named so the operator/model can read them another way.
+    const refusal = imageCapabilityRefusal(result, ctx);
+    if (refusal !== undefined) return this.render(toolName, refusal);
+
+    // 7. Render.
     return this.render(toolName, result);
   }
 

@@ -82,29 +82,52 @@
     "type": "object"
   },
   "result": {
-    "additionalProperties": true,
-    "properties": {
-      "export_hashes": {
+    "oneOf": [
+      {
+        "additionalProperties": true,
+        "properties": {
+          "export_hashes": {
+            "type": "object"
+          },
+          "paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "source_artifact_ref": {
+            "type": "string"
+          },
+          "source_input_hashes": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "paths",
+          "source_artifact_ref"
+        ],
         "type": "object"
       },
-      "paths": {
-        "items": {
-          "type": "string"
+      {
+        "additionalProperties": true,
+        "properties": {
+          "code": {
+            "const": "capability_not_available"
+          },
+          "message": {
+            "type": "string"
+          },
+          "status": {
+            "const": "capability_error"
+          }
         },
-        "type": "array"
-      },
-      "source_artifact_ref": {
-        "type": "string"
-      },
-      "source_input_hashes": {
+        "required": [
+          "status",
+          "code"
+        ],
         "type": "object"
       }
-    },
-    "required": [
-      "paths",
-      "source_artifact_ref"
-    ],
-    "type": "object"
+    ]
   },
   "title": "export_part",
   "x-hephaestus-tool": {

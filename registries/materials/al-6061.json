@@ -1,0 +1,42 @@
+{
+  "id": "al-6061",
+  "name": "Aluminium 6061-T6",
+  "density": 2700.0,
+  "forms": [
+    "plate",
+    "sheet",
+    "bar",
+    "extrusion"
+  ],
+  "thicknesses": [
+    1.5,
+    3.0,
+    6.0,
+    10.0,
+    12.0,
+    20.0,
+    25.0
+  ],
+  "notes": "The general-purpose structural aluminium: machines cleanly, anodises well, and is stiff enough that a 6 mm bracket usually beats a 20 mm printed one. Design for the tool, not the shape you want: internal corners need a radius of at least half the pocket depth's worth of tool clearance (3 mm end mill => 1.5 mm minimum internal radius), pockets deeper than about 4x the tool diameter chatter, and thin webs below roughly 1 mm distort. Tapped M3 threads want 4.5-6 mm of engagement; through-bolting with clearance holes plus nuts is more forgiving than tapping thin plate.",
+  "keywords": [
+    "aluminium",
+    "aluminum",
+    "al",
+    "6061",
+    "t6",
+    "metal",
+    "plate",
+    "bar",
+    "cnc",
+    "mill",
+    "machined",
+    "extrusion",
+    "bracket"
+  ],
+  "processes": [
+    "cnc_router",
+    "cnc_mill"
+  ],
+  "cost_hint": "mid-high; plate offcuts are the cheap route",
+  "sources": "published 6061 density 2.70 g/cm^3"
+}

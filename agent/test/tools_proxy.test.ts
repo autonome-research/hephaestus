@@ -326,6 +326,38 @@ describe("result rendering", () => {
     expect(JSON.stringify(textBlock)).not.toContain(tinyPngBase64());
   });
 
+  it("refuses with image_model_required when the reading model is text-only", async () => {
+    const bridge = fakeBridge(() => ({
+      status: "ok",
+      source_artifact_ref: "a",
+      render_artifact_refs: ["r1"],
+      images: [{ data: tinyPngBase64(), mime_type: "image/png" }],
+    }));
+    const result = await new ToolProxy(bridge.request).execute("inspect_part", { name: "p" }, {
+      ...CTX,
+      imagesSupported: false,
+    });
+    expect(result.content.filter((c) => c.type === "image")).toHaveLength(0);
+    expect(result.details.capability).toBe("image_model_required");
+    expect(result.details.result).toMatchObject({
+      status: "capability_error",
+      code: "image_model_required",
+      source_artifact_ref: "a",
+      render_artifact_refs: ["r1"],
+    });
+  });
+
+  it("does not refuse an image-free result on a text-only model", async () => {
+    const bridge = fakeBridge(() => ({ value: 1, units: "mm" }));
+    const result = await new ToolProxy(bridge.request).execute(
+      "measure",
+      { kind: "bbox", a: "x" },
+      { ...CTX, imagesSupported: false },
+    );
+    expect(result.details.capability).toBeUndefined();
+    expect(result.details.result).toMatchObject({ value: 1 });
+  });
+
   it("fails closed when the image payload is over budget (never reaches the model)", async () => {
     // Width beyond MAX_IMAGE_WIDTH -> parseImageHeader rejects -> ProxyResultError.
     const bad = Buffer.alloc(24);

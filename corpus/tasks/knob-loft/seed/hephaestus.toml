@@ -1,0 +1,4 @@
+# knob-loft bench task: a fresh single-part project with the symmetry gauges.
+[project]
+name = "knobloft"
+description = "Turned control knob: revolved flange, lofted grip transition"

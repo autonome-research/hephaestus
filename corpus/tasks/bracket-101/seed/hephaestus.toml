@@ -1,0 +1,4 @@
+# bracket-101 bench task: a fresh single-part project.
+[project]
+name = "bracket101"
+description = "L-bracket with two through-holes and a filleted inner corner"

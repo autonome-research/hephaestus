@@ -1,0 +1,4 @@
+# repair-fillet bench task: a project whose only part fails to build.
+[project]
+name = "repair_fillet"
+description = "Notched L-plate whose corner blend is oversized (repair fixture)"

@@ -1,0 +1,4 @@
+# Per-run archives — seeded projects, event JSONL, grades, transcripts — are
+# ordinary CI artifacts, not repository history. The per-model/date scoring JSON
+# (bench/results/<model>/<date>.json) is the committed leaderboard deliverable.
+*/*/

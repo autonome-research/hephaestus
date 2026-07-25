@@ -1,0 +1,10 @@
+{
+  "id": "cat-step",
+  "prompt": "I want a cat step for the hallway wall - one of a run of climbing shelves, so this one has to be right before I cut the rest.\n\nIt is two pieces of the 18 mm ply we have in stock. The tread is a rectangle 300 mm wide (along X) and 200 mm deep (out from the wall), lying flat with its back edge against the wall and its underside level with the top of the bracket. Put the underside on z = 0 and keep the tread centred left-to-right on x = 0, so it spans z = 0 up to one panel thickness. The two front corners - the outer corners furthest from the wall - want rounding off with a 25 mm radius so the cat cannot catch a sharp corner coming down.\n\nUnder it goes a single triangular gusset, the same 18 mm ply, standing on edge and centred on x = 0. It is a right triangle: the vertical leg against the wall, the horizontal leg flat against the tread's underside reaching 140 mm out from the wall, and the hypotenuse running from that far point back down to the wall 160 mm below the tread. The gusset must touch the tread's underside along its whole top edge and must sit flat against the wall - it cannot float in front of the wall or cut into it.\n\nThe project already contains a `wall_plane` part: that is the wall itself, reference geometry for the acceptance checks. Leave it exactly as it is.\n\nCall the tread part `shelf` and the bracket part `gusset`. The panel thickness and the wall's position are in `globals.py`; read them through `hc`. Build both parts when the geometry is right.",
+  "budget_tool_calls": 40,
+  "required_checks": ["cat_step"],
+  "export_requirements": [],
+  "render_requirements": [],
+  "protected_paths": ["parts/wall_plane.py"],
+  "notes": "Difficulty 3 (flagship prose task). Checks: both envelopes, exact tread volume (pins the R25 corners) and gusset volume (pins the triangular profile), sealed genus 0 for both, gusset-to-tread contact with zero interference, both parts flush against the seeded wall gauge."
+}

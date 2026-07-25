@@ -1,0 +1,5 @@
+# store-hardware bench task: the finished bracket-101 project, to be
+# re-detailed for store-sourced M5 socket-head cap screws.
+[project]
+name = "storehardware"
+description = "L-bracket mounted with counterbored M5 socket-head cap screws"
