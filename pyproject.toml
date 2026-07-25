@@ -43,7 +43,7 @@ target-version = "py311"
 # spikes/ is frozen Stage S evidence; corpus/ and registries/ hold part
 # scripts written against the executor's injected namespace, not importable
 # Python modules.
-extend-exclude = ["spikes", "corpus", "registries"]
+extend-exclude = ["spikes", "corpus", "registries", "*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
