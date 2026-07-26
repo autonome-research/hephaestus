@@ -42,6 +42,8 @@ __all__ = [
     "COMPELLED_TOOLS",
     "DEFAULT_PROMPT_TIMEOUT",
     "DEFAULT_SEEDS",
+    "OBSERVE_CEILING_FACTOR",
+    "OBSERVE_CEILING_FLOOR",
     "ProviderConfig",
     "ReviewHook",
     "RunContext",
@@ -51,6 +53,7 @@ __all__ = [
     "default_review_hook",
     "default_runtime_factory",
     "dry_run",
+    "observe_ceiling",
     "run_bench",
     "run_task",
 ]
@@ -334,20 +337,59 @@ COMPELLED_TOOLS: frozenset[str] = frozenset(
 )
 
 
+#: Hard ceiling on an observed (non-enforcing) run, as a multiple of the budget.
+#: Generous enough that "how many calls does this actually take?" is answered,
+#: bounded so a non-converging run cannot spin forever. A run that hits it did
+#: not converge, which is itself the measurement.
+OBSERVE_CEILING_FACTOR: Final[int] = 4
+OBSERVE_CEILING_FLOOR: Final[int] = 24
+
+
+def observe_ceiling(budget: int) -> int:
+    """The hard call ceiling for an observed run."""
+    return max(budget * OBSERVE_CEILING_FACTOR, budget + OBSERVE_CEILING_FLOOR)
+
+
 class _BudgetGuard:
-    """Counts chargeable ``tool_call`` events; cancels the run once spent.
+    """Counts chargeable ``tool_call`` events and bounds the run.
+
+    Two modes, and the distinction is a *measurement* choice, never a grading
+    one — ``grade`` computes ``within_budget`` from the recorded count either
+    way, so the pass criteria of ``verification.md`` are identical:
+
+    ``observe`` (default)
+        The run continues past its budget to a hard ceiling
+        (:func:`observe_ceiling`) or the wall-clock timeout. Cancelling AT the
+        budget censors the data: every over-budget run records exactly
+        ``budget + 1`` and "needs one more call" is indistinguishable from
+        "needs triple". Worse, a cancelled run never reaches a stop state, so
+        the §5 termination reviewer and the §6 continuation ladder never run —
+        measured 2026-07-26, when seven consecutive cancellations meant the
+        reviewer had never executed in a bench at all.
+    ``enforce``
+        Cancels on the call that exceeds the budget (the original behaviour),
+        for cost-bounded runs where the uncensored number is not worth paying
+        for.
 
     Harness-compelled ladder calls (:data:`COMPELLED_TOOLS`) are tallied into
-    ``compelled_tool_calls`` and never charged.
+    ``compelled_tool_calls`` and never charged in either mode.
     """
 
-    def __init__(self, runtime: BridgeRuntime, run_id: str, budget: int) -> None:
+    def __init__(
+        self, runtime: BridgeRuntime, run_id: str, budget: int, *, enforce: bool = False
+    ) -> None:
         self._runtime = runtime
         self._run_id = run_id
         self._budget = budget
+        self._enforce = enforce
+        self._ceiling = budget if enforce else observe_ceiling(budget)
         self._cancelled = False
         self.tool_calls = 0
         self.compelled_tool_calls = 0
+        #: Calls spent when the budget was first exceeded (None if never).
+        self.budget_exceeded_at: int | None = None
+        #: True when the run was stopped by the observe ceiling, not the budget.
+        self.hit_ceiling = False
         self.questions: list[Mapping[str, Any]] = []
 
     def on_event(self, event: Mapping[str, Any]) -> None:
@@ -367,8 +409,11 @@ class _BudgetGuard:
             self.compelled_tool_calls += 1
             return
         self.tool_calls += 1
-        if self.tool_calls > self._budget and not self._cancelled:
+        if self.tool_calls > self._budget and self.budget_exceeded_at is None:
+            self.budget_exceeded_at = self.tool_calls
+        if self.tool_calls > self._ceiling and not self._cancelled:
             self._cancelled = True
+            self.hit_ceiling = not self._enforce
             # Cancel off the reader thread: the notification sink must not block
             # on the supervisor's stdin writer.
             threading.Thread(target=self._runtime.cancel, args=(self._run_id,), daemon=True).start()
@@ -388,6 +433,7 @@ def run_task(
     before_prompt: Callable[[RunContext], None] | None = None,
     review: ReviewHook | None = None,
     prompt_timeout: float = DEFAULT_PROMPT_TIMEOUT,
+    enforce_budget: bool = False,
     date: str | None = None,
     project_root: Path | None = None,
 ) -> RunRecord:
@@ -412,7 +458,7 @@ def run_task(
         runtime.start()
         session_id = runtime.create_session("orchestrator", session_id=f"bench-{task.id}-s{seed}")
         run_id = runtime.new_run_id()
-        guard = _BudgetGuard(runtime, run_id, task.budget_tool_calls)
+        guard = _BudgetGuard(runtime, run_id, task.budget_tool_calls, enforce=enforce_budget)
 
         def on_event(event: dict[str, Any]) -> None:
             events.append(event)
@@ -457,6 +503,8 @@ def run_task(
 
     tool_calls = guard.tool_calls if guard is not None else 0
     compelled_calls = guard.compelled_tool_calls if guard is not None else 0
+    exceeded_at = guard.budget_exceeded_at if guard is not None else None
+    hit_ceiling = guard.hit_ceiling if guard is not None else False
     questions = tuple(guard.questions) if guard is not None else ()
     with (run_dir / ARCHIVE_EVENTS_FILENAME).open("w", encoding="utf-8") as handle:
         for event in events:
@@ -509,6 +557,8 @@ def run_task(
         status=status,
         tool_calls=tool_calls,
         compelled_tool_calls=compelled_calls,
+        budget_exceeded_at=exceeded_at,
+        hit_observe_ceiling=hit_ceiling,
         budget_tool_calls=task.budget_tool_calls,
         reasons=report.reasons,
         prompt=prompt,
@@ -544,6 +594,7 @@ def run_bench(
     before_prompt: Callable[[RunContext], None] | None = None,
     review: ReviewHook | None = None,
     prompt_timeout: float = DEFAULT_PROMPT_TIMEOUT,
+    enforce_budget: bool = False,
     on_record: Callable[[RunRecord], None] | None = None,
     parallel: int = 1,
 ) -> BenchRun:
@@ -581,6 +632,7 @@ def run_bench(
             before_prompt=before_prompt,
             review=review,
             prompt_timeout=prompt_timeout,
+            enforce_budget=enforce_budget,
             date=run_date,
         )
         with emit_lock:

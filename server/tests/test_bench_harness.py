@@ -624,3 +624,66 @@ def test_bench_run_parallel_seeds_are_isolated_and_indexed(
     assert len(index_lines) == 2
     dirs = {r.project_dir for r in run.records}
     assert len(dirs) == 2, "parallel runs must use distinct project roots"
+
+
+def test_observe_mode_lets_a_run_pass_its_budget_and_records_where(
+    tmp_path: Path,
+    fake_model: FakeOpenAI,
+    provider: ProviderConfig,
+    runtime_factory: harness.RuntimeFactory,
+) -> None:
+    """Default (observe) mode measures the true cost; grading is unchanged.
+
+    Cancelling at the budget censors every over-budget run to ``budget + 1``
+    and — because a cancelled run never reaches a stop state — skips the §5
+    reviewer entirely. Observe mode lets the run finish, records
+    ``budget_exceeded_at``, and still fails the run for being over budget.
+    """
+    (task,) = load_tasks(["bracket-101"])
+    tight = replace(task, budget_tool_calls=2)  # the scripted solution needs 3
+    fake_model.set_script([stateless_bracket_resolver()] * 8)
+
+    run = harness.run_task(
+        tight,
+        1,
+        provider=provider,
+        archive_dir=tmp_path / "archive",
+        runtime_factory=runtime_factory,
+        prompt_timeout=PROMPT_TIMEOUT,
+        date="2026-07-26",
+    )
+
+    # It ran to COMPLETION rather than being cut the moment it went over —
+    # which is what lets the §5 reviewer see a stop state at all.
+    assert run.status == "completed"
+    assert run.budget_exceeded_at == tight.budget_tool_calls + 1
+    assert run.hit_observe_ceiling is False
+    # ... and grading still fails it for exceeding the budget.
+    assert not run.passed
+    assert any(r.startswith("budget_exceeded") for r in run.reasons), run.reasons
+
+
+def test_enforce_mode_still_cancels_at_the_budget(
+    tmp_path: Path,
+    fake_model: FakeOpenAI,
+    provider: ProviderConfig,
+    runtime_factory: harness.RuntimeFactory,
+) -> None:
+    (task,) = load_tasks(["bracket-101"])
+    tight = replace(task, budget_tool_calls=2)
+    fake_model.set_script([stateless_bracket_resolver()] * 8)
+
+    run = harness.run_task(
+        tight,
+        1,
+        provider=provider,
+        archive_dir=tmp_path / "archive",
+        runtime_factory=runtime_factory,
+        prompt_timeout=PROMPT_TIMEOUT,
+        enforce_budget=True,
+        date="2026-07-26",
+    )
+
+    assert run.status == "cancelled"
+    assert run.tool_calls == tight.budget_tool_calls + 1
+    assert not run.passed

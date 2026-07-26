@@ -76,6 +76,12 @@ class RunRecord:
     #: Harness-compelled ladder calls, counted but never charged against the
     #: budget (see ``COMPELLED_TOOLS``): the exemption stays visible per run.
     compelled_tool_calls: int = 0
+    #: Calls spent when the budget was first exceeded — ``None`` when the run
+    #: stayed inside it. Recorded because cancelling AT the budget censors the
+    #: number: "needed one more" and "needed triple" both look like budget+1.
+    budget_exceeded_at: int | None = None
+    #: The run was stopped by the observe ceiling rather than finishing.
+    hit_observe_ceiling: bool = False
     spec: str = "prose"
     #: The orchestrator session the run used; its Pi JSONL transcript lives at
     #: ``<project>/.heph/sessions/<session_id>`` inside the archived project.
@@ -111,6 +117,8 @@ class RunRecord:
             "tool_calls": self.tool_calls,
             "budget_tool_calls": self.budget_tool_calls,
             "compelled_tool_calls": self.compelled_tool_calls,
+            "budget_exceeded_at": self.budget_exceeded_at,
+            "hit_observe_ceiling": self.hit_observe_ceiling,
             "reasons": list(self.reasons),
             "prompt": self.prompt,
             "archive_dir": self.archive_dir,

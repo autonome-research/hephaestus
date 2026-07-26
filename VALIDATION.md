@@ -204,6 +204,23 @@ and the run records `asked: true` for that requirement. Auto-answering
 helpfully would delete the very mechanism under test. An agent that asks well
 scores better than one that guesses right by luck (§8).
 
+### Budget enforcement vs measurement (2026-07-26)
+
+Cancelling a run the moment it exceeds its budget **censors the measurement**:
+every over-budget run records exactly `budget + 1`, so "needed one more call"
+and "needed triple" are indistinguishable — and the pass rate cannot tell a
+calibration problem from a capability one. Worse, a cancelled run never reaches
+a stop state, so §5's termination reviewer and §6's continuation ladder never
+fire; measured 2026-07-26, seven consecutive cancellations meant the reviewer
+had never executed in a bench at all.
+
+The bench therefore **observes** by default: a run continues past its budget to
+a hard ceiling (`max(4 × budget, budget + 24)`) or the wall-clock timeout, and
+records `tool_calls` to completion plus `budget_exceeded_at`. `--enforce-budget`
+restores hard cancellation for cost-bounded runs. **Grading is identical in both
+modes** — `within_budget` is computed from the recorded count and a run over its
+budget still fails — so this changes what is learned, never what passes.
+
 ### Budget accounting for compelled calls (2026-07-26)
 
 The tool-call budget measures the **agent's own** design efficiency. The

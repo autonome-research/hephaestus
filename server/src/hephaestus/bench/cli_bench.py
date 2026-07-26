@@ -101,6 +101,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         review=review,
         on_record=None if bool(args.json) else _print_record,
         parallel=int(args.parallel),
+        enforce_budget=bool(args.enforce_budget),
     )
     if bool(args.json):
         print(json.dumps(run.to_json(), indent=2, sort_keys=True))
@@ -215,6 +216,15 @@ def add_subparsers(
         help="corpus spec split to run (default: both, reported separately)",
     )
     run.add_argument("--seeds", type=int, default=3, help="seeds per task (default 3)")
+    run.add_argument(
+        "--enforce-budget",
+        action="store_true",
+        help=(
+            "cancel a run the moment it exceeds its budget (default: observe — "
+            "let it finish so the true call count is measured; grading is "
+            "identical either way)"
+        ),
+    )
     run.add_argument(
         "--parallel",
         type=int,
