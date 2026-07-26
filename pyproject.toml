@@ -26,6 +26,7 @@ dev = [
     "ruff>=0.8",
     "pyright>=1.1.390",
     "scikit-image>=0.26",
+    "pypdf>=5.1",
 ]
 
 [tool.uv.sources.hephaestus-core]
