@@ -86,16 +86,24 @@ class ProviderConfig:
                         "models": [{"id": "...", "contextWindow": 200000,
                                     "maxTokens": 8192, "input": ["text","image"]}]}],
          "credentials": {"ENV_NAME": "literal-secret"},
-         "credential_env": ["ENV_NAME"]}
+         "credential_env": ["ENV_NAME"],
+         "auth_source": "/home/you/.pi/agent/auth.json"}
 
     ``credential_env`` names are read from the ambient environment at load time;
     the supervisor forwards only the resulting allowlist to the sidecar.
+
+    ``auth_source`` is the opt-in hook for providers of kind ``pi_native``: an
+    absolute path to an existing Pi ``auth.json`` that the supervisor *symlinks*
+    into the project's agent dir (see
+    :func:`~hephaestus.agent_bridge.app.link_auth_source`). Omitted by default,
+    and omitting it means the sidecar has no credential but the explicit ones.
     """
 
     providers: tuple[ProviderSpec, ...]
     model_id: str
     credentials: Mapping[str, str] = field(default_factory=dict[str, str])
     credential_allowlist: tuple[str, ...] = ()
+    auth_source: Path | None = None
 
     @property
     def model_slug(self) -> str:
@@ -129,12 +137,15 @@ class ProviderConfig:
             credentials[env_name] = value
             if env_name not in allowlist:
                 allowlist.append(env_name)
+        auth_raw = data.get("auth_source")
+        auth_source = Path(str(auth_raw)).expanduser() if auth_raw else None
         ordered, model_id = cls._select_model(providers, model)
         return cls(
             providers=tuple(ordered),
             model_id=model_id,
             credentials=credentials,
             credential_allowlist=tuple(allowlist),
+            auth_source=auth_source,
         )
 
     @staticmethod
@@ -187,6 +198,7 @@ def default_runtime_factory(project_root: Path, provider: ProviderConfig) -> Bri
         providers=provider.providers,
         credentials=dict(provider.credentials),
         credential_allowlist=provider.credential_allowlist,
+        auth_source=provider.auth_source,
     )
 
 

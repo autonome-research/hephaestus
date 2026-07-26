@@ -23,10 +23,16 @@ Provider configuration is explicit and app-owned. ``--providers FILE`` (or
 ``HEPHAESTUS_AGENT_PROVIDERS``, else ``<project>/.heph/providers.json``) holds::
 
     {"providers": [ …runtime.configure provider specs… ],
-     "credential_allowlist": ["ANTHROPIC_API_KEY"]}
+     "credential_allowlist": ["ANTHROPIC_API_KEY"],
+     "auth_source": "/home/you/.pi/agent/auth.json"}
 
 Only allowlisted variables are read from the environment and handed to the
 sidecar; an ambient key that is not named is never forwarded.
+
+``auth_source`` is optional and opt-in: when present, ``<project>/.heph/agent/
+auth.json`` is made a **symlink** to it so providers of kind ``pi_native`` (Pi's
+built-in catalog, e.g. ``openai-codex``) can use Pi's own stored OAuth
+credential. Absent it, nothing outside the project is visible to the sidecar.
 """
 
 from __future__ import annotations
@@ -47,7 +53,7 @@ from typing import Any, TextIO, cast
 
 from hephaestus.core.project_store.layout import find_project_root
 
-from .app import AskUserAnswerer, BridgeRuntime, PromptResult
+from .app import AskUserAnswerer, AuthLinkError, BridgeRuntime, PromptResult
 from .supervisor import SupervisorError
 
 __all__ = ["AgentConsole", "ProviderConfig", "add_subparsers", "load_provider_config", "main"]
@@ -71,6 +77,10 @@ class ProviderConfig:
 
     providers: list[dict[str, Any]]
     credential_allowlist: tuple[str, ...] = ()
+    #: Optional absolute path to an existing Pi ``auth.json``; when set the
+    #: supervisor symlinks it into ``<project>/.heph/agent/auth.json`` so
+    #: ``pi_native`` providers can use Pi's own stored (OAuth) credential.
+    auth_source: Path | None = None
 
     def credentials(self, env: dict[str, str] | None = None) -> dict[str, str]:
         """Values for the allowlisted credential names present in the environment."""
@@ -97,7 +107,13 @@ def load_provider_config(path: Path) -> ProviderConfig:
     allowlist: tuple[str, ...] = ()
     if isinstance(allow_raw, list):
         allowlist = tuple(str(name) for name in cast("list[Any]", allow_raw))
-    return ProviderConfig(providers=providers, credential_allowlist=allowlist)
+    auth_raw = obj.get("auth_source")
+    auth_source = Path(str(auth_raw)).expanduser() if auth_raw else None
+    return ProviderConfig(
+        providers=providers,
+        credential_allowlist=allowlist,
+        auth_source=auth_source,
+    )
 
 
 def _resolve_config_path(project_root: Path, explicit: str | None) -> Path:
@@ -290,13 +306,18 @@ def _cmd_agent(args: argparse.Namespace) -> int:
     console = AgentConsole(image_dir=project_root / IMAGE_DIR_RELPATH)
     answerer = interactive_answerer()
 
-    runtime = BridgeRuntime(
-        project_root=project_root,
-        providers=config.providers,
-        credentials=config.credentials(),
-        credential_allowlist=config.credential_allowlist,
-        answerer=answerer,
-    )
+    try:
+        runtime = BridgeRuntime(
+            project_root=project_root,
+            providers=config.providers,
+            credentials=config.credentials(),
+            credential_allowlist=config.credential_allowlist,
+            answerer=answerer,
+            auth_source=config.auth_source,
+        )
+    except AuthLinkError as exc:
+        print(f"heph: {exc}", file=sys.stderr)
+        return 2
     try:
         runtime.start()
     except (SupervisorError, RuntimeError) as exc:

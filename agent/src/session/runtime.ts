@@ -9,6 +9,13 @@
 // hostile ambient provider key cannot reach a session (arch §4.1, §7.2; the
 // isolation test proves it).
 //
+// A fourth kind, `pi_native`, names a provider from Pi's *built-in* catalog
+// (e.g. `openai-codex`) and is NOT registered here at all: its credential is
+// whatever the app-owned `auth.json` holds, which the supervisor populates only
+// when the provider config explicitly declares an `auth_source`. With no
+// auth_source there is no auth.json content, so a pi_native provider simply
+// fails configuration — it can never fall back to an ambient login.
+//
 // FakeModel is an in-process OpenAI-compatible server driven by a scripted turn
 // list. It exercises the exact public provider surface (`registerProvider` with
 // `api:"openai-completions"` + baseURL), the same path proven in
@@ -21,7 +28,7 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 
 // ── configure payload ────────────────────────────────────────────────────────
 
-export type ProviderKind = "anthropic" | "openai_compatible" | "local";
+export type ProviderKind = "anthropic" | "openai_compatible" | "local" | "pi_native";
 
 export interface ProviderModelSpec {
   readonly id: string;
@@ -32,15 +39,59 @@ export interface ProviderModelSpec {
   readonly reasoning?: boolean;
 }
 
-export interface ProviderSpec {
+/** For pi_native only the id is meaningful — the rest comes from Pi's catalog. */
+export interface PiNativeModelSpec {
   readonly id: string;
-  readonly kind: ProviderKind;
+}
+
+/** A provider the app defines end-to-end: endpoint + api + explicit key. */
+export interface KeyedProviderSpec {
+  readonly id: string;
+  readonly kind: "anthropic" | "openai_compatible" | "local";
   readonly name?: string;
   /** Required for openai_compatible/local; ignored for anthropic. */
   readonly baseUrl?: string;
   /** Key into the credential allowlist; omitted providers get no key. */
   readonly credential?: string;
   readonly models: readonly ProviderModelSpec[];
+}
+
+/**
+ * A provider taken *as-is* from Pi's built-in catalog, authenticated by the
+ * credential stored in the app-owned `auth.json` (typically an OAuth record the
+ * supervisor exposed by symlinking a Pi auth file into the agent dir).
+ *
+ * Deliberately has no `credential`/`baseUrl`/`api`: nothing about the endpoint
+ * or the key is app-supplied, so there is no explicit-key path to confuse with
+ * it and no way for it to smuggle an ambient env var in. If `auth.json` carries
+ * no record for the provider, configuration fails loudly (see
+ * `RuntimeConfigError` code `provider_not_authenticated`).
+ */
+export interface PiNativeProviderSpec {
+  readonly id: string;
+  readonly kind: "pi_native";
+  readonly models: readonly PiNativeModelSpec[];
+}
+
+export type ProviderSpec = KeyedProviderSpec | PiNativeProviderSpec;
+
+/** Why a `runtime.configure` payload could not be turned into a ModelRuntime. */
+export type RuntimeConfigErrorCode =
+  | "credential_not_allowlisted"
+  | "provider_unknown"
+  | "provider_not_authenticated"
+  | "model_unknown";
+
+export class RuntimeConfigError extends Error {
+  readonly code: RuntimeConfigErrorCode;
+  readonly providerId: string;
+
+  constructor(code: RuntimeConfigErrorCode, providerId: string, message: string) {
+    super(message);
+    this.name = "RuntimeConfigError";
+    this.code = code;
+    this.providerId = providerId;
+  }
 }
 
 export interface RuntimeConfig {
@@ -59,7 +110,7 @@ export type PiModel = NonNullable<ReturnType<ModelRuntime["getModel"]>>;
 
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } as const;
 
-function apiForKind(kind: ProviderKind): string {
+function apiForKind(kind: KeyedProviderSpec["kind"]): string {
   return kind === "anthropic" ? "anthropic-messages" : "openai-completions";
 }
 
@@ -80,11 +131,19 @@ export async function createModelRuntime(
   });
   const credentials = config.credentials ?? {};
   for (const provider of config.providers) {
+    if (provider.kind === "pi_native") {
+      // No registerProvider: the provider *is* Pi's built-in one, and its
+      // credential comes from authPath (auth.json under the agent dir).
+      verifyPiNativeProvider(runtime, provider);
+      continue;
+    }
     let apiKey = "app-managed-no-network";
     if (provider.credential !== undefined) {
       const secret = credentials[provider.credential];
       if (secret === undefined) {
-        throw new Error(
+        throw new RuntimeConfigError(
+          "credential_not_allowlisted",
+          provider.id,
           `provider '${provider.id}' references credential '${provider.credential}' ` +
             `which is not in the allowlist`,
         );
@@ -96,7 +155,52 @@ export async function createModelRuntime(
   return runtime;
 }
 
-function registerProvider(runtime: ModelRuntime, provider: ProviderSpec, apiKey: string): void {
+/**
+ * Check that a pi_native provider is real, authenticated, and declares models
+ * Pi knows — before any session is created, so failures name the cause instead
+ * of surfacing as an opaque 401 mid-run.
+ */
+function verifyPiNativeProvider(runtime: ModelRuntime, provider: PiNativeProviderSpec): void {
+  if (runtime.getProvider(provider.id) === undefined) {
+    const known = runtime
+      .getProviders()
+      .map((p) => p.id)
+      .join(", ");
+    throw new RuntimeConfigError(
+      "provider_unknown",
+      provider.id,
+      `pi_native provider '${provider.id}' is not in Pi's built-in catalog ` +
+        `(known providers: ${known})`,
+    );
+  }
+  if (!runtime.hasConfiguredAuth(provider.id)) {
+    const status = runtime.getProviderAuthStatus(provider.id);
+    throw new RuntimeConfigError(
+      "provider_not_authenticated",
+      provider.id,
+      `pi_native provider '${provider.id}' has no stored credential in the ` +
+        `app-owned auth.json (auth status: ${JSON.stringify(status)}). Declare an ` +
+        `'auth_source' in the provider config so the supervisor links an existing ` +
+        `Pi auth.json into the agent dir, or log in for this provider.`,
+    );
+  }
+  for (const model of provider.models) {
+    if (runtime.getModel(provider.id, model.id) === undefined) {
+      const available = runtime
+        .getModels(provider.id)
+        .map((m) => m.id)
+        .join(", ");
+      throw new RuntimeConfigError(
+        "model_unknown",
+        provider.id,
+        `pi_native provider '${provider.id}' does not offer model '${model.id}' ` +
+          `(available: ${available})`,
+      );
+    }
+  }
+}
+
+function registerProvider(runtime: ModelRuntime, provider: KeyedProviderSpec, apiKey: string): void {
   const models = provider.models.map((m) => ({
     id: m.id,
     name: m.name,

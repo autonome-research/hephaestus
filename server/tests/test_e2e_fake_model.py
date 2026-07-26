@@ -28,6 +28,7 @@ Every scenario asserts zero orphan sidecar processes afterwards.
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
@@ -528,6 +529,38 @@ def test_sidecar_agent_dir_is_app_owned(harness: Harness) -> None:
     assert (agent_dir / "auth.json").exists()
     # The repository root (this process's cwd during the test run) stays clean.
     assert not (repo_root() / "auth.json").exists()
+
+    # No auth_source was declared, so auth.json is the sidecar's own file — not a
+    # link into ~/.pi or anywhere else — and it carries no credential record. A
+    # `pi_native` provider therefore has nothing ambient to authenticate with.
+    auth = agent_dir / "auth.json"
+    assert not auth.is_symlink()
+    stored = json.loads(auth.read_text(encoding="utf-8") or "{}")
+    assert stored == {}
+
+
+def test_declared_auth_source_is_linked_into_the_agent_dir(tmp_path: Path) -> None:
+    """The other half of the isolation contract: opt-in linking, by symlink.
+
+    Uses a synthetic auth.json under tmp — never the operator's real Pi login —
+    and never starts the sidecar, so nothing here can make a network call.
+    """
+    source = tmp_path / "pi-auth.json"
+    source.write_text(
+        json.dumps({"openai-codex": {"type": "oauth", "access": "synthetic"}}), encoding="utf-8"
+    )
+    project = e2e_project(tmp_path / "linked")
+    runtime = BridgeRuntime(
+        project_root=project,
+        providers=[{"id": "openai-codex", "kind": "pi_native", "models": [{"id": "gpt-5.6-sol"}]}],
+        auth_source=source,
+    )
+    try:
+        link = project / ".heph" / "agent" / "auth.json"
+        assert link.is_symlink()
+        assert link.resolve() == source.resolve()
+    finally:
+        runtime.close()
 
 
 def test_minimal_env_drops_ambient_keys_and_keeps_app_settings() -> None:

@@ -20,7 +20,7 @@ from typing import Any
 
 import pytest
 from hephaestus.agent_bridge import cli as agent_cli
-from hephaestus.agent_bridge.app import PromptResult
+from hephaestus.agent_bridge.app import AuthLinkError, PromptResult, link_auth_source
 from hephaestus.core.cli import build_parser
 from hephaestus.testing.stream_assertions import text, tool_call
 from test_e2e_fake_model import Harness
@@ -86,6 +86,111 @@ def test_provider_config_rejects_unusable_files(tmp_path: Path, body: str) -> No
 def test_missing_provider_config_is_a_usage_error(tmp_path: Path) -> None:
     with pytest.raises(agent_cli.ConfigError):
         agent_cli.load_provider_config(tmp_path / "absent.json")
+
+
+# --------------------------------------------------------------------------
+# pi_native providers: the opt-in auth_source link
+
+
+def _synthetic_pi_auth(tmp_path: Path) -> Path:
+    """A throwaway Pi auth.json — never the operator's real credential."""
+    source = tmp_path / "pi" / "auth.json"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text(
+        json.dumps(
+            {
+                "openai-codex": {
+                    "type": "oauth",
+                    "access": "synthetic-access-token",
+                    "refresh": "synthetic-refresh-token",
+                    "expires": 4102444800000,
+                    "accountId": "synthetic-account",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    return source
+
+
+def test_provider_config_defaults_to_no_auth_source(tmp_path: Path) -> None:
+    """Isolation default: nothing outside the project is linked unless asked."""
+    path = tmp_path / "providers.json"
+    path.write_text(
+        json.dumps({"providers": [{"id": "p", "kind": "anthropic", "models": []}]}),
+        encoding="utf-8",
+    )
+    assert agent_cli.load_provider_config(path).auth_source is None
+
+
+def test_provider_config_parses_auth_source(tmp_path: Path) -> None:
+    source = _synthetic_pi_auth(tmp_path)
+    path = tmp_path / "providers.json"
+    path.write_text(
+        json.dumps(
+            {
+                "providers": [
+                    {
+                        "id": "openai-codex",
+                        "kind": "pi_native",
+                        "models": [{"id": "gpt-5.6-sol"}],
+                    }
+                ],
+                "auth_source": str(source),
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = agent_cli.load_provider_config(path)
+    assert config.auth_source == source
+    assert config.credential_allowlist == ()
+
+
+def test_link_auth_source_creates_a_symlink_not_a_copy(tmp_path: Path) -> None:
+    source = _synthetic_pi_auth(tmp_path)
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    link = link_auth_source(agent_dir, source)
+    assert link == agent_dir / "auth.json"
+    assert link.is_symlink()
+    assert link.resolve() == source.resolve()
+    # A rotated token on the Pi side is visible through the link — the whole
+    # point of not copying: one file, one refresh, no invalidated login.
+    source.write_text(json.dumps({"openai-codex": {"access": "rotated"}}), encoding="utf-8")
+    assert json.loads(link.read_text(encoding="utf-8"))["openai-codex"]["access"] == "rotated"
+
+
+def test_link_auth_source_reports_a_missing_target(tmp_path: Path) -> None:
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    absent = tmp_path / "nowhere" / "auth.json"
+    with pytest.raises(AuthLinkError) as exc:
+        link_auth_source(agent_dir, absent)
+    assert str(absent) in str(exc.value)
+    assert not (agent_dir / "auth.json").exists()
+
+
+def test_link_auth_source_refuses_to_clobber_real_credentials(tmp_path: Path) -> None:
+    source = _synthetic_pi_auth(tmp_path)
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    existing = agent_dir / "auth.json"
+    existing.write_text(json.dumps({"anthropic": {"type": "api"}}), encoding="utf-8")
+    with pytest.raises(AuthLinkError):
+        link_auth_source(agent_dir, source)
+    assert not existing.is_symlink()
+    assert "anthropic" in existing.read_text(encoding="utf-8")
+
+
+def test_link_auth_source_replaces_pis_empty_placeholder(tmp_path: Path) -> None:
+    """The sidecar writes `{}` on first run; that is not a credential."""
+    source = _synthetic_pi_auth(tmp_path)
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    (agent_dir / "auth.json").write_text("{}", encoding="utf-8")
+    assert link_auth_source(agent_dir, source).is_symlink()
+    # Re-linking is idempotent: an existing link is ours to re-point.
+    assert link_auth_source(agent_dir, source).resolve() == source.resolve()
 
 
 # --------------------------------------------------------------------------

@@ -50,11 +50,13 @@ from .supervisor import ProcessLossEvent, Supervisor, SupervisorConfig
 
 __all__ = [
     "AskUserAnswerer",
+    "AuthLinkError",
     "BridgeRuntime",
     "EventCallback",
     "PromptResult",
     "ProviderSpec",
     "default_dist_main",
+    "link_auth_source",
     "repo_root",
 ]
 
@@ -118,6 +120,57 @@ def _open_project_store(layout: ProjectLayout) -> OpStore:
     return store
 
 
+class AuthLinkError(Exception):
+    """``auth_source`` could not be exposed to the app-owned agent dir."""
+
+
+#: Content of a Pi ``auth.json`` that carries nothing worth protecting; the
+#: sidecar writes this placeholder on first run, so an ``auth_source`` declared
+#: after a plain run must be allowed to replace it.
+_EMPTY_AUTH = ("", "{}")
+
+
+def link_auth_source(agent_dir: Path, auth_source: Path) -> Path:
+    """Symlink ``<agent_dir>/auth.json`` at an existing Pi ``auth.json``.
+
+    This is the *only* way a credential the app did not mint reaches the sidecar,
+    and it is opt-in: nothing happens unless the provider config named an
+    ``auth_source``. Two properties are load-bearing.
+
+    **A symlink, never a copy.** OAuth records rotate: Pi refreshes the access
+    token and rewrites the file, invalidating the refresh token it replaced. A
+    copy would therefore either go stale or — worse — refresh independently and
+    revoke the user's own Codex/Pi login out from under them. A symlink keeps a
+    single file with a single rotation, shared by both readers.
+
+    **Never clobber a real credential.** An existing symlink is ours to re-point;
+    an existing *file* is replaced only when it is Pi's empty placeholder.
+    Anything else raises rather than destroying a login.
+    """
+    target = auth_source.expanduser()
+    if not target.is_file():
+        raise AuthLinkError(
+            f"auth_source {target} does not exist (or is not a file); "
+            "point it at an existing Pi auth.json, or drop the setting"
+        )
+    link = agent_dir / "auth.json"
+    if link.is_symlink():
+        link.unlink()
+    elif link.exists():
+        try:
+            existing = link.read_text(encoding="utf-8").strip()
+        except OSError as exc:  # pragma: no cover - unreadable file
+            raise AuthLinkError(f"cannot inspect existing {link}: {exc}") from exc
+        if existing not in _EMPTY_AUTH:
+            raise AuthLinkError(
+                f"{link} already exists and holds credentials; refusing to replace it "
+                f"with a link to {target}. Move or delete it first if that is intended."
+            )
+        link.unlink()
+    link.symlink_to(target)
+    return link
+
+
 def _node_executable() -> str:
     node = os.environ.get("HEPHAESTUS_NODE") or shutil.which("node")
     if node is None:
@@ -138,6 +191,7 @@ class BridgeRuntime:
         dist_main: Path | None = None,
         agent_dir: Path | None = None,
         answerer: AskUserAnswerer | None = None,
+        auth_source: Path | None = None,
     ) -> None:
         self._layout = load_project(project_root)
         self._store = _open_project_store(self._layout)
@@ -164,6 +218,11 @@ class BridgeRuntime:
 
         agent_dir = agent_dir or (self._layout.store_root / "agent")
         agent_dir.mkdir(parents=True, exist_ok=True)
+        # Opt-in credential linking: with no auth_source the agent dir keeps only
+        # what the sidecar itself writes, so a `pi_native` provider has nothing to
+        # authenticate with and fails loudly instead of borrowing an ambient login.
+        if auth_source is not None:
+            link_auth_source(agent_dir, auth_source)
         argv = [_node_executable(), str(dist_main or default_dist_main())]
         # HEPHAESTUS_AGENT_DIR is app-owned configuration, not a credential: it is
         # injected explicitly (never sourced from the ambient environment) so the

@@ -102,6 +102,26 @@ def test_provider_config_load_selects_and_reorders(tmp_path: Path) -> None:
         ProviderConfig.load(path, model="nope")
 
 
+def test_provider_config_auth_source_is_opt_in(tmp_path: Path) -> None:
+    """``auth_source`` defaults to None; declared, it survives model selection."""
+    source = tmp_path / "pi-auth.json"
+    source.write_text("{}", encoding="utf-8")
+    spec = {
+        "providers": [
+            {"id": "openai-codex", "kind": "pi_native", "models": [{"id": "gpt-5.6-sol"}]}
+        ]
+    }
+    plain = tmp_path / "plain.json"
+    plain.write_text(json.dumps(spec), encoding="utf-8")
+    assert ProviderConfig.load(plain).auth_source is None
+
+    linked = tmp_path / "linked.json"
+    linked.write_text(json.dumps({**spec, "auth_source": str(source)}), encoding="utf-8")
+    config = ProviderConfig.load(linked, model="gpt-5.6-sol")
+    assert config.auth_source == source
+    assert config.credential_allowlist == ()
+
+
 def test_provider_config_model_slug_is_filesystem_safe() -> None:
     config = ProviderConfig(providers=({"id": "x"},), model_id="vendor/model:2026-07")
     assert config.model_slug == "vendor-model-2026-07"

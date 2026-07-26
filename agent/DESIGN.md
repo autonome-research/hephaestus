@@ -166,6 +166,48 @@ Python -> sidecar notifications: `cancel {run_id}`, `terminal.ack
 `session.answer {run_id, question_id, selection}`.
 Every frame: `{"hv":1, "jsonrpc":"2.0", ...}`. Unknown `hv` -> fail closed.
 
+## Provider kinds and the `auth_source` link
+
+`runtime.configure` carries provider specs of four kinds. Three are
+**explicitly keyed** — `anthropic`, `openai_compatible`, `local` — and are
+fully app-defined: the sidecar calls Pi's `registerProvider` with an `api`, an
+optional `baseUrl`, a model list, and an `apiKey` taken *only* from the
+`credentials` allowlist in the same payload. `process.env` is never consulted,
+so an ambient key cannot reach a session.
+
+The fourth, **`pi_native`**, names a provider that already exists in Pi's
+built-in catalog (e.g. `openai-codex`, whose models are `gpt-5.4`, `gpt-5.5`,
+`gpt-5.6-{luna,sol,terra}`, …). For it the sidecar calls `registerProvider`
+**not at all**: endpoint, api, and model metadata come from Pi's bundled
+catalog, and the credential comes from the app-owned `auth.json` that
+`ModelRuntime.create({authPath})` reads. The spec therefore has no `apiKey`,
+`baseUrl`, or `credential` field — only an id and model ids — so there is no
+way for it to smuggle a key in. `createModelRuntime` verifies each such
+provider up front and throws a typed `RuntimeConfigError` whose `code`
+distinguishes `provider_unknown` (not in Pi's catalog),
+`provider_not_authenticated` (`hasConfiguredAuth` false), and `model_unknown`,
+rather than letting the failure surface as an opaque 401 mid-run.
+
+**Isolation is preserved by default.** Pi's catalog is bundled with the
+package, not read from `~/.pi`; with no credential in the project's
+`.heph/agent/auth.json` a `pi_native` provider simply fails to configure. It
+can never fall back to the operator's ambient login.
+
+Making a stored credential visible is **opt-in and explicit**: the provider
+config declares `"auth_source": "<abs path to an existing Pi auth.json>"`, and
+the supervisor (`agent_bridge.app.link_auth_source`) makes
+`<project>/.heph/agent/auth.json` a **symlink** to it before spawning the
+sidecar.
+
+Why a symlink and never a copy: an OAuth record rotates. Pi (or the sidecar)
+refreshes the access token and rewrites the file, and the refresh token it
+replaces is invalidated. A copy would go stale at best, and at worst refresh
+independently — logging the user out of their own Codex/Pi session. One file
+with one rotation, shared by both readers, is the only correct arrangement.
+`link_auth_source` re-points an existing symlink and replaces Pi's empty `{}`
+placeholder, but refuses (raising `AuthLinkError`) to overwrite a real
+credential file, and names the path when the target is missing.
+
 ## Ownership boundaries
 
 - Foundation agent owns: schemas/bridge_limits.json, tools_decl.py, toolgen.py,
