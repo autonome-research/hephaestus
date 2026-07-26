@@ -391,6 +391,57 @@ schema equality. Claude Code configured
 with the server completes bracket-101 end-to-end in a
 recorded, replayed session committed as a fixture.
 
+## Stage ordering amendment (2026-07-26, maintainer-directed)
+
+Under mission rule 5, the stage ORDER changes; no gate, threshold, or
+deliverable is removed or weakened. Rationale: the engine-first invariant
+(`architecture.md` §2, `README.md`) already makes the CLI + MCP server the
+product and the web UI one client among several. Every line of the ~43 kLOC
+built so far is headless, so the functional component can ship — and be
+deployed as an agent inside any MCP environment — before any UI exists.
+
+**New order:** Stage 2V → G2 closure → **Stage 6** → **Stage 7H (headless
+release)** → Stage 4 → Stage 5 → Stage 7 (full release).
+
+Consequences, all recorded rather than assumed:
+
+- Stage 6 is engine work and moves ahead of the UI stages unchanged, EXCEPT
+  its one web-dependent clause — "e2e covers the DFM toggle surfacing findings
+  in the web panel" — which defers to G4/G5 and is struck from G6. G6's
+  pytest/ezdxf/pdf/bench clauses are unaffected.
+- Stages 4 and 5 keep their deliverables and gates verbatim; only their
+  position moves. `server/http` lands with Stage 4 as before — it is a web
+  client API, not part of the headless surface.
+- Stage 7 splits: 7H ships the headless artifact; 7 ships the complete
+  product. Neither relaxes G7's clean-machine matrix.
+
+## Stage 7H — Headless release (v0.1.0-headless)
+
+The deployable functional component: Python wheel, `heph` CLI, MCP server,
+and the packaged agent sidecar — no web UI, no browser dependency.
+
+Deliverables: the PyPI wheel with its private compiled sidecar per
+`repo_conventions.md` (integrity-checked, never a global `pi`/`thread-phase`),
+a headless docs set (install, `heph` verbs, MCP client configuration, project
+conventions, registry pinning), the model-leaderboard page generated from
+bench artifacts, CONTRIBUTING + registry contribution guide, and Apache-2.0
+headers.
+
+**Gate G7H**: clean-machine matrix lanes (a)-(d) exactly as specified in G7 —
+(a) Python-only `pipx install` → `heph --version` → import/lint/schema smoke
+with no script execution and no Node; (b) core build/check through the secure
+executor → packaged-sidecar integrity/native-addon audit → Python-backed
+JobStore initialization → `heph agent` fake-model → MCP smoke on the supported
+secure Linux x86_64 lane; (c) the same fake-model/MCP smoke and executor escape
+suite on a macOS lane through a detected OCI backend; (d) explicit fail-closed
+agent/server script execution on lanes without a passing secure backend. The
+test MUST prove the wheel uses its packaged sidecar. The Linux release lane
+also runs the secure-executor escape suite. Gates GS, G0A, G0B, G1, G2, G2V,
+G3 and G6 are green on the release SHA; headless docs build without warnings;
+`bench.yml` publishes the leaderboard artifact; tag `v0.1.0-headless` is cut.
+`LEGAL-REVIEW.md` is NOT a G7H blocker: it gates publication of the private
+reference fixtures and the full release, not the headless tool.
+
 ## Stage 4 — Web workspace, read-only
 
 Deliverables: `server/http` (project/build/artifact/event APIs over the same
@@ -481,8 +532,8 @@ gusset contains 3 profiles fitting the declared 210×125 blanks (ezdxf
 assertions); bench on corpus v1 lower-90% Wilson bound ≥ 0.70 (12 tasks × ≥3 seeds)
 with the reference model; a registry-integrity test (tampered registry tree
 fails the hash check and refuses to load; a store part attempting file IO is
-denied by the sandbox); e2e covers the DFM toggle surfacing findings in the
-web panel.
+denied by the sandbox). The DFM-toggle web-panel e2e clause defers to G4/G5
+under the 2026-07-26 ordering amendment.
 
 ## Stage 7 — Release
 

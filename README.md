@@ -95,7 +95,15 @@ hephaestus/
 
 ## Status
 
-Pre-implementation. `mission_plan.md` is the operative document: a
+Under active construction, engine-first. Stages S through 3 are complete with
+green gates (durability substrate, CAD engine, render service, agent runtime,
+MCP server); the validation ladder (Stage 2V) and manufacturing depth (Stage 6)
+follow, then a **headless v0.1 release** — wheel, `heph` CLI, MCP server and
+packaged agent sidecar, no browser dependency — before any web UI work begins
+(`mission_plan.md`, 2026-07-26 ordering amendment). Everything built so far is
+headless and deployable into any MCP client today.
+
+Originally documented as: pre-implementation. `mission_plan.md` is the operative document: a
 staged droid mission in which every stage gates on machine-checkable evidence
 (pytest/pnpm exit codes, deterministic render comparisons,
 Playwright/computer-use screenshot assertions, and benchmark success rates).
