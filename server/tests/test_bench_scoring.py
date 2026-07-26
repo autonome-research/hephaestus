@@ -439,12 +439,47 @@ def test_the_score_artifact_carries_the_validation_metric_table() -> None:
         "review_catch_rate_vision",
         "review_catch_rate_numeric",
         "spec_tampering_rate",
+        "harness_error_rate",
     }
-    # Nothing was measured, so nothing is reported as zero.
-    assert all(table[key] is None for key in table if key.endswith("_rate"))
+    # Nothing was measured, so nothing is reported as zero — except
+    # harness_error_rate, whose denominator is simply the runs: one clean run is
+    # a measured 0.0, not an absence of evidence.
+    assert table["harness_error_rate"] == 0.0
+    assert all(
+        table[key] is None for key in table if key.endswith("_rate") and key != "harness_error_rate"
+    )
     per_split = cast("dict[str, Any]", payload["splits"])
     assert set(per_split) == {"prose", "seeded"}
     assert "metrics" in cast("dict[str, Any]", per_split["prose"])
+
+
+def test_a_harness_error_is_counted_and_printed_without_failing_the_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """VALIDATION.md §8: harness errors are measured, never charged to the model.
+
+    The run below passed *with* a ``review_error`` recorded — that is the whole
+    contract — and the archive still names the reason, so the reliability number
+    can be computed from it.
+    """
+    archive = tmp_path / "ref-model" / "2026-07-26"
+    archive.mkdir(parents=True)
+    broken = record("bracket-101", 0, passed=True)
+    broken["reasons"] = ["review_error:SupervisorError: session.prompt failed"]
+    broken["grade"] = {"reasons": broken["reasons"]}
+    rows = [broken, *[record("bracket-101", i, passed=True) for i in range(1, 4)]]
+    (archive / RUNS_FILENAME).write_text(
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows), encoding="utf-8"
+    )
+    score = score_records(rows)
+    assert score.passes == 4, "a harness failure does not cost the model a pass"
+    assert score.metrics.harness_error_rate == 0.25
+    assert score.metrics.counts["harness_error_runs"] == 1
+
+    cli_bench.main(["bench", "score", str(archive)])
+    out = capsys.readouterr().out
+    assert "harness_error_rate" in out
+    assert "1/4 runs" in out
 
 
 def test_cli_bench_score_prints_the_split_table(

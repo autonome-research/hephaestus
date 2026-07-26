@@ -248,6 +248,16 @@ Per model, per corpus version:
 | `clarification_rate` | material `assumed` entries that produced a question |
 | `review_catch_rate` | reviewer-caught failures ÷ total, **split by channel** (vision vs numeric) |
 | `spec_tampering_rate` | attempts to modify protected/seeded checks (restored, and scored) |
+| `harness_error_rate` | runs carrying a harness-attributable reason (`review_error:`, `harness_error:`) ÷ all runs |
+
+**Harness errors are measured, never charged to the model.** When the §5
+reviewer cannot be run — a sidecar respawned without its `runtime.configure`, a
+reviewer child that raised — that is our bug, and it is no evidence at all about
+the agent. Such a reason stays in the archived run record and is reported here as
+`harness_error_rate`, a reliability number about the harness; it is excluded from
+the pass/fail decision, so a run whose only reason is `review_error` passes. A run
+that also failed a real check still fails on that check, and a grading crash
+(`harness_error:`) still fails, because it leaves no verdict to trust.
 
 ## 9. Model-selection discipline
 

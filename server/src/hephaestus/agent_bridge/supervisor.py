@@ -22,6 +22,14 @@ Design points (architecture §5, digest §6):
   call passes its deadline by ``watchdog_grace_s`` (unresponsive process), then
   hands the set of tracked run ids to the injected recovery hook **before** any
   terminal synthesis, and restarts.
+* **Re-configuration on every spawn.** A fresh child is a blank runtime: it has
+  never seen ``runtime.configure``. :meth:`Supervisor.set_spawn_hook` registers a
+  post-spawn callback that :class:`~.app.BridgeRuntime` uses to replay exactly
+  the payload it sent at start-up, and it fires for *every* path that produces a
+  child — initial :meth:`~Supervisor.start`, explicit :meth:`~Supervisor.restart`
+  and the watchdog's own respawn. Without it a watchdog restart silently drops
+  the provider configuration and every later ``session.create``/``session.prompt``
+  fails with ``runtime.configure has not run yet``.
 * **Orphan-free.** On Linux the child gets ``PR_SET_PDEATHSIG=SIGKILL`` so it
   dies with the supervisor; an ``atexit`` hook and ``close()`` also kill it. No
   sidecar survives the supervisor.
@@ -60,6 +68,7 @@ __all__ = [
     "BASE_ENV_VARS",
     "ProcessLossEvent",
     "PyRequestHandler",
+    "SpawnHook",
     "Supervisor",
     "SupervisorConfig",
     "SupervisorError",
@@ -83,6 +92,11 @@ PyRequestHandler = Callable[[str, dict[str, Any]], Any]
 #: Sink for a sidecar-originated notification (``event``/``terminal``):
 #: ``(method, params) -> None``.
 NotificationSink = Callable[[str, dict[str, Any]], None]
+
+#: Called with the supervisor immediately after *every* successful spawn, before
+#: any other caller can use the fresh child. This is where per-process state that
+#: does not survive a respawn (``runtime.configure``) is replayed.
+SpawnHook = Callable[["Supervisor"], None]
 
 
 class SupervisorError(Exception):
@@ -189,11 +203,13 @@ class Supervisor:
         py_handler: PyRequestHandler | None = None,
         notification_sink: NotificationSink | None = None,
         recovery_hook: Callable[[ProcessLossEvent], None] | None = None,
+        spawn_hook: SpawnHook | None = None,
     ) -> None:
         self.config = config
         self._py_handler = py_handler
         self._sink = notification_sink
         self._recovery_hook = recovery_hook
+        self._spawn_hook = spawn_hook
 
         self.proc: subprocess.Popen[bytes] | None = None
         self._next_id = 0
@@ -207,14 +223,28 @@ class Supervisor:
         self._restart_generation = 0
         self.last_exit: int | None = None
         self.frame_errors: list[str] = []
+        #: Post-spawn hook failures, newest last (a watchdog respawn cannot raise
+        #: at a caller, so the failure is recorded here instead of vanishing).
+        self.spawn_errors: list[str] = []
+        #: Successful spawns, including the initial one (regression evidence).
+        self.spawn_count = 0
 
         self._atexit = self._kill_now
         atexit.register(self._atexit)
 
     # -- lifecycle ---------------------------------------------------------
 
+    def set_spawn_hook(self, hook: SpawnHook | None) -> None:
+        """Register the post-spawn callback (see :data:`SpawnHook`).
+
+        Set before :meth:`start`; it then fires for every child this supervisor
+        ever creates, so per-process runtime state is never silently lost to a
+        respawn the app did not ask for.
+        """
+        self._spawn_hook = hook
+
     def start(self) -> None:
-        """Spawn the sidecar and start the reader + watchdog threads."""
+        """Spawn the sidecar, start the reader + watchdog, run the spawn hook."""
         with self._plock:
             if self.proc is not None and self.proc.poll() is None:
                 raise SupervisorError("sidecar already running")
@@ -242,6 +272,21 @@ class Supervisor:
             if self._watchdog is None or not self._watchdog.is_alive():
                 self._watchdog = threading.Thread(target=self._watchdog_loop, daemon=True)
                 self._watchdog.start()
+            self.spawn_count += 1
+        # Outside the process lock on purpose: the hook issues real requests, and
+        # a blocking call under `_plock` would deadlock against the reader thread.
+        self._fire_spawn_hook()
+
+    def _fire_spawn_hook(self) -> None:
+        """Replay per-process state onto the fresh child; record any failure."""
+        hook = self._spawn_hook
+        if hook is None:
+            return
+        try:
+            hook(self)
+        except Exception as exc:
+            self.spawn_errors.append(f"{type(exc).__name__}: {exc}")
+            raise
 
     def restart(self, *, reason: str = "manual") -> None:
         """Kill the whole sidecar, fire recovery, and respawn.
@@ -379,10 +424,23 @@ class Supervisor:
             with self._plock:
                 self._pending.pop(call.id, None)
             raise SupervisorError(f"failed to send {method}: {exc}") from exc
-        call.done.wait()
+        # The watchdog is what normally ends an unanswered call (it kills the
+        # child at deadline+grace and fails every pending call). The bound here
+        # is only a backstop for the one case the watchdog cannot cover: a call
+        # issued *from* the watchdog thread, i.e. the spawn hook's replayed
+        # `runtime.configure`. Without it a child that accepts the frame and
+        # never answers would wedge the watchdog forever.
+        if not call.done.wait(self._hard_wait_s(deadline_s)):
+            with self._plock:
+                self._pending.pop(call.id, None)
+            raise SupervisorError(f"{method} timed out after {deadline_s}s with no response")
         if call.error is not None:
             raise SupervisorError(f"{method} failed: {call.error}")
         return call.result
+
+    def _hard_wait_s(self, deadline_s: float) -> float:
+        """The backstop wait: strictly later than the watchdog's own kill point."""
+        return deadline_s + self.config.watchdog_grace_s + self.config.watchdog_interval_s + 5.0
 
     def notify(self, method: str, params: dict[str, Any] | None = None) -> None:
         """Fire-and-forget notification to the sidecar (``cancel``, acks, …)."""
@@ -536,7 +594,13 @@ class Supervisor:
                         overdue = True
                         break
             if overdue:
-                self.restart(reason="watchdog")
+                # The restart replays `runtime.configure` through the spawn hook,
+                # so this blocks on a request; the hard bound in `call` keeps the
+                # watchdog from being wedged by a child that never answers. A
+                # failing hook is recorded by `_fire_spawn_hook` and must not take
+                # the watchdog thread down with it.
+                with contextlib.suppress(Exception):
+                    self.restart(reason="watchdog")
 
 
 # -- orphan verification helpers (used by tests) ---------------------------

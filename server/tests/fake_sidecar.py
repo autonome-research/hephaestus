@@ -16,7 +16,17 @@ on stdout (logs to stderr only). Behavior is driven by the request ``method``:
 * ``crash``         -> exits the process immediately (crash injection)
 * ``big``           -> writes a single oversized (> cap) frame then exits
 
-Env vars ``FAKE_SIDECAR_EMIT_READY`` toggles a startup ``event`` notification.
+Env vars:
+
+* ``FAKE_SIDECAR_EMIT_READY`` toggles a startup ``event`` notification;
+* ``FAKE_SIDECAR_REQUIRE_CONFIGURE`` makes the process model the real sidecar's
+  per-process configuration: ``session.*`` is refused with the real error
+  (``-32600 runtime.configure has not run yet``) until ``runtime.configure``
+  arrives *on this process*. That is the whole point of the respawn regression
+  tests — a fresh child that was never re-configured must be observably broken;
+* ``FAKE_SIDECAR_CONFIGURE_LOG`` names a file each received ``runtime.configure``
+  payload is appended to (one compact JSON object per line), so a test can prove
+  the payload replayed after a respawn is identical to the initial one.
 """
 
 from __future__ import annotations
@@ -71,6 +81,29 @@ def _call_py(method: str, params: dict[str, object], timeout: float = 5.0) -> di
         return _py_pending.pop(pid)
 
 
+#: Set by ``runtime.configure``; never survives the process, exactly like the
+#: real sidecar's provider registry.
+_configured = [False]
+
+
+def _record_configure(params: dict[str, object]) -> None:
+    _configured[0] = True
+    path = os.environ.get("FAKE_SIDECAR_CONFIGURE_LOG")
+    if not path:
+        return
+    line = json.dumps(params, sort_keys=True) + "\n"
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(line)
+
+
+def _needs_configure(method: str) -> bool:
+    return (
+        bool(os.environ.get("FAKE_SIDECAR_REQUIRE_CONFIGURE"))
+        and not _configured[0]
+        and method.startswith("session.")
+    )
+
+
 def _handle(msg: dict[str, object]) -> None:
     method = msg.get("method")
     req_id = msg.get("id")
@@ -87,8 +120,20 @@ def _handle(msg: dict[str, object]) -> None:
 
     params = cast("dict[str, object]", msg.get("params") or {})
 
+    if _needs_configure(str(method)):
+        _send(
+            {
+                "id": req_id,
+                "error": {"code": -32600, "message": "runtime.configure has not run yet"},
+            }
+        )
+        return
+
     if method == "echo":
         _respond(req_id, params)
+    elif method == "runtime.configure":
+        _record_configure(params)
+        _respond(req_id, {"ok": True})
     elif method == "session.create":
         _respond(req_id, {"session_id": f"sess-{req_id}"})
     elif method == "session.prompt":

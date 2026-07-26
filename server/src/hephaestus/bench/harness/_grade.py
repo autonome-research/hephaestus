@@ -28,6 +28,7 @@ from hephaestus.core.errors import SandboxDeniedError
 from hephaestus.core.executor.sandbox.probe import secure_backend
 from hephaestus.core.project_store.layout import ProjectLayout, load_project
 
+from ..metrics import charged_reasons, harness_reasons
 from ._exports import dxf_layer_extents, dxf_profile_count, pdf_text, validate_export_bytes
 from ._seed import apply_solution, open_cad, restore_protected, seed_project
 from ._tasks import BenchTask, DfmRequirement, ExportRequirement
@@ -60,11 +61,22 @@ class GradeReport:
     #: Protected task files the run had modified (restored before grading).
     restored_protected: tuple[str, ...] = ()
 
+    @property
+    def harness_errors(self) -> tuple[str, ...]:
+        """Reasons this run carried that the *harness* owns, not the model.
+
+        They stay in :attr:`reasons` and in the archive — they are just reported
+        as a reliability number (``harness_error_rate``) instead of being charged
+        to the agent. See :mod:`hephaestus.bench.metrics`.
+        """
+        return harness_reasons(self.reasons)
+
     def to_json(self) -> dict[str, Any]:
         return {
             "task_id": self.task_id,
             "passed": self.passed,
             "reasons": list(self.reasons),
+            "harness_errors": list(self.harness_errors),
             "builds": dict(self.builds),
             "check_status": self.check_status,
             "checks": dict(self.checks),
@@ -448,7 +460,11 @@ def grade(
         reasons.extend(dfm_reasons)
     return GradeReport(
         task_id=task.id,
-        passed=not reasons,
+        # A harness failure is our bug and is not evidence about the agent: it is
+        # kept in `reasons` (and in the archive, and in harness_error_rate) but
+        # left out of the verdict. Anything the model is answerable for still
+        # fails the run, including a run that has both.
+        passed=not charged_reasons(reasons),
         reasons=tuple(reasons),
         builds=builds,
         check_status=check_status,

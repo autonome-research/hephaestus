@@ -196,6 +196,13 @@ def _print_metrics(metrics: ValidationMetrics) -> None:
         f" / numeric {_rate(metrics.review_catch_rate_numeric)})"
     )
     print(f"  spec_tampering_rate     {_rate(metrics.spec_tampering_rate)}")
+    # Reported next to the rest, but it measures *us*: harness errors are never
+    # charged to the model, so a non-zero number here is our bug to fix.
+    harness_errors = metrics.counts.get("harness_error_runs", 0)
+    print(
+        f"  harness_error_rate      {_rate(metrics.harness_error_rate)}"
+        f"  ({harness_errors}/{metrics.n} runs, harness fault, not charged)"
+    )
 
 
 def add_subparsers(

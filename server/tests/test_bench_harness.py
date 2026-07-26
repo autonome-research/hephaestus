@@ -455,18 +455,19 @@ def test_a_review_hook_outcome_is_archived_and_scored(
     assert measured.reviewed_requirements == 2
 
 
-def test_a_failing_review_hook_fails_that_run_and_not_the_bench(
+def test_a_failing_review_hook_is_recorded_but_never_charged_to_the_model(
     tmp_path: Path,
     fake_model: FakeOpenAI,
     provider: ProviderConfig,
     runtime_factory: harness.RuntimeFactory,
 ) -> None:
-    """§5 is blocking: a review that could not run verified nothing.
+    """A review that could not run is the *harness* failing, not the model.
 
-    The failure is scoped to *this* run — it is graded, archived and given a
+    The failure is scoped to this run — it is graded, archived and given a
     reason, and nothing propagates out of ``run_task`` — so the bench keeps
-    going. What must not happen is a run that quietly passes on the strength of
-    a review that never completed.
+    going. And because ``review_error`` is our bug, it is reported (through
+    ``harness_error_rate``) rather than charged to the agent: with every real
+    check green, this run passes.
     """
     (task,) = load_tasks(["repair-fillet"])
     repair_script(fake_model)
@@ -485,12 +486,37 @@ def test_a_failing_review_hook_fails_that_run_and_not_the_bench(
     )
     assert run.error is None, "the run itself completed; it is the review that failed"
     assert cast("dict[str, Any]", run.review)["error"].startswith("RuntimeError")
-    assert not run.passed
     assert any(reason.startswith("review_error:RuntimeError") for reason in run.reasons), (
         run.reasons
     )
+    graded = cast("dict[str, Any]", run.grade)
+    assert run.passed, "a harness failure must not be charged to the model"
+    assert graded["harness_errors"] == list(run.reasons)
     # …and the grading evidence is complete anyway: the run was archived, not lost.
-    assert cast("dict[str, Any]", run.grade)["builds"]["plate"]["status"] == "ok"
+    assert graded["builds"]["plate"]["status"] == "ok"
+    # It is measured, though: this is a reliability number about the harness.
+    measured = metrics.run_metrics(run.to_json())
+    assert measured.harness_error is True
+    table = metrics.aggregate_metrics([measured])
+    assert table.harness_error_rate == 1.0
+
+
+def test_a_review_error_alongside_a_real_failure_still_fails_the_run(tmp_path: Path) -> None:
+    """Only the harness's own reasons are excused; the model's are not.
+
+    Graded directly (no model): an unauthored project fails on its own merits,
+    and adding a ``review_error`` on top neither rescues it nor disappears.
+    """
+    (task,) = load_tasks(["bracket-101"])
+    project = tmp_path / "project"
+    harness.seed_project(task, project)
+    report = harness.grade(task, project, extra_reasons=["review_error:RuntimeError: boom"])
+    assert not report.passed
+    assert report.harness_errors == ("review_error:RuntimeError: boom",)
+    assert set(report.reasons) - set(report.harness_errors), "the real failure is still charged"
+    assert metrics.charged_reasons(report.reasons) == tuple(
+        r for r in report.reasons if not r.startswith("review_error:")
+    )
 
 
 def test_budget_exceeded_cancels_the_run_and_cannot_pass(

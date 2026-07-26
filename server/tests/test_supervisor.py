@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
@@ -9,6 +10,7 @@ import sys
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from hephaestus.agent_bridge.supervisor import (
@@ -23,6 +25,10 @@ from hephaestus.agent_bridge.supervisor import (
 
 FAKE = Path(__file__).with_name("fake_sidecar.py")
 ORPHAN_PARENT = Path(__file__).with_name("orphan_parent.py")
+
+#: The two knobs the fake sidecar reads for the respawn regression; they travel
+#: through the credential allowlist because the sidecar env is minimal by design.
+_FAKE_ENV_NAMES = frozenset({"FAKE_SIDECAR_REQUIRE_CONFIGURE", "FAKE_SIDECAR_CONFIGURE_LOG"})
 
 
 def _argv() -> list[str]:
@@ -204,6 +210,145 @@ def test_watchdog_kills_unresponsive_sidecar() -> None:
             time.sleep(0.02)
         assert sup.is_running()
         assert sup.child_pid != first_pid
+    finally:
+        sup.close()
+
+
+# -- a respawned child is re-configured ------------------------------------
+#
+# The bug this covers: the sidecar's `runtime.configure` state lives in the
+# *process*. A watchdog respawn produced a blank child that nothing
+# re-configured, so every later session.create/session.prompt failed with
+# `-32600 runtime.configure has not run yet` — silently, long after the restart.
+
+
+_CONFIGURE_PAYLOAD: dict[str, Any] = {
+    "providers": [{"id": "fake", "kind": "openai", "base_url": "http://127.0.0.1:9/v1"}],
+    "credentials": {"FAKE_KEY": "secret-value"},
+}
+
+
+def _wedging_supervisor(log: Path) -> Supervisor:
+    """A supervisor over a fake sidecar that *refuses* an unconfigured session.
+
+    Timeouts are short so the watchdog fires quickly; the configure call itself
+    is given a generous timeout so the watchdog never mistakes it for a wedge.
+    """
+    source = dict(os.environ)
+    source["FAKE_SIDECAR_REQUIRE_CONFIGURE"] = "1"
+    source["FAKE_SIDECAR_CONFIGURE_LOG"] = str(log)
+    return Supervisor(
+        SupervisorConfig(
+            argv=_argv(),
+            credential_allowlist=_FAKE_ENV_NAMES,
+            env_source=source,
+            default_timeout_s=0.3,
+            watchdog_grace_s=0.2,
+            watchdog_interval_s=0.05,
+        ),
+        spawn_hook=lambda sup: sup.call("runtime.configure", _CONFIGURE_PAYLOAD, timeout=5),
+    )
+
+
+def _configure_log(log: Path) -> list[str]:
+    if not log.is_file():
+        return []
+    return [line for line in log.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def _wedge_until_respawned(sup: Supervisor, log: Path) -> None:
+    """Wedge the sidecar mid-session and wait for the re-configured replacement."""
+    with pytest.raises(SupervisorError):
+        sup.call("sleep", {})  # never answered -> the watchdog kills the child
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and len(_configure_log(log)) < 2:
+        time.sleep(0.02)
+
+
+def test_respawned_sidecar_is_reconfigured_before_the_next_session(tmp_path: Path) -> None:
+    log = tmp_path / "configure.jsonl"
+    sup = _wedging_supervisor(log)
+    sup.start()
+    first_pid = sup.child_pid
+    try:
+        assert sup.call("session.create", {"profile": "orchestrator"}, timeout=5)["session_id"]
+        _wedge_until_respawned(sup, log)
+        assert sup.child_pid != first_pid, "the watchdog must have respawned the sidecar"
+        # The whole regression in one line: without the replay this raises
+        # SupervisorError carrying "runtime.configure has not run yet".
+        result = sup.call("session.create", {"profile": "orchestrator"}, timeout=5)
+        assert result["session_id"]
+        assert sup.call("session.prompt", {"run_id": "run-after", "prompt": "hi"}, timeout=5)
+        assert not sup.spawn_errors, sup.spawn_errors
+        assert sup.spawn_count >= 2
+    finally:
+        sup.close()
+
+
+def test_replayed_configure_payload_is_identical_to_the_initial_one(tmp_path: Path) -> None:
+    log = tmp_path / "configure.jsonl"
+    sup = _wedging_supervisor(log)
+    sup.start()
+    try:
+        _wedge_until_respawned(sup, log)
+        lines = _configure_log(log)
+        assert len(lines) == 2, f"expected one configure per child, got {lines}"
+        assert lines[0] == lines[1], "the respawn must replay the *same* payload"
+        assert json.loads(lines[0]) == _CONFIGURE_PAYLOAD
+    finally:
+        sup.close()
+
+
+def test_bridge_runtime_replays_its_own_configure_payload_on_every_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The app half: one payload, replayed by the supervisor's spawn hook.
+
+    Runs the scripted sidecar *as* the sidecar (``HEPHAESTUS_NODE`` + a python
+    ``dist_main``) so this exercises the real :class:`BridgeRuntime` wiring
+    without Node or a provider.
+    """
+    from hephaestus.agent_bridge.app import BridgeRuntime
+    from hephaestus.testing.projects import scaffold_project
+
+    log = tmp_path / "configure.jsonl"
+    monkeypatch.setenv("HEPHAESTUS_NODE", sys.executable)
+    monkeypatch.setenv("FAKE_SIDECAR_REQUIRE_CONFIGURE", "1")
+    monkeypatch.setenv("FAKE_SIDECAR_CONFIGURE_LOG", str(log))
+    project = scaffold_project(tmp_path / "proj", name="respawn")
+    runtime = BridgeRuntime(
+        project_root=project,
+        providers=[{"id": "fake", "kind": "openai", "base_url": "http://127.0.0.1:9/v1"}],
+        credentials={"FAKE_KEY": "secret-value"},
+        credential_allowlist=sorted(_FAKE_ENV_NAMES),
+        dist_main=FAKE,
+    )
+    payload = runtime.configure_payload
+    runtime.start()
+    try:
+        assert runtime.create_session("orchestrator")
+        runtime.restart()
+        # The fresh child refuses sessions unless it was re-configured.
+        assert runtime.create_session("orchestrator")
+        lines = _configure_log(log)
+        assert len(lines) == 2, lines
+        assert lines[0] == lines[1]
+        assert json.loads(lines[0]) == payload
+    finally:
+        runtime.close()
+
+
+def test_spawn_hook_failure_is_recorded_and_raises_to_the_caller() -> None:
+    """An explicit start whose re-configuration fails must fail loudly."""
+
+    def hook(_sup: Supervisor) -> None:
+        raise RuntimeError("configure refused")
+
+    sup = Supervisor(SupervisorConfig(argv=_argv()), spawn_hook=hook)
+    try:
+        with pytest.raises(RuntimeError):
+            sup.start()
+        assert sup.spawn_errors and "configure refused" in sup.spawn_errors[0]
     finally:
         sup.close()
 

@@ -527,9 +527,11 @@ def run_task(
         extra.append(f"run_{status}")
     if error is not None:
         extra.append("run_error")
-    # §5 is blocking: a review that could not be carried out verified nothing, so
-    # the run it belongs to fails with a reason. The bench itself is untouched —
-    # this run is graded and archived like any other, and the next one starts.
+    # A review that could not be carried out verified nothing — but that is the
+    # *harness* failing, not the model, so the reason is recorded here (and in
+    # `harness_error_rate`) without being charged to the run's verdict; see
+    # `metrics.UNCHARGED_REASON_PREFIXES`. The bench itself is untouched either
+    # way: this run is graded and archived like any other, and the next starts.
     review_error = None if review_outcome is None else review_outcome.get("error")
     if isinstance(review_error, str) and review_error:
         extra.append(f"review_error:{review_error}")

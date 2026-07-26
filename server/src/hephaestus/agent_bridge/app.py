@@ -4,8 +4,10 @@ Wires the supervised Node sidecar (:mod:`supervisor`) to the Python halves of
 the bridge so a caller — ``heph agent`` or an end-to-end test — can drive a real
 Pi session over the frozen wire protocol:
 
-* **runtime.configure** is sent once at start-up from a provider list (the fake
-  OpenAI-compatible server in tests, real providers in production);
+* **runtime.configure** is built once from a provider list (the fake
+  OpenAI-compatible server in tests, real providers in production) and replayed
+  onto *every* sidecar process via the supervisor's spawn hook — the first one
+  and every respawn, since a fresh child has no configuration at all;
 * **session.create / session.prompt / session.cancel** are issued as ordinary
   supervisor requests; every prompt gets a durably-admitted, tracked run id;
 * the sidecar's **py.tool_dispatch** requests are authorized against the bound
@@ -240,30 +242,42 @@ class BridgeRuntime:
             py_handler=self._on_py_request,
             notification_sink=self._on_notification,
             recovery_hook=self._on_process_loss,
+            # Every child — the first one, an explicit restart(), and the
+            # watchdog's own respawn — gets the configure payload replayed
+            # before anyone can use it. A respawned sidecar is a blank runtime,
+            # and without this it answers every later session.create /
+            # session.prompt with "runtime.configure has not run yet".
+            spawn_hook=self._configure_runtime,
         )
 
     # -- lifecycle ---------------------------------------------------------
 
+    @property
+    def configure_payload(self) -> dict[str, Any]:
+        """The one ``runtime.configure`` payload, replayed onto every child.
+
+        Built here and nowhere else: two call sites that each assemble their own
+        dict are two payloads that can drift, and the drift would only show up
+        after a respawn nobody asked for.
+        """
+        return {"providers": self._providers, "credentials": self._credentials}
+
+    def _configure_runtime(self, sup: Supervisor) -> None:
+        """Supervisor spawn hook: push ``runtime.configure`` onto a fresh child."""
+        sup.call("runtime.configure", self.configure_payload)
+
     def start(self) -> None:
-        """Spawn the sidecar and push the one-time runtime.configure payload."""
+        """Spawn the sidecar (the spawn hook pushes ``runtime.configure``)."""
         self._sup.start()
-        self._sup.call(
-            "runtime.configure",
-            {"providers": self._providers, "credentials": self._credentials},
-        )
 
     def restart(self) -> None:
-        """Kill the whole sidecar and respawn it, then re-configure the runtime.
+        """Kill the whole sidecar and respawn it; the spawn hook re-configures.
 
         Generic in-flight runs are marked interrupted by the supervisor's
         recovery hook before this returns; persisted Pi sessions are re-openable
         via :meth:`resume_session`.
         """
         self._sup.restart(reason="manual")
-        self._sup.call(
-            "runtime.configure",
-            {"providers": self._providers, "credentials": self._credentials},
-        )
 
     def close(self) -> None:
         """Graceful shutdown: close the sidecar (no orphan) and the opstore."""
