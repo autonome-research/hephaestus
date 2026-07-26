@@ -153,6 +153,32 @@ of those prompts, ids, targets, checks, or dimensions appear below:
    *Purpose: forces internal-feature reasoning (section channel) and
    print-process metadata.*
 
+### Corpus splits and validation metrics (amended 2026-07-26)
+
+Every public task ships in two spec variants (`VALIDATION.md` §1): **prose**
+(no seeded `checks/`; measures interpretation) and **seeded** (acceptance
+checks installed as an independent spec; measures iterate-to-green). The two
+pass rates are reported and gated **separately with independently baselined
+thresholds**, never collapsed. The corpus-v0 aggregate gate (Wilson lower-90%
+≥ 0.60) continues to name the **prose** split so the pre-amendment baseline
+stays comparable; the seeded threshold is baselined on its first measurement.
+Post-seeding numbers are never compared against pre-amendment results. The
+prose-vs-seeded gap — the interpretation tax — is a published leaderboard
+column.
+
+Reported alongside pass rates: `interpretation_gap`, `error_recovery_rate`
+(failed build → *next build succeeds*, not error uniqueness),
+`requirement_coverage`, `clarification_rate`, `review_catch_rate` split by
+catching channel (vision vs numeric), and `spec_tampering_rate` (protected
+checks are restored before the final build, and the attempt is scored). The
+bench answers `ask_user` non-committally ("unspecified — use your judgment")
+so auto-answering cannot substitute for the production clarification path;
+whether the agent asked is itself scored.
+
+No model-path conclusion (including any downgrade of the vision path) may be
+drawn before `knob-loft`, `enclosure-bosses`, and an assembly-mating task have
+reported with the channel split.
+
 Scoring artifact: `bench/results/<model>/<date>.json` with per-task pass
 rate, mean tool calls, and token cost. The bench doubles as the model
 leaderboard deliverable.

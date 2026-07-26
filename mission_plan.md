@@ -336,6 +336,38 @@ prompts, scripts, images, tool payloads, transcripts, and workflow records go
 only to an access-controlled artifact store with retention limits; public CI
 receives redacted aggregate counts/rates and leak-scan evidence.
 
+## Stage 2V — Validation ladder
+
+Amendment (2026-07-26, maintainer-directed) under mission rule 5. Stage 2
+closed the verification loop (did the agent build what it intended?) but
+measured evidence shows it is self-referential: agents author `CHECKS` that
+encode their own misreading, pass them, and stop. This stage adds
+**validation** — was the intention correct? — as an escalating ladder in which
+**every rung fires by rule, not by model choice**. `VALIDATION.md` is the
+normative specification; the summary here is its gate.
+
+Deliverables: (a) corpus `spec: prose|seeded` variants with separately
+baselined split scoring; (b) the requirement ledger (`specified`/`derived`/
+`assumed` entries, ledger-cited CHECKS thresholds, `heph lint` unsourced-
+constant rules); (c) a rule-enforced clarification gate that refuses
+`build_part` on material unresolved assumptions and demands concrete-option
+questions; (d) automatic unrequested post-build critique (pairwise
+interference, manifold, prompt-number diff); (e) a blocking independent
+termination reviewer child (request verbatim + ledger + multi-view/section
+renders + scripts + metrics, and explicitly NOT the agent's own CHECKS)
+returning per-requirement pass/fail/unverifiable with the catching channel;
+(f) the bounded continuation ladder (≤3 cycles, same-failure-twice escalates
+to `ask_user`, `unresolved_requirements` terminal, never-green-with-open-
+requirements invariant); (g) a non-committal bench answerer with asking
+scored; (h) the §8 metric suite.
+
+**Gate G2V**: as specified in `VALIDATION.md` §Gate G2V — `uv run pytest
+tests/stage2v -q` exits 0 with every listed clause covered, the recorded
+`bracket-101` seed-2 misread fixture MUST trigger the prompt-number diff, and
+all prior gates stay green. The prose-split Tier 3 threshold is unchanged and
+remains the historical baseline; the seeded split is baselined on first
+measurement and is never compared against pre-amendment numbers.
+
 ## Stage 3 — MCP server
 
 Deliverables: `server/mcp` via FastMCP — stdio and streamable-HTTP transports
