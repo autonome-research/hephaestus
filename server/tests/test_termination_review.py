@@ -58,6 +58,7 @@ from hephaestus.agent_bridge.review import (
 )
 from hephaestus.core import tools_decl
 from hephaestus.testing.fake_openai import FakeOpenAI, RequestInfo, start_fake_openai
+from hephaestus.testing.ledger import seed_minimal_ledger
 from hephaestus.testing.projects import scaffold_project
 from hephaestus.testing.sidecar import build_agent_dist
 from hephaestus.testing.stream_assertions import text, tool_call
@@ -85,7 +86,9 @@ CHECKS = {
 
 @pytest.fixture
 def project(tmp_path: Path) -> Iterator[Project]:
-    proj = make_project(tmp_path / "proj")
+    # No seeded ledger: these tests assert on the ledger the *review* sees, so
+    # each one records exactly the entries it means to have judged.
+    proj = make_project(tmp_path / "proj", seed_ledger=False)
     try:
         yield proj
     finally:
@@ -163,7 +166,7 @@ def finding(
 def test_context_carries_request_ledger_and_renders(project: Project) -> None:
     """Request verbatim + ledger + >=2 rgb views per built part (VALIDATION §5)."""
     request = "Make a 60 mm (X) by 40 mm (Y) base plate, 40 mm tall."
-    project.build("widget")
+    # §2's ordering, which the gate now enforces: the ledger precedes geometry.
     project.cad.record_requirements(
         [
             {
@@ -177,6 +180,7 @@ def test_context_carries_request_ledger_and_renders(project: Project) -> None:
         ],
         op_id="op-ledger-1",
     )
+    project.build("widget")
 
     context = build_review_context(project.cad, request=request, parts=["widget"])
 
@@ -196,6 +200,7 @@ def test_context_carries_request_ledger_and_renders(project: Project) -> None:
 
 def test_context_excludes_the_agents_own_checks(project: Project) -> None:
     """Structural: no CHECKS token anywhere in the context the reviewer receives."""
+    seed_minimal_ledger(project)  # §2: a build with no ledger is refused
     project.build("widget")
     source = (project.root / "parts" / "widget.py").read_text(encoding="utf-8")
     assert "CHECKS" in source and "wide_enough" in source  # the fixture really has one
@@ -236,6 +241,7 @@ def test_strip_agent_checks_survives_unparseable_scripts() -> None:
 
 def test_section_render_for_parts_with_internal_features(project: Project) -> None:
     """A bored part gets a section render; a plain solid does not."""
+    seed_minimal_ledger(project)  # §2: a build with no ledger is refused
     (project.root / "parts" / "bored.py").write_text(BORED_SRC, encoding="utf-8")
     project.build("bored", "bracket")
 
@@ -697,6 +703,7 @@ def test_reviewer_principal_is_refused_every_mutation(
 
 def test_reviewer_principal_may_measure_and_render_across_parts(project: Project) -> None:
     """The reviewer reads the whole project — it judges every part."""
+    seed_minimal_ledger(project)  # §2: a build with no ledger is refused
     project.build("widget", "bracket")
 
     rendered = project.call(

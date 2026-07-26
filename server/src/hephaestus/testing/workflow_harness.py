@@ -101,7 +101,13 @@ def scaffold_workflow_project(root: Path, *, shelf: str = SHELF_CLEAR_SRC) -> Pa
 class Wiring:
     """One project's opstore plus every Python half the workflow layer needs."""
 
-    def __init__(self, root: Path, *, prompter: Callable[[str, str, str], PartPromptOutcome]):
+    def __init__(
+        self,
+        root: Path,
+        *,
+        prompter: Callable[[str, str, str], PartPromptOutcome],
+        seed_ledger: bool = True,
+    ):
         self.root = root
         self.layout: ProjectLayout = load_project(root)
         self.store: OpStore = open_store(self.layout)
@@ -116,6 +122,13 @@ class Wiring:
             delegation=self.delegation,
             delegation_runner=SessionDelegationRunner(prompter, self.prompts),
         )
+        if seed_ledger:
+            # VALIDATION.md §2 is enforced by the dispatcher: an empty requirement
+            # ledger refuses every build_part. A workflow test's subject is the
+            # workflow, so the ledger is a precondition here, not a subject.
+            from hephaestus.testing.ledger import seed_minimal_ledger
+
+            seed_minimal_ledger(self.cad)
 
     def bridge(self) -> RecordingBridge:
         return RecordingBridge(

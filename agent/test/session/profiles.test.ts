@@ -118,6 +118,25 @@ describe("system prompt", () => {
   it("names the bound part when provided", () => {
     expect(systemPromptForProfile("part", { part: "widget" })).toContain("widget");
   });
+
+  // VALIDATION.md §2/§3/§7. The harness is what binds these rules — build_part is
+  // refused without a ledger — so the prompt only spares the model the round-trip
+  // of learning that by being refused. It is necessary, never sufficient.
+  it("teaches the requirement ledger to every authoring profile", () => {
+    for (const profile of ["part", "orchestrator", "quick_edit"] as const) {
+      const prompt = systemPromptForProfile(profile);
+      expect(prompt).toContain("record_requirements");
+      expect(prompt).toContain("no_ledger");
+      expect(prompt).toContain("ask_user(requirement_ids=");
+      expect(prompt).toContain("NOT charged against your tool-call budget");
+    }
+  });
+
+  it("does not hand the reviewer the authoring rules", () => {
+    const prompt = systemPromptForProfile("reviewer");
+    expect(prompt).not.toContain("record_requirements");
+    expect(prompt).not.toContain("PART-SCRIPT CONTRACT");
+  });
 });
 
 describe("session directory", () => {

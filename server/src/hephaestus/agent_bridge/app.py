@@ -229,6 +229,16 @@ class BridgeRuntime:
     def admission(self) -> BridgeAdmission:
         return self._admission
 
+    @property
+    def cad(self) -> CadOps:
+        """The runtime's own CAD/ledger handle.
+
+        Exposed because the ``VALIDATION.md`` §5/§6 ladder must read *this*
+        ledger — the one the run actually wrote through the dispatcher — rather
+        than a second handle opened over the same store.
+        """
+        return self._cad
+
     # -- sessions ----------------------------------------------------------
 
     def create_session(

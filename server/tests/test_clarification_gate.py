@@ -4,6 +4,9 @@ The gate is the rung that makes an unconfirmed *material* assumption stop the
 build instead of quietly becoming geometry. What is tested here is that every
 part of it fires **by rule**:
 
+* an **empty** ledger refuses ``build_part`` on its own (``reason:
+  "no_ledger"``): §2 lets no geometry precede requirements, and a ladder whose
+  substrate the model can decline to create is inert;
 * a material assumption refuses ``build_part`` with the discriminated
   ``clarification_required`` result — and the s2 wall-direction entry, the
   recorded seed-2 misread, is one of them;
@@ -90,7 +93,9 @@ WALL_OPTIONS: list[dict[str, str]] = [
 
 @pytest.fixture
 def project(tmp_path: Path) -> Iterator[Project]:
-    p = make_project(tmp_path / "proj")
+    # seed_ledger=False: this module's subject IS the ledger/gate, so it must see
+    # the project's real initial state — no ledger at all (VALIDATION.md §2).
+    p = make_project(tmp_path / "proj", seed_ledger=False)
     try:
         yield p
     finally:
@@ -109,12 +114,21 @@ def test_a_material_assumption_blocks_the_build_with_the_discriminated_result(
     project: Project,
 ) -> None:
     """The s2 wall-direction entry is exactly what fires (VALIDATION.md §3)."""
-    assert _build(project)["status"] == "ok", "the fixture builds while the ledger is empty"
+    # The baseline is a build that is refused for a *different* reason: §2 lets no
+    # geometry precede a ledger at all. Recording an immaterial entry is what
+    # buys the unblocked build this test needs as its control, so the refusal
+    # below can only be §3's.
+    empty = _build(project)
+    assert empty["status"] == "clarification_required"
+    assert empty["reason"] == "no_ledger", "an empty ledger is itself a refusal (§2)"
+    project.call("record_requirements", {"entries": [NAMING]})
+    assert _build(project)["status"] == "ok", "an immaterial ledger builds"
 
     project.call("record_requirements", {"entries": [R1, WALL_DIR]})
     result = _build(project)
 
     assert result["status"] == "clarification_required"
+    assert result["reason"] == "unresolved_material_assumption"
     assert result["unresolved_material"] == ["R9"]
     assert [entry["id"] for entry in cast("list[Any]", result["entries"])] == ["R9"], (
         "only the offending entries ride on the refusal"
@@ -125,6 +139,36 @@ def test_a_material_assumption_blocks_the_build_with_the_discriminated_result(
     assert "ask_user" in str(result["message"])
     assert "consequence" in str(result["message"])
     assert "artifact_ref" not in result, "a refused build produces no geometry"
+
+
+def test_an_empty_ledger_refuses_the_build_naming_record_requirements(
+    project: Project,
+) -> None:
+    """§2, by rule: geometry may not precede requirements.
+
+    Measured 2026-07-26: a live bench run reported ``compelled=0`` on every run —
+    the whole ladder sat inert behind a tool the model simply never called. An
+    absent ledger is therefore its own discriminated refusal, distinguishable
+    from §3's by ``reason`` and pointing at the one call that clears it.
+    """
+    assert project.cad.ledger_state().entries == ()
+    gate = clarification_gate(project.cad.ledger_state())
+    assert gate.no_ledger is True and gate.blocked is True
+
+    result = _build(project)
+
+    assert result["status"] == "clarification_required"
+    assert result["reason"] == "no_ledger"
+    assert result["entries"] == [], "there is no offending entry — there is no ledger"
+    assert result["unresolved_material"] == []
+    message = str(result["message"])
+    assert "record_requirements" in message
+    assert "ask_user" not in message, "the way out is the ledger, not a question"
+    assert "artifact_ref" not in result, "a refused build produces no geometry"
+
+    # …and recording anything at all clears this particular refusal.
+    project.call("record_requirements", {"entries": [R1]})
+    assert _build(project)["status"] == "ok"
 
 
 def test_the_refusal_is_a_result_not_an_error_and_repeats(project: Project) -> None:

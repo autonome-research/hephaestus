@@ -16,6 +16,7 @@ import pytest
 from fastmcp import Client
 from hephaestus.core.tools_decl import MAX_IMAGES_PER_RESULT
 from hephaestus.mcp.app import HephaestusMCP, build_app
+from hephaestus.testing.ledger import MINIMAL_LEDGER_ENTRY
 from hephaestus.testing.tools_fixture import scaffold
 from mcp.types import ImageContent
 
@@ -56,6 +57,10 @@ def test_inspect_part_returns_image_content_and_artifact_refs(
     async def scenario() -> None:
         async with Client(runtime.app) as client:
             await open_project(client, project_root)
+            # VALIDATION.md §2: geometry may not precede requirements, so the
+            # ledger is a precondition of every build — here through the MCP
+            # surface, which is the same dispatcher underneath.
+            await client.call_tool("record_requirements", {"entries": [MINIMAL_LEDGER_ENTRY]})
             built = structured(await client.call_tool("build_part", {"name": "widget"}))
             assert built["status"] == "ok"
 
@@ -83,9 +88,13 @@ def test_build_replay_returns_the_recorded_result(
     async def scenario() -> None:
         async with Client(runtime.app) as client:
             await open_project(client, project_root)
+            # §2 again: without a ledger the "build" under test is a refusal, and
+            # a refusal is not a publication to replay.
+            await client.call_tool("record_requirements", {"entries": [MINIMAL_LEDGER_ENTRY]})
             session = cast("Any", client.session)
             request_id = int(session._request_id)
             first = structured(await client.call_tool("build_part", {"name": "widget"}))
+            assert first["status"] == "ok"
             session._request_id = request_id
             replay = await client.call_tool("build_part", {"name": "widget"})
             assert structured(replay) == first

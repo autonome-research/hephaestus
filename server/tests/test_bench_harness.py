@@ -435,12 +435,19 @@ def test_a_review_hook_outcome_is_archived_and_scored(
     assert measured.reviewed_requirements == 2
 
 
-def test_a_failing_review_hook_never_fails_the_run(
+def test_a_failing_review_hook_fails_that_run_and_not_the_bench(
     tmp_path: Path,
     fake_model: FakeOpenAI,
     provider: ProviderConfig,
     runtime_factory: harness.RuntimeFactory,
 ) -> None:
+    """§5 is blocking: a review that could not run verified nothing.
+
+    The failure is scoped to *this* run — it is graded, archived and given a
+    reason, and nothing propagates out of ``run_task`` — so the bench keeps
+    going. What must not happen is a run that quietly passes on the strength of
+    a review that never completed.
+    """
     (task,) = load_tasks(["repair-fillet"])
     repair_script(fake_model)
 
@@ -456,9 +463,14 @@ def test_a_failing_review_hook_never_fails_the_run(
         review=review,
         prompt_timeout=PROMPT_TIMEOUT,
     )
-    assert run.passed, run.reasons
-    assert run.error is None
+    assert run.error is None, "the run itself completed; it is the review that failed"
     assert cast("dict[str, Any]", run.review)["error"].startswith("RuntimeError")
+    assert not run.passed
+    assert any(reason.startswith("review_error:RuntimeError") for reason in run.reasons), (
+        run.reasons
+    )
+    # …and the grading evidence is complete anyway: the run was archived, not lost.
+    assert cast("dict[str, Any]", run.grade)["builds"]["plate"]["status"] == "ok"
 
 
 def test_budget_exceeded_cancels_the_run_and_cannot_pass(

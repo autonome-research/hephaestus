@@ -271,6 +271,10 @@ def harness(tmp_path: Path, sidecar_dist: Path) -> Iterator[Harness]:
         tmp_path / "bracket",
         name="bracket-101",
         globals_src=(FIXTURES / "bracket_101_s2_globals.py").read_text(encoding="utf-8"),
+        # No seeded ledger: the run under test writes its own, and every rung
+        # below is asserted against exactly those entries. Handing it one would
+        # be the bench doing the agent's §2 work for it.
+        seed_ledger=False,
     )
     (root / "parts" / "bracket.py").write_text(
         (FIXTURES / "bracket_101_s2_bracket.py").read_text(encoding="utf-8"), encoding="utf-8"

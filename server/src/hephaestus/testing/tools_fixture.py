@@ -118,7 +118,21 @@ def make_project(
     delegation: Any = None,
     delegation_runner: Any = None,
     snapshot_caller: Any = None,
+    seed_ledger: bool = True,
 ) -> Project:
+    """A scaffolded project + dispatcher, ready to build.
+
+    ``seed_ledger`` records the one-entry minimal ledger
+    (:func:`hephaestus.testing.ledger.seed_minimal_ledger`) because
+    ``VALIDATION.md`` §2 is enforced by rule: an empty ledger refuses every
+    ``build_part`` (``reason: "no_ledger"``). Almost every test here builds
+    geometry to get at something *downstream* of the build, and for those the
+    ledger is a precondition, not a subject — the entry is ``source:"specified"``
+    so it can never trip §3's clarification gate either.
+
+    Pass ``seed_ledger=False`` in the tests whose subject *is* the ledger or the
+    gate: they need to see the project's real initial state (no ledger at all).
+    """
     scaffold(root, broken=broken)
     layout = load_project(root)
     store = open_store(layout)
@@ -130,4 +144,8 @@ def make_project(
         delegation_runner=delegation_runner,
         snapshot_caller=snapshot_caller,
     )
+    if seed_ledger:
+        from hephaestus.testing.ledger import seed_minimal_ledger
+
+        seed_minimal_ledger(cad)
     return Project(root=root, layout=layout, store=store, cad=cad, dispatcher=dispatcher, _n=[0])

@@ -62,7 +62,9 @@ LEDGER: list[dict[str, Any]] = [
 
 @pytest.fixture
 def project(tmp_path: Path) -> Iterator[Project]:
-    p = make_project(tmp_path / "proj")
+    # No seeded ledger: `seeded()` records exactly the §5 fixture below, and the
+    # assertions name those ids.
+    p = make_project(tmp_path / "proj", seed_ledger=False)
     try:
         yield p
     finally:
@@ -70,9 +72,24 @@ def project(tmp_path: Path) -> Iterator[Project]:
 
 
 def seeded(project: Project) -> Project:
-    """A built project whose ledger holds the §5 fixture."""
-    project.build("widget")
+    """A built project whose ledger holds the §5 fixture.
+
+    The ordering is the one ``VALIDATION.md`` compels, not a convenience: §2
+    forbids geometry that precedes requirements (an empty ledger refuses
+    ``build_part`` outright), and §3 then refuses it again while ``R9`` — a
+    material assumption — has never been put to anyone. So the fixture records
+    the ledger, takes §7's non-committal answer on ``R9``, and only then builds.
+    ``R9`` is still ``assumed`` and unconfirmed afterwards, which is exactly the
+    state §5 is asked to judge below.
+    """
     project.cad.record_requirements(LEDGER, op_id="g2v-ledger")
+    record_clarification_answer(
+        project.cad,
+        "R9",
+        "unspecified — use your engineering judgment and record it as an assumption.",
+        op_id="g2v-asked",
+    )
+    project.build("widget")
     return project
 
 

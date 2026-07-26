@@ -5,10 +5,12 @@ so the bench stack — provider config, the Node sidecar, the CAD grading path �
 imported only when a bench verb actually runs.
 
 - ``heph bench run --provider FILE --model ID [--tasks a,b] [--spec S] [--seeds N]
-  [--results-dir DIR] [--dry-run] [--json]`` runs the public corpus against the
-  model named by ``--model`` (which must be declared by the provider file) and
-  archives every run under ``bench/results/<model>/<date>/``. ``--dry-run`` lists
-  the planned (task, seed) prompts and makes **no** model call.
+  [--results-dir DIR] [--no-review] [--dry-run] [--json]`` runs the public corpus
+  against the model named by ``--model`` (which must be declared by the provider
+  file) and archives every run under ``bench/results/<model>/<date>/``. The
+  ``VALIDATION.md`` §5/§6 termination-review ladder runs on every run unless
+  ``--no-review`` is passed. ``--dry-run`` lists the planned (task, seed) prompts
+  and makes **no** model call.
 - ``heph bench score DIR [--model ID] [--date D] [--out FILE] [--json]`` scores an
   archived run directory and writes ``bench/results/<model>/<date>.json``, plus
   the ``VALIDATION.md`` §1 split table (prose and seeded, never averaged; the
@@ -86,11 +88,17 @@ def _cmd_run(args: argparse.Namespace) -> int:
         return 2
 
     results_dir = cast("str | None", args.results_dir)
+    # VALIDATION.md §5: the agent may not self-declare done, so the termination
+    # review runs by default. --no-review is an escape hatch for debugging a
+    # model's own loop; it leaves §8's requirement_coverage / review_catch_rate
+    # unmeasured, which is the honest reading of a bench that never reviewed.
+    review = None if bool(args.no_review) else harness.default_review_hook
     run = harness.run_bench(
         tasks,
         provider=provider,
         seeds=seeds,
         results_dir=None if results_dir is None else Path(results_dir),
+        review=review,
         on_record=None if bool(args.json) else _print_record,
         parallel=int(args.parallel),
     )
@@ -214,6 +222,14 @@ def add_subparsers(
         help="concurrent (task, seed) runs; each run is fully isolated (default 1)",
     )
     run.add_argument("--results-dir", help="archive root (default bench/results)")
+    run.add_argument(
+        "--no-review",
+        action="store_true",
+        help=(
+            "skip the VALIDATION.md §5/§6 termination review (it runs by default); "
+            "leaves requirement_coverage and review_catch_rate unmeasured"
+        ),
+    )
     run.add_argument("--dry-run", action="store_true", help="list planned runs; no model calls")
     run.add_argument("--json", action="store_true", help="emit JSON")
     run.set_defaults(func=_cmd_run)

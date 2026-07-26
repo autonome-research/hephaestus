@@ -38,7 +38,9 @@ WALL_DIR: dict[str, Any] = {
 
 @pytest.fixture
 def project(tmp_path: Path) -> Iterator[Project]:
-    p = make_project(tmp_path / "proj")
+    # seed_ledger=False: this module's subject IS the ledger/gate, so it must see
+    # the project's real initial state — no ledger at all (VALIDATION.md §2).
+    p = make_project(tmp_path / "proj", seed_ledger=False)
     try:
         yield p
     finally:

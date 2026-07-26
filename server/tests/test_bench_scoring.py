@@ -231,6 +231,71 @@ def test_cli_bench_run_requires_a_provider_when_not_dry(
     assert "--provider is required" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    ("argv", "expect_default_hook"),
+    [([], True), (["--no-review"], False)],
+    ids=["default", "opted-out"],
+)
+def test_cli_bench_run_reviews_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    argv: list[str],
+    expect_default_hook: bool,
+) -> None:
+    """``VALIDATION.md`` §5 is not opt-in: ``heph bench run`` supplies the reviewer.
+
+    Measured 2026-07-26: the bench never passed a review hook, so §5/§6 never ran
+    under ``heph bench run`` and §8's ``requirement_coverage`` /
+    ``review_catch_rate`` reported *unmeasured* on every archive. The hook is now
+    the default and ``--no-review`` is the explicit way out.
+    """
+    from hephaestus.bench import harness
+
+    provider_file = tmp_path / "provider.json"
+    provider_file.write_text(
+        json.dumps(
+            {
+                "providers": [
+                    {
+                        "id": "p",
+                        "kind": "openai_compatible",
+                        "baseUrl": "http://127.0.0.1:1/v1",
+                        "models": [{"id": "m", "contextWindow": 8192, "maxTokens": 1024}],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    seen: dict[str, Any] = {}
+
+    def fake_run_bench(tasks: Any, **kwargs: Any) -> Any:
+        seen.update(kwargs)
+        return harness.BenchRun(model="m", date="2026-07-24", archive_dir=tmp_path, records=())
+
+    monkeypatch.setattr(harness, "run_bench", fake_run_bench)
+    code = cli_bench.main(
+        [
+            "bench",
+            "run",
+            "--provider",
+            str(provider_file),
+            "--tasks",
+            "bracket-101",
+            "--seeds",
+            "1",
+            *argv,
+        ]
+    )
+
+    assert code == 0
+    assert ("review" in seen) is True
+    if expect_default_hook:
+        assert seen["review"] is harness.default_review_hook
+    else:
+        assert seen["review"] is None
+
+
 def test_cli_bench_run_rejects_an_unknown_task(capsys: pytest.CaptureFixture[str]) -> None:
     code = cli_bench.main(["bench", "run", "--tasks", "no-such-task", "--dry-run"])
     assert code == 2

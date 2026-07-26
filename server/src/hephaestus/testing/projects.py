@@ -19,11 +19,25 @@ def scaffold_project(
     *,
     name: str = "heph",
     globals_src: str = "PARAMS = {}\n",
+    seed_ledger: bool = True,
 ) -> Path:
-    """A minimal but real Hephaestus project: manifest + globals + parts/checks."""
+    """A minimal but real Hephaestus project: manifest + globals + parts/checks.
+
+    ``seed_ledger`` records the one-entry minimal requirement ledger. It defaults
+    on because ``VALIDATION.md`` §2 is enforced by the dispatcher — an empty
+    ledger refuses every ``build_part`` with ``reason: "no_ledger"`` — so a
+    harness whose subject is *anything downstream of a build* needs it as a
+    precondition. Pass ``seed_ledger=False`` when the ledger (or the gate over
+    it) is what the test is actually about, or when the project must be inspected
+    in its untouched initial state.
+    """
     root.mkdir(parents=True, exist_ok=True)
     (root / "hephaestus.toml").write_text(f'[project]\nname = "{name}"\n', encoding="utf-8")
     (root / "globals.py").write_text(globals_src, encoding="utf-8")
     (root / "parts").mkdir(exist_ok=True)
     (root / "checks").mkdir(exist_ok=True)
+    if seed_ledger:
+        from .ledger import seed_minimal_ledger_at
+
+        seed_minimal_ledger_at(root)
     return root

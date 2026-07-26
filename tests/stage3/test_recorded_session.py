@@ -20,6 +20,7 @@ from fastmcp import Client
 from hephaestus.bench.harness import grade, load_tasks, seed_project
 from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.mcp.app import build_app
+from hephaestus.testing.ledger import seed_minimal_ledger_at
 
 FIXTURE = Path(__file__).parent / "fixtures" / "claude_code_bracket101"
 
@@ -38,6 +39,12 @@ def seeded_project(tmp_path: Path) -> Path:
     task = {t.id: t for t in load_tasks()}["bracket-101"]
     root = tmp_path / "project"
     seed_project(task, root)
+    # The transcript was recorded before VALIDATION.md §2 existed, so it contains
+    # no record_requirements call and its build_part would now be refused. The
+    # ledger is seeded here rather than in the bench seeder on purpose: the bench
+    # must NEVER hand the agent a ledger — writing it is the agent's obligation,
+    # and seeding it there would make the whole ladder untestable.
+    seed_minimal_ledger_at(root)
     return root
 
 

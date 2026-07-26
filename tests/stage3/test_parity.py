@@ -65,6 +65,7 @@ from hephaestus.agent_bridge.dispatch import DispatchError, Principal
 from hephaestus.agent_bridge.protocol import ProtocolError
 from hephaestus.core.errors import HephaestusError
 from hephaestus.mcp import build_app
+from hephaestus.testing.ledger import MINIMAL_LEDGER_ENTRY
 from mcp.types import TextContent
 
 # --------------------------------------------------------------------------
@@ -646,10 +647,27 @@ ROWS: tuple[Row, ...] = (
 # drivers
 
 
+async def _seed_ledger(path: PathUnderTest) -> None:
+    """VALIDATION.md §2, through the front door under test.
+
+    An empty requirement ledger refuses every ``build_part``, so the rows that
+    reach geometry need one. It is recorded *through the path* rather than into
+    the seed on disk, because the seeds are digest-compared for identity and an
+    opstore write is not byte-reproducible.
+    """
+    outcome = await path.call("record_requirements", {"entries": [MINIMAL_LEDGER_ENTRY]})
+    assert outcome.ok, outcome.payload
+
+
 def run_pi(row: Row, root: Path) -> dict[str, Any]:
     path = PiPath(root)
+
+    async def scenario() -> dict[str, Any]:
+        await _seed_ledger(path)
+        return await row.run(path)
+
     try:
-        return asyncio.run(row.run(path))
+        return asyncio.run(scenario())
     finally:
         path.close()
 
@@ -658,6 +676,7 @@ def run_mcp(row: Row, root: Path, *, capture: list[str] | None = None) -> dict[s
     async def scenario() -> dict[str, Any]:
         async with McpPath(root) as path:
             try:
+                await _seed_ledger(path)
                 return await row.run(path)
             finally:
                 if capture is not None:

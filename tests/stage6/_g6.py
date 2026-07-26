@@ -33,6 +33,7 @@ from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.core.project_store.layout import ProjectLayout, load_project, open_store
 from hephaestus.core.project_store.store import ProjectStore
 from hephaestus.core.registry import RegistryOps, RegistrySet
+from hephaestus.testing.ledger import seed_minimal_ledger
 
 from opstore import OpStore
 
@@ -249,6 +250,10 @@ def make_g6_project(
             scratch_root=root / ".heph" / "scratch",
         )
     dispatcher = ToolDispatcher(ProjectStore(layout, store), cad=cad, registry=registry)
+    # VALIDATION.md §2: an empty requirement ledger refuses every build_part, and
+    # every G6 clause is about what a *built* artifact yields (DFM findings,
+    # drawings, nested sheets). The ledger is this harness's precondition.
+    seed_minimal_ledger(cad)
     return G6Project(root=root, layout=layout, store=store, cad=cad, dispatcher=dispatcher, _n=[0])
 
 

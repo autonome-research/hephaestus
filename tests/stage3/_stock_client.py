@@ -44,6 +44,7 @@ from mcp.client.stdio import stdio_client
 
 __all__ = [
     "FIXTURE_PROJECT",
+    "LEDGER_ENTRY",
     "PLATE_SCRIPT",
     "REPO_ROOT",
     "FlowOutcome",
@@ -79,6 +80,18 @@ part.description = "G3 scripted-client plate"
 
 #: Volume of ``PLATE_SCRIPT`` at its default params, in mm^3.
 PLATE_VOLUME_MM3 = 40.0 * 20.0 * 6.0
+
+#: The one requirement the flow records before it builds (``VALIDATION.md`` §2).
+#: Spelled out literally rather than imported, because this module may not import
+#: Hephaestus at all — the gate's claim is a client with no Hephaestus code.
+LEDGER_ENTRY: dict[str, Any] = {
+    "id": "R1",
+    "text": "the plate is 40 mm wide",
+    "source": "specified",
+    "quote": "40 mm",
+    "value": 40.0,
+    "unit": "mm",
+}
 
 _READY_TIMEOUT_S = 120.0
 
@@ -188,6 +201,12 @@ async def run_flow(session: ClientSession, root: Path, part: str = "g3_plate") -
     parts = structured(await _call(session, "list_parts", {}))
     listed = tuple(str(row["name"]) for row in parts["parts"])
     assert "bracket" in listed and "primary" in listed, listed
+
+    # VALIDATION.md §2: geometry may not precede requirements — build_part is
+    # refused while the ledger is empty. A stock client records it through the
+    # ordinary tool surface, which is exactly what this flow is here to exercise.
+    ledger = structured(await _call(session, "record_requirements", {"entries": [LEDGER_ENTRY]}))
+    assert ledger["status"] == "ok", ledger
 
     created = structured(await _call(session, "create_part", {"name": part, "template": "blank"}))
     edited = structured(

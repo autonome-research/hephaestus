@@ -121,10 +121,18 @@ def build_sidecar() -> Path:
     return built[0]
 
 
-def scaffold_project(root: Path, *, name: str = "g2") -> Path:
-    """A minimal but real project: manifest + globals + empty parts/ and checks/."""
+def scaffold_project(root: Path, *, name: str = "g2", seed_ledger: bool = True) -> Path:
+    """A minimal but real project: manifest + globals + empty parts/ and checks/.
+
+    ``seed_ledger`` defaults on for the same reason it does upstream: §2 refuses
+    every build while the requirement ledger is empty. Turn it off in the tests
+    that record (and assert on) a ledger of their own.
+    """
     return _scaffold_project(
-        root, name=name, globals_src="# Project-shared namespace.\nPARAMS = {}\n"
+        root,
+        name=name,
+        globals_src="# Project-shared namespace.\nPARAMS = {}\n",
+        seed_ledger=seed_ledger,
     )
 
 

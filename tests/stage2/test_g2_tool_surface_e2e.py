@@ -252,7 +252,9 @@ class Chain:
 def surface(tmp_path: Any, sidecar_dist: Any) -> Any:
     from _g2 import scaffold_project
 
-    project = scaffold_project(tmp_path / "surface")
+    # The chain records its own ledger and asserts its generations, so the
+    # project must start with none (VALIDATION.md §2).
+    project = scaffold_project(tmp_path / "surface", seed_ledger=False)
     harness = G2Harness(project, sidecar_dist, snapshot=True, sandbox=True)
     try:
         yield harness

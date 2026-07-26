@@ -75,6 +75,13 @@ declares whether it moves geometry).
   `quote` is not a substring of the request.
 - The ledger is the substrate for §3, §5 and §8: it makes interpretation an
   inspectable artifact rather than an implicit act.
+- **"Before any geometry" is enforced, not advised (2026-07-26).** `build_part`
+  is refused while the ledger is **empty**, with the §3 discriminated result
+  carrying `reason: "no_ledger"` and a message naming `record_requirements` as
+  the way out. Measured: a live bench run reported `compelled_tool_calls = 0` on
+  every run — nothing compelled the substrate to exist, so §3 had nothing to
+  gate, §5 nothing to verify and §8's `requirement_coverage` no denominator. A
+  rung that fires only when the model chooses to build it is not a rung.
 
 ## 3. Clarification gate (rule-enforced, blocking)
 
@@ -92,8 +99,12 @@ never-green invariant still forbids terminating green with the assumption
 open. Refusal is a discriminated result:
 
 ```
-{status:"clarification_required", entries:[...], message:...}
+{status:"clarification_required", reason:"unresolved_material_assumption"|"no_ledger",
+ entries:[...], message:...}
 ```
+
+`reason` discriminates the two refusals that share this shape: §2's absent
+ledger (`no_ledger`, `entries: []`) and §3's unasked material assumption.
 
 Material classes (non-exhaustive, matched by `applies_to`/`kind` on the entry):
 envelope dimension, datum/origin placement, wall or feature direction

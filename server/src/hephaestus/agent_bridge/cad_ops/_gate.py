@@ -205,11 +205,13 @@ class ClarificationGate:
 
     generation: int
     entries: tuple[RequirementEntry, ...]
+    #: No ledger exists at all — geometry may not precede requirements (§2).
+    no_ledger: bool = False
 
     @property
     def blocked(self) -> bool:
         """Whether ``build_part`` must be refused right now."""
-        return bool(self.entries)
+        return self.no_ledger or bool(self.entries)
 
     @property
     def ids(self) -> tuple[str, ...]:
@@ -217,6 +219,16 @@ class ClarificationGate:
 
     def message(self) -> str:
         """Why the build is refused, and the exact shape of the way out."""
+        if self.no_ledger:
+            return (
+                "build_part is refused: this project has no requirement ledger, and "
+                "geometry may not precede requirements (VALIDATION.md §2). Call "
+                "record_requirements(entries=[…]) first — one entry per constraint, each "
+                'tagged source="specified" (with the quote it comes from), "derived" '
+                '(with the ids it follows from), or "assumed" (with a rationale and '
+                "whether it moves geometry). Ledger calls are not charged against the "
+                "tool-call budget."
+            )
         listed = "; ".join(
             f"{entry.id} ({material_class(entry) or 'declared material'}): {entry.text}"
             for entry in self.entries
@@ -236,6 +248,7 @@ class ClarificationGate:
         """The discriminated ``build_part`` refusal result of §3."""
         return {
             "status": "clarification_required",
+            "reason": "no_ledger" if self.no_ledger else "unresolved_material_assumption",
             "generation": self.generation,
             "entries": [entry.to_json() for entry in self.entries],
             "unresolved_material": list(self.ids),
@@ -244,9 +257,20 @@ class ClarificationGate:
 
 
 def clarification_gate(state: LedgerState) -> ClarificationGate:
-    """Evaluate §3 over a ledger generation (no I/O; pure over the state)."""
+    """Evaluate §3 over a ledger generation (no I/O; pure over the state).
+
+    An EMPTY ledger blocks too. ``VALIDATION.md`` §2 opens "before any geometry,
+    the agent emits a ledger", and the ladder's design rule is that every rung
+    fires by rule rather than by model choice — so if the mere absence of a
+    ledger were permitted, an agent that never calls ``record_requirements``
+    would face no gate (§3), give the reviewer nothing to verify against (§5),
+    and make §8's coverage metric vacuous. Measured on 2026-07-26: a bench run
+    reported ``compelled=0`` on every run, i.e. the whole ladder sat inert
+    behind a tool the model simply never called.
+    """
     return ClarificationGate(
         generation=state.generation,
+        no_ledger=not state.entries,
         entries=tuple(entry for entry in state.entries if _blocking(entry)),
     )
 

@@ -15,7 +15,7 @@ import os
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Final, cast
 
@@ -48,6 +48,7 @@ __all__ = [
     "RuntimeFactory",
     "annotate_requirements",
     "bench_answerer",
+    "default_review_hook",
     "default_runtime_factory",
     "dry_run",
     "run_bench",
@@ -235,7 +236,12 @@ def annotate_requirements(
 
 @dataclass(frozen=True)
 class RunContext:
-    """Handed to the ``before_prompt``/``review`` hooks around the prompt."""
+    """Handed to the ``before_prompt``/``review`` hooks around the prompt.
+
+    ``status`` and ``events`` are the finished prompt run's, so a ``review`` hook
+    can decide for itself whether §5's stop state was actually reached. They are
+    empty when the context is handed to ``before_prompt`` — nothing has run yet.
+    """
 
     task: BenchTask
     seed: int
@@ -244,15 +250,69 @@ class RunContext:
     runtime: BridgeRuntime
     session_id: str
     run_id: str = ""
+    status: str = ""
+    events: tuple[Mapping[str, Any], ...] = ()
 
 
 #: ``VALIDATION.md`` §5/§6 seam: run the termination-review ladder for a finished
 #: run and return its ``LadderOutcome.to_json()`` for the archive (``None`` to
-#: record no review). The bench does not run the ladder by default — the §8
-#: metrics that need it (``requirement_coverage``, ``review_catch_rate``) report
-#: *unmeasured* rather than zero until a hook is supplied, which is the honest
-#: state and not a silent zero.
+#: record no review). ``run_task``/``run_bench`` still default to *no* hook so a
+#: unit test can drive the loop without a reviewer child; ``heph bench run``
+#: supplies :func:`default_review_hook` unless ``--no-review`` is passed, which
+#: is what makes §5/§6 fire — and §8's ``requirement_coverage`` /
+#: ``review_catch_rate`` real numbers — on every bench run.
 ReviewHook = Callable[[RunContext], Mapping[str, Any] | None]
+
+
+def default_review_hook(context: RunContext) -> Mapping[str, Any] | None:
+    """Run the real §5 review + §6 continuation ladder over a finished run.
+
+    This is the production wiring, and it is deliberately the *default* for
+    ``heph bench run``: §5 says the agent may not self-declare done, so a bench
+    that never reviewed measured only what the agent was willing to claim. Before
+    it existed the §8 table reported ``requirement_coverage`` and
+    ``review_catch_rate`` as *unmeasured* on every run.
+
+    What it wires together is exactly what ``tests/stage2v`` exercises:
+
+    * :class:`~hephaestus.agent_bridge.review.SessionReviewer` — an independent
+      Pi child on the read-only ``reviewer`` profile, with its own budget;
+    * :class:`~hephaestus.agent_bridge.review.TerminationReviewService` — the §5
+      context (the verbatim *task prompt*, the ledger the run actually wrote,
+      renders — never the agent's ``CHECKS``) and the by-rule normalization that
+      records a ``channel`` on every finding and fails an unconfirmed assumption
+      however confidently the reviewer passed it;
+    * :func:`~hephaestus.agent_bridge.review.run_review_ladder` — §6's bounded
+      continuation: findings re-enter *the agent's own session* as a tool result
+      it must resolve, capped at
+      :data:`~hephaestus.agent_bridge.review.MAX_REVIEW_CYCLES` cycles, and the
+      terminal can never be green with an open requirement.
+
+    Returns ``None`` when the run never reached §5's stop state (cancelled, over
+    budget, errored): there is no finished work to review and the agent's session
+    is not in a state to receive a continuation, so "no review ran" is the honest
+    record rather than a fabricated empty one.
+    """
+    from hephaestus.agent_bridge.review import (
+        PromptContinuation,
+        SessionReviewer,
+        TerminationReviewService,
+        is_stop_state,
+        run_review_ladder,
+    )
+
+    if not is_stop_state(context.events, context.status):
+        return None
+    cad = context.runtime.cad
+    outcome = run_review_ladder(
+        TerminationReviewService(cad, SessionReviewer(context.runtime)),
+        PromptContinuation(context.runtime, context.session_id, timeout_s=DEFAULT_PROMPT_TIMEOUT),
+        # The corpus prompt verbatim — never the agent's paraphrase of it.
+        request=context.prompt,
+        run_id=context.run_id or f"{context.task.id}-s{context.seed}",
+        cad=cad,
+    )
+    return outcome.to_json()
 
 
 #: Tools the VALIDATION.md ladder COMPELS, which therefore do not spend budget.
@@ -382,10 +442,11 @@ def run_task(
         if result.terminal is not None:
             terminal_state = str(result.terminal.get("state"))
         if review is not None:
-            # The stop state is where §5 fires. A review that raises fails the
-            # review, never the run: the archive still has to be written.
+            # The stop state is where §5 fires. A review that raises fails THIS
+            # run (below, as a graded reason) and never the bench: the archive
+            # still has to be written, and the next (task, seed) still runs.
             try:
-                review_outcome = review(context)
+                review_outcome = review(replace(context, status=status, events=tuple(events)))
             except Exception as exc:  # recorded, never raised
                 review_outcome = {"error": f"{type(exc).__name__}: {exc}"}
     except Exception as exc:
@@ -406,6 +467,12 @@ def run_task(
         extra.append(f"run_{status}")
     if error is not None:
         extra.append("run_error")
+    # §5 is blocking: a review that could not be carried out verified nothing, so
+    # the run it belongs to fails with a reason. The bench itself is untouched —
+    # this run is graded and archived like any other, and the next one starts.
+    review_error = None if review_outcome is None else review_outcome.get("error")
+    if isinstance(review_error, str) and review_error:
+        extra.append(f"review_error:{review_error}")
     try:
         report = grade(task, project, tool_calls=tool_calls, extra_reasons=extra)
     except Exception as exc:  # a grading crash fails THIS run, never the bench
