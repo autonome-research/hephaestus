@@ -233,8 +233,27 @@ def load_tasks(
     return tuple(tasks)
 
 
+def budget_disclosure(task: BenchTask) -> str:
+    """The tool-call budget, stated to the model.
+
+    A run is cancelled once the budget is spent, so an agent that cannot see the
+    number cannot ration it — every observed overrun was verification spending
+    past a correct result. Disclosing the ceiling (never the pass criteria)
+    makes the stop/verify tradeoff decidable. Not a gate relaxation: the budget
+    value and the pass criteria are unchanged.
+    """
+    return (
+        f"Tool-call budget: {task.budget_tool_calls} calls for this task. "
+        "The run is cancelled when the budget is spent, so spend calls on "
+        "building the geometry correctly, not on re-verifying it: one final "
+        "run_checks is enough confirmation, and build results already report "
+        "bbox/volume/sealed. Stop and summarise as soon as the work is done "
+        "and its checks pass."
+    )
+
+
 def seeded_prompt(task: BenchTask, seed: int) -> str:
-    """The task prompt plus a deterministic, requirement-free per-seed suffix."""
+    """The task prompt plus the budget disclosure and a per-seed suffix."""
     digest = hashlib.sha256(f"{task.id}:{seed}".encode()).digest()
     suffix = PROMPT_SUFFIXES[digest[0] % len(PROMPT_SUFFIXES)]
-    return f"{task.prompt.rstrip()}\n\n{suffix}"
+    return f"{task.prompt.rstrip()}\n\n{budget_disclosure(task)}\n\n{suffix}"
