@@ -1,0 +1,23 @@
+{
+  "id": "print-bracket",
+  "prompt": "I need a small cantilever bracket for the printer - one part, called `bracket`, printed in PLA standing on the plate with +Z as the build direction. The printer has a 0.4 mm nozzle and I do not want to run support material, so the geometry has to be printable as modelled: no wall thinner than the printer can build, no bore that closes up, and nothing leaning further than 45 degrees from vertical.\n\nEvery dimension is in `globals.py` - read them through `hc`. Millimetres, and one single solid:\n\n- the upright stands on the plate: 30 wide (along X, centred on x = 0), one wall thickness deep (y = 0 to 6), and 40 tall (z = 0 to 40);\n- the arm cantilevers out from the top of the upright to a total reach of 30 mm (so it spans y = 6 to 30) and its top face is flush with the top of the upright at z = 40;\n- the arm's underside is NOT flat. It is a single straight ramp, starting on the upright at z = 4 and rising to z = 34 where it meets the tip at y = 30. That ramp is the whole point: a flat-bottomed arm is a horizontal bridge and prints as drooping strings;\n- one fixing bore goes straight down through the arm: 4 mm diameter, centred on x = 0 at y = 27, all the way through.\n\nGive the part its manufacturing metadata too: a description, the process (`fdm`), the material (`PLA filament`) and the stock form.\n\nBuild it, and check it for printability before you report - the fdm rule pack must come back with nothing to say about walls, bores or overhangs.",
+  "budget_tool_calls": 26,
+  "required_checks": [
+    "print_bracket"
+  ],
+  "export_requirements": [],
+  "render_requirements": [],
+  "dfm_requirements": [
+    {
+      "part": "bracket",
+      "clean_rules": [
+        "fdm.min_wall_thickness",
+        "fdm.min_hole_diameter",
+        "fdm.overhang_angle"
+      ]
+    }
+  ],
+  "drawing_requirements": [],
+  "protected_paths": [],
+  "notes": "Difficulty 6 (hardest of the corpus-v1 additions): the naive part - an arm with a flat underside - builds, passes an envelope check and fails printability with a 90 deg overhang finding over 707 mm^2, so the task cannot be passed without modelling the ramp. Acceptance is independent of the run's own reading: the grader re-runs the whole fdm pack on a probed secure backend and requires all three rule ids clean, while the CHECKS pin the envelope, genus 1 (the bore still exists) and the exact ramped volume (a flat-bottomed arm is 10800 mm^3 heavier). The bore is deliberately vertical: a horizontal bore's own crown is a 90 deg unsupported face, which would make the overhang rule unsatisfiable. The reference solution is a file overlay, so its call path is counted by hand: 16 calls (read_globals, write_part, build_part, run_dfm, two edit/build iterations, measure, run_checks); budget 26 leaves ~60% headroom."
+}

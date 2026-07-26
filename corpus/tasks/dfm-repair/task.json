@@ -1,0 +1,22 @@
+{
+  "id": "dfm-repair",
+  "prompt": "The laser shop rejected the cut file for the `vent_panel` part in this project. The part builds fine - two of its features simply cannot be cut on their machine, and they want it fixed before they will quote it.\n\nRun the manufacturability check for the process the part declares and read what it reports. Then repair the geometry.\n\nThis is a repair-only task: the design intent does not change. Keep the 80 x 50 mm blank, one sheet thick, and keep the service notch exactly where it is (16 mm along X, 10 mm deep, cut in from the +Y edge). What is wrong is that two feature sizes were typed into the script as placeholders instead of being read from the project: the vent bore diameter and the radius on the notch's two inner corners are both declared in `globals.py`, like every other dimension the script uses. Read them through `hc`.\n\nWhen you are done, the laser_cut rule pack must report no findings at all for the minimum-cut-feature rule and the internal-radius rule. Build the part to prove the repair.",
+  "budget_tool_calls": 12,
+  "required_checks": [
+    "dfm_repair"
+  ],
+  "export_requirements": [],
+  "render_requirements": [],
+  "dfm_requirements": [
+    {
+      "part": "vent_panel",
+      "clean_rules": [
+        "laser_cut.min_feature_vs_kerf",
+        "laser_cut.min_internal_radius"
+      ]
+    }
+  ],
+  "drawing_requirements": [],
+  "protected_paths": [],
+  "notes": "Difficulty 4. The seeded part violates two laser_cut rules with known ids: a 0.5 mm vent bore (below the 0.8 mm minimum cut feature for a 0.2 mm kerf) and R0.3 notch corners (below the 0.5 mm beam radius). Acceptance is independent of the run's own reading: the grader re-runs the pack on a probed secure backend and requires both rule ids clean, and the CHECKS pin the blank envelope, genus 1 (the vent still exists) and the exact repaired volume. The third laser_cut rule (sheet_thickness_match) is deliberately clean in the seed - 6 mm modelled in a material stocked at 3/6/12/18 mm - so the task is exactly the two named violations. The reference solution is a file overlay, so its call path is counted by hand: 8 calls (read_part, read_globals, build_part, run_dfm, edit_part, build_part, run_dfm, run_checks); budget 12 leaves 50% headroom."
+}

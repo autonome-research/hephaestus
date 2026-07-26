@@ -1,0 +1,4 @@
+# nest-gusset bench task: three laser-cut laminations that must fit one blank.
+[project]
+name = "gussetset"
+description = "Laminated shelf gusset: three profiles nested on one 210 x 125 blank"

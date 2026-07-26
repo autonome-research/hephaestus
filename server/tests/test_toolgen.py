@@ -95,13 +95,15 @@ def test_no_drift_between_declaration_and_tool_schema_md() -> None:
     assert decl.isdisjoint(excluded)
 
 
-def test_full_stage2_surface_is_30_tools() -> None:
-    # 27 Stage-2 tools plus the Stage 2V requirement-ledger family.
-    assert len(tools_decl.tool_names()) == 30
-    assert len(set(tools_decl.tool_names())) == 30
+def test_full_tool_surface_is_33_tools() -> None:
+    # 27 Stage-2 tools, the Stage 2V requirement-ledger family, and the Stage 6
+    # manufacturing tools (run_dfm, generate_drawing, generate_doc).
+    assert len(tools_decl.tool_names()) == 33
+    assert len(set(tools_decl.tool_names())) == 33
     assert {"record_requirements", "read_requirements", "update_requirement"} <= set(
         tools_decl.tool_names()
     )
+    assert {"run_dfm", "generate_drawing", "generate_doc"} <= set(tools_decl.tool_names())
 
 
 def test_delegate_prompt_carries_max_utf8_keyword() -> None:

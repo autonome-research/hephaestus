@@ -12,9 +12,12 @@ The Tier 3 loop (verification.md §Tier 3, digest §8), one run at a time:
 3. **grade** after the terminal: build every part in the project, install the
    task's required CHECKS as project checks, run them project-scoped, then
    validate the required exports (bytes sniffed per format, ``as_built`` DXF
-   profile count where declared) and required renders. Pass = every required
-   check passes AND every export/render validates AND the run stayed within
-   budget;
+   profile count where declared, a ``nested_sheet`` layout's profiles counted on
+   their own layer and fitted to the declared blank), required renders, required
+   DFM verdicts (re-run on a probed secure backend) and required drawing sheets
+   (dimension strings read out of the generated PDF's text layer). Pass = every
+   required check passes AND every export/render/DFM/drawing requirement
+   validates AND the run stayed within budget;
 4. **archive** normalized events (JSONL), the run record, the prompt and the
    grading evidence under ``bench/results/<model>/<date>/<task>-s<seed>/``.
 
@@ -40,7 +43,7 @@ from ._archive import (
     results_root,
     session_transcript_dir,
 )
-from ._exports import dxf_profile_count, validate_export_bytes
+from ._exports import dxf_layer_extents, dxf_profile_count, pdf_text, validate_export_bytes
 from ._grade import GradeReport, grade, grade_reference_solution
 from ._run import (
     BENCH_ANSWER,
@@ -65,6 +68,8 @@ from ._tasks import (
     SPEC_SEEDED,
     SPECS,
     BenchTask,
+    DfmRequirement,
+    DrawingRequirement,
     ExportRequirement,
     RenderRequirement,
     base_task_id,
@@ -93,6 +98,8 @@ __all__ = [
     "SPEC_SEEDED",
     "BenchRun",
     "BenchTask",
+    "DfmRequirement",
+    "DrawingRequirement",
     "ExportRequirement",
     "GradeReport",
     "ProviderConfig",
@@ -110,11 +117,13 @@ __all__ = [
     "corpus_tasks_dir",
     "default_runtime_factory",
     "dry_run",
+    "dxf_layer_extents",
     "dxf_profile_count",
     "grade",
     "grade_reference_solution",
     "load_tasks",
     "open_cad",
+    "pdf_text",
     "restore_protected",
     "results_root",
     "run_bench",

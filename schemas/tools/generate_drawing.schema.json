@@ -1,0 +1,191 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/generate_drawing.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Dimensioned/assembly/exploded PDF+SVG drawing of a frozen build artifact.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "artifact_ref": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "kind": {
+        "default": "dimensioned",
+        "enum": [
+          "dimensioned",
+          "assembly",
+          "exploded"
+        ],
+        "type": "string"
+      },
+      "name": {
+        "pattern": "^[a-z][a-z0-9_]{0,63}$",
+        "type": "string"
+      },
+      "sheet": {
+        "default": "A4",
+        "enum": [
+          "A4",
+          "A3",
+          "letter"
+        ],
+        "type": "string"
+      },
+      "target": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      }
+    },
+    "required": [
+      "name",
+      "kind"
+    ],
+    "type": "object"
+  },
+  "result": {
+    "oneOf": [
+      {
+        "additionalProperties": true,
+        "properties": {
+          "dimensions": {
+            "items": {
+              "additionalProperties": true,
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "linear",
+                    "diameter",
+                    "thickness"
+                  ],
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "unit": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "id",
+                "label",
+                "text",
+                "value",
+                "kind"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "export_hashes": {
+            "type": "object"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "pdf": {
+            "type": "string"
+          },
+          "replayed": {
+            "type": "boolean"
+          },
+          "sheet": {
+            "type": "string"
+          },
+          "source_artifact_ref": {
+            "type": "string"
+          },
+          "source_input_hashes": {
+            "type": "object"
+          },
+          "status": {
+            "const": "ok"
+          },
+          "svg": {
+            "type": "string"
+          },
+          "title_block": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "views": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "status",
+          "pdf",
+          "svg",
+          "paths",
+          "source_artifact_ref"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": true,
+        "properties": {
+          "code": {
+            "const": "capability_not_available"
+          },
+          "message": {
+            "type": "string"
+          },
+          "status": {
+            "const": "capability_error"
+          }
+        },
+        "required": [
+          "status",
+          "code"
+        ],
+        "type": "object"
+      }
+    ]
+  },
+  "title": "generate_drawing",
+  "x-hephaestus-tool": {
+    "idempotent": true,
+    "maxUtf8Fields": {},
+    "name": "generate_drawing",
+    "profiles": [
+      "part",
+      "orchestrator",
+      "quick_edit"
+    ],
+    "sequential": true
+  }
+}

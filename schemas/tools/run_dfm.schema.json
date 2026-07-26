@@ -1,0 +1,412 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/run_dfm.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Run the process rule pack against a resolved artifact; report findings.",
+  "parameters": {
+    "additionalProperties": false,
+    "allOf": [
+      {
+        "not": {
+          "required": [
+            "artifact_ref",
+            "project_snapshot_ref"
+          ]
+        }
+      }
+    ],
+    "properties": {
+      "artifact_ref": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "name": {
+        "pattern": "^[a-z][a-z0-9_]{0,63}$",
+        "type": "string"
+      },
+      "process": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "project_snapshot_ref": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "type": "object"
+  },
+  "result": {
+    "oneOf": [
+      {
+        "additionalProperties": true,
+        "properties": {
+          "errored_rules": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "findings": {
+            "items": {
+              "additionalProperties": true,
+              "properties": {
+                "bound_unit": {
+                  "type": "string"
+                },
+                "measured": {},
+                "message": {
+                  "type": "string"
+                },
+                "process": {
+                  "type": "string"
+                },
+                "rule_id": {
+                  "type": "string"
+                },
+                "severity": {
+                  "enum": [
+                    "error",
+                    "warning",
+                    "info"
+                  ],
+                  "type": "string"
+                },
+                "source_artifact_ref": {
+                  "type": "string"
+                },
+                "suggested_bound": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "tags": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "topology": {
+                  "items": {
+                    "additionalProperties": true,
+                    "properties": {
+                      "kind": {
+                        "enum": [
+                          "solid",
+                          "face",
+                          "edge",
+                          "wire",
+                          "vertex",
+                          "other"
+                        ],
+                        "type": "string"
+                      },
+                      "solid_id": {
+                        "type": "integer"
+                      },
+                      "tag": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "topology_index": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "solid_id",
+                      "topology_index"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "rule_id",
+                "severity",
+                "title",
+                "message",
+                "source_artifact_ref",
+                "topology"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "material": {},
+          "pack": {
+            "additionalProperties": true,
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "registry": {
+                "type": "string"
+              },
+              "registry_digest": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "part": {
+            "type": "string"
+          },
+          "process": {
+            "type": "string"
+          },
+          "resolved_from": {
+            "enum": [
+              "current",
+              "artifact_ref",
+              "project_snapshot"
+            ],
+            "type": "string"
+          },
+          "rules": {
+            "items": {
+              "additionalProperties": true,
+              "properties": {
+                "error": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "findings": {
+                  "items": {
+                    "additionalProperties": true,
+                    "properties": {
+                      "bound_unit": {
+                        "type": "string"
+                      },
+                      "measured": {},
+                      "message": {
+                        "type": "string"
+                      },
+                      "process": {
+                        "type": "string"
+                      },
+                      "rule_id": {
+                        "type": "string"
+                      },
+                      "severity": {
+                        "enum": [
+                          "error",
+                          "warning",
+                          "info"
+                        ],
+                        "type": "string"
+                      },
+                      "source_artifact_ref": {
+                        "type": "string"
+                      },
+                      "suggested_bound": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "tags": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "topology": {
+                        "items": {
+                          "additionalProperties": true,
+                          "properties": {
+                            "kind": {
+                              "enum": [
+                                "solid",
+                                "face",
+                                "edge",
+                                "wire",
+                                "vertex",
+                                "other"
+                              ],
+                              "type": "string"
+                            },
+                            "solid_id": {
+                              "type": "integer"
+                            },
+                            "tag": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "topology_index": {
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "solid_id",
+                            "topology_index"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "rule_id",
+                      "severity",
+                      "title",
+                      "message",
+                      "source_artifact_ref",
+                      "topology"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "params": {
+                  "additionalProperties": {
+                    "type": "number"
+                  },
+                  "type": "object"
+                },
+                "rule_id": {
+                  "type": "string"
+                },
+                "severity": {
+                  "type": "string"
+                },
+                "status": {
+                  "enum": [
+                    "ok",
+                    "violations",
+                    "error"
+                  ],
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "rule_id",
+                "status"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "severity_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "source_artifact_ref": {
+            "type": "string"
+          },
+          "status": {
+            "const": "ok"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "status",
+          "part",
+          "process",
+          "source_artifact_ref",
+          "findings"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": true,
+        "properties": {
+          "code": {
+            "const": "capability_not_available"
+          },
+          "message": {
+            "type": "string"
+          },
+          "status": {
+            "const": "capability_error"
+          }
+        },
+        "required": [
+          "status",
+          "code"
+        ],
+        "type": "object"
+      }
+    ]
+  },
+  "title": "run_dfm",
+  "x-hephaestus-tool": {
+    "idempotent": false,
+    "maxUtf8Fields": {},
+    "name": "run_dfm",
+    "profiles": [
+      "part",
+      "orchestrator",
+      "quick_edit"
+    ],
+    "sequential": false
+  }
+}

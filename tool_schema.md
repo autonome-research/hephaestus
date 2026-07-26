@@ -79,13 +79,14 @@ detectable). Both mutate exactly once and both surface the live hash.
 Tolerances are in mm. Source/artifact mutations and stateful delegation tools use this
 contract: `create_part`, `edit_part`, `write_part`, `edit_globals`,
 `create_project_check`, `edit_project_check`, `set_params`, `build_part`,
-`export_part`, `delegate_part_agent`, and `cancel_delegation`; none may silently
-duplicate work or
+`export_part`, `generate_drawing`, `generate_doc`, `delegate_part_agent`, and
+`cancel_delegation`; none may silently duplicate work or
 discard bytes.
 
 Pi tool execution is parallel by default, but `ask_user`, `create_part`,
 `edit_part`, `write_part`, `edit_globals`, `create_project_check`,
-`edit_project_check`, `set_params`, `build_part`, `export_part`, and
+`edit_project_check`, `set_params`, `build_part`, `export_part`,
+`generate_drawing`, `generate_doc`, and
 `delegate_part_agent` and `cancel_delegation` MUST declare sequential
 execution. Any future stateful or mutating tool does the
 same. Read-only render and measurement calls MAY run concurrently against the
@@ -517,17 +518,53 @@ produce a later bundle rather than ambiguous evidence.
 ### run_dfm
 ```
 run_dfm(name: str, process: str|null = null,
-        artifact_ref: str|null = null) -> DfmReport
+        artifact_ref: str|null = null,
+        project_snapshot_ref: str|null = null)
+    -> {status: "ok", part, process, source_artifact_ref,
+        resolved_from: "current"|"artifact_ref"|"project_snapshot",
+        pack: {name, version, registry, registry_digest},
+        rules: [{rule_id, title, severity,
+                 status: "ok"|"violations"|"error", params, findings, error}],
+        findings: [{rule_id, severity: "error"|"warning"|"info", title, message,
+                    process, source_artifact_ref, tags: [str],
+                    topology: [{kind, solid_id, topology_index, tag}],
+                    measured, suggested_bound, bound_unit}],
+        severity_counts, errored_rules, truncated, material}
+     | {status: "capability_error", code: "capability_not_available", message}
 ```
-Runs the DFM rule pack matching `part.process` (or an explicit process) against
-current geometry by default or an explicit successful current/historical/
-preview artifact, and reports the resolved artifact ref. Automatic DFM always
+Runs the DFM rule pack matching `part.process` (or an explicit `process`)
+against current geometry by default, an explicit successful current/historical/
+**preview** artifact when `artifact_ref` is given, or the part's entry in an
+immutable `project_snapshot_ref` (the two refs are mutually exclusive). The
+resolved ref is reported as `source_artifact_ref` with `resolved_from` naming
+the mode that produced it, and it is repeated on every finding: a DFM report is
+a claim about specific bytes, never about "the part". Automatic DFM always
 receives the exact `artifact_ref` from the successful BuildResult that triggered
-it, never a mutable current lookup. Findings carry rule id, severity, suggested bound, resolved
+it, never a mutable current lookup.
+
+Findings carry rule id, severity, suggested bound, resolved
 `source_artifact_ref`, and artifact-bound topology descriptor `{kind,
-solid_id, topology_index, tag?}`—never a bare mutable mask id. Powers the DFM mode
-toggle: when the mode is on, the harness auto-runs this after each successful
-build and injects findings.
+solid_id, topology_index, tag?}`—never a bare mutable mask id. `tags` are the
+offending §5.3 tag names, recovered from the source map of the build that
+published those bytes; an artifact whose build record has aged out is still
+checked and simply addresses topology by index.
+
+A rule whose predicate raises is that rule's `status: "error"` with the
+remaining rules still evaluated — a broken pack rule never hides the others and
+never fails the run. `process` is never guessed: a part with no `part.process`
+and no override is refused with `invalid_params` listing the packs that exist.
+Predicates are untrusted registry content and run only under a probed secure
+sandbox (`origin: "registry"`, architecture §3.6/§7.2); without one the tool
+answers `capability_not_available` rather than evaluating unsandboxed.
+
+**DFM mode** is a project setting, not a tool argument: with `[dfm] auto_run =
+true` in `hephaestus.toml`, every successful `build_part` carries a `dfm`
+section inside its `VALIDATION.md` §4 `critique` block — the same evaluation
+against the artifact that build just published, with each `error`/`warning`
+finding flattened into `critique.warnings` as `kind: "dfm_finding"`. The block
+reports `available: false` with a `dfm_unavailable` warning when the run could
+not happen, so silence never reads as a pass, and a DFM failure never fails the
+build.
 
 ## Validation (the requirement ledger — `VALIDATION.md` §2)
 
@@ -728,7 +765,8 @@ ledger writes, which is what makes a recorded answer evidence.
 ```
 export_part(name: str, format: "step"|"dxf"|"svg"|"gltf"|"3mf"|"stl",
             artifact_ref: str|null = null, target: str|null = null,
-            layout: "as_built"|"nested_sheet" = "as_built")
+            layout: "as_built"|"nested_sheet" = "as_built",
+            blank: {width_mm, height_mm, margin_mm?, spacing_mm?}|null = null)
     -> {paths, source_artifact_ref, source_input_hashes, export_hashes}
      | {status: "capability_error", code: "capability_not_available", message}
 ```
@@ -746,33 +784,118 @@ from another operation is never overwritten, even if regenerated bytes happen
 to match. Every successful export is pinned as a GC root until explicit
 `heph export unpin/delete`. The confinement and no-symlink-escape rules above
 apply. Canonical JSON Schema permits `layout="nested_sheet"` only with
-`format="dxf"|"svg"`; it is reserved until Stage 6 and returns the structured
-refusal `{status: "capability_error", code: "capability_not_available",
-message}` before then. Stage 2 supports `as_built`. STEP for
-interchange (observed Smith ceiling); DXF/SVG per-lamination
+`format="dxf"|"svg"` — that restriction stands; the layout itself shipped with
+Stage 6. STEP for interchange (observed Smith ceiling); DXF/SVG per-lamination
 profiles with `nested_sheet` layout for laser/CNC workflows (each 6 mm
-lamination as a flat profile, kerf-aware nesting is a Stage 6 stretch); 3MF/
-STL for printing; GLTF for clients. Exceeding STEP-only is a deliberate
-differentiator — the recovered scripts describe laser-cut parts whose real
-manufacturing input is DXF.
+lamination as a flat profile); 3MF/STL for printing; GLTF for clients.
+Exceeding STEP-only is a deliberate differentiator — the recovered scripts
+describe laser-cut parts whose real manufacturing input is DXF.
+
+**`layout="nested_sheet"`.** Each solid of the frozen artifact contributes one
+flat profile — its largest planar face's boundary, taken in that face's own
+plane, normalized to counter-clockwise winding at the origin, and discretised
+(curved edges are sampled; a cut file is a polyline). The face's inner
+boundaries travel with it: holes are cut contours and are emitted, never
+dropped. Only the outer ring occupies space when packing. Profiles are
+placed on **one declared blank** by deterministic **shelf/row packing**: given
+order, no rotation, fill a row until the next profile would cross the right
+margin, then start a new row above the tallest profile of the closed row.
+*Kerf-aware auto-nesting is deferred by mission rule 5* — nothing here
+compensates a cut width or reorders/rotates to improve yield, and nothing
+pretends to. Identical inputs produce byte-identical output.
+
+The blank comes from `blank` when supplied (`margin_mm` and `spacing_mm`
+default to 5 mm each); otherwise from the part's `part.blank_size` metadata
+(§5.2 free text — the first `W x H` pair in it), read statically from the part
+script and trusted **only** while that script still hashes to the exported
+artifact's frozen script input. A historical or drifted source therefore
+refuses (`blank_unknown`) rather than applying an intent the geometry no longer
+matches. DXF output carries the profiles on layer `PROFILES` and the blank
+outline on layer `BLANK`; SVG output carries one `<polygon>` per cut contour
+(`id` = profile name, holes `<name>_hole_<n>`) inside a blank-sized `viewBox`.
+
+Anything that will not fit is a **structured refusal naming the offending
+profile and the blank** — never a silent overlap and never a clipped part:
+`profile_too_large` (the profile exceeds the blank's usable area),
+`blank_full` (the rows ran out of height; the refusal lists what was already
+placed), `not_a_sheet_profile` (a solid with no planar face has no flat
+pattern), and `blank_unknown` (no blank was declared or parseable).
 
 ### generate_drawing
 ```
 generate_drawing(name: str, kind: "dimensioned"|"assembly"|"exploded",
-                 sheet: "A4"|"A3"|"letter" = "A4") -> {pdf, svg}
+                 sheet: "A4"|"A3"|"letter" = "A4",
+                 artifact_ref: str|null = null, target: str|null = null)
+    -> {status: "ok", pdf, svg, paths, source_artifact_ref,
+        source_input_hashes, export_hashes, kind, sheet, views,
+        dimensions: [{id, label, text, value, unit,
+                      kind: "linear"|"diameter"|"thickness"}],
+        title_block: {field: str}, replayed?}
+     | {status: "capability_error", code: "capability_not_available", message}
 ```
-Projection-based 2D drawings from the same geometry (build123d supports
-projection; title block from part metadata). Covers the Docs tree section
-(user hypothesis: docs are md/drawings generated from the same scripting —
-adopted).
+A 2D drawing of one **frozen build artifact** — the same source resolution
+`export_part` uses (current successful build by default, or an explicit
+authorized successful historical/preview ref), and the same §7 export contract:
+the PDF and the SVG are one deliverable written to create-only confined targets
+beneath `.heph/exports/`, pinned as GC roots, carrying source-input and
+exported-byte SHA-256 provenance, replayable on the recorded invocation id.
+`target` is the shared *stem*: `target.pdf` and `target.svg`.
+
+Views come from the Stage 1 render service over that artifact, in the framing
+`inspect_part` uses: `dimensioned` places the top (X-Y) and front (X-Z)
+orthographic views its dimension lines are drawn against; `assembly` places the
+isometric plus a top view; `exploded` renders the same pair through the
+`explode` channel, so an exploded sheet is never quietly an assembled one.
+
+**Dimensions are text, not pixels.** Each is measured on the reloaded artifact —
+overall X/Y/Z extents, the material thickness between opposing planar faces,
+bore diameters (full internal cylinders), each labeled solid's footprint, and
+the lengths/diameters of *tagged* features recovered through the build's source
+map — and is drawn as a leader-and-text annotation in a real PDF text layer.
+The printed form is fixed because the G6 gate extracts it: `%.1f` millimetres,
+diameters prefixed `Ø` (U+00D8). The result reports every drawn dimension with
+its machine-readable value.
+
+The title block carries the project name, the part, its §5.2 metadata
+(`description`, `material_spec`, `process`, `general_tolerance`, `finish`) and
+the build provenance (source artifact ref, script hash). Metadata is read
+statically from the part source and only while that source still hashes to the
+artifact's frozen script input; a drifted or historical artifact prints
+`NOT STATED` rather than a title block describing a part these bytes are not.
 
 ### generate_doc
 ```
-generate_doc(name: str, kind: "bom"|"assembly_instructions"|"spec") -> {markdown}
+generate_doc(name: str, kind: "bom"|"assembly_instructions"|"spec",
+             artifact_ref: str|null = null, target: str|null = null)
+    -> {status: "ok", markdown, markdown_truncated, doc, json, paths,
+        source_artifact_ref, source_input_hashes, export_hashes, kind, items,
+        replayed?}
+     | {status: "capability_error", code: "capability_not_available", message}
 ```
-Text docs synthesized from part metadata, params, checks, and renders.
+Documents synthesized from the same frozen artifact, its build result and the
+part's §5.2 metadata, written as a markdown + JSON pair through the identical
+export contract (`doc` is the `.md` path, `json` the `.json`; `target` is again
+the shared stem). `markdown` is the inline copy, truncated at 20 KiB with
+`markdown_truncated: true`; the file on disk is never cut.
 
-## Deferred (schema reserved, not in mission scope until Stage 6+)
+`bom` — one row per group of identically labeled, identically sized solids of
+the artifact. Labels come from the build result's `geometries` rows (a reloaded
+BRep carries none), sizes and volumes are measured, and the material is the
+materials-registry record the free-text `material_spec` resolves to — with its
+density, hence the estimated mass, and its `registry_digest`. A spec that
+resolves to no record says so instead of borrowing a plausible one.
+
+`assembly_instructions` — ordered steps in a fixed phase sequence
+(`fabricate` → `prepare` → `assemble` → `mate` → `finish`): a fabrication step
+per BOM row whose verb comes from `part.process`, tolerance/joint preparation,
+the `part.assembly_method` assembly step, one mate step per *other part of this
+project the metadata names*, then `part.finish`. Nothing is inferred from
+geometric proximity, so the same evidence always yields the same steps.
+
+`spec` — the metadata, effective parameters, kernel metrics and CHECKS outcomes
+of exactly that build, as one page.
+
+## Deferred (schema reserved, not in mission scope)
 
 `run_fea(name, load_spec)` — static FEA via CalculiX with loads on tagged
 faces (Smith volunteers "static FEA … ~15 kg dynamic"; we reserve the slot).

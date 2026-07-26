@@ -4,17 +4,23 @@ import { TOOLS, TOOL_NAMES } from "../src/tools/schema.gen.js";
 import { PROMPT_MAX_UTF8_BYTES } from "../src/limits.js";
 
 describe("generated tool surface", () => {
-  it("declares the full Stage 2 surface plus the Stage 2V ledger (30 tools)", () => {
-    expect(TOOL_NAMES).toHaveLength(30);
+  it("declares the Stage 2 surface, the Stage 2V ledger and Stage 6 (33 tools)", () => {
+    expect(TOOL_NAMES).toHaveLength(33);
     for (const ledger of ["record_requirements", "read_requirements", "update_requirement"]) {
       expect(TOOL_NAMES).toContain(ledger);
     }
     expect(Object.keys(TOOLS).sort()).toEqual([...TOOL_NAMES].sort());
   });
 
-  it("excludes the out-of-scope tools", () => {
-    for (const excluded of ["run_dfm", "generate_drawing", "generate_doc", "run_fea"]) {
+  it("excludes the deferred tools", () => {
+    for (const excluded of ["run_fea", "import_geometry"]) {
       expect(TOOL_NAMES).not.toContain(excluded);
+    }
+  });
+
+  it("carries the Stage 6 manufacturing tools", () => {
+    for (const name of ["run_dfm", "generate_drawing", "generate_doc"]) {
+      expect(TOOL_NAMES).toContain(name);
     }
   });
 

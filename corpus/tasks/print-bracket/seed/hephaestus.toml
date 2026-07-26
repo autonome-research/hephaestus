@@ -1,0 +1,4 @@
+# print-bracket bench task: an FDM part that has to print without support.
+[project]
+name = "printbracket"
+description = "Printed cantilever bracket, support-free on the plate"

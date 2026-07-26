@@ -22,6 +22,18 @@ Three rungs, all computed from data the build already produced:
     ``sealed``/``genus``/solid count surfaced from the build metrics, with a
     warning when the geometry is not watertight.
 
+``dfm``
+    The process rule pack's findings against the artifact this build just
+    published — present only when the project turns DFM mode on
+    (``[dfm] auto_run = true`` in ``hephaestus.toml``) and the part declares a
+    ``part.process``. Unrequested by the same rule as the rungs above: a shop
+    limit the model never thought to check is exactly the one that bites. Every
+    ``error``/``warning`` finding becomes a critique warning carrying its rule
+    id, its offending tags and the artifact it was measured against; the block
+    records ``unavailable`` instead of a clean sheet when the run could not
+    happen (no secure sandbox, no pack for the process), because silence must
+    never read as a pass.
+
 ``prompt_number_diff``
     Numeric values with units extracted from the **original request** and
     compared with the built dimensions. An axis-tagged request number
@@ -44,13 +56,16 @@ from dataclasses import dataclass
 from itertools import combinations
 from typing import Any, Final, cast
 
+from hephaestus.core.dfm import DfmEvaluation, findings_by_severity
 from hephaestus.core.types import Metrics
 from opstore.types import JSONValue
 
 __all__ = [
+    "DFM_WARNING_SEVERITIES",
     "MAX_INTERFERENCE_PAIRS",
     "RequestNumber",
     "critique_block",
+    "dfm_report",
     "intentional_overlap_declarations",
     "interference_report",
     "manifold_report",
@@ -484,6 +499,78 @@ def manifold_report(metrics: Metrics | None) -> dict[str, JSONValue]:
 
 
 # --------------------------------------------------------------------------
+# dfm
+
+
+#: Finding severities that become §4 warnings. ``info`` findings stay in the
+#: block's ``findings`` list: they are context, not a call to act.
+DFM_WARNING_SEVERITIES: Final[frozenset[str]] = frozenset({"error", "warning"})
+
+
+def dfm_report(
+    evaluation: DfmEvaluation | None, *, process: str | None = None, unavailable: str | None = None
+) -> dict[str, JSONValue]:
+    """§4 ``dfm``: one auto-run pack evaluation, or why it did not happen.
+
+    ``unavailable`` (no secure sandbox, no declared process, a pack that failed
+    to load) is reported as a warning of its own — a DFM block that could not
+    run says so rather than presenting an empty findings list as a clean sheet.
+    """
+    if evaluation is None:
+        return {
+            "available": False,
+            "process": process,
+            "findings": [],
+            "warnings": [
+                {
+                    "kind": "dfm_unavailable",
+                    "message": f"DFM findings were not computed: {unavailable}",
+                }
+            ]
+            if unavailable is not None
+            else [],
+        }
+    warnings: list[JSONValue] = []
+    for finding in findings_by_severity(evaluation.findings):
+        if finding.severity not in DFM_WARNING_SEVERITIES:
+            continue
+        warnings.append(
+            {
+                "kind": "dfm_finding",
+                "rule_id": finding.rule_id,
+                "severity": finding.severity,
+                "process": finding.process,
+                "tags": list(finding.tags),
+                "source_artifact_ref": finding.source_artifact_ref,
+                "message": f"{finding.rule_id}: {finding.message}",
+            }
+        )
+    for rule_id in evaluation.errored_rules():
+        warnings.append(
+            {
+                "kind": "dfm_rule_error",
+                "rule_id": rule_id,
+                "message": f"DFM rule {rule_id} failed to evaluate; its limit was not checked",
+            }
+        )
+    return {
+        "available": True,
+        "process": evaluation.process,
+        "source_artifact_ref": evaluation.source_artifact_ref,
+        "pack": {
+            "name": evaluation.pack_name,
+            "version": evaluation.pack_version,
+            "registry": evaluation.registry,
+            "registry_digest": evaluation.registry_digest,
+        },
+        "findings": [finding.to_json() for finding in findings_by_severity(evaluation.findings)],
+        "severity_counts": cast("dict[str, JSONValue]", dict(evaluation.severity_counts())),
+        "errored_rules": list(evaluation.errored_rules()),
+        "warnings": warnings,
+    }
+
+
+# --------------------------------------------------------------------------
 # assembly
 
 
@@ -493,19 +580,27 @@ def critique_block(
     interference: dict[str, JSONValue],
     request: str | None,
     dimensions: Mapping[str, float],
+    dfm: dict[str, JSONValue] | None = None,
 ) -> dict[str, JSONValue]:
-    """Assemble the whole §4 block, including the flattened warning list."""
+    """Assemble the whole §4 block, including the flattened warning list.
+
+    ``dfm`` is omitted entirely when the project's DFM mode is off — an absent
+    section means "not asked for", which is why the auto-run wiring passes a
+    report (possibly an ``unavailable`` one) whenever the mode *is* on.
+    """
     manifold = manifold_report(metrics)
     block: dict[str, JSONValue] = {
         "interference": interference,
         "manifold": manifold,
     }
+    if dfm is not None:
+        block["dfm"] = dfm
     if request is not None and metrics is not None:
         block["prompt_number_diff"] = prompt_number_diff(
             request, bbox_mm=metrics.bbox_mm, dimensions=dimensions
         )
     warnings: list[JSONValue] = []
-    for section in ("interference", "manifold", "prompt_number_diff"):
+    for section in ("interference", "manifold", "dfm", "prompt_number_diff"):
         part = block.get(section)
         if not isinstance(part, dict):
             continue

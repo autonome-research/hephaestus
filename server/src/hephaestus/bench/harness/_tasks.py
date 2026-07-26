@@ -1,9 +1,9 @@
 """The corpus task model: what one ``corpus/tasks/<id>/`` declares.
 
-A task is a prompt, a tool-call budget, the CHECKS grading installs, the exports
-and renders grading must be able to produce, and the seeded files a run may not
-edit its way past. Loading is strict — a task whose id, spec or required check
-source is wrong fails here rather than mid-run.
+A task is a prompt, a tool-call budget, the CHECKS grading installs, the exports,
+renders, DFM verdicts and drawing sheets grading must be able to produce, and the
+seeded files a run may not edit its way past. Loading is strict — a task whose
+id, spec or required check source is wrong fails here rather than mid-run.
 
 ``VALIDATION.md`` §1: every public task ships in **two spec variants**, and they
 are never collapsed.
@@ -41,6 +41,8 @@ __all__ = [
     "SPEC_PROSE",
     "SPEC_SEEDED",
     "BenchTask",
+    "DfmRequirement",
+    "DrawingRequirement",
     "ExportRequirement",
     "RenderRequirement",
     "base_task_id",
@@ -112,6 +114,15 @@ class ExportRequirement:
     #: Required count of outermost closed profiles (DXF/SVG cut layouts only).
     profile_count: int | None = None
     min_bytes: int = 64
+    #: DXF layer the profiles are counted on. A ``nested_sheet`` layout draws the
+    #: stock rectangle too, and it encloses every profile — counting outermost
+    #: components across all layers would report *one*. Set for nested layouts.
+    profile_layer: str | None = None
+    #: Declared blank the profiles must fit inside, as ``(width_mm, height_mm)``.
+    #: Checked against the ``BLANK`` layer's own rectangle, so a run cannot pass
+    #: by declaring a whole 2500 x 1250 sheet and nesting onto that instead.
+    blank_mm: tuple[float, float] | None = None
+    blank_layer: str = "BLANK"
 
     @classmethod
     def from_json(cls, data: Mapping[str, Any]) -> ExportRequirement:
@@ -119,12 +130,28 @@ class ExportRequirement:
         if fmt not in EXPORT_FORMATS:
             raise ValueError(f"unknown export format {fmt!r}")
         raw_count = data.get("profile_count")
+        raw_blank = data.get("blank_mm")
+        blank: tuple[float, float] | None = None
+        if raw_blank is not None:
+            pair = [float(cast("float", v)) for v in cast("Sequence[Any]", raw_blank)]
+            if len(pair) != 2:
+                raise ValueError(f"blank_mm must be [width, height], got {raw_blank!r}")
+            blank = (pair[0], pair[1])
+        layer = data.get("profile_layer")
+        if blank is not None and layer is None:
+            raise ValueError(
+                "blank_mm needs profile_layer: without it the blank rectangle is "
+                "counted as a profile and the fit test is vacuous"
+            )
         return cls(
             part=str(data["part"]),
             fmt=fmt,
             layout=str(data.get("layout", "as_built")),
             profile_count=None if raw_count is None else int(cast("int", raw_count)),
             min_bytes=int(cast("int", data.get("min_bytes", 64))),
+            profile_layer=None if layer is None else str(layer),
+            blank_mm=blank,
+            blank_layer=str(data.get("blank_layer", "BLANK")),
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -134,6 +161,85 @@ class ExportRequirement:
             "layout": self.layout,
             "profile_count": self.profile_count,
             "min_bytes": self.min_bytes,
+            "profile_layer": self.profile_layer,
+            "blank_mm": None if self.blank_mm is None else list(self.blank_mm),
+            "blank_layer": self.blank_layer,
+        }
+
+
+@dataclass(frozen=True)
+class DfmRequirement:
+    """One required DFM verdict: named rules must find nothing on the built part.
+
+    The grader runs ``run_dfm`` itself, on a probed secure backend, against the
+    part's current build — so the verdict is measured on the graded geometry and
+    never on the run's own report of it. ``clean_rules`` is the acceptance test:
+    a listed rule that produces a finding (or that fails to evaluate at all)
+    fails the task. Rules outside the list are recorded, not gated: the point of
+    a repair task is the violations it names, not the whole pack.
+    """
+
+    part: str
+    #: Rule ids that must produce zero findings (and must have evaluated).
+    clean_rules: tuple[str, ...]
+    #: Explicit process override; ``None`` uses the part's ``part.process``.
+    process: str | None = None
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> DfmRequirement:
+        rules = tuple(str(r) for r in cast("Sequence[Any]", data.get("clean_rules", [])))
+        if not rules:
+            raise ValueError("a DFM requirement with no clean_rules gates nothing")
+        process = data.get("process")
+        return cls(
+            part=str(data["part"]),
+            clean_rules=rules,
+            process=None if process is None else str(process),
+        )
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "part": self.part,
+            "clean_rules": list(self.clean_rules),
+            "process": self.process,
+        }
+
+
+@dataclass(frozen=True)
+class DrawingRequirement:
+    """One required drawing sheet and the strings its PDF text layer must carry.
+
+    ``required_texts`` are exact strings — dimension texts as
+    :func:`hephaestus.agent_bridge.cad_ops.dimension_text` prints them, and
+    title-block values as the part's §5.2 metadata declares them. They are
+    extracted from the PDF the grader generates from the graded geometry, so a
+    sheet that "says" the right numbers only passes when the numbers are really
+    in its text layer and really came out of the run's own model.
+    """
+
+    part: str
+    kind: str = "dimensioned"
+    sheet: str = "A4"
+    required_texts: tuple[str, ...] = ()
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> DrawingRequirement:
+        texts = tuple(str(t) for t in cast("Sequence[Any]", data.get("required_texts", [])))
+        if not texts:
+            raise ValueError("a drawing requirement with no required_texts gates nothing")
+        return cls(
+            part=str(data["part"]),
+            kind=str(data.get("kind", "dimensioned")),
+            sheet=str(data.get("sheet", "A4")),
+            required_texts=texts,
+        )
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "part": self.part,
+            "kind": self.kind,
+            "sheet": self.sheet,
+            "required_texts": list(self.required_texts),
         }
 
 
@@ -182,6 +288,10 @@ class BenchTask:
     required_checks: tuple[str, ...] = ()
     exports: tuple[ExportRequirement, ...] = ()
     renders: tuple[RenderRequirement, ...] = ()
+    #: Stage 6 manufacturing acceptance: DFM verdicts and drawing sheets the
+    #: grader produces itself from the graded geometry.
+    dfm: tuple[DfmRequirement, ...] = ()
+    drawings: tuple[DrawingRequirement, ...] = ()
     #: Seeded, task-owned files (inspection gauges, broken fixtures) restored
     #: from ``seed/`` before grading, so a run cannot pass by editing them.
     protected_paths: tuple[str, ...] = ()
@@ -267,6 +377,8 @@ class BenchTask:
         checks_raw = data.get("required_checks", [])
         exports_raw = data.get("export_requirements", [])
         renders_raw = data.get("render_requirements", [])
+        dfm_raw = data.get("dfm_requirements", [])
+        drawings_raw = data.get("drawing_requirements", [])
         task = cls(
             id=task_id,
             directory=directory,
@@ -280,6 +392,14 @@ class BenchTask:
             renders=tuple(
                 RenderRequirement.from_json(cast("Mapping[str, Any]", item))
                 for item in cast("Sequence[Any]", renders_raw)
+            ),
+            dfm=tuple(
+                DfmRequirement.from_json(cast("Mapping[str, Any]", item))
+                for item in cast("Sequence[Any]", dfm_raw)
+            ),
+            drawings=tuple(
+                DrawingRequirement.from_json(cast("Mapping[str, Any]", item))
+                for item in cast("Sequence[Any]", drawings_raw)
             ),
             protected_paths=tuple(
                 str(item) for item in cast("Sequence[Any]", data.get("protected_paths", []))
@@ -299,6 +419,8 @@ class BenchTask:
             "required_checks": list(self.required_checks),
             "export_requirements": [e.to_json() for e in self.exports],
             "render_requirements": [r.to_json() for r in self.renders],
+            "dfm_requirements": [d.to_json() for d in self.dfm],
+            "drawing_requirements": [d.to_json() for d in self.drawings],
             "protected_paths": list(self.protected_paths),
         }
 

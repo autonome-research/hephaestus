@@ -14,7 +14,8 @@ so a refusal that a client could not parse fails the gate.
 Cases:
 
 * ``query_snapshot`` with no vision child configured -> ``capability_not_available``;
-* ``export_part(layout="nested_sheet")`` (Stage 6 work) -> ``capability_not_available``;
+* ``export_part(layout="nested_sheet")`` -> a schema-valid *success* (the layout
+  shipped with Stage 6; the refusal it once returned no longer exists);
 * ``instance_store_part`` with no probed sandbox -> ``capability_not_available``
   (never a quiet unsandboxed generator run);
 * ``inspect_part`` against a text-only active model -> ``image_model_required``
@@ -98,15 +99,27 @@ def test_query_snapshot_without_a_vision_child_is_capability_not_available(
     assert harness.runtime.snapshot_caller is None
 
 
-def test_nested_sheet_export_is_capability_not_available(harness: G2Harness) -> None:
-    """Stage 2 supports ``as_built`` only; ``nested_sheet`` is a typed deferral."""
+def test_nested_sheet_export_produces_a_schema_valid_result(harness: G2Harness) -> None:
+    """``nested_sheet`` shipped with Stage 6: the same call now *succeeds*.
+
+    The Stage-2 clause this case was written for is about discriminated,
+    schema-valid tool outcomes; the layout it used as its example is no longer
+    deferred, so the case asserts the implemented outcome against the same
+    committed schema instead of asserting a refusal that can no longer happen.
+    ``widget`` declares no ``part.blank_size``, so the blank is stated here.
+    """
     (harness.project_root / "parts" / "widget.py").write_text(WIDGET, encoding="utf-8")
     session_id = harness.create_session("orchestrator", session_id="g2-cap-export")
 
     def then_export(info: RequestInfo) -> dict[str, Any]:
         return tool_call(
             "export_part",
-            {"name": "widget", "format": "dxf", "layout": "nested_sheet"},
+            {
+                "name": "widget",
+                "format": "dxf",
+                "layout": "nested_sheet",
+                "blank": {"width_mm": 120.0, "height_mm": 80.0},
+            },
             "call_1",
         )
 
@@ -121,12 +134,12 @@ def test_nested_sheet_export_is_capability_not_available(harness: G2Harness) -> 
     )
     outcome = harness.prompt(session_id, "export a nested sheet", timeout=1200)
     assert outcome.status == "completed"
-    _assert_capability(
-        cast("dict[str, Any]", seen["result"]), "export_part", "capability_not_available"
-    )
-    # …and nothing was exported.
+    result = cast("dict[str, Any]", seen["result"])
+    assert result.get("status") != "capability_error", result
+    jsonschema.validate(result, _result_schema("export_part"))
+    # …and the nested DXF is really on disk.
     exports = harness.project_root / ".heph" / "exports"
-    assert not exports.exists() or not any(exports.rglob("*.dxf"))
+    assert any(exports.rglob("*.dxf"))
 
 
 def test_store_generator_without_a_sandbox_is_capability_not_available(

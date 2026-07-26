@@ -512,6 +512,8 @@ def dry_run(tasks: Sequence[BenchTask], *, seeds: int = DEFAULT_SEEDS) -> list[d
                     "required_checks": list(task.required_checks),
                     "export_requirements": [e.to_json() for e in task.exports],
                     "render_requirements": [r.to_json() for r in task.renders],
+                    "dfm_requirements": [d.to_json() for d in task.dfm],
+                    "drawing_requirements": [d.to_json() for d in task.drawings],
                     "prompt": seeded_prompt(task, seed),
                 }
             )

@@ -1,7 +1,7 @@
 {
   "$id": "https://hephaestus.dev/schemas/tools/export_part.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Export a frozen successful build artifact (Stage 2: as_built layout only).",
+  "description": "Export a frozen successful build artifact (as_built or nested_sheet layout).",
   "parameters": {
     "additionalProperties": false,
     "allOf": [
@@ -33,6 +33,40 @@
         "anyOf": [
           {
             "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "blank": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "height_mm": {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              "margin_mm": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "spacing_mm": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "width_mm": {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              }
+            },
+            "required": [
+              "width_mm",
+              "height_mm"
+            ],
+            "type": "object"
           },
           {
             "type": "null"

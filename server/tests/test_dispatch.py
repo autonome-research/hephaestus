@@ -301,6 +301,9 @@ _ARGS: dict[str, dict[str, object]] = {
     "cancel_delegation": {"delegation_ref": "dg-1"},
     "ask_user": {"question": "q", "options": ["a"]},
     "export_part": {"name": "widget", "format": "step"},
+    "run_dfm": {"name": "widget"},
+    "generate_drawing": {"name": "widget", "kind": "dimensioned"},
+    "generate_doc": {"name": "widget", "kind": "bom"},
 }
 
 

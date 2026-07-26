@@ -1,4 +1,4 @@
-"""``export_part``: the §7 export contract — WAL, confinement, pins, formats.
+"""The §7 export contract — WAL, confinement, pins, formats.
 
 An export is a two-phase durable operation over its own table
 (``tp_exports``). The first sight of an invocation id freezes the immutable
@@ -12,6 +12,15 @@ per-component directory-descriptor walk with no-follow/beneath semantics and
 ``O_CREAT|O_EXCL`` — a racing parent symlink fails the walk instead of
 redirecting the write. Successful exports become GC roots linked to their source,
 and the format writers here turn one reloaded BRep shape into bytes.
+
+:meth:`ExportOps.wal_export` is that contract as one reusable operation: a
+caller supplies the source resolution inputs and a ``produce`` callback that
+turns the frozen artifact into one *or more* :class:`ExportOutput` files, and
+gets back the frozen ref, the confined create-only paths, the provenance hashes
+and the GC-root pins. ``export_part`` is its single-file caller; the Stage 6
+document generators (``generate_drawing``, ``generate_doc``) are its multi-file
+callers, so no second export path — and no second set of confinement or pin
+rules — exists anywhere in the engine.
 """
 
 from __future__ import annotations
@@ -22,12 +31,25 @@ import json
 import os
 import struct
 import zipfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Final, cast
 
-from hephaestus.core.errors import AddressingError
+from hephaestus.core.errors import AddressingError, ValidationError
 from hephaestus.core.executor.artifact_geometry import load_brep_shape
+from hephaestus.core.nesting import (
+    DEFAULT_MARGIN_MM,
+    DEFAULT_SPACING_MM,
+    Blank,
+    NestingRefusal,
+    blank_from_metadata,
+    blank_size_literal,
+    flat_profiles,
+    layout_to_dxf,
+    layout_to_svg,
+    shelf_nest,
+)
 from hephaestus.core.project_store.store import blob_hash_of_ref
 from opstore.types import JSONValue
 
@@ -58,13 +80,68 @@ CREATE TABLE IF NOT EXISTS {_EXPORTS_TABLE}(
   rel_path TEXT,
   export_blob TEXT,
   source_input_hashes TEXT,
-  state TEXT NOT NULL)
+  state TEXT NOT NULL,
+  outputs TEXT,
+  extra TEXT)
 """
+
+#: Columns added after the table's first shipped shape. A project whose
+#: ``tp_exports`` predates multi-file exports is migrated in place (ALTER TABLE
+#: ADD COLUMN is a metadata-only change) rather than losing its export history.
+_LATE_EXPORT_COLUMNS: Final[tuple[str, ...]] = ("outputs", "extra")
 
 
 def ensure_exports_table(store: OpStore) -> None:
-    """Create the export write-ahead table if this project has never exported."""
-    store.db.conn.execute(_CREATE_EXPORTS_TABLE)
+    """Create (or forward-migrate) the export write-ahead table."""
+    conn = store.db.conn
+    conn.execute(_CREATE_EXPORTS_TABLE)
+    present = {str(row[1]) for row in conn.execute(f"PRAGMA table_info({_EXPORTS_TABLE})")}
+    for column in _LATE_EXPORT_COLUMNS:
+        if column not in present:
+            conn.execute(f"ALTER TABLE {_EXPORTS_TABLE} ADD COLUMN {column} TEXT")
+
+
+@dataclass(frozen=True)
+class ExportOutput:
+    """One file an export operation produces: its extension and its bytes.
+
+    ``suffix`` is the extension without the dot. A single-output operation
+    (``export_part``) names its file exactly as it always has; a multi-output
+    one (a drawing's PDF + SVG) shares one stem and differs only by suffix, so
+    the whole set is addressable as one deliverable.
+    """
+
+    suffix: str
+    data: bytes
+
+
+@dataclass(frozen=True)
+class ExportCommit:
+    """The committed result of one export: paths, provenance, and extra fields.
+
+    ``extra`` is the per-operation result payload (a drawing's dimensions and
+    title block, a document's markdown) recorded in the WAL alongside the paths,
+    so a committed retry replays the *whole* result and not just its filenames.
+    """
+
+    paths: tuple[str, ...]
+    source_artifact_ref: str
+    source_input_hashes: Mapping[str, Any]
+    export_hashes: Mapping[str, str]
+    extra: Mapping[str, Any] = field(default_factory=dict[str, Any])
+    replayed: bool = False
+
+    def to_result(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "paths": list(self.paths),
+            "source_artifact_ref": self.source_artifact_ref,
+            "source_input_hashes": dict(self.source_input_hashes),
+            "export_hashes": dict(self.export_hashes),
+        }
+        out.update(self.extra)
+        if self.replayed:
+            out["replayed"] = True
+        return out
 
 
 # --------------------------------------------------------------------------
@@ -84,6 +161,54 @@ def _validate_relative_target(target: str) -> PurePosixPath:
     if not parts or any(part in (".", "..") for part in parts):
         raise CadOpError("invalid_target", f"target {target!r} must not traverse")
     return candidate
+
+
+def _output_paths(
+    outputs: Sequence[ExportOutput], *, target: str | None, stem: str
+) -> tuple[PurePosixPath, ...]:
+    """The confined relative path of each output.
+
+    A single-output operation with an explicit ``target`` uses it verbatim (the
+    ``export_part`` contract). A multi-output operation treats ``target`` as the
+    shared *stem* and appends each suffix, so one requested name yields one
+    coherent set. Without a target the stem is content-addressed over the whole
+    set, which keeps a drawing's PDF and SVG named as the pair they are.
+    """
+    if len(outputs) == 1 and target is not None:
+        return (_validate_relative_target(target),)
+    if target is not None:
+        base = _validate_relative_target(target).as_posix()
+        return tuple(_validate_relative_target(f"{base}.{o.suffix}") for o in outputs)
+    digest = sha256_bytes(b"".join(o.data for o in outputs)).removeprefix("sha256:")[:16]
+    return tuple(PurePosixPath(f"{stem}-{digest}.{o.suffix}") for o in outputs)
+
+
+def _row_json(row: Mapping[str, Any], column: str, fallback: JSONValue) -> JSONValue:
+    """One JSON-encoded WAL column, tolerant of a row written before it existed."""
+    raw = row[column] if column in row.keys() else None  # noqa: SIM118 - sqlite3.Row
+    if raw is None:
+        return fallback
+    try:
+        return cast("JSONValue", json.loads(str(raw)))
+    except ValueError:  # pragma: no cover - the writer is this module
+        return fallback
+
+
+def _recorded_outputs(row: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
+    """``[(rel_path, export_blob)]`` of a committed row (single-file rows too)."""
+    recorded = _row_json(row, "outputs", None)
+    if isinstance(recorded, list):
+        out: list[tuple[str, str]] = []
+        for item in cast("list[JSONValue]", recorded):
+            if not isinstance(item, dict):
+                continue
+            entry = cast("Mapping[str, JSONValue]", item)
+            path, blob = entry.get("path"), entry.get("blob")
+            if isinstance(path, str) and isinstance(blob, str):
+                out.append((path, blob))
+        if out:
+            return tuple(out)
+    return ((str(row["rel_path"]), str(row["export_blob"])),)
 
 
 def _create_confined(exports_dir: Path, rel: PurePosixPath, data: bytes) -> None:
@@ -269,6 +394,22 @@ def _export_bytes(shape: object, fmt: str, scratch: Path) -> bytes:
     return target.read_bytes()
 
 
+def _blank_payload(blank: Mapping[str, Any] | None) -> JSONValue:
+    """The blank as it enters the idempotency payload (name-sorted, numeric).
+
+    Two presentations of the same invocation id must hash identically, so the
+    argument is canonicalised here rather than trusted key-order-first.
+    """
+    if blank is None:
+        return None
+    out: dict[str, JSONValue] = {}
+    for key in sorted(blank):
+        value = blank[key]
+        numeric = isinstance(value, int | float) and not isinstance(value, bool)
+        out[str(key)] = float(cast("float", value)) if numeric else None
+    return out
+
+
 class ExportOps(CadOpsState):
     """Freeze a source artifact, write a confined target, pin the result."""
 
@@ -280,14 +421,17 @@ class ExportOps(CadOpsState):
         artifact_ref: str | None,
         target: str | None,
         layout: str,
+        blank: Mapping[str, Any] | None = None,
         op_id: str,
     ) -> dict[str, Any]:
         """The §7 export contract: frozen source, create-only target, pinned root."""
-        if layout != "as_built":
+        if layout not in ("as_built", "nested_sheet"):
+            raise CadOpError("invalid_params", f"unsupported export layout {layout!r}")
+        if layout == "nested_sheet" and fmt not in ("dxf", "svg"):
             raise CadOpError(
-                "capability_not_available",
-                f"layout={layout!r} is reserved until Stage 6 (Stage 2 supports as_built)",
-                data={"code": "capability_not_available"},
+                "invalid_params",
+                f"layout='nested_sheet' produces a flat cut file: format must be dxf or svg, "
+                f"not {fmt!r}",
             )
         if fmt not in EXPORT_FORMATS:
             raise CadOpError("invalid_params", f"unsupported export format {fmt!r}")
@@ -299,8 +443,107 @@ class ExportOps(CadOpsState):
                 "layout": layout,
                 "artifact_ref": artifact_ref,
                 "target": target,
+                "blank": _blank_payload(blank),
             }
         )
+        source_ref, replay = self._begin_export(
+            op_id=op_id,
+            part=name,
+            payload_hash=payload_hash,
+            recorded_format=fmt,
+            layout=layout,
+            artifact_ref=artifact_ref,
+            target=target,
+        )
+        if replay is not None:
+            return replay.to_result()
+        source_blob = blob_hash_of_ref(source_ref)
+        with self._scratch("heph-export-") as scratch:
+            shape = load_brep_shape(self._store.blobs.get(source_blob), scratch_dir=Path(scratch))
+            if layout == "nested_sheet":
+                data = self._nested_sheet_bytes(name, fmt, source_ref, blank, shape)
+            else:
+                data = _export_bytes(shape, fmt, Path(scratch))
+        return self._commit_export(
+            op_id=op_id,
+            part=name,
+            source_ref=source_ref,
+            outputs=(ExportOutput(EXPORT_FORMATS[fmt], data),),
+            target=target,
+            stem=name,
+        ).to_result()
+
+    # -- the reusable §7 contract ------------------------------------------
+
+    def wal_export(
+        self,
+        *,
+        op_id: str,
+        part: str,
+        operation: str,
+        variant: str,
+        payload: Mapping[str, JSONValue],
+        artifact_ref: str | None,
+        target: str | None,
+        stem: str,
+        produce: Callable[[str, Path], tuple[Sequence[ExportOutput], Mapping[str, Any]]],
+    ) -> dict[str, Any]:
+        """One export operation end to end: freeze → produce → confine → pin.
+
+        ``produce`` receives the frozen ``source_artifact_ref`` and a scratch
+        directory and returns the files to install plus the operation-specific
+        result fields. Everything around it — the idempotency payload, the WAL
+        row, create-only confined installation, GC-root pinning, provenance
+        hashes and committed-retry replay — is the same contract ``export_part``
+        runs under, because it is literally the same code.
+        """
+        payload_hash = sha256_canonical_json(
+            {
+                "kind": operation,
+                "part": part,
+                "variant": variant,
+                "artifact_ref": artifact_ref,
+                "target": target,
+                **dict(payload),
+            }
+        )
+        source_ref, replay = self._begin_export(
+            op_id=op_id,
+            part=part,
+            payload_hash=payload_hash,
+            recorded_format=f"{operation}:{variant}",
+            layout=operation,
+            artifact_ref=artifact_ref,
+            target=target,
+        )
+        if replay is not None:
+            return replay.to_result()
+        with self._scratch(f"heph-{operation.replace('_', '-')}-") as scratch:
+            outputs, extra = produce(source_ref, Path(scratch))
+        if not outputs:  # pragma: no cover - every generator produces a file
+            raise CadOpError("export_failed", f"{operation} produced no output file")
+        return self._commit_export(
+            op_id=op_id,
+            part=part,
+            source_ref=source_ref,
+            outputs=outputs,
+            target=target,
+            stem=stem,
+            extra=extra,
+        ).to_result()
+
+    def _begin_export(
+        self,
+        *,
+        op_id: str,
+        part: str,
+        payload_hash: str,
+        recorded_format: str,
+        layout: str,
+        artifact_ref: str | None,
+        target: str | None,
+    ) -> tuple[str, ExportCommit | None]:
+        """Freeze (or recover) this invocation's row: ``(source_ref, replay?)``."""
         row = self._export_row(op_id)
         if row is not None:
             if str(row["payload_hash"]) != payload_hash:
@@ -309,50 +552,159 @@ class ExportOps(CadOpsState):
                     f"export invocation {op_id!r} was already used with a different payload",
                 )
             if str(row["state"]) == "COMMITTED":
-                return self._replay_export(row)
-            source_ref = str(row["source_artifact_ref"])
-        else:
-            source_ref = self._freeze_export_source(name, artifact_ref)
-            with self._store.db.transaction() as conn:
-                conn.execute(
-                    f"INSERT INTO {_EXPORTS_TABLE}(op_id, payload_hash, part, format, layout, "
-                    "source_artifact_ref, requested_target, state) "
-                    "VALUES(?, ?, ?, ?, ?, ?, ?, 'FROZEN')",
-                    (op_id, payload_hash, name, fmt, layout, source_ref, target),
-                )
+                return str(row["source_artifact_ref"]), self._replay_commit(row)
+            return str(row["source_artifact_ref"]), None
+        source_ref = self._freeze_export_source(part, artifact_ref)
+        with self._store.db.transaction() as conn:
+            conn.execute(
+                f"INSERT INTO {_EXPORTS_TABLE}(op_id, payload_hash, part, format, layout, "
+                "source_artifact_ref, requested_target, state) "
+                "VALUES(?, ?, ?, ?, ?, ?, ?, 'FROZEN')",
+                (op_id, payload_hash, part, recorded_format, layout, source_ref, target),
+            )
+        return source_ref, None
+
+    def _commit_export(
+        self,
+        *,
+        op_id: str,
+        part: str,
+        source_ref: str,
+        outputs: Sequence[ExportOutput],
+        target: str | None,
+        stem: str,
+        extra: Mapping[str, Any] | None = None,
+    ) -> ExportCommit:
+        """Install every output create-only, pin it, and mark the row committed.
+
+        The whole set installs or none of it does: a target that already exists
+        rolls back the files this call created, so a refused multi-file export
+        never leaves half a deliverable behind to block its own retry.
+        """
+        rels = _output_paths(outputs, target=target, stem=stem)
+        created: list[PurePosixPath] = []
+        try:
+            for rel, output in zip(rels, outputs, strict=True):
+                _create_confined(self._layout.exports_dir, rel, output.data)
+                created.append(rel)
+        except CadOpError:
+            for rel in created:
+                (self._layout.exports_dir / rel.as_posix()).unlink(missing_ok=True)
+            raise
         source_blob = blob_hash_of_ref(source_ref)
-        with self._scratch("heph-export-") as scratch:
-            shape = load_brep_shape(self._store.blobs.get(source_blob), scratch_dir=Path(scratch))
-            data = _export_bytes(shape, fmt, Path(scratch))
-        if target is not None:
-            rel = _validate_relative_target(target)
-        else:
-            digest = sha256_bytes(data).removeprefix("sha256:")[:16]
-            rel = PurePosixPath(f"{name}-{digest}.{EXPORT_FORMATS[fmt]}")
-        _create_confined(self._layout.exports_dir, rel, data)
-        export_blob = self._store.blobs.put(data)
-        # Every successful export is a GC root until explicit unpin/delete, and
-        # links its immutable source so provenance stays reachable.
-        self._store.gc.pin(export_blob)
-        self._store.gc.link(export_blob, source_blob)
-        input_hashes = self._source_input_hashes(name, source_ref)
+        recorded: list[JSONValue] = []
+        export_hashes: dict[str, str] = {}
+        for rel, output in zip(rels, outputs, strict=True):
+            export_blob = self._store.blobs.put(output.data)
+            # Every successful export is a GC root until explicit unpin/delete,
+            # and links its immutable source so provenance stays reachable.
+            self._store.gc.pin(export_blob)
+            self._store.gc.link(export_blob, source_blob)
+            recorded.append({"path": rel.as_posix(), "blob": export_blob})
+            export_hashes[rel.as_posix()] = export_blob
+        input_hashes = self._source_input_hashes(part, source_ref)
         with self._store.db.transaction() as conn:
             conn.execute(
                 f"UPDATE {_EXPORTS_TABLE} SET rel_path = ?, export_blob = ?, "
-                "source_input_hashes = ?, state = 'COMMITTED' WHERE op_id = ?",
+                "source_input_hashes = ?, outputs = ?, extra = ?, state = 'COMMITTED' "
+                "WHERE op_id = ?",
                 (
-                    rel.as_posix(),
-                    export_blob,
+                    rels[0].as_posix(),
+                    export_hashes[rels[0].as_posix()],
                     canonical_json(cast("JSONValue", input_hashes)),
+                    canonical_json(cast("JSONValue", recorded)),
+                    canonical_json(cast("JSONValue", dict(extra or {}))),
                     op_id,
                 ),
             )
-        return {
-            "paths": [str(Path(".heph") / "exports" / rel.as_posix())],
-            "source_artifact_ref": source_ref,
-            "source_input_hashes": input_hashes,
-            "export_hashes": {rel.as_posix(): sha256_bytes(data)},
-        }
+        return ExportCommit(
+            paths=tuple(str(Path(".heph") / "exports" / rel.as_posix()) for rel in rels),
+            source_artifact_ref=source_ref,
+            source_input_hashes=input_hashes,
+            export_hashes=export_hashes,
+            extra=dict(extra or {}),
+        )
+
+    # -- nested_sheet ------------------------------------------------------
+
+    def _nested_sheet_bytes(
+        self,
+        name: str,
+        fmt: str,
+        source_ref: str,
+        blank: Mapping[str, Any] | None,
+        shape: object,
+    ) -> bytes:
+        """``layout="nested_sheet"``: flat profiles packed onto the declared blank.
+
+        Deterministic shelf packing, no rotation, no kerf compensation (mission
+        rule 5 defers kerf-aware auto-nesting). Anything that will not fit is a
+        structured refusal naming the profile and the blank — never a silent
+        overlap and never a clipped part.
+        """
+        resolved = self._resolve_blank(name, source_ref, blank)
+        try:
+            profiles = flat_profiles(shape, prefix=name)
+            nested = shelf_nest(profiles, resolved)
+        except NestingRefusal as exc:
+            raise CadOpError(exc.reason, exc.message, data=exc.data) from exc
+        return layout_to_dxf(nested) if fmt == "dxf" else layout_to_svg(nested)
+
+    def _resolve_blank(self, name: str, source_ref: str, blank: Mapping[str, Any] | None) -> Blank:
+        """The declared blank: the explicit argument, else ``part.blank_size``."""
+        if blank is not None:
+            try:
+                return Blank(
+                    width_mm=float(cast("float", blank["width_mm"])),
+                    height_mm=float(cast("float", blank["height_mm"])),
+                    margin_mm=float(cast("float", blank.get("margin_mm", DEFAULT_MARGIN_MM))),
+                    spacing_mm=float(cast("float", blank.get("spacing_mm", DEFAULT_SPACING_MM))),
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                raise CadOpError(
+                    "invalid_params", f"blank is not a usable stock size: {exc}"
+                ) from exc
+            except ValidationError as exc:
+                raise CadOpError("invalid_params", str(exc)) from exc
+        declared = self._declared_blank_size(name, source_ref)
+        if declared is None:
+            raise CadOpError(
+                "blank_unknown",
+                f"part {name!r} declares no part.blank_size for the exported artifact; pass "
+                "blank={'width_mm': …, 'height_mm': …} to nest it",
+                data={"part": name, "source_artifact_ref": source_ref},
+            )
+        parsed = blank_from_metadata(declared)
+        if parsed is None:
+            raise CadOpError(
+                "blank_unknown",
+                f"part.blank_size {declared!r} names no 'W x H' stock size; pass "
+                "blank={'width_mm': …, 'height_mm': …} to nest it",
+                data={"part": name, "blank_size": declared},
+            )
+        return parsed
+
+    def _declared_blank_size(self, name: str, source_ref: str) -> str | None:
+        """``part.blank_size`` of the script that produced ``source_ref``, or None.
+
+        Manufacturing metadata is authored in the script and is not carried by a
+        published BRep, so it is read statically from the part source — but only
+        while that source still hashes to the exported artifact's frozen input.
+        Exporting a historical artifact, or one whose script has since been
+        edited, yields None and the caller must state the blank explicitly
+        rather than have a drifted intent silently applied.
+        """
+        publisher = self._publisher()
+        result = publisher.current_result(name)
+        if result is None or result.artifact_ref != source_ref:
+            return None
+        try:
+            snapshot = publisher.parts.read_part(name)
+        except AddressingError:
+            return None
+        if snapshot.content_hash != result.input_hashes.script:
+            return None
+        return blank_size_literal(snapshot.content)
 
     def _export_row(self, op_id: str) -> Mapping[str, Any] | None:
         raw = self._store.db.conn.execute(
@@ -362,25 +714,31 @@ class ExportOps(CadOpsState):
 
     def _replay_export(self, row: Mapping[str, Any]) -> dict[str, Any]:
         """A committed retry reconciles to the recorded source/outputs exactly."""
-        rel = str(row["rel_path"])
-        export_blob = str(row["export_blob"])
+        return self._replay_commit(row).to_result()
+
+    def _replay_commit(self, row: Mapping[str, Any]) -> ExportCommit:
+        """The recorded commit of a ``COMMITTED`` row, pins and links reapplied."""
         source_ref = str(row["source_artifact_ref"])
-        raw_hashes = row["source_input_hashes"]
-        input_hashes = cast(
-            "dict[str, Any]",
-            json.loads(str(raw_hashes)) if raw_hashes is not None else {},
+        recorded = _recorded_outputs(row)
+        input_hashes = cast("dict[str, Any]", _row_json(row, "source_input_hashes", {}))
+        extra = cast("dict[str, Any]", _row_json(row, "extra", {}))
+        paths: list[str] = []
+        export_hashes: dict[str, str] = {}
+        for rel, export_blob in recorded:
+            # Reapply the idempotent completion steps so recovery converges from
+            # any crash point between install, pin and link.
+            self._store.gc.pin(export_blob)
+            self._store.gc.link(export_blob, blob_hash_of_ref(source_ref))
+            paths.append(str(Path(".heph") / "exports" / rel))
+            export_hashes[rel] = export_blob
+        return ExportCommit(
+            paths=tuple(paths),
+            source_artifact_ref=source_ref,
+            source_input_hashes=input_hashes,
+            export_hashes=export_hashes,
+            extra=extra,
+            replayed=True,
         )
-        # Reapply the idempotent completion steps so recovery converges from any
-        # crash point between install, pin and link.
-        self._store.gc.pin(export_blob)
-        self._store.gc.link(export_blob, blob_hash_of_ref(source_ref))
-        return {
-            "paths": [str(Path(".heph") / "exports" / rel)],
-            "source_artifact_ref": source_ref,
-            "source_input_hashes": input_hashes,
-            "export_hashes": {rel: export_blob},
-            "replayed": True,
-        }
 
     def _freeze_export_source(self, name: str, artifact_ref: str | None) -> str:
         """Resolve (and authorize) the immutable source the export freezes."""

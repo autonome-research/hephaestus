@@ -535,6 +535,15 @@ fails the hash check and refuses to load; a store part attempting file IO is
 denied by the sandbox). The DFM-toggle web-panel e2e clause defers to G4/G5
 under the 2026-07-26 ordering amendment.
 
+**G6 status (2026-07-26):** every clause above is green EXCEPT the Tier 3
+corpus-v1 bench measurement (Wilson lower-90% ≥ 0.70 on the prose split),
+which is OPEN for the same reason G2's corpus-v0 measurement is open: no
+designated reference model has yet cleared it. The latest measured attempt
+(qwen3.6:27b, corpus v0, prose) scored 4/24 against a 0.60 bar. Implementation
+and every pytest/ezdxf/pdf/registry clause are complete and archived; the
+numeric bench clause is satisfied only by a future archived Tier 3 run, never
+by a partial or killed run.
+
 ## Stage 7 — Release
 
 Deliverables: the PyPI wheel with its private compiled agent sidecar per

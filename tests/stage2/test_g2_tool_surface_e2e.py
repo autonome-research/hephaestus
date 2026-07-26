@@ -164,6 +164,9 @@ def _steps() -> list[Step]:
             },
         ),
         ("export_part", lambda seen: {"name": "widget", "format": "stl"}),
+        ("run_dfm", lambda seen: {"name": "widget", "process": "laser_cut"}),
+        ("generate_drawing", lambda seen: {"name": "widget", "kind": "dimensioned"}),
+        ("generate_doc", lambda seen: {"name": "widget", "kind": "bom"}),
         (
             "query_snapshot",
             lambda seen: {"name": "widget", "question": "does the widget look square?"},
@@ -349,6 +352,19 @@ def test_every_generated_tool_flows_through_the_real_bridge(surface: G2Harness) 
     assert export["paths"] and export["export_hashes"]
     for path in cast("list[str]", export["paths"]):
         assert (surface.project_root / path).exists() or path.startswith("/")
+
+    # -- documents: both files exported, dimensions in the result -----------
+    drawing = cast("dict[str, Any]", seen["generate_drawing"])
+    assert drawing["source_artifact_ref"] == build["artifact_ref"]
+    assert drawing["paths"] == [drawing["pdf"], drawing["svg"]]
+    assert any(dimension["text"] for dimension in cast("list[Any]", drawing["dimensions"]))
+    for path in cast("list[str]", drawing["paths"]):
+        assert (surface.project_root / path).exists()
+    doc = cast("dict[str, Any]", seen["generate_doc"])
+    assert doc["source_artifact_ref"] == build["artifact_ref"]
+    assert "Bill of materials" in doc["markdown"]
+    for path in cast("list[str]", doc["paths"]):
+        assert (surface.project_root / path).exists()
 
     # -- query_snapshot: text + refs only, never child images ---------------
     snapshot = cast("dict[str, Any]", seen["query_snapshot"])

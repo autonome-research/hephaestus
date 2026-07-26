@@ -1,0 +1,27 @@
+{
+  "id": "nest-gusset",
+  "prompt": "The shelf gussets are laminated: each one is three flat pieces of 6 mm ply, glued face to face after cutting. I need the set modelled as one part called `gusset` and the nested cut file for it.\n\nThe stock thickness, the blank size and the three flat sizes are all in `globals.py` - read them through `hc`. All three pieces lie flat in the sheet, every one of them spanning z = 0 to one sheet thickness, and they are three separate solids in the part (they are three separate pieces of ply). Label them `web`, `spacer` and `cleat`. In millimetres:\n\n- `web` is a right triangle: the two legs are 100 along X and 60 along Y, meeting at the right angle;\n- `spacer` is a 60 x 40 rectangle;\n- `cleat` is a 90 x 25 rectangle.\n\nLay them out in the part so none of them overlap - the layout inside the part does not have to be tight, the cut file is nested for you.\n\nThe shop cuts one set per 210 x 125 mm blank, so declare that blank as the part's stock blank size in its manufacturing metadata, along with a description, the material (`6 mm Baltic birch plywood`), the process (`laser_cut`) and the stock form. Then export the nested cut file as DXF so all three profiles come out nested on that single blank.\n\nBuild the part before you export it.",
+  "budget_tool_calls": 20,
+  "required_checks": [
+    "nest_gusset"
+  ],
+  "export_requirements": [
+    {
+      "part": "gusset",
+      "format": "dxf",
+      "layout": "nested_sheet",
+      "profile_count": 3,
+      "profile_layer": "PROFILES",
+      "blank_mm": [
+        210.0,
+        125.0
+      ],
+      "min_bytes": 512
+    }
+  ],
+  "render_requirements": [],
+  "dfm_requirements": [],
+  "drawing_requirements": [],
+  "protected_paths": [],
+  "notes": "Difficulty 4, and the G6 nesting clause as a bench task: the grader exports the nested_sheet DXF itself and asserts three closed profiles on the PROFILES layer, a blank rectangle measuring exactly 210 x 125 (so a run cannot pass by declaring a whole sheet) and every profile inside that rectangle (so it cannot pass by nesting off the edge). Nesting refuses rather than overlaps, so a fourth profile or an oversized one fails the export outright. The CHECKS pin one-sheet thickness, the exact combined material volume (which is what makes the web a triangle and not a rectangle) and genus 0. The reference solution is a file overlay, so its call path is counted by hand: 12 calls (read_globals, write_part, build_part, measure, export_part, run_checks plus slack for the metadata); budget 20 leaves ~65% headroom because a nesting refusal is a legitimate retry."
+}

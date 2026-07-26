@@ -147,6 +147,9 @@ CAD_TOOLS: frozenset[str] = frozenset(
         "read_artifact",
         "export_part",
         "query_snapshot",
+        "run_dfm",
+        "generate_drawing",
+        "generate_doc",
     }
 )
 DELEGATION_TOOLS: frozenset[str] = frozenset(
@@ -469,6 +472,9 @@ class ToolDispatcher:
             "read_artifact": self._read_artifact,
             "export_part": self._export_part,
             "query_snapshot": self._query_snapshot,
+            "run_dfm": self._run_dfm,
+            "generate_drawing": self._generate_drawing,
+            "generate_doc": self._generate_doc,
         }.get(decl.name)
         if cad_handler is None:  # pragma: no cover - every declared tool is routed
             raise DispatchError(
@@ -776,7 +782,61 @@ class ToolDispatcher:
             artifact_ref=_opt_str(arguments, "artifact_ref"),
             target=_opt_str(arguments, "target"),
             layout=str(arguments.get("layout", "as_built")),
+            blank=_opt_mapping(arguments, "blank"),
             op_id=inv.op_id,
+        )
+
+    # -- documents ---------------------------------------------------------
+
+    def _generate_drawing(
+        self, _p: Principal, cad: CadOps, arguments: dict[str, Any], inv: Invocation
+    ) -> dict[str, Any]:
+        """Mission Stage 6: a dimensioned/assembly/exploded sheet as PDF + SVG.
+
+        Both files land under ``.heph/exports/`` through the same §7 export
+        contract ``export_part`` uses, so the drawing is a pinned, provenance-
+        hashed artifact and a lost-response retry replays it rather than
+        producing a second sheet.
+        """
+        return cad.generate_drawing(
+            str(arguments["name"]),
+            str(arguments["kind"]),
+            sheet=str(arguments.get("sheet", "A4")),
+            artifact_ref=_opt_str(arguments, "artifact_ref"),
+            target=_opt_str(arguments, "target"),
+            op_id=inv.op_id,
+        )
+
+    def _generate_doc(
+        self, _p: Principal, cad: CadOps, arguments: dict[str, Any], inv: Invocation
+    ) -> dict[str, Any]:
+        """Mission Stage 6: BOM / assembly instructions / spec as markdown + JSON."""
+        return cad.generate_doc(
+            str(arguments["name"]),
+            str(arguments["kind"]),
+            artifact_ref=_opt_str(arguments, "artifact_ref"),
+            target=_opt_str(arguments, "target"),
+            op_id=inv.op_id,
+        )
+
+    # -- dfm ---------------------------------------------------------------
+
+    def _run_dfm(
+        self, _p: Principal, cad: CadOps, arguments: dict[str, Any], _inv: Invocation
+    ) -> dict[str, Any]:
+        """Mission Stage 6: the process rule pack over a resolved artifact.
+
+        Nothing is decided here — artifact/process/material resolution and the
+        sandbox boundary all live in :mod:`~.cad_ops._dfm`, so the MCP and REST
+        paths get the identical contract. A refusal keeps its typed reason
+        (``capability_not_available`` rides through to the proxy as a
+        discriminated tool result).
+        """
+        return cad.run_dfm(
+            str(arguments["name"]),
+            process=_opt_str(arguments, "process"),
+            artifact_ref=_opt_str(arguments, "artifact_ref"),
+            project_snapshot_ref=_opt_str(arguments, "project_snapshot_ref"),
         )
 
     # -- query_snapshot ----------------------------------------------------
@@ -1083,6 +1143,16 @@ class ToolDispatcher:
 def _opt_str(arguments: Mapping[str, Any], key: str) -> str | None:
     value = arguments.get(key)
     return None if value is None else str(value)
+
+
+def _opt_mapping(arguments: Mapping[str, Any], key: str) -> Mapping[str, Any] | None:
+    """A schema-validated optional object argument (``export_part.blank``)."""
+    value = arguments.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):  # pragma: no cover - schema-constrained
+        raise DispatchError("invalid_params", f"{key} must be an object")
+    return cast("Mapping[str, Any]", value)
 
 
 def _numbered(script: str) -> str:

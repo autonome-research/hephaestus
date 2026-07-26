@@ -2,9 +2,16 @@
 
 The verdict is deterministic: protected files are restored, every part is
 rebuilt, the task's required CHECKS are installed over whatever the run authored
-and run project-scoped, and the required exports and renders are produced from
-that graded geometry. Pass means every required check passed, every export and
-render validated, and the run stayed inside its tool-call budget.
+and run project-scoped, and the required exports, renders, DFM verdicts and
+drawing sheets are produced from that graded geometry. Pass means every required
+check passed, every artifact validated, and the run stayed inside its tool-call
+budget.
+
+The Stage 6 halves are graded the same way as the rest: the grader *runs the
+tool itself*. A DFM verdict is re-measured on a probed secure backend (rule
+predicates are registry content and never run unsandboxed — architecture §3.6),
+and a drawing's dimension strings are read out of the PDF text layer the grader
+generated. Nothing in the verdict comes from what the run said it found.
 """
 
 from __future__ import annotations
@@ -17,11 +24,13 @@ from pathlib import Path
 from typing import Any, cast
 
 from hephaestus.agent_bridge.cad_ops import EXPORT_FORMATS, CadOpError, CadOps
-from hephaestus.core.project_store.layout import ProjectLayout
+from hephaestus.core.errors import SandboxDeniedError
+from hephaestus.core.executor.sandbox.probe import secure_backend
+from hephaestus.core.project_store.layout import ProjectLayout, load_project
 
-from ._exports import dxf_profile_count, validate_export_bytes
+from ._exports import dxf_layer_extents, dxf_profile_count, pdf_text, validate_export_bytes
 from ._seed import apply_solution, open_cad, restore_protected, seed_project
-from ._tasks import BenchTask
+from ._tasks import BenchTask, DfmRequirement, ExportRequirement
 
 __all__ = ["GradeReport", "grade", "grade_reference_solution"]
 
@@ -42,6 +51,9 @@ class GradeReport:
     other_checks: Mapping[str, Any] = field(default_factory=dict[str, Any])
     exports: tuple[Mapping[str, Any], ...] = ()
     renders: tuple[Mapping[str, Any], ...] = ()
+    #: Stage 6: one record per DFM requirement / drawing requirement.
+    dfm: tuple[Mapping[str, Any], ...] = ()
+    drawings: tuple[Mapping[str, Any], ...] = ()
     tool_calls: int | None = None
     budget_tool_calls: int | None = None
     within_budget: bool = True
@@ -59,6 +71,8 @@ class GradeReport:
             "other_checks": dict(self.other_checks),
             "exports": [dict(e) for e in self.exports],
             "renders": [dict(r) for r in self.renders],
+            "dfm": [dict(d) for d in self.dfm],
+            "drawings": [dict(d) for d in self.drawings],
             "tool_calls": self.tool_calls,
             "budget_tool_calls": self.budget_tool_calls,
             "within_budget": self.within_budget,
@@ -180,7 +194,7 @@ def _validate_exports(
             continue
         if requirement.profile_count is not None:
             try:
-                count = dxf_profile_count(data)
+                count = dxf_profile_count(data, layer=requirement.profile_layer)
             except Exception as exc:
                 record["invalid"] = f"{type(exc).__name__}: {exc}"
                 reasons.append(f"export_unparsable:{requirement.part}:{requirement.fmt}")
@@ -191,6 +205,166 @@ def _validate_exports(
                 reasons.append(
                     f"export_profile_count:{requirement.part}:{count}!={requirement.profile_count}"
                 )
+        if requirement.blank_mm is not None:
+            reasons.extend(_validate_blank(requirement, data, record))
+        records.append(record)
+    return records, reasons
+
+
+def _validate_blank(
+    requirement: ExportRequirement, data: bytes, record: dict[str, Any]
+) -> list[str]:
+    """Check a nested layout's declared blank and that the profiles fit inside it.
+
+    Two independent claims, both read off the exported bytes: the blank drawn on
+    the layout really is the stock the task declared (a run cannot pass by
+    nesting onto a whole sheet), and every profile lies inside it (a run cannot
+    pass by nesting off the edge).
+    """
+    reasons: list[str] = []
+    part = str(requirement.part)
+    if requirement.blank_mm is None or requirement.profile_layer is None:
+        # ``ExportRequirement.from_json`` refuses this pairing; a hand-built
+        # requirement that reaches here has nothing to check rather than a
+        # silently vacuous pass.
+        return [f"export_blank_requirement_incomplete:{part}"]
+    width, height = requirement.blank_mm
+    try:
+        blank = dxf_layer_extents(data, requirement.blank_layer)
+        profiles = dxf_layer_extents(data, requirement.profile_layer)
+    except Exception as exc:  # pragma: no cover - malformed export
+        record["invalid"] = f"{type(exc).__name__}: {exc}"
+        return [f"export_unparsable:{part}:{requirement.fmt}"]
+    record["blank_extents"] = None if blank is None else list(blank)
+    record["profile_extents"] = None if profiles is None else list(profiles)
+    if blank is None:
+        return [f"export_blank_missing:{part}"]
+    drawn = (round(blank[2] - blank[0], 3), round(blank[3] - blank[1], 3))
+    if abs(drawn[0] - width) > 0.05 or abs(drawn[1] - height) > 0.05:
+        reasons.append(f"export_blank_size:{part}:{drawn[0]}x{drawn[1]}!={width}x{height}")
+    if profiles is None:
+        return [*reasons, f"export_profiles_missing:{part}"]
+    inside = (
+        profiles[0] >= blank[0] - 0.05
+        and profiles[1] >= blank[1] - 0.05
+        and profiles[2] <= blank[2] + 0.05
+        and profiles[3] <= blank[3] + 0.05
+    )
+    if not inside:
+        reasons.append(f"export_profiles_outside_blank:{part}")
+    return reasons
+
+
+def _dfm_record(cad: CadOps, requirement: DfmRequirement) -> tuple[dict[str, Any], list[str]]:
+    """Re-run the process pack for one requirement and judge the named rules."""
+    record: dict[str, Any] = {"requirement": requirement.to_json()}
+    reasons: list[str] = []
+    try:
+        report = cad.run_dfm(requirement.part, process=requirement.process)
+    except Exception as exc:
+        record["error"] = f"{type(exc).__name__}: {exc}"
+        return record, [f"dfm_failed:{requirement.part}"]
+    record["process"] = report.get("process")
+    record["source_artifact_ref"] = report.get("source_artifact_ref")
+    record["severity_counts"] = report.get("severity_counts")
+    rules = {
+        str(cast("Mapping[str, Any]", row).get("rule_id")): cast("Mapping[str, Any]", row)
+        for row in cast("Sequence[Any]", report.get("rules", []))
+    }
+    record["findings"] = [
+        {
+            "rule_id": cast("Mapping[str, Any]", f).get("rule_id"),
+            "severity": cast("Mapping[str, Any]", f).get("severity"),
+            "message": cast("Mapping[str, Any]", f).get("message"),
+            "tags": cast("Mapping[str, Any]", f).get("tags"),
+        }
+        for f in cast("Sequence[Any]", report.get("findings", []))
+    ]
+    for rule_id in requirement.clean_rules:
+        row = rules.get(rule_id)
+        if row is None:
+            reasons.append(f"dfm_rule_missing:{requirement.part}:{rule_id}")
+            continue
+        status = str(row.get("status", "error"))
+        count = len(cast("Sequence[Any]", row.get("findings", [])))
+        if status == "error":
+            reasons.append(f"dfm_rule_errored:{requirement.part}:{rule_id}")
+        elif count:
+            reasons.append(f"dfm_findings:{requirement.part}:{rule_id}:{count}")
+    return record, reasons
+
+
+def _validate_dfm(task: BenchTask, project_root: Path) -> tuple[list[dict[str, Any]], list[str]]:
+    """Every required DFM verdict, measured through a probed secure sandbox.
+
+    Opened as its own ops object: builds are graded on the project's ordinary
+    backend, but DFM predicates are untrusted registry content and run only
+    under the probed secure backend — there is no fallback, so a machine without
+    one fails the requirement loudly instead of grading it away.
+    """
+    if not task.dfm:
+        return [], []
+    layout = load_project(project_root)
+    try:
+        backend = secure_backend(layout.store_root)
+    except SandboxDeniedError as exc:
+        return [{"error": f"sandbox_denied: {exc}"}], [
+            f"dfm_backend_unavailable:{req.part}" for req in task.dfm
+        ]
+    records: list[dict[str, Any]] = []
+    reasons: list[str] = []
+    with open_cad(project_root, backend=backend) as cad:
+        for requirement in task.dfm:
+            record, rule_reasons = _dfm_record(cad, requirement)
+            records.append(record)
+            reasons.extend(rule_reasons)
+    return records, reasons
+
+
+def _validate_drawings(
+    cad: CadOps, task: BenchTask, layout: ProjectLayout
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Generate every required drawing and read its PDF text layer."""
+    records: list[dict[str, Any]] = []
+    reasons: list[str] = []
+    for index, requirement in enumerate(task.drawings):
+        record: dict[str, Any] = {"requirement": requirement.to_json()}
+        try:
+            result = cad.generate_drawing(
+                requirement.part,
+                requirement.kind,
+                sheet=requirement.sheet,
+                target=f"bench-{requirement.part}-{requirement.kind}-{index}",
+                op_id=f"bench-drawing-{uuid.uuid4().hex}",
+            )
+        except Exception as exc:
+            record["error"] = f"{type(exc).__name__}: {exc}"
+            reasons.append(f"drawing_failed:{requirement.part}:{requirement.kind}")
+            records.append(record)
+            continue
+        record["result"] = {
+            "paths": result.get("paths"),
+            "source_artifact_ref": result.get("source_artifact_ref"),
+            "dimensions": result.get("dimensions"),
+        }
+        pdf_rel = result.get("pdf")
+        if not isinstance(pdf_rel, str) or not pdf_rel:
+            reasons.append(f"drawing_no_pdf:{requirement.part}:{requirement.kind}")
+            records.append(record)
+            continue
+        path = layout.root / pdf_rel
+        data = path.read_bytes() if path.is_file() else b""
+        record["bytes"] = len(data)
+        if not data.startswith(b"%PDF"):
+            record["invalid"] = "not_a_pdf"
+            reasons.append(f"drawing_invalid:{requirement.part}:{requirement.kind}")
+            records.append(record)
+            continue
+        text = pdf_text(data)
+        missing = [want for want in requirement.required_texts if want not in text]
+        record["missing_texts"] = missing
+        if missing:
+            reasons.append(f"drawing_text_missing:{requirement.part}:{','.join(missing)}")
         records.append(record)
     return records, reasons
 
@@ -247,11 +421,15 @@ def grade(
     other: dict[str, Any] = {}
     exports: list[dict[str, Any]] = []
     renders: list[dict[str, Any]] = []
+    dfm: list[dict[str, Any]] = []
+    drawings: list[dict[str, Any]] = []
+    graded = False
     with open_cad(project_root) as cad:
         layout = cad.layout
         builds, build_reasons = _build_all(cad, layout)
         reasons.extend(build_reasons)
         if not build_reasons:
+            graded = True
             check_status, required, other, check_reasons = _run_required_checks(cad, task)
             reasons.extend(check_reasons)
             export_records, export_reasons = _validate_exports(cad, task, layout)
@@ -260,6 +438,14 @@ def grade(
             render_records, render_reasons = _validate_renders(cad, task)
             renders = render_records
             reasons.extend(render_reasons)
+            drawing_records, drawing_reasons = _validate_drawings(cad, task, layout)
+            drawings = drawing_records
+            reasons.extend(drawing_reasons)
+    if graded:
+        # Outside the ops object above on purpose: DFM predicates run on a probed
+        # secure backend, which the grading ops object deliberately is not.
+        dfm, dfm_reasons = _validate_dfm(task, project_root)
+        reasons.extend(dfm_reasons)
     return GradeReport(
         task_id=task.id,
         passed=not reasons,
@@ -270,6 +456,8 @@ def grade(
         other_checks=other,
         exports=tuple(exports),
         renders=tuple(renders),
+        dfm=tuple(dfm),
+        drawings=tuple(drawings),
         tool_calls=tool_calls,
         budget_tool_calls=task.budget_tool_calls,
         within_budget=within_budget,

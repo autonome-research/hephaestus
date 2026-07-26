@@ -7,9 +7,14 @@ cannot pass a stage (verification.md Tier 3, digest §8). With ``n`` runs,
 
     lower = [p + z^2/(2n) - z*sqrt(p(1-p)/n + z^2/(4n^2))] / (1 + z^2/n)
 
-:data:`G2_AGGREGATE_THRESHOLD` is 0.60 over 8 tasks x >= 3 seeds (n >= 24), plus
-``repair-fillet`` at 3/3 seeds (:data:`PERFECT_TASKS`). Thresholds are
-mission-tunable *upward only*.
+:data:`G2_AGGREGATE_THRESHOLD` is 0.60 over the 8 corpus-v0 tasks x >= 3 seeds
+(n >= 24), plus ``repair-fillet`` at 3/3 seeds (:data:`PERFECT_TASKS`).
+:data:`G6_AGGREGATE_THRESHOLD` is 0.70 over corpus **v1** — the same 8 tasks plus
+the four Stage 6 additions (:data:`CORPUS_V1_TASKS`), 12 tasks x >= 3 seeds
+(n >= 36). Thresholds are mission-tunable *upward only*, and which one applies is
+read off the corpus the archive actually covers (:func:`aggregate_threshold`)
+rather than configured: a v0 archive keeps being scored against the bound it was
+measured under, and a v1 run cannot be scored against the easier one.
 
 **The two corpus splits are scored separately and never averaged**
 (``VALIDATION.md`` §1). A :class:`BenchScore`'s headline numbers — ``n``,
@@ -40,6 +45,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from .metrics import (
+    SEEDED_SUFFIX,
     SPEC_PROSE,
     SPEC_SEEDED,
     RunMetrics,
@@ -50,7 +56,9 @@ from .metrics import (
 )
 
 __all__ = [
+    "CORPUS_V1_TASKS",
     "G2_AGGREGATE_THRESHOLD",
+    "G6_AGGREGATE_THRESHOLD",
     "PERFECT_TASKS",
     "RUNS_FILENAME",
     "SEEDED_BASELINE_FILENAME",
@@ -60,6 +68,7 @@ __all__ = [
     "BenchScore",
     "SplitScore",
     "TaskScore",
+    "aggregate_threshold",
     "load_run_records",
     "record_seeded_baseline",
     "score_directory",
@@ -71,8 +80,17 @@ __all__ = [
 #: One-sided z for a 90% lower confidence bound (digest §8 fixes this constant).
 Z_LOWER_90 = 1.281552
 
-#: Gate G2 aggregate lower-bound threshold (mission-tunable upward only).
+#: Gate G2 aggregate lower-bound threshold, corpus v0 (mission-tunable up only).
 G2_AGGREGATE_THRESHOLD = 0.60
+
+#: Gate G6 aggregate lower-bound threshold, corpus v1 (12 tasks x >= 3 seeds).
+G6_AGGREGATE_THRESHOLD = 0.70
+
+#: The tasks corpus v1 adds to v0 (mission_plan.md Stage 6: "corpus expanded to
+#: 12 tasks ... including a DFM-repair task and a drawing task"). An archive that
+#: covers all of them is a corpus-v1 run and is gated at
+#: :data:`G6_AGGREGATE_THRESHOLD`.
+CORPUS_V1_TASKS: tuple[str, ...] = ("dfm-repair", "drawing-shelf", "nest-gusset", "print-bracket")
 
 #: Tasks the gate additionally requires at 100% of their seeds.
 PERFECT_TASKS: tuple[str, ...] = ("repair-fillet",)
@@ -82,6 +100,21 @@ RUNS_FILENAME = "runs.jsonl"
 
 #: Where the seeded split's first measurement is recorded (never a gate input).
 SEEDED_BASELINE_FILENAME = "seeded_baseline.json"
+
+
+def aggregate_threshold(task_ids: Iterable[str]) -> float:
+    """The gate threshold for a run set covering ``task_ids``.
+
+    Corpus v1 (every task in :data:`CORPUS_V1_TASKS` present) is gated at
+    :data:`G6_AGGREGATE_THRESHOLD`; anything less is still the v0 corpus and
+    keeps :data:`G2_AGGREGATE_THRESHOLD`, the bound it was baselined under. The
+    threshold is therefore a fact about the evidence, not a knob: a v1 archive
+    cannot be scored against the easier bound by passing a different flag.
+    """
+    covered = {task_id.split(SEEDED_SUFFIX, 1)[0] for task_id in task_ids}
+    if set(CORPUS_V1_TASKS) <= covered:
+        return G6_AGGREGATE_THRESHOLD
+    return G2_AGGREGATE_THRESHOLD
 
 
 def wilson_lower_bound(passes: int, n: int, *, z: float = Z_LOWER_90) -> float:
@@ -374,12 +407,16 @@ def score_records(
     }
     resolved_model = model or (models[0] if models else "unknown-model")
     resolved_date = date or (dates[0] if dates else datetime.now(UTC).date().isoformat())
+    # The corpus the *gated* split covers decides the bound (v0: 0.60, v1: 0.70).
+    threshold = aggregate_threshold(
+        str(record.get("task_id", "")) for record in by_spec[SPEC_PROSE]
+    )
     splits = {
         SPEC_PROSE: _split_score(
             SPEC_PROSE,
             by_spec[SPEC_PROSE],
             metrics_by_spec[SPEC_PROSE],
-            threshold=G2_AGGREGATE_THRESHOLD,
+            threshold=threshold,
         ),
         # §1: the seeded split is baselined on first measurement, so it carries
         # no threshold at all — there is nothing here to compare it against.
@@ -398,6 +435,7 @@ def score_records(
         aggregate=prose.pass_rate,
         wilson_lower_90=prose.wilson_lower_90,
         per_task=per_task,
+        threshold=threshold,
         splits=splits,
         metrics=aggregate_metrics(all_metrics),
         n_total=total,

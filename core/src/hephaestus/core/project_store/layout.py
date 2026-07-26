@@ -52,11 +52,19 @@ _PART_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 @dataclass(frozen=True)
 class ProjectManifest:
-    """Parsed ``hephaestus.toml``: project name, units, ``[params]`` overrides."""
+    """Parsed ``hephaestus.toml``: name, units, ``[params]``, ``[dfm]``.
+
+    ``dfm_auto_run`` is the project's DFM *mode* (mission Stage 6): with it on,
+    every successful build carries the process pack's findings in its post-build
+    critique block, unrequested, exactly as the other ``VALIDATION.md`` §4 rungs
+    do. It is a project setting rather than a tool argument precisely so no model
+    choice decides whether manufacturability gets checked.
+    """
 
     name: str
     units: str = "mm"
     params: Mapping[str, int | float] = field(default_factory=dict[str, "int | float"])
+    dfm_auto_run: bool = False
 
 
 def parse_manifest(text: str, *, source: str = MANIFEST_FILENAME) -> ProjectManifest:
@@ -64,7 +72,8 @@ def parse_manifest(text: str, *, source: str = MANIFEST_FILENAME) -> ProjectMani
 
     ``name`` is required and non-empty; ``units`` defaults to ``"mm"``; the
     optional ``[params]`` table holds project-parameter overrides whose values
-    must be plain numbers (§3 — bools are not numbers).
+    must be plain numbers (§3 — bools are not numbers); the optional ``[dfm]``
+    table carries ``auto_run`` (default off), the project's DFM mode.
     """
     try:
         data = tomllib.loads(text)
@@ -98,7 +107,13 @@ def parse_manifest(text: str, *, source: str = MANIFEST_FILENAME) -> ProjectMani
                 kind="contract",
             )
         params[str(key)] = value
-    return ProjectManifest(name=name, units=units, params=params)
+    raw_dfm = data.get("dfm", {})
+    if not isinstance(raw_dfm, dict):
+        raise ValidationError(f"{source}: [dfm] must be a table", kind="contract")
+    auto_run = cast("Mapping[str, object]", raw_dfm).get("auto_run", False)
+    if not isinstance(auto_run, bool):
+        raise ValidationError(f"{source}: [dfm] 'auto_run' must be a boolean", kind="contract")
+    return ProjectManifest(name=name, units=units, params=params, dfm_auto_run=auto_run)
 
 
 @dataclass(frozen=True)

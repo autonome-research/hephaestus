@@ -13,6 +13,7 @@ from pathlib import Path
 
 from hephaestus.core.errors import ValidationError
 
+from ._dfm import DfmIndex
 from ._digest import merkle_digest
 from ._errors import RegistryIntegrityError
 from ._layout import Registry, load_registry
@@ -36,6 +37,7 @@ class RegistrySet:
         self.skills = SkillsIndex(by_kind.get("skills"))
         self.parts = PartsIndex(by_kind.get("parts"))
         self.materials = MaterialsIndex(by_kind.get("materials"))
+        self.dfm = DfmIndex(by_kind.get("dfm"))
 
     @classmethod
     def open(

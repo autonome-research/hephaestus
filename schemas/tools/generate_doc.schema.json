@@ -1,0 +1,136 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/generate_doc.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "BOM / assembly instructions / spec for a frozen build artifact (md + JSON).",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "artifact_ref": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "kind": {
+        "default": "bom",
+        "enum": [
+          "bom",
+          "assembly_instructions",
+          "spec"
+        ],
+        "type": "string"
+      },
+      "name": {
+        "pattern": "^[a-z][a-z0-9_]{0,63}$",
+        "type": "string"
+      },
+      "target": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      }
+    },
+    "required": [
+      "name",
+      "kind"
+    ],
+    "type": "object"
+  },
+  "result": {
+    "oneOf": [
+      {
+        "additionalProperties": true,
+        "properties": {
+          "doc": {
+            "type": "string"
+          },
+          "export_hashes": {
+            "type": "object"
+          },
+          "items": {
+            "type": "integer"
+          },
+          "json": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "markdown": {
+            "type": "string"
+          },
+          "markdown_truncated": {
+            "type": "boolean"
+          },
+          "paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "replayed": {
+            "type": "boolean"
+          },
+          "source_artifact_ref": {
+            "type": "string"
+          },
+          "source_input_hashes": {
+            "type": "object"
+          },
+          "status": {
+            "const": "ok"
+          }
+        },
+        "required": [
+          "status",
+          "markdown",
+          "paths",
+          "source_artifact_ref"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": true,
+        "properties": {
+          "code": {
+            "const": "capability_not_available"
+          },
+          "message": {
+            "type": "string"
+          },
+          "status": {
+            "const": "capability_error"
+          }
+        },
+        "required": [
+          "status",
+          "code"
+        ],
+        "type": "object"
+      }
+    ]
+  },
+  "title": "generate_doc",
+  "x-hephaestus-tool": {
+    "idempotent": true,
+    "maxUtf8Fields": {},
+    "name": "generate_doc",
+    "profiles": [
+      "part",
+      "orchestrator",
+      "quick_edit"
+    ],
+    "sequential": true
+  }
+}

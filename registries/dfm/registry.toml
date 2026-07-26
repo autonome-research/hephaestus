@@ -1,0 +1,21 @@
+[registry]
+name = "hephaestus-dfm"
+kind = "dfm"
+version = "0.1.0"
+license = "Apache-2.0"
+description = """
+Design-for-manufacture rule packs, one per process. A pack declares the process
+parameters it is characterised by (kerf, nozzle diameter, ...) and binds each
+rule to a predicate: executable registry content that runs under the same
+sandboxed executor and injected namespace as a part script, and that measures
+geometry rather than asserting prose. Findings are advisory engineering limits,
+not a certification: they are the questions a shop would ask, made measurable.
+"""
+
+[[packs]]
+process = "laser_cut"
+dir = "laser_cut"
+
+[[packs]]
+process = "fdm"
+dir = "fdm"

@@ -7,11 +7,11 @@ TypeBox module (``agent/src/tools/schema.gen.ts``), and — from Stage 3 — the
 declarations. Those artifacts, this declaration, and the ``tool_schema.md``
 headings are drift-tested against each other in CI.
 
-Scope (mission Stage 2): the full ``tool_schema.md`` surface **except**
-``run_dfm``, ``generate_drawing``, ``generate_doc``, and the deferred ``run_fea``
-/ ``import_geometry``. ``export_part`` keeps ``layout="nested_sheet"`` in the
-schema (permitted only with ``format="dxf"|"svg"``) but the runtime returns
-``capability_not_available`` until Stage 6.
+Scope: the full ``tool_schema.md`` surface **except** the deferred ``run_fea`` /
+``import_geometry``. ``run_dfm``, ``generate_drawing`` and ``generate_doc``
+joined the surface with mission Stage 6. ``export_part`` keeps
+``layout="nested_sheet"`` in the schema (permitted only with
+``format="dxf"|"svg"``).
 
 Every numeric limit referenced here (prompt UTF-8 cap, delegation deadline
 bounds, max images per result) is read from ``schemas/bridge_limits.json`` — no
@@ -66,9 +66,7 @@ REVIEWER_TOOLS: Final[frozenset[str]] = frozenset({"inspect_part", "measure", "r
 
 # Documented in tool_schema.md but explicitly out of Stage 2 scope; the drift
 # test subtracts these from the heading set before comparing with TOOLS.
-STAGE2_EXCLUDED_TOOLS: Final[frozenset[str]] = frozenset(
-    {"run_dfm", "generate_drawing", "generate_doc", "run_fea", "import_geometry"}
-)
+STAGE2_EXCLUDED_TOOLS: Final[frozenset[str]] = frozenset({"run_fea", "import_geometry"})
 
 JsonSchema = dict[str, Any]
 
@@ -1405,6 +1403,120 @@ def _update_requirement() -> ToolDecl:
     )
 
 
+#: One artifact-bound topology address a finding points at (§ run_dfm). Never a
+#: mutable mask id: ``solid_id``/``topology_index`` enumerate the *artifact*.
+_TOPOLOGY_DESCRIPTOR: Final[JsonSchema] = _obj(
+    {
+        "kind": _enum(["solid", "face", "edge", "wire", "vertex", "other"]),
+        "solid_id": _INT,
+        "topology_index": _INT,
+        "tag": {"anyOf": [_STR, {"type": "null"}]},
+    },
+    ["kind", "solid_id", "topology_index"],
+    additional=True,
+)
+
+_DFM_FINDING: Final[JsonSchema] = _obj(
+    {
+        "rule_id": _STR,
+        "severity": _enum(["error", "warning", "info"]),
+        "title": _STR,
+        "message": _STR,
+        "process": _STR,
+        "source_artifact_ref": _STR,
+        "tags": {"type": "array", "items": _STR},
+        "topology": {"type": "array", "items": _TOPOLOGY_DESCRIPTOR},
+        "measured": {},
+        "suggested_bound": {"anyOf": [_NUM, {"type": "null"}]},
+        "bound_unit": _STR,
+    },
+    ["rule_id", "severity", "title", "message", "source_artifact_ref", "topology"],
+    additional=True,
+)
+
+_DFM_RULE_OUTCOME: Final[JsonSchema] = _obj(
+    {
+        "rule_id": _STR,
+        "title": _STR,
+        "severity": _STR,
+        "status": _enum(["ok", "violations", "error"]),
+        "findings": {"type": "array", "items": _DFM_FINDING},
+        "params": _dict(_NUM),
+        "error": {"anyOf": [_STR, {"type": "null"}]},
+    },
+    ["rule_id", "status"],
+    additional=True,
+)
+
+
+def _run_dfm() -> ToolDecl:
+    conditional = [
+        # One artifact resolution mode at a time: an explicit artifact ref and a
+        # project snapshot cannot both name the geometry to check.
+        {"not": {"required": ["artifact_ref", "project_snapshot_ref"]}},
+    ]
+    return ToolDecl(
+        name="run_dfm",
+        summary="Run the process rule pack against a resolved artifact; report findings.",
+        params=_obj(
+            {
+                "name": _ident(),
+                "process": {"anyOf": [_STR, {"type": "null"}], "default": None},
+                "artifact_ref": {"anyOf": [_STR, {"type": "null"}], "default": None},
+                "project_snapshot_ref": {"anyOf": [_STR, {"type": "null"}], "default": None},
+            },
+            ["name"],
+            extra={"allOf": conditional},
+        ),
+        result=_result(
+            _ok(
+                {
+                    "status": {"const": "ok"},
+                    "part": _STR,
+                    "process": _STR,
+                    "source_artifact_ref": _STR,
+                    "resolved_from": _enum(["current", "artifact_ref", "project_snapshot"]),
+                    "pack": _obj(
+                        {
+                            "name": _STR,
+                            "version": _STR,
+                            "registry": _STR,
+                            "registry_digest": _STR,
+                        },
+                        [],
+                        additional=True,
+                    ),
+                    "rules": {"type": "array", "items": _DFM_RULE_OUTCOME},
+                    "findings": {"type": "array", "items": _DFM_FINDING},
+                    "severity_counts": _dict(_INT),
+                    "errored_rules": {"type": "array", "items": _STR},
+                    "truncated": _BOOL,
+                    "material": {},
+                },
+                ["status", "part", "process", "source_artifact_ref", "findings"],
+            ),
+            _CAPABILITY_NOT_AVAILABLE,
+        ),
+        profiles=("part", "orchestrator", "quick_edit"),
+        sequential=False,
+        idempotent=False,
+    )
+
+
+#: The declared stock rectangle a ``nested_sheet`` export nests onto. Omitted,
+#: the blank is read from the part's ``part.blank_size`` metadata; supplied, it
+#: overrides it. Margin/spacing default in the nesting module, never here.
+_BLANK: Final[JsonSchema] = _obj(
+    {
+        "width_mm": {"type": "number", "exclusiveMinimum": 0},
+        "height_mm": {"type": "number", "exclusiveMinimum": 0},
+        "margin_mm": {"type": "number", "minimum": 0},
+        "spacing_mm": {"type": "number", "minimum": 0},
+    },
+    ["width_mm", "height_mm"],
+)
+
+
 def _export_part() -> ToolDecl:
     conditional = [
         {
@@ -1414,7 +1526,7 @@ def _export_part() -> ToolDecl:
     ]
     return ToolDecl(
         name="export_part",
-        summary="Export a frozen successful build artifact (Stage 2: as_built layout only).",
+        summary="Export a frozen successful build artifact (as_built or nested_sheet layout).",
         params=_obj(
             {
                 "name": _ident(),
@@ -1422,6 +1534,7 @@ def _export_part() -> ToolDecl:
                 "artifact_ref": {"anyOf": [_STR, {"type": "null"}], "default": None},
                 "target": {"anyOf": [_STR, {"type": "null"}], "default": None},
                 "layout": _enum(["as_built", "nested_sheet"], "as_built"),
+                "blank": {"anyOf": [_BLANK, {"type": "null"}], "default": None},
             },
             ["name", "format"],
             extra={"allOf": conditional},
@@ -1435,6 +1548,103 @@ def _export_part() -> ToolDecl:
                     "export_hashes": _dict(),
                 },
                 ["paths", "source_artifact_ref"],
+            ),
+            _CAPABILITY_NOT_AVAILABLE,
+        ),
+        profiles=("part", "orchestrator", "quick_edit"),
+        sequential=True,
+        idempotent=True,
+    )
+
+
+#: One drawn dimension: the text that appears on the sheet plus what it measures.
+#: ``text`` is the exact string the PDF text layer carries (the G6 gate extracts
+#: it), ``value``/``unit`` the machine-readable measurement behind it.
+_DRAWN_DIMENSION: Final[JsonSchema] = _obj(
+    {
+        "id": _STR,
+        "label": _STR,
+        "text": _STR,
+        "value": _NUM,
+        "unit": _STR,
+        "kind": _enum(["linear", "diameter", "thickness"]),
+    },
+    ["id", "label", "text", "value", "kind"],
+    additional=True,
+)
+
+
+def _generate_drawing() -> ToolDecl:
+    return ToolDecl(
+        name="generate_drawing",
+        summary="Dimensioned/assembly/exploded PDF+SVG drawing of a frozen build artifact.",
+        params=_obj(
+            {
+                "name": _ident(),
+                "kind": _enum(["dimensioned", "assembly", "exploded"], "dimensioned"),
+                "sheet": _enum(["A4", "A3", "letter"], "A4"),
+                "artifact_ref": {"anyOf": [_STR, {"type": "null"}], "default": None},
+                "target": {"anyOf": [_STR, {"type": "null"}], "default": None},
+            },
+            ["name", "kind"],
+        ),
+        result=_result(
+            _ok(
+                {
+                    "status": {"const": "ok"},
+                    "pdf": _STR,
+                    "svg": _STR,
+                    "paths": {"type": "array", "items": _STR},
+                    "source_artifact_ref": _STR,
+                    "source_input_hashes": _dict(),
+                    "export_hashes": _dict(),
+                    "kind": _STR,
+                    "sheet": _STR,
+                    "views": {"type": "array", "items": _STR},
+                    "dimensions": {"type": "array", "items": _DRAWN_DIMENSION},
+                    "title_block": _dict(_STR),
+                    "replayed": _BOOL,
+                },
+                ["status", "pdf", "svg", "paths", "source_artifact_ref"],
+            ),
+            _CAPABILITY_NOT_AVAILABLE,
+        ),
+        profiles=("part", "orchestrator", "quick_edit"),
+        sequential=True,
+        idempotent=True,
+    )
+
+
+def _generate_doc() -> ToolDecl:
+    return ToolDecl(
+        name="generate_doc",
+        summary="BOM / assembly instructions / spec for a frozen build artifact (md + JSON).",
+        params=_obj(
+            {
+                "name": _ident(),
+                "kind": _enum(["bom", "assembly_instructions", "spec"], "bom"),
+                "artifact_ref": {"anyOf": [_STR, {"type": "null"}], "default": None},
+                "target": {"anyOf": [_STR, {"type": "null"}], "default": None},
+            },
+            ["name", "kind"],
+        ),
+        result=_result(
+            _ok(
+                {
+                    "status": {"const": "ok"},
+                    "markdown": _STR,
+                    "markdown_truncated": _BOOL,
+                    "doc": _STR,
+                    "json": _STR,
+                    "paths": {"type": "array", "items": _STR},
+                    "source_artifact_ref": _STR,
+                    "source_input_hashes": _dict(),
+                    "export_hashes": _dict(),
+                    "kind": _STR,
+                    "items": _INT,
+                    "replayed": _BOOL,
+                },
+                ["status", "markdown", "paths", "source_artifact_ref"],
             ),
             _CAPABILITY_NOT_AVAILABLE,
         ),
@@ -1475,6 +1685,9 @@ TOOLS: Final[tuple[ToolDecl, ...]] = (
     _cancel_delegation(),
     _ask_user(),
     _export_part(),
+    _run_dfm(),
+    _generate_drawing(),
+    _generate_doc(),
 )
 
 TOOLS_BY_NAME: Final[dict[str, ToolDecl]] = {t.name: t for t in TOOLS}

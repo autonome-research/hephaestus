@@ -33,13 +33,24 @@ and a final ``part.geometry = <name>`` statement naming the instance root.
 This module is the package facade; the implementation is split by concern:
 :mod:`._digest` (Merkle tree hashing), :mod:`._layout` (``registry.toml`` and
 verify-on-load), :mod:`._pins` (``hephaestus.toml`` pinning), :mod:`._skills` /
-:mod:`._parts` / :mod:`._materials` (per-kind content indexes), :mod:`._set`
+:mod:`._parts` / :mod:`._materials` / :mod:`._dfm` (per-kind content indexes),
+:mod:`._publish` (end-to-end validation + the publication record), :mod:`._set`
 (project-wide resolution), :mod:`._reference` (provenance-delimited paging),
 :mod:`._generator` (the fragment contract) and :mod:`._ops` (the tool surface).
 """
 
 from __future__ import annotations
 
+from ._dfm import (
+    PACK_FILENAME,
+    SEVERITIES,
+    DfmIndex,
+    DfmPack,
+    DfmParam,
+    DfmRule,
+    load_pack,
+)
+from ._dfm import DfmSeverity as DfmSeverity  # re-exported, not in __all__
 from ._digest import merkle_digest, tree_leaves
 from ._errors import RegistryError, RegistryIntegrityError
 from ._generator import (
@@ -71,6 +82,15 @@ from ._pins import (
     read_pins,
     write_pins,
 )
+from ._publish import (
+    PUBLICATION_VERSION,
+    LeafDrift,
+    PublicationRecord,
+    publication_drift,
+    publish_registry,
+    validate_content,
+    verify_publication,
+)
 from ._reference import (
     REFERENCE_END,
     REFERENCE_START,
@@ -87,16 +107,25 @@ __all__ = [
     "BODY_MARKER",
     "BUNDLED_KINDS",
     "MANIFEST_FILENAME",
+    "PACK_FILENAME",
     "PARAMS_MARKER",
+    "PUBLICATION_VERSION",
     "REFERENCE_END",
     "REFERENCE_START",
     "REGISTRIES_TABLE",
+    "SEVERITIES",
     "TEXT_MAX_BYTES",
     "TEXT_MAX_LINES",
+    "DfmIndex",
+    "DfmPack",
+    "DfmParam",
+    "DfmRule",
     "GeneratorSource",
+    "LeafDrift",
     "Material",
     "MaterialsIndex",
     "PartsIndex",
+    "PublicationRecord",
     "Registry",
     "RegistryError",
     "RegistryIntegrityError",
@@ -110,13 +139,18 @@ __all__ = [
     "bundled_pins",
     "bundled_registries_root",
     "instance_prefix",
+    "load_pack",
     "load_registry",
     "merkle_digest",
     "parse_generator",
     "parse_manifest",
+    "publication_drift",
+    "publish_registry",
     "read_pins",
     "render_fragment",
     "tree_leaves",
+    "validate_content",
+    "verify_publication",
     "wrap_reference",
     "write_pins",
 ]

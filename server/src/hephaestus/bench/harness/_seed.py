@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from hephaestus.agent_bridge.cad_ops import CadOps
+from hephaestus.core.executor.sandbox.base import ExecBackend
 from hephaestus.core.project_store.layout import GLOBALS_FILENAME, load_project, open_store
 
 from ._tasks import BenchTask, solution_dir
@@ -75,12 +76,17 @@ def restore_protected(task: BenchTask, project_root: Path) -> list[str]:
 
 
 @contextlib.contextmanager
-def open_cad(project_root: Path) -> Generator[CadOps]:
-    """Open the project's store and yield a :class:`CadOps` bound to it."""
+def open_cad(project_root: Path, *, backend: ExecBackend | None = None) -> Generator[CadOps]:
+    """Open the project's store and yield a :class:`CadOps` bound to it.
+
+    ``backend`` is the executor the ops object runs scripts and registry content
+    on. Left unset, ``CadOps`` picks its own default; grading passes a probed
+    secure backend for the paths that require one (DFM predicates).
+    """
     layout = load_project(project_root)
     store = open_store(layout)
     try:
-        yield CadOps(layout, store)
+        yield CadOps(layout, store, backend=backend)
     finally:
         store.close()
 

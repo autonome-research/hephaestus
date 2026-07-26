@@ -1,0 +1,4 @@
+# drawing-shelf bench task: a wall shelf that has to leave the shop as a drawing.
+[project]
+name = "wallshelf"
+description = "Wall shelf: deck on two side panels, drawn for the shop"

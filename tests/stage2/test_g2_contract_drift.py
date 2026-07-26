@@ -343,7 +343,7 @@ def test_stage2_surface_excludes_deferred_tools_everywhere(md_source: str) -> No
 def test_committed_schema_files_match_the_declared_surface() -> None:
     on_disk = {path.name.removesuffix(".schema.json") for path in SCHEMAS_DIR.glob("*.json")}
     assert on_disk == set(TOOL_NAMES)
-    assert len(TOOL_NAMES) == 30
+    assert len(TOOL_NAMES) == 33
 
 
 def test_sequential_declarations_cover_the_normative_list() -> None:

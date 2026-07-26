@@ -34,8 +34,8 @@ __all__ = [
 #: Manifest filename inside every registry directory.
 MANIFEST_FILENAME: Final[str] = "registry.toml"
 
-#: Registry kinds Hephaestus ships (``dfm`` lands with the DFM packs, Stage 5).
-BUNDLED_KINDS: Final[tuple[str, ...]] = ("skills", "parts", "materials")
+#: Registry kinds Hephaestus ships.
+BUNDLED_KINDS: Final[tuple[str, ...]] = ("skills", "parts", "materials", "dfm")
 
 RegistryKind = Literal["skills", "parts", "materials", "dfm"]
 _KINDS: Final[frozenset[str]] = frozenset({"skills", "parts", "materials", "dfm"})
@@ -53,6 +53,7 @@ class RegistryManifest:
     skills: tuple[Mapping[str, JSONValue], ...] = ()
     parts: tuple[Mapping[str, JSONValue], ...] = ()
     materials: tuple[Mapping[str, JSONValue], ...] = ()
+    packs: tuple[Mapping[str, JSONValue], ...] = ()
 
 
 def parse_manifest(text: str, *, source: str = MANIFEST_FILENAME) -> RegistryManifest:
@@ -82,6 +83,7 @@ def parse_manifest(text: str, *, source: str = MANIFEST_FILENAME) -> RegistryMan
         materials=cast(
             "tuple[Mapping[str, JSONValue], ...]", entries(data, "materials", source=source)
         ),
+        packs=cast("tuple[Mapping[str, JSONValue], ...]", entries(data, "packs", source=source)),
     )
 
 

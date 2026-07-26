@@ -41,14 +41,22 @@ from ..limits import MAX_IMAGES_PER_RESULT, parse_image_header
 from ._base import CadOpError, CadOpsState, json_map
 from ._critique import (
     critique_block,
+    dfm_report,
     intentional_overlap_declarations,
     interference_report,
     named_solids,
 )
+from ._dfm import DfmOps
 from ._requirements import RequirementOps, entry_views
 
 #: A reloaded build artifact resolves exactly the ``"part"`` selector (§7 rule 1).
 _PART_RESOLUTION: Final[Resolution] = Resolution(kind="part", name=PART_SELECTOR)
+
+
+def _why(exc: BaseException) -> str:
+    """A refusal's own message where it has one; its type otherwise."""
+    message = getattr(exc, "message", None)
+    return message if isinstance(message, str) and message else f"{type(exc).__name__}: {exc}"
 
 
 def metrics_solids(metrics: Metrics | None) -> int:
@@ -148,7 +156,34 @@ class BuildOps(CadOpsState):
             interference=self._interference(metrics_solids(metrics), artifact_ref, declared),
             request=self.request_text,
             dimensions=self._critique_dimensions(build, script),
+            dfm=self._auto_dfm(build.result.part, artifact_ref),
         )
+
+    def _auto_dfm(self, part: str, artifact_ref: str | None) -> dict[str, JSONValue] | None:
+        """DFM mode (mission Stage 6): the pack's findings on this exact artifact.
+
+        Off unless the project asks for it (``[dfm] auto_run``), and then never
+        fatal: the geometry is published either way, so every failure path — no
+        declared process, no secure sandbox, a pack that will not load, a worker
+        that dies — becomes an ``unavailable`` note inside the block instead of
+        an exception that would cost the caller its build result.
+
+        The run receives the exact ``artifact_ref`` this build published, never
+        a "current" lookup: a preview build's critique is about the preview.
+        """
+        if not self._layout.manifest.dfm_auto_run or not isinstance(self, DfmOps):
+            return None
+        if artifact_ref is None:  # pragma: no cover - a successful build has an artifact
+            return dfm_report(None, unavailable="the build published no artifact")
+        try:
+            target = self.dfm_target(part, artifact_ref=artifact_ref)
+        except Exception as exc:
+            return dfm_report(None, unavailable=_why(exc))
+        try:
+            evaluation = self.evaluate_target(target)
+        except Exception as exc:
+            return dfm_report(None, process=target.process, unavailable=_why(exc))
+        return dfm_report(evaluation)
 
     def _interference(
         self, solid_count: int, artifact_ref: str | None, declared: Sequence[str]

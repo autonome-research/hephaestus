@@ -759,15 +759,39 @@ def test_export_rejects_traversal_targets(built: Project, target: str) -> None:
     assert ei.value.reason == "invalid_target"
 
 
-def test_export_nested_sheet_is_capability_not_available(built: Project) -> None:
+def test_export_nested_sheet_nests_onto_a_declared_blank(built: Project) -> None:
+    """Stage 6 implemented ``nested_sheet``; the layout is no longer deferred.
+
+    ``widget`` declares no ``part.blank_size``, so the caller states the blank —
+    and a blank nothing fits on is a structured refusal, not an overlap.
+    (Profile extraction and packing are covered in ``test_nested_sheet.py``.)
+    """
+    result = built.call(
+        "export_part",
+        {
+            "name": "widget",
+            "format": "dxf",
+            "layout": "nested_sheet",
+            "blank": {"width_mm": 120.0, "height_mm": 80.0},
+        },
+        entry="nested",
+    )
+    assert len(result["paths"]) == 1
+    assert str(result["paths"][0]).endswith(".dxf")
+    assert result["source_artifact_ref"].startswith("artifact:build:")
     with pytest.raises(DispatchError) as ei:
         built.call(
             "export_part",
-            {"name": "widget", "format": "dxf", "layout": "nested_sheet"},
-            entry="nested",
+            {
+                "name": "widget",
+                "format": "dxf",
+                "layout": "nested_sheet",
+                "blank": {"width_mm": 10.0, "height_mm": 10.0},
+            },
+            entry="nested-tiny",
         )
-    assert ei.value.reason == "capability_not_available"
-    assert ei.value.data["code"] == "capability_not_available"
+    assert ei.value.reason == "profile_too_large"
+    assert ei.value.data["blank"]["width_mm"] == 10.0
 
 
 def test_export_rejects_a_checkpoint_only_ref(built: Project) -> None:
@@ -942,6 +966,9 @@ def _minimal_args(tool: str) -> dict[str, Any]:
         "read_artifact": {"ref": "artifact:build:sha256:" + "0" * 64},
         "export_part": {"name": "widget", "format": "step"},
         "query_snapshot": {"name": "widget", "question": "?"},
+        "run_dfm": {"name": "widget"},
+        "generate_drawing": {"name": "widget", "kind": "dimensioned"},
+        "generate_doc": {"name": "widget", "kind": "bom"},
     }
     return table[tool]
 
@@ -956,6 +983,9 @@ def test_part_session_scope_holds_for_every_newly_wired_tool(built: Project) -> 
         ("run_checks", {"name": "bracket"}),
         ("export_part", {"name": "bracket", "format": "step"}),
         ("query_snapshot", {"name": "bracket", "question": "?"}),
+        ("run_dfm", {"name": "bracket"}),
+        ("generate_drawing", {"name": "bracket", "kind": "dimensioned"}),
+        ("generate_doc", {"name": "bracket", "kind": "bom"}),
         ("set_params", {"values": {}, "expected_state_hash": "x", "name": "bracket"}),
         ("run_checks", {"scope": "project"}),
         ("set_params", {"values": {}, "expected_state_hash": "x", "scope": "project"}),

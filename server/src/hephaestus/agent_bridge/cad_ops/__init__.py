@@ -26,14 +26,23 @@ mixin per domain so each domain reads independently:
                  validation rung keys on.
 ``_critique``    the ``VALIDATION.md`` §4 post-build critique every successful
                  ``build_part`` carries unasked: bounded pairwise interference,
-                 manifold, and the original request's numbers versus the built
-                 dimensions.
+                 manifold, the original request's numbers versus the built
+                 dimensions, and — with the project's DFM mode on — the process
+                 pack's findings on the artifact just published.
+``_dfm``         ``run_dfm``: artifact resolution (current / explicit ref /
+                 project snapshot), process and material resolution, and the
+                 sandboxed rule-pack evaluation behind both the tool and the
+                 auto-run critique rung.
 ``_gate``        the ``VALIDATION.md`` §3 clarification gate: which assumption is
                  material, what a clarification question must look like, and what
                  an answer does to the ledger — all by rule.
 ``_artifacts``   ``read_artifact`` byte-cursor paging.
-``_exports``     the §7 ``export_part`` contract (WAL, path confinement, pins,
-                 format writers).
+``_exports``     the §7 export contract (WAL, path confinement, pins, format
+                 writers) as one reusable operation, plus ``export_part``.
+``_drawing``     ``generate_drawing``: render-service views, artifact-measured
+                 dimensions drawn as real text, metadata title block, PDF+SVG.
+``_doc``         ``generate_doc``: BOM (labeled solids x materials registry),
+                 assembly instructions and spec sheets as markdown + JSON.
 ``_base``        the shared state, the persisted-override :class:`ParamStore`,
                  and the :class:`CadOpError` taxonomy every domain raises.
 
@@ -70,9 +79,11 @@ from ._checks import (
     check_template,
 )
 from ._critique import (
+    DFM_WARNING_SEVERITIES,
     MAX_INTERFERENCE_PAIRS,
     RequestNumber,
     critique_block,
+    dfm_report,
     intentional_overlap_declarations,
     interference_report,
     manifold_report,
@@ -80,7 +91,20 @@ from ._critique import (
     prompt_number_diff,
     request_numbers,
 )
-from ._exports import EXPORT_FORMATS, ExportOps, ensure_exports_table
+from ._dfm import DfmOps, DfmTarget, script_metadata
+from ._doc import DOC_KINDS, BomRow, DocOps, assembly_steps, fabrication_verb
+from ._drawing import (
+    DRAWING_KINDS,
+    SHEET_SIZES,
+    TITLE_BLOCK_FIELDS,
+    Dimension,
+    DrawingOps,
+    Sheet,
+    dimension_text,
+    principal_dimensions,
+    solid_labels,
+)
+from ._exports import EXPORT_FORMATS, ExportOps, ExportOutput, ensure_exports_table
 from ._gate import (
     CLARIFICATION_MAX_OPTIONS,
     CLARIFICATION_MIN_OPTIONS,
@@ -121,6 +145,9 @@ __all__ = [
     "CHECK_TEMPLATE_HEADER",
     "CLARIFICATION_MAX_OPTIONS",
     "CLARIFICATION_MIN_OPTIONS",
+    "DFM_WARNING_SEVERITIES",
+    "DOC_KINDS",
+    "DRAWING_KINDS",
     "EXPORT_FORMATS",
     "INVALID_QUESTION_CODE",
     "MATERIAL_CLASSES",
@@ -131,12 +158,21 @@ __all__ = [
     "REQUIREMENT_ARTIFACT_KIND",
     "REQUIREMENT_ID_PATTERN",
     "REQUIREMENT_SOURCES",
+    "SHEET_SIZES",
     "SYNC_PART",
     "TEXT_ARTIFACT_MIME",
+    "TITLE_BLOCK_FIELDS",
+    "BomRow",
     "CadOpError",
     "CadOps",
     "ClarificationGate",
     "ClarificationOutcome",
+    "DfmOps",
+    "DfmTarget",
+    "Dimension",
+    "DocOps",
+    "DrawingOps",
+    "ExportOutput",
     "LedgerState",
     "ParamConflict",
     "ParamProbe",
@@ -144,11 +180,16 @@ __all__ = [
     "ParamStore",
     "RequestNumber",
     "RequirementEntry",
+    "Sheet",
     "answer_text",
+    "assembly_steps",
     "check_template",
     "clarification_gate",
     "critique_block",
+    "dfm_report",
+    "dimension_text",
     "entry_views",
+    "fabrication_verb",
     "intentional_overlap_declarations",
     "interference_report",
     "invalid_question_result",
@@ -160,6 +201,7 @@ __all__ = [
     "option_consequence",
     "option_label",
     "params_pointer",
+    "principal_dimensions",
     "prompt_number_diff",
     "question_problems",
     "question_refusal",
@@ -167,10 +209,23 @@ __all__ = [
     "record_clarification_answer",
     "request_numbers",
     "requirement_ids",
+    "script_metadata",
+    "solid_labels",
 ]
 
 
-class CadOps(BuildOps, ParamOps, CheckOps, MeasureOps, ArtifactOps, ExportOps, RequirementOps):
+class CadOps(
+    BuildOps,
+    ParamOps,
+    CheckOps,
+    MeasureOps,
+    ArtifactOps,
+    DrawingOps,
+    DocOps,
+    ExportOps,
+    RequirementOps,
+    DfmOps,
+):
     """Core-backed operations for one project's layout, opstore and backend."""
 
     def __init__(

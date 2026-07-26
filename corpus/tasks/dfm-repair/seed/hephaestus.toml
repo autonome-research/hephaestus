@@ -1,0 +1,4 @@
+# dfm-repair bench task: a laser-cut sheet project whose vent panel cannot be cut.
+[project]
+name = "ventpanel"
+description = "Laser-cut vent panel for a fan shroud"
