@@ -3,7 +3,7 @@
 Gate clause: *"Tests use a scripted fake model to drive every generated Pi custom
 tool through the real Node/Python bridge, including images, ``ask_user`` …"*.
 
-One orchestrator session, one prompt, one chain of 27 turns — every tool in
+One orchestrator session, one prompt, one chain of 30 turns — every tool in
 ``tools_decl`` is called exactly once, in a dependency-respecting order, with the
 arguments built from the *previous* tool's real result (hashes, refs, ids). The
 model never sees a stub: each call travels model -> Pi loop -> ToolProxy (TypeBox
@@ -110,6 +110,37 @@ def _steps() -> list[Step]:
                 "old_str": "PARAMS = {}",
                 "new_str": "PARAMS = {}\n\nSHELF_W = 100.0",
             },
+        ),
+        # -- requirement ledger (VALIDATION.md §2, before any geometry) ------
+        (
+            "record_requirements",
+            lambda seen: {
+                "entries": [
+                    {
+                        "id": "R1",
+                        "text": "widget is 40 mm wide in X",
+                        "source": "specified",
+                        "quote": "exercise the whole tool surface",
+                        "value": 40.0,
+                        "unit": "mm",
+                        "applies_to": "widget",
+                    },
+                    {
+                        "id": "R2",
+                        "text": "widget stays at least 10 mm wide",
+                        "source": "derived",
+                        "from": ["R1"],
+                        "value": 10.0,
+                        "unit": "mm",
+                        "applies_to": "widget",
+                    },
+                ]
+            },
+        ),
+        ("read_requirements", lambda seen: {}),
+        (
+            "update_requirement",
+            lambda seen: {"id": "R1", "value": 44.0, "text": "widget is 44 mm wide in X"},
         ),
         # -- parameters + geometry -----------------------------------------
         (
@@ -283,6 +314,20 @@ def test_every_generated_tool_flows_through_the_real_bridge(surface: G2Harness) 
     assert "(edited)" in script_path.read_text(encoding="utf-8")
     assert seen["edit_globals"]["status"] == "applied"
     assert "SHELF_W" in (surface.project_root / "globals.py").read_text(encoding="utf-8")
+
+    # -- requirement ledger: immutable generations, no open assumptions ------
+    recorded = cast("dict[str, Any]", seen["record_requirements"])
+    assert recorded["status"] == "ok" and recorded["generation"] == 1
+    assert recorded["artifact_ref"].startswith("artifact:requirements:")
+    assert [entry["id"] for entry in cast("list[Any]", recorded["entries"])] == ["R1", "R2"]
+    read_back = cast("dict[str, Any]", seen["read_requirements"])
+    assert read_back["artifact_ref"] == recorded["artifact_ref"]
+    updated = cast("dict[str, Any]", seen["update_requirement"])
+    assert updated["generation"] == 2
+    assert updated["artifact_ref"] != recorded["artifact_ref"]
+    assert cast("list[Any]", updated["entries"])[0]["value"] == 44.0
+    # Nothing here is an assumption, so the §3 gate has nothing to block on.
+    assert updated["unresolved_material"] == []
 
     # -- parameters + geometry ---------------------------------------------
     assert seen["set_params"]["effective"]["width"] == 44.0

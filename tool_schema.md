@@ -207,9 +207,76 @@ for publication. Publication revalidates persisted/source hashes so failed,
 preview, or raced results remain non-current evidence and never clear stale
 state. The trusted build invocation id freezes the initial snapshot and cached
 outcome, so a retry cannot silently build newer live inputs.
+Before any geometry runs, the **clarification gate** (`VALIDATION.md` §3) reads
+the requirement ledger and refuses the build while any entry is `assumed`,
+material, and unresolved. The refusal is a discriminated result, not an error:
+`{status: "clarification_required", generation, entries, unresolved_material,
+message}`, carrying the offending entries so the follow-up `ask_user` can be
+written straight from them. Materiality is decided by the harness, not by the
+model: an entry counts as material when it declares `material: true` **or** when
+its `applies_to`/`text` falls in a §3 material class (envelope dimension,
+datum/origin placement, wall or feature direction, fit class or clearance, joint
+mating direction, unstated thickness). An assumption cannot be tagged
+`material: false` to get past the gate. The refusal claims no idempotency key —
+it did no work — so the same invocation id builds for real once the assumption
+is resolved.
+
 Always re-runs the part's CHECKS and reports them. Observed equivalent:
 `Build cat_step — success`, `Build wood_screw — 438 faces`, and the captured
 failure with last-good stats.
+
+Every **successful** build additionally carries `critique` — see below. It is
+unrequested and unconditional.
+
+### build_part → critique (`VALIDATION.md` §4)
+```
+critique: {
+  interference: {solids, pairs_total, pairs_measured, pairs_capped,
+                 declared_intentional: [str],
+                 overlaps: [{a, b, volume_mm3}], warnings: [W]},
+  manifold:     {available, sealed?, genus?, solids?, warnings: [W]},
+  prompt_number_diff?: {
+      numbers: [{value_mm, unit, text, axis: "x"|"y"|"z"|null,
+                 matched?, compared_to?, dimension_mm?}],
+      dimensions: dict[str, number], warnings: [W]},
+  warnings: [W]   // the flattened union of the three sections
+}
+W = {kind: "interference"|"interference_pairs_capped"|"interference_unavailable"
+          |"not_sealed"|"unmatched_request_number"|"dimension_mismatch",
+     message, ...per-kind evidence}
+```
+The model does not ask for this and cannot turn it off; it is computed by rule
+from the build's own outputs, because a self-authored `CHECKS` block cannot
+catch a misreading of the spec that it encodes.
+
+`interference` measures pairwise overlap volume across the built compound's
+solids on the *published* artifact. A non-zero overlap (above kernel noise) is
+an `interference` warning naming the pair and the volume, **unless** the build
+declared it intentional: `part.feature(<name>).intentional_overlap = True` in
+the script, or a ledger entry with `applies_to: "intentional_overlap"` (or an
+intentional-overlap/press-fit phrase in its `text`/`rationale`). Declarations
+are echoed in `declared_intentional`. The pass is bounded — at most 64 pairs —
+so a many-solid compound cannot eat the 300 s CAD budget; a compound with fewer
+than two solids never reloads its geometry at all, and a bound that bites is
+itself reported (`pairs_capped`, plus an `interference_pairs_capped` warning).
+A compound that could not be enumerated reports `interference_unavailable`
+rather than an implied clean sheet.
+
+`manifold` surfaces the build metrics' `sealed`/`genus`/solid count and warns
+`not_sealed` on non-watertight geometry.
+
+`prompt_number_diff` extracts every number carrying a length unit (mm, cm, m,
+in) from the **original request** and compares it with the built dimensions.
+It is **absent** when the runtime holds no request text — never fabricated.
+A number the request tags with an axis (`40 mm (Y)`, `60 mm in X`, "overall
+height is 40 mm") is compared against the bbox extent on that axis:
+disagreement emits `dimension_mismatch` carrying request value, dimension name
+and dimension value, and — since nothing on that axis then measures the stated
+number — `unmatched_request_number`. An axis-less number is matched against
+every known dimension (bbox extents, tagged edge lengths, `CHECKS` thresholds)
+and emits `unmatched_request_number` when none corresponds. Matching is
+deliberately crude (regex + unit normalization + a 0.5%/0.05 mm tolerance):
+false positives are acceptable, silence on a real mismatch is not.
 
 ### set_params
 ```
@@ -462,6 +529,65 @@ solid_id, topology_index, tag?}`—never a bare mutable mask id. Powers the DFM 
 toggle: when the mode is on, the harness auto-runs this after each successful
 build and injects findings.
 
+## Validation (the requirement ledger — `VALIDATION.md` §2)
+
+### record_requirements / read_requirements / update_requirement
+```
+record_requirements(entries: [{id: str, text: str,
+                     source: "specified"|"derived"|"assumed",
+                     quote: str|null, from: [str], rationale: str|null,
+                     material: bool|null, value: number|null,
+                     unit: str|null, applies_to: str|null}])
+    -> {status: "ok", generation, artifact_ref, entries, unresolved_material}
+read_requirements()
+    -> {status: "ok", generation, artifact_ref, entries, unresolved_material}
+update_requirement(id: str, text: str|null = null,
+                   source: "specified"|"derived"|"assumed"|null = null,
+                   quote: str|null = null, from: [str]|null = null,
+                   rationale: str|null = null, material: bool|null = null,
+                   value: number|null = null, unit: str|null = null,
+                   applies_to: str|null = null)
+    -> {status: "ok", generation, artifact_ref, entries, unresolved_material}
+```
+The ledger makes interpretation an inspectable artifact instead of an implicit
+act. One entry per constraint, emitted **before** any geometry. `source` is
+`specified` (traceable to a phrase of the request — `quote` required and
+checked), `derived` (computed from other entries — `from` lists their ids, and
+every id must resolve), or `assumed` (the model supplied it — `rationale`
+required, and `material: true|false` declares whether it moves geometry).
+Entries failing those obligations are refused with `invalid_requirement` and
+**nothing is written**: the batch is all-or-nothing.
+
+Recording upserts by entry id — a first-seen id appends, a repeated id replaces
+in place — and each write publishes a new immutable generation
+(`artifact:requirements:sha256:…`) naming its parent, CAS-published under the
+project-config lock. Older generations stay readable forever, so a lost-response
+retry of the same invocation id replays exactly the generation its own committed
+write produced. `update_requirement` patches only the fields supplied and
+re-validates the resulting entry.
+
+**`asked` and `resolution` are not the caller's to write.** They record what
+happened when a human was consulted, and the rest of the ladder keys on them: the
+§3 gate opens on them, §5 fails any assumption without a `resolution`, and §8's
+`clarification_rate` counts `asked`. So neither appears in the parameters of
+either write tool, and supplying one anyway — over MCP/REST, which does not
+schema-check — is refused with `invalid_requirement` and nothing is written. They
+are written by exactly one thing: the runtime, applying a real `ask_user` answer
+(see `ask_user`). Re-recording an entry carries them across untouched, so an
+upsert can neither forge nor erase them. Their presence on an entry is therefore
+*evidence that a user was asked*, not a claim the run can make about itself.
+
+`unresolved_material` lists the entries with `source: "assumed"`,
+`material: true` and no recorded `resolution`. That set is the ledger's
+contract with the rest of the ladder: it is what the termination reviewer treats
+as fail-unless-confirmed and what a green termination may never contain. (The
+clarification gate refuses `build_part` on a *wider* set, classified by the
+harness rather than declared by the model, and it clears on the question having
+been asked rather than answered — see `build_part`.) `heph lint` reads the same
+ledger: a `CHECKS` numeric literal citing no entry id is `unsourced_constant`,
+and a `specified` entry whose `quote` is not in the request is
+`unsourced_requirement`.
+
 ## Knowledge and registries
 
 ### load_skill
@@ -563,11 +689,38 @@ tool; its bounded fanout is clamped to available child-admission capacity.
 
 ### ask_user
 ```
-ask_user(question: str, options: list[str], allow_free_text: bool = true,
-         multi: bool = false) -> {selection}
+ask_user(question: str, options: list[str | {label: str, consequence: str}],
+         allow_free_text: bool = true, multi: bool = false,
+         requirement_ids: [str] = [])
+    -> {selection, recorded?}
+     | {status: "invalid_question", code: "clarification_question_shape",
+        message, problems: [str]}
 ```
 Structured question; suspends the loop until answered. Observed equivalent:
 `Ask question (4)` with the honeycomb-direction fork.
+
+`requirement_ids` makes the question a **clarification** of those requirement
+ledger entries (`VALIDATION.md` §3), and that turns two rules on, both
+structural:
+
+*The question must be concrete.* It must offer 2–4 options, and every option
+must state **the geometric consequence of choosing it** — the
+`{label, consequence}` form. A clarification that does not is refused with
+`status: "invalid_question"` and its `problems` list *before any human is
+asked*; "what did you mean?" about a material assumption is unaskable, not
+discouraged. Ordinary (non-clarification) questions keep the plain string
+options.
+
+*The answer is recorded by the runtime, not by the model.* Each named entry is
+patched from the selection: a committal answer lands as `resolution` (which
+clears the entry from `unresolved_material` and unblocks `build_part`), while a
+declined or non-committal answer — the bench answerer's "unspecified — use your
+engineering judgment" is exactly this — records only `asked: true` and **leaves
+the entry assumed**, so §5 review still sees an unconfirmed assumption that can
+never terminate green. `recorded` reports what happened per id. Nothing here
+depends on the model choosing to call `update_requirement` afterwards, and
+nothing here is reachable that way: both fields are refused on model-facing
+ledger writes, which is what makes a recorded answer evidence.
 
 ## Output
 

@@ -20,31 +20,394 @@
     "type": "object"
   },
   "result": {
-    "additionalProperties": true,
-    "properties": {
-      "artifact_ref": {
-        "type": "string"
-      },
-      "current": {
-        "type": "boolean"
-      },
-      "effective_params": {
+    "oneOf": [
+      {
+        "additionalProperties": true,
+        "properties": {
+          "artifact_ref": {
+            "type": "string"
+          },
+          "critique": {
+            "additionalProperties": true,
+            "properties": {
+              "interference": {
+                "additionalProperties": true,
+                "properties": {
+                  "declared_intentional": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "overlaps": {
+                    "items": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "a": {
+                          "type": "string"
+                        },
+                        "b": {
+                          "type": "string"
+                        },
+                        "volume_mm3": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "a",
+                        "b"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "pairs_capped": {
+                    "type": "boolean"
+                  },
+                  "pairs_measured": {
+                    "type": "integer"
+                  },
+                  "pairs_total": {
+                    "type": "integer"
+                  },
+                  "solids": {
+                    "type": "integer"
+                  },
+                  "warnings": {
+                    "items": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "kind": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "solids",
+                  "pairs_total",
+                  "pairs_measured",
+                  "pairs_capped",
+                  "warnings"
+                ],
+                "type": "object"
+              },
+              "manifold": {
+                "additionalProperties": true,
+                "properties": {
+                  "available": {
+                    "type": "boolean"
+                  },
+                  "genus": {
+                    "type": "integer"
+                  },
+                  "sealed": {
+                    "type": "boolean"
+                  },
+                  "solids": {
+                    "type": "integer"
+                  },
+                  "warnings": {
+                    "items": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "kind": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "available",
+                  "warnings"
+                ],
+                "type": "object"
+              },
+              "prompt_number_diff": {
+                "additionalProperties": true,
+                "properties": {
+                  "dimensions": {
+                    "additionalProperties": {
+                      "type": "number"
+                    },
+                    "type": "object"
+                  },
+                  "numbers": {
+                    "items": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "axis": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "compared_to": {
+                          "type": "string"
+                        },
+                        "dimension_mm": {
+                          "type": "number"
+                        },
+                        "matched": {
+                          "type": "boolean"
+                        },
+                        "text": {
+                          "type": "string"
+                        },
+                        "unit": {
+                          "type": "string"
+                        },
+                        "value_mm": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "value_mm",
+                        "unit",
+                        "text",
+                        "axis"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "warnings": {
+                    "items": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "kind": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "numbers",
+                  "dimensions",
+                  "warnings"
+                ],
+                "type": "object"
+              },
+              "warnings": {
+                "items": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "kind": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "interference",
+              "manifold",
+              "warnings"
+            ],
+            "type": "object"
+          },
+          "current": {
+            "type": "boolean"
+          },
+          "effective_params": {
+            "type": "object"
+          },
+          "project_snapshot_ref": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "toolchain_hashes": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "status"
+        ],
         "type": "object"
       },
-      "project_snapshot_ref": {
-        "type": "string"
-      },
-      "status": {
-        "type": "string"
-      },
-      "toolchain_hashes": {
+      {
+        "additionalProperties": true,
+        "properties": {
+          "entries": {
+            "items": {
+              "additionalProperties": true,
+              "properties": {
+                "applies_to": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "asked": {
+                  "type": "boolean"
+                },
+                "from": {
+                  "default": [],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "id": {
+                  "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                  "type": "string"
+                },
+                "material": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "quote": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "rationale": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "resolution": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "source": {
+                  "enum": [
+                    "specified",
+                    "derived",
+                    "assumed"
+                  ],
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "unit": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                }
+              },
+              "required": [
+                "id",
+                "text",
+                "source"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "generation": {
+            "type": "integer"
+          },
+          "message": {
+            "type": "string"
+          },
+          "status": {
+            "const": "clarification_required"
+          },
+          "unresolved_material": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "status",
+          "entries",
+          "message"
+        ],
         "type": "object"
       }
-    },
-    "required": [
-      "status"
-    ],
-    "type": "object"
+    ]
   },
   "title": "build_part",
   "x-hephaestus-tool": {

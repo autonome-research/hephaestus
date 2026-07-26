@@ -27,7 +27,13 @@ __all__ = ["apply_solution", "open_cad", "restore_protected", "seed_project"]
 
 
 def seed_project(task: BenchTask, project_root: Path) -> Path:
-    """Materialize a fresh project for ``task`` at ``project_root``."""
+    """Materialize a fresh project for ``task`` at ``project_root``.
+
+    A **seeded**-spec task (``VALIDATION.md`` §1) additionally installs its own
+    acceptance checks into ``checks/`` — the independent spec the run iterates
+    against. They are protected paths, so the grader restores them before the
+    final build and any edit is scored as spec tampering (§8).
+    """
     project_root.mkdir(parents=True, exist_ok=True)
     if task.seed_dir.is_dir():
         shutil.copytree(task.seed_dir, project_root, dirs_exist_ok=True)
@@ -41,26 +47,26 @@ def seed_project(task: BenchTask, project_root: Path) -> Path:
             "# Project-shared namespace (script contract §4).\nPARAMS = {}\n", encoding="utf-8"
         )
     (project_root / "parts").mkdir(exist_ok=True)
-    (project_root / "checks").mkdir(exist_ok=True)
+    checks_dir = project_root / "checks"
+    checks_dir.mkdir(exist_ok=True)
+    if task.is_seeded:
+        for name, source in task.check_sources().items():
+            (checks_dir / f"{name}.py").write_text(source, encoding="utf-8")
     return project_root
 
 
 def restore_protected(task: BenchTask, project_root: Path) -> list[str]:
-    """Restore the task's protected seed files; returns the paths that changed.
+    """Restore the task's protected files; returns the paths that changed.
 
-    Inspection gauges and broken fixtures are task-owned evidence: grading always
-    measures against the seeded originals, so a run that rewrites a gauge to make
-    itself pass changes nothing.
+    Inspection gauges, broken fixtures and (for a seeded-spec task) the seeded
+    acceptance checks are task-owned evidence: grading always measures against
+    the originals, so a run that rewrites a gauge — or its own spec — to make
+    itself pass changes nothing. The returned list is the spec-tampering
+    evidence §8 scores.
     """
     restored: list[str] = []
-    for rel in task.protected_paths:
-        source = task.seed_dir / rel
-        if not source.is_file():
-            raise FileNotFoundError(
-                f"task {task.id}: protected path {rel!r} is not in {task.seed_dir}"
-            )
+    for rel, original in task.protected_sources().items():
         target = project_root / rel
-        original = source.read_bytes()
         if not target.is_file() or target.read_bytes() != original:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(original)
@@ -89,9 +95,11 @@ def apply_solution(
     ``{"project": {...}, "part": {"<name>": {...}}}`` applied through the real
     ``set_params`` path (that is the whole solution for ``param-retune``).
     """
-    source = solution_dir(task.id, solutions_dir=solutions_dir)
+    # Reference solutions are per *task*, not per spec variant: both splits of a
+    # task are the same design and share one reference implementation.
+    source = solution_dir(task.base_id, solutions_dir=solutions_dir)
     if not source.is_dir():
-        raise FileNotFoundError(f"no reference solution for task {task.id!r} at {source}")
+        raise FileNotFoundError(f"no reference solution for task {task.base_id!r} at {source}")
     applied: dict[str, Any] = {"files": [], "params": {}}
     files = cast("list[str]", applied["files"])
     for item in sorted(source.rglob("*")):

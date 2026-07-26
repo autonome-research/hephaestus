@@ -361,31 +361,394 @@
     {
       "_meta": {
         "hephaestus.dev/result-schema": {
-          "additionalProperties": true,
-          "properties": {
-            "artifact_ref": {
-              "type": "string"
-            },
-            "current": {
-              "type": "boolean"
-            },
-            "effective_params": {
+          "oneOf": [
+            {
+              "additionalProperties": true,
+              "properties": {
+                "artifact_ref": {
+                  "type": "string"
+                },
+                "critique": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "interference": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "declared_intentional": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "overlaps": {
+                          "items": {
+                            "additionalProperties": true,
+                            "properties": {
+                              "a": {
+                                "type": "string"
+                              },
+                              "b": {
+                                "type": "string"
+                              },
+                              "volume_mm3": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "a",
+                              "b"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "pairs_capped": {
+                          "type": "boolean"
+                        },
+                        "pairs_measured": {
+                          "type": "integer"
+                        },
+                        "pairs_total": {
+                          "type": "integer"
+                        },
+                        "solids": {
+                          "type": "integer"
+                        },
+                        "warnings": {
+                          "items": {
+                            "additionalProperties": true,
+                            "properties": {
+                              "kind": {
+                                "type": "string"
+                              },
+                              "message": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "solids",
+                        "pairs_total",
+                        "pairs_measured",
+                        "pairs_capped",
+                        "warnings"
+                      ],
+                      "type": "object"
+                    },
+                    "manifold": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "available": {
+                          "type": "boolean"
+                        },
+                        "genus": {
+                          "type": "integer"
+                        },
+                        "sealed": {
+                          "type": "boolean"
+                        },
+                        "solids": {
+                          "type": "integer"
+                        },
+                        "warnings": {
+                          "items": {
+                            "additionalProperties": true,
+                            "properties": {
+                              "kind": {
+                                "type": "string"
+                              },
+                              "message": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "available",
+                        "warnings"
+                      ],
+                      "type": "object"
+                    },
+                    "prompt_number_diff": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "dimensions": {
+                          "additionalProperties": {
+                            "type": "number"
+                          },
+                          "type": "object"
+                        },
+                        "numbers": {
+                          "items": {
+                            "additionalProperties": true,
+                            "properties": {
+                              "axis": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "compared_to": {
+                                "type": "string"
+                              },
+                              "dimension_mm": {
+                                "type": "number"
+                              },
+                              "matched": {
+                                "type": "boolean"
+                              },
+                              "text": {
+                                "type": "string"
+                              },
+                              "unit": {
+                                "type": "string"
+                              },
+                              "value_mm": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "value_mm",
+                              "unit",
+                              "text",
+                              "axis"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "warnings": {
+                          "items": {
+                            "additionalProperties": true,
+                            "properties": {
+                              "kind": {
+                                "type": "string"
+                              },
+                              "message": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "numbers",
+                        "dimensions",
+                        "warnings"
+                      ],
+                      "type": "object"
+                    },
+                    "warnings": {
+                      "items": {
+                        "additionalProperties": true,
+                        "properties": {
+                          "kind": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kind"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "interference",
+                    "manifold",
+                    "warnings"
+                  ],
+                  "type": "object"
+                },
+                "current": {
+                  "type": "boolean"
+                },
+                "effective_params": {
+                  "type": "object"
+                },
+                "project_snapshot_ref": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "toolchain_hashes": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "status"
+              ],
               "type": "object"
             },
-            "project_snapshot_ref": {
-              "type": "string"
-            },
-            "status": {
-              "type": "string"
-            },
-            "toolchain_hashes": {
+            {
+              "additionalProperties": true,
+              "properties": {
+                "entries": {
+                  "items": {
+                    "additionalProperties": true,
+                    "properties": {
+                      "applies_to": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "asked": {
+                        "type": "boolean"
+                      },
+                      "from": {
+                        "default": [],
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "id": {
+                        "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                        "type": "string"
+                      },
+                      "material": {
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "quote": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "rationale": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "resolution": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "source": {
+                        "enum": [
+                          "specified",
+                          "derived",
+                          "assumed"
+                        ],
+                        "type": "string"
+                      },
+                      "text": {
+                        "type": "string"
+                      },
+                      "unit": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "text",
+                      "source"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "generation": {
+                  "type": "integer"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "status": {
+                  "const": "clarification_required"
+                },
+                "unresolved_material": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "status",
+                "entries",
+                "message"
+              ],
               "type": "object"
             }
-          },
-          "required": [
-            "status"
-          ],
-          "type": "object"
+          ]
         },
         "hephaestus.dev/tool": {
           "idempotent": true,
@@ -1244,7 +1607,8 @@
           "profiles": [
             "part",
             "orchestrator",
-            "quick_edit"
+            "quick_edit",
+            "reviewer"
           ],
           "sequential": false
         }
@@ -1572,7 +1936,8 @@
           "profiles": [
             "part",
             "orchestrator",
-            "quick_edit"
+            "quick_edit",
+            "reviewer"
           ],
           "sequential": false
         }
@@ -1633,7 +1998,8 @@
           "profiles": [
             "part",
             "orchestrator",
-            "quick_edit"
+            "quick_edit",
+            "reviewer"
           ],
           "sequential": false
         }
@@ -1892,6 +2258,742 @@
         "type": "object"
       },
       "name": "run_checks"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "entries": {
+              "items": {
+                "additionalProperties": true,
+                "properties": {
+                  "applies_to": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "asked": {
+                    "type": "boolean"
+                  },
+                  "from": {
+                    "default": [],
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "id": {
+                    "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                    "type": "string"
+                  },
+                  "material": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "quote": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "rationale": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "resolution": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "source": {
+                    "enum": [
+                      "specified",
+                      "derived",
+                      "assumed"
+                    ],
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "unit": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "value": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  }
+                },
+                "required": [
+                  "id",
+                  "text",
+                  "source"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "generation": {
+              "type": "integer"
+            },
+            "status": {
+              "const": "ok"
+            },
+            "unresolved_material": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "status",
+            "generation",
+            "artifact_ref",
+            "entries",
+            "unresolved_material"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": true,
+          "maxUtf8Fields": {},
+          "name": "record_requirements",
+          "profiles": [
+            "part",
+            "orchestrator"
+          ],
+          "sequential": true
+        }
+      },
+      "description": "Record requirement-ledger entries (upsert by id); advances one generation.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entries": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "applies_to": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "from": {
+                  "default": [],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "id": {
+                  "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                  "type": "string"
+                },
+                "material": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "quote": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "rationale": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "source": {
+                  "enum": [
+                    "specified",
+                    "derived",
+                    "assumed"
+                  ],
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "unit": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                }
+              },
+              "required": [
+                "id",
+                "text",
+                "source"
+              ],
+              "type": "object"
+            },
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "entries"
+        ],
+        "type": "object"
+      },
+      "name": "record_requirements"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "entries": {
+              "items": {
+                "additionalProperties": true,
+                "properties": {
+                  "applies_to": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "asked": {
+                    "type": "boolean"
+                  },
+                  "from": {
+                    "default": [],
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "id": {
+                    "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                    "type": "string"
+                  },
+                  "material": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "quote": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "rationale": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "resolution": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "source": {
+                    "enum": [
+                      "specified",
+                      "derived",
+                      "assumed"
+                    ],
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "unit": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "value": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  }
+                },
+                "required": [
+                  "id",
+                  "text",
+                  "source"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "generation": {
+              "type": "integer"
+            },
+            "status": {
+              "const": "ok"
+            },
+            "unresolved_material": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "status",
+            "generation",
+            "artifact_ref",
+            "entries",
+            "unresolved_material"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": false,
+          "maxUtf8Fields": {},
+          "name": "read_requirements",
+          "profiles": [
+            "part",
+            "orchestrator"
+          ],
+          "sequential": false
+        }
+      },
+      "description": "Read the current requirement ledger generation and its open assumptions.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "name": "read_requirements"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "entries": {
+              "items": {
+                "additionalProperties": true,
+                "properties": {
+                  "applies_to": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "asked": {
+                    "type": "boolean"
+                  },
+                  "from": {
+                    "default": [],
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "id": {
+                    "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                    "type": "string"
+                  },
+                  "material": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "quote": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "rationale": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "resolution": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "source": {
+                    "enum": [
+                      "specified",
+                      "derived",
+                      "assumed"
+                    ],
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "unit": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "value": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  }
+                },
+                "required": [
+                  "id",
+                  "text",
+                  "source"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "generation": {
+              "type": "integer"
+            },
+            "status": {
+              "const": "ok"
+            },
+            "unresolved_material": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "status",
+            "generation",
+            "artifact_ref",
+            "entries",
+            "unresolved_material"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": true,
+          "maxUtf8Fields": {},
+          "name": "update_requirement",
+          "profiles": [
+            "part",
+            "orchestrator"
+          ],
+          "sequential": true
+        }
+      },
+      "description": "Patch one ledger entry (text, material flag, value, unit); one generation.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "applies_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "from": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "id": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+            "type": "string"
+          },
+          "material": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "quote": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "specified",
+                  "derived",
+                  "assumed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "update_requirement"
     },
     {
       "_meta": {
@@ -2566,14 +3668,48 @@
     {
       "_meta": {
         "hephaestus.dev/result-schema": {
-          "additionalProperties": true,
-          "properties": {
-            "selection": {}
-          },
-          "required": [
-            "selection"
-          ],
-          "type": "object"
+          "oneOf": [
+            {
+              "additionalProperties": true,
+              "properties": {
+                "recorded": {
+                  "type": "array"
+                },
+                "selection": {}
+              },
+              "required": [
+                "selection"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": true,
+              "properties": {
+                "code": {
+                  "const": "clarification_question_shape"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "problems": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "status": {
+                  "const": "invalid_question"
+                }
+              },
+              "required": [
+                "status",
+                "code",
+                "message",
+                "problems"
+              ],
+              "type": "object"
+            }
+          ]
         },
         "hephaestus.dev/tool": {
           "idempotent": false,
@@ -2601,12 +3737,40 @@
           },
           "options": {
             "items": {
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "consequence": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "label",
+                    "consequence"
+                  ],
+                  "type": "object"
+                }
+              ]
             },
             "type": "array"
           },
           "question": {
             "type": "string"
+          },
+          "requirement_ids": {
+            "default": [],
+            "items": {
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+              "type": "string"
+            },
+            "type": "array"
           }
         },
         "required": [

@@ -45,12 +45,14 @@ __all__ = [
 
 
 class SessionProfile(enum.StrEnum):
-    """The four session profiles (arch §4.1/§4.2/§4.4)."""
+    """The session profiles (arch §4.1/§4.2/§4.4, VALIDATION.md §5)."""
 
     PART = "part"
     ORCHESTRATOR = "orchestrator"
     QUICK_EDIT = "quick_edit"
     QUERY_SNAPSHOT = "query_snapshot"
+    #: The independent termination reviewer: ephemeral, read-only, own budget.
+    REVIEWER = "reviewer"
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,7 +62,8 @@ class ProfileSpec:
     ``tools_profile`` names the generated tool-availability profile the sidecar's
     registry uses (``orchestrator`` gets delegation + project-check + globals
     tools; ``part``/``quick_edit`` are single-part scoped; ``query_snapshot`` gets
-    an **empty** allowlist). ``persistent`` marks whether the Pi JSONL is kept.
+    an **empty** allowlist; ``reviewer`` gets the read-only measurement/render
+    subset). ``persistent`` marks whether the Pi JSONL is kept.
     """
 
     profile: SessionProfile
@@ -81,6 +84,9 @@ _SPECS: dict[SessionProfile, ProfileSpec] = {
     ),
     SessionProfile.QUERY_SNAPSHOT: ProfileSpec(
         SessionProfile.QUERY_SNAPSHOT, None, persistent=False, can_delegate=False
+    ),
+    SessionProfile.REVIEWER: ProfileSpec(
+        SessionProfile.REVIEWER, "reviewer", persistent=False, can_delegate=False
     ),
 }
 

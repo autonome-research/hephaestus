@@ -31,6 +31,7 @@ import {
   LimitError,
 } from "../limits.js";
 import { TOOLS } from "./schema.gen.js";
+import { clarificationRefusal } from "./clarify.js";
 import type { TrustedInvocation } from "./invocation.js";
 
 /** Minimal bridge request surface (RpcPeer.request); rejects with RpcError. */
@@ -275,6 +276,16 @@ export class ToolProxy {
       }
     }
 
+    // 3b. VALIDATION.md §3 question shaping: a question raised against ledger
+    //     requirement ids is a clarification and must offer 2-4 concrete options
+    //     that each state their geometric consequence. A malformed one is
+    //     refused HERE — no human is disturbed by "what did you mean?" — as a
+    //     discriminated result the model corrects and re-asks.
+    if (toolName === "ask_user") {
+      const refusal = clarificationRefusal(args);
+      if (refusal !== undefined) return this.render(toolName, refusal);
+    }
+
     // 4. Dispatch across the bridge.
     let result: JsonValue;
     try {
@@ -326,6 +337,9 @@ export class ToolProxy {
       };
       if (args.allow_free_text !== undefined) params.allow_free_text = args.allow_free_text;
       if (args.multi !== undefined) params.multi = args.multi;
+      // The ledger ids travel with the question so the runtime — not the model —
+      // records the answer against them (VALIDATION.md §3).
+      if (args.requirement_ids !== undefined) params.requirement_ids = args.requirement_ids;
       return ["py.ask_user", params];
     }
     return [

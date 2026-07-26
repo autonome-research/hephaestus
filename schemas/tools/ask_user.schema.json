@@ -15,12 +15,40 @@
       },
       "options": {
         "items": {
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "consequence": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "label",
+                "consequence"
+              ],
+              "type": "object"
+            }
+          ]
         },
         "type": "array"
       },
       "question": {
         "type": "string"
+      },
+      "requirement_ids": {
+        "default": [],
+        "items": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+          "type": "string"
+        },
+        "type": "array"
       }
     },
     "required": [
@@ -30,14 +58,48 @@
     "type": "object"
   },
   "result": {
-    "additionalProperties": true,
-    "properties": {
-      "selection": {}
-    },
-    "required": [
-      "selection"
-    ],
-    "type": "object"
+    "oneOf": [
+      {
+        "additionalProperties": true,
+        "properties": {
+          "recorded": {
+            "type": "array"
+          },
+          "selection": {}
+        },
+        "required": [
+          "selection"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": true,
+        "properties": {
+          "code": {
+            "const": "clarification_question_shape"
+          },
+          "message": {
+            "type": "string"
+          },
+          "problems": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "status": {
+            "const": "invalid_question"
+          }
+        },
+        "required": [
+          "status",
+          "code",
+          "message",
+          "problems"
+        ],
+        "type": "object"
+      }
+    ]
   },
   "title": "ask_user",
   "x-hephaestus-tool": {

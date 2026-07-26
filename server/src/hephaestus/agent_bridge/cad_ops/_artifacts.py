@@ -45,6 +45,8 @@ TEXT_ARTIFACT_MIME: Final[dict[str, str]] = {
     "snapshot-issues": "application/json",
     "build-result": "application/json",
     "check-report": "application/json",
+    # One immutable requirement-ledger generation (VALIDATION.md §2).
+    "requirements": "application/json",
 }
 
 

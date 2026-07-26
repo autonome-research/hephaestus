@@ -43,14 +43,33 @@ target-version = "py311"
 # spikes/ is frozen Stage S evidence; corpus/ and registries/ hold part
 # scripts written against the executor's injected namespace, not importable
 # Python modules. tests/stage3/fixtures/ is recorded session evidence in the
-# same category: verbatim model-authored part scripts, not project source.
-extend-exclude = ["spikes", "corpus", "registries", "tests/stage3/fixtures", "*.md"]
+# same category: verbatim model-authored part scripts, not project source, as is
+# server/tests/fixtures/ (the recorded bracket-101 seed-2 failure the Stage 2V
+# critique tests assert over — reformatting it would edit the evidence).
+extend-exclude = [
+    "spikes",
+    "corpus",
+    "registries",
+    "tests/stage3/fixtures",
+    "server/tests/fixtures",
+    "*.md",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.pyright]
 include = ["opstore", "core", "server"]
+# server/tests/fixtures/ is recorded model-authored part-script evidence written
+# against the executor's injected namespace, not importable project source (same
+# category as tests/stage3/fixtures/, which pyright never sees because it is
+# outside `include`).
+exclude = [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.*",
+    "server/tests/fixtures",
+]
 typeCheckingMode = "strict"
 pythonVersion = "3.13"
 

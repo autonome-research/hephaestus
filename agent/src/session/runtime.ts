@@ -30,15 +30,6 @@ export interface ProviderModelSpec {
   readonly maxTokens: number;
   readonly input?: readonly ("text" | "image")[];
   readonly reasoning?: boolean;
-  /**
-   * Whether the endpoint understands OpenAI strict tool schemas. Defaults to
-   * `false`, which makes Pi omit the `strict` field entirely — the only shape
-   * self-hosted vLLM answers with tool calls. Set `true` only for an endpoint
-   * proven to honour strict mode.
-   */
-  readonly supportsStrictMode?: boolean;
-  /** Escape hatch for any other Pi model-compat flag. */
-  readonly compat?: Readonly<Record<string, unknown>>;
 }
 
 export interface ProviderSpec {
@@ -114,14 +105,6 @@ function registerProvider(runtime: ModelRuntime, provider: ProviderSpec, apiKey:
     cost: { ...ZERO_COST },
     contextWindow: m.contextWindow,
     maxTokens: m.maxTokens,
-    // Pi's openai-completions adapter attaches `strict: false` to every tool
-    // unless the model declares `supportsStrictMode: false`, in which case it
-    // omits the field. Self-hosted OpenAI-compatible servers (vLLM) read an
-    // explicit `strict: false` as "disable structured tool-call decoding" and
-    // then answer with prose instead of tool calls — measured 0/4 with the
-    // flag versus 4/4 without it on vLLM + Qwen3.6. Omitting it is also what
-    // stock OpenAI sees by default, so this costs nothing on hosted providers.
-    compat: { ...(m.compat ?? {}), supportsStrictMode: m.supportsStrictMode ?? false },
   }));
   const base = { name: provider.name ?? provider.id, apiKey, api: apiForKind(provider.kind), models };
   const providerConfig =

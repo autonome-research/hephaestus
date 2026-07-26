@@ -926,6 +926,19 @@ def _minimal_args(tool: str) -> dict[str, Any]:
         },
         "measure": {"kind": "bbox", "a": "part", "part": "widget"},
         "run_checks": {"name": "widget"},
+        "record_requirements": {
+            "entries": [
+                {
+                    "id": "R1",
+                    "text": "t",
+                    "source": "assumed",
+                    "rationale": "r",
+                    "material": False,
+                }
+            ]
+        },
+        "read_requirements": {},
+        "update_requirement": {"id": "R1", "value": 1.0},
         "read_artifact": {"ref": "artifact:build:sha256:" + "0" * 64},
         "export_part": {"name": "widget", "format": "step"},
         "query_snapshot": {"name": "widget", "question": "?"},

@@ -1,0 +1,172 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/read_requirements.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Read the current requirement ledger generation and its open assumptions.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {},
+    "required": [],
+    "type": "object"
+  },
+  "result": {
+    "additionalProperties": true,
+    "properties": {
+      "artifact_ref": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "entries": {
+        "items": {
+          "additionalProperties": true,
+          "properties": {
+            "applies_to": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "asked": {
+              "type": "boolean"
+            },
+            "from": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "id": {
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+              "type": "string"
+            },
+            "material": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "quote": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "rationale": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "resolution": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "source": {
+              "enum": [
+                "specified",
+                "derived",
+                "assumed"
+              ],
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "unit": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "required": [
+            "id",
+            "text",
+            "source"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "generation": {
+        "type": "integer"
+      },
+      "status": {
+        "const": "ok"
+      },
+      "unresolved_material": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "status",
+      "generation",
+      "artifact_ref",
+      "entries",
+      "unresolved_material"
+    ],
+    "type": "object"
+  },
+  "title": "read_requirements",
+  "x-hephaestus-tool": {
+    "idempotent": false,
+    "maxUtf8Fields": {},
+    "name": "read_requirements",
+    "profiles": [
+      "part",
+      "orchestrator"
+    ],
+    "sequential": false
+  }
+}

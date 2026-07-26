@@ -4,13 +4,15 @@ Registered exactly like the Stage 1 render verbs (``cli_render.add_subparsers``)
 so the bench stack — provider config, the Node sidecar, the CAD grading path — is
 imported only when a bench verb actually runs.
 
-- ``heph bench run --provider FILE --model ID [--tasks a,b] [--seeds N]
+- ``heph bench run --provider FILE --model ID [--tasks a,b] [--spec S] [--seeds N]
   [--results-dir DIR] [--dry-run] [--json]`` runs the public corpus against the
   model named by ``--model`` (which must be declared by the provider file) and
   archives every run under ``bench/results/<model>/<date>/``. ``--dry-run`` lists
   the planned (task, seed) prompts and makes **no** model call.
 - ``heph bench score DIR [--model ID] [--date D] [--out FILE] [--json]`` scores an
-  archived run directory and writes ``bench/results/<model>/<date>.json``.
+  archived run directory and writes ``bench/results/<model>/<date>.json``, plus
+  the ``VALIDATION.md`` §1 split table (prose and seeded, never averaged; the
+  gate names the prose split) and the §8 validation metrics.
 
 Exit codes: 0 success (for ``score``: the gate is met), 1 error / gate not met,
 2 usage. ``run`` exits 1 when any run failed so CI surfaces a red bench.
@@ -23,10 +25,12 @@ import json
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from hephaestus.bench import scoring
     from hephaestus.bench.harness import RunRecord
+    from hephaestus.bench.metrics import ValidationMetrics
 
 __all__ = ["add_subparsers", "main"]
 
@@ -46,8 +50,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
     task_filter = _tasks_argument(cast("str | None", args.tasks))
     seeds = int(cast("int", args.seeds))
+    # VALIDATION.md §1: the two spec splits are reported and gated separately, so
+    # they must also be *runnable* separately. --tasks names ids outright.
+    spec = str(cast("str", args.spec))
+    specs = harness.SPECS if spec == "all" else (spec,)
     try:
-        tasks = harness.load_tasks(task_filter)
+        tasks = harness.load_tasks(task_filter, specs=specs)
     except (FileNotFoundError, ValueError) as exc:
         print(f"heph bench run: {exc}", file=sys.stderr)
         return 2
@@ -120,18 +128,65 @@ def _cmd_score(args: argparse.Namespace) -> int:
     out = cast("str | None", args.out)
     target = Path(out) if out is not None else directory.parent / f"{score.date}.json"
     scoring.write_score(score, target)
+    # VALIDATION.md §1: the seeded split is baselined on its first measurement and
+    # never re-baselined; writing it is a record, not a gate input.
+    baseline = scoring.record_seeded_baseline(
+        score, directory.parent / scoring.SEEDED_BASELINE_FILENAME
+    )
     if bool(args.json):
         print(json.dumps(score.to_json(), indent=2, sort_keys=True))
     else:
-        print(f"model {score.model} date {score.date}: {score.passes}/{score.n} passed")
-        print(f"aggregate {score.aggregate:.4f}  wilson_lower_90 {score.wilson_lower_90:.4f}")
+        print(f"model {score.model} date {score.date}: {score.passes_total}/{score.n_total} passed")
+        _print_splits(score, baseline)
         for task_id, row in sorted(score.per_task.items()):
             calls = "-" if row.mean_tool_calls is None else f"{row.mean_tool_calls:.1f}"
-            print(f"  {task_id:<18} {row.passes}/{row.n}  mean_tool_calls={calls}")
+            print(f"  {task_id:<24} {row.passes}/{row.n}  mean_tool_calls={calls}")
+        _print_metrics(score.metrics)
         if score.perfect_task_failures:
             print(f"  required-perfect tasks failed: {', '.join(score.perfect_task_failures)}")
         print(f"wrote {target}")
     return 0 if score.meets_gate else 1
+
+
+def _rate(value: float | None) -> str:
+    """Rates that were never measured print as ``-``, never as ``0.000``."""
+    return "-" if value is None else f"{value:.3f}"
+
+
+def _print_splits(score: scoring.BenchScore, baseline: dict[str, Any] | None) -> None:
+    """The §1 split table: the two splits, side by side, never averaged."""
+    from hephaestus.bench.metrics import SPEC_PROSE, SPEC_SEEDED
+
+    print("split      n   passes  pass_rate  wilson_lower_90  threshold")
+    for spec in (SPEC_PROSE, SPEC_SEEDED):
+        row = score.splits[spec]
+        threshold = "-" if row.threshold is None else f"{row.threshold:.2f}"
+        print(
+            f"{spec:<9} {row.n:>3}   {row.passes:>4}      {row.pass_rate:.3f}"
+            f"            {row.wilson_lower_90:.4f}       {threshold}"
+        )
+    print(f"interpretation_gap (seeded - prose): {_rate(score.interpretation_gap)}")
+    print(f"gate: {SPEC_PROSE} split only (the historical baseline)")
+    if baseline is not None:
+        print(
+            f"seeded baseline (first measurement, not a gate): "
+            f"{baseline.get('passes')}/{baseline.get('n')} "
+            f"wilson_lower_90={baseline.get('wilson_lower_90')}"
+        )
+
+
+def _print_metrics(metrics: ValidationMetrics) -> None:
+    """The §8 metric table (``-`` where there is no evidence)."""
+    print("validation metrics (VALIDATION.md §8):")
+    print(f"  error_recovery_rate     {_rate(metrics.error_recovery_rate)}")
+    print(f"  requirement_coverage    {_rate(metrics.requirement_coverage)}")
+    print(f"  clarification_rate      {_rate(metrics.clarification_rate)}")
+    print(
+        f"  review_catch_rate       {_rate(metrics.review_catch_rate)}"
+        f"  (vision {_rate(metrics.review_catch_rate_vision)}"
+        f" / numeric {_rate(metrics.review_catch_rate_numeric)})"
+    )
+    print(f"  spec_tampering_rate     {_rate(metrics.spec_tampering_rate)}")
 
 
 def add_subparsers(
@@ -145,6 +200,12 @@ def add_subparsers(
     run.add_argument("--provider", help="JSON provider config (providers/credentials)")
     run.add_argument("--model", help="model id declared by the provider config")
     run.add_argument("--tasks", help="comma-separated task ids (default: the whole corpus)")
+    run.add_argument(
+        "--spec",
+        choices=["prose", "seeded", "all"],
+        default="all",
+        help="corpus spec split to run (default: both, reported separately)",
+    )
     run.add_argument("--seeds", type=int, default=3, help="seeds per task (default 3)")
     run.add_argument(
         "--parallel",

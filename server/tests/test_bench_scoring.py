@@ -15,17 +15,19 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from hephaestus.bench import cli_bench
-from hephaestus.bench.harness import dry_run, load_tasks, task_ids
+from hephaestus.bench.harness import SEEDED_SUFFIX, dry_run, load_tasks, task_ids
 from hephaestus.bench.scoring import (
     G2_AGGREGATE_THRESHOLD,
     PERFECT_TASKS,
     RUNS_FILENAME,
+    SEEDED_BASELINE_FILENAME,
     Z_LOWER_90,
     load_run_records,
+    record_seeded_baseline,
     score_directory,
     score_records,
     wilson_lower_bound,
@@ -272,3 +274,131 @@ def test_cli_bench_score_writes_the_artifact_and_gates(
 def test_cli_bench_score_rejects_a_missing_directory(capsys: pytest.CaptureFixture[str]) -> None:
     assert cli_bench.main(["bench", "score", "/nonexistent/bench/archive"]) == 2
     assert "is not a directory" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------
+# VALIDATION.md §1: the two splits are scored separately and never averaged
+
+
+def seeded(task_id: str) -> str:
+    return task_id + SEEDED_SUFFIX
+
+
+def test_the_two_splits_are_tallied_separately() -> None:
+    score = score_records(
+        [
+            record("bracket-101", 1, passed=True),
+            record("bracket-101", 2, passed=False),
+            record(seeded("bracket-101"), 1, passed=True),
+            record(seeded("bracket-101"), 2, passed=True),
+        ]
+    )
+    assert (score.prose.n, score.prose.passes) == (2, 1)
+    assert (score.seeded.n, score.seeded.passes) == (2, 2)
+    assert score.pass_rate_prose == pytest.approx(0.5)
+    assert score.pass_rate_seeded == pytest.approx(1.0)
+    assert score.interpretation_gap == pytest.approx(0.5)
+    # The headline numbers are the prose split; the archive total is separate.
+    assert (score.n, score.passes) == (2, 1)
+    assert (score.n_total, score.passes_total) == (4, 3)
+
+
+def test_a_seeded_run_never_moves_the_prose_gate() -> None:
+    """The historical baseline stays comparable: seeding cannot change it."""
+    prose_only = [record("bracket-101", i, passed=i < 18) for i in range(24)]
+    before = score_records(prose_only)
+    after = score_records(
+        [*prose_only, *[record(seeded("bracket-101"), i, passed=True) for i in range(24)]]
+    )
+    assert after.wilson_lower_90 == before.wilson_lower_90
+    assert (after.n, after.passes, after.aggregate) == (before.n, before.passes, before.aggregate)
+    assert after.meets_gate == before.meets_gate
+
+
+def test_the_seeded_split_carries_no_threshold_and_cannot_be_compared() -> None:
+    score = score_records([record(seeded("bracket-101"), i, passed=True) for i in range(3)])
+    assert score.seeded.threshold is None
+    assert score.seeded.meets_threshold is None  # never False: nothing to meet
+    assert score.prose.threshold == G2_AGGREGATE_THRESHOLD
+    # A perfect seeded split with no prose evidence is not a passed gate.
+    assert score.n == 0
+    assert score.meets_gate is False
+    assert score.interpretation_gap is None
+
+
+def test_the_split_pass_rates_are_never_averaged_into_one_number() -> None:
+    score = score_records(
+        [
+            *[record("bracket-101", i, passed=False) for i in range(4)],
+            *[record(seeded("bracket-101"), i, passed=True) for i in range(4)],
+        ]
+    )
+    payload = score.to_json()
+    assert payload["pass_rate_prose"] == 0.0
+    assert payload["pass_rate_seeded"] == 1.0
+    assert payload["gated_split"] == "prose"
+    # The one aggregate that exists is the prose split's, not the mean of the two.
+    assert payload["aggregate"] == 0.0
+    assert payload["interpretation_gap"] == 1.0
+
+
+def test_the_seeded_baseline_is_recorded_once_and_never_re_baselined(tmp_path: Path) -> None:
+    first = score_records([record(seeded("bracket-101"), i, passed=i < 2) for i in range(3)])
+    path = tmp_path / SEEDED_BASELINE_FILENAME
+    baseline = record_seeded_baseline(first, path)
+    assert baseline is not None
+    assert (baseline["n"], baseline["passes"]) == (3, 2)
+    assert baseline["threshold"] is None
+
+    # A later, better measurement does not move the baseline.
+    later = score_records([record(seeded("bracket-101"), i, passed=True) for i in range(3)])
+    assert record_seeded_baseline(later, path) == baseline
+    assert json.loads(path.read_text(encoding="utf-8")) == baseline
+
+
+def test_no_seeded_run_means_no_seeded_baseline(tmp_path: Path) -> None:
+    score = score_records([record("bracket-101", 1, passed=True)])
+    path = tmp_path / SEEDED_BASELINE_FILENAME
+    assert record_seeded_baseline(score, path) is None
+    assert not path.exists()
+
+
+def test_the_score_artifact_carries_the_validation_metric_table() -> None:
+    payload = score_records([record("bracket-101", 1, passed=True)]).to_json()
+    table = cast("dict[str, Any]", payload["metrics"])
+    assert set(table) >= {
+        "error_recovery_rate",
+        "requirement_coverage",
+        "clarification_rate",
+        "review_catch_rate",
+        "review_catch_rate_vision",
+        "review_catch_rate_numeric",
+        "spec_tampering_rate",
+    }
+    # Nothing was measured, so nothing is reported as zero.
+    assert all(table[key] is None for key in table if key.endswith("_rate"))
+    per_split = cast("dict[str, Any]", payload["splits"])
+    assert set(per_split) == {"prose", "seeded"}
+    assert "metrics" in cast("dict[str, Any]", per_split["prose"])
+
+
+def test_cli_bench_score_prints_the_split_table(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    archive = tmp_path / "ref-model" / "2026-07-27"
+    archive.mkdir(parents=True)
+    rows = [
+        *[record("bracket-101", i, passed=True) for i in range(3)],
+        *[record(seeded("bracket-101"), i, passed=False) for i in range(3)],
+    ]
+    (archive / RUNS_FILENAME).write_text(
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows), encoding="utf-8"
+    )
+    cli_bench.main(["bench", "score", str(archive)])
+    out = capsys.readouterr().out
+    assert "prose" in out and "seeded" in out
+    assert "interpretation_gap" in out
+    assert "validation metrics" in out
+    # The baseline artifact is written beside the score, and is not a gate.
+    baseline = json.loads((archive.parent / SEEDED_BASELINE_FILENAME).read_text(encoding="utf-8"))
+    assert baseline["threshold"] is None

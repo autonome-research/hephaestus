@@ -22,7 +22,7 @@ The one thing it *adds* is :class:`G2Runtime`: ``BridgeRuntime`` with the tool
 families Stage 2A left unwired for the runtime slice — registries, delegation
 and the ``query_snapshot`` vision child — plugged in, plus a recorder that
 captures the trusted invocation metadata Python actually received. Gate clauses
-about "every generated tool through the real bridge" need all 27 tools routed,
+about "every generated tool through the real bridge" need all 30 tools routed,
 and clauses about scheduling/idempotency need to observe *what Python saw*.
 """
 

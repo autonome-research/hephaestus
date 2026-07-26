@@ -145,7 +145,8 @@
     "profiles": [
       "part",
       "orchestrator",
-      "quick_edit"
+      "quick_edit",
+      "reviewer"
     ],
     "sequential": false
   }

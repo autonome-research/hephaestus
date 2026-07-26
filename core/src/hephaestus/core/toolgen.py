@@ -142,7 +142,10 @@ def generate_typebox_module() -> str:
     lines.append("// DO NOT EDIT BY HAND — regenerate and commit instead.")
     lines.append('import { Type, type TSchema } from "@sinclair/typebox";')
     lines.append("")
-    lines.append('export type ToolProfile = "part" | "orchestrator" | "quick_edit";')
+    # The union is generated from PROFILES so a new profile (e.g. the §5
+    # reviewer) cannot exist on one side of the language boundary only.
+    profile_union = " | ".join(json.dumps(p) for p in tools_decl.PROFILES)
+    lines.append(f"export type ToolProfile = {profile_union};")
     lines.append("")
     lines.append("export interface ToolMeta {")
     lines.append("  readonly name: string;")

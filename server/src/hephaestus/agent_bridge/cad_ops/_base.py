@@ -267,10 +267,30 @@ class CadOpsState:
         # production wiring passes a probed secure backend.
         self._backend: ExecBackend = backend or UnsafeLocalBackend()
         self.params = ParamStore(layout, store)
+        self._request_text: str | None = None
 
     @property
     def layout(self) -> ProjectLayout:
         return self._layout
+
+    # -- the original request (VALIDATION.md §4 / §5) -----------------------
+
+    @property
+    def request_text(self) -> str | None:
+        """The request this project is working from, or None when unknown.
+
+        ``VALIDATION.md`` §4 diffs the numbers in the request against the built
+        geometry, and §5 hands the reviewer the request verbatim; both need the
+        text to reach the ops layer, which the bridge does by binding it on the
+        run's prompt. Unknown is a first-class state: a critique with no request
+        **omits** ``prompt_number_diff`` rather than inventing one.
+        """
+        return self._request_text
+
+    def set_request_text(self, text: str | None) -> None:
+        """Bind the request text (the latest user turn is the live request)."""
+        cleaned = text.strip() if text is not None else None
+        self._request_text = cleaned or None
 
     def _publisher(self) -> Publisher:
         return Publisher(self._layout, self._store)

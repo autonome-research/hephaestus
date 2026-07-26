@@ -36,10 +36,11 @@ from typing import Any, cast
 
 import pytest
 from hephaestus.agent_bridge.app import BridgeRuntime, repo_root
-from hephaestus.bench import harness
+from hephaestus.bench import harness, metrics
 from hephaestus.bench.harness import (
     ARCHIVE_EVENTS_FILENAME,
     ARCHIVE_RESULT_FILENAME,
+    BENCH_ANSWER,
     BenchTask,
     ProviderConfig,
     RunRecord,
@@ -106,10 +107,18 @@ def test_provider_config_model_slug_is_filesystem_safe() -> None:
     assert config.model_slug == "vendor-model-2026-07"
 
 
-def test_bench_answerer_never_hangs_a_run() -> None:
-    assert bench_answerer({"options": ["yes", "no"]}) == "yes"
-    assert isinstance(bench_answerer({"options": []}), str)
-    assert isinstance(bench_answerer({}), str)
+def test_bench_answerer_never_hangs_a_run_and_never_disambiguates() -> None:
+    """``VALIDATION.md`` §7: the same non-committal sentence, whatever is asked.
+
+    It still cannot hang a run (an answer always comes back), but it no longer
+    picks an option: answering helpfully would do the disambiguation production
+    ``ask_user`` exists to obtain, which deletes the mechanism under test. The
+    ledger consequence (``asked`` recorded, entry left ``assumed``) is asserted in
+    ``test_bench_validation_metrics``.
+    """
+    assert bench_answerer({"options": ["yes", "no"]}) == BENCH_ANSWER
+    assert bench_answerer({"options": []}) == BENCH_ANSWER
+    assert bench_answerer({}) == BENCH_ANSWER
 
 
 def test_validate_export_bytes_rejects_malformed_payloads() -> None:
@@ -367,6 +376,89 @@ def test_bench_run_repair_fillet_with_a_scripted_model(
     assert cast("list[Any]", grade["exports"]) == []
     assert cast("dict[str, Any]", grade["builds"])["plate"]["status"] == "ok"
     assert_archived(archive / "repair-fillet-s2", run)
+
+
+def test_a_review_hook_outcome_is_archived_and_scored(
+    tmp_path: Path,
+    fake_model: FakeOpenAI,
+    provider: ProviderConfig,
+    runtime_factory: harness.RuntimeFactory,
+) -> None:
+    """``VALIDATION.md`` §5/§6: a review outcome enters the archive, and §8 reads it.
+
+    The ladder itself is exercised in ``tests/stage2v``; what is pinned here is
+    the harness contract — the hook runs at the stop state, its outcome lands in
+    ``review.json`` *and* in the run record, and the §8 metrics that need a review
+    are computed from it rather than from anything the model said.
+    """
+    (task,) = load_tasks(["repair-fillet"])
+    repair_script(fake_model)
+    archive = tmp_path / "results" / provider.model_slug / "2026-07-24"
+    seen: list[str] = []
+
+    def review(context: harness.RunContext) -> dict[str, Any]:
+        seen.append(context.session_id)
+        assert context.run_id, "the hook needs the run id the ladder reviews under"
+        return {
+            "terminal": {"status": "unresolved_requirements", "cycles": 1},
+            "cycles": [
+                {
+                    "cycle": 1,
+                    "findings": [
+                        {"id": "R1", "verdict": "fail", "evidence": "46 mm", "channel": "numeric"},
+                        {"id": "R2", "verdict": "pass", "evidence": "seen", "channel": "vision"},
+                    ],
+                }
+            ],
+        }
+
+    run = harness.run_task(
+        task,
+        4,
+        provider=provider,
+        archive_dir=archive,
+        runtime_factory=runtime_factory,
+        review=review,
+        prompt_timeout=PROMPT_TIMEOUT,
+        date="2026-07-24",
+    )
+
+    assert seen == [run.session_id]
+    run_dir = archive / "repair-fillet-s4"
+    archived = cast(
+        "dict[str, Any]", json.loads((run_dir / "review.json").read_text(encoding="utf-8"))
+    )
+    assert archived == run.review
+    measured = metrics.run_metrics(run.to_json(), archive_dir=run_dir)
+    assert measured.reviewed is True
+    assert (measured.caught_failures, measured.caught_numeric) == (1, 1)
+    assert measured.reviewed_requirements == 2
+
+
+def test_a_failing_review_hook_never_fails_the_run(
+    tmp_path: Path,
+    fake_model: FakeOpenAI,
+    provider: ProviderConfig,
+    runtime_factory: harness.RuntimeFactory,
+) -> None:
+    (task,) = load_tasks(["repair-fillet"])
+    repair_script(fake_model)
+
+    def review(context: harness.RunContext) -> dict[str, Any]:
+        raise RuntimeError("reviewer child exploded")
+
+    run = harness.run_task(
+        task,
+        5,
+        provider=provider,
+        archive_dir=tmp_path / "results",
+        runtime_factory=runtime_factory,
+        review=review,
+        prompt_timeout=PROMPT_TIMEOUT,
+    )
+    assert run.passed, run.reasons
+    assert run.error is None
+    assert cast("dict[str, Any]", run.review)["error"].startswith("RuntimeError")
 
 
 def test_budget_exceeded_cancels_the_run_and_cannot_pass(

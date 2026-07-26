@@ -68,7 +68,7 @@ from hephaestus.core.tools_decl import (
 )
 from opstore.types import TerminalState
 
-from .cad_ops import CadOpError, CadOps, ParamConflict, check_template
+from .cad_ops import CadOpError, CadOps, ParamConflict, check_template, clarification_gate
 from .delegation import (
     DEADLINE_DEFAULT_S,
     DelegationError,
@@ -96,6 +96,7 @@ __all__ = [
     "MUTATION_TOOLS",
     "NOT_IMPLEMENTED_TOOLS",
     "REGISTRY_TOOLS",
+    "REVIEWER_PROFILE",
     "STORE_TOOLS",
     "DelegationRunner",
     "DispatchError",
@@ -103,6 +104,9 @@ __all__ = [
     "Principal",
     "ToolDispatcher",
 ]
+
+#: The VALIDATION.md §5 termination-review profile: project-wide reads only.
+REVIEWER_PROFILE: str = "reviewer"
 
 #: Tools whose result never re-does work: idempotency-contract members.
 MUTATION_TOOLS: frozenset[str] = frozenset(
@@ -137,6 +141,9 @@ CAD_TOOLS: frozenset[str] = frozenset(
         "edit_project_check",
         "measure",
         "run_checks",
+        "record_requirements",
+        "read_requirements",
+        "update_requirement",
         "read_artifact",
         "export_part",
         "query_snapshot",
@@ -225,12 +232,17 @@ class Principal:
     """The session identity a dispatch is authorized against."""
 
     session_id: str
-    profile: str  # "part" | "orchestrator" | "quick_edit"
-    part: str | None  # bound part id for part/quick_edit; None for orchestrator
+    profile: str  # "part" | "orchestrator" | "quick_edit" | "reviewer"
+    part: str | None  # bound part id for part/quick_edit; None for orchestrator/reviewer
 
     @property
     def is_orchestrator(self) -> bool:
         return self.profile == "orchestrator"
+
+    @property
+    def is_reviewer(self) -> bool:
+        """VALIDATION.md §5: project-wide *read-only* termination reviewer."""
+        return self.profile == REVIEWER_PROFILE
 
 
 class _NullLedger:
@@ -355,6 +367,18 @@ class ToolDispatcher:
             )
         if principal.is_orchestrator:
             return  # orchestrator addresses every part / project scope
+        if principal.is_reviewer:
+            # VALIDATION.md §5: the reviewer reads the whole project (it judges
+            # every part) and may change none of it. The generated `reviewer`
+            # tool profile already excludes mutation and delegation; this is the
+            # second, independent enforcement of the same rule, so a future
+            # profiles= edit cannot silently hand the reviewer a write.
+            if decl.name in MUTATION_TOOLS or decl.name in DELEGATION_TOOLS:
+                raise DispatchError(
+                    "scope_denied",
+                    f"tool {decl.name!r} mutates or delegates; a reviewer session may do neither",
+                )
+            return
         bound = principal.part
         if bound is None:
             raise DispatchError("scope_denied", f"{principal.profile} session has no bound part")
@@ -439,6 +463,9 @@ class ToolDispatcher:
             "edit_project_check": self._edit_project_check,
             "measure": self._measure,
             "run_checks": self._run_checks,
+            "record_requirements": self._record_requirements,
+            "read_requirements": self._read_requirements,
+            "update_requirement": self._update_requirement,
             "read_artifact": self._read_artifact,
             "export_part": self._export_part,
             "query_snapshot": self._query_snapshot,
@@ -456,6 +483,15 @@ class ToolDispatcher:
     def _build_part(
         self, _p: Principal, cad: CadOps, arguments: dict[str, Any], inv: Invocation
     ) -> dict[str, Any]:
+        # VALIDATION.md §3: the clarification gate runs BEFORE any geometry, over
+        # the ledger's own tags, and refuses with a discriminated result. It is a
+        # dispatch-layer rule precisely so no prompt, profile or model choice can
+        # route around it — every build path (sidecar, MCP, REST) comes through
+        # here. No idempotency key is claimed: the refusal did no work, so the
+        # same invocation id may build for real once the assumption is resolved.
+        gate = clarification_gate(cad.ledger_state())
+        if gate.blocked:
+            return gate.to_result()
         raw_params = arguments.get("params")
         params = cast("dict[str, Any]", raw_params) if isinstance(raw_params, dict) else None
         try:
@@ -683,6 +719,39 @@ class ToolDispatcher:
             raise
         except HephaestusError as exc:
             raise DispatchError("build_failed", exc.message) from exc
+
+    # -- requirement ledger (VALIDATION.md §2) -----------------------------
+
+    def _record_requirements(
+        self, _p: Principal, cad: CadOps, arguments: dict[str, Any], inv: Invocation
+    ) -> dict[str, Any]:
+        raw = arguments.get("entries")
+        if not isinstance(raw, list):
+            raise DispatchError("invalid_params", "record_requirements requires an entries array")
+        entries: list[Mapping[str, Any]] = []
+        for item in cast("list[Any]", raw):
+            if not isinstance(item, dict):
+                raise DispatchError("invalid_params", "each requirement entry must be an object")
+            entries.append(cast("Mapping[str, Any]", item))
+        return cad.record_requirements(entries, op_id=inv.op_id).to_json()
+
+    def _read_requirements(
+        self, _p: Principal, cad: CadOps, _arguments: dict[str, Any], _inv: Invocation
+    ) -> dict[str, Any]:
+        return cad.ledger_state().to_json()
+
+    def _update_requirement(
+        self, _p: Principal, cad: CadOps, arguments: dict[str, Any], inv: Invocation
+    ) -> dict[str, Any]:
+        # No `provenance` argument: this is the model's own hand on the ledger, so
+        # it takes the default and `asked`/`resolution` are refused here with
+        # `invalid_requirement` (VALIDATION.md §3 — the clarification record is the
+        # runtime's to write). The sidecar's schema already rejects them a layer
+        # earlier; py.tool_dispatch is also the MCP/REST path, which does not.
+        fields = {key: value for key, value in arguments.items() if key != "id"}
+        return cad.update_requirement(
+            str(arguments["id"]), cast("Mapping[str, Any]", fields), op_id=inv.op_id
+        ).to_json()
 
     # -- artifacts ---------------------------------------------------------
 

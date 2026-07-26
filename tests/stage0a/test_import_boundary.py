@@ -12,7 +12,10 @@ Walks every module under ``opstore/src/opstore`` with ``ast`` and asserts:
 from __future__ import annotations
 
 import ast
+import json
+import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -69,12 +72,36 @@ def test_no_forbidden_imports() -> None:
 
 
 def test_import_graph_closure_via_runtime() -> None:
-    """Belt and braces: importing every opstore module pulls in no forbidden module."""
-    import importlib
+    """Belt and braces: importing every opstore module pulls in no forbidden module.
 
+    Runs in a SUBPROCESS. Measuring ``sys.modules`` in the test process only
+    reports what opstore imported when nothing else has been imported first —
+    in a full-suite run the CAD suites have already loaded ``hephaestus.core``
+    and build123d, so an in-process assertion measures the session, not the
+    package boundary, and fails on other suites' imports rather than on a real
+    opstore dependency.
+    """
+    dotted_names: list[str] = []
     for path in _module_files():
         rel = path.relative_to(PACKAGE_DIR).with_suffix("")
         dotted = "opstore" if rel.name == "__init__" else "opstore." + ".".join(rel.parts)
-        importlib.import_module(dotted)
-    loaded = {name.partition(".")[0] for name in sys.modules}
+        dotted_names.append(dotted)
+
+    program = textwrap.dedent(
+        """
+        import importlib, json, sys
+        names = json.loads(sys.argv[1])
+        for name in names:
+            importlib.import_module(name)
+        print(json.dumps(sorted({n.partition(".")[0] for n in sys.modules})))
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", program, json.dumps(dotted_names)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"importing opstore failed:\n{result.stderr}"
+    loaded = set(json.loads(result.stdout))
     assert not loaded & (FORBIDDEN_TOP_LEVEL - {"subprocess"})

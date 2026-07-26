@@ -70,6 +70,10 @@ class RunRecord:
     prompt: str
     archive_dir: str
     event_count: int
+    #: ``VALIDATION.md`` §1 corpus split (``prose``/``seeded``). Scoring never
+    #: averages the two, so every record states which one it belongs to rather
+    #: than leaving it to be inferred from the task id.
+    spec: str = "prose"
     #: The orchestrator session the run used; its Pi JSONL transcript lives at
     #: ``<project>/.heph/sessions/<session_id>`` inside the archived project.
     session_id: str | None = None
@@ -83,10 +87,19 @@ class RunRecord:
     error: str | None = None
     grade: Mapping[str, Any] = field(default_factory=dict[str, Any])
     questions: tuple[Mapping[str, Any], ...] = ()
+    #: The task's protected paths — the denominator of §8's spec-tampering rate
+    #: (a run with nothing protected cannot tamper, and must not dilute the rate).
+    protected_paths: tuple[str, ...] = ()
+    #: The run's final requirement ledger, each entry annotated with the §3
+    #: material class the harness assigned it (``VALIDATION.md`` §2/§8).
+    requirements: tuple[Mapping[str, Any], ...] = ()
+    #: ``LadderOutcome.to_json()`` when the §5/§6 review ladder ran for this run.
+    review: Mapping[str, Any] | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
             "task_id": self.task_id,
+            "spec": self.spec,
             "seed": self.seed,
             "model": self.model,
             "date": self.date,
@@ -106,6 +119,9 @@ class RunRecord:
             "error": self.error,
             "grade": dict(self.grade),
             "questions": [dict(q) for q in self.questions],
+            "protected_paths": list(self.protected_paths),
+            "requirements": [dict(entry) for entry in self.requirements],
+            "review": None if self.review is None else dict(self.review),
         }
 
 

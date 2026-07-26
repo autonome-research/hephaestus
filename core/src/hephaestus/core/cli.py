@@ -12,9 +12,14 @@
 - ``heph check [--project] [--json]`` runs the ``checks/*.py`` cross-part
   check set against each part's current published artifact; ``--project``
   additionally assembles (and requires) a coherent project snapshot.
-- ``heph lint <path> [--json]`` runs the §9 lints (plus the §4 shadowing
+- ``heph lint <path> [--json] [--requirements <ledger.json>]
+  [--request <request.txt>]`` runs the §9 lints (plus the §4 shadowing
   error) against a part script, resolving the project's globals.py when the
-  script lives inside a project.
+  script lives inside a project. With ``--requirements`` the ledger's entry
+  ids become the accepted ``CHECKS`` citations (``VALIDATION.md`` §2
+  ``unsourced_constant``); adding ``--request`` also checks every
+  ``source: "specified"`` entry's quote against the request text
+  (``unsourced_requirement``).
 
 Exit codes: 0 success, 1 failure (build failed / raced, failing checks,
 sandbox unavailable), 2 usage (bad arguments, no project, unknown part).
@@ -35,7 +40,7 @@ import tempfile
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from hephaestus.core.checks.engine import CheckSet
 from hephaestus.core.checks.facade import GeometrySource
@@ -54,7 +59,7 @@ from hephaestus.core.executor.sandbox.base import (
 )
 from hephaestus.core.executor.sandbox.probe import cached_probe, secure_backend
 from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
-from hephaestus.core.lint import lint_part_script
+from hephaestus.core.lint import lint_part_script, lint_requirements, requirement_entries
 from hephaestus.core.project_store.layout import (
     GLOBALS_FILENAME,
     PARTS_DIRNAME,
@@ -411,7 +416,29 @@ def _cmd_lint(args: argparse.Namespace) -> int:
         globals_path = root / GLOBALS_FILENAME
         if globals_path.is_file() and globals_path.resolve() != resolved:
             globals_source = globals_path.read_text(encoding="utf-8")
-    findings = lint_part_script(source, globals_source=globals_source, filename=str(path))
+    entries: list[Mapping[str, Any]] = []
+    # No --requirements: the ledger rules stay off entirely (None), rather than
+    # reporting every threshold against a ledger the caller never showed us.
+    ledger_ids: list[str] | None = None
+    raw_requirements = cast("str | None", args.requirements)
+    if raw_requirements is not None:
+        ledger_path = Path(raw_requirements)
+        if not ledger_path.is_file():
+            raise _UsageError(f"no such requirements file: {ledger_path}")
+        entries = requirement_entries(json.loads(ledger_path.read_text(encoding="utf-8")))
+        ledger_ids = [str(entry.get("id", "")) for entry in entries]
+    findings = lint_part_script(
+        source,
+        globals_source=globals_source,
+        filename=str(path),
+        ledger_ids=ledger_ids,
+    )
+    raw_request = cast("str | None", args.request)
+    if raw_request is not None:
+        request_path = Path(raw_request)
+        if not request_path.is_file():
+            raise _UsageError(f"no such request file: {request_path}")
+        findings = findings + lint_requirements(entries, request_path.read_text(encoding="utf-8"))
     if json_out:
         print(json.dumps([finding.to_json() for finding in findings]))
     else:
@@ -475,6 +502,16 @@ def build_parser() -> argparse.ArgumentParser:
     lint = sub.add_parser("lint", help="lint a part script (§9 + hc shadowing)")
     lint.add_argument("path", help="path to the part script")
     lint.add_argument("--json", action="store_true", help="emit findings as JSON")
+    lint.add_argument(
+        "--requirements",
+        default=None,
+        help="requirement-ledger JSON (entry array or generation document)",
+    )
+    lint.add_argument(
+        "--request",
+        default=None,
+        help="original request text; enables the unsourced_requirement rule",
+    )
     lint.set_defaults(func=_cmd_lint)
 
     # Stage 1 render verbs (heph render / heph goldens) live in a separate module

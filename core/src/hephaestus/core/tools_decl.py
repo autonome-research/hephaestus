@@ -25,11 +25,14 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, cast
 
 __all__ = [
     "IDENT_PATTERN",
     "PROFILES",
+    "REQUIREMENT_ID_PATTERN",
+    "REQUIREMENT_SOURCES",
+    "REVIEWER_TOOLS",
     "STAGE2_EXCLUDED_TOOLS",
     "TOOLS",
     "TOOLS_BY_NAME",
@@ -43,8 +46,23 @@ __all__ = [
 # Normalized identifier grammar for part / new-part / project-check names.
 IDENT_PATTERN: Final[str] = r"^[a-z][a-z0-9_]{0,63}$"
 
+# Requirement-ledger entry ids (VALIDATION.md §2): "R1", "R12b", "wall_dir".
+# Case-sensitive and deliberately wider than IDENT_PATTERN — a ledger id is a
+# citation token that appears verbatim in CHECKS comments, not a filesystem name.
+REQUIREMENT_ID_PATTERN: Final[str] = r"^[A-Za-z][A-Za-z0-9_.-]{0,31}$"
+# The three provenance classes a ledger entry may declare (VALIDATION.md §2).
+REQUIREMENT_SOURCES: Final[tuple[str, ...]] = ("specified", "derived", "assumed")
+
 Profile = str  # one of PROFILES
-PROFILES: Final[tuple[str, ...]] = ("part", "orchestrator", "quick_edit")
+# ``reviewer`` (VALIDATION.md §5) is the independent termination-review child: a
+# read-only measurement/render subset. Its availability is declared here, per
+# tool, exactly like every other profile — the reviewer's inability to mutate the
+# project is a property of this table, not of its prompt.
+PROFILES: Final[tuple[str, ...]] = ("part", "orchestrator", "quick_edit", "reviewer")
+#: The measurement/render subset a ``reviewer`` session may call (VALIDATION.md
+#: §5). Declared as data so the structural "no mutation, no delegation" audit has
+#: one place to read; every member also names ``reviewer`` in its ``profiles``.
+REVIEWER_TOOLS: Final[frozenset[str]] = frozenset({"inspect_part", "measure", "read_artifact"})
 
 # Documented in tool_schema.md but explicitly out of Stage 2 scope; the drift
 # test subtracts these from the heading set before comparing with TOOLS.
@@ -335,16 +353,20 @@ def _build_part() -> ToolDecl:
             {"name": _ident(), "params": {"type": "object", "default": {}}},
             ["name"],
         ),
-        result=_ok(
-            {
-                "status": _STR,
-                "artifact_ref": _STR,
-                "current": _BOOL,
-                "project_snapshot_ref": _STR,
-                "effective_params": _dict(),
-                "toolchain_hashes": _dict(),
-            },
-            ["status"],
+        result=_result(
+            _ok(
+                {
+                    "status": _STR,
+                    "artifact_ref": _STR,
+                    "current": _BOOL,
+                    "project_snapshot_ref": _STR,
+                    "effective_params": _dict(),
+                    "toolchain_hashes": _dict(),
+                    "critique": _CRITIQUE,
+                },
+                ["status"],
+            ),
+            _CLARIFICATION_REQUIRED,
         ),
         profiles=("part", "orchestrator", "quick_edit"),
         sequential=True,
@@ -689,7 +711,7 @@ def _inspect_part() -> ToolDecl:
                 ["status", "code"],
             ),
         ),
-        profiles=("part", "orchestrator", "quick_edit"),
+        profiles=("part", "orchestrator", "quick_edit", "reviewer"),
         sequential=False,
         idempotent=False,
     )
@@ -770,7 +792,7 @@ def _read_artifact() -> ToolDecl:
                 ["error"],
             ),
         ),
-        profiles=("part", "orchestrator", "quick_edit"),
+        profiles=("part", "orchestrator", "quick_edit", "reviewer"),
         sequential=False,
         idempotent=False,
     )
@@ -821,7 +843,7 @@ def _measure() -> ToolDecl:
             },
             ["value", "units"],
         ),
-        profiles=("part", "orchestrator", "quick_edit"),
+        profiles=("part", "orchestrator", "quick_edit", "reviewer"),
         sequential=False,
         idempotent=False,
     )
@@ -1135,6 +1157,29 @@ def _cancel_delegation() -> ToolDecl:
     )
 
 
+#: One concrete option of a clarification question (``VALIDATION.md`` §3): a
+#: label and **the geometric consequence of choosing it**. The consequence is a
+#: required field, not a convention, so "what did you mean?" cannot be asked
+#: about a material assumption — the runtime refuses the question instead.
+_CLARIFICATION_OPTION: Final[JsonSchema] = _obj(
+    {"label": _STR, "consequence": _STR},
+    ["label", "consequence"],
+)
+
+#: ``ask_user`` refusing to put a badly-shaped clarification to the user. It is a
+#: discriminated *result* (the model corrects and re-asks), never an error, and
+#: it is returned before any human is disturbed.
+_INVALID_QUESTION: Final[JsonSchema] = _ok(
+    {
+        "status": {"const": "invalid_question"},
+        "code": {"const": "clarification_question_shape"},
+        "message": _STR,
+        "problems": {"type": "array", "items": _STR},
+    },
+    ["status", "code", "message", "problems"],
+)
+
+
 def _ask_user() -> ToolDecl:
     return ToolDecl(
         name="ask_user",
@@ -1142,16 +1187,221 @@ def _ask_user() -> ToolDecl:
         params=_obj(
             {
                 "question": _STR,
-                "options": {"type": "array", "items": _STR},
+                "options": {
+                    "type": "array",
+                    "items": {"anyOf": [_STR, _CLARIFICATION_OPTION]},
+                },
                 "allow_free_text": {"type": "boolean", "default": True},
                 "multi": {"type": "boolean", "default": False},
+                "requirement_ids": {
+                    "type": "array",
+                    "items": {"type": "string", "pattern": REQUIREMENT_ID_PATTERN},
+                    "default": [],
+                },
             },
             ["question", "options"],
         ),
-        result=_ok({"selection": {}}, ["selection"]),
+        result=_result(
+            _ok({"selection": {}, "recorded": {"type": "array"}}, ["selection"]),
+            _INVALID_QUESTION,
+        ),
         profiles=("part", "orchestrator", "quick_edit"),
         sequential=True,
         idempotent=False,
+    )
+
+
+#: One requirement-ledger entry (``VALIDATION.md`` §2). The per-source
+#: obligations (``specified`` needs ``quote``; ``derived`` needs ``from``;
+#: ``assumed`` needs ``rationale`` + ``material``) are enforced structurally by
+#: the ledger op, which refuses the whole batch — they are not prompt advice.
+_REQUIREMENT_ENTRY: Final[JsonSchema] = _obj(
+    {
+        "id": {"type": "string", "pattern": REQUIREMENT_ID_PATTERN},
+        "text": _STR,
+        "source": _enum(list(REQUIREMENT_SOURCES)),
+        "quote": {"anyOf": [_STR, {"type": "null"}], "default": None},
+        "from": {"type": "array", "items": _STR, "default": []},
+        "rationale": {"anyOf": [_STR, {"type": "null"}], "default": None},
+        "material": {"anyOf": [_BOOL, {"type": "null"}], "default": None},
+        "value": {"anyOf": [_NUM, {"type": "null"}], "default": None},
+        "unit": {"anyOf": [_STR, {"type": "null"}], "default": None},
+        "applies_to": {"anyOf": [_STR, {"type": "null"}], "default": None},
+    },
+    ["id", "text", "source"],
+)
+
+#: The same entry as it is *reported*: lenient, and carrying the two §3 fields a
+#: clarification writes back (``asked`` when a question was raised, ``resolution``
+#: when it was answered). Reporting is a strict superset of what a caller may
+#: declare — those two are readable everywhere and writable only by the runtime.
+_REQUIREMENT_ENTRY_OUT: Final[JsonSchema] = _ok(
+    {
+        **cast("dict[str, JsonSchema]", _REQUIREMENT_ENTRY["properties"]),
+        "asked": _BOOL,
+        "resolution": {"anyOf": [_STR, {"type": "null"}]},
+    },
+    ["id", "text", "source"],
+)
+
+#: The single result shape all three ledger tools share: the generation that is
+#: now current, its immutable artifact ref, every entry, and the ids of material
+#: assumptions still unresolved (what the §3 clarification gate blocks on).
+_LEDGER_RESULT: Final[JsonSchema] = _ok(
+    {
+        "status": {"const": "ok"},
+        "generation": _INT,
+        "artifact_ref": {"anyOf": [_STR, {"type": "null"}]},
+        "entries": {"type": "array", "items": _REQUIREMENT_ENTRY_OUT},
+        "unresolved_material": {"type": "array", "items": _STR},
+    },
+    ["status", "generation", "artifact_ref", "entries", "unresolved_material"],
+)
+
+#: ``VALIDATION.md`` §3: the clarification gate's refusal of ``build_part``. It
+#: is a discriminated result rather than an error because refusing to build on an
+#: unconfirmed material assumption is a *normal outcome* the model must handle —
+#: it carries the offending entries so the follow-up question can be written
+#: straight from them. Consumed by ``_build_part`` below (module order is
+#: irrelevant: the tool constructors run when ``TOOLS`` is built).
+_CLARIFICATION_REQUIRED: Final[JsonSchema] = _ok(
+    {
+        "status": {"const": "clarification_required"},
+        "generation": _INT,
+        "entries": {"type": "array", "items": _REQUIREMENT_ENTRY_OUT},
+        "unresolved_material": {"type": "array", "items": _STR},
+        "message": _STR,
+    },
+    ["status", "entries", "message"],
+)
+
+#: One §4 critique warning. ``kind`` is the stable machine token
+#: (``interference``, ``interference_pairs_capped``, ``interference_unavailable``,
+#: ``not_sealed``, ``unmatched_request_number``, ``dimension_mismatch``); the
+#: rest of each object is per-kind evidence, so the shape stays open.
+_CRITIQUE_WARNING: Final[JsonSchema] = _ok({"kind": _STR, "message": _STR}, ["kind"])
+_CRITIQUE_WARNINGS: Final[JsonSchema] = {"type": "array", "items": _CRITIQUE_WARNING}
+
+#: ``VALIDATION.md`` §4: the post-build critique nobody asked for. It rides on
+#: every *successful* ``build_part`` result and is computed by rule from the
+#: build's own outputs — no extra tool call, no prompt instruction, no model
+#: choice. ``warnings`` is the flattened union of the three sections' warnings.
+#: ``prompt_number_diff`` is **absent** when the runtime holds no original
+#: request text; it is never fabricated.
+_CRITIQUE: Final[JsonSchema] = _ok(
+    {
+        "interference": _ok(
+            {
+                "solids": _INT,
+                "pairs_total": _INT,
+                "pairs_measured": _INT,
+                "pairs_capped": _BOOL,
+                "declared_intentional": {"type": "array", "items": _STR},
+                "overlaps": {
+                    "type": "array",
+                    "items": _ok({"a": _STR, "b": _STR, "volume_mm3": _NUM}, ["a", "b"]),
+                },
+                "warnings": _CRITIQUE_WARNINGS,
+            },
+            ["solids", "pairs_total", "pairs_measured", "pairs_capped", "warnings"],
+        ),
+        "manifold": _ok(
+            {
+                "available": _BOOL,
+                "sealed": _BOOL,
+                "genus": _INT,
+                "solids": _INT,
+                "warnings": _CRITIQUE_WARNINGS,
+            },
+            ["available", "warnings"],
+        ),
+        "prompt_number_diff": _ok(
+            {
+                "numbers": {
+                    "type": "array",
+                    "items": _ok(
+                        {
+                            "value_mm": _NUM,
+                            "unit": _STR,
+                            "text": _STR,
+                            "axis": {"anyOf": [_STR, {"type": "null"}]},
+                            "matched": _BOOL,
+                            "compared_to": _STR,
+                            "dimension_mm": _NUM,
+                        },
+                        ["value_mm", "unit", "text", "axis"],
+                    ),
+                },
+                "dimensions": _dict(_NUM),
+                "warnings": _CRITIQUE_WARNINGS,
+            },
+            ["numbers", "dimensions", "warnings"],
+        ),
+        "warnings": _CRITIQUE_WARNINGS,
+    },
+    ["interference", "manifold", "warnings"],
+)
+
+
+def _record_requirements() -> ToolDecl:
+    return ToolDecl(
+        name="record_requirements",
+        summary="Record requirement-ledger entries (upsert by id); advances one generation.",
+        params=_obj(
+            {"entries": {"type": "array", "items": _REQUIREMENT_ENTRY, "minItems": 1}},
+            ["entries"],
+        ),
+        result=_LEDGER_RESULT,
+        profiles=("part", "orchestrator"),
+        sequential=True,
+        idempotent=True,
+    )
+
+
+def _read_requirements() -> ToolDecl:
+    return ToolDecl(
+        name="read_requirements",
+        summary="Read the current requirement ledger generation and its open assumptions.",
+        params=_obj({}, []),
+        result=_LEDGER_RESULT,
+        profiles=("part", "orchestrator"),
+        sequential=False,
+        idempotent=False,
+    )
+
+
+def _update_requirement() -> ToolDecl:
+    return ToolDecl(
+        name="update_requirement",
+        summary="Patch one ledger entry (text, material flag, value, unit); one generation.",
+        # `asked`/`resolution` are deliberately absent: the clarification record is
+        # written by the runtime from a real ask_user answer, never by the caller
+        # (VALIDATION.md §3). Supplying one is refused with `invalid_requirement`.
+        params=_obj(
+            {
+                "id": {"type": "string", "pattern": REQUIREMENT_ID_PATTERN},
+                "text": {"anyOf": [_STR, {"type": "null"}], "default": None},
+                "source": {
+                    "anyOf": [_enum(list(REQUIREMENT_SOURCES)), {"type": "null"}],
+                    "default": None,
+                },
+                "quote": {"anyOf": [_STR, {"type": "null"}], "default": None},
+                "from": {
+                    "anyOf": [{"type": "array", "items": _STR}, {"type": "null"}],
+                    "default": None,
+                },
+                "rationale": {"anyOf": [_STR, {"type": "null"}], "default": None},
+                "material": {"anyOf": [_BOOL, {"type": "null"}], "default": None},
+                "value": {"anyOf": [_NUM, {"type": "null"}], "default": None},
+                "unit": {"anyOf": [_STR, {"type": "null"}], "default": None},
+                "applies_to": {"anyOf": [_STR, {"type": "null"}], "default": None},
+            },
+            ["id"],
+        ),
+        result=_LEDGER_RESULT,
+        profiles=("part", "orchestrator"),
+        sequential=True,
+        idempotent=True,
     )
 
 
@@ -1212,6 +1462,9 @@ TOOLS: Final[tuple[ToolDecl, ...]] = (
     _read_artifact(),
     _measure(),
     _run_checks(),
+    _record_requirements(),
+    _read_requirements(),
+    _update_requirement(),
     _load_skill(),
     _list_skills(),
     _search_parts_store(),

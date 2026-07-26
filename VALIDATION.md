@@ -79,7 +79,17 @@ declares whether it moves geometry).
 ## 3. Clarification gate (rule-enforced, blocking)
 
 `build_part` is **refused** while any ledger entry has `source:"assumed"` and
-`material:true` and no recorded resolution. Refusal is a discriminated result:
+`material:true` and **no recorded clarification** — that is, neither `asked`
+nor `resolution` set by the runtime. The gate compels the *question*, not a
+particular answer: once the runtime has recorded that the user was asked, §5
+carries the burden. This is forced by the rest of the document — §3's own
+closing clause and §6's exemplar terminal ("built, but wall direction
+unconfirmed…") both presuppose that a declined answer still reaches geometry
+and review, and §7's bench answer instructs the agent to proceed and record an
+assumption. Nothing is relaxed: `asked` alone never confirms, §5 remains
+fail-unless-**confirmed** keyed on a runtime-recorded `resolution`, and the §6
+never-green invariant still forbids terminating green with the assumption
+open. Refusal is a discriminated result:
 
 ```
 {status:"clarification_required", entries:[...], message:...}
@@ -89,6 +99,12 @@ Material classes (non-exhaustive, matched by `applies_to`/`kind` on the entry):
 envelope dimension, datum/origin placement, wall or feature direction
 (inside/outside a stated face), fit class or clearance value, joint mating
 direction, material thickness when not stated.
+
+Both `asked` and `resolution` are **runtime-only fields**: `record_requirements`
+and `update_requirement` refuse them from the model (discriminated
+`invalid_requirement` naming `ask_user` as the only route), so their presence on
+a stored entry is itself the evidence that a user was asked. An agent cannot
+self-resolve its way past the gate, nor self-report §8's clarification rate.
 
 Resolution comes from `ask_user`, and the question must follow the
 concrete-options pattern — 2–4 options, **each stating its geometric

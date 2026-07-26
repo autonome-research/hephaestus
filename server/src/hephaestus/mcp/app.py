@@ -51,7 +51,14 @@ from fastmcp import Context, FastMCP
 from fastmcp.server.dependencies import get_context
 from fastmcp.tools.base import Tool, ToolResult
 from hephaestus.agent_bridge.admission import bridge_store_config
-from hephaestus.agent_bridge.cad_ops import CadOps
+from hephaestus.agent_bridge.cad_ops import (
+    CadOps,
+    invalid_question_result,
+    option_consequence,
+    option_label,
+    question_problems,
+    requirement_ids,
+)
 from hephaestus.agent_bridge.dispatch import DispatchError, Invocation, Principal, ToolDispatcher
 from hephaestus.agent_bridge.limits import LIMITS
 from hephaestus.agent_bridge.protocol import ProtocolError
@@ -63,6 +70,7 @@ from hephaestus.core.project_store.layout import ProjectLayout, load_project
 from hephaestus.core.project_store.retention import DefaultProtectedRoots
 from hephaestus.core.project_store.store import ProjectStore
 from hephaestus.core.tools_decl import TOOLS_BY_NAME
+from opstore.types import JSONValue
 from pydantic import ConfigDict
 
 from mcp.types import (
@@ -444,7 +452,19 @@ class HephaestusMCP:
         self, session_id: str, arguments: dict[str, Any], ctx: Context
     ) -> ToolResult:
         question = str(arguments["question"])
-        options = tuple(str(o) for o in cast("list[Any]", arguments.get("options") or []))
+        raw_options = cast("list[Any]", arguments.get("options") or [])
+        # VALIDATION.md §3: a question naming ledger ids is a clarification, and
+        # its shape is enforced here — before the elicitation goes out — exactly
+        # as it is on the sidecar path. Options may be plain strings or
+        # ``{label, consequence}`` objects; elicitation is flat, so the label is
+        # what the user picks from and the consequence rides in the message.
+        if requirement_ids(cast("JSONValue", arguments.get("requirement_ids"))):
+            problems = question_problems(
+                cast("JSONValue", question), cast("JSONValue", raw_options)
+            )
+            if problems:
+                return _tool_result("ask_user", invalid_question_result(problems))
+        options = tuple(option_label(cast("JSONValue", o)) for o in raw_options)
         allow_free_text = bool(arguments.get("allow_free_text", True))
         multi = bool(arguments.get("multi", False))
 
@@ -452,7 +472,8 @@ class HephaestusMCP:
             return self._question_fallback(session_id, question, options, allow_free_text, multi)
 
         response_type = _elicit_response_type(options, allow_free_text, multi)
-        action, data = await _elicit(ctx, _elicit_message(question, options), response_type)
+        displayed = tuple(_option_display(cast("JSONValue", o)) for o in raw_options)
+        action, data = await _elicit(ctx, _elicit_message(question, displayed), response_type)
         if action != "accept":
             raise McpToolError(
                 f"question_{action}d" if action == "decline" else f"question_{action}",
@@ -648,6 +669,13 @@ async def _elicit(ctx: Context, message: str, response_type: Any) -> tuple[str, 
     action = str(getattr(outcome, "action", "decline"))  # pyright: ignore[reportUnknownArgumentType]
     data: Any = getattr(outcome, "data", None)  # pyright: ignore[reportUnknownArgumentType]
     return action, data
+
+
+def _option_display(option: JSONValue) -> str:
+    """``label — consequence`` when the option states one, else just the label."""
+    consequence = option_consequence(option)
+    label = option_label(option)
+    return f"{label} — {consequence}" if consequence else label
 
 
 def _elicit_message(question: str, options: Sequence[str]) -> str:

@@ -9,17 +9,29 @@
 // query_snapshot is the ephemeral vision child: empty tool allowlist (NOT
 // noTools:"all", which the Stage S spike found also strips custom tools), no
 // extensions, no persistence, a single turn, 1024 output tokens, 60 s.
+//
+// reviewer (VALIDATION.md §5) is the independent termination-review child. Its
+// allowlist is the generated `reviewer` tool profile — the measurement/render
+// subset — so "no mutation, no delegation" is a property of tools_decl.py, not
+// of the reviewer's prompt. It never persists (each review cycle is a fresh
+// judgement over the assembled context) and has its own budget.
 
 import path from "node:path";
 import { TOOLS, TOOL_NAMES, type ToolProfile } from "../tools/schema.gen.js";
 
-export type SessionProfile = "part" | "orchestrator" | "quick_edit" | "query_snapshot";
+export type SessionProfile =
+  | "part"
+  | "orchestrator"
+  | "quick_edit"
+  | "query_snapshot"
+  | "reviewer";
 
 export const SESSION_PROFILES: readonly SessionProfile[] = [
   "part",
   "orchestrator",
   "quick_edit",
   "query_snapshot",
+  "reviewer",
 ];
 
 // query_snapshot has no tool-profile in the generated surface (it is toolless).
@@ -27,6 +39,7 @@ const TOOL_PROFILE_OF: Readonly<Record<Exclude<SessionProfile, "query_snapshot">
   part: "part",
   orchestrator: "orchestrator",
   quick_edit: "quick_edit",
+  reviewer: "reviewer",
 };
 
 /** The tool names available to a profile, from the generated per-tool flags. */
@@ -45,6 +58,13 @@ export function toolsForProfile(profile: SessionProfile): string[] {
 export const QUERY_SNAPSHOT_MAX_TURNS = 1;
 export const QUERY_SNAPSHOT_MAX_OUTPUT_TOKENS = 1024;
 export const QUERY_SNAPSHOT_TIMEOUT_MS = 60_000;
+
+// reviewer budget (VALIDATION.md §5): its own, separate from the agent's. The
+// same numbers are re-enforced Python-side in agent_bridge/review.py — the
+// reviewer child is bounded twice, exactly like query_snapshot.
+export const REVIEWER_MAX_TURNS = 12;
+export const REVIEWER_MAX_OUTPUT_TOKENS = 4096;
+export const REVIEWER_TIMEOUT_MS = 300_000;
 
 /** The standing instruction that neutralises injected registry/reference text. */
 export const PROVENANCE_INSTRUCTION =
@@ -129,16 +149,41 @@ const PROFILE_PROMPT_NOTE: Readonly<Record<SessionProfile, string>> = {
   query_snapshot:
     "You answer a single visual question about the provided renders in one turn. " +
     "Return text only; do not call tools or emit images.",
+  reviewer:
+    "You are the independent termination reviewer. You did not build this design " +
+    "and you may not change it: your tools are measurement and render only. Judge " +
+    "the delivered geometry against the ORIGINAL REQUEST and the requirement " +
+    "ledger you were given — never against the agent's own acceptance tests, " +
+    "which are deliberately withheld from you because they may encode the very " +
+    "misreading you are here to catch. Verify each requirement id with evidence " +
+    "you obtained yourself (a measurement, or an observation of a render) and " +
+    "return one JSON object:\n" +
+    '{"findings": [{"id": "R1", "verdict": "pass"|"fail"|"unverifiable", ' +
+    '"evidence": "...", "channel": "vision"|"numeric", "expected": "...", ' +
+    '"observed": "..."}]}\n' +
+    "Use channel 'numeric' when a measurement decided it and 'vision' when a " +
+    "render did (a feature on the wrong face, a joint that does not mate). Say " +
+    "'unverifiable' when neither channel settles it — never guess a pass.",
 };
 
 export interface SystemPromptOptions {
   readonly part?: string;
 }
 
+// The reviewer authors nothing, so it gets no part-script cheatsheet — only the
+// provenance rule and its review charter. Feeding it the authoring contract
+// would invite it to propose edits it has no tools to make.
+const REVIEWER_SYSTEM_PROMPT_BASE =
+  "You are a Hephaestus validation reviewer. The build artifacts on disk — never " +
+  "this transcript — are the source of truth for geometry; every verdict you give " +
+  "must rest on a measurement or a render you obtained yourself. " +
+  PROVENANCE_INSTRUCTION;
+
 /** The full CAD system prompt for a profile (base + provenance + profile note). */
 export function systemPromptForProfile(profile: SessionProfile, opts: SystemPromptOptions = {}): string {
   const scope = opts.part !== undefined ? ` The bound part is '${opts.part}'.` : "";
-  return `${CAD_SYSTEM_PROMPT_BASE}\n\n${PROFILE_PROMPT_NOTE[profile]}${scope}`;
+  const base = profile === "reviewer" ? REVIEWER_SYSTEM_PROMPT_BASE : CAD_SYSTEM_PROMPT_BASE;
+  return `${base}\n\n${PROFILE_PROMPT_NOTE[profile]}${scope}`;
 }
 
 export interface ProfileBudget {
@@ -171,6 +216,20 @@ export function profileDefinition(profile: SessionProfile, opts: SystemPromptOpt
         maxTurns: QUERY_SNAPSHOT_MAX_TURNS,
         maxOutputTokens: QUERY_SNAPSHOT_MAX_OUTPUT_TOKENS,
         timeoutMs: QUERY_SNAPSHOT_TIMEOUT_MS,
+      },
+    };
+  }
+  if (profile === "reviewer") {
+    return {
+      profile,
+      tools: toolsForProfile(profile),
+      persist: false,
+      extensions: false,
+      systemPrompt: systemPromptForProfile(profile, opts),
+      budget: {
+        maxTurns: REVIEWER_MAX_TURNS,
+        maxOutputTokens: REVIEWER_MAX_OUTPUT_TOKENS,
+        timeoutMs: REVIEWER_TIMEOUT_MS,
       },
     };
   }

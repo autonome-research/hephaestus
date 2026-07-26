@@ -284,6 +284,13 @@ _ARGS: dict[str, dict[str, object]] = {
     "read_artifact": {"ref": "artifact:build:sha256:" + "0" * 64},
     "measure": {"kind": "bbox", "a": "part", "part": "widget"},
     "run_checks": {"name": "widget"},
+    "record_requirements": {
+        "entries": [
+            {"id": "R1", "text": "t", "source": "assumed", "rationale": "r", "material": False}
+        ]
+    },
+    "read_requirements": {},
+    "update_requirement": {"id": "R1", "value": 1.0},
     "load_skill": {"name": "booleans"},
     "list_skills": {},
     "search_parts_store": {"query": "m5"},
@@ -312,11 +319,22 @@ def test_orchestrator_only_tools_deny_scoped_sessions(
 def test_scoped_sessions_reach_past_authz_for_their_own_part(
     dispatcher: ToolDispatcher, tool: str, principal: Principal
 ) -> None:
-    """Availability, not success: the call must fail for a *routing* reason, if at all."""
+    """Availability, not success: exactly the profiles the declaration names.
+
+    A session whose profile declares the tool must never be ``scope_denied``
+    (it may still fail for a routing reason); a session whose profile does not
+    — a quick-edit session against the requirement ledger, say — must be.
+    """
+    declared = principal.profile in TOOLS_BY_NAME[tool].profiles
     try:
         dispatcher.dispatch(principal, _params(tool, dict(_ARGS[tool])))
     except DispatchError as exc:
-        assert exc.reason != "scope_denied", tool
+        if declared:
+            assert exc.reason != "scope_denied", tool
+        else:
+            assert exc.reason == "scope_denied", tool
+    else:
+        assert declared, tool
 
 
 def test_argument_matrix_covers_every_declared_tool() -> None:

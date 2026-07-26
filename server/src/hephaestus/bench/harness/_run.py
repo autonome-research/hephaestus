@@ -17,10 +17,12 @@ from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Final, cast
 
 from hephaestus.agent_bridge.app import BridgeRuntime, ProviderSpec
+from hephaestus.agent_bridge.cad_ops import RequirementEntry, material_class
 
+from ..metrics import ledger_snapshot
 from ..scoring import RUNS_FILENAME
 from ._archive import (
     ARCHIVE_EVENTS_FILENAME,
@@ -36,11 +38,14 @@ from ._seed import seed_project
 from ._tasks import BenchTask, seeded_prompt
 
 __all__ = [
+    "BENCH_ANSWER",
     "DEFAULT_PROMPT_TIMEOUT",
     "DEFAULT_SEEDS",
     "ProviderConfig",
+    "ReviewHook",
     "RunContext",
     "RuntimeFactory",
+    "annotate_requirements",
     "bench_answerer",
     "default_runtime_factory",
     "dry_run",
@@ -53,6 +58,16 @@ DEFAULT_SEEDS = 3
 
 #: Wall-clock cap for one prompt run (CAD builds are minutes, not seconds).
 DEFAULT_PROMPT_TIMEOUT = 1800.0
+
+#: ``VALIDATION.md`` §7, verbatim: the only answer the bench ever gives.
+#:
+#: The wording is load-bearing — ``cad_ops._gate._NON_COMMITTAL`` must classify
+#: it as non-committal, or the bench would start silently *resolving* ledger
+#: entries and the clarification gate would open on a question nobody answered.
+#: ``test_bench_validation_metrics`` pins that coupling.
+BENCH_ANSWER: Final[str] = (
+    "unspecified — use your engineering judgment and record it as an assumption."
+)
 
 
 @dataclass(frozen=True)
@@ -171,20 +186,55 @@ def default_runtime_factory(project_root: Path, provider: ProviderConfig) -> Bri
 
 
 def bench_answerer(params: Mapping[str, Any]) -> Any:
-    """Unattended ``ask_user`` policy: take the first option, else defer to the model.
+    """The §7 answerer: **non-committal, always** — the same sentence every time.
 
-    Bench runs have no human; questions are archived as run evidence and answered
-    deterministically so a run cannot hang on a suspension.
+    ``VALIDATION.md`` §7 is explicit that the bench must not do the
+    disambiguation production ``ask_user`` exists to obtain. The previous policy
+    ("take the first option") answered helpfully and therefore deleted the very
+    mechanism under test: an agent that guessed and asked got a free correct
+    answer, so asking cost nothing and measured nothing.
+
+    What the answer *does* is enforced elsewhere and by rule:
+    :func:`~hephaestus.agent_bridge.cad_ops.record_answers` classifies this
+    sentence as non-committal (it matches the ``_NON_COMMITTAL`` markers
+    "unspecified" and "engineering judgment"), so the named requirement is
+    recorded ``asked: true`` and **stays** ``assumed`` — the clarification gate
+    stays shut and §5 still sees an unconfirmed assumption. Asking is scored (§8
+    ``clarification_rate``); guessing right by luck is not.
+
+    ``params`` is ignored on purpose: an answer that varied with the question
+    would be a policy the agent could steer.
     """
-    options = params.get("options")
-    if isinstance(options, list) and options:
-        return cast("list[Any]", options)[0]
-    return "Use your best engineering judgement and continue; do not ask again."
+    del params
+    return BENCH_ANSWER
+
+
+def annotate_requirements(
+    events: Sequence[Mapping[str, Any]],
+) -> tuple[Mapping[str, Any], ...]:
+    """The run's final ledger, each entry tagged with its §3 material class.
+
+    The classification is the *harness's* second opinion on the model's own
+    ``material`` flag (``cad_ops.material_class``), and it is written down here —
+    at archive time, where the bridge is already imported — precisely so
+    :mod:`hephaestus.bench.metrics` can compute ``clarification_rate`` over the
+    §3 gate's wider set without importing the CAD stack. An entry the classifier
+    cannot parse keeps a ``None`` class and still counts by its own flag.
+    """
+    annotated: list[Mapping[str, Any]] = []
+    for entry in ledger_snapshot(events):
+        row = dict(entry)
+        try:
+            row["material_class"] = material_class(RequirementEntry.from_json(entry))
+        except Exception:
+            row["material_class"] = None
+        annotated.append(row)
+    return tuple(annotated)
 
 
 @dataclass(frozen=True)
 class RunContext:
-    """Handed to a ``before_prompt`` hook just before the prompt is sent."""
+    """Handed to the ``before_prompt``/``review`` hooks around the prompt."""
 
     task: BenchTask
     seed: int
@@ -192,6 +242,16 @@ class RunContext:
     project_root: Path
     runtime: BridgeRuntime
     session_id: str
+    run_id: str = ""
+
+
+#: ``VALIDATION.md`` §5/§6 seam: run the termination-review ladder for a finished
+#: run and return its ``LadderOutcome.to_json()`` for the archive (``None`` to
+#: record no review). The bench does not run the ladder by default — the §8
+#: metrics that need it (``requirement_coverage``, ``review_catch_rate``) report
+#: *unmeasured* rather than zero until a hook is supplied, which is the honest
+#: state and not a silent zero.
+ReviewHook = Callable[[RunContext], Mapping[str, Any] | None]
 
 
 class _BudgetGuard:
@@ -234,6 +294,7 @@ def run_task(
     archive_dir: Path,
     runtime_factory: RuntimeFactory | None = None,
     before_prompt: Callable[[RunContext], None] | None = None,
+    review: ReviewHook | None = None,
     prompt_timeout: float = DEFAULT_PROMPT_TIMEOUT,
     date: str | None = None,
     project_root: Path | None = None,
@@ -254,6 +315,7 @@ def run_task(
     terminal_state: str | None = None
     session_id: str | None = None
     guard: _BudgetGuard | None = None
+    review_outcome: Mapping[str, Any] | None = None
     try:
         runtime.start()
         session_id = runtime.create_session("orchestrator", session_id=f"bench-{task.id}-s{seed}")
@@ -265,17 +327,17 @@ def run_task(
             assert guard is not None
             guard.on_event(event)
 
+        context = RunContext(
+            task=task,
+            seed=seed,
+            prompt=prompt,
+            project_root=project,
+            runtime=runtime,
+            session_id=session_id,
+            run_id=run_id,
+        )
         if before_prompt is not None:
-            before_prompt(
-                RunContext(
-                    task=task,
-                    seed=seed,
-                    prompt=prompt,
-                    project_root=project,
-                    runtime=runtime,
-                    session_id=session_id,
-                )
-            )
+            before_prompt(context)
         result = runtime.prompt(
             session_id,
             prompt,
@@ -287,6 +349,13 @@ def run_task(
         status = result.status
         if result.terminal is not None:
             terminal_state = str(result.terminal.get("state"))
+        if review is not None:
+            # The stop state is where §5 fires. A review that raises fails the
+            # review, never the run: the archive still has to be written.
+            try:
+                review_outcome = review(context)
+            except Exception as exc:  # recorded, never raised
+                review_outcome = {"error": f"{type(exc).__name__}: {exc}"}
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
     finally:
@@ -325,8 +394,14 @@ def run_task(
     (run_dir / "grade.json").write_text(
         json.dumps(report.to_json(), indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
+    requirements = annotate_requirements(events)
+    if review_outcome is not None:
+        (run_dir / "review.json").write_text(
+            json.dumps(dict(review_outcome), indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
     record = RunRecord(
         task_id=task.id,
+        spec=task.spec,
         seed=seed,
         model=provider.model_id,
         date=date or today(),
@@ -347,6 +422,9 @@ def run_task(
         error=error,
         grade=report.to_json(),
         questions=questions,
+        protected_paths=task.protected_paths,
+        requirements=requirements,
+        review=review_outcome,
     )
     (run_dir / ARCHIVE_RESULT_FILENAME).write_text(
         json.dumps(record.to_json(), indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -363,6 +441,7 @@ def run_bench(
     date: str | None = None,
     runtime_factory: RuntimeFactory | None = None,
     before_prompt: Callable[[RunContext], None] | None = None,
+    review: ReviewHook | None = None,
     prompt_timeout: float = DEFAULT_PROMPT_TIMEOUT,
     on_record: Callable[[RunRecord], None] | None = None,
     parallel: int = 1,
@@ -399,6 +478,7 @@ def run_bench(
             archive_dir=archive_dir,
             runtime_factory=runtime_factory,
             before_prompt=before_prompt,
+            review=review,
             prompt_timeout=prompt_timeout,
             date=run_date,
         )

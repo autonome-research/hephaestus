@@ -5,6 +5,12 @@ same sequence the engine CLI runs: persisted overrides are ordinary build inputs
 and only *transient* tool-argument overrides make a build a preview. The publish
 is idempotent on the trusted invocation id.
 
+Every *successful* build then carries the ``VALIDATION.md`` §4 ``critique``
+block nobody asked for — interference, manifold, and the original request's
+numbers against the built dimensions (:mod:`._critique`). It is assembled here,
+by rule, from what the build already produced; a critique failure never fails
+the build (the geometry is published and the result is truthful about the gap).
+
 ``inspect_part`` returns the full tool-schema render result — channels/modes,
 inline-or-ref mask legend paging, selection bundles — with every image checked
 against the §5 image budgets by a bounded header parse before the payload is
@@ -18,15 +24,36 @@ import base64
 import json
 import uuid
 from collections.abc import Mapping, Sequence
-from typing import Any
+from pathlib import Path
+from typing import Any, Final
 
+from hephaestus.core.addressing import PART_SELECTOR, Resolution
+from hephaestus.core.executor.runner import UnpublishedBuild
+from hephaestus.core.lint import checks_thresholds
+from hephaestus.core.project_store.store import blob_hash_of_ref
 from hephaestus.core.render.inspect import inspect_part, prepare_render_bundle
+from hephaestus.core.types import BuildResult, Metrics
 from opstore.types import JSONValue
 
 from opstore import LeaseHeldError
 
 from ..limits import MAX_IMAGES_PER_RESULT, parse_image_header
 from ._base import CadOpError, CadOpsState, json_map
+from ._critique import (
+    critique_block,
+    intentional_overlap_declarations,
+    interference_report,
+    named_solids,
+)
+from ._requirements import RequirementOps, entry_views
+
+#: A reloaded build artifact resolves exactly the ``"part"`` selector (§7 rule 1).
+_PART_RESOLUTION: Final[Resolution] = Resolution(kind="part", name=PART_SELECTOR)
+
+
+def metrics_solids(metrics: Metrics | None) -> int:
+    """Solid count of a build, or 0 when the build reported no metrics."""
+    return 0 if metrics is None else metrics.solids
 
 
 class BuildOps(CadOpsState):
@@ -100,7 +127,82 @@ class BuildOps(CadOpsState):
             # The canonical §8 error record (line/col/type/message/frame/
             # built_through/last_good/hint) — the repair loop reads exactly this.
             payload["error"] = result.error.to_json()
+        if result.status == "ok":
+            # VALIDATION.md §4: unrequested, by rule, on every successful build.
+            payload["critique"] = self._critique(build, inputs.script, result.artifact_ref)
         return payload
+
+    # -- the §4 post-build critique ----------------------------------------
+
+    def _critique(
+        self, build: UnpublishedBuild, script: str, artifact_ref: str | None
+    ) -> dict[str, JSONValue]:
+        """Assemble the §4 critique block for a successful build."""
+        metrics = build.result.metrics
+        declared = intentional_overlap_declarations(
+            json_map(build.worker_result.get("feature_metadata")),
+            entry_views(self.ledger_state().entries) if isinstance(self, RequirementOps) else (),
+        )
+        return critique_block(
+            metrics=metrics,
+            interference=self._interference(metrics_solids(metrics), artifact_ref, declared),
+            request=self.request_text,
+            dimensions=self._critique_dimensions(build, script),
+        )
+
+    def _interference(
+        self, solid_count: int, artifact_ref: str | None, declared: Sequence[str]
+    ) -> dict[str, JSONValue]:
+        """Pairwise solid overlap over the published artifact (bounded).
+
+        A compound with fewer than two solids has no pair to measure, so its
+        geometry is never reloaded — the common single-solid part costs nothing.
+        """
+        if solid_count < 2:
+            return interference_report((), declared_intentional=declared, solid_count=solid_count)
+        if artifact_ref is None or not self._store.blobs.has(blob_hash_of_ref(artifact_ref)):
+            return interference_report(
+                (),
+                declared_intentional=declared,
+                solid_count=solid_count,
+                unavailable="the build artifact is not durably stored",
+            )
+        try:
+            with self._scratch("heph-critique-") as scratch:
+                source = self._artifact_geometry(artifact_ref, Path(scratch))
+                solids = named_solids(source.shape(_PART_RESOLUTION))
+                return interference_report(solids, declared_intentional=declared)
+        except Exception as exc:
+            return interference_report(
+                (),
+                declared_intentional=declared,
+                solid_count=solid_count,
+                unavailable=f"{type(exc).__name__}: {exc}",
+            )
+
+    def _critique_dimensions(self, build: UnpublishedBuild, script: str) -> dict[str, float]:
+        """The axis-less dimensions §4 matches request numbers against.
+
+        Tagged *edge* lengths (the only tag descriptor scalar that is a length —
+        faces carry area and solids volume) and every ``CHECKS`` numeric
+        threshold, which is a dimension the script itself claims.
+        """
+        dimensions: dict[str, float] = {}
+        for name, descriptor in build.tag_fingerprints.items():
+            if descriptor.kind == "edge":
+                dimensions[f"tag:{name}"] = float(descriptor.scalar)
+        for threshold in checks_thresholds(script):
+            dimensions[f"checks_threshold:{threshold:g}"] = threshold
+        return dimensions
+
+    def current_build(self, name: str) -> BuildResult | None:
+        """The last published *current* build of ``name`` (lock-free, no rebuild).
+
+        The read the validation layer needs: ``VALIDATION.md`` §5 assembles the
+        reviewer's evidence from what was actually published, never from a fresh
+        build, so the reviewer judges the same geometry the agent delivered.
+        """
+        return self._publisher().current_result(name)
 
     # -- inspect -----------------------------------------------------------
 

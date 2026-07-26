@@ -1,4 +1,5 @@
-"""§9 style lints plus the §4 PARAMS-shadowing error — AST only, never executed.
+"""§9 style lints, the §4 PARAMS-shadowing error, and the VALIDATION.md §2
+ledger rules — AST/token analysis only, never executed.
 
 ``heph lint`` nudges part scripts toward the recovered idiom (script
 contract §9): geometry unreachable from ``part.geometry``, unlabeled
@@ -14,20 +15,35 @@ known build123d constructors/operations and propagated through the module's
 def-use graph; reachability walks the same graph backwards from the
 ``part.geometry`` assignment, ``tag()`` arguments, ``CHECKS``, and ``part.*``
 metadata expressions.
+
+Two rules come from ``VALIDATION.md`` §2 and close the self-referential-spec
+gap rather than a style gap. ``unsourced_constant`` reports a numeric literal
+inside a ``CHECKS`` predicate that cites no requirement-ledger entry — a
+threshold nobody can trace to the request is exactly how a misreading gets
+frozen into a passing test. ``unsourced_requirement`` reports a ledger entry
+claiming ``source: "specified"`` whose ``quote`` does not actually occur in the
+request. Both are decided mechanically here; neither can be satisfied by asking
+the model to be careful.
 """
 
 from __future__ import annotations
 
 import ast
-from collections.abc import Iterable
+import io
+import re
+import tokenize
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal, cast
 
 from hephaestus.core.executor.globals_exec import shadowed_params
 from hephaestus.core.executor.splitter import GLOBALS_FILENAME, PART_FILENAME
 from opstore.types import JSONValue
 
 Severity = Literal["warning", "error"]
+
+#: Nothing cites an empty ledger: this never matches.
+_NO_CITATION_RE: re.Pattern[str] = re.compile(r"(?!)")
 
 #: build123d names whose call results seed the geometry taint analysis.
 GEOMETRY_CALLS: frozenset[str] = frozenset(
@@ -149,12 +165,13 @@ def lint_part_script(
     *,
     globals_source: str | None = None,
     filename: str = PART_FILENAME,
+    ledger_ids: Iterable[str] | None = None,
 ) -> tuple[LintFinding, ...]:
     """Convenience wrapper: lint a part script against its project globals.py."""
     hc_names: tuple[str, ...] = ()
     if globals_source is not None and globals_source.strip():
         hc_names = hc_names_from_globals(globals_source)
-    return lint_script(source, hc_names=hc_names, filename=filename)
+    return lint_script(source, hc_names=hc_names, filename=filename, ledger_ids=ledger_ids)
 
 
 def lint_script(
@@ -162,8 +179,16 @@ def lint_script(
     *,
     hc_names: Iterable[str] = (),
     filename: str = PART_FILENAME,
+    ledger_ids: Iterable[str] | None = None,
 ) -> tuple[LintFinding, ...]:
     """Run every §9 lint (plus the §4 shadowing error) over one part script.
+
+    ``ledger_ids`` are the requirement-ledger entry ids the ``CHECKS``
+    thresholds may cite. Passing ``None`` (the default) leaves the
+    ``unsourced_constant`` rule **off**: a project with no ledger at all is a
+    ``VALIDATION.md`` §3 failure the clarification gate refuses, not a style
+    finding here. Passing a sequence — including an empty one — turns it on,
+    and an empty ledger cites nothing, so every threshold is reported.
 
     Returns findings sorted by (line, col, code, name). An unparseable
     script yields a single ``syntax`` error finding — lint never raises for
@@ -189,6 +214,8 @@ def lint_script(
     findings.extend(_missing_metadata_findings(facts))
     findings.extend(_unlabeled_compound_findings(module))
     findings.extend(_unreachable_geometry_findings(facts))
+    if ledger_ids is not None:
+        findings.extend(_unsourced_constant_findings(module, source, ledger_ids))
     findings.sort(key=lambda f: (f.line, f.col, f.code, f.name or ""))
     return tuple(findings)
 
@@ -518,6 +545,182 @@ def _unreachable_geometry_findings(facts: _Facts) -> list[LintFinding]:
                 )
             )
     return findings
+
+
+# ---------------------------------------------------------------------------
+# VALIDATION.md §2 — ledger-sourced thresholds
+
+
+def _comments_by_line(source: str) -> dict[int, str]:
+    """``{line: comment text}`` for every comment token in the source."""
+    comments: dict[int, str] = {}
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(source).readline):
+            if token.type == tokenize.COMMENT:
+                comments[token.start[0]] = token.string
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        # The module already parsed; a tokenizer disagreement means no citations
+        # are visible, which fails toward reporting rather than toward silence.
+        return comments
+    return comments
+
+
+def _citation_re(ledger_ids: Iterable[str]) -> re.Pattern[str]:
+    """Match any ledger id verbatim (``_`` counts as a boundary: ``y_env_R2``)."""
+    ids = sorted({entry for entry in ledger_ids if entry}, key=len, reverse=True)
+    if not ids:
+        return _NO_CITATION_RE
+    return re.compile(r"(?<![A-Za-z0-9])(?:" + "|".join(re.escape(i) for i in ids) + r")\b")
+
+
+def _checks_dicts(module: ast.Module) -> list[ast.Dict]:
+    """Every top-level ``CHECKS = {...}`` mapping literal."""
+    out: list[ast.Dict] = []
+    for stmt in module.body:
+        if not isinstance(stmt, ast.Assign) or not isinstance(stmt.value, ast.Dict):
+            continue
+        if any(isinstance(t, ast.Name) and t.id == "CHECKS" for t in stmt.targets):
+            out.append(stmt.value)
+    return out
+
+
+def _numeric_literals(node: ast.AST) -> list[ast.Constant]:
+    """Non-boolean int/float constants under ``node``, excluding index literals.
+
+    A subscript index (``m.bbox("part")[1]``) selects an axis; it is not a
+    threshold and has nothing to cite.
+    """
+    indices: set[int] = set()
+    for inner in ast.walk(node):
+        if isinstance(inner, ast.Subscript):
+            indices.update(id(sub) for sub in ast.walk(inner.slice))
+    return [
+        inner
+        for inner in ast.walk(node)
+        if isinstance(inner, ast.Constant)
+        and not isinstance(inner.value, bool)
+        and isinstance(inner.value, int | float)
+        and id(inner) not in indices
+    ]
+
+
+def _unsourced_constant_findings(
+    module: ast.Module, source: str, ledger_ids: Iterable[str]
+) -> list[LintFinding]:
+    """VALIDATION.md §2: every ``CHECKS`` threshold must cite a ledger entry.
+
+    A literal is *cited* when a ledger id appears either in a comment on the
+    literal's own line (the trailing-comment form, ``<= 40.0  # R3``) or in the
+    check's own name in the map (``"y_envelope_R3"``). Nothing else counts:
+    a threshold whose provenance is not written down next to it is precisely the
+    self-referential spec this stage exists to break.
+    """
+    comments = _comments_by_line(source)
+    citation = _citation_re(ledger_ids)
+    findings: list[LintFinding] = []
+    for checks in _checks_dicts(module):
+        for key, value in zip(checks.keys, checks.values, strict=True):
+            name: str | None = None
+            if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                name = key.value
+            key_cited = name is not None and bool(citation.search(name))
+            for literal in _numeric_literals(value):
+                comment = comments.get(literal.lineno, "")
+                if key_cited or citation.search(comment):
+                    continue
+                findings.append(
+                    LintFinding(
+                        code="unsourced_constant",
+                        severity="warning",
+                        line=literal.lineno,
+                        col=literal.col_offset,
+                        message=(
+                            f"CHECKS threshold {literal.value!r} cites no requirement-ledger "
+                            "entry — add a trailing '# <id>' comment or name the check after "
+                            "the entry it tests (VALIDATION.md §2)"
+                        ),
+                        name=name,
+                    )
+                )
+    return findings
+
+
+def _normalize(text: str) -> str:
+    """Whitespace-collapsed, case-folded text for substring citation matching."""
+    return " ".join(text.split()).casefold()
+
+
+def lint_requirements(
+    entries: Sequence[Mapping[str, Any]], request: str
+) -> tuple[LintFinding, ...]:
+    """VALIDATION.md §2: a ``specified`` entry must quote the request verbatim.
+
+    ``entries`` are ledger entries as plain JSON objects (``id``/``source``/
+    ``quote``); ``request`` is the original request text. Comparison collapses
+    whitespace and case so a quote spanning a line break still matches, and
+    nothing else is forgiven — an entry whose quote is absent from the request
+    is a fabricated citation, reported as an ``error``.
+
+    Findings carry ``line=0``: a ledger entry has no position in a source file.
+    """
+    haystack = _normalize(request)
+    findings: list[LintFinding] = []
+    for index, entry in enumerate(entries):
+        if str(entry.get("source", "")) != "specified":
+            continue
+        entry_id = str(entry.get("id", f"#{index}"))
+        raw_quote = entry.get("quote")
+        quote = "" if raw_quote is None else str(raw_quote)
+        if quote.strip() and _normalize(quote) in haystack:
+            continue
+        detail = "has no quote" if not quote.strip() else f"quote {quote!r} is not in the request"
+        findings.append(
+            LintFinding(
+                code="unsourced_requirement",
+                severity="error",
+                line=0,
+                col=0,
+                message=(
+                    f"requirement {entry_id} claims source='specified' but {detail} — "
+                    "it is an assumption, not a specification (VALIDATION.md §2)"
+                ),
+                name=entry_id,
+            )
+        )
+    return tuple(findings)
+
+
+def requirement_entries(document: Any) -> list[Mapping[str, Any]]:
+    """Ledger entries from either a bare list or a stored generation document."""
+    if isinstance(document, list):
+        return [
+            cast("Mapping[str, Any]", item)
+            for item in cast("list[Any]", document)
+            if isinstance(item, dict)
+        ]
+    if isinstance(document, dict):
+        return requirement_entries(cast("Mapping[str, Any]", document).get("entries", []))
+    return []
+
+
+def checks_thresholds(source: str, *, filename: str = PART_FILENAME) -> tuple[float, ...]:
+    """Every numeric threshold literal in the script's ``CHECKS`` predicates.
+
+    The same literals ``unsourced_constant`` reports on, without the citation
+    question: ``VALIDATION.md`` §4 compares them (as dimensions the script
+    itself claims) against the numbers in the original request. Unparseable
+    source yields ``()`` — the caller is critiquing a build, not linting.
+    """
+    try:
+        module = ast.parse(source, filename=filename)
+    except SyntaxError:
+        return ()
+    values: dict[float, None] = {}
+    for checks in _checks_dicts(module):
+        for value in checks.values:
+            for literal in _numeric_literals(value):
+                values.setdefault(float(cast("int | float", literal.value)))
+    return tuple(values)
 
 
 # ---------------------------------------------------------------------------

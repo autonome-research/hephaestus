@@ -27,6 +27,8 @@ from hephaestus.bench.harness import (
     corpus_solutions_dir,
     grade_reference_solution,
     load_tasks,
+    restore_protected,
+    seed_project,
     seeded_prompt,
     task_ids,
 )
@@ -59,7 +61,44 @@ def tasks() -> Mapping[str, BenchTask]:
 
 
 def test_corpus_is_the_eight_public_tasks() -> None:
-    assert set(task_ids()) == {task_id for task_id, _ in CORPUS}
+    prose = {task_id for task_id, _ in CORPUS}
+    # The historically baselined split is still exactly the eight public tasks…
+    assert set(task_ids(specs=("prose",))) == prose
+    # …and VALIDATION.md §1 ships each of them a second time as a seeded variant,
+    # never collapsed into the prose split.
+    assert set(task_ids(specs=("seeded",))) == {f"{task_id}@seeded" for task_id in prose}
+    assert set(task_ids()) == prose | {f"{task_id}@seeded" for task_id in prose}
+
+
+@pytest.mark.parametrize(("task_id", "_budget"), CORPUS)
+def test_seeded_variant_installs_the_acceptance_checks_as_a_protected_spec(
+    task_id: str, _budget: int, tasks: Mapping[str, BenchTask], tmp_path: Path
+) -> None:
+    """VALIDATION.md §1: seeded seeds ``checks/``; prose must not."""
+    prose = tasks[task_id]
+    seeded = tasks[f"{task_id}@seeded"]
+
+    assert prose.spec == "prose" and seeded.spec == "seeded"
+    # Same task: same prompt, same budget, same acceptance checks.
+    assert (seeded.prompt, seeded.budget_tool_calls) == (prose.prompt, prose.budget_tool_calls)
+    assert seeded.required_checks == prose.required_checks
+    assert seeded.base_id == prose.id
+
+    prose_root = seed_project(prose, tmp_path / "prose")
+    seeded_root = seed_project(seeded, tmp_path / "seeded")
+    assert list((prose_root / "checks").glob("*.py")) == [], "a prose task must seed no spec"
+    for name in seeded.required_checks:
+        installed = seeded_root / "checks" / f"{name}.py"
+        assert installed.is_file()
+        assert installed.read_text(encoding="utf-8") == seeded.check_sources()[name]
+        assert f"checks/{name}.py" in seeded.protected_paths
+
+    # Tampering with the seeded spec is restored (and reported for §8 scoring).
+    target = seeded_root / "checks" / f"{seeded.required_checks[0]}.py"
+    target.write_text("CHECKS = {}\n", encoding="utf-8")
+    assert restore_protected(seeded, seeded_root) == [f"checks/{seeded.required_checks[0]}.py"]
+    assert target.read_text(encoding="utf-8") == seeded.check_sources()[seeded.required_checks[0]]
+    assert restore_protected(prose, prose_root) == []
 
 
 @pytest.mark.parametrize(("task_id", "budget"), CORPUS)

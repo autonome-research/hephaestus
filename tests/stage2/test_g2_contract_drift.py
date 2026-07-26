@@ -343,7 +343,7 @@ def test_stage2_surface_excludes_deferred_tools_everywhere(md_source: str) -> No
 def test_committed_schema_files_match_the_declared_surface() -> None:
     on_disk = {path.name.removesuffix(".schema.json") for path in SCHEMAS_DIR.glob("*.json")}
     assert on_disk == set(TOOL_NAMES)
-    assert len(TOOL_NAMES) == 27
+    assert len(TOOL_NAMES) == 30
 
 
 def test_sequential_declarations_cover_the_normative_list() -> None:
@@ -361,11 +361,21 @@ def test_sequential_declarations_cover_the_normative_list() -> None:
         "export_part",
         "delegate_part_agent",
         "cancel_delegation",
+        # VALIDATION.md §2: ledger writes advance a generation, so they serialize.
+        "record_requirements",
+        "update_requirement",
     }
     sequential = {name for name in TOOL_NAMES if tools_decl.get_tool(name).sequential}
     assert normative <= sequential, f"missing sequential declarations: {normative - sequential}"
     # Read-only render/measure stay parallel.
-    for parallel in ("inspect_part", "measure", "read_part", "read_artifact", "run_checks"):
+    for parallel in (
+        "inspect_part",
+        "measure",
+        "read_part",
+        "read_artifact",
+        "run_checks",
+        "read_requirements",
+    ):
         assert not tools_decl.get_tool(parallel).sequential
 
 
@@ -383,10 +393,15 @@ def test_orchestrator_only_families_are_declared_orchestrator_only() -> None:
         "get_delegation_status",
         "cancel_delegation",
     }
+    # The requirement ledger is the orchestrator's and a delegated part agent's
+    # (VALIDATION.md §2/§3); a quick-edit session never authors interpretation.
+    ledger_family = {"record_requirements", "read_requirements", "update_requirement"}
     for name in TOOL_NAMES:
         profiles = set(tools_decl.get_tool(name).profiles)
         if name in orchestrator_only:
             assert profiles == {"orchestrator"}, f"{name} leaked outside the orchestrator"
+        elif name in ledger_family:
+            assert profiles == {"part", "orchestrator"}, f"{name} profiles drifted"
         else:
             assert "part" in profiles and "quick_edit" in profiles, name
 

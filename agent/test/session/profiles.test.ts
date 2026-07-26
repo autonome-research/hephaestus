@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { TOOLS } from "../../src/tools/schema.gen.js";
 import {
   profileDefinition,
   toolsForProfile,
@@ -8,6 +9,9 @@ import {
   QUERY_SNAPSHOT_MAX_OUTPUT_TOKENS,
   QUERY_SNAPSHOT_MAX_TURNS,
   QUERY_SNAPSHOT_TIMEOUT_MS,
+  REVIEWER_MAX_OUTPUT_TOKENS,
+  REVIEWER_MAX_TURNS,
+  REVIEWER_TIMEOUT_MS,
 } from "../../src/session/profiles.js";
 
 const ORCHESTRATOR_ONLY = [
@@ -55,6 +59,18 @@ describe("profile tool subsets", () => {
   it("query_snapshot is toolless", () => {
     expect(toolsForProfile("query_snapshot")).toEqual([]);
   });
+
+  it("reviewer gets the read-only measurement/render subset only", () => {
+    const reviewer = toolsForProfile("reviewer");
+    expect(reviewer.sort()).toEqual(["inspect_part", "measure", "read_artifact"].sort());
+    // No mutation, no delegation, and not the agent's own checks (VALIDATION §5).
+    for (const name of [...ORCHESTRATOR_ONLY, "write_part", "edit_part", "build_part", "run_checks", "export_part", "set_params", "record_requirements", "update_requirement"]) {
+      expect(reviewer).not.toContain(name);
+    }
+    for (const name of reviewer) {
+      expect(TOOLS[name]!.meta.idempotent).toBe(false);
+    }
+  });
 });
 
 describe("profile definitions", () => {
@@ -71,6 +87,18 @@ describe("profile definitions", () => {
     expect(QUERY_SNAPSHOT_TIMEOUT_MS).toBe(60_000);
   });
 
+  it("reviewer: ephemeral, no extensions, its own budget", () => {
+    const def = profileDefinition("reviewer");
+    expect(def.persist).toBe(false);
+    expect(def.extensions).toBe(false);
+    expect(def.budget.maxTurns).toBe(REVIEWER_MAX_TURNS);
+    expect(def.budget.maxOutputTokens).toBe(REVIEWER_MAX_OUTPUT_TOKENS);
+    expect(def.budget.timeoutMs).toBe(REVIEWER_TIMEOUT_MS);
+    // Its charter, not the authoring cheatsheet: it cannot author anything.
+    expect(def.systemPrompt).toContain("independent termination reviewer");
+    expect(def.systemPrompt).not.toContain("PART-SCRIPT CONTRACT");
+  });
+
   it("part/orchestrator persist with no ambient extensions", () => {
     for (const profile of ["part", "orchestrator", "quick_edit"] as const) {
       const def = profileDefinition(profile);
@@ -82,7 +110,7 @@ describe("profile definitions", () => {
 
 describe("system prompt", () => {
   it("always carries the provenance instruction", () => {
-    for (const profile of ["part", "orchestrator", "quick_edit", "query_snapshot"] as const) {
+    for (const profile of ["part", "orchestrator", "quick_edit", "query_snapshot", "reviewer"] as const) {
       expect(systemPromptForProfile(profile)).toContain(PROVENANCE_INSTRUCTION);
     }
   });

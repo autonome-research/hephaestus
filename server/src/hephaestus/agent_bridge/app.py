@@ -32,17 +32,17 @@ import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from hephaestus.core.project_store.layout import ProjectLayout, load_project
 from hephaestus.core.project_store.retention import DefaultProtectedRoots
 from hephaestus.core.project_store.store import ProjectStore
-from opstore.types import TerminalState
+from opstore.types import JSONValue, TerminalState
 
 from opstore import OpStore
 
 from .admission import BridgeAdmission, bridge_store_config
-from .cad_ops import CadOps
+from .cad_ops import CadOps, question_refusal, record_answers
 from .dispatch import DispatchError, Principal, ToolDispatcher
 from .events import EventPump, PerClientQueue
 from .protocol import ErrorCode, ProtocolError
@@ -289,6 +289,12 @@ class BridgeRuntime:
         before the call blocks — that is what makes mid-run cancellation possible.
         """
         run_id = run_id or self.new_run_id()
+        # VALIDATION.md §4/§5: the prompt IS the request every validation rung
+        # judges against, so it is bound to the ops layer here — the only place
+        # that sees it — rather than asked for later from a model that has
+        # already paraphrased it. Delegated child prompts never pass through
+        # this method, so a part agent's build is critiqued against the original.
+        self._cad.set_request_text(text)
         run = _Run(run_id=run_id, session_id=session_id, on_event=on_event)
         with self._lock:
             self._runs[run_id] = run
@@ -347,7 +353,21 @@ class BridgeRuntime:
         return self._dispatcher.dispatch(principal, params)
 
     def _handle_ask_user(self, params: dict[str, Any]) -> Any:
+        """Ask, then record the answer against the ledger (``VALIDATION.md`` §3).
+
+        A question naming ``requirement_ids`` is a *clarification*: its shape is
+        enforced before anyone is asked (2-4 options, each stating its geometric
+        consequence), and the answer is written back to those entries by the
+        runtime — a committal answer as ``resolution``, a declined or
+        non-committal one as ``asked: true`` only, leaving the entry assumed and
+        unconfirmed for the §5 review. Neither half depends on the model choosing
+        to call ``update_requirement`` afterwards, and neither half is reachable
+        that way: both fields are refused on model-facing ledger writes.
+        """
         run_id = str(params.get("run_id", ""))
+        refusal = question_refusal(params)
+        if refusal is not None:
+            return refusal
         with self._lock:
             answerer = self._answerers.get(run_id) or self._default_answerer
         if answerer is None:
@@ -355,7 +375,10 @@ class BridgeRuntime:
                 ErrorCode.INVALID_PARAMS, "no ask_user answerer configured for this run"
             )
         selection = answerer(params)
-        return {"selection": selection}
+        recorded = record_answers(self._cad, run_id, params, cast("JSONValue", selection))
+        if not recorded:
+            return {"selection": selection}
+        return {"selection": selection, "recorded": recorded}
 
     # -- notifications (sidecar -> python) ---------------------------------
 
