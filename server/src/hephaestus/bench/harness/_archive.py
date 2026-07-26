@@ -73,6 +73,9 @@ class RunRecord:
     #: ``VALIDATION.md`` §1 corpus split (``prose``/``seeded``). Scoring never
     #: averages the two, so every record states which one it belongs to rather
     #: than leaving it to be inferred from the task id.
+    #: Harness-compelled ladder calls, counted but never charged against the
+    #: budget (see ``COMPELLED_TOOLS``): the exemption stays visible per run.
+    compelled_tool_calls: int = 0
     spec: str = "prose"
     #: The orchestrator session the run used; its Pi JSONL transcript lives at
     #: ``<project>/.heph/sessions/<session_id>`` inside the archived project.
@@ -107,6 +110,7 @@ class RunRecord:
             "status": self.status,
             "tool_calls": self.tool_calls,
             "budget_tool_calls": self.budget_tool_calls,
+            "compelled_tool_calls": self.compelled_tool_calls,
             "reasons": list(self.reasons),
             "prompt": self.prompt,
             "archive_dir": self.archive_dir,

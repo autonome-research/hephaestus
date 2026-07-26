@@ -193,6 +193,20 @@ and the run records `asked: true` for that requirement. Auto-answering
 helpfully would delete the very mechanism under test. An agent that asks well
 scores better than one that guesses right by luck (§8).
 
+### Budget accounting for compelled calls (2026-07-26)
+
+The tool-call budget measures the **agent's own** design efficiency. The
+ladder's rungs are not the agent's choices — §2 requires a ledger before
+geometry, §3 blocks `build_part` until a material assumption has been asked
+about, §6 returns findings the agent must resolve — so `record_requirements`,
+`read_requirements`, `update_requirement` and `ask_user` are **counted but not
+charged**. Charging them would silently tighten every task by several calls
+against budgets calibrated before the ladder existed, making the bench measure
+harness ceremony rather than agent competence. They cannot be gamed precisely
+because they are compelled: the rules decide when they fire. Every run record
+reports `compelled_tool_calls` alongside `tool_calls`, so the exemption is
+visible per run rather than hidden.
+
 ## 8. Reported metrics (leaderboard + gate evidence)
 
 Per model, per corpus version:

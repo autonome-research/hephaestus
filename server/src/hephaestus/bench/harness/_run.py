@@ -39,6 +39,7 @@ from ._tasks import BenchTask, seeded_prompt
 
 __all__ = [
     "BENCH_ANSWER",
+    "COMPELLED_TOOLS",
     "DEFAULT_PROMPT_TIMEOUT",
     "DEFAULT_SEEDS",
     "ProviderConfig",
@@ -254,8 +255,31 @@ class RunContext:
 ReviewHook = Callable[[RunContext], Mapping[str, Any] | None]
 
 
+#: Tools the VALIDATION.md ladder COMPELS, which therefore do not spend budget.
+#:
+#: The budget measures the agent's own design efficiency — how economically it
+#: reaches correct geometry. The ladder's rungs are not the agent's choices:
+#: §2 requires a ledger before geometry, §3 blocks ``build_part`` until a
+#: material assumption has been asked about, and §6 hands review findings back
+#: as work the agent MUST resolve. Charging those against a budget calibrated
+#: before the ladder existed would silently tighten every task by several calls
+#: and make the bench measure harness ceremony instead of agent competence.
+#:
+#: They cannot be gamed precisely because they are compelled: an agent cannot
+#: spend them on anything else, and the gate rules decide when they fire. They
+#: are still counted and reported separately as ``compelled_tool_calls``, so the
+#: exemption is visible in every archived run rather than hidden.
+COMPELLED_TOOLS: frozenset[str] = frozenset(
+    {"record_requirements", "read_requirements", "update_requirement", "ask_user"}
+)
+
+
 class _BudgetGuard:
-    """Counts ``tool_call`` events and cancels the run once the budget is spent."""
+    """Counts chargeable ``tool_call`` events; cancels the run once spent.
+
+    Harness-compelled ladder calls (:data:`COMPELLED_TOOLS`) are tallied into
+    ``compelled_tool_calls`` and never charged.
+    """
 
     def __init__(self, runtime: BridgeRuntime, run_id: str, budget: int) -> None:
         self._runtime = runtime
@@ -263,6 +287,7 @@ class _BudgetGuard:
         self._budget = budget
         self._cancelled = False
         self.tool_calls = 0
+        self.compelled_tool_calls = 0
         self.questions: list[Mapping[str, Any]] = []
 
     def on_event(self, event: Mapping[str, Any]) -> None:
@@ -273,6 +298,13 @@ class _BudgetGuard:
                 self.questions.append(cast("Mapping[str, Any]", payload))
             return
         if kind != "tool_call":
+            return
+        payload = event.get("payload")
+        name = ""
+        if isinstance(payload, dict):
+            name = str(cast("Mapping[str, Any]", payload).get("name", ""))
+        if name in COMPELLED_TOOLS:
+            self.compelled_tool_calls += 1
             return
         self.tool_calls += 1
         if self.tool_calls > self._budget and not self._cancelled:
@@ -363,6 +395,7 @@ def run_task(
             runtime.close()
 
     tool_calls = guard.tool_calls if guard is not None else 0
+    compelled_calls = guard.compelled_tool_calls if guard is not None else 0
     questions = tuple(guard.questions) if guard is not None else ()
     with (run_dir / ARCHIVE_EVENTS_FILENAME).open("w", encoding="utf-8") as handle:
         for event in events:
@@ -408,6 +441,7 @@ def run_task(
         passed=report.passed,
         status=status,
         tool_calls=tool_calls,
+        compelled_tool_calls=compelled_calls,
         budget_tool_calls=task.budget_tool_calls,
         reasons=report.reasons,
         prompt=prompt,
