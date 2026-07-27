@@ -85,7 +85,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal, Protocol, cast, runtime_checkable
 
-from hephaestus.core.tools_decl import REVIEWER_TOOLS
+from hephaestus.contract.tools_decl import REVIEWER_TOOLS
 from opstore.types import JSONValue
 
 from .cad_ops import (

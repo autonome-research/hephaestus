@@ -38,7 +38,7 @@ from hephaestus.core.executor.splitter import (
     split_statements,
 )
 from hephaestus.core.executor.tags import TagRegistry
-from hephaestus.core.kernel import AnyShape, geometry_index, labeled_nodes
+from hephaestus.geom import AnyShape, geometry_index, labeled_nodes
 from opstore.types import JSONValue
 
 FIXTURES = Path(__file__).resolve().parents[2] / "corpus" / "public_fixtures"

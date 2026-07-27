@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from hephaestus.core import toolgen, tools_decl
+from hephaestus.contract import toolgen, tools_decl
 
 
 def _root() -> Path:

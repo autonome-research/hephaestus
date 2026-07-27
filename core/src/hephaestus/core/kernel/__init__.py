@@ -1,13 +1,13 @@
-"""hephaestus.core.kernel: geometry metrics and measurement services.
+"""Compatibility facade: the kernel geometry services now live in ``hephaestus.geom``.
 
-Pure functions over built build123d geometry (architecture §3.2), shared by
-tools and checks. Re-exports the full public surface of
-:mod:`hephaestus.core.kernel.metrics`, :mod:`hephaestus.core.kernel.measure`
-and :mod:`hephaestus.core.kernel.topology` (the face-level facts DFM rule packs
-measure against).
+The metrics, measurement and topology services moved out of the engine package
+so they can be used without the executor or the project store; see
+:mod:`hephaestus.geom` for the package contract. This module re-exports that
+surface unchanged so existing ``hephaestus.core.kernel`` imports keep working.
+Compatibility only — new code should import from :mod:`hephaestus.geom`.
 """
 
-from hephaestus.core.kernel.measure import (
+from hephaestus.geom.measure import (
     OVERLAP_EPS_MM3,
     clearance,
     distance,
@@ -16,7 +16,7 @@ from hephaestus.core.kernel.measure import (
     mass,
     section,
 )
-from hephaestus.core.kernel.metrics import (
+from hephaestus.geom.metrics import (
     AnyShape,
     bbox_mm,
     genus,
@@ -26,7 +26,7 @@ from hephaestus.core.kernel.metrics import (
     metrics,
     shape_volume,
 )
-from hephaestus.core.kernel.topology import (
+from hephaestus.geom.topology import (
     OVERHANG_SAMPLES,
     PARALLEL_EPS,
     WALL_FACE_LIMIT,

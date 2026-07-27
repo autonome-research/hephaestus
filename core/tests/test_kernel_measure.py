@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 from build123d import Axis, Box, Compound, Plane, Pos
-from hephaestus.core.kernel import (
+from hephaestus.geom import (
     AnyShape,
     clearance,
     distance,
@@ -161,7 +161,7 @@ def test_clearance_translation_invariant(gap: float, tx: float, ty: float, tz: f
 _DETERMINISM_SCRIPT = """\
 import json
 from build123d import Box, Cylinder, Pos
-from hephaestus.core.kernel import clearance, interference, metrics
+from hephaestus.geom import clearance, interference, metrics
 
 shape = Box(20.0, 20.0, 10.0) - Cylinder(3.0, 10.0)
 other = Pos(27.5, 0.0, 0.0) * Box(10.0, 10.0, 10.0)

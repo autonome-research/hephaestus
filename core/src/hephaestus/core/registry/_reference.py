@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Final
 
-from hephaestus.core.tools_decl import limits_document
+from hephaestus.core.limits import limits_document
 
 from ._skills import SkillEntry
 

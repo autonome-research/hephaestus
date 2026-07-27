@@ -1,0 +1,14 @@
+[project]
+name = "hephaestus-contract"
+version = "0.1.0"
+description = "Canonical tool-surface contract: typed declarations, codegen, committed schemas"
+requires-python = ">=3.11,<3.15"
+license = "Apache-2.0"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hephaestus"]

@@ -19,9 +19,9 @@ from hephaestus.agent_bridge.dispatch import (
     Principal,
     ToolDispatcher,
 )
+from hephaestus.contract.tools_decl import TOOLS_BY_NAME, tool_names
 from hephaestus.core.project_store.layout import load_project, open_store
 from hephaestus.core.project_store.store import ProjectStore
-from hephaestus.core.tools_decl import TOOLS_BY_NAME, tool_names
 from opstore.errors import KeyPayloadMismatchError
 
 

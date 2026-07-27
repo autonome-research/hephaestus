@@ -17,13 +17,13 @@ from typing import Any
 import pytest
 from build123d import Box, Compound, Cylinder, Pos, Sphere
 from hephaestus.core.errors import ValidationError
-from hephaestus.core.kerf import (
+from hephaestus.geom.kerf import (
     KERF_UNCOMPENSATED,
     KerfRefusal,
     kerf_compensated_shape,
     resolve_kerf,
 )
-from hephaestus.core.nesting import Blank, flat_profiles, shelf_nest
+from hephaestus.geom.nesting import Blank, flat_profiles, shelf_nest
 
 #: A kerf big enough that a rounding error cannot hide inside it.
 KERF: float = 0.4

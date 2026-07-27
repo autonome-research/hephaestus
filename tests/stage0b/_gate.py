@@ -40,7 +40,7 @@ from hephaestus.core.executor.splitter import (
     split_statements,
 )
 from hephaestus.core.executor.tags import TagRegistry
-from hephaestus.core.kernel import AnyShape, geometry_index
+from hephaestus.geom import AnyShape, geometry_index
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = REPO_ROOT / "corpus" / "public_fixtures"

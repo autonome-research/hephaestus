@@ -40,13 +40,15 @@ from hephaestus.core.cutfile import CUT_LAYER, LAYER_COLORS, Mark, solid_marks
 from hephaestus.core.dfm import TopologyDescriptor, descriptors_from_source_map
 from hephaestus.core.errors import AddressingError, ValidationError
 from hephaestus.core.executor.artifact_geometry import load_brep_shape
-from hephaestus.core.kerf import (
+from hephaestus.core.project_store.store import blob_hash_of_ref
+from hephaestus.core.types import BuildResult
+from hephaestus.geom.kerf import (
     KerfDecision,
     KerfRefusal,
     kerf_compensated_shape,
     resolve_kerf,
 )
-from hephaestus.core.nesting import (
+from hephaestus.geom.nesting import (
     DEFAULT_MARGIN_MM,
     DEFAULT_SPACING_MM,
     Blank,
@@ -58,8 +60,6 @@ from hephaestus.core.nesting import (
     layout_to_svg,
     shelf_nest,
 )
-from hephaestus.core.project_store.store import blob_hash_of_ref
-from hephaestus.core.types import BuildResult
 from opstore.types import JSONValue
 
 from opstore import OpStore, canonical_json, sha256_bytes, sha256_canonical_json
@@ -1041,7 +1041,7 @@ class ExportOps(FrozenMetadataOps):
     def _kerf_decision(self, name: str, source_ref: str, kerf_mm: float | None) -> KerfDecision:
         """Which kerf this export compensates by, and where it came from.
 
-        The order is fixed by :func:`~hephaestus.core.kerf.resolve_kerf`: the
+        The order is fixed by :func:`~hephaestus.geom.kerf.resolve_kerf`: the
         explicit argument, else the ``kerf_mm`` parameter of the DFM pack for
         the process the *frozen* script declares, else nothing at all. Every
         link that can be missing — a drifted script, no declared process, a

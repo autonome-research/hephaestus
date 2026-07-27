@@ -1,8 +1,10 @@
-# bench/ — Tier 3 benchmark results
+# bench/ — Tier 3 benchmark
 
-The harness lives in `server/src/hephaestus/bench/` (`hephaestus.bench`); this
-directory is where its output lands. The tasks and their reference solutions are
-`corpus/tasks/` and `corpus/solutions/`.
+This directory is the `hephaestus-bench` workspace member. The harness is its
+source tree, `bench/src/hephaestus/bench/` (import path `hephaestus.bench`,
+unchanged by the promotion out of `server/`); `bench/results/` is where its
+output lands. The tasks and their reference solutions are `corpus/tasks/` and
+`corpus/solutions/`.
 
 ## Running it
 

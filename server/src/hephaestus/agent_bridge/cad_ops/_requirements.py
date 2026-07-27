@@ -44,6 +44,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Final, cast
 
+from hephaestus.contract.tools_decl import REQUIREMENT_ID_PATTERN, REQUIREMENT_SOURCES
 from hephaestus.core.project_store.locks import PROJECT_CONFIG_LOCK, LockManager
 from hephaestus.core.project_store.store import (
     artifact_ref as make_artifact_ref,
@@ -51,7 +52,6 @@ from hephaestus.core.project_store.store import (
 from hephaestus.core.project_store.store import (
     blob_hash_of_ref,
 )
-from hephaestus.core.tools_decl import REQUIREMENT_ID_PATTERN, REQUIREMENT_SOURCES
 from opstore.types import JSONValue
 
 from opstore import (

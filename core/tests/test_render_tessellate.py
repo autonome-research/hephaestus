@@ -10,12 +10,12 @@ from __future__ import annotations
 import numpy as np
 from build123d import Axis, Box, Compound, Pos
 from hephaestus.core.executor.tags import TagRegistry, resolve_placements
-from hephaestus.core.kernel.metrics import geometry_index, metrics
 from hephaestus.core.render.tessellate import (
     ANGULAR_DEFLECTION,
     LINEAR_DEFLECTION,
     tessellate,
 )
+from hephaestus.geom.metrics import geometry_index, metrics
 
 
 def _tagged_compound() -> tuple[Compound, TagRegistry]:

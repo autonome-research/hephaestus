@@ -65,7 +65,7 @@ agent/                    pnpm package @hephaestus/agent (private, ESM, TS stric
                           escalation via ask_user
     tools/
       schema.gen.ts       GENERATED TypeBox definitions — do not hand-edit;
-                          produced by `uv run python -m hephaestus.core.toolgen ts`
+                          produced by `uv run python -m hephaestus.contract.toolgen ts`
       registry.ts         builds the Pi custom-tool set per profile from
                           schema.gen.ts; sequential-execution declarations
       proxy.ts            validate input (TypeBox + x-hephaestus-maxUtf8Bytes)
@@ -128,22 +128,27 @@ server/                   uv workspace member hephaestus-server
 schemas/                  repo-root cross-language contracts (committed)
   bridge_limits.json      every §5 numeric limit (single source both sides)
   tools/*.schema.json     canonical per-tool JSON Schema, generated from
-                          hephaestus.core.tools_decl by toolgen; committed;
+                          hephaestus.contract.tools_decl by toolgen; committed;
                           drift-tested against tool_schema.md names
-core/src/hephaestus/core/tools_decl.py   typed Python declaration of the FULL
-                          Stage 2 tool surface (params, results, errors,
-                          conditionals, x-hephaestus-maxUtf8Bytes, sequential/
-                          idempotent flags, per-profile availability)
-core/src/hephaestus/core/toolgen.py      emits JSON Schema + TypeBox (ts) +
-                          (Stage 3) MCP declarations from tools_decl
+contract/src/hephaestus/contract/tools_decl.py
+                          typed Python declaration of the FULL Stage 2 tool
+                          surface (params, results, errors, conditionals,
+                          x-hephaestus-maxUtf8Bytes, sequential/idempotent
+                          flags, per-profile availability)
+contract/src/hephaestus/contract/toolgen.py
+                          emits JSON Schema + TypeBox (ts) + (Stage 3) MCP
+                          declarations from tools_decl. hephaestus.core keeps
+                          compatibility facades at the old module paths; the
+                          engine itself never imports the contract.
 registries/               skills/ (six references), parts/ (metric screws,
                           heat-set inserts), materials/ (plywoods, PLA/PETG,
                           6061); each registry: registry.toml + content;
                           Merkle tree hash pinning in hephaestus.toml;
                           heph registry verbs land with the tools
 corpus/tasks/ + corpus/solutions/        public bench split v0 (8 tasks)
-bench/                    harness package dir under server (hephaestus.bench):
-                          runner, Wilson bound scoring, results JSON, archives
+bench/                    workspace member hephaestus-bench (hephaestus.bench):
+                          src/ holds runner + Wilson bound scoring; results/
+                          holds the results JSON and run archives
 tests/stage2/             gate tests (pytest side)
 ```
 

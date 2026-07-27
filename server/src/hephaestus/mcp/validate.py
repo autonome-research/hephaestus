@@ -4,7 +4,7 @@ MCP clients are stock: nothing on the client side validates a tool call against
 ``schemas/tools/<name>.schema.json`` before it reaches us, and FastMCP does not
 validate arguments for a server-supplied ``inputSchema``. This module therefore
 enforces the canonical parameter schema itself, over exactly the draft-2020-12
-subset ``hephaestus.core.tools_decl`` emits (``type``, ``enum``/``const``,
+subset ``hephaestus.contract.tools_decl`` emits (``type``, ``enum``/``const``,
 ``properties``/``required``/``additionalProperties``, ``items`` with
 ``minItems``/``maxItems``, ``pattern``, ``minimum``/``maximum``, ``anyOf``,
 ``allOf`` with ``if``/``then``/``else``, ``not``, and ``default``) plus the

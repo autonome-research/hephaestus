@@ -586,7 +586,7 @@ def _run_part_checks(
         from hephaestus.core.addressing import Resolution
         from hephaestus.core.checks.engine import CheckPredicate, run_checks
         from hephaestus.core.checks.facade import MappedGeometry, part_measurement
-        from hephaestus.core.kernel import geometry_index, labeled_nodes
+        from hephaestus.geom import geometry_index, labeled_nodes
 
         nodes = labeled_nodes(geometry)
         index = geometry_index(

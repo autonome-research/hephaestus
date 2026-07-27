@@ -8,7 +8,7 @@ through, engrave that, and only score the fold": the operator has to
 re-separate the geometry by hand, and any mistake is destroyed material.
 
 This module is the one place that decides which layer a contour belongs on, so
-the nested-sheet writer (:mod:`hephaestus.core.nesting`) and the as-built DXF
+the nested-sheet writer (:mod:`hephaestus.geom.nesting`) and the as-built DXF
 writer emit the *same* convention. It owns three things and nothing else:
 
 * the four layer names and their standard ACI colours (:data:`LAYER_COLORS`);

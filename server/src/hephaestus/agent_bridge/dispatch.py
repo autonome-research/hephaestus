@@ -52,6 +52,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol, cast, runtime_checkable
 
+from hephaestus.contract.tools_decl import (
+    IDENT_PATTERN,
+    READ_ARTIFACT_PAGE_MAX,
+    TOOLS_BY_NAME,
+    ToolDecl,
+)
 from hephaestus.core.errors import (
     AddressingError,
     HephaestusError,
@@ -60,12 +66,6 @@ from hephaestus.core.errors import (
 )
 from hephaestus.core.project_store.store import ProjectStore, WriteConflictError
 from hephaestus.core.registry import TEXT_MAX_LINES, RegistryError, RegistryOps
-from hephaestus.core.tools_decl import (
-    IDENT_PATTERN,
-    READ_ARTIFACT_PAGE_MAX,
-    TOOLS_BY_NAME,
-    ToolDecl,
-)
 from opstore.types import TerminalState
 
 from .cad_ops import CadOpError, CadOps, ParamConflict, check_template, clarification_gate

@@ -10,7 +10,7 @@ topology so the render passes can colour by selectable occurrence:
 which is **exactly** the indexing
 :func:`hephaestus.core.executor.tags.resolve_placements` uses, so a tag placed
 at ``(solid s, topology index t)`` addresses the same face/edge group here, and
-the per-solid counts agree with :func:`hephaestus.core.kernel.metrics.metrics`.
+the per-solid counts agree with :func:`hephaestus.geom.metrics.metrics`.
 
 Tessellation deflection is fixed by the module constants below (linear in mm,
 angular in radians). They are part of the determinism contract and the golden

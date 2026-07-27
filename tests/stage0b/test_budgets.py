@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 from _gate import ASSEMBLY, InProcessPart, build_part, build_source, read
-from hephaestus.core.kernel import AnyShape, interference_pairs
+from hephaestus.geom import AnyShape, interference_pairs
 
 FULL_BUILD_BUDGET_S = 30.0
 INTERFERENCE_BUDGET_S = 5.0
@@ -104,7 +104,7 @@ class TestMeasureFacadeBudget:
         primary = InProcessPart(read(PRIMARY), read(GLOBALS))
         bracket = InProcessPart(read(BRACKET), read(GLOBALS))
         started = time.monotonic()
-        from hephaestus.core.kernel import clearance, interference
+        from hephaestus.geom import clearance, interference
 
         overlap = interference(primary.shape, bracket.shape)
         gap = clearance(primary.shape, bracket.shape)

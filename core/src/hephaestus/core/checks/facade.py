@@ -4,7 +4,7 @@ A :class:`Measurement` resolves geometry selectors via ``addressing.py``
 (part-scoped or project-scoped with cross-part ``"<part>/<selector>"``
 addressing) and computes values through a :class:`KernelOps` backend. The
 production backend (:func:`default_kernel_ops`) binds lazily to
-``hephaestus.core.kernel.{metrics,measure}``; tests and non-geometry callers
+``hephaestus.geom.{metrics,measure}``; tests and non-geometry callers
 may inject any :class:`KernelOps` implementation.
 
 Every measurement is appended to a deterministic trace so the checks engine
@@ -102,7 +102,7 @@ class _MetricsLike(Protocol):
 
 
 class _LazyKernelOps:
-    """Production backend: binds ``hephaestus.core.kernel`` at first call.
+    """Production backend: binds ``hephaestus.geom`` at first call.
 
     Import happens per call site so this module stays importable (and the
     engine testable) before/without the geometry kernel; kernel ``metrics()``
@@ -111,12 +111,12 @@ class _LazyKernelOps:
 
     @staticmethod
     def _measure_fn(name: str) -> Callable[..., object]:
-        module = importlib.import_module("hephaestus.core.kernel.measure")
+        module = importlib.import_module("hephaestus.geom.measure")
         return cast("Callable[..., object]", getattr(module, name))
 
     @staticmethod
     def _metrics(shape: object) -> _MetricsLike:
-        module = importlib.import_module("hephaestus.core.kernel.metrics")
+        module = importlib.import_module("hephaestus.geom.metrics")
         fn = cast("Callable[[object], _MetricsLike]", module.metrics)
         return fn(shape)
 
@@ -147,7 +147,7 @@ class _LazyKernelOps:
 
 
 def default_kernel_ops() -> KernelOps:
-    """The production :class:`KernelOps` backed by ``hephaestus.core.kernel``."""
+    """The production :class:`KernelOps` backed by ``hephaestus.geom``."""
     return _LazyKernelOps()
 
 

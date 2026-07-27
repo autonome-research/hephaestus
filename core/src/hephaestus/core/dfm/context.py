@@ -9,7 +9,7 @@ deterministic order (so every measurement can be reported as an artifact-bound
 metadata, the resolved materials record, and exactly the pack parameters the
 rule declared it reads.
 
-The geometry itself is measured by :mod:`hephaestus.core.kernel.topology`; this
+The geometry itself is measured by :mod:`hephaestus.geom.topology`; this
 module's job is to bind each measurement to the handle that addresses it, so a
 predicate that finds a thin wall or an undersized bore can point at it:
 
@@ -34,7 +34,7 @@ from typing import Any, cast
 
 from hephaestus.core.dfm.types import TopologyDescriptor, TopologyKind
 from hephaestus.core.errors import ValidationError
-from hephaestus.core.kernel.topology import (
+from hephaestus.geom.topology import (
     OVERHANG_SAMPLES,
     WALL_FACE_LIMIT,
     Vec3,

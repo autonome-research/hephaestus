@@ -417,7 +417,7 @@ def interference_report(
     records why the solids could not be enumerated — an unmeasured compound
     says so instead of reporting a clean sheet.
     """
-    from hephaestus.core.kernel.measure import interference
+    from hephaestus.geom.measure import interference
 
     cap = MAX_INTERFERENCE_PAIRS if max_pairs is None else max_pairs
     pairs = list(combinations(range(len(solids)), 2))

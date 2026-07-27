@@ -56,7 +56,7 @@ from hephaestus.agent_bridge.review import (
     run_review_ladder,
     strip_agent_checks,
 )
-from hephaestus.core import tools_decl
+from hephaestus.contract import tools_decl
 from hephaestus.testing.fake_openai import FakeOpenAI, RequestInfo, start_fake_openai
 from hephaestus.testing.ledger import seed_minimal_ledger
 from hephaestus.testing.projects import scaffold_project

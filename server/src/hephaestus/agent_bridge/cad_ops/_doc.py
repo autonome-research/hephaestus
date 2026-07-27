@@ -33,10 +33,10 @@ from pathlib import Path
 from typing import Any, Final, cast
 
 from hephaestus.core.executor.artifact_geometry import load_brep_shape
-from hephaestus.core.kernel.metrics import bbox_mm, shape_volume
 from hephaestus.core.project_store.store import blob_hash_of_ref
 from hephaestus.core.registry import Material, RegistrySet
 from hephaestus.core.types import BuildResult
+from hephaestus.geom.metrics import bbox_mm, shape_volume
 from opstore.types import JSONValue
 
 from ._base import CadOpError

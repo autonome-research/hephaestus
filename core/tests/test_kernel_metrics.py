@@ -11,7 +11,7 @@ import math
 
 from build123d import Axis, Box, Compound, Cylinder, Pos, Sphere, Torus
 from hephaestus.core.addressing import label_rows, namespace, resolve
-from hephaestus.core.kernel import (
+from hephaestus.geom import (
     AnyShape,
     bbox_mm,
     genus,

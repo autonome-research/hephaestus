@@ -41,10 +41,10 @@ from xml.sax.saxutils import escape, quoteattr
 import numpy as np
 from hephaestus.core.dfm import TopologyDescriptor
 from hephaestus.core.executor.artifact_geometry import load_brep_shape
-from hephaestus.core.kernel.topology import cylindrical_faces, opposing_planar_pairs
 from hephaestus.core.project_store.store import blob_hash_of_ref
 from hephaestus.core.render.cameras import DEFAULT_MARGIN, ViewSpec, camera_framing, parse_view
 from hephaestus.core.types import BuildResult
+from hephaestus.geom.topology import cylindrical_faces, opposing_planar_pairs
 from opstore.types import JSONValue
 
 from ._base import CadOpError

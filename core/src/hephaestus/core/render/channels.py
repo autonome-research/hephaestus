@@ -629,7 +629,7 @@ def _render_section(
     view: ViewSpec,
     plane: SectionPlane,
 ) -> NDArray[np.uint8]:
-    from hephaestus.core.kernel.measure import section as kernel_section
+    from hephaestus.geom.measure import section as kernel_section
 
     keep = plane.keep_box(scene.bbox_min, scene.bbox_max)
     meshes: list[Any] = []

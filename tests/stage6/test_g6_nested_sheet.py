@@ -28,7 +28,7 @@ import pytest
 from _g6 import G6Project, make_g6_project
 from hephaestus.agent_bridge.cad_ops import script_metadata
 from hephaestus.bench.harness import dxf_layer_extents, dxf_profile_count
-from hephaestus.core.nesting import BLANK_LAYER, PROFILE_LAYER, blank_from_metadata
+from hephaestus.geom.nesting import BLANK_LAYER, PROFILE_LAYER, blank_from_metadata
 
 #: The blank ``part.blank_size`` declares, in millimetres.
 BLANK_W, BLANK_H = 210.0, 125.0

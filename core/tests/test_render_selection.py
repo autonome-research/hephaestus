@@ -36,7 +36,6 @@ from hephaestus.core.executor.splitter import (
     split_statements,
 )
 from hephaestus.core.executor.tags import TagPlacement, TagRegistry, resolve_placements
-from hephaestus.core.kernel.metrics import metrics
 from hephaestus.core.project_store.store import artifact_ref, blob_hash_of_ref
 from hephaestus.core.render.bundle import (
     RenderStore,
@@ -56,6 +55,7 @@ from hephaestus.core.render.selection import (
     solid_labels,
 )
 from hephaestus.core.render.tessellate import Tessellation, tessellate
+from hephaestus.geom.metrics import metrics
 from numpy.typing import NDArray
 
 from opstore import OpStore

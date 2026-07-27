@@ -5,8 +5,8 @@ One FastMCP app serves both transports (stdio and streamable HTTP; see
 the Pi bridge already uses:
 
 * **Tool surface.** Every canonical tool is registered from
-  :func:`hephaestus.core.toolgen.mcp_declarations` — declarations generated from
-  :mod:`hephaestus.core.tools_decl` (and therefore byte-identical to
+  :func:`hephaestus.contract.toolgen.mcp_declarations` — declarations generated from
+  :mod:`hephaestus.contract.tools_decl` (and therefore byte-identical to
   ``schemas/tools/*.schema.json`` and ``schemas/mcp/tools.json``). No tool
   schema is written by hand here, so the CI drift contract covers MCP too. Three
   server-local verbs are added: ``open_project`` and ``list_parts`` (mission
@@ -62,14 +62,14 @@ from hephaestus.agent_bridge.cad_ops import (
 from hephaestus.agent_bridge.dispatch import DispatchError, Invocation, Principal, ToolDispatcher
 from hephaestus.agent_bridge.limits import LIMITS
 from hephaestus.agent_bridge.protocol import ProtocolError
-from hephaestus.core import toolgen
+from hephaestus.contract import toolgen
+from hephaestus.contract.tools_decl import TOOLS_BY_NAME
 from hephaestus.core.errors import HephaestusError
 from hephaestus.core.executor.sandbox.base import ExecBackend
 from hephaestus.core.executor.sandbox.probe import refuse_unsafe, secure_backend
 from hephaestus.core.project_store.layout import ProjectLayout, load_project
 from hephaestus.core.project_store.retention import DefaultProtectedRoots
 from hephaestus.core.project_store.store import ProjectStore
-from hephaestus.core.tools_decl import TOOLS_BY_NAME
 from opstore.types import JSONValue
 from pydantic import ConfigDict
 

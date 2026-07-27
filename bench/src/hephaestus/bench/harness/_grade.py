@@ -31,8 +31,8 @@ from typing import Any, cast
 from hephaestus.agent_bridge.cad_ops import EXPORT_FORMATS, CadOpError, CadOps
 from hephaestus.core.errors import SandboxDeniedError
 from hephaestus.core.executor.sandbox.probe import secure_backend
-from hephaestus.core.nesting import blank_from_metadata
 from hephaestus.core.project_store.layout import ProjectLayout, load_project
+from hephaestus.geom.nesting import blank_from_metadata
 
 from ..metrics import charged_reasons, harness_reasons
 from ._exports import dxf_layer_extents, dxf_profile_count, pdf_text, validate_export_bytes

@@ -14,7 +14,7 @@ from typing import Any, cast
 
 import pytest
 from fastmcp import Client
-from hephaestus.core.tools_decl import MAX_IMAGES_PER_RESULT
+from hephaestus.contract.tools_decl import MAX_IMAGES_PER_RESULT
 from hephaestus.mcp.app import HephaestusMCP, build_app
 from hephaestus.testing.ledger import MINIMAL_LEDGER_ENTRY
 from hephaestus.testing.tools_fixture import scaffold

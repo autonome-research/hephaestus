@@ -32,7 +32,7 @@ from typing import Any
 import pytest
 from hephaestus.agent_bridge.cad_ops import CadOpError
 from hephaestus.agent_bridge.dispatch import DispatchError
-from hephaestus.core.nesting import PROFILE_LAYER
+from hephaestus.geom.nesting import PROFILE_LAYER
 from hephaestus.testing.tools_fixture import Project, make_project
 
 #: The ``laser_cut`` pack's declared kerf (``registries/dfm/laser_cut``).

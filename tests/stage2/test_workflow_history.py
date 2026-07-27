@@ -245,9 +245,13 @@ def test_workflow_history_no_python_module_parses_pi_jsonl() -> None:
     """No Python package names a ``.jsonl`` transcript except the bench archives."""
     bridge = REPO_ROOT / "server" / "src" / "hephaestus" / "agent_bridge"
     core = REPO_ROOT / "core" / "src" / "hephaestus" / "core"
-    bench = REPO_ROOT / "server" / "src" / "hephaestus" / "bench"
+    geom = REPO_ROOT / "core" / "src" / "hephaestus" / "geom"
+    bench = REPO_ROOT / "bench" / "src" / "hephaestus" / "bench"
+    # A stale path would scan nothing and pass vacuously; fail loudly instead.
+    for package in (bridge, core, geom, bench):
+        assert package.is_dir(), f"package path went stale: {package}"
 
-    for package in (bridge, core):
+    for package in (bridge, core, geom):
         for path, source in python_modules(package):
             offenders = jsonl_filenames(source)
             assert offenders == [], f"{path} names a JSONL file: {offenders}"

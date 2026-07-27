@@ -40,7 +40,6 @@ from typing import Any
 
 import numpy as np
 from hephaestus.core.executor.tags import TagPlacement, TagRegistry, resolve_placements
-from hephaestus.core.kernel.metrics import labeled_nodes
 from hephaestus.core.render.bundle import RenderStore, SelectionBundle
 from hephaestus.core.render.cameras import camera_framing, parse_view
 from hephaestus.core.render.offscreen import (
@@ -52,6 +51,7 @@ from hephaestus.core.render.offscreen import (
 )
 from hephaestus.core.render.palette import SelectionEntry, id_to_rgb
 from hephaestus.core.render.tessellate import Tessellation, face_trimesh, tessellate
+from hephaestus.geom.metrics import labeled_nodes
 from numpy.typing import NDArray
 
 from opstore import OpStore

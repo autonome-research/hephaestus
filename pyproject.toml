@@ -12,6 +12,8 @@ members = [
     "opstore",
     "core",
     "server",
+    "contract",
+    "bench",
 ]
 
 [dependency-groups]
@@ -19,6 +21,8 @@ dev = [
     "opstore",
     "hephaestus-core",
     "hephaestus-server",
+    "hephaestus-contract",
+    "hephaestus-bench",
     "pytest>=8.3",
     "pytest-cov>=6.0",
     "hypothesis>=6.115",
@@ -33,6 +37,12 @@ dev = [
 workspace = true
 
 [tool.uv.sources.hephaestus-server]
+workspace = true
+
+[tool.uv.sources.hephaestus-contract]
+workspace = true
+
+[tool.uv.sources.hephaestus-bench]
 workspace = true
 
 [tool.uv.sources]
@@ -61,7 +71,7 @@ extend-exclude = [
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.pyright]
-include = ["opstore", "core", "server"]
+include = ["opstore", "core", "server", "contract", "bench/src"]
 # server/tests/fixtures/ is recorded model-authored part-script evidence written
 # against the executor's injected namespace, not importable project source (same
 # category as tests/stage3/fixtures/, which pyright never sees because it is

@@ -1,35 +1,33 @@
-"""Deterministic code generator: tools_decl -> committed JSON Schema + TypeBox + MCP.
+"""Compatibility facade: the code generator moved to :mod:`hephaestus.contract`.
 
-``uv run python -m hephaestus.core.toolgen all`` regenerates every artifact from
-:mod:`hephaestus.core.tools_decl`:
+The generator now lives in ``contract/src/hephaestus/contract/toolgen.py`` so the
+CAD engine stays engine-first — :mod:`hephaestus.core` knows nothing about agents
+or the tool contract. The canonical invocation is
+``uv run python -m hephaestus.contract.toolgen all``; ``python -m
+hephaestus.core.toolgen all`` keeps working through this module and writes
+byte-identical artifacts.
 
-* ``schemas/tools/<name>.schema.json`` — one canonical draft-2020-12 JSON Schema
-  document per tool, carrying the parameter schema, the result schema, and the
-  ``x-hephaestus-tool`` metadata block (profiles, sequential/idempotent flags,
-  and the ``x-hephaestus-maxUtf8Bytes`` guarded fields).
-* ``agent/src/tools/schema.gen.ts`` — a single generated TypeBox module wrapping
-  the identical schemas via ``Type.Unsafe`` plus a typed ``TOOLS`` registry.
-* ``schemas/mcp/tools.json`` — the MCP ``tools/list`` declaration document
-  (Stage 3). The FastMCP server registers exactly these declarations by calling
-  :func:`mcp_declarations` in-process, so an MCP client sees the canonical
-  parameter schema verbatim and no MCP tool surface is ever hand-written.
-
-Output is byte-deterministic: schemas are emitted with sorted keys and a fixed
-two-space indent, tools iterate in the fixed :data:`hephaestus.core.tools_decl.TOOLS`
-order, and every file ends with a single trailing newline. Running the generator
-twice produces identical bytes (determinism test), and the committed outputs are
-drift-tested against this declaration and ``tool_schema.md`` in CI.
+This module re-exports :mod:`hephaestus.contract.toolgen` for out-of-tree
+consumers and existing drift tests only; it is not part of
+:mod:`hephaestus.core`'s own surface, and nothing inside :mod:`hephaestus.core`
+may import it.
 """
 
 from __future__ import annotations
 
-import json
-import sys
-from pathlib import Path
-from typing import Any, cast
-
-from . import tools_decl
-from .tools_decl import TOOLS, ToolDecl
+from hephaestus.contract.toolgen import (
+    MCP_META_RESULT_KEY,
+    MCP_META_TOOL_KEY,
+    generate_json_schemas,
+    generate_mcp_document,
+    generate_typebox_module,
+    main,
+    mcp_declaration,
+    mcp_declarations,
+    repo_root,
+    schema_document,
+    write_all,
+)
 
 __all__ = [
     "MCP_META_RESULT_KEY",
@@ -44,305 +42,6 @@ __all__ = [
     "schema_document",
     "write_all",
 ]
-
-_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
-_ID_BASE = "https://hephaestus.dev/schemas/tools"
-
-#: ``_meta`` key carrying the ``x-hephaestus-tool`` block on an MCP declaration.
-MCP_META_TOOL_KEY = "hephaestus.dev/tool"
-#: ``_meta`` key carrying the canonical result schema on an MCP declaration.
-#: The result schema is a discriminated union, so it is advertised as metadata
-#: rather than as an MCP ``outputSchema`` (which clients validate structurally).
-MCP_META_RESULT_KEY = "hephaestus.dev/result-schema"
-
-
-def repo_root() -> Path:
-    """Repo root = the directory containing ``schemas/bridge_limits.json``."""
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        if (parent / "schemas" / "bridge_limits.json").is_file():
-            return parent
-    raise FileNotFoundError("repo root (schemas/bridge_limits.json) not found")
-
-
-def schema_document(tool: ToolDecl) -> dict[str, Any]:
-    """The canonical per-tool JSON Schema document."""
-    return {
-        "$schema": _SCHEMA_DIALECT,
-        "$id": f"{_ID_BASE}/{tool.name}.schema.json",
-        "title": tool.name,
-        "description": tool.summary,
-        "x-hephaestus-tool": {
-            "name": tool.name,
-            "profiles": list(tool.profiles),
-            "sequential": tool.sequential,
-            "idempotent": tool.idempotent,
-            "maxUtf8Fields": dict(sorted(tool.max_utf8_fields.items())),
-        },
-        "parameters": tool.params,
-        "result": tool.result,
-    }
-
-
-def _canonical_json(value: Any) -> str:
-    # Sorted keys + fixed indent => byte-deterministic and diff-friendly.
-    return json.dumps(value, sort_keys=True, indent=2, ensure_ascii=False)
-
-
-def generate_json_schemas() -> dict[str, str]:
-    """Return ``{relative_path: file_text}`` for every per-tool JSON Schema."""
-    out: dict[str, str] = {}
-    for tool in TOOLS:
-        text = _canonical_json(schema_document(tool)) + "\n"
-        out[f"schemas/tools/{tool.name}.schema.json"] = text
-    return out
-
-
-def mcp_declaration(tool: ToolDecl) -> dict[str, Any]:
-    """One MCP tool declaration, derived from the canonical schema document."""
-    document = schema_document(tool)
-    return {
-        "name": tool.name,
-        "description": tool.summary,
-        "inputSchema": document["parameters"],
-        "_meta": {
-            MCP_META_TOOL_KEY: document["x-hephaestus-tool"],
-            MCP_META_RESULT_KEY: document["result"],
-        },
-    }
-
-
-def mcp_declarations() -> list[dict[str, Any]]:
-    """Every canonical tool's MCP declaration, in the fixed ``TOOLS`` order."""
-    return [mcp_declaration(tool) for tool in TOOLS]
-
-
-def generate_mcp_document() -> str:
-    """Return the full text of ``schemas/mcp/tools.json``."""
-    return _canonical_json({"version": 1, "tools": mcp_declarations()}) + "\n"
-
-
-def _camel(name: str) -> str:
-    head, *rest = name.split("_")
-    return head + "".join(part[:1].upper() + part[1:] for part in rest)
-
-
-def _profiles_literal(profiles: tuple[str, ...]) -> str:
-    return "[" + ", ".join(json.dumps(p) for p in profiles) + "]"
-
-
-def generate_typebox_module() -> str:
-    """Return the full text of ``agent/src/tools/schema.gen.ts``."""
-    lines: list[str] = []
-    lines.append("/* eslint-disable */")
-    lines.append(
-        "// GENERATED by `uv run python -m hephaestus.core.toolgen ts` from "
-        "core/src/hephaestus/core/tools_decl.py."
-    )
-    lines.append("// DO NOT EDIT BY HAND — regenerate and commit instead.")
-    lines.append('import { Type, type TSchema } from "@sinclair/typebox";')
-    lines.append("")
-    # The union is generated from PROFILES so a new profile (e.g. the §5
-    # reviewer) cannot exist on one side of the language boundary only.
-    profile_union = " | ".join(json.dumps(p) for p in tools_decl.PROFILES)
-    lines.append(f"export type ToolProfile = {profile_union};")
-    lines.append("")
-    lines.append("export interface ToolMeta {")
-    lines.append("  readonly name: string;")
-    lines.append("  readonly summary: string;")
-    lines.append("  readonly profiles: readonly ToolProfile[];")
-    lines.append("  readonly sequential: boolean;")
-    lines.append("  readonly idempotent: boolean;")
-    lines.append("  readonly maxUtf8Fields: Readonly<Record<string, number>>;")
-    lines.append("}")
-    lines.append("")
-    lines.append("export interface ToolSchema {")
-    lines.append("  readonly meta: ToolMeta;")
-    lines.append("  readonly params: TSchema;")
-    lines.append("  readonly result: TSchema;")
-    lines.append("}")
-    lines.append("")
-
-    for tool in TOOLS:
-        cam = _camel(tool.name)
-        lines.append(f"export const {cam}Params: TSchema = {_ts_typebox(tool.params)};")
-        lines.append(f"export const {cam}Result: TSchema = {_ts_typebox(tool.result)};")
-        lines.append("")
-
-    lines.append("export const TOOLS: Readonly<Record<string, ToolSchema>> = {")
-    for tool in TOOLS:
-        cam = _camel(tool.name)
-        meta_parts = [
-            f"name: {json.dumps(tool.name)}",
-            f"summary: {json.dumps(tool.summary)}",
-            f"profiles: {_profiles_literal(tool.profiles)}",
-            f"sequential: {json.dumps(tool.sequential)}",
-            f"idempotent: {json.dumps(tool.idempotent)}",
-            f"maxUtf8Fields: {json.dumps(dict(sorted(tool.max_utf8_fields.items())))}",
-        ]
-        meta = "{ " + ", ".join(meta_parts) + " }"
-        lines.append(f"  {json.dumps(tool.name)}: {{")
-        lines.append(f"    meta: {meta},")
-        lines.append(f"    params: {cam}Params,")
-        lines.append(f"    result: {cam}Result,")
-        lines.append("  },")
-    lines.append("};")
-    lines.append("")
-    names = ", ".join(json.dumps(t.name) for t in TOOLS)
-    lines.append(f"export const TOOL_NAMES = [{names}] as const;")
-    lines.append("")
-    return "\n".join(lines)
-
-
-# Keywords the TypeBox constructor represents structurally (not carried into the
-# options object). ``additionalProperties`` is handled explicitly per object.
-_STRUCTURAL_KEYS: frozenset[str] = frozenset(
-    {
-        "type",
-        "properties",
-        "required",
-        "items",
-        "enum",
-        "const",
-        "oneOf",
-        "anyOf",
-        "additionalProperties",
-    }
-)
-
-
-def _opts_literal(schema: dict[str, Any], extra: dict[str, Any] | None = None) -> str:
-    """Return a TS options object literal (or '') for a schema's annotation keys.
-
-    Non-structural JSON Schema keywords — including conditionals (``allOf``/
-    ``if``/``then``/``else``/``not``), ``default``, bounds, ``pattern``, and the
-    custom ``x-hephaestus-maxUtf8Bytes`` — are preserved verbatim so the TypeBox
-    schema stays faithful to the canonical JSON Schema. TypeBox ``Value.Check``
-    enforces the base shape/enums/bounds and ignores conditional keywords, which
-    remain enforced canonically by the Python/JSON-Schema validator.
-    """
-    opts = {k: v for k, v in schema.items() if k not in _STRUCTURAL_KEYS}
-    if extra:
-        opts.update(extra)
-    if not opts:
-        return ""
-    return json.dumps(opts, sort_keys=True)
-
-
-def _ts_typebox(schema: dict[str, Any]) -> str:
-    """Emit a TypeBox constructor expression for a supported JSON Schema subset."""
-    if not schema:
-        return "Type.Unknown()"
-    if "oneOf" in schema or "anyOf" in schema:
-        variants = cast("list[dict[str, Any]]", schema.get("oneOf") or schema.get("anyOf") or [])
-        inner = ", ".join(_ts_typebox(v) for v in variants)
-        opts = _opts_literal(schema)
-        return f"Type.Union([{inner}]{', ' + opts if opts else ''})"
-    if "const" in schema:
-        opts = _opts_literal(schema)
-        return f"Type.Literal({json.dumps(schema['const'])}{', ' + opts if opts else ''})"
-    if "enum" in schema:
-        values = cast("list[Any]", schema["enum"])
-        lits = ", ".join(f"Type.Literal({json.dumps(v)})" for v in values)
-        opts = _opts_literal(schema)
-        return f"Type.Union([{lits}]{', ' + opts if opts else ''})"
-
-    kind = schema.get("type")
-    opts = _opts_literal(schema)
-    if kind == "string":
-        return f"Type.String({opts})"
-    if kind == "integer":
-        return f"Type.Integer({opts})"
-    if kind == "number":
-        return f"Type.Number({opts})"
-    if kind == "boolean":
-        return f"Type.Boolean({opts})"
-    if kind == "null":
-        return f"Type.Null({opts})"
-    if kind == "array":
-        items = cast("dict[str, Any]", schema.get("items", {}))
-        item_expr = _ts_typebox(items) if items else "Type.Unknown()"
-        return f"Type.Array({item_expr}{', ' + opts if opts else ''})"
-    if kind == "object":
-        props = cast("dict[str, dict[str, Any]] | None", schema.get("properties"))
-        if props is not None:
-            required = cast("list[str]", schema.get("required", []))
-            entries: list[str] = []
-            for key, sub in props.items():
-                expr = _ts_typebox(sub)
-                if key not in required:
-                    expr = f"Type.Optional({expr})"
-                entries.append(f"{json.dumps(key)}: {expr}")
-            body = "{ " + ", ".join(entries) + " }" if entries else "{}"
-            ap = schema.get("additionalProperties", False)
-            extra = {"additionalProperties": ap} if isinstance(ap, bool) else None
-            obj_opts = _opts_literal(schema, extra)
-            return f"Type.Object({body}{', ' + obj_opts if obj_opts else ''})"
-        ap_raw = schema.get("additionalProperties")
-        value_expr = (
-            _ts_typebox(cast("dict[str, Any]", ap_raw))
-            if isinstance(ap_raw, dict)
-            else "Type.Unknown()"
-        )
-        return f"Type.Record(Type.String(), {value_expr}{', ' + opts if opts else ''})"
-    # No recognizable "type": treat as an unconstrained value.
-    return "Type.Unknown()"
-
-
-def write_all(root: Path | None = None) -> list[Path]:
-    """Write every generated artifact under ``root`` (default: repo root)."""
-    base = root if root is not None else repo_root()
-    written: list[Path] = []
-
-    schemas_dir = base / "schemas" / "tools"
-    schemas_dir.mkdir(parents=True, exist_ok=True)
-    for rel, text in generate_json_schemas().items():
-        path = base / rel
-        path.write_text(text, encoding="utf-8")
-        written.append(path)
-
-    ts_path = base / "agent" / "src" / "tools" / "schema.gen.ts"
-    ts_path.parent.mkdir(parents=True, exist_ok=True)
-    ts_path.write_text(generate_typebox_module(), encoding="utf-8")
-    written.append(ts_path)
-
-    mcp_path = base / "schemas" / "mcp" / "tools.json"
-    mcp_path.parent.mkdir(parents=True, exist_ok=True)
-    mcp_path.write_text(generate_mcp_document(), encoding="utf-8")
-    written.append(mcp_path)
-
-    return written
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = list(sys.argv[1:] if argv is None else argv)
-    what = args[0] if args else "all"
-    if what not in {"all", "json", "ts", "mcp"}:
-        print(f"usage: toolgen [all|json|ts|mcp]; got {what!r}", file=sys.stderr)
-        return 2
-    base = repo_root()
-    written: list[Path] = []
-    if what in {"all", "json"}:
-        (base / "schemas" / "tools").mkdir(parents=True, exist_ok=True)
-        for rel, text in generate_json_schemas().items():
-            path = base / rel
-            path.write_text(text, encoding="utf-8")
-            written.append(path)
-    if what in {"all", "ts"}:
-        ts_path = base / "agent" / "src" / "tools" / "schema.gen.ts"
-        ts_path.parent.mkdir(parents=True, exist_ok=True)
-        ts_path.write_text(generate_typebox_module(), encoding="utf-8")
-        written.append(ts_path)
-    if what in {"all", "mcp"}:
-        mcp_path = base / "schemas" / "mcp" / "tools.json"
-        mcp_path.parent.mkdir(parents=True, exist_ok=True)
-        mcp_path.write_text(generate_mcp_document(), encoding="utf-8")
-        written.append(mcp_path)
-    for path in written:
-        print(str(path.relative_to(base)))
-    print(f"toolgen: wrote {len(written)} files from {len(TOOLS)} tools", file=sys.stderr)
-    _ = tools_decl  # keep the module reference for callers importing via toolgen
-    return 0
 
 
 if __name__ == "__main__":

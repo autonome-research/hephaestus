@@ -27,7 +27,7 @@ from typing import Any, cast
 import pytest
 from hephaestus.agent_bridge.cad_ops import CadOpError
 from hephaestus.agent_bridge.dispatch import DispatchError
-from hephaestus.core.nesting import (
+from hephaestus.geom.nesting import (
     BLANK_LAYER,
     PROFILE_LAYER,
     Blank,

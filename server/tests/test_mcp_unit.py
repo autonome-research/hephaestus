@@ -23,9 +23,9 @@ from typing import Any, cast
 import pytest
 from fastmcp import Client
 from fastmcp.client.elicitation import ElicitResult
+from hephaestus.contract.tools_decl import TOOLS_BY_NAME
 from hephaestus.core.errors import UnsafeRefusedError
 from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
-from hephaestus.core.tools_decl import TOOLS_BY_NAME
 from hephaestus.mcp.app import EXTRA_TOOL_NAMES, HephaestusMCP, build_app
 from hephaestus.mcp.idempotency import IDEMPOTENCY_META_KEY
 from hephaestus.testing.tools_fixture import scaffold
@@ -111,7 +111,7 @@ def test_declarations_carry_the_canonical_input_schema(runtime: HephaestusMCP) -
 
 def test_committed_mcp_document_is_not_stale() -> None:
     """``schemas/mcp/tools.json`` is generated output; regenerating changes nothing."""
-    from hephaestus.core import toolgen
+    from hephaestus.contract import toolgen
 
     path = toolgen.repo_root() / "schemas" / "mcp" / "tools.json"
     committed = path.read_text(encoding="utf-8")
@@ -121,7 +121,7 @@ def test_committed_mcp_document_is_not_stale() -> None:
 
 def test_registered_declarations_come_from_the_generator(runtime: HephaestusMCP) -> None:
     """The live MCP surface is the generated document, not a parallel hand-written one."""
-    from hephaestus.core import toolgen
+    from hephaestus.contract import toolgen
 
     async def scenario() -> None:
         async with Client(runtime.app) as client:

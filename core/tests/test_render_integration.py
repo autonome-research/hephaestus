@@ -43,7 +43,6 @@ import pytest
 from hephaestus.core.executor.artifact_geometry import load_brep_shape
 from hephaestus.core.executor.runner import BuildRequest, run_build
 from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
-from hephaestus.core.kernel.metrics import metrics
 from hephaestus.core.project_store.layout import ProjectLayout, load_project, open_store
 from hephaestus.core.project_store.publication import Publisher
 from hephaestus.core.project_store.store import blob_hash_of_ref
@@ -55,6 +54,7 @@ from hephaestus.core.render.inspect import RenderProject, inspect_part
 from hephaestus.core.render.palette import hex_to_rgb, rgb_to_id
 from hephaestus.core.render.selection import build_selection_catalog
 from hephaestus.core.render.tessellate import tessellate
+from hephaestus.geom.metrics import metrics
 from PIL import Image
 
 from opstore import OpStore
