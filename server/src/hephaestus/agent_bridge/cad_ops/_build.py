@@ -25,7 +25,7 @@ import json
 import uuid
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from hephaestus.core.addressing import PART_SELECTOR, Resolution
 from hephaestus.core.executor.runner import UnpublishedBuild
@@ -45,8 +45,11 @@ from ._critique import (
     intentional_overlap_declarations,
     interference_report,
     named_solids,
+    prompt_number_diff,
+    with_dimension_findings,
 )
 from ._dfm import DfmOps
+from ._findings import DimensionFindingOps, DimensionFindingState
 from ._requirements import RequirementOps, entry_views
 
 #: A reloaded build artifact resolves exactly the ``"part"`` selector (§7 rule 1).
@@ -137,13 +140,20 @@ class BuildOps(CadOpsState):
             payload["error"] = result.error.to_json()
         if result.status == "ok":
             # VALIDATION.md §4: unrequested, by rule, on every successful build.
-            payload["critique"] = self._critique(build, inputs.script, result.artifact_ref)
+            payload["critique"] = self._critique(
+                build, inputs.script, result.artifact_ref, preview=preview
+            )
         return payload
 
     # -- the §4 post-build critique ----------------------------------------
 
     def _critique(
-        self, build: UnpublishedBuild, script: str, artifact_ref: str | None
+        self,
+        build: UnpublishedBuild,
+        script: str,
+        artifact_ref: str | None,
+        *,
+        preview: bool = False,
     ) -> dict[str, JSONValue]:
         """Assemble the §4 critique block for a successful build."""
         metrics = build.result.metrics
@@ -151,12 +161,55 @@ class BuildOps(CadOpsState):
             json_map(build.worker_result.get("feature_metadata")),
             entry_views(self.ledger_state().entries) if isinstance(self, RequirementOps) else (),
         )
-        return critique_block(
+        block = critique_block(
             metrics=metrics,
             interference=self._interference(metrics_solids(metrics), artifact_ref, declared),
             request=self.request_text,
             dimensions=self._critique_dimensions(build, script),
             dfm=self._auto_dfm(build.result.part, artifact_ref),
+        )
+        try:
+            state = self._record_dimension_findings(build, metrics, preview=preview)
+        except Exception as exc:
+            # The geometry is already published; refusing the caller its result now
+            # would lose the build over the bookkeeping about it. But a store that
+            # did not record must not read as a clean sheet, so the block says so —
+            # the same rule the interference and DFM rungs follow.
+            return with_dimension_findings(block, None, unavailable=_why(exc))
+        return with_dimension_findings(block, state)
+
+    def _record_dimension_findings(
+        self, build: UnpublishedBuild, metrics: Metrics | None, *, preview: bool
+    ) -> DimensionFindingState | None:
+        """Bind this build's §4 number diff (``VALIDATION.md`` §4/§6), or don't.
+
+        Returns ``None`` when there is nothing to bind: a *preview* build (its
+        geometry was never published, so it is not what the run delivered), a
+        runtime with no request text, or a project whose ops predate the store.
+
+        The binding diff is recomputed here rather than lifted out of the block
+        above, and against **measured** dimensions only — the script's own
+        ``CHECKS`` thresholds are excluded. A run that could clear a binding
+        finding by asserting the number in its own acceptance test would be
+        clearing it with the misreading that raised it (the §5 rule, one rung
+        down).
+        """
+        request = self.request_text
+        if preview or request is None or metrics is None:
+            return None
+        if not isinstance(self, DimensionFindingOps):  # pragma: no cover - CadOps always is
+            return None
+        binding = prompt_number_diff(
+            request, bbox_mm=metrics.bbox_mm, dimensions=self._measured_dimensions(build)
+        )
+        raw = binding.get("warnings")
+        warnings = (
+            [item for item in cast("list[JSONValue]", raw) if isinstance(item, dict)]
+            if isinstance(raw, list)
+            else []
+        )
+        return self.record_dimension_findings(
+            build.result.part, cast("list[Mapping[str, JSONValue]]", warnings)
         )
 
     def _auto_dfm(self, part: str, artifact_ref: str | None) -> dict[str, JSONValue] | None:
@@ -220,15 +273,23 @@ class BuildOps(CadOpsState):
 
         Tagged *edge* lengths (the only tag descriptor scalar that is a length —
         faces carry area and solids volume) and every ``CHECKS`` numeric
-        threshold, which is a dimension the script itself claims.
+        threshold, which is a dimension the script itself claims. The advisory
+        block matches against both; the *binding* record
+        (:meth:`_record_dimension_findings`) deliberately drops the second half.
         """
-        dimensions: dict[str, float] = {}
-        for name, descriptor in build.tag_fingerprints.items():
-            if descriptor.kind == "edge":
-                dimensions[f"tag:{name}"] = float(descriptor.scalar)
+        dimensions = self._measured_dimensions(build)
         for threshold in checks_thresholds(script):
             dimensions[f"checks_threshold:{threshold:g}"] = threshold
         return dimensions
+
+    @staticmethod
+    def _measured_dimensions(build: UnpublishedBuild) -> dict[str, float]:
+        """Dimensions the *kernel* measured: tagged edge lengths, nothing claimed."""
+        return {
+            f"tag:{name}": float(descriptor.scalar)
+            for name, descriptor in build.tag_fingerprints.items()
+            if descriptor.kind == "edge"
+        }
 
     def current_build(self, name: str) -> BuildResult | None:
         """The last published *current* build of ``name`` (lock-free, no rebuild).

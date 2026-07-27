@@ -50,6 +50,31 @@ before the final build (already the ordering in `_grade.grade` —
 `restore_protected` precedes `_build_all`; pinned by a regression test) and
 scores any attempt to modify them (§8 spec-tampering rate).
 
+### Acceptance checks are functional, never reproductive (2026-07-26)
+
+The corpus fell into the same self-referential trap this document describes for
+model-authored `CHECKS`, one level up: every acceptance check was authored FROM
+its reference solution and validated AGAINST that same solution, so the "a task
+no reference solution passes is broken" meta-test could only ever prove a task
+was *passable* — never that it graded correctness rather than the author's
+geometry. `gpt-5.6-sol` exposed it by failing three tasks no model can pass.
+
+Three normative rules follow, enforced by corpus-wide tests:
+
+1. **An acceptance check asserts a functional property** — fits, clears, seals,
+   holds this envelope, uses this material, has this count. Never "matches my
+   numbers."
+2. **A volume window is a material budget**, carrying in a named constant the
+   smallest spec deviation it must reject and the margin it keeps. An inline
+   `abs=20.0` justifies nothing and is rejected.
+3. **A check named for a fit is measured as a fit** — against a seeded gauge
+   part, not through a volume proxy.
+
+Every task additionally ships an independent second solution — different
+construction, different dimensions within spec — that must also pass. A check
+written from one implementation cannot detect that it demands that
+implementation; only a second, deliberately different one can.
+
 ## 2. Requirement ledger (the substrate)
 
 Before any geometry, the agent emits a ledger; one entry per constraint:
@@ -155,6 +180,55 @@ nothing references 40.
 Rationale: the reference product volunteered interference unasked; waiting for
 a confident model to choose to measure is waiting forever.
 
+### Dimension findings are BINDING (2026-07-26)
+
+Measured on `bracket-101`: all three seeds built a wall outside the stated
+footprint, this rung **fired correctly and unrequested** — "bbox.y measures
+46 mm" against a request that says 40 mm, plus "nothing in the built geometry
+measures 40 mm on Y" — and every seed shipped anyway. §3 could not help, because
+the model tagged its misreading `source: "specified"`, so there was no assumption
+to gate on. The rung that works is the independent one, and it had no teeth: a
+warning is advice, and an agent that must be asked to care is not validated.
+
+So a `dimension_mismatch` / `unmatched_request_number` raised by a **successful**
+build is recorded as an **open finding on the run**, and §6 may not terminate
+green while one is open — exactly the never-green invariant an unconfirmed
+material assumption already carries (§5/§6), from the other side: one says nobody
+confirmed the interpretation, this says the geometry contradicts the request.
+
+- **Harness-derived, so not self-clearable.** Findings are computed from the
+  request text the runtime bound and the geometry the build published. There is
+  no model-facing write: not through the ledger, not through `update_requirement`,
+  not by the reviewer being talked into a `pass` (a verdict supplied for a finding
+  id is filed as unknown and counts for nothing).
+- **Judged against measured dimensions only** — bbox extents and tagged edge
+  lengths, never the script's own `CHECKS` thresholds. §5 refuses to hand the
+  reviewer the agent's acceptance tests for this reason and it holds one rung
+  down: clearing a finding with the artifact that encodes the misreading is not
+  clearing it. (The *advisory* block above still matches thresholds.)
+- **Binding on axis-resolved numbers.** A number the request pins to an axis
+  ("40 mm (Y)", "overall height is 40 mm") is measured by the bbox either way
+  round, so a disagreement is evidence. An axis-less unmatched number ("no
+  dimension corresponds to 12 mm") says the harness did not *find* it, not that
+  the geometry contradicts it; it stays the advisory warning it was, because
+  binding on the harness's blindness would make every terminal red and therefore
+  meaningless.
+- **It clears in exactly two ways.** (1) A **later successful build of the same
+  part** whose binding diff no longer raises it — the geometry actually changed
+  to match. A failed build publishes nothing and clears nothing; a *preview*
+  build (transient overrides) is not what the run delivered and neither raises
+  nor clears. (2) An **explicit dismissal by the user** through the `ask_user`
+  path, recorded by the runtime from a committal answer exactly as §3 records a
+  clarification `resolution` — a declined or non-committal answer (§7's bench
+  answerer) records `asked` and dismisses nothing, so the bench can never answer
+  its way past its own measurement. A dismissed finding is not reopened by a
+  later build: a human judged that dimension.
+- Findings live in an immutable generation store
+  (`artifact:dimension-findings:sha256:…`) so the archive shows what was open
+  when and how it closed, and every successful build's result carries the still-
+  open findings — with the id an `ask_user` question must name — so the model
+  reads the obligation in the same result as the measurement.
+
 ## 5. Termination review (independent, blocking)
 
 **The agent may not self-declare done.** Reaching a stop state (final assistant
@@ -189,9 +263,31 @@ a continuation, not an advisory. Bounds:
   `unresolved_requirements` report listing each open item.
 
 **Invariant: an agent may never terminate green while any requirement is
-unverified or assumed-without-confirmation.** A truthful "built, but wall
-direction unconfirmed and Y envelope is 46 mm against a stated 40 mm" is a
-better outcome than a confident pass — in the bench and in front of a user.
+unverified, assumed-without-confirmation, or contradicted by an open §4
+dimension finding.** A truthful "built, but wall direction unconfirmed and Y
+envelope is 46 mm against a stated 40 mm" is a better outcome than a confident
+pass — in the bench and in front of a user. Note that the exemplar's second
+clause is now enforced by machinery rather than hoped for in a report: §4's
+findings enter this ladder as open items of the same kind as review findings.
+
+Open dimension findings ride the machinery above unchanged, because they are the
+same kind of obligation:
+
+- they re-enter as part of the same continuation payload the agent must resolve,
+  each naming its finding id and the number it failed;
+- the same failure twice escalates to the same mandatory `ask_user`, whose
+  concrete options must include the dismissal — that is the only route the run
+  has short of geometry that matches, so an escalation that hid it would demand
+  a resolution nobody could give;
+- the escalation is satisfied by the *runtime's* record that the question was put
+  (`asked` on the finding, as on a ledger entry), never by a silent repair;
+- the 3-cycle cap applies, and the terminal's `unresolved_requirements` lists
+  each open dimension alongside each open requirement, carrying
+  `source: "critique"` so a reader can tell what was stated from what was
+  measured.
+
+Their clearing rules — a rebuild that matches, or a runtime-recorded dismissal,
+and nothing else — are §4's, above.
 
 ## 7. Bench answers non-committally, and asking is scored
 
@@ -275,6 +371,12 @@ lint rules (unsourced constant, unquoted `specified`); the clarification gate
 resolution unblocks; non-committal answer keeps `assumed` + `asked`);
 post-build critique (interference pair detection, `unmatched_request_number`
 and `dimension_mismatch` on the recorded s2 fixture — it MUST fire there);
+**binding dimension findings** (the recorded s2 build MUST be blocked from
+terminating green; it clears when a rebuild matches; an explicit
+runtime-recorded dismissal clears it; a non-committal answer, a ledger write, a
+`CHECKS` assertion and a reviewer `pass` all fail to clear it; the 3-cycle cap,
+the escalation-with-dismissal-option and the `unresolved_requirements` terminal
+hold);
 termination review (reviewer receives request/ledger/renders and NOT the
 agent's CHECKS — asserted structurally; assumed ⇒ fail-unless-confirmed;
 channel recorded); continuation ladder (findings re-enter, 3-cycle cap,

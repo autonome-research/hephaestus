@@ -60,6 +60,8 @@ from hephaestus.core.dfm import DfmEvaluation, findings_by_severity
 from hephaestus.core.types import Metrics
 from opstore.types import JSONValue
 
+from ._findings import DimensionFindingState
+
 __all__ = [
     "DFM_WARNING_SEVERITIES",
     "MAX_INTERFERENCE_PAIRS",
@@ -71,6 +73,7 @@ __all__ = [
     "manifold_report",
     "prompt_number_diff",
     "request_numbers",
+    "with_dimension_findings",
 ]
 
 #: Most solid pairs one critique will evaluate. Interference is a boolean
@@ -599,13 +602,94 @@ def critique_block(
         block["prompt_number_diff"] = prompt_number_diff(
             request, bbox_mm=metrics.bbox_mm, dimensions=dimensions
         )
+    block["warnings"] = _flatten_warnings(block)
+    return block
+
+
+#: The critique sections whose ``warnings`` are flattened into ``critique.warnings``.
+_WARNING_SECTIONS: Final[tuple[str, ...]] = (
+    "interference",
+    "manifold",
+    "dfm",
+    "prompt_number_diff",
+    "dimension_findings",
+)
+
+
+def _flatten_warnings(block: Mapping[str, JSONValue]) -> list[JSONValue]:
     warnings: list[JSONValue] = []
-    for section in ("interference", "manifold", "dfm", "prompt_number_diff"):
+    for section in _WARNING_SECTIONS:
         part = block.get(section)
         if not isinstance(part, dict):
             continue
         found = cast("Mapping[str, JSONValue]", part).get("warnings")
         if isinstance(found, list):
             warnings.extend(cast("list[JSONValue]", found))
-    block["warnings"] = warnings
+    return warnings
+
+
+def with_dimension_findings(
+    block: dict[str, JSONValue],
+    state: DimensionFindingState | None,
+    *,
+    unavailable: str | None = None,
+) -> dict[str, JSONValue]:
+    """Attach the **binding** view of this build's number diff (§4/§6).
+
+    ``prompt_number_diff`` above is the advisory measurement; this section is the
+    obligation it now carries. Every still-open finding is restated as a warning
+    of its own — carrying the finding id, because that id is what an ``ask_user``
+    question must name for a user to dismiss it — so the model reads, in the same
+    result, both what does not match and that it cannot finish while it does not.
+
+    ``None`` (a preview build, no request text, no store) leaves the block exactly
+    as it was: an absent section means "nothing was bound here", never "clean".
+    ``unavailable`` is the one case where the section appears without a state: the
+    binding record could not be written, which must never read as a clean sheet.
+    """
+    if state is None:
+        if unavailable is None:
+            return block
+        block["dimension_findings"] = {
+            "open": [],
+            "cleared": [],
+            "warnings": [
+                {
+                    "kind": "dimension_findings_unavailable",
+                    "message": (
+                        "the binding record of this build's number diff was not written: "
+                        f"{unavailable}. Nothing here says the dimensions agree."
+                    ),
+                }
+            ],
+        }
+        block["warnings"] = _flatten_warnings(block)
+        return block
+    open_findings = state.open
+    block["dimension_findings"] = {
+        "generation": state.generation,
+        "artifact_ref": state.artifact_ref,
+        "open": [finding.to_json() for finding in open_findings],
+        "cleared": [
+            finding.to_json() for finding in state.findings if finding.closed_by is not None
+        ],
+        "warnings": [
+            {
+                "kind": "open_dimension_finding",
+                "id": finding.id,
+                "part": finding.part,
+                "axis": finding.axis,
+                "request_value_mm": finding.request_value_mm,
+                "message": (
+                    f"{finding.message}. This finding is BINDING (VALIDATION.md §4): the run "
+                    "cannot finish while it is open. Clear it by rebuilding so the geometry "
+                    f"matches the request, or ask the user to dismiss it with "
+                    f'ask_user(requirement_ids=["{finding.id}"], …) — you cannot clear it '
+                    "yourself, and asserting the number in CHECKS does not clear it."
+                ),
+            }
+            for finding in open_findings
+        ],
+    }
+    block["warnings"] = _flatten_warnings(block)
     return block

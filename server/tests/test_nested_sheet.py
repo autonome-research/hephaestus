@@ -57,8 +57,18 @@ part.stock_form = "sheet"
 part.blank_size = "Three 210 x 125 x 6 mm nested profiles"
 """
 
-#: Areas of the three flat patterns, in mm^2.
-EXPECTED_AREAS: tuple[float, ...] = (90.0 * 55.0, 70.0 * 40.0, 50.0 * 30.0)
+#: Nominal sizes of the three flat patterns, in mm.
+FLAT_SIZES: tuple[tuple[float, float], ...] = ((90.0, 55.0), (70.0, 40.0), (50.0, 30.0))
+
+#: The fixture declares ``process = "laser_cut"``, so its cut path is kerf
+#: compensated from that pack's ``kerf_mm`` without anyone asking: each profile
+#: is offset outward by half a kerf on every edge and therefore measures one
+#: full kerf larger on each axis. These are the areas of the *cut path* — the
+#: finished parts land on :data:`FLAT_SIZES`, which is the point.
+PACK_KERF: float = 0.2
+
+#: Areas of the three cut paths, in mm^2.
+EXPECTED_AREAS: tuple[float, ...] = tuple((w + PACK_KERF) * (h + PACK_KERF) for w, h in FLAT_SIZES)
 
 
 @pytest.fixture
@@ -131,7 +141,14 @@ def test_declared_blank_nests_three_profiles(sheet: Project, tmp_path: Path) -> 
     assert str(result["paths"][0]).endswith(".dxf")
     rings = _polygons(_exported_bytes(sheet, result), tmp_path / "read.dxf")
     assert len(rings) == 3
-    assert sorted(round(_area(ring), 3) for ring in rings) == sorted(EXPECTED_AREAS)
+    assert sorted(round(_area(ring), 3) for ring in rings) == sorted(
+        round(area, 3) for area in EXPECTED_AREAS
+    )
+    # An uncompensated export would be the nominal areas — the exact half-kerf
+    # undersize this exporter used to ship.
+    assert sorted(round(_area(ring), 3) for ring in rings) != sorted(
+        round(w * h, 3) for w, h in FLAT_SIZES
+    )
     # Every profile lies inside the declared blank, margins included.
     for ring in rings:
         min_x, min_y, max_x, max_y = _bbox(ring)
@@ -192,7 +209,9 @@ def test_an_oversized_profile_is_a_structured_refusal(sheet: Project) -> None:
     assert ei.value.reason == "profile_too_large"
     data = ei.value.data
     assert data["profile"]["name"] == "sheet_1"
-    assert data["profile"]["width_mm"] == pytest.approx(90.0)
+    # The compensated width — refusals are about the path being cut, not the
+    # nominal one, because that is what has to fit on the stock.
+    assert data["profile"]["width_mm"] == pytest.approx(90.0 + PACK_KERF)
     assert data["blank"]["width_mm"] == pytest.approx(80.0)
     assert "does not fit" in str(ei.value)
     # Nothing was written.
@@ -316,7 +335,12 @@ def test_a_hole_reaches_the_cut_file(tmp_path: Path) -> None:
         rings = _rings(_read_dxf(data, tmp_path / "holed.dxf"), PROFILE_LAYER)
         assert len(rings) == 2
         areas = sorted(_area(ring) for ring in rings)
-        assert areas[1] == pytest.approx(80.0 * 60.0)
-        assert areas[0] == pytest.approx(math.pi * 10.0**2, rel=0.005)
+        # ``laser_cut`` again, so both contours are compensated — and in
+        # *opposite* directions: the outline grows by half a kerf per side so
+        # the plate lands on 80 x 60, and the bore shrinks by half a kerf per
+        # side so the finished hole lands on its nominal 20 mm diameter.
+        assert areas[1] == pytest.approx((80.0 + PACK_KERF) * (60.0 + PACK_KERF))
+        assert areas[0] == pytest.approx(math.pi * (10.0 - PACK_KERF / 2.0) ** 2, rel=0.005)
+        assert areas[0] < math.pi * 10.0**2
     finally:
         project.close()

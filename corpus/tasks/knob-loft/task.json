@@ -18,5 +18,5 @@
     "parts/core_gauge.py",
     "parts/sleeve_gauge.py"
   ],
-  "notes": "Difficulty 7. Checks: envelope, sealed genus 0, equal X/Y extents, grip form held inside a 0.05 mm radial band by the seeded go-plug/no-go sleeve gauges (the measured form of revolve symmetry), and a volume window pinning the loft and the R6 crown. Export: 3MF."
+  "notes": "Difficulty 7. Checks: envelope, sealed genus 0, equal X/Y extents, grip form held inside a 0.05 mm radial band by the seeded go-plug/no-go sleeve gauges (the measured form of revolve symmetry), and a material budget covering the loft and the R6 crown. Export: 3MF. The 2026-07-26 corpus audit left this task's windows alone - the grip is already measured as a fit and the +/-220 mm^3 budget (1.0%) is the widest in the corpus - and only renamed material_volume to material_budget for consistency."
 }

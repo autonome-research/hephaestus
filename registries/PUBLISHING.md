@@ -126,6 +126,50 @@ Write rules that measure. A rule that cannot measure its limit on the geometry
 it is given should say so in its `description` rather than approximate it
 silently.
 
+## 2b. Cut-file layer conventions (what an exported DXF/SVG means)
+
+A DXF handed to a laser or router is a machine program, not a drawing:
+controllers map **layer name or colour** to a power/speed pair. `export_part`
+therefore separates geometry onto four conventional layers with standard ACI
+colours, and the assignment is a **rule over the part's own semantics** — never
+a guess about geometry.
+
+| layer | ACI | carries |
+| --- | --- | --- |
+| `CUT` | 1 (red) | through-cuts: each profile's outer ring and its holes |
+| `ENGRAVE` | 5 (blue) | marking geometry that must not penetrate the stock |
+| `SCORE` | 3 (green) | shallow score lines (folds, register marks) |
+| `BLANK` | 8 (grey) | the nested-sheet stock rectangle — reference, never cut |
+
+A contour reaches `ENGRAVE` or `SCORE` **only** because the part script tagged
+that topology (`script_contract.md` §5.3) with a name carrying the documented
+prefix:
+
+```python
+tag(lid.faces().sort_by(Axis.Z)[-1], "engrave_logo")   # -> ENGRAVE
+tag(panel.edges().group_by(Axis.X)[0][0], "score_fold")  # -> SCORE
+```
+
+Everything else is a through-cut. Nothing is inferred from a feature's depth,
+size or position: a heuristic that silently promotes a pocket to a marking pass
+is exactly how a sheet gets scrapped, so an untagged contour is always cut.
+
+Three consequences worth stating plainly:
+
+- a tagged **face** contributes its outer boundary as a closed contour; a tagged
+  **edge** contributes an **open** polyline, because a controller that closes a
+  fold line cuts a slot the design does not have;
+- a closed mark that lands inside an inner boundary **reclassifies** it — the
+  part's own tag says that opening is a marking, so it is not also cut;
+- a layer is written **only when it carries geometry**. A part that tagged
+  nothing emits no `ENGRAVE`/`SCORE` layer at all, because an empty layer in a
+  controller's job list invites a power setting that fires on nothing.
+
+Marks are resolved against the **nominal** artifact, so kerf compensation moves
+the cut path and never the marking — a marking pass removes no material. The
+rule lives in one place, `hephaestus.core.cutfile`, and both the nested-sheet
+writer and the as-built DXF writer consume it, so the two files cannot disagree.
+
 ## 3. Publish
 
 From inside a Hephaestus project:

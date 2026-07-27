@@ -19,6 +19,7 @@ The refusal/determinism/SVG coverage lives in
 from __future__ import annotations
 
 import importlib
+import math
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
@@ -33,7 +34,30 @@ from hephaestus.core.nesting import BLANK_LAYER, PROFILE_LAYER, blank_from_metad
 BLANK_W, BLANK_H = 210.0, 125.0
 
 #: Flat-pattern areas of the three laminations, mm^2: triangle, spacer, cleat.
-EXPECTED_AREAS: tuple[float, ...] = (0.5 * 100.0 * 60.0, 60.0 * 40.0, 90.0 * 25.0)
+NOMINAL_AREAS: tuple[float, ...] = (0.5 * 100.0 * 60.0, 60.0 * 40.0, 90.0 * 25.0)
+
+#: The fixture declares ``process = "laser_cut"``, so the exported path is kerf
+#: compensated from that pack's ``kerf_mm``: every boundary is offset outward by
+#: half a kerf, which grows a closed profile's area by its own perimeter times
+#: that offset (plus a negligible mitre term at each corner). The *finished*
+#: parts still measure :data:`NOMINAL_AREAS`, which is what compensation buys.
+PACK_KERF: float = 0.2
+_PERIMETERS: tuple[float, ...] = (
+    100.0 + 60.0 + math.hypot(100.0, 60.0),
+    2.0 * (60.0 + 40.0),
+    2.0 * (90.0 + 25.0),
+)
+EXPECTED_AREAS: tuple[float, ...] = tuple(
+    area + perimeter * PACK_KERF / 2.0
+    for area, perimeter in zip(NOMINAL_AREAS, _PERIMETERS, strict=True)
+)
+
+#: Nominal bounding boxes of the two *rectangular* laminations (mm). A mitred
+#: offset grows a rectangle by exactly one kerf on each axis — half a kerf per
+#: side. The triangular web is deliberately excluded: mitring its two acute
+#: corners carries the path further than half a kerf out (that is what a mitre
+#: is), so its extents are checked as a lower bound instead.
+RECTANGLE_EXTENTS: tuple[tuple[float, float], ...] = ((60.0, 40.0), (90.0, 25.0))
 
 Ring = list[tuple[float, float]]
 
@@ -101,8 +125,25 @@ def _overlap(a: tuple[float, ...], b: tuple[float, ...]) -> bool:
 def test_the_nested_dxf_holds_three_closed_profiles(nested: bytes, tmp_path: Path) -> None:
     rings = _rings(nested, tmp_path / "nested.dxf", PROFILE_LAYER)
     assert len(rings) == 3, "the gusset is three laminations, so three cut profiles"
-    # They are the fixture's own flat patterns, not decorative rectangles.
-    assert sorted(_area(ring) for ring in rings) == pytest.approx(sorted(EXPECTED_AREAS), rel=1e-3)
+    # They are the fixture's own flat patterns, not decorative rectangles — and
+    # they are the *compensated* ones: the beam removes half a kerf per edge, so
+    # a path cut on the nominal outline would deliver three undersized parts.
+    assert sorted(_area(ring) for ring in rings) == pytest.approx(sorted(EXPECTED_AREAS), abs=0.1)
+    # Every profile is at least one kerf over nominal on both axes — an
+    # uncompensated path would measure nominal exactly.
+    extents = sorted((round(x1 - x0, 6), round(y1 - y0, 6)) for x0, y0, x1, y1 in map(_bbox, rings))
+    nominal = sorted([(100.0, 60.0), (60.0, 40.0), (90.0, 25.0)])
+    assert all(
+        got[0] >= want[0] + PACK_KERF - 1e-6 and got[1] >= want[1] + PACK_KERF - 1e-6
+        for got, want in zip(extents, nominal, strict=True)
+    )
+    # …and the two rectangles are over by exactly one kerf, no more.
+    rectangles = sorted(
+        extent for extent in extents if extent[0] < 100.0
+    )  # the web is the only 100 mm profile
+    assert rectangles == sorted(
+        (round(w + PACK_KERF, 6), round(h + PACK_KERF, 6)) for w, h in RECTANGLE_EXTENTS
+    )
     # The grader's own reader agrees with ezdxf on the count.
     assert dxf_profile_count(nested, layer=PROFILE_LAYER) == 3
 

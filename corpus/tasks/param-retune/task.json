@@ -13,5 +13,5 @@
     "parts/wall_plane.py",
     "globals.py"
   ],
-  "notes": "Difficulty 6. Every script is a protected path, so the only way to move the envelope is project-scoped set_params: geometry edits are restored before grading. Checks: the new tread/gusset envelopes plus every original invariant (corner radius and triangular profile via exact volumes, sealed genus 0, gusset-to-tread contact, both parts flush to the wall gauge)."
+  "notes": "Difficulty 6. Every script is a protected path, so the only way to move the envelope is project-scoped set_params: geometry edits are restored before grading. Checks: the new tread/gusset envelopes plus every original invariant (corner radius and triangular profile via material budgets, sealed genus 0, gusset-to-tread contact, both parts flush to the wall gauge). The two volume checks were renamed and widened to match cat-step's in the 2026-07-26 corpus audit, even though this is the one task with no room for a different implementation at all - so a later edit to either task cannot leave one of them demanding an identity. Budget unchanged at 10."
 }

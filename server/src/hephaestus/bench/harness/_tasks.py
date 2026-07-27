@@ -33,6 +33,7 @@ from typing import Any, cast
 
 from hephaestus.agent_bridge.app import repo_root
 from hephaestus.agent_bridge.cad_ops import EXPORT_FORMATS
+from hephaestus.core.executor.namespace import METADATA_FIELDS
 
 __all__ = [
     "PROMPT_SUFFIXES",
@@ -44,6 +45,7 @@ __all__ = [
     "DfmRequirement",
     "DrawingRequirement",
     "ExportRequirement",
+    "MetadataRequirement",
     "RenderRequirement",
     "base_task_id",
     "corpus_solutions_dir",
@@ -244,6 +246,56 @@ class DrawingRequirement:
 
 
 @dataclass(frozen=True)
+class MetadataRequirement:
+    """§5.2 manufacturing metadata the graded part must really carry.
+
+    Authored metadata is what a shop is handed — the material to buy, the
+    process to run it on, the tolerance to hold — so a task whose deliverable is
+    a drawing has to gate it. It is gated **structurally**, never as prose: a
+    listed field must be non-empty, ``process`` must equal the process token the
+    registry packs are keyed by, and ``material_id`` must be the materials
+    registry record the free-text ``material_spec`` resolves to. Any wording
+    that names the right material passes; matching an author's exact sentence
+    is not an engineering property and is not asked for. (The audit of
+    2026-07-26 introduced this to replace a verbatim title-block string match in
+    ``drawing-shelf``, which failed correct runs for punctuation.)
+    """
+
+    part: str
+    #: Metadata fields that must be present and non-empty.
+    required_fields: tuple[str, ...] = ()
+    #: Required ``part.process`` token (registry pack id), if any.
+    process: str | None = None
+    #: Materials-registry id ``part.material_spec`` must resolve to, if any.
+    material_id: str | None = None
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> MetadataRequirement:
+        fields = tuple(str(f) for f in cast("Sequence[Any]", data.get("required_fields", [])))
+        unknown = [field for field in fields if field not in METADATA_FIELDS]
+        if unknown:
+            raise ValueError(f"unknown metadata fields {unknown} (script contract §5.2)")
+        process = data.get("process")
+        material = data.get("material_id")
+        if not fields and process is None and material is None:
+            raise ValueError("a metadata requirement with nothing required gates nothing")
+        return cls(
+            part=str(data["part"]),
+            required_fields=fields,
+            process=None if process is None else str(process),
+            material_id=None if material is None else str(material),
+        )
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "part": self.part,
+            "required_fields": list(self.required_fields),
+            "process": self.process,
+            "material_id": self.material_id,
+        }
+
+
+@dataclass(frozen=True)
 class RenderRequirement:
     """One required render (e.g. the ``+Z`` midplane section of an enclosure)."""
 
@@ -292,6 +344,9 @@ class BenchTask:
     #: grader produces itself from the graded geometry.
     dfm: tuple[DfmRequirement, ...] = ()
     drawings: tuple[DrawingRequirement, ...] = ()
+    #: §5.2 manufacturing metadata the graded parts must carry (structural: a
+    #: registry-resolvable material and a process token, never authored prose).
+    metadata: tuple[MetadataRequirement, ...] = ()
     #: Seeded, task-owned files (inspection gauges, broken fixtures) restored
     #: from ``seed/`` before grading, so a run cannot pass by editing them.
     protected_paths: tuple[str, ...] = ()
@@ -379,6 +434,7 @@ class BenchTask:
         renders_raw = data.get("render_requirements", [])
         dfm_raw = data.get("dfm_requirements", [])
         drawings_raw = data.get("drawing_requirements", [])
+        metadata_raw = data.get("metadata_requirements", [])
         task = cls(
             id=task_id,
             directory=directory,
@@ -401,6 +457,10 @@ class BenchTask:
                 DrawingRequirement.from_json(cast("Mapping[str, Any]", item))
                 for item in cast("Sequence[Any]", drawings_raw)
             ),
+            metadata=tuple(
+                MetadataRequirement.from_json(cast("Mapping[str, Any]", item))
+                for item in cast("Sequence[Any]", metadata_raw)
+            ),
             protected_paths=tuple(
                 str(item) for item in cast("Sequence[Any]", data.get("protected_paths", []))
             ),
@@ -421,6 +481,7 @@ class BenchTask:
             "render_requirements": [r.to_json() for r in self.renders],
             "dfm_requirements": [d.to_json() for d in self.dfm],
             "drawing_requirements": [d.to_json() for d in self.drawings],
+            "metadata_requirements": [m.to_json() for m in self.metadata],
             "protected_paths": list(self.protected_paths),
         }
 

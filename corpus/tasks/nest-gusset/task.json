@@ -11,7 +11,7 @@
       "format": "dxf",
       "layout": "nested_sheet",
       "profile_count": 3,
-      "profile_layer": "PROFILES",
+      "profile_layer": "CUT",
       "blank_mm": [
         210.0,
         125.0
@@ -23,5 +23,5 @@
   "dfm_requirements": [],
   "drawing_requirements": [],
   "protected_paths": [],
-  "notes": "Difficulty 4, and the G6 nesting clause as a bench task: the grader exports the nested_sheet DXF itself and asserts three closed profiles on the PROFILES layer, a blank rectangle measuring exactly 210 x 125 (so a run cannot pass by declaring a whole sheet) and every profile inside that rectangle (so it cannot pass by nesting off the edge). Nesting refuses rather than overlaps, so a fourth profile or an oversized one fails the export outright. The CHECKS pin one-sheet thickness, the exact combined material volume (which is what makes the web a triangle and not a rectangle) and genus 0. The reference solution is a file overlay, so its call path is counted by hand: 12 calls (read_globals, write_part, build_part, measure, export_part, run_checks plus slack for the metadata); budget 20 leaves ~65% headroom because a nesting refusal is a legitimate retry."
+  "notes": "Difficulty 4, and the G6 nesting clause as a bench task: the grader exports the nested_sheet DXF itself and asserts three closed profiles on the CUT layer, a blank rectangle measuring exactly 210 x 125 (so a run cannot pass by declaring a whole sheet) and every profile inside that rectangle (so it cannot pass by nesting off the edge). Nesting refuses rather than overlaps, so a fourth profile or an oversized one fails the export outright. The CHECKS pin one-sheet thickness, the exact combined material volume (which is what makes the web a triangle and not a rectangle) and genus 0. The reference solution is a file overlay, so its call path is counted by hand: 12 calls (read_globals, write_part, build_part, measure, export_part, run_checks plus slack for the metadata); budget 20 leaves ~65% headroom because a nesting refusal is a legitimate retry. Re-authored 2026-07-26 (corpus audit): the material window went from +/-30 mm^3 to +/-150. What it exists to reject is a rectangular web instead of a triangular one, 18000 mm^3 away, so two orders of magnitude of margin remain. Budget unchanged at 20."
 }

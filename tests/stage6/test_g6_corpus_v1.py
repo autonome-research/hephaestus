@@ -99,6 +99,21 @@ def test_the_expansion_includes_a_dfm_repair_task_and_a_drawing_task(
     required = set(drawing.drawings[0].required_texts)
     # The G6 clause: the five principal dimensions in the extracted PDF text.
     assert {"600.0", "250.0", "218.0", "18.0", "Ø8.0"} <= required
+    # …and *only* dimensions. The 2026-07-26 corpus audit removed a title-block
+    # sentence from this set: a drawing requirement gates what the shop reads off
+    # the sheet, never the wording of the sheet. The manufacturing metadata it
+    # used to carry is gated structurally instead — the free-text material spec
+    # must resolve in the materials registry, so any wording naming the right
+    # stock passes and a wrong stock does not.
+    assert not any(" " in text for text in required), (
+        f"{DRAWING_TASK}: required drawing texts must be dimensions, not prose: {required}"
+    )
+    assert drawing.metadata, "the drawing task must gate its manufacturing metadata"
+    requirement = drawing.metadata[0]
+    assert requirement.part == "shelf"
+    assert requirement.material_id == "plywood-baltic-birch"
+    assert requirement.process == "laser_cut"
+    assert "material_spec" in requirement.required_fields
 
 
 # ==========================================================================

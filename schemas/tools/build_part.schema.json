@@ -30,6 +30,238 @@
           "critique": {
             "additionalProperties": true,
             "properties": {
+              "dimension_findings": {
+                "additionalProperties": true,
+                "properties": {
+                  "artifact_ref": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "cleared": {
+                    "items": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "asked": {
+                          "type": "boolean"
+                        },
+                        "axis": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "closed_by": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "dimension": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "dimension_value_mm": {
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "dismissal": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "part": {
+                          "type": "string"
+                        },
+                        "request_text": {
+                          "type": "string"
+                        },
+                        "request_value_mm": {
+                          "type": "number"
+                        },
+                        "status": {
+                          "enum": [
+                            "open",
+                            "cleared",
+                            "dismissed"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "part",
+                        "kind",
+                        "request_value_mm",
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "generation": {
+                    "type": "integer"
+                  },
+                  "open": {
+                    "items": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "asked": {
+                          "type": "boolean"
+                        },
+                        "axis": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "closed_by": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "dimension": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "dimension_value_mm": {
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "dismissal": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "part": {
+                          "type": "string"
+                        },
+                        "request_text": {
+                          "type": "string"
+                        },
+                        "request_value_mm": {
+                          "type": "number"
+                        },
+                        "status": {
+                          "enum": [
+                            "open",
+                            "cleared",
+                            "dismissed"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "part",
+                        "kind",
+                        "request_value_mm",
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "warnings": {
+                    "items": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "kind": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "open",
+                  "cleared",
+                  "warnings"
+                ],
+                "type": "object"
+              },
               "interference": {
                 "additionalProperties": true,
                 "properties": {

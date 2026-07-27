@@ -56,6 +56,7 @@ from typing import Any, Final
 
 from opstore.types import JSONValue
 
+from ._findings import DimensionFindingOps, DimensionFindingState
 from ._requirements import LedgerState, RequirementEntry, RequirementOps
 
 __all__ = [
@@ -77,6 +78,7 @@ __all__ = [
     "question_refusal",
     "record_answers",
     "record_clarification_answer",
+    "record_dimension_answer",
     "requirement_ids",
 ]
 
@@ -372,12 +374,14 @@ def is_committal(selection: JSONValue) -> bool:
 
 @dataclass(frozen=True)
 class ClarificationOutcome:
-    """What one answer did to one ledger entry."""
+    """What one answer did to one ledger entry — or to one binding §4 finding."""
 
     requirement_id: str
     committal: bool
     answer: str
-    state: LedgerState | None
+    #: The generation the answer produced; ``None`` when the id was unknown, which
+    #: is the one case where an answer records nothing.
+    state: LedgerState | DimensionFindingState | None
 
     @property
     def recorded(self) -> bool:
@@ -432,6 +436,35 @@ def question_refusal(params: Mapping[str, Any]) -> dict[str, Any] | None:
     return invalid_question_result(problems) if problems else None
 
 
+def record_dimension_answer(
+    project: DimensionFindingOps,
+    finding_id: str,
+    selection: JSONValue,
+    *,
+    op_id: str,
+) -> ClarificationOutcome:
+    """§4/§6: a user's answer about one **binding dimension finding**.
+
+    The dismissal path, and the only one there is. It mirrors
+    :func:`record_clarification_answer` exactly — the runtime writes it, from a
+    real answer, and the same committal test decides: a committal answer dismisses
+    the finding (the user has judged that dimension), a declined or non-committal
+    one records that the question was put and dismisses nothing. That is why the
+    bench, which answers "unspecified — use your engineering judgment" by rule,
+    can never answer its way past its own measurement.
+    """
+    text = answer_text(selection)
+    committal = is_committal(selection)
+    state = project.dismiss_dimension_finding(
+        finding_id,
+        answer=text,
+        dismissed=committal,
+        op_id=op_id,
+        provenance="runtime",
+    )
+    return ClarificationOutcome(finding_id, committal, text, None if state is None else state)
+
+
 def record_answers(
     project: RequirementOps,
     run_id: str,
@@ -440,25 +473,43 @@ def record_answers(
 ) -> list[dict[str, Any]]:
     """Write one answer back to every requirement the question was raised against.
 
-    The op id is derived from ``(run_id, requirement id, answer)`` — never
-    model-supplied — so a repeated identical answer replays instead of piling up
-    ledger generations, while a *different* answer to the same question is a new
-    write.
+    ``requirement_ids`` names ledger entries *and* binding §4 dimension findings —
+    the two things a run can be blocked on, both cleared only by a runtime-recorded
+    answer. An id that is a known finding is routed to the findings store
+    (:func:`record_dimension_answer`); anything else is a ledger id
+    (:func:`record_clarification_answer`). An id in neither is reported
+    ``recorded: false`` rather than silently accepted.
+
+    The op id is derived from ``(run_id, id, answer)`` — never model-supplied — so
+    a repeated identical answer replays instead of piling up generations, while a
+    *different* answer to the same question is a new write.
     """
+    known_findings: dict[str, object] = (
+        dict(project.dimension_findings().by_id) if isinstance(project, DimensionFindingOps) else {}
+    )
     outcomes: list[dict[str, Any]] = []
     for requirement_id in requirement_ids(params.get("requirement_ids")):
-        outcome = record_clarification_answer(
-            project,
-            requirement_id,
-            selection,
-            op_id=answer_op_id(run_id, requirement_id, selection),
-        )
+        op_id = answer_op_id(run_id, requirement_id, selection)
+        if requirement_id in known_findings and isinstance(project, DimensionFindingOps):
+            outcome = record_dimension_answer(project, requirement_id, selection, op_id=op_id)
+            outcomes.append(
+                {
+                    "id": requirement_id,
+                    "kind": "dimension_finding",
+                    "committal": outcome.committal,
+                    "recorded": outcome.recorded,
+                    "dismissed": outcome.committal and outcome.recorded,
+                    "resolution": outcome.answer if outcome.committal else None,
+                }
+            )
+            continue
+        clarification = record_clarification_answer(project, requirement_id, selection, op_id=op_id)
         outcomes.append(
             {
                 "id": requirement_id,
-                "committal": outcome.committal,
-                "recorded": outcome.recorded,
-                "resolution": outcome.answer if outcome.committal else None,
+                "committal": clarification.committal,
+                "recorded": clarification.recorded,
+                "resolution": clarification.answer if clarification.committal else None,
             }
         )
     return outcomes

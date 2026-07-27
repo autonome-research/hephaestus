@@ -16,5 +16,5 @@
   ],
   "render_requirements": [],
   "protected_paths": [],
-  "notes": "Difficulty 2. Checks: assembled zero interference + seating contact, both envelopes, exact wall/base material volumes (the base volume pins the kerf), base genus 8, layout one sheet thick with the same total material. Export: as_built DXF of the cut layout with profile_count = 5."
+  "notes": "Difficulty 2. Checks: assembled zero interference + seating contact, both envelopes, wall/base material budgets (the base's pins the kerf), base genus 8, layout one sheet thick with the same total material. Export: as_built DXF of the cut layout with profile_count = 5. The 2026-07-26 corpus audit widened the three volume windows from +/-30/15/40 to +/-50/50/100, each ~3x below the smallest error it must reject (a missing tab, 432 mm^3; a kerfless slot set, 175; a layout short of a panel, tens of thousands). Budget unchanged at 32."
 }

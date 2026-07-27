@@ -22,7 +22,9 @@ request** and then walks every rung of ``VALIDATION.md``:
    resolve, the same failure twice escalates to a mandatory question, and the
    ladder is capped;
 7. §6 — the run cannot terminate green: it ends ``unresolved_requirements``,
-   listing every open item.
+   listing every open item — the two unconfirmed assumptions, the requirement the
+   reviewer failed, and the two **binding** §4 dimension findings the build itself
+   raised against the request's numbers.
 
 Nothing here is asked of the model in a prompt. Every rung fires from the
 harness: the model's script is free to be as confident and as wrong as the
@@ -57,6 +59,7 @@ from hephaestus.agent_bridge.review import (
     SessionReviewer,
     TerminationReviewService,
     is_stop_state,
+    open_dimension_findings,
     run_review_ladder,
 )
 from hephaestus.bench.harness import BENCH_ANSWER, bench_answerer, load_tasks
@@ -383,12 +386,19 @@ def test_the_whole_ladder_runs_on_the_recorded_misread(harness: Harness) -> None
     )
     assert harness.script.continuations[0]["status"] == "changes_required"
     delivered = cast("list[Any]", harness.script.continuations[0]["findings"])
-    assert {cast("dict[str, Any]", f)["id"] for f in delivered} == {"R1", "R7", "R9"}
-    assert set(cast("list[Any]", harness.script.continuations[0]["unresolved_requirements"])) == {
-        "R1",
-        "R7",
-        "R9",
-    }
+    # The three ledger ids, plus the two BINDING §4 dimension findings the build
+    # raised on its own numbers (46 mm on Y against a stated 40 mm). The latter are
+    # harness-derived: no reviewer verdict was solicited for them and none would be
+    # accepted, and they are what makes an unresolved §4 diff terminal rather than
+    # advisory.
+    bound = {finding.id for finding in open_dimension_findings(harness.cad)}
+    assert len(bound) == 2
+    assert {cast("dict[str, Any]", f)["id"] for f in delivered} == {"R1", "R7", "R9"} | bound
+    assert {
+        cast("dict[str, Any]", f)["id"] for f in delivered if cast("dict[str, Any]", f)["harness"]
+    } == bound
+    open_now = set(cast("list[Any]", harness.script.continuations[0]["unresolved_requirements"]))
+    assert open_now == {"R1", "R7", "R9"} | bound
 
     # … the same failure twice escalated to a mandatory concrete question …
     escalations = [p for p in harness.script.continuations if p["status"] == "ask_user_required"]
@@ -408,5 +418,5 @@ def test_the_whole_ladder_runs_on_the_recorded_misread(harness: Harness) -> None
     # … and the run could not terminate green with requirements open.
     assert outcome.green is False
     assert outcome.terminal.status == "unresolved_requirements"
-    assert {item.id for item in outcome.terminal.unresolved} == {"R1", "R7", "R9"}
+    assert {item.id for item in outcome.terminal.unresolved} == {"R1", "R7", "R9"} | bound
     assert all(item.evidence for item in outcome.terminal.unresolved)

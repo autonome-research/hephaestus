@@ -36,6 +36,19 @@ recorded resolution is forced to ``fail`` however confidently the reviewer
 passed it. That is the "fail-unless-confirmed" clause: it is arithmetic here,
 not judgement there.
 
+**§4's binding dimension findings.** A report carries two kinds of open item, and
+they arrive by opposite routes. A review finding is a *judgement* the reviewer
+returned and the rules then corrected. A dimension finding is a *measurement* the
+harness took at build time — the request said 40 mm on Y, the delivered bbox says
+46 — recorded in the runtime's own store
+(:class:`~.cad_ops.DimensionFindingState`) and lifted into the report by
+:func:`dimension_review_findings` with ``harness=True``. No verdict is solicited
+for one and none is accepted: a verdict the reviewer volunteers for a finding id
+is filed as unknown. It leaves the report exactly when the store says it closed —
+a rebuild whose diff no longer raises it, or a user's runtime-recorded dismissal —
+and never because anyone argued it away. §8's counters skip these, because no
+reviewer reviewed them.
+
 **§6 continuation ladder.** :class:`ContinuationLadder` turns each report into
 the next move. Findings go back to the agent as an *ordinary tool result it must
 resolve* (:data:`REVIEW_TOOL`, ``status="changes_required"``), not as advice.
@@ -45,16 +58,21 @@ Bounds, all enforced in code:
 * a requirement failing **the same way twice** (same normalized failure
   signature) escalates to a mandatory ``ask_user`` carrying 2-4 concrete
   options, each stating its geometric consequence — and the *next* cycle checks
-  the ledger's ``asked`` flag to see whether the question was really put, so a
-  silent repair cannot satisfy an escalation;
+  the runtime's ``asked`` record (on the ledger entry, or on the dimension
+  finding) to see whether the question was really put, so a silent repair cannot
+  satisfy an escalation. For a dimension finding the options must name the
+  dismissal (:func:`dimension_options`), because that is the only resolution the
+  run has short of geometry that matches;
 * exhausting the cycles, the budget, or an ignored escalation terminates with an
-  explicit ``unresolved_requirements`` report listing every open item.
+  explicit ``unresolved_requirements`` report listing every open item, each
+  tagged with where it came from (a ledger ``source``, or ``critique``).
 
 The invariant the whole stage exists for — **an agent may never terminate green
-while any requirement is unverified or assumed-without-confirmation** — is
-enforced by construction: :class:`TerminalReport` derives its own status in
-:meth:`TerminalReport.of` and rejects a green status with any open item in
-``__post_init__``. There is no code path that sets it by hand.
+while any requirement is unverified, assumed-without-confirmation, or
+contradicted by an open §4 dimension finding** — is enforced by construction:
+:class:`TerminalReport` derives its own status in :meth:`TerminalReport.of` and
+rejects a green status with any open item in ``__post_init__``. There is no code
+path that sets it by hand.
 """
 
 from __future__ import annotations
@@ -70,7 +88,14 @@ from typing import Any, Final, Literal, Protocol, cast, runtime_checkable
 from hephaestus.core.tools_decl import REVIEWER_TOOLS
 from opstore.types import JSONValue
 
-from .cad_ops import CadOps, LedgerState, RequirementEntry
+from .cad_ops import (
+    CadOps,
+    DimensionFinding,
+    DimensionFindingOps,
+    DimensionFindingState,
+    LedgerState,
+    RequirementEntry,
+)
 
 __all__ = [
     "MAX_REVIEW_CYCLES",
@@ -102,9 +127,13 @@ __all__ = [
     "TerminationReviewService",
     "UnresolvedItem",
     "build_review_context",
+    "concrete_options",
+    "dimension_options",
+    "dimension_review_findings",
     "internal_feature_reasons",
     "is_stop_state",
     "normalize_findings",
+    "open_dimension_findings",
     "run_review_ladder",
     "strip_agent_checks",
 ]
@@ -520,6 +549,12 @@ class ReviewFinding:
     observed: str | None = None
     #: True when the ``assumed``-without-confirmation rule produced this fail.
     forced_assumption: bool = False
+    #: True when the harness raised this itself and the reviewer's opinion of it
+    #: is not consulted — §4's binding dimension findings. It is the same
+    #: never-green machinery as an unconfirmed assumption, from the other side:
+    #: one is "nobody confirmed the interpretation", this is "the geometry
+    #: contradicts a number in the request".
+    harness: bool = False
 
     @property
     def open(self) -> bool:
@@ -546,6 +581,7 @@ class ReviewFinding:
             "expected": self.expected,
             "observed": self.observed,
             "forced_assumption": self.forced_assumption,
+            "harness": self.harness,
         }
 
 
@@ -600,12 +636,56 @@ class ReviewReport:
         }
 
 
+def open_dimension_findings(cad: object) -> tuple[DimensionFinding, ...]:
+    """Every §4 finding still open on this project (``()`` when there is no store).
+
+    A ``CadOps`` always has one; the argument is loose because the review layer is
+    routinely driven by test doubles, and "this seam does not record findings" must
+    degrade to "no findings", never to an attribute error at termination.
+    """
+    if not isinstance(cad, DimensionFindingOps):
+        return ()
+    state: DimensionFindingState = cad.dimension_findings()
+    return state.open
+
+
+def dimension_review_findings(
+    findings: Sequence[DimensionFinding],
+) -> tuple[ReviewFinding, ...]:
+    """The still-open §4 dimension findings, as blocking review findings.
+
+    They enter the report *after* normalization and are never keyed to anything
+    the reviewer said: the harness measured the request against the delivered
+    bbox, so there is no verdict to solicit and none to accept. A finding here is
+    always a ``fail`` on the ``numeric`` channel, and it leaves the report exactly
+    when the store says it closed — a rebuild that matches, or a user's dismissal.
+    """
+    return tuple(
+        ReviewFinding(
+            id=finding.id,
+            verdict="fail",
+            evidence=(
+                f"{finding.message} (part {finding.part}; raised by the post-build critique, "
+                "VALIDATION.md §4, and binding until the geometry matches or the user "
+                "dismisses it)"
+            ),
+            channel="numeric",
+            expected=finding.expected,
+            observed=finding.observed,
+            harness=True,
+        )
+        for finding in findings
+        if finding.open
+    )
+
+
 def normalize_findings(
     entries: Sequence[RequirementEntry],
     raw: Sequence[Mapping[str, Any]],
     *,
     cycle: int = 1,
     error: str | None = None,
+    dimensions: Sequence[DimensionFinding] = (),
 ) -> ReviewReport:
     """Turn whatever the reviewer said into one verdict per ledger entry, by rule.
 
@@ -614,6 +694,10 @@ def normalize_findings(
     * a malformed verdict or channel is replaced, not trusted;
     * an ``assumed`` entry with no recorded resolution is forced to ``fail``
       ("fail-unless-confirmed"), whatever verdict came back;
+    * every open §4 dimension finding is appended as a ``fail`` the reviewer was
+      never asked about (:func:`dimension_review_findings`) — a verdict supplied
+      for one of those ids is filed as unknown and counts for nothing, so neither
+      the reviewer nor the agent can talk one closed;
     * verdicts for ids that are not in the ledger are recorded separately and
       never counted as coverage.
     """
@@ -633,7 +717,7 @@ def normalize_findings(
     )
     return ReviewReport(
         cycle=cycle,
-        findings=findings,
+        findings=findings + dimension_review_findings(dimensions),
         unknown_ids=tuple(sorted(set(unknown))),
         error=error,
     )
@@ -894,6 +978,10 @@ class TerminationReviewService:
         terminate honestly. None of those states can be green.
         """
         state = self._cad.ledger_state()
+        # §4's binding findings are read at review time, from the runtime's own
+        # store: whatever the agent said it fixed, this is what the last
+        # successful build actually measured.
+        open_dimensions = open_dimension_findings(self._cad)
         assembled = context if context is not None else self.context(request=request, parts=parts)
         review_request = ReviewRequest(
             run_id=run_id,
@@ -908,13 +996,21 @@ class TerminationReviewService:
             response = self._reviewer.call(review_request)
         except Exception as exc:
             return normalize_findings(
-                state.entries, (), cycle=cycle, error=f"{type(exc).__name__}: {exc}"
+                state.entries,
+                (),
+                cycle=cycle,
+                error=f"{type(exc).__name__}: {exc}",
+                dimensions=open_dimensions,
             )
         elapsed = time.monotonic() - started
         # Re-enforce the reviewer's budget Python-side, whatever the child claims.
         if elapsed > self._timeout_s:
             return normalize_findings(
-                state.entries, (), cycle=cycle, error=f"reviewer exceeded {self._timeout_s}s"
+                state.entries,
+                (),
+                cycle=cycle,
+                error=f"reviewer exceeded {self._timeout_s}s",
+                dimensions=open_dimensions,
             )
         if response.turns > self._max_turns:
             return normalize_findings(
@@ -922,6 +1018,7 @@ class TerminationReviewService:
                 (),
                 cycle=cycle,
                 error=f"reviewer used {response.turns} turns (max {self._max_turns})",
+                dimensions=open_dimensions,
             )
         if response.output_tokens > self._max_output_tokens:
             return normalize_findings(
@@ -932,8 +1029,11 @@ class TerminationReviewService:
                     f"reviewer produced {response.output_tokens} output tokens "
                     f"(max {self._max_output_tokens})"
                 ),
+                dimensions=open_dimensions,
             )
-        return normalize_findings(state.entries, response.findings, cycle=cycle)
+        return normalize_findings(
+            state.entries, response.findings, cycle=cycle, dimensions=open_dimensions
+        )
 
 
 # --------------------------------------------------------------------------
@@ -993,14 +1093,17 @@ class TerminalReport:
         reason: str,
         repeats: Mapping[str, int] | None = None,
         entries: Sequence[RequirementEntry] = (),
+        dimensions: Sequence[DimensionFinding] = (),
     ) -> TerminalReport:
-        """Derive the terminal status from the last report and the ledger.
+        """Derive the terminal status from the last report, the ledger and §4.
 
-        Green requires all three: a completed review, a non-empty ledger with a
-        verified pass for every entry, and no ``assumed`` entry lacking a
-        recorded resolution. Anything else is ``unresolved_requirements``.
+        Green requires all four: a completed review, a non-empty ledger with a
+        verified pass for every entry, no ``assumed`` entry lacking a recorded
+        resolution, and no open §4 dimension finding. Anything else is
+        ``unresolved_requirements``.
         """
         by_entry = {entry.id: entry for entry in entries}
+        by_dimension = {finding.id: finding for finding in dimensions}
         counts = dict(repeats or {})
         unresolved: list[UnresolvedItem] = []
         if report is None:
@@ -1013,7 +1116,9 @@ class TerminalReport:
                 )
             )
         else:
-            if not report.findings:
+            if not any(not finding.harness for finding in report.findings):
+                # A run with §4 findings but no ledger has still recorded no
+                # interpretation: the harness measured it, nobody stated it.
                 unresolved.append(
                     UnresolvedItem(
                         id="*ledger*",
@@ -1027,15 +1132,16 @@ class TerminalReport:
                 )
             for finding in report.open_findings:
                 entry = by_entry.get(finding.id)
+                dimension = by_dimension.get(finding.id)
                 unresolved.append(
                     UnresolvedItem(
                         id=finding.id,
                         verdict=finding.verdict,
                         evidence=finding.evidence,
                         channel=finding.channel,
-                        text="" if entry is None else entry.text,
-                        source="" if entry is None else entry.source,
-                        asked=False if entry is None else entry.asked,
+                        text=_open_text(entry, dimension),
+                        source=_open_source(entry, dimension),
+                        asked=_open_asked(entry, dimension),
                         repeats=counts.get(finding.signature, 1),
                     )
                 )
@@ -1057,6 +1163,27 @@ class TerminalReport:
         }
 
 
+def _open_text(entry: RequirementEntry | None, dimension: DimensionFinding | None) -> str:
+    if entry is not None:
+        return entry.text
+    if dimension is not None:
+        return f"{dimension.request_text} from the request is not met by {dimension.part}"
+    return ""
+
+
+def _open_source(entry: RequirementEntry | None, dimension: DimensionFinding | None) -> str:
+    if entry is not None:
+        return entry.source
+    # Not a ledger provenance class: this one was measured, not stated.
+    return "critique" if dimension is not None else ""
+
+
+def _open_asked(entry: RequirementEntry | None, dimension: DimensionFinding | None) -> bool:
+    if entry is not None:
+        return entry.asked
+    return dimension is not None and dimension.asked
+
+
 @dataclass(frozen=True)
 class Continuation:
     """The ladder's next move after one review cycle."""
@@ -1076,13 +1203,46 @@ def _option(text: str, consequence: str) -> dict[str, JSONValue]:
     return {"option": text, "consequence": consequence}
 
 
-def concrete_options(finding: ReviewFinding, entry: RequirementEntry | None) -> list[JSONValue]:
+def dimension_options(finding: ReviewFinding, dimension: DimensionFinding) -> list[JSONValue]:
+    """The escalation options for a binding §4 finding — including its dismissal.
+
+    The second option *is* the dismissal path of §4: a committal answer to a
+    question naming this finding id is recorded by the runtime as a dismissal, and
+    that is the only way the finding closes short of geometry that matches. The
+    options therefore have to name it, or the escalation would demand a resolution
+    the run has no route to.
+    """
+    return [
+        _option(
+            f"Rebuild {dimension.part} to {finding.expected}",
+            f"{dimension.observed}; rebuilding to the request's number closes this finding "
+            "automatically at the next successful build",
+        ),
+        _option(
+            f"Keep the geometry as built and dismiss finding {dimension.id}",
+            f"{dimension.observed} is accepted as intended, the finding is recorded as "
+            "dismissed by you, and nothing moves",
+        ),
+        _option(
+            f"The number {dimension.request_text} means something else here",
+            "say what it dimensions and the part is rebuilt against that reading instead",
+        ),
+    ]
+
+
+def concrete_options(
+    finding: ReviewFinding,
+    entry: RequirementEntry | None,
+    dimension: DimensionFinding | None = None,
+) -> list[JSONValue]:
     """The 2-4 concrete options a §6 escalation must offer.
 
     Each states its geometric consequence; none is an open "what did you mean?".
     Built from the finding, so the question is specific to the failure that
     repeated rather than to the requirement in the abstract.
     """
+    if dimension is not None:
+        return dimension_options(finding, dimension)
     expected = finding.expected or (entry.text if entry is not None else finding.id)
     observed = finding.observed or "the geometry as built"
     options: list[JSONValue] = [
@@ -1148,26 +1308,34 @@ class ContinuationLadder:
         self._budget_exhausted = True
 
     def advance(
-        self, report: ReviewReport, *, entries: Sequence[RequirementEntry] = ()
+        self,
+        report: ReviewReport,
+        *,
+        entries: Sequence[RequirementEntry] = (),
+        dimensions: Sequence[DimensionFinding] = (),
     ) -> Continuation:
         """Consume one review cycle and decide what happens next."""
         self._cycles += 1
         self._last = report
         by_entry = {entry.id: entry for entry in entries}
+        by_dimension = {finding.id: finding for finding in dimensions}
+        asked = {entry.id for entry in entries if entry.asked}
+        asked |= {finding.id for finding in dimensions if finding.asked}
 
         # 1. An escalation raised last cycle must have produced a question. The
-        #    ledger's `asked` flag is the evidence — a silent repair does not
-        #    satisfy it, which is exactly what the rule is for.
+        #    runtime's `asked` record is the evidence — on the ledger entry for a
+        #    review finding, on the findings store for a §4 dimension finding —
+        #    and a silent repair does not satisfy it, which is the whole rule.
         ignored = [
             req_id
             for req_id in self._pending_escalation
-            if not (by_entry[req_id].asked if req_id in by_entry else False)
-            and req_id in report.open_ids
+            if req_id not in asked and req_id in report.open_ids
         ]
         if ignored:
             return self._terminate(
                 report,
                 entries,
+                dimensions,
                 reason=(
                     "escalation_ignored: the mandatory question was never put for "
                     + ", ".join(sorted(ignored))
@@ -1176,7 +1344,7 @@ class ContinuationLadder:
         self._pending_escalation = {}
 
         if report.green:
-            return self._terminate(report, entries, reason="all requirements verified")
+            return self._terminate(report, entries, dimensions, reason="all requirements verified")
 
         # 2. Count repeated failure signatures before deciding anything else.
         escalate: list[ReviewFinding] = []
@@ -1187,16 +1355,20 @@ class ContinuationLadder:
                 escalate.append(finding)
 
         if self._budget_exhausted:
-            return self._terminate(report, entries, reason="budget exhausted")
+            return self._terminate(report, entries, dimensions, reason="budget exhausted")
         if self._cycles >= self._max_cycles:
             return self._terminate(
-                report, entries, reason=f"review cycles exhausted ({self._max_cycles})"
+                report,
+                entries,
+                dimensions,
+                reason=f"review cycles exhausted ({self._max_cycles})",
             )
 
         if escalate:
             questions: list[JSONValue] = []
             for finding in escalate:
                 entry = by_entry.get(finding.id)
+                dimension = by_dimension.get(finding.id)
                 self._pending_escalation[finding.id] = finding.signature
                 questions.append(
                     {
@@ -1206,7 +1378,7 @@ class ContinuationLadder:
                             f"{finding.evidence} You must call ask_user with these options "
                             "before changing anything else."
                         ),
-                        "options": concrete_options(finding, entry),
+                        "options": concrete_options(finding, entry, dimension),
                     }
                 )
             payload = self._payload(
@@ -1264,10 +1436,20 @@ class ContinuationLadder:
         return payload
 
     def _terminate(
-        self, report: ReviewReport | None, entries: Sequence[RequirementEntry], *, reason: str
+        self,
+        report: ReviewReport | None,
+        entries: Sequence[RequirementEntry],
+        dimensions: Sequence[DimensionFinding] = (),
+        *,
+        reason: str,
     ) -> Continuation:
         terminal = TerminalReport.of(
-            report, cycles=self._cycles, reason=reason, repeats=self._repeats, entries=entries
+            report,
+            cycles=self._cycles,
+            reason=reason,
+            repeats=self._repeats,
+            entries=entries,
+            dimensions=dimensions,
         )
         payload: dict[str, JSONValue] = {
             "tool": REVIEW_TOOL,
@@ -1282,10 +1464,14 @@ class ContinuationLadder:
         )
 
     def terminate_now(
-        self, *, reason: str, entries: Sequence[RequirementEntry] = ()
+        self,
+        *,
+        reason: str,
+        entries: Sequence[RequirementEntry] = (),
+        dimensions: Sequence[DimensionFinding] = (),
     ) -> Continuation:
         """Force the terminal (cancelled run, spent budget) from the last report."""
-        return self._terminate(self._last, entries, reason=reason)
+        return self._terminate(self._last, entries, dimensions, reason=reason)
 
 
 @runtime_checkable
@@ -1384,7 +1570,8 @@ def run_review_ladder(
         )
         reports.append(report)
         entries = cad.ledger_state().entries
-        continuation = ladder.advance(report, entries=entries)
+        dimensions = open_dimension_findings(cad)
+        continuation = ladder.advance(report, entries=entries, dimensions=dimensions)
         continuations.append(continuation)
         if continuation.terminated:
             terminal = continuation.terminal
@@ -1404,6 +1591,7 @@ def run_review_ladder(
             forced = ladder.terminate_now(
                 reason=f"agent run ended {status!r} with open requirements",
                 entries=cad.ledger_state().entries,
+                dimensions=open_dimension_findings(cad),
             )
             terminal = forced.terminal
             assert terminal is not None

@@ -36,8 +36,16 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Final, cast
 
+from hephaestus.core.cutfile import CUT_LAYER, LAYER_COLORS, Mark, solid_marks
+from hephaestus.core.dfm import TopologyDescriptor, descriptors_from_source_map
 from hephaestus.core.errors import AddressingError, ValidationError
 from hephaestus.core.executor.artifact_geometry import load_brep_shape
+from hephaestus.core.kerf import (
+    KerfDecision,
+    KerfRefusal,
+    kerf_compensated_shape,
+    resolve_kerf,
+)
 from hephaestus.core.nesting import (
     DEFAULT_MARGIN_MM,
     DEFAULT_SPACING_MM,
@@ -51,11 +59,13 @@ from hephaestus.core.nesting import (
     shelf_nest,
 )
 from hephaestus.core.project_store.store import blob_hash_of_ref
+from hephaestus.core.types import BuildResult
 from opstore.types import JSONValue
 
 from opstore import OpStore, canonical_json, sha256_bytes, sha256_canonical_json
 
 from ._base import CadOpError, CadOpsState
+from ._dfm import DfmOps, script_metadata
 
 #: Export formats and the file extension each produces.
 EXPORT_FORMATS: Final[dict[str, str]] = {
@@ -66,6 +76,11 @@ EXPORT_FORMATS: Final[dict[str, str]] = {
     "3mf": "3mf",
     "stl": "stl",
 }
+
+#: Formats whose bytes a machine drives a cutter along, and therefore the only
+#: ones kerf compensation means anything for. A STEP or an STL is a *model*: it
+#: must stay nominal, because whatever consumes it applies its own allowances.
+CUT_PATH_FORMATS: Final[frozenset[str]] = frozenset({"dxf", "svg"})
 
 _EXPORTS_TABLE: Final[str] = "tp_exports"
 _CREATE_EXPORTS_TABLE: Final[str] = f"""
@@ -268,6 +283,89 @@ def _create_confined(exports_dir: Path, rel: PurePosixPath, data: bytes) -> None
 
 
 # --------------------------------------------------------------------------
+# what the frozen artifact's own script said about it
+#
+# A published BRep carries topology and geometry and nothing else: no build123d
+# labels, no §5.3 tags, no §5.2 metadata. Every export that wants to say what a
+# solid *is* — a 3MF object name, a drawing's title block, a cut file's engrave
+# layer — has to recover those facts from the build that produced exactly these
+# bytes, and must decline when it cannot. These three readers are that rule, in
+# one place, for every format writer and document generator.
+
+
+def solid_labels(result: BuildResult | None, count: int) -> tuple[str, ...]:
+    """Per-solid labels recovered from the build's ``geometries`` rows.
+
+    A published BRep carries no build123d labels, so the label namespace comes
+    from the build result: its rows are the geometry tree in order and each row
+    states how many solids it owns, which partitions ``shape.solids()``. When
+    the rows do not account for exactly the artifact's solids (a historical
+    artifact, a mismatched result) the solids are named positionally instead of
+    being given labels that might belong to different geometry.
+    """
+    if result is None:
+        return tuple(f"solid#{i + 1}" for i in range(count))
+    rows = [(entry.label, entry.solids) for entry in result.geometries]
+    if sum(solids for _, solids in rows) != count:
+        return tuple(f"solid#{i + 1}" for i in range(count))
+    labels: list[str] = []
+    for label, solids in rows:
+        for offset in range(solids):
+            labels.append(label if solids == 1 else f"{label}[{offset + 1}]")
+    return tuple(labels)
+
+
+class FrozenMetadataOps(CadOpsState):
+    """Reading a frozen artifact's authored metadata, labels and tags."""
+
+    def frozen_script_metadata(self, name: str, source_ref: str) -> Mapping[str, str]:
+        """§5.2 metadata of the script that produced ``source_ref`` (else empty).
+
+        Manufacturing metadata is authored in the part script and is not carried
+        by a published BRep, so it is read statically from the source — and only
+        while that source still hashes to the artifact's frozen script input. A
+        drifted or historical artifact yields no metadata rather than a title
+        block (or a bill of materials, or a 3MF package) describing a part these
+        bytes are not.
+        """
+        publisher = self._publisher()
+        result = publisher.current_result(name)
+        if result is None or result.artifact_ref != source_ref:
+            return {}
+        try:
+            snapshot = publisher.parts.read_part(name)
+        except AddressingError:  # pragma: no cover - a deleted script is not a failure here
+            return {}
+        if snapshot.content_hash != result.input_hashes.script:
+            return {}
+        return script_metadata(snapshot.content)
+
+    def frozen_result(self, name: str, source_ref: str) -> BuildResult | None:
+        """The published build result that produced ``source_ref``, if it is current."""
+        result = self._publisher().current_result(name)
+        return result if result is not None and result.artifact_ref == source_ref else None
+
+    def artifact_tags(
+        self, result: BuildResult | None, source_ref: str
+    ) -> Mapping[str, TopologyDescriptor]:
+        """Tag names bound to artifact topology, from the build's source map.
+
+        A reloaded BRep has no tags of its own; the source map is the only thing
+        that can put the script's names back onto this artifact's topology, and
+        it is only used when it belongs to exactly these bytes.
+        """
+        if result is None or result.source_map_ref is None or result.artifact_ref != source_ref:
+            return {}
+        blob = blob_hash_of_ref(result.source_map_ref)
+        if not self._store.blobs.has(blob):
+            return {}
+        loaded: object = json.loads(self._store.blobs.get(blob).decode("utf-8"))
+        if not isinstance(loaded, dict):
+            return {}
+        return descriptors_from_source_map(cast("Mapping[str, JSONValue]", loaded))
+
+
+# --------------------------------------------------------------------------
 # format conversion
 
 
@@ -303,25 +401,112 @@ def _binary_stl_mesh(data: bytes) -> tuple[_Vertices, _Triangles]:
     return vertices, triangles
 
 
-def _write_3mf(
-    vertices: Sequence[tuple[float, float, float]], triangles: Sequence[tuple[int, int, int]]
-) -> bytes:
-    """A minimal, deterministic 3MF core-spec package (stdlib zipfile only)."""
-    from xml.sax.saxutils import escape
+@dataclass(frozen=True)
+class MeshObject:
+    """One 3MF ``<object>``: a named mesh that is a whole labelled solid.
 
-    verts = "".join(f'<vertex x="{x:.6f}" y="{y:.6f}" z="{z:.6f}"/>' for x, y, z in vertices)
-    tris = "".join(f'<triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in triangles)
+    3MF's advantage over STL is precisely that a build is a *set of named
+    objects* rather than one anonymous triangle soup. ``name`` is the geometry
+    label the part script authored (recovered by :func:`solid_labels`), so a
+    box-and-lid part opens in a slicer as two selectable objects called ``box``
+    and ``lid`` instead of one merged shell nobody can assign a material to.
+    """
+
+    name: str
+    vertices: tuple[tuple[float, float, float], ...]
+    triangles: tuple[tuple[int, int, int], ...]
+
+
+#: 3MF core metadata names a package may carry at model level. Everything else
+#: MUST be namespace-qualified per the core spec, which is why the part's §5.2
+#: manufacturing fields are emitted under :data:`THREEMF_NS_PREFIX` below.
+THREEMF_CORE_METADATA: Final[tuple[str, ...]] = (
+    "Title",
+    "Designer",
+    "Description",
+    "Application",
+)
+
+#: Namespace for the §5.2 fields 3MF has no reserved name for (material,
+#: process, stock form, tolerance, finish). Declared on ``<model>`` so the
+#: package stays conformant instead of inventing bare metadata names.
+THREEMF_NS_PREFIX: Final[str] = "heph"
+THREEMF_NS_URI: Final[str] = "https://hephaestus.dev/3mf/2026/01"
+
+#: §5.2 metadata field -> the namespaced 3MF metadata name it becomes.
+THREEMF_METADATA_FIELDS: Final[tuple[tuple[str, str], ...]] = (
+    ("material_spec", "Material"),
+    ("process", "Process"),
+    ("stock_form", "StockForm"),
+    ("general_tolerance", "Tolerance"),
+    ("finish", "Finish"),
+)
+
+
+def three_mf_metadata(
+    part: str, project: str, metadata: Mapping[str, str]
+) -> tuple[tuple[str, str], ...]:
+    """Model-level 3MF metadata for one part, in a fixed order.
+
+    ``Title`` is the part, ``Designer`` the project that authored it,
+    ``Description`` the part's own §5.2 description and ``Application`` this
+    engine. The remaining §5.2 fields — material above all, which is what a
+    slicer or a shop actually needs and what an STL can never carry — follow
+    under the ``heph:`` namespace, and a field the part never declared is
+    simply absent rather than present and empty.
+    """
+    out: list[tuple[str, str]] = [("Title", part)]
+    if project:
+        out.append(("Designer", project))
+    description = metadata.get("description", "").strip()
+    if description:
+        out.append(("Description", description))
+    out.append(("Application", "Hephaestus"))
+    for field_name, label in THREEMF_METADATA_FIELDS:
+        value = metadata.get(field_name, "").strip()
+        if value:
+            out.append((f"{THREEMF_NS_PREFIX}:{label}", value))
+    return tuple(out)
+
+
+def _write_3mf(objects: Sequence[MeshObject], *, metadata: Sequence[tuple[str, str]] = ()) -> bytes:
+    """A deterministic 3MF core-spec package: one ``<object>`` per mesh.
+
+    Every object is referenced by the ``<build>`` section — an object no build
+    item names is resource the consumer never places, which is a silently
+    dropped part — and carries its label as the ``name`` attribute. Model
+    metadata is written in the given order. Stdlib ``zipfile``/string
+    templating only: trimesh's 3MF writer needs ``lxml``, which is not in the
+    dependency set, and a production format is not worth a new dependency.
+    """
+    from xml.sax.saxutils import escape, quoteattr
+
+    if not objects:  # pragma: no cover - callers always pass at least one mesh
+        raise CadOpError("export_failed", "3mf export has no solid to write")
+    resources: list[str] = []
+    items: list[str] = []
+    for index, obj in enumerate(objects, start=1):
+        verts = "".join(
+            f'<vertex x="{x:.6f}" y="{y:.6f}" z="{z:.6f}"/>' for x, y, z in obj.vertices
+        )
+        tris = "".join(f'<triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in obj.triangles)
+        resources.append(
+            f'<object id="{index}" type="model" name={quoteattr(obj.name)}><mesh>'
+            f"<vertices>{verts}</vertices><triangles>{tris}</triangles>"
+            "</mesh></object>"
+        )
+        items.append(f'<item objectid="{index}"/>')
+    meta = "".join(
+        f"<metadata name={quoteattr(name)}>{escape(value)}</metadata>" for name, value in metadata
+    )
     model = (
         '<?xml version="1.0" encoding="UTF-8"?>'
         '<model unit="millimeter" xml:lang="en-US" '
-        'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">'
-        f'<metadata name="Application">{escape("Hephaestus")}</metadata>'
-        "<resources>"
-        '<object id="1" type="model"><mesh>'
-        f"<vertices>{verts}</vertices><triangles>{tris}</triangles>"
-        "</mesh></object>"
-        "</resources>"
-        '<build><item objectid="1"/></build>'
+        'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" '
+        f'xmlns:{THREEMF_NS_PREFIX}="{THREEMF_NS_URI}">'
+        f"{meta}"
+        f"<resources>{''.join(resources)}</resources>"
+        f"<build>{''.join(items)}</build>"
         "</model>"
     )
     content_types = (
@@ -354,16 +539,96 @@ def _write_3mf(
     return buffer.getvalue()
 
 
-def _export_bytes(shape: object, fmt: str, scratch: Path) -> bytes:
+def _solid_mesh(solid: object, path: Path) -> tuple[_Vertices, _Triangles]:
+    """One solid tessellated to (vertices, triangles) through a binary STL."""
+    import importlib
+
+    e3: Any = importlib.import_module("build123d.exporters3d")
+    e3.export_stl(cast("Any", solid), path, ascii_format=False)
+    if not path.is_file():  # pragma: no cover - the exporter raises first
+        raise CadOpError("export_failed", "stl exporter produced no mesh for a solid")
+    return _binary_stl_mesh(path.read_bytes())
+
+
+def three_mf_objects(shape: object, labels: Sequence[str], scratch: Path) -> tuple[MeshObject, ...]:
+    """One :class:`MeshObject` per solid of ``shape``, named by ``labels``.
+
+    ``labels`` is :func:`solid_labels` over the same artifact, so index *i* here
+    and index *i* there are the same solid: ``shape.solids()`` is the order both
+    the build result's geometry rows and the tag descriptors address. A solid
+    the labels do not reach is named positionally rather than borrowing its
+    neighbour's name.
+    """
+    solids: list[Any] = list(cast("Any", shape).solids())
+    return tuple(
+        MeshObject(
+            name=labels[index] if index < len(labels) else f"solid#{index + 1}",
+            vertices=tuple(vertices),
+            triangles=tuple(triangles),
+        )
+        for index, (vertices, triangles) in (
+            (i, _solid_mesh(solid, scratch / f"solid-{i}.stl")) for i, solid in enumerate(solids)
+        )
+    )
+
+
+def _as_built_dxf(shape: object, marks: Sequence[Mark], target: Path) -> None:
+    """The as-built +Z projection as a DXF, on the cut-file layers.
+
+    The hidden-line ``Drawing`` projection is the through-cut outline and goes
+    on ``CUT``; the part's own ``engrave_*``/``score_*`` tagged topology, already
+    projected onto XY by :func:`~hephaestus.core.cutfile.solid_marks`, is
+    re-emitted as flat polylines on its layer. Only layers that receive geometry
+    are declared, so a part that tagged nothing produces a plain single-layer
+    cut file rather than three empty job entries.
+    """
+    import importlib
+
+    e2: Any = importlib.import_module("build123d.exporters")
+    drawing: Any = e2.Drawing(
+        cast("Any", shape), look_from=(0, 0, 1), look_up=(0, 1, 0), with_hidden=False
+    )
+    exporter: Any = e2.ExportDXF(unit=e2.Unit.MM)
+    exporter.add_layer(CUT_LAYER, color=e2.ColorIndex(LAYER_COLORS[CUT_LAYER]))
+    exporter.add_shape(drawing.visible_lines, layer=CUT_LAYER)
+    for layer in sorted({mark.layer for mark in marks}):
+        exporter.add_layer(layer, color=e2.ColorIndex(LAYER_COLORS[layer]))
+    for mark in marks:
+        exporter.add_shape(_mark_shape(mark), layer=mark.layer)
+    exporter.write(target)
+
+
+def _shape_marks(shape: object, tags: Mapping[str, TopologyDescriptor]) -> tuple[Mark, ...]:
+    """Every ``engrave_*``/``score_*`` contour of a whole shape, projected on XY.
+
+    The as-built layout looks down +Z, so a tagged face or edge projects by
+    dropping its Z — the same projection the hidden-line ``Drawing`` applies to
+    the outline it puts on ``CUT``.
+    """
+    solids: list[Any] = list(cast("Any", shape).solids())
+    return tuple(
+        mark for index, solid in enumerate(solids) for mark in solid_marks(solid, tags, index)
+    )
+
+
+def _mark_shape(mark: Mark) -> object:
+    """A mark's polyline as flat build123d geometry (z = 0), closed or open."""
+    from build123d import Polyline
+
+    points = [*mark.points, mark.points[0]] if mark.closed else list(mark.points)
+    return Polyline(*[(x, y, 0.0) for x, y in points])
+
+
+def _export_bytes(shape: object, fmt: str, scratch: Path, *, marks: Sequence[Mark] = ()) -> bytes:
     """Render one export format's bytes from a reloaded BRep shape.
 
     build123d's exporter signatures are generic over an unparameterized ``Shape``,
     so the interop surface is deliberately confined to this function's explicitly
     ``Any``-typed locals rather than leaking partially-unknown types outward.
     STEP / STL / GLB come from ``exporters3d``; DXF / SVG project the solid with
-    the hidden-line ``Drawing`` first (``as_built`` = the +Z profile); 3MF is
-    written from the binary-STL mesh by :func:`_write_3mf` (no extra dependency —
-    trimesh's 3MF writer needs ``lxml``, which is not in the dependency set).
+    the hidden-line ``Drawing`` first (``as_built`` = the +Z profile), the DXF
+    onto the cut-file layers. 3MF is not written here — it is per *labelled
+    solid* and therefore needs the build result, so ``ExportOps`` writes it.
     """
     import importlib
 
@@ -377,17 +642,14 @@ def _export_bytes(shape: object, fmt: str, scratch: Path) -> bytes:
         e3.export_stl(typed, target, ascii_format=False)
     elif fmt == "gltf":
         e3.export_gltf(typed, target, binary=True)
-    elif fmt in ("dxf", "svg"):
+    elif fmt == "dxf":
+        _as_built_dxf(typed, marks, target)
+    elif fmt == "svg":
         drawing: Any = e2.Drawing(typed, look_from=(0, 0, 1), look_up=(0, 1, 0), with_hidden=False)
-        exporter: Any = e2.ExportDXF() if fmt == "dxf" else e2.ExportSVG()
+        exporter: Any = e2.ExportSVG()
         exporter.add_shape(drawing.visible_lines)
         exporter.write(target)
-    elif fmt == "3mf":
-        stl_path = scratch / "mesh.stl"
-        e3.export_stl(typed, stl_path, ascii_format=False)
-        vertices, triangles = _binary_stl_mesh(stl_path.read_bytes())
-        return _write_3mf(vertices, triangles)
-    else:  # pragma: no cover - schema-constrained enum
+    else:  # pragma: no cover - 3mf is routed away and the enum is schema-constrained
         raise CadOpError("invalid_params", f"unsupported export format {fmt!r}")
     if not target.is_file():
         raise CadOpError("export_failed", f"{fmt} exporter produced no output")
@@ -410,7 +672,7 @@ def _blank_payload(blank: Mapping[str, Any] | None) -> JSONValue:
     return out
 
 
-class ExportOps(CadOpsState):
+class ExportOps(FrozenMetadataOps):
     """Freeze a source artifact, write a confined target, pin the result."""
 
     def export_part(
@@ -422,6 +684,7 @@ class ExportOps(CadOpsState):
         target: str | None,
         layout: str,
         blank: Mapping[str, Any] | None = None,
+        kerf_mm: float | None = None,
         op_id: str,
     ) -> dict[str, Any]:
         """The §7 export contract: frozen source, create-only target, pinned root."""
@@ -435,6 +698,11 @@ class ExportOps(CadOpsState):
             )
         if fmt not in EXPORT_FORMATS:
             raise CadOpError("invalid_params", f"unsupported export format {fmt!r}")
+        if kerf_mm is not None and fmt not in CUT_PATH_FORMATS:
+            raise CadOpError(
+                "invalid_params",
+                f"kerf_mm compensates a cut path: it applies to dxf/svg, not {fmt!r}",
+            )
         payload_hash = sha256_canonical_json(
             {
                 "kind": "export_part",
@@ -444,6 +712,7 @@ class ExportOps(CadOpsState):
                 "artifact_ref": artifact_ref,
                 "target": target,
                 "blank": _blank_payload(blank),
+                "kerf_mm": None if kerf_mm is None else float(kerf_mm),
             }
         )
         source_ref, replay = self._begin_export(
@@ -458,12 +727,24 @@ class ExportOps(CadOpsState):
         if replay is not None:
             return replay.to_result()
         source_blob = blob_hash_of_ref(source_ref)
+        kerf = self._kerf_decision(name, source_ref, kerf_mm) if fmt in CUT_PATH_FORMATS else None
         with self._scratch("heph-export-") as scratch:
             shape = load_brep_shape(self._store.blobs.get(source_blob), scratch_dir=Path(scratch))
+            result = self.frozen_result(name, source_ref)
+            tags: Mapping[str, TopologyDescriptor] = self.artifact_tags(result, source_ref)
+            # The source map's topology indices address the *nominal* artifact.
+            # Compensation rebuilds each flat pattern, so tags are resolved on
+            # the shape they were recorded against and only the cut path moves.
+            nominal = shape
+            if kerf is not None and kerf.compensates:
+                shape, kerf = self._compensated(name, layout, shape, kerf)
             if layout == "nested_sheet":
-                data = self._nested_sheet_bytes(name, fmt, source_ref, blank, shape)
+                data = self._nested_sheet_bytes(name, fmt, source_ref, blank, shape, tags, nominal)
+            elif fmt == "3mf":
+                data = self._three_mf_bytes(name, source_ref, shape, result, Path(scratch))
             else:
-                data = _export_bytes(shape, fmt, Path(scratch))
+                marks = _shape_marks(nominal, tags) if fmt == "dxf" else ()
+                data = _export_bytes(shape, fmt, Path(scratch), marks=marks)
         return self._commit_export(
             op_id=op_id,
             part=name,
@@ -471,6 +752,7 @@ class ExportOps(CadOpsState):
             outputs=(ExportOutput(EXPORT_FORMATS[fmt], data),),
             target=target,
             stem=name,
+            extra={} if kerf is None else {"kerf": kerf.to_json()},
         ).to_result()
 
     # -- the reusable §7 contract ------------------------------------------
@@ -634,21 +916,62 @@ class ExportOps(CadOpsState):
         source_ref: str,
         blank: Mapping[str, Any] | None,
         shape: object,
+        tags: Mapping[str, TopologyDescriptor] = {},
+        nominal: object | None = None,
     ) -> bytes:
         """``layout="nested_sheet"``: flat profiles packed onto the declared blank.
 
-        Deterministic shelf packing, no rotation, no kerf compensation (mission
-        rule 5 defers kerf-aware auto-nesting). Anything that will not fit is a
-        structured refusal naming the profile and the blank — never a silent
-        overlap and never a clipped part.
+        Deterministic shelf packing, no rotation (mission rule 5 defers
+        rotation- and yield-aware auto-nesting). ``shape`` arrives already kerf
+        compensated when a kerf resolved, so the packed outlines are the cut
+        path and the blank's spacing is measured between compensated profiles.
+        Anything that will not fit is a structured refusal naming the profile
+        and the blank — never a silent overlap and never a clipped part.
+
+        ``tags`` carries the build's §5.3 names onto this artifact's topology so
+        the writer can separate through-cuts from the part's own ``engrave_*``
+        and ``score_*`` geometry (:mod:`hephaestus.core.cutfile`); ``nominal`` is
+        the pre-compensation shape those names were recorded against. Empty tags
+        mean every contour is a through-cut, which is the safe reading.
         """
         resolved = self._resolve_blank(name, source_ref, blank)
         try:
-            profiles = flat_profiles(shape, prefix=name)
+            profiles = flat_profiles(shape, prefix=name, tags=tags, tag_shape=nominal)
             nested = shelf_nest(profiles, resolved)
         except NestingRefusal as exc:
             raise CadOpError(exc.reason, exc.message, data=exc.data) from exc
         return layout_to_dxf(nested) if fmt == "dxf" else layout_to_svg(nested)
+
+    # -- 3mf ---------------------------------------------------------------
+
+    def _three_mf_bytes(
+        self,
+        name: str,
+        source_ref: str,
+        shape: object,
+        result: BuildResult | None,
+        scratch: Path,
+    ) -> bytes:
+        """``3mf``: one ``<object>`` per labelled solid, plus the part's metadata.
+
+        A 3MF that merges a box and its lid into one mesh has thrown away the
+        only thing it has over an STL. Each of the artifact's solids becomes its
+        own build object carrying the geometry label the script authored, and
+        the model metadata carries the part's §5.2 manufacturing fields — so the
+        package states what it is, who made it, and what it is made of.
+        """
+        labels = solid_labels(result, len(list(cast("Any", shape).solids())))
+        objects = three_mf_objects(shape, labels, scratch)
+        if not objects:
+            raise CadOpError(
+                "export_failed",
+                f"part {name!r} has no solid to write into a 3mf package",
+                data={"part": name, "source_artifact_ref": source_ref},
+            )
+        metadata = three_mf_metadata(
+            name, self._layout.manifest.name, self.frozen_script_metadata(name, source_ref)
+        )
+        return _write_3mf(objects, metadata=metadata)
 
     def _resolve_blank(self, name: str, source_ref: str, blank: Mapping[str, Any] | None) -> Blank:
         """The declared blank: the explicit argument, else ``part.blank_size``."""
@@ -685,14 +1008,21 @@ class ExportOps(CadOpsState):
         return parsed
 
     def _declared_blank_size(self, name: str, source_ref: str) -> str | None:
-        """``part.blank_size`` of the script that produced ``source_ref``, or None.
+        """``part.blank_size`` of the script that produced ``source_ref``, or None."""
+        script = self._trusted_script(name, source_ref)
+        return None if script is None else blank_size_literal(script)
 
-        Manufacturing metadata is authored in the script and is not carried by a
-        published BRep, so it is read statically from the part source — but only
-        while that source still hashes to the exported artifact's frozen input.
-        Exporting a historical artifact, or one whose script has since been
-        edited, yields None and the caller must state the blank explicitly
-        rather than have a drifted intent silently applied.
+    def _trusted_script(self, name: str, source_ref: str) -> str | None:
+        """The part source that still hashes to ``source_ref``'s frozen input.
+
+        §5.2 manufacturing metadata — the blank size, the process, the material —
+        is authored in the script and is not carried by a published BRep, so it
+        is read statically from the part source. It is only *trustworthy* while
+        that source still hashes to the exported artifact's own script input:
+        exporting a historical artifact, or one whose script has since been
+        edited, yields None so the caller refuses (or reports that nothing was
+        resolved) rather than applying a drifted intent to geometry that never
+        had it.
         """
         publisher = self._publisher()
         result = publisher.current_result(name)
@@ -704,7 +1034,90 @@ class ExportOps(CadOpsState):
             return None
         if snapshot.content_hash != result.input_hashes.script:
             return None
-        return blank_size_literal(snapshot.content)
+        return snapshot.content
+
+    # -- kerf compensation -------------------------------------------------
+
+    def _kerf_decision(self, name: str, source_ref: str, kerf_mm: float | None) -> KerfDecision:
+        """Which kerf this export compensates by, and where it came from.
+
+        The order is fixed by :func:`~hephaestus.core.kerf.resolve_kerf`: the
+        explicit argument, else the ``kerf_mm`` parameter of the DFM pack for
+        the process the *frozen* script declares, else nothing at all. Every
+        link that can be missing — a drifted script, no declared process, a
+        process with no rule pack, a pack with no kerf parameter — names itself
+        in the reported ``reason`` instead of falling through to an invented
+        default, because a cut file compensated by a number nobody declared is
+        indistinguishable from a correct one until the part is measured.
+        """
+        pack_kerf: float | None = None
+        unavailable: str | None = None
+        # The declared process is reported either way — an explicit kerf is
+        # still a kerf *for* a process, and a reader comparing the two wants to
+        # see which one the caller overrode.
+        script = self._trusted_script(name, source_ref)
+        process = (script_metadata(script).get("process") or "").strip() or None if script else None
+        if kerf_mm is None:
+            if script is None:
+                unavailable = "source_script_unavailable"
+            elif process is None:
+                unavailable = "no_process"
+            else:
+                pack_kerf, unavailable = self._pack_kerf(process)
+        try:
+            return resolve_kerf(
+                explicit_mm=kerf_mm,
+                process=process,
+                pack_kerf_mm=pack_kerf,
+                unavailable=unavailable,
+            )
+        except ValidationError as exc:
+            raise CadOpError("invalid_params", str(exc)) from exc
+
+    def _pack_kerf(self, process: str) -> tuple[float | None, str | None]:
+        """``(kerf_mm, why-not)`` from the DFM pack of one process."""
+        if not isinstance(self, DfmOps):  # pragma: no cover - CadOps is DfmOps
+            return None, "no_dfm_registry"
+        try:
+            pack = self.registries().dfm.get(process)
+        except Exception:
+            # A process with no rule pack is a legitimate design (an unusual
+            # machine, a fork nobody published); it simply declares no kerf.
+            return None, "no_dfm_pack"
+        param = pack.params.get("kerf_mm")
+        if param is None:
+            return None, "pack_declares_no_kerf"
+        return float(param.value), None
+
+    def _compensated(
+        self, name: str, layout: str, shape: object, decision: KerfDecision
+    ) -> tuple[object, KerfDecision]:
+        """``shape`` grown onto the waste side, or a refusal naming the profile.
+
+        The one fallback is deliberate and narrow: an ``as_built`` projection of
+        a part with no flat pattern at all (a turned boss, a printed bracket that
+        merely declares a process) was never a cut path, so it keeps its
+        uncompensated projection and *says so* in the result. An explicit
+        ``kerf_mm`` never falls back — the caller asked for a compensated path
+        and must be told it could not be produced — and a boundary that fails to
+        offset (``kerf_offset_failed``) never falls back either, in any layout:
+        that is exactly the silently-undersized part this whole module exists to
+        prevent.
+        """
+        applied = decision.applied_mm
+        if applied is None:  # pragma: no cover - guarded by decision.compensates
+            return shape, decision
+        try:
+            return kerf_compensated_shape(shape, applied, prefix=name), decision
+        except KerfRefusal as exc:
+            fallback = (
+                layout == "as_built"
+                and decision.source != "explicit"
+                and exc.reason in ("not_a_sheet_profile", "no_profiles")
+            )
+            if fallback:
+                return shape, decision.uncompensated(exc.reason)
+            raise CadOpError(exc.reason, exc.message, data=exc.data) from exc
 
     def _export_row(self, op_id: str) -> Mapping[str, Any] | None:
         raw = self._store.db.conn.execute(

@@ -17,5 +17,5 @@
   "protected_paths": [
     "parts/hole_gauge.py"
   ],
-  "notes": "Difficulty 1. Checks: envelope window, exact material volume (fillet + hole diameters), go-pin gauge fit (hole pattern), sealed with genus 2."
+  "notes": "Difficulty 1. Checks: envelope window, material BUDGET (+/-100 mm^3, 0.38%), go-pin gauge fit (hole pattern), sealed with genus 2. Re-authored 2026-07-26 (corpus audit): the volume check was named material_volume and windowed at +/-60 mm^3 as an identity on the author's arithmetic; the envelope and the gauge already measure the extents and the hole diameters, so the window now exists only to reject a missing R4 inner blend (206 mm^3) and is set a factor of 2 below it. Budget unchanged at 20: nothing about the call path moved."
 }

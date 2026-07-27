@@ -240,11 +240,20 @@ critique: {
       numbers: [{value_mm, unit, text, axis: "x"|"y"|"z"|null,
                  matched?, compared_to?, dimension_mm?}],
       dimensions: dict[str, number], warnings: [W]},
-  warnings: [W]   // the flattened union of the three sections
+  dimension_findings?: {
+      generation?, artifact_ref?,
+      open:    [F],   // still binding: the run cannot finish while any is here
+      cleared: [F],   // closed by a matching rebuild or a user's dismissal
+      warnings: [W]},
+  warnings: [W]   // the flattened union of the sections above
 }
 W = {kind: "interference"|"interference_pairs_capped"|"interference_unavailable"
-          |"not_sealed"|"unmatched_request_number"|"dimension_mismatch",
+          |"not_sealed"|"unmatched_request_number"|"dimension_mismatch"
+          |"open_dimension_finding"|"dimension_findings_unavailable",
      message, ...per-kind evidence}
+F = {id, part, kind, request_value_mm, request_text, message, axis,
+     dimension, dimension_value_mm, status: "open"|"cleared"|"dismissed",
+     asked, dismissal, closed_by}
 ```
 The model does not ask for this and cannot turn it off; it is computed by rule
 from the build's own outputs, because a self-authored `CHECKS` block cannot
@@ -278,6 +287,25 @@ every known dimension (bbox extents, tagged edge lengths, `CHECKS` thresholds)
 and emits `unmatched_request_number` when none corresponds. Matching is
 deliberately crude (regex + unit normalization + a 0.5%/0.05 mm tolerance):
 false positives are acceptable, silence on a real mismatch is not.
+
+`dimension_findings` is the **binding** half of that diff (`VALIDATION.md` §4,
+"Dimension findings are BINDING"). Every axis-resolved mismatch a published
+build raises becomes an open finding on the run, restated as an
+`open_dimension_finding` warning carrying its `id`, and **the run may not
+terminate green while one is open** (§6). Two things clear it and nothing else:
+a later successful build of the same part whose diff no longer raises it, or a
+committal user answer to `ask_user(requirement_ids: [<finding id>], …)`, which
+the runtime records as a dismissal — a non-committal answer records `asked` and
+dismisses nothing. There is no tool that writes this store: not the ledger, not
+`update_requirement`, and the reviewer's verdict on a finding id is discarded.
+The binding comparison also ignores the script's own `CHECKS` thresholds (the
+advisory `dimensions` pool above still includes them), because an acceptance
+test the run authored cannot be the evidence that the run read the spec right.
+Axis-less unmatched numbers stay advisory: they say the harness did not find the
+number, not that the geometry contradicts it. The section is **absent** on a
+preview build or with no request text, and reports
+`dimension_findings_unavailable` when the record could not be written — an
+absent or failed section never means "the dimensions agree".
 
 ### set_params
 ```
@@ -766,8 +794,11 @@ ledger writes, which is what makes a recorded answer evidence.
 export_part(name: str, format: "step"|"dxf"|"svg"|"gltf"|"3mf"|"stl",
             artifact_ref: str|null = null, target: str|null = null,
             layout: "as_built"|"nested_sheet" = "as_built",
-            blank: {width_mm, height_mm, margin_mm?, spacing_mm?}|null = null)
-    -> {paths, source_artifact_ref, source_input_hashes, export_hashes}
+            blank: {width_mm, height_mm, margin_mm?, spacing_mm?}|null = null,
+            kerf_mm: number|null = null)
+    -> {paths, source_artifact_ref, source_input_hashes, export_hashes,
+        kerf?: {applied_mm: number|null, source: "explicit"|"dfm"|"none",
+                process: str|null, note?: "kerf_uncompensated", reason?: str}}
      | {status: "capability_error", code: "capability_not_available", message}
 ```
 At first invocation the WAL freezes an immutable successful build artifact.
@@ -788,6 +819,20 @@ apply. Canonical JSON Schema permits `layout="nested_sheet"` only with
 Stage 6. STEP for interchange (observed Smith ceiling); DXF/SVG per-lamination
 profiles with `nested_sheet` layout for laser/CNC workflows (each 6 mm
 lamination as a flat profile); 3MF/STL for printing; GLTF for clients.
+
+**3MF is a build, not a mesh.** `format="3mf"` writes one `<object>` **per
+labelled solid** of the frozen artifact — a box and its lid export as a
+two-object build, not one merged shell — with each object's `name` taken from
+the geometry label the script authored (recovered from the build result's
+`geometries` rows; a solid the rows do not account for is named positionally).
+Every object is referenced by a `<build><item>`, because an object no item
+places is a part the consumer silently drops. Model metadata carries the part's
+§5.2 fields: reserved `Title` (the part), `Designer` (the project), `Description`
+and `Application`, plus namespaced `heph:Material`, `heph:Process`,
+`heph:StockForm`, `heph:Tolerance` and `heph:Finish` for the fields 3MF reserves
+no name for — a field the part never declared is absent rather than empty. Units
+stay `millimeter`. The package is stdlib-only (`zipfile` + string templating; no
+`lxml`) and deterministic: identical inputs produce identical bytes.
 Exceeding STEP-only is a deliberate differentiator — the recovered scripts
 describe laser-cut parts whose real manufacturing input is DXF.
 
@@ -800,9 +845,10 @@ dropped. Only the outer ring occupies space when packing. Profiles are
 placed on **one declared blank** by deterministic **shelf/row packing**: given
 order, no rotation, fill a row until the next profile would cross the right
 margin, then start a new row above the tallest profile of the closed row.
-*Kerf-aware auto-nesting is deferred by mission rule 5* — nothing here
-compensates a cut width or reorders/rotates to improve yield, and nothing
-pretends to. Identical inputs produce byte-identical output.
+*Rotation- and yield-aware auto-nesting is deferred by mission rule 5* — nothing
+here reorders or rotates to improve yield, and nothing pretends to. Kerf **is**
+compensated (below), before packing, so the declared `spacing_mm` is the gap
+between compensated outlines. Identical inputs produce byte-identical output.
 
 The blank comes from `blank` when supplied (`margin_mm` and `spacing_mm`
 default to 5 mm each); otherwise from the part's `part.blank_size` metadata
@@ -810,9 +856,39 @@ default to 5 mm each); otherwise from the part's `part.blank_size` metadata
 script and trusted **only** while that script still hashes to the exported
 artifact's frozen script input. A historical or drifted source therefore
 refuses (`blank_unknown`) rather than applying an intent the geometry no longer
-matches. DXF output carries the profiles on layer `PROFILES` and the blank
-outline on layer `BLANK`; SVG output carries one `<polygon>` per cut contour
-(`id` = profile name, holes `<name>_hole_<n>`) inside a blank-sized `viewBox`.
+matches. DXF and SVG output are separated onto the **cut-file layers** below;
+SVG carries one element per contour (`id` = profile name, holes
+`<name>_hole_<n>`, marks `<name>_engrave_<n>` / `<name>_score_<n>`) inside a
+blank-sized `viewBox`.
+
+**Cut-file layers (DXF/SVG, both layouts).** A laser or router controller maps
+layer name — or colour — to a power/speed pair, so geometry is emitted onto
+conventional layers with standard ACI colours rather than onto one anonymous
+layer an operator must re-separate by hand:
+
+| layer | ACI | carries |
+| --- | --- | --- |
+| `CUT` | 1 (red) | every through-cut: each profile's outer ring and its holes |
+| `ENGRAVE` | 5 (blue) | marking geometry that must not penetrate the stock |
+| `SCORE` | 3 (green) | shallow score lines (folds, register marks) |
+| `BLANK` | 8 (grey) | the `nested_sheet` stock rectangle — reference, never cut |
+
+Layer assignment is **by rule, from the part's own semantics** — never inferred
+from geometry. A contour reaches `ENGRAVE` or `SCORE` only because the script
+tagged that topology (§5.3) with the documented prefix `engrave_` or `score_`:
+`tag(lid.faces().sort_by(Axis.Z)[-1], "engrave_logo")`. Everything else is a
+through-cut, because a heuristic that promotes a pocket to a marking pass is
+how a sheet gets scrapped. A tagged **face** contributes its outer boundary as a
+closed contour; a tagged **edge** contributes an *open* polyline, so a fold line
+never closes into a slot. A closed mark falling inside an inner boundary
+reclassifies that boundary — a tagged engrave pocket is a marking, not a
+through-cut *and* a marking — and a mark spanning the outer ring is dropped,
+because the perimeter is always cut. Marks are resolved against the **nominal**
+artifact and are therefore never kerf compensated: a marking removes no
+material. A layer is written **only when it carries geometry**, so a part that
+tagged nothing emits no empty `ENGRAVE`/`SCORE` for a controller to assign
+power to. `layout="as_built"` DXF follows the same convention: the hidden-line
++Z projection is the `CUT` layer, with tagged marks projected onto theirs.
 
 Anything that will not fit is a **structured refusal naming the offending
 profile and the blank** — never a silent overlap and never a clipped part:
@@ -820,6 +896,55 @@ profile and the blank** — never a silent overlap and never a clipped part:
 `blank_full` (the rows ran out of height; the refusal lists what was already
 placed), `not_a_sheet_profile` (a solid with no planar face has no flat
 pattern), and `blank_unknown` (no blank was declared or parseable).
+
+**Kerf compensation (`kerf_mm`, DXF/SVG only).** A cutter removes material as it
+travels, so a path driven along the nominal boundary takes half a kerf off the
+part on *every* edge: a 40 mm finger cut to nominal on a 0.2 mm kerf measures
+39.8 mm and the joint it belongs to does not assemble. Every DXF/SVG export
+therefore offsets each closed contour onto the **waste** side by half the kerf —
+the outer boundary **outward**, every hole **inward**, so the finished opening
+lands on its nominal diameter too — using the kernel's 2D offset on the flat
+pattern's own boundaries (not on the discretised polyline), with corners
+extended to their intersection so a compensated square stays square.
+
+The kerf's **source order is fixed and a default is never invented**:
+
+1. the explicit `kerf_mm` argument (it is part of the idempotency payload, so
+   two exports of one invocation id must agree on it);
+2. otherwise the `kerf_mm` parameter of the DFM rule pack for the process the
+   part declares (`part.process`), read from the frozen script under the same
+   hash check `part.blank_size` gets;
+3. otherwise **nothing is applied**.
+
+Every DXF/SVG result carries a `kerf` block reporting exactly what happened —
+`applied_mm` (null when the emitted path is the nominal boundary), `source`
+(`explicit`/`dfm`/`none`), the `process` the pack came from, and, whenever the
+path is uncompensated, `note: "kerf_uncompensated"` with a `reason` naming the
+missing link (`explicit_zero`, `no_process`, `no_dfm_pack`,
+`pack_declares_no_kerf`, `source_script_unavailable`, or — `as_built` only —
+`not_a_sheet_profile`). An uncompensated cut file is a legitimate output; one
+that cannot be told apart from a compensated one is not, because the difference
+is invisible until the part is measured. `kerf_mm = 0`, and any export with no
+kerf source, produce byte-identical geometry to an export from before
+compensation existed.
+
+Compensation rebuilds each solid as a prism of its **compensated flat pattern**
+in its own plane — which is what a sheet part is, and what a cutter is given —
+so a compensated `as_built` DXF/SVG carries each piece's cut contour rather than
+the full hidden-line projection of its 3D detail. That is deliberate: a chamfer
+edge is drawn by a projection and is not cut by a laser. An uncompensated
+export is the projection it always was.
+
+A boundary the kernel cannot offset cleanly — most often a hole narrower than
+the kerf, which has no compensated path at all — is the structured refusal
+`kerf_offset_failed`, naming the profile and the ring (`outer`, `hole_<n>`), the
+kerf and the offset. It is never downgraded to an uncompensated path in either
+layout. The single narrow fallback: an `as_built` projection of a part with no
+flat pattern (`not_a_sheet_profile`) keeps its uncompensated projection and says
+so in the `kerf` block — but only when the kerf came from the DFM pack, never
+when the caller asked for one explicitly. `kerf_mm` with a non-cut format
+(`step`/`stl`/`gltf`/`3mf`) is `invalid_params`: a model must stay nominal,
+because whatever consumes it applies its own allowances.
 
 ### generate_drawing
 ```

@@ -8,5 +8,5 @@
   "export_requirements": [],
   "render_requirements": [],
   "protected_paths": [],
-  "notes": "Difficulty 5 in the digest ordering; MUST pass 3/3 seeds. Checks: builds clean and sealed, envelope unchanged, exact R5 blend volume (6600 + 32.19 mm^3)."
+  "notes": "Difficulty 5 in the digest ordering; MUST pass 3/3 seeds. Checks: builds clean and sealed, envelope unchanged, R5 blend measured as a material budget (6600 + 32.19 mm^3, +/-3). The 2026-07-26 corpus audit widened that window from +/-1: the nearest wrong radius (R4) is 11.6 mm^3 away, so +/-3 keeps a ~4x margin without pinning the plate to a hundredth of a cubic millimetre."
 }

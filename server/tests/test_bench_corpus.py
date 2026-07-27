@@ -18,7 +18,10 @@ aggregate Wilson bound from 0.60 to G6's 0.70 on the gated prose split.
 
 from __future__ import annotations
 
+import ast
 import io
+import re
+import shutil
 import sys
 import time
 from collections.abc import Mapping
@@ -34,6 +37,7 @@ from hephaestus.bench.harness import (
     grade,
     grade_reference_solution,
     load_tasks,
+    open_cad,
     pdf_text,
     restore_protected,
     seed_project,
@@ -88,6 +92,65 @@ requires_bwrap = pytest.mark.skipif(
     sys.platform != "linux" or find_bwrap() is None,
     reason="DFM rule predicates execute only under a probed secure sandbox (bubblewrap)",
 )
+
+#: Independently authored *second* implementations of the tasks the 2026-07-26
+#: corpus audit re-authored. ``corpus/solutions`` proves a task is passable;
+#: these prove it is passable by something other than the reference geometry,
+#: which is the only way to show a check grades correctness and not reproduction.
+CORPUS_VARIANTS: Path = Path(__file__).parent / "fixtures" / "corpus_variants"
+VARIANT_TASKS: frozenset[str] = frozenset({"enclosure-bosses", "drawing-shelf", "cat-step"})
+
+#: The constants of the checks the audit retired, kept so the guards can measure
+#: that a correct variant really would have failed them.
+RETIRED_LID_VOLUME = 22625.26
+RETIRED_MATERIAL_TEXT = "18 mm Baltic birch plywood"
+SHELL_GAUGE_VOLUME = 20112.384
+#: ``cat-step``: the tread's intended volume, and the window the audit replaced.
+TREAD_VOLUME = 1075171.46
+RETIRED_TREAD_WINDOW = 400.0
+TREAD_WINDOW = 600.0
+
+#: A required drawing text must be a dimension as ``dimension_text`` prints one
+#: (``600.0``, ``Ø8.0``, ``R4.0``) — never a sentence out of a title block.
+DIMENSION_TEXT_RE = re.compile(r"[ØR]?\d+(?:\.\d+)?(?:\s*mm)?")
+
+#: Words in a check name that promise a *fit* — a relation between two bodies.
+#: A check named with one of these must be measured as one (``m.clearance`` /
+#: ``m.interference`` against the other body or a seeded gauge), never as one
+#: part's volume. ``lid_register_clearance`` broke exactly this rule.
+FIT_WORDS: tuple[str, ...] = (
+    "clearance",
+    "clears",
+    "contact",
+    "fit",
+    "flush",
+    "gap",
+    "interfere",
+    "mates",
+    "seat",
+    "touch",
+)
+
+
+def _check_predicates(source: str) -> dict[str, str]:
+    """``{check name: predicate source}`` for a ``CHECKS = {...}`` module."""
+    module = ast.parse(source)
+    found: dict[str, str] = {}
+    for node in ast.walk(module):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == "CHECKS" for target in node.targets
+        ):
+            continue
+        value = node.value
+        if not isinstance(value, ast.Dict):
+            continue
+        for key, predicate in zip(value.keys, value.values, strict=True):
+            if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                found[key.value] = ast.get_source_segment(source, predicate) or ""
+    return found
+
 
 #: A single reference solution must build and grade well inside this; the digest's
 #: working budget is 30 s per solution build, and the whole grading pass (build +
@@ -218,7 +281,292 @@ def test_reference_solution_passes_its_own_checks(
         assert "error" not in record and "invalid" not in record, record
         assert record.get("missing_texts") == [], record
         assert int(cast("int", record.get("bytes", 0))) > 0
+    # …and the §5.2 metadata a task requires was authored and resolves.
+    assert len(report.metadata) == len(task.metadata)
+    for record, requirement in zip(report.metadata, task.metadata, strict=True):
+        assert record.get("missing_fields") == [], record
+        if requirement.material_id is not None:
+            assert record.get("material_id") == requirement.material_id, record
     assert elapsed < GRADE_SECONDS_CEILING, f"{task_id}: grading took {elapsed:.1f}s"
+
+
+@pytest.mark.parametrize("task_id", sorted(VARIANT_TASKS))
+def test_a_different_but_correct_solution_also_passes(
+    task_id: str, tasks: Mapping[str, BenchTask], tmp_path: Path
+) -> None:
+    """The audit's own guard: correctness must pass, not reproduction.
+
+    ``corpus/solutions`` validates that a task is *passable*; it cannot show
+    that the task grades the engineering rather than the author's geometry,
+    because the checks were authored from that very solution. These variants are
+    the second, independent implementation each re-authored task needs: same
+    specification, different construction order, different in-spec dimensions,
+    different wording. A check that demands the reference back fails here.
+    """
+    report = grade_reference_solution(
+        tasks[task_id], tmp_path / "project", solutions_dir=CORPUS_VARIANTS
+    )
+    assert report.passed, f"{task_id} variant solution failed: {report.reasons}"
+    for name, value in report.checks.items():
+        entry = cast("Mapping[str, Any]", value)
+        assert entry.get("pass") is True, f"{task_id}: variant failed check {name}: {entry}"
+    assert report.restored_protected == ()
+    for record in report.drawings:
+        assert record.get("missing_texts") == [], record
+
+
+def test_the_enclosure_variant_would_have_failed_the_retired_checks(
+    tasks: Mapping[str, BenchTask], tmp_path: Path
+) -> None:
+    """Why ``enclosure-bosses`` was re-authored, measured on the variant lid.
+
+    The retired ``lid_register_clearance`` was ``volume("lid/part") ==
+    approx(22625.26, abs=20.0)`` — a 0.09% window on a lid whose lip the task
+    lets you model as a solid block *or* a peripheral rib. The variant is the
+    rib, and it is ~6800 mm^3 lighter: functionally a correct lid, arithmetically
+    a different one. The retired ``min_wall_1p6`` window (±5 mm^3) is measured
+    the same way against the variant's 0.3 mm base chamfer.
+    """
+    root = tmp_path / "project"
+    report = grade_reference_solution(
+        tasks["enclosure-bosses"], root, solutions_dir=CORPUS_VARIANTS
+    )
+    assert report.passed, report.reasons
+
+    with open_cad(root) as cad:
+        measured = cad.measure(
+            "volume", "lid/part", None, part=None, artifact_ref=None, project_snapshot_ref=None
+        )
+    lid_volume = float(cast("float", measured["value"]))
+    assert abs(lid_volume - RETIRED_LID_VOLUME) > 1000.0, (
+        "the variant lid must really differ from the reference lid, or this guard proves nothing"
+    )
+
+    shell = float(cast("float", report.checks["enclosure_bosses:min_wall_1p6"]["measured"]))
+    assert 5.0 < abs(shell - SHELL_GAUGE_VOLUME) < 40.0, (
+        "the variant's base chamfer must land outside the retired ±5 mm^3 min-wall window "
+        "and inside the re-authored ±40 one"
+    )
+
+
+def test_the_cat_step_variant_would_have_failed_the_retired_window(
+    tasks: Mapping[str, BenchTask], tmp_path: Path
+) -> None:
+    """Why the material budgets were widened, measured on the flagship task.
+
+    ``cat-step`` fixes every dimension it asks for, so the freedom a correct run
+    really has is the *unrequested* detailing — and on a ply cat step that means
+    easing the edges the cat lands on. The variant breaks the tread's top edges
+    by 1 mm: ~490 mm^3, outside the retired +/-400 identity window and inside the
+    +/-600 budget. The old check would have failed a better tread than the
+    reference's.
+    """
+    report = grade_reference_solution(
+        tasks["cat-step"], tmp_path / "project", solutions_dir=CORPUS_VARIANTS
+    )
+    assert report.passed, report.reasons
+
+    measured = float(
+        cast("float", report.checks["cat_step:tread_material_pins_r25_corners"]["measured"])
+    )
+    delta = abs(measured - TREAD_VOLUME)
+    assert RETIRED_TREAD_WINDOW < delta < TREAD_WINDOW, (
+        f"the eased tread is {delta:.1f} mm^3 off nominal: it must land outside the retired "
+        "window and inside the re-authored one, or this guard proves nothing"
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "replacement", "failing_checks"),
+    [
+        pytest.param(
+            "_clear = 0.3",
+            "_clear = 0.0",
+            {"lid_register_clears_the_opening"},
+            id="press-fit-lip",
+        ),
+        pytest.param(
+            "body = plate + rib",
+            "body = plate + Pos(0, 0, _lip_z) * Box(20.0, 20.0, hc.lid_lip_h)",
+            {"lid_register_clears_the_opening", "lid_closes_and_registers"},
+            id="token-lip-that-registers-nothing",
+        ),
+    ],
+)
+def test_the_re_authored_register_checks_bite(
+    mutation: str,
+    replacement: str,
+    failing_checks: set[str],
+    tasks: Mapping[str, BenchTask],
+    tmp_path: Path,
+) -> None:
+    """A fit check that nothing can fail is decoration. These are the mutations.
+
+    A lip with no clearance is a press fit on a printed box; a lip that does not
+    run round the opening registers nothing. Both build, both keep the envelope,
+    the topology and the rim contact — under the retired volume check the first
+    was caught only incidentally (it moved the number) and the second, at the
+    right volume, not at all.
+    """
+    task = tasks["enclosure-bosses"]
+    root = tmp_path / "mutant"
+    seed_project(task, root)
+    source = (CORPUS_VARIANTS / "enclosure-bosses" / "parts" / "lid.py").read_text(encoding="utf-8")
+    assert mutation in source
+    (root / "parts" / "lid.py").write_text(source.replace(mutation, replacement), encoding="utf-8")
+    shutil.copy2(CORPUS_VARIANTS / "enclosure-bosses" / "parts" / "enclosure.py", root / "parts")
+    report = grade(task, root)
+
+    assert not report.passed
+    failed = {name.split(":", 1)[1] for name in report.reasons if name.startswith("check_failed:")}
+    assert {f"enclosure_bosses:{name}" for name in failing_checks} <= failed, report.reasons
+
+
+def test_drawing_requirements_gate_dimensions_and_metadata_gates_material(
+    tasks: Mapping[str, BenchTask],
+) -> None:
+    """A drawing sheet is gated on its dimensions; its metadata is gated structurally.
+
+    ``required_texts`` was carrying a title-block sentence
+    (``"18 mm Baltic birch plywood"``), so a correct shelf failed on wording.
+    The rule now: every required drawing text is a dimension string, and
+    manufacturing metadata is a ``metadata_requirements`` entry — a registry id
+    the free-text spec must *resolve* to, and a process pack token.
+    """
+    for task in tasks.values():
+        for requirement in task.drawings:
+            for text in requirement.required_texts:
+                assert DIMENSION_TEXT_RE.fullmatch(text), (
+                    f"{task.id}: required drawing text {text!r} is not a dimension — "
+                    "gate document prose through metadata_requirements instead"
+                )
+    shelf = tasks["drawing-shelf"]
+    assert len(shelf.metadata) == 1
+    requirement = shelf.metadata[0]
+    assert requirement.part == "shelf"
+    assert requirement.process == "laser_cut"
+    assert requirement.material_id == "plywood-baltic-birch"
+    assert "material_spec" in requirement.required_fields
+
+
+def test_the_metadata_requirement_gates_the_material_not_its_wording(
+    tasks: Mapping[str, BenchTask], tmp_path: Path
+) -> None:
+    """Both halves of the replacement, measured: it passes prose and fails a wrong stock."""
+    task = tasks["drawing-shelf"]
+    variant = (CORPUS_VARIANTS / "drawing-shelf" / "parts" / "shelf.py").read_text(encoding="utf-8")
+    # The variant states the same stock in different words — and would have
+    # failed the retired verbatim title-block match.
+    assert RETIRED_MATERIAL_TEXT not in variant
+    root = tmp_path / "wrong-material"
+    seed_project(task, root)
+    (root / "parts").mkdir(exist_ok=True)
+    (root / "parts" / "shelf.py").write_text(
+        variant.replace("Baltic birch plywood, 18 mm, BB/BB grade", "6061 aluminium plate"),
+        encoding="utf-8",
+    )
+    report = grade(task, root)
+
+    assert not report.passed
+    assert "metadata_material:shelf:al-6061!=plywood-baltic-birch" in report.reasons
+    # …and only that: the geometry is untouched, so nothing else fails.
+    assert [reason for reason in report.reasons if not reason.startswith("metadata_")] == []
+
+
+def test_no_required_check_names_a_fit_and_measures_a_volume(
+    tasks: Mapping[str, BenchTask],
+) -> None:
+    """The audit's naming rule, pinned where it was broken.
+
+    ``lid_register_clearance`` measured ``volume("lid/part")``: a name promising
+    a fit over a check demanding an identity. The register is now measured as a
+    clearance against a seeded cavity-opening gauge, and no check in the task
+    reads the lid's volume at all.
+    """
+    source = tasks["enclosure-bosses"].check_sources()["enclosure_bosses"]
+    assert 'm.clearance("lid/part", "register_gauge/part")' in source
+    assert 'm.interference("lid/part", "lid_go_gauge/part")' in source
+    assert 'm.volume("lid/part")' not in source
+    assert "lid_register_clearance" not in source
+
+    # …and the rule generalised over the whole corpus, so the next task cannot
+    # reintroduce it: a check whose NAME promises a fit may not be implemented as
+    # a single part's volume. Whether a design fits is a relation between two
+    # bodies; a volume is an identity, and no window on it measures a fit.
+    offenders: list[str] = []
+    for task in tasks.values():
+        if task.spec != "prose":
+            continue
+        for stem, check_source in task.check_sources().items():
+            for name, predicate in _check_predicates(check_source).items():
+                promises_fit = any(word in name for word in FIT_WORDS)
+                if promises_fit and "m.volume(" in predicate:
+                    offenders.append(f"{task.id}:{stem}:{name}")
+    assert offenders == [], (
+        f"checks naming a fit but measuring a volume: {offenders} — measure it against a "
+        "gauge with m.clearance/m.interference, or rename it to the material budget it is"
+    )
+
+
+def test_every_volume_window_is_a_named_documented_constant(
+    tasks: Mapping[str, BenchTask],
+) -> None:
+    """The audit's second rule: a volume window must be *named*, never inline.
+
+    A volume check is only ever a **material budget** — the corpus has no way to
+    ask for an exact solid, and asking for one is what ``lid_register_clearance``
+    did. A budget needs a stated reason: how wide, and what deviation it is set
+    below. Requiring the window to be a module-level constant is the mechanical
+    half of that (an ``abs=20.0`` written inline carries no paragraph), and every
+    such constant in the corpus is introduced by the comment that justifies it.
+    """
+    offenders: list[str] = []
+    for task in tasks.values():
+        if task.spec != "prose":
+            continue
+        for stem, check_source in task.check_sources().items():
+            for name, predicate in _check_predicates(check_source).items():
+                if "m.volume(" not in predicate:
+                    continue
+                if not re.search(r"abs=_[A-Z0-9_]*WINDOW\b", predicate):
+                    offenders.append(f"{task.id}:{stem}:{name}")
+    assert offenders == [], (
+        f"volume checks with an unnamed tolerance: {offenders} — give the window a module "
+        "constant and a comment saying which deviation it is set below"
+    )
+
+
+def test_the_audited_material_checks_are_named_as_budgets(
+    tasks: Mapping[str, BenchTask],
+) -> None:
+    """The renames the 2026-07-26 audit made, pinned so they cannot drift back.
+
+    ``tread_corner_radius`` measured a volume; so did ``gusset_is_triangular``.
+    A name that states a shape fact over an arithmetic identity is the same trap
+    as a name that states a fit, one step milder — it hides from the reader that
+    the check will reject any other correct way of reaching that shape.
+    """
+    expected = {
+        "bracket-101": {"material_budget"},
+        "cat-step": {"tread_material_pins_r25_corners", "gusset_material_pins_triangular_profile"},
+        "param-retune": {
+            "tread_material_pins_r25_corners",
+            "gusset_material_pins_triangular_profile",
+        },
+        "knob-loft": {"material_budget"},
+        "drawing-shelf": {"shelf_material_budget"},
+        "enclosure-bosses": {"box_material_budget"},
+    }
+    for task_id, names in expected.items():
+        found: set[str] = set()
+        for check_source in tasks[task_id].check_sources().values():
+            found |= set(_check_predicates(check_source))
+        assert names <= found, f"{task_id}: expected material-budget checks {names - found}"
+    # …and the retired names are gone from the corpus entirely.
+    retired = {"tread_corner_radius", "gusset_is_triangular", "material_volume", "shelf_material"}
+    for task in tasks.values():
+        for check_source in task.check_sources().values():
+            assert retired.isdisjoint(_check_predicates(check_source)), task.id
 
 
 def test_export_and_render_requirements_are_covered_by_the_corpus(
@@ -260,7 +608,7 @@ def test_stage6_requirements_are_covered_by_the_corpus(
     nested = [req for task in prose for req in task.exports if req.layout == "nested_sheet"]
     assert len(nested) == 1, "nest-gusset is the nested_sheet task"
     assert nested[0].profile_count == 3
-    assert nested[0].profile_layer == "PROFILES"
+    assert nested[0].profile_layer == "CUT"
     assert nested[0].blank_mm == (210.0, 125.0), "G6 names the 210 x 125 blank"
 
 

@@ -478,11 +478,12 @@ def run_metrics(
     assumptions = _material_assumptions(entries)
 
     findings = _final_review_findings(record)
+    reviewed = tuple(item for item in findings or () if item.get("harness") is not True)
     verifiable = 0
     caught = 0
     vision = 0
     numeric = 0
-    for finding in findings or ():
+    for finding in reviewed:
         verdict = str(finding.get("verdict", ""))
         if verdict != "unverifiable":
             verifiable += 1
@@ -520,7 +521,12 @@ def run_metrics(
         material_assumptions=len(assumptions),
         material_assumptions_asked=sum(1 for e in assumptions if e.get("asked") is True),
         reviewed=findings is not None,
-        reviewed_requirements=len(findings or ()),
+        # §8 counts *reviewer verdicts on ledger entries*. A §4 dimension finding
+        # rides in the same report (it blocks the same terminal) but no reviewer
+        # was asked about it and it is not a ledger entry, so counting it would
+        # move `requirement_coverage` and `review_catch_rate` without a single
+        # extra thing having been reviewed.
+        reviewed_requirements=len(reviewed),
         verdicts_verifiable=verifiable,
         caught_failures=caught,
         caught_vision=vision,

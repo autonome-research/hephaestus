@@ -10,5 +10,5 @@
   "protected_paths": [
     "parts/wall_plane.py"
   ],
-  "notes": "Difficulty 3 (flagship prose task). Checks: both envelopes, exact tread volume (pins the R25 corners) and gusset volume (pins the triangular profile), sealed genus 0 for both, gusset-to-tread contact with zero interference, both parts flush against the seeded wall gauge."
+  "notes": "Difficulty 3 (flagship prose task). Checks: both envelopes, tread and gusset material budgets, sealed genus 0 for both, gusset-to-tread contact with zero interference, both parts flush against the seeded wall gauge. Re-authored 2026-07-26 (corpus audit): tread_corner_radius and gusset_is_triangular both named a shape fact and measured a volume identity (+/-400 on 1.08 million, i.e. 0.037%, which an eased tread edge breaks). They are now tread_material_pins_r25_corners (+/-600, ~3x below an R20 corner) and gusset_material_pins_triangular_profile (+/-1500, two orders below a rectangular web), and the comments state the discrimination margin. Budget unchanged at 52."
 }

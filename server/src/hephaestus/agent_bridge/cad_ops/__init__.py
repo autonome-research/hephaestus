@@ -33,6 +33,10 @@ mixin per domain so each domain reads independently:
                  project snapshot), process and material resolution, and the
                  sandboxed rule-pack evaluation behind both the tool and the
                  auto-run critique rung.
+``_findings``    the binding half of ``VALIDATION.md`` §4: the dimension findings
+                 a successful build raises against the request's own numbers,
+                 recorded by the runtime, cleared only by a rebuild that matches
+                 or a user's dismissal, and blocking in §6.
 ``_gate``        the ``VALIDATION.md`` §3 clarification gate: which assumption is
                  material, what a clarification question must look like, and what
                  an answer does to the ledger — all by rule.
@@ -90,6 +94,7 @@ from ._critique import (
     named_solids,
     prompt_number_diff,
     request_numbers,
+    with_dimension_findings,
 )
 from ._dfm import DfmOps, DfmTarget, script_metadata
 from ._doc import DOC_KINDS, BomRow, DocOps, assembly_steps, fabrication_verb
@@ -105,6 +110,18 @@ from ._drawing import (
     solid_labels,
 )
 from ._exports import EXPORT_FORMATS, ExportOps, ExportOutput, ensure_exports_table
+from ._findings import (
+    BINDING_WARNING_KINDS,
+    DIMENSION_FINDING_ARTIFACT_KIND,
+    DIMENSION_FINDING_ID_PREFIX,
+    DIMENSION_FINDINGS_POINTER,
+    DimensionFinding,
+    DimensionFindingOps,
+    DimensionFindingState,
+    dimension_finding_id,
+    dimension_findings,
+    finding_views,
+)
 from ._gate import (
     CLARIFICATION_MAX_OPTIONS,
     CLARIFICATION_MIN_OPTIONS,
@@ -123,6 +140,7 @@ from ._gate import (
     question_refusal,
     record_answers,
     record_clarification_answer,
+    record_dimension_answer,
     requirement_ids,
 )
 from ._measure import MeasureOps
@@ -141,11 +159,15 @@ from ._requirements import (
 
 __all__ = [
     "BINARY_ARTIFACT_KINDS",
+    "BINDING_WARNING_KINDS",
     "CHECK_DESCRIPTION_SENTINEL",
     "CHECK_TEMPLATE_HEADER",
     "CLARIFICATION_MAX_OPTIONS",
     "CLARIFICATION_MIN_OPTIONS",
     "DFM_WARNING_SEVERITIES",
+    "DIMENSION_FINDINGS_POINTER",
+    "DIMENSION_FINDING_ARTIFACT_KIND",
+    "DIMENSION_FINDING_ID_PREFIX",
     "DOC_KINDS",
     "DRAWING_KINDS",
     "EXPORT_FORMATS",
@@ -170,6 +192,9 @@ __all__ = [
     "DfmOps",
     "DfmTarget",
     "Dimension",
+    "DimensionFinding",
+    "DimensionFindingOps",
+    "DimensionFindingState",
     "DocOps",
     "DrawingOps",
     "ExportOutput",
@@ -187,9 +212,12 @@ __all__ = [
     "clarification_gate",
     "critique_block",
     "dfm_report",
+    "dimension_finding_id",
+    "dimension_findings",
     "dimension_text",
     "entry_views",
     "fabrication_verb",
+    "finding_views",
     "intentional_overlap_declarations",
     "interference_report",
     "invalid_question_result",
@@ -207,10 +235,12 @@ __all__ = [
     "question_refusal",
     "record_answers",
     "record_clarification_answer",
+    "record_dimension_answer",
     "request_numbers",
     "requirement_ids",
     "script_metadata",
     "solid_labels",
+    "with_dimension_findings",
 ]
 
 
@@ -224,6 +254,7 @@ class CadOps(
     DocOps,
     ExportOps,
     RequirementOps,
+    DimensionFindingOps,
     DfmOps,
 ):
     """Core-backed operations for one project's layout, opstore and backend."""

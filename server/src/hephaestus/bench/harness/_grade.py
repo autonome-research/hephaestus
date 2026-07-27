@@ -12,6 +12,11 @@ tool itself*. A DFM verdict is re-measured on a probed secure backend (rule
 predicates are registry content and never run unsandboxed — architecture §3.6),
 and a drawing's dimension strings are read out of the PDF text layer the grader
 generated. Nothing in the verdict comes from what the run said it found.
+
+Manufacturing metadata is judged the same way and deliberately *structurally*
+(``_validate_metadata``): the material a run declares must resolve in the
+materials registry, not match an author's sentence. A verdict that turns on
+wording measures transcription, not engineering.
 """
 
 from __future__ import annotations
@@ -55,6 +60,8 @@ class GradeReport:
     #: Stage 6: one record per DFM requirement / drawing requirement.
     dfm: tuple[Mapping[str, Any], ...] = ()
     drawings: tuple[Mapping[str, Any], ...] = ()
+    #: One record per §5.2 metadata requirement (material/process/fields).
+    metadata: tuple[Mapping[str, Any], ...] = ()
     tool_calls: int | None = None
     budget_tool_calls: int | None = None
     within_budget: bool = True
@@ -85,6 +92,7 @@ class GradeReport:
             "renders": [dict(r) for r in self.renders],
             "dfm": [dict(d) for d in self.dfm],
             "drawings": [dict(d) for d in self.drawings],
+            "metadata": [dict(m) for m in self.metadata],
             "tool_calls": self.tool_calls,
             "budget_tool_calls": self.budget_tool_calls,
             "within_budget": self.within_budget,
@@ -381,6 +389,61 @@ def _validate_drawings(
     return records, reasons
 
 
+def _validate_metadata(
+    cad: CadOps, task: BenchTask, builds: Mapping[str, Any]
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Judge each part's §5.2 manufacturing metadata, structurally.
+
+    Read from the script that produced the graded artifact (``frozen_script_metadata``
+    refuses to answer for a drifted source), so this is the metadata of the
+    geometry actually being graded. What is gated is engineering content and not
+    wording: a listed field is non-empty, the process token is the registry pack
+    id the task names, and the free-text material spec *resolves* to the
+    materials-registry record it has to. Two runs that word the material
+    differently both pass; a run that never states one does not.
+    """
+    records: list[dict[str, Any]] = []
+    reasons: list[str] = []
+    for requirement in task.metadata:
+        record: dict[str, Any] = {"requirement": requirement.to_json()}
+        build = builds.get(requirement.part)
+        ref = (
+            str(cast("Mapping[str, Any]", build).get("artifact_ref", ""))
+            if isinstance(build, dict)
+            else ""
+        )
+        metadata: Mapping[str, str] = (
+            cad.frozen_script_metadata(requirement.part, ref) if ref else {}
+        )
+        record["metadata"] = dict(metadata)
+        missing = [
+            field for field in requirement.required_fields if not metadata.get(field, "").strip()
+        ]
+        record["missing_fields"] = missing
+        if missing:
+            reasons.append(f"metadata_missing:{requirement.part}:{','.join(missing)}")
+        if requirement.process is not None:
+            process = metadata.get("process", "").strip()
+            record["process"] = process
+            if process != requirement.process:
+                reasons.append(
+                    f"metadata_process:{requirement.part}:{process or 'unstated'}"
+                    f"!={requirement.process}"
+                )
+        if requirement.material_id is not None:
+            spec = metadata.get("material_spec", "").strip()
+            material = cad.registries().materials.match(spec) if spec else None
+            resolved = None if material is None else material.id
+            record["material_id"] = resolved
+            if resolved != requirement.material_id:
+                reasons.append(
+                    f"metadata_material:{requirement.part}:{resolved or 'unresolved'}"
+                    f"!={requirement.material_id}"
+                )
+        records.append(record)
+    return records, reasons
+
+
 def _validate_renders(cad: CadOps, task: BenchTask) -> tuple[list[dict[str, Any]], list[str]]:
     """Produce + record every required render (e.g. a ``+Z`` midplane section)."""
     records: list[dict[str, Any]] = []
@@ -435,6 +498,7 @@ def grade(
     renders: list[dict[str, Any]] = []
     dfm: list[dict[str, Any]] = []
     drawings: list[dict[str, Any]] = []
+    metadata: list[dict[str, Any]] = []
     graded = False
     with open_cad(project_root) as cad:
         layout = cad.layout
@@ -453,6 +517,9 @@ def grade(
             drawing_records, drawing_reasons = _validate_drawings(cad, task, layout)
             drawings = drawing_records
             reasons.extend(drawing_reasons)
+            metadata_records, metadata_reasons = _validate_metadata(cad, task, builds)
+            metadata = metadata_records
+            reasons.extend(metadata_reasons)
     if graded:
         # Outside the ops object above on purpose: DFM predicates run on a probed
         # secure backend, which the grading ops object deliberately is not.
@@ -474,6 +541,7 @@ def grade(
         renders=tuple(renders),
         dfm=tuple(dfm),
         drawings=tuple(drawings),
+        metadata=tuple(metadata),
         tool_calls=tool_calls,
         budget_tool_calls=task.budget_tool_calls,
         within_budget=within_budget,

@@ -14,16 +14,26 @@ Three deliberately small pieces, each pure and testable on its own:
   edges keep their endpoints, curved edges are sampled at a
   :data:`CURVE_SEGMENT_MM` chord — a cut file is a polyline).
 * :func:`shelf_nest` — **simple deterministic shelf/row packing**, in profile
-  order, no rotation, no kerf compensation. Kerf-aware auto-nesting is deferred
-  by mission rule 5; this is the honest, reproducible placeholder and is
-  documented as such in ``tool_schema.md``. A profile that cannot be placed
-  raises :class:`NestingRefusal` naming the profile and the blank — never a
-  silent overlap and never a clipped part.
+  order, no rotation. Rotation- and yield-aware auto-nesting is deferred by
+  mission rule 5; this is the honest, reproducible placeholder and is documented
+  as such in ``tool_schema.md``. A profile that cannot be placed raises
+  :class:`NestingRefusal` naming the profile and the blank — never a silent
+  overlap and never a clipped part.
+
 * :func:`layout_to_dxf` / :func:`layout_to_svg` — the bytes. Both are pure
   functions of the layout: coordinates are rounded to :data:`COORD_DECIMALS`
   and written in placement order, so two exports of the same build produce
   identical geometry bytes (DXF additionally carries ezdxf's own generated
-  header, which is not content).
+  header, which is not content). Geometry is separated onto the cut-file layers
+  :mod:`hephaestus.core.cutfile` defines — ``CUT``/``ENGRAVE``/``SCORE`` plus
+  the reference ``BLANK`` — with the standard ACI colour per layer, because a
+  laser controller maps layer (or colour) to a power/speed pair.
+
+**Kerf compensation happens upstream of everything here**
+(:mod:`hephaestus.core.kerf`): the exporter grows each solid's flat pattern onto
+the waste side by half the kerf *before* profiles are extracted, so the profiles
+this module packs are already the path the machine follows and the blank's
+declared spacing is measured between compensated outlines.
 
 Nothing here touches the store, the sandbox or the network: the caller resolves
 the artifact and the blank and hands over bytes and numbers.
@@ -34,21 +44,47 @@ from __future__ import annotations
 import ast
 import math
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Final
+from typing import Any, Final, cast
 
+from hephaestus.core.cutfile import (
+    BLANK_LAYER,
+    COORD_DECIMALS,
+    CURVE_SEGMENT_MM,
+    CUT_LAYER,
+    CUTFILE_LAYERS,
+    ENGRAVE_LAYER,
+    LAYER_COLORS,
+    LAYER_SVG_COLORS,
+    MAX_CURVE_SEGMENTS,
+    MIN_CURVE_SEGMENTS,
+    SCORE_LAYER,
+    Mark,
+    Point,
+    ring_points,
+    solid_marks,
+)
+from hephaestus.core.dfm.types import TopologyDescriptor
 from hephaestus.core.errors import ValidationError
 from hephaestus.core.kernel.topology import planar_faces
 from opstore.types import JSONValue
 
 __all__ = [
+    "BLANK_LAYER",
     "COORD_DECIMALS",
     "CURVE_SEGMENT_MM",
+    "CUT_LAYER",
     "DEFAULT_MARGIN_MM",
     "DEFAULT_SPACING_MM",
+    "ENGRAVE_LAYER",
+    "LAYER_COLORS",
     "MAX_CURVE_SEGMENTS",
     "MIN_CURVE_SEGMENTS",
+    "PROFILE_LAYER",
+    "SCORE_LAYER",
     "Blank",
+    "Mark",
     "NestedLayout",
     "NestingRefusal",
     "Placement",
@@ -56,32 +92,23 @@ __all__ = [
     "blank_from_metadata",
     "blank_size_literal",
     "flat_profiles",
+    "layout_layers",
     "layout_to_dxf",
     "layout_to_svg",
     "shelf_nest",
 ]
 
-#: Target chord length (mm) when discretising a curved edge. A 10 mm bore comes
-#: out within ~0.03% of its true area, which is finer than any cutter's kerf.
-CURVE_SEGMENT_MM: Final[float] = 0.5
-#: Hard bounds on that segment count, so a hair-thin or enormous curve is still
-#: a sane, deterministic polyline.
-MIN_CURVE_SEGMENTS: Final[int] = 8
-MAX_CURVE_SEGMENTS: Final[int] = 512
-#: Decimal places every emitted coordinate is rounded to (determinism).
-COORD_DECIMALS: Final[int] = 6
 #: Default clear border between the blank edge and any profile.
 DEFAULT_MARGIN_MM: Final[float] = 5.0
 #: Default clear gap between two placed profiles.
 DEFAULT_SPACING_MM: Final[float] = 5.0
 
-#: DXF/SVG layer names: profiles are the cut geometry, the blank is reference.
-PROFILE_LAYER: Final[str] = "PROFILES"
-BLANK_LAYER: Final[str] = "BLANK"
+#: Historical name for the through-cut layer. Profiles have always been the cut
+#: geometry; since the cut-file layer convention landed the layer is called
+#: ``CUT`` (what a controller expects) and this alias names the same layer.
+PROFILE_LAYER: Final[str] = CUT_LAYER
 
 _EPS: Final[float] = 1e-9
-
-Point = tuple[float, float]
 
 
 class NestingRefusal(Exception):
@@ -142,11 +169,18 @@ class Profile:
     cut contours too, and a file that dropped them would cut a solid part where
     the design has openings. Packing only ever considers ``points`` (the outer
     ring), which is what occupies space on the blank.
+
+    ``marks`` are the profile's non-cut contours — the engrave and score
+    geometry the part's own ``engrave_*``/``score_*`` tags declare
+    (:mod:`hephaestus.core.cutfile`). They travel with the profile so a
+    placement moves them with it, and they never affect packing: a marking pass
+    removes no material and occupies no space the outer ring does not already.
     """
 
     name: str
     points: tuple[Point, ...]
     holes: tuple[tuple[Point, ...], ...] = ()
+    marks: tuple[Mark, ...] = ()
 
     def __post_init__(self) -> None:
         if len(self.points) < 3:
@@ -180,6 +214,11 @@ class Profile:
             "height_mm": self.height_mm,
             "area_mm2": self.area_mm2,
             "holes": len(self.holes),
+            "marks": {
+                layer: sum(1 for mark in self.marks if mark.layer == layer)
+                for layer in (ENGRAVE_LAYER, SCORE_LAYER)
+                if any(mark.layer == layer for mark in self.marks)
+            },
         }
 
 
@@ -207,6 +246,13 @@ class Placement:
     def hole_points(self) -> tuple[tuple[Point, ...], ...]:
         """The placed inner rings (cut contours inside the profile)."""
         return tuple(self._translate(ring) for ring in self.profile.holes)
+
+    def marks(self) -> tuple[Mark, ...]:
+        """The placed engrave/score contours, in the profile's own order."""
+        return tuple(
+            Mark(layer=mark.layer, points=self._translate(mark.points), closed=mark.closed)
+            for mark in self.profile.marks
+        )
 
     def bbox(self) -> tuple[float, float, float, float]:
         """``(min_x, min_y, max_x, max_y)`` of the placed profile."""
@@ -310,41 +356,6 @@ def _signed_area(points: list[Point]) -> float:
     return total / 2.0
 
 
-def _dedupe(points: list[Point]) -> list[Point]:
-    """Drop consecutive (and wrap-around) duplicates within rounding tolerance."""
-    out: list[Point] = []
-    for point in points:
-        if out and abs(point[0] - out[-1][0]) < 1e-7 and abs(point[1] - out[-1][1]) < 1e-7:
-            continue
-        out.append(point)
-    while (
-        len(out) > 1 and abs(out[0][0] - out[-1][0]) < 1e-7 and abs(out[0][1] - out[-1][1]) < 1e-7
-    ):
-        out.pop()
-    return out
-
-
-def _wire_points(wire: Any) -> list[Point]:
-    """Ordered ring of the wire's outer boundary in its own plane's XY."""
-    from build123d import GeomType
-
-    points: list[Point] = []
-    for edge in wire.order_edges():
-        if edge.geom_type == GeomType.LINE:
-            samples = [0.0]
-        else:
-            length = round(float(edge.length), COORD_DECIMALS)
-            count = min(
-                MAX_CURVE_SEGMENTS,
-                max(MIN_CURVE_SEGMENTS, math.ceil(length / CURVE_SEGMENT_MM)),
-            )
-            samples = [index / count for index in range(count)]
-        for parameter in samples:
-            position = edge.position_at(parameter)
-            points.append((float(position.X), float(position.Y)))
-    return _dedupe(points)
-
-
 def _largest_planar_face(solid: Any) -> Any | None:
     records = planar_faces(solid)
     if not records:
@@ -363,7 +374,13 @@ def _solid_sort_key(solid: Any) -> tuple[float, float, float, float]:
     )
 
 
-def flat_profiles(shape: Any, *, prefix: str = "profile") -> tuple[Profile, ...]:
+def flat_profiles(
+    shape: Any,
+    *,
+    prefix: str = "profile",
+    tags: Mapping[str, TopologyDescriptor] | None = None,
+    tag_shape: Any | None = None,
+) -> tuple[Profile, ...]:
     """One flat :class:`Profile` per solid of ``shape``, deterministically ordered.
 
     Solids are ordered by bounding-box minimum then descending volume (a
@@ -372,18 +389,50 @@ def flat_profiles(shape: Any, *, prefix: str = "profile") -> tuple[Profile, ...]
     flat to cut — is refused rather than approximated. The face's inner
     boundaries travel with the profile as :attr:`Profile.holes`: they are cut
     contours, not decoration.
+
+    ``tags`` is the build's tag table (``descriptors_from_source_map``), keyed
+    by §5.3 tag name and addressed against the artifact's *own* ``solids()``
+    order. Tags named by the :mod:`hephaestus.core.cutfile` convention
+    (``engrave_*``, ``score_*``) become the profile's :attr:`Profile.marks`,
+    projected into the flat pattern's plane. A mark that lands **inside** an
+    inner boundary reclassifies it — a tagged engrave pocket is a marking, not
+    a through-cut *and* a marking — and a mark spanning the whole outer ring is
+    dropped, because the perimeter is always cut. Without ``tags`` every contour
+    is a through-cut, which is the safe reading of a part that declared nothing.
+
+    ``tag_shape`` is where those descriptors are resolved, when it is not
+    ``shape`` itself. Kerf compensation rebuilds each flat pattern, so the
+    source map's topology indices address the **nominal** artifact and nothing
+    else; passing the nominal shape here keeps a part's engrave and score
+    geometry alive through a compensated export instead of silently losing it.
+    The contours are still expressed in the *packed* profile's plane and shifted
+    by the *packed* outline's origin, so mark and cut path stay in one rigid
+    frame — the compensated path is offset from the nominal outline, and the
+    marking is not, which is exactly right: a marking removes no material.
     """
     from build123d import Plane
 
-    solids = sorted(shape.solids(), key=_solid_sort_key)
-    if not solids:
+    descriptors = dict(tags or {})
+    # Descriptors address the artifact's own solids() order; the flat pattern
+    # re-sorts for determinism, so carry each solid's original index with it.
+    numbered: list[tuple[int, Any]] = list(enumerate(cast("list[Any]", shape.solids())))
+    indexed = sorted(numbered, key=lambda item: _solid_sort_key(item[1]))
+    tag_solids: list[Any] = [] if tag_shape is None else cast("list[Any]", tag_shape.solids())
+    if tag_shape is not None and len(tag_solids) != len(numbered):
+        # The nominal shape must partition the same way, or a descriptor's
+        # solid id names different geometry. Refuse the tags, not the export.
+        descriptors = {}
+        tag_solids = []
+    if not tag_solids:
+        tag_shape = None
+    if not indexed:
         raise NestingRefusal(
             "no_profiles",
             "the exported artifact contains no solids to nest",
             data={"profiles": []},
         )
     profiles: list[Profile] = []
-    for index, solid in enumerate(solids, start=1):
+    for index, (origin, solid) in enumerate(indexed, start=1):
         name = f"{prefix}_{index}"
         face = _largest_planar_face(solid)
         if face is None:
@@ -394,7 +443,7 @@ def flat_profiles(shape: Any, *, prefix: str = "profile") -> tuple[Profile, ...]
             )
         plane: Any = Plane(face)
         local: Any = plane.to_local_coords(face.outer_wire())
-        points = _wire_points(local)
+        points = ring_points(local)
         if len(points) < 3:
             raise NestingRefusal(
                 "not_a_sheet_profile",
@@ -415,20 +464,94 @@ def flat_profiles(shape: Any, *, prefix: str = "profile") -> tuple[Profile, ...]
 
         holes: list[tuple[Point, ...]] = []
         for inner in face.inner_wires():
-            ring = _wire_points(plane.to_local_coords(inner))
+            ring = ring_points(plane.to_local_coords(inner))
             if len(ring) < 3:
                 continue
             if _signed_area(ring) < 0.0:
                 ring.reverse()
             holes.append(_normalized(ring))
+        outer = _normalized(points)
+        tagged = solid if tag_shape is None else tag_solids[origin]
+        marks = tuple(
+            Mark(layer=mark.layer, points=_normalized(list(mark.points)), closed=mark.closed)
+            for mark in solid_marks(tagged, descriptors, origin, plane=plane)
+        )
+        marks, holes = _reconcile_marks(marks, holes, outer)
         profiles.append(
             Profile(
                 name=name,
-                points=_normalized(points),
+                points=outer,
                 holes=tuple(sorted(holes)),
+                marks=marks,
             )
         )
     return tuple(profiles)
+
+
+def _reconcile_marks(
+    marks: tuple[Mark, ...],
+    holes: list[tuple[Point, ...]],
+    outer: tuple[Point, ...],
+) -> tuple[tuple[Mark, ...], list[tuple[Point, ...]]]:
+    """Resolve a mark that lands on geometry the cut layer already carries.
+
+    A tagged engrave pocket's floor projects onto the same opening the flat
+    pattern would otherwise cut through, and a tag on the flat face itself
+    projects onto the perimeter. Emitting both would either cut a marking
+    (scrap) or double-fire the perimeter, so:
+
+    * a closed mark whose centroid falls **inside** an inner boundary takes
+      that boundary off the cut layer — the part's own tag says it is a
+      marking, not an opening;
+    * a closed mark that spans the outer ring is dropped — the perimeter is the
+      through-cut by definition and nothing may move it.
+
+    Containment is tested on the centroid rather than on point equality because
+    kerf compensation moves the cut path off the nominal contour by half a kerf:
+    the two rings describe the same feature and are no longer the same points.
+    """
+    kept_marks: list[Mark] = []
+    kept_holes = list(holes)
+    outer_box = _ring_bbox(outer)
+    for mark in marks:
+        if not mark.closed:
+            kept_marks.append(mark)
+            continue
+        if _covers(_ring_bbox(mark.points), outer_box):
+            continue
+        centre = _ring_centre(mark.points)
+        kept_holes = [ring for ring in kept_holes if not _inside(centre, _ring_bbox(ring))]
+        kept_marks.append(mark)
+    return tuple(kept_marks), kept_holes
+
+
+def _ring_bbox(ring: tuple[Point, ...]) -> tuple[float, float, float, float]:
+    xs = [x for x, _ in ring]
+    ys = [y for _, y in ring]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def _ring_centre(ring: tuple[Point, ...]) -> Point:
+    box = _ring_bbox(ring)
+    return ((box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0)
+
+
+def _inside(point: Point, box: tuple[float, float, float, float]) -> bool:
+    return box[0] <= point[0] <= box[2] and box[1] <= point[1] <= box[3]
+
+
+_Box = tuple[float, float, float, float]
+
+
+def _covers(box: _Box, other: _Box) -> bool:
+    """``box`` reaches the whole of ``other`` (within a kerf-scale tolerance)."""
+    tolerance = 1.0
+    return (
+        abs(box[0] - other[0]) <= tolerance
+        and abs(box[1] - other[1]) <= tolerance
+        and abs(box[2] - other[2]) <= tolerance
+        and abs(box[3] - other[3]) <= tolerance
+    )
 
 
 # --------------------------------------------------------------------------
@@ -498,11 +621,31 @@ def shelf_nest(profiles: tuple[Profile, ...], blank: Blank) -> NestedLayout:
 # writers
 
 
-def layout_to_dxf(layout: NestedLayout) -> bytes:
-    """The layout as a DXF: one closed ``LWPOLYLINE`` per profile, plus the blank.
+def layout_layers(layout: NestedLayout) -> tuple[str, ...]:
+    """The cut-file layers this layout actually carries geometry on.
 
-    Profiles are on the ``PROFILES`` layer and the blank outline on ``BLANK``,
-    so a downstream cutter can drop the reference rectangle by layer.
+    ``BLANK`` and ``CUT`` are always present (a nested sheet always draws the
+    stock rectangle and at least one profile); ``ENGRAVE`` and ``SCORE`` appear
+    only when a part tagged topology onto them. An empty layer in a controller's
+    job list is an invitation to assign it a power setting, so none is written.
+    """
+    used = {mark.layer for placement in layout.placements for mark in placement.profile.marks}
+    return tuple(
+        layer for layer in CUTFILE_LAYERS if layer in (BLANK_LAYER, CUT_LAYER) or layer in used
+    )
+
+
+def layout_to_dxf(layout: NestedLayout) -> bytes:
+    """The layout as a DXF on the cut-file layers a laser controller reads.
+
+    Through-cuts (every profile's outer ring and its holes) go on ``CUT``, the
+    stock rectangle on ``BLANK``, and the part's tagged marking geometry on
+    ``ENGRAVE``/``SCORE`` — each layer carrying its standard ACI colour
+    (:data:`hephaestus.core.cutfile.LAYER_COLORS`), because a controller keys
+    power and speed off layer or colour. Layers with no geometry are not
+    written at all. Closed contours are ``LWPOLYLINE``\\ s with the close flag;
+    a score line tagged on an edge is an *open* polyline, so nothing joins its
+    ends into a slot the design does not have.
 
     The bytes are a pure function of the layout. ezdxf otherwise stamps a fresh
     creation timestamp and two random GUIDs into every document it writes, so
@@ -526,8 +669,8 @@ def layout_to_dxf(layout: NestedLayout) -> bytes:
     try:
         document: Any = ezdxf.new(dxfversion="R2010", setup=False)
         document.header["$INSUNITS"] = 4  # millimetres
-        document.layers.add(BLANK_LAYER)
-        document.layers.add(PROFILE_LAYER)
+        for layer in layout_layers(layout):
+            document.layers.add(layer, color=LAYER_COLORS[layer])
         modelspace: Any = document.modelspace()
         blank = layout.blank
         modelspace.add_lwpolyline(
@@ -545,7 +688,13 @@ def layout_to_dxf(layout: NestedLayout) -> bytes:
                 modelspace.add_lwpolyline(
                     list(ring),
                     close=True,
-                    dxfattribs={"layer": PROFILE_LAYER},
+                    dxfattribs={"layer": CUT_LAYER},
+                )
+            for mark in placement.marks():
+                modelspace.add_lwpolyline(
+                    list(mark.points),
+                    close=mark.closed,
+                    dxfattribs={"layer": mark.layer},
                 )
         document.write(stream)
     finally:
@@ -561,12 +710,16 @@ def _svg_number(value: float) -> str:
 
 
 def layout_to_svg(layout: NestedLayout) -> bytes:
-    """The layout as an SVG: one ``<polygon>`` per cut contour inside the blank.
+    """The layout as an SVG: one element per contour, classed by cut-file layer.
 
     Each profile's outer ring is id'd by profile name and each of its holes
-    ``<name>_hole_<n>``. SVG's Y axis points down, so every point is mirrored
-    about the blank's mid-height; the file therefore reads the same way as the
-    DXF when opened.
+    ``<name>_hole_<n>``; both are ``<polygon>`` on ``class="CUT"``. Tagged
+    marking geometry follows as ``<name>_engrave_<n>`` / ``<name>_score_<n>``
+    on ``class="ENGRAVE"``/``"SCORE"``, closed marks as ``<polygon>`` and open
+    ones as ``<polyline>`` so a score line stays a line. Stroke colour matches
+    the DXF's ACI colour per layer. SVG's Y axis points down, so every point is
+    mirrored about the blank's mid-height; the file therefore reads the same way
+    as the DXF when opened.
     """
     blank = layout.blank
     width = _svg_number(blank.width_mm)
@@ -576,22 +729,33 @@ def layout_to_svg(layout: NestedLayout) -> bytes:
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}mm" height="{height}mm" '
         f'viewBox="0 0 {width} {height}">',
         f'<rect class="{BLANK_LAYER}" x="0" y="0" width="{width}" height="{height}" '
-        'fill="none" stroke="#808080" stroke-width="0.25"/>',
+        f'fill="none" stroke="{LAYER_SVG_COLORS[BLANK_LAYER]}" stroke-width="0.25"/>',
     ]
+
+    def _points(ring: tuple[Point, ...]) -> str:
+        return " ".join(f"{_svg_number(x)},{_svg_number(blank.height_mm - y)}" for x, y in ring)
+
     for placement in layout.placements:
         name = placement.profile.name
-        rings = [(name, placement.points())]
-        rings += [
-            (f"{name}_hole_{index}", ring)
-            for index, ring in enumerate(placement.hole_points(), start=1)
-        ]
-        for ring_id, ring in rings:
-            coordinates = " ".join(
-                f"{_svg_number(x)},{_svg_number(blank.height_mm - y)}" for x, y in ring
-            )
+        for ring_id, ring in [
+            (name, placement.points()),
+            *(
+                (f"{name}_hole_{index}", ring)
+                for index, ring in enumerate(placement.hole_points(), start=1)
+            ),
+        ]:
             lines.append(
-                f'<polygon class="{PROFILE_LAYER}" id="{ring_id}" '
-                f'points="{coordinates}" fill="none" stroke="#000000" stroke-width="0.25"/>'
+                f'<polygon class="{CUT_LAYER}" id="{ring_id}" points="{_points(ring)}" '
+                f'fill="none" stroke="{LAYER_SVG_COLORS[CUT_LAYER]}" stroke-width="0.25"/>'
+            )
+        counters: dict[str, int] = {}
+        for mark in placement.marks():
+            counters[mark.layer] = counters.get(mark.layer, 0) + 1
+            mark_id = f"{name}_{mark.layer.lower()}_{counters[mark.layer]}"
+            element = "polygon" if mark.closed else "polyline"
+            lines.append(
+                f'<{element} class="{mark.layer}" id="{mark_id}" points="{_points(mark.points)}" '
+                f'fill="none" stroke="{LAYER_SVG_COLORS[mark.layer]}" stroke-width="0.25"/>'
             )
     lines.append("</svg>")
     return ("\n".join(lines) + "\n").encode("utf-8")

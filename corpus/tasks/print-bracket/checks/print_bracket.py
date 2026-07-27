@@ -14,16 +14,21 @@
 #   (0.5 x 24 x 30), i.e. (864 - 360) x 30 = 15120; the 4 mm bore removes
 #   pi r^2 h over the 9.75 mm of material above the ramp at its centre = 122.52.
 #   A flat-bottomed arm (33120 mm^3) or a ramp at another angle lands far outside
-#   the window, so the ramp is measured and not assumed.
+#   the window, so the ramp is measured and not assumed. The window was +/-20 mm^3
+#   and is +/-120 (re-authored 2026-07-26, corpus audit): a ramp starting 1 mm off
+#   moves 360 mm^3, so 120 keeps a 3x margin on the only thing the check exists to
+#   reject, while admitting the root fillet a printed cantilever legitimately
+#   carries (R2 along the 30 mm root is ~26 mm^3).
 _ENVELOPE = (30.0, 30.0, 40.0)
 _UPRIGHT = 30.0 * 6.0 * 40.0
 _ARM = (24.0 * 36.0 - 0.5 * 24.0 * 30.0) * 30.0
 _BORE = 3.14159265 * 4.0 * 9.75
 _VOLUME_MM3 = _UPRIGHT + _ARM - _BORE
+_VOLUME_WINDOW = 120.0
 
 CHECKS = {
     "one_solid_one_bore": lambda m: m.sealed("bracket/part") and m.genus("bracket/part") == 1,
     "bracket_envelope": lambda m: m.bbox("bracket/part") == approx(_ENVELOPE, abs=0.05),
     "ramped_arm_material": lambda m: m.volume("bracket/part")
-    == approx(_VOLUME_MM3, abs=20.0),
+    == approx(_VOLUME_MM3, abs=_VOLUME_WINDOW),
 }

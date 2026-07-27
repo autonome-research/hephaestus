@@ -783,6 +783,7 @@ class ToolDispatcher:
             target=_opt_str(arguments, "target"),
             layout=str(arguments.get("layout", "as_built")),
             blank=_opt_mapping(arguments, "blank"),
+            kerf_mm=_opt_float(arguments, "kerf_mm"),
             op_id=inv.op_id,
         )
 
@@ -1143,6 +1144,16 @@ class ToolDispatcher:
 def _opt_str(arguments: Mapping[str, Any], key: str) -> str | None:
     value = arguments.get(key)
     return None if value is None else str(value)
+
+
+def _opt_float(arguments: Mapping[str, Any], key: str) -> float | None:
+    """A schema-validated optional number argument (``export_part.kerf_mm``)."""
+    value = arguments.get(key)
+    if value is None or isinstance(value, bool):
+        return None
+    if not isinstance(value, int | float):  # pragma: no cover - schema-constrained
+        raise DispatchError("invalid_params", f"{key} must be a number")
+    return float(value)
 
 
 def _opt_mapping(arguments: Mapping[str, Any], key: str) -> Mapping[str, Any] | None:

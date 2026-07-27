@@ -14,8 +14,13 @@
 #   6 mm bore removes pi r^2 t = 169.65. A 0.5 mm bore (23039.05), a bore at any
 #   other diameter (5 mm: 22945.4) and any other corner radius (R2: 22880.6) all
 #   land outside the window, so both repaired sizes are measured, not assumed.
+#   The window was +/-1 mm^3 and is +/-4 (re-authored 2026-07-26, corpus audit):
+#   the tightest thing it must reject is R2 instead of R3, 12.9 mm^3 away, so 4
+#   keeps a 3x margin while no longer pinning the panel to six significant
+#   figures of the author's own arithmetic.
 _ENVELOPE = (80.0, 50.0, 6.0)
 _VOLUME_MM3 = 22893.53
+_VOLUME_WINDOW = 4.0
 
 CHECKS = {
     "builds_sealed_with_one_bore": lambda m: m.sealed("vent_panel/part")
@@ -23,5 +28,5 @@ CHECKS = {
     "blank_envelope_unchanged": lambda m: m.bbox("vent_panel/part")
     == approx(_ENVELOPE, abs=0.05),
     "vent_and_corners_at_size": lambda m: m.volume("vent_panel/part")
-    == approx(_VOLUME_MM3, abs=1.0),
+    == approx(_VOLUME_MM3, abs=_VOLUME_WINDOW),
 }

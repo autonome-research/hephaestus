@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import base64
 import io
-import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -40,8 +39,7 @@ from typing import Any, Final, cast
 from xml.sax.saxutils import escape, quoteattr
 
 import numpy as np
-from hephaestus.core.dfm import TopologyDescriptor, descriptors_from_source_map
-from hephaestus.core.errors import AddressingError
+from hephaestus.core.dfm import TopologyDescriptor
 from hephaestus.core.executor.artifact_geometry import load_brep_shape
 from hephaestus.core.kernel.topology import cylindrical_faces, opposing_planar_pairs
 from hephaestus.core.project_store.store import blob_hash_of_ref
@@ -49,9 +47,8 @@ from hephaestus.core.render.cameras import DEFAULT_MARGIN, ViewSpec, camera_fram
 from hephaestus.core.types import BuildResult
 from opstore.types import JSONValue
 
-from ._base import CadOpError, CadOpsState
-from ._dfm import script_metadata
-from ._exports import ExportOps, ExportOutput
+from ._base import CadOpError
+from ._exports import ExportOps, ExportOutput, FrozenMetadataOps, solid_labels
 
 __all__ = [
     "DRAWING_KINDS",
@@ -157,28 +154,6 @@ def _bbox(shape: Any) -> tuple[tuple[float, float, float], tuple[float, float, f
     )
 
 
-def solid_labels(result: BuildResult | None, count: int) -> tuple[str, ...]:
-    """Per-solid labels recovered from the build's ``geometries`` rows.
-
-    A published BRep carries no build123d labels, so the label namespace comes
-    from the build result: its rows are the geometry tree in order and each row
-    states how many solids it owns, which partitions ``shape.solids()``. When
-    the rows do not account for exactly the artifact's solids (a historical
-    artifact, a mismatched result) the solids are named positionally instead of
-    being given labels that might belong to different geometry.
-    """
-    if result is None:
-        return tuple(f"solid#{i + 1}" for i in range(count))
-    rows = [(entry.label, entry.solids) for entry in result.geometries]
-    if sum(solids for _, solids in rows) != count:
-        return tuple(f"solid#{i + 1}" for i in range(count))
-    labels: list[str] = []
-    for label, solids in rows:
-        for offset in range(solids):
-            labels.append(label if solids == 1 else f"{label}[{offset + 1}]")
-    return tuple(labels)
-
-
 def principal_dimensions(
     shape: Any,
     *,
@@ -273,31 +248,6 @@ def _tag_dimensions(
                     )
                     break
     return tuple(out)
-
-
-class FrozenMetadataOps(CadOpsState):
-    """Reading a frozen artifact's authored metadata (drawings and docs share it)."""
-
-    def frozen_script_metadata(self, name: str, source_ref: str) -> Mapping[str, str]:
-        """§5.2 metadata of the script that produced ``source_ref`` (else empty).
-
-        Manufacturing metadata is authored in the part script and is not carried
-        by a published BRep, so it is read statically from the source — and only
-        while that source still hashes to the artifact's frozen script input. A
-        drifted or historical artifact yields no metadata rather than a title
-        block (or a bill of materials) describing a part these bytes are not.
-        """
-        publisher = self._publisher()
-        result = publisher.current_result(name)
-        if result is None or result.artifact_ref != source_ref:
-            return {}
-        try:
-            snapshot = publisher.parts.read_part(name)
-        except AddressingError:  # pragma: no cover - a deleted script is not a failure here
-            return {}
-        if snapshot.content_hash != result.input_hashes.script:
-            return {}
-        return script_metadata(snapshot.content)
 
 
 # --------------------------------------------------------------------------
@@ -740,11 +690,11 @@ class DrawingOps(ExportOps, FrozenMetadataOps):
         shape: Any = load_brep_shape(
             self._store.blobs.get(blob_hash_of_ref(source_ref)), scratch_dir=scratch
         )
-        result = self._result_for(name, source_ref)
+        result = self.frozen_result(name, source_ref)
         solids: list[Any] = list(shape.solids())
         labels = solid_labels(result, len(solids))
         dimensions = principal_dimensions(
-            shape, labels=labels, tags=self._artifact_tags(result, source_ref)
+            shape, labels=labels, tags=self.artifact_tags(result, source_ref)
         )
         views = self._render_views(shape, kind)
         metadata = self.frozen_script_metadata(name, source_ref)
@@ -773,30 +723,6 @@ class DrawingOps(ExportOps, FrozenMetadataOps):
         return outputs, extra
 
     # -- inputs ------------------------------------------------------------
-
-    def _result_for(self, name: str, source_ref: str) -> BuildResult | None:
-        """The published build result that produced ``source_ref``, if it is current."""
-        result = self._publisher().current_result(name)
-        return result if result is not None and result.artifact_ref == source_ref else None
-
-    def _artifact_tags(
-        self, result: BuildResult | None, source_ref: str
-    ) -> Mapping[str, TopologyDescriptor]:
-        """Tag names bound to artifact topology, from the build's source map.
-
-        A reloaded BRep has no tags of its own; the source map is the only thing
-        that can put the script's names back onto this artifact's topology, and
-        it is only used when it belongs to exactly these bytes.
-        """
-        if result is None or result.source_map_ref is None or result.artifact_ref != source_ref:
-            return {}
-        blob = blob_hash_of_ref(result.source_map_ref)
-        if not self._store.blobs.has(blob):
-            return {}
-        loaded: object = json.loads(self._store.blobs.get(blob).decode("utf-8"))
-        if not isinstance(loaded, dict):
-            return {}
-        return descriptors_from_source_map(cast("Mapping[str, JSONValue]", loaded))
 
     def _title_block(
         self,

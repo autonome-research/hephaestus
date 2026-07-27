@@ -18,13 +18,27 @@
         "250.0",
         "218.0",
         "18.0",
-        "Ø8.0",
-        "18 mm Baltic birch plywood"
+        "\u00d88.0"
       ]
+    }
+  ],
+  "metadata_requirements": [
+    {
+      "part": "shelf",
+      "required_fields": [
+        "description",
+        "material_spec",
+        "process",
+        "stock_form",
+        "general_tolerance",
+        "finish"
+      ],
+      "process": "laser_cut",
+      "material_id": "plywood-baltic-birch"
     }
   ],
   "protected_paths": [
     "parts/rail.py"
   ],
-  "notes": "Difficulty 3. Acceptance is independent of the run's own reading twice over: the CHECKS measure the assembly (envelope, exact volume including the 8 mm bore, flush contact with the seeded wall gauge) and the grader generates the dimensioned sheet itself and extracts its PDF text layer, requiring the five principal dimensions (600.0 / 250.0 / 218.0 overall, 18.0 material thickness, dia 8.0 bore) plus the title-block material spec. Because the required strings are the model's own dimensions, a run that draws a wrong shelf fails the drawing requirement and not just the checks. The reference solution is a file overlay, so its call path is counted by hand: 11 calls (read_part rail, read_globals, write_part, build_part, measure, generate_drawing, run_checks plus slack); budget 18 leaves ~60% headroom for the metadata iteration."
+  "notes": "Difficulty 3. Acceptance is independent of the run's own reading twice over: the CHECKS measure the assembly (envelope, exact volume including the 8 mm bore, flush contact with the seeded wall gauge) and the grader generates the dimensioned sheet itself and extracts its PDF text layer, requiring the five principal dimensions (600.0 / 250.0 / 218.0 overall, 18.0 material thickness, dia 8.0 bore) - which are the drawing's engineering purpose and are the model's own dimensions, so a run that draws a wrong shelf fails the drawing requirement and not just the checks. Re-authored 2026-07-26 (corpus audit): the title block's material line was gated as a VERBATIM string ('18 mm Baltic birch plywood'), which is a reproduction demand - correct runs failed on punctuation. The metadata is now gated structurally instead (metadata_requirements): the six \u00a75.2 fields must be authored, the process must be the 'laser_cut' pack id, and the free-text material_spec must RESOLVE in the materials registry to plywood-baltic-birch, so any wording that names the right stock passes. The reference solution is a file overlay, so its call path is counted by hand: 11 calls (read_part rail, read_globals, write_part, build_part, measure, generate_drawing, run_checks plus slack); budget 18 leaves ~60% headroom for the metadata iteration, and dropping the string match did not change the call path. The geometry half was re-authored in the same pass: shelf_material became shelf_material_budget and its window went from +/-50 mm^3 on 4.5 million (one part in 90,000 - an unrequested 0.5 mm break on one 600 mm edge is 75) to +/-350, which is still 2.6x below the missing cable bore (905 mm^3) it has to reject."
 }

@@ -1280,6 +1280,31 @@ _CLARIFICATION_REQUIRED: Final[JsonSchema] = _ok(
 _CRITIQUE_WARNING: Final[JsonSchema] = _ok({"kind": _STR, "message": _STR}, ["kind"])
 _CRITIQUE_WARNINGS: Final[JsonSchema] = {"type": "array", "items": _CRITIQUE_WARNING}
 
+#: One **binding** §4 dimension finding (``VALIDATION.md`` §4, "Dimension findings
+#: are BINDING"). ``id`` is what an ``ask_user(requirement_ids=[…])`` question must
+#: name for a user to dismiss one; ``status`` is ``open`` while it blocks
+#: termination and ``cleared``/``dismissed`` once a matching rebuild or a
+#: runtime-recorded dismissal closed it. Written by the runtime only — no tool
+#: writes this, which is why its presence is evidence rather than a claim.
+_DIMENSION_FINDING: Final[JsonSchema] = _ok(
+    {
+        "id": _STR,
+        "part": _STR,
+        "kind": _STR,
+        "request_value_mm": _NUM,
+        "request_text": _STR,
+        "message": _STR,
+        "axis": {"anyOf": [_STR, {"type": "null"}]},
+        "dimension": {"anyOf": [_STR, {"type": "null"}]},
+        "dimension_value_mm": {"anyOf": [_NUM, {"type": "null"}]},
+        "status": _enum(["open", "cleared", "dismissed"]),
+        "asked": _BOOL,
+        "dismissal": {"anyOf": [_STR, {"type": "null"}]},
+        "closed_by": {"anyOf": [_STR, {"type": "null"}]},
+    },
+    ["id", "part", "kind", "request_value_mm", "status"],
+)
+
 #: ``VALIDATION.md`` §4: the post-build critique nobody asked for. It rides on
 #: every *successful* ``build_part`` result and is computed by rule from the
 #: build's own outputs — no extra tool call, no prompt instruction, no model
@@ -1334,6 +1359,19 @@ _CRITIQUE: Final[JsonSchema] = _ok(
                 "warnings": _CRITIQUE_WARNINGS,
             },
             ["numbers", "dimensions", "warnings"],
+        ),
+        # Present when this build could bind its number diff: a published (non-
+        # preview) build with request text in hand. Absent means "nothing was
+        # bound here", never "clean" — the same rule as prompt_number_diff.
+        "dimension_findings": _ok(
+            {
+                "generation": _INT,
+                "artifact_ref": {"anyOf": [_STR, {"type": "null"}]},
+                "open": {"type": "array", "items": _DIMENSION_FINDING},
+                "cleared": {"type": "array", "items": _DIMENSION_FINDING},
+                "warnings": _CRITIQUE_WARNINGS,
+            },
+            ["open", "cleared", "warnings"],
         ),
         "warnings": _CRITIQUE_WARNINGS,
     },
@@ -1516,11 +1554,37 @@ _BLANK: Final[JsonSchema] = _obj(
     ["width_mm", "height_mm"],
 )
 
+#: What a DXF/SVG export reports about kerf compensation. ``applied_mm`` is null
+#: exactly when the emitted path is the nominal boundary, and ``source`` says
+#: whether that was the caller's choice, the process pack's number, or nothing
+#: at all — a kerf is never invented, so ``note: "kerf_uncompensated"`` is how an
+#: uncompensated cut file announces itself instead of passing for a compensated
+#: one.
+_KERF: Final[JsonSchema] = _obj(
+    {
+        "applied_mm": {"anyOf": [{"type": "number", "minimum": 0}, {"type": "null"}]},
+        "source": _enum(["explicit", "dfm", "none"]),
+        "process": {"anyOf": [_STR, {"type": "null"}]},
+        "note": {"const": "kerf_uncompensated"},
+        "reason": _STR,
+    },
+    ["applied_mm", "source"],
+    additional=True,
+)
+
 
 def _export_part() -> ToolDecl:
     conditional = [
         {
             "if": {"properties": {"layout": {"const": "nested_sheet"}}, "required": ["layout"]},
+            "then": {"properties": {"format": {"enum": ["dxf", "svg"]}}},
+        },
+        # Kerf compensates a *cut path*; a STEP/STL/GLTF/3MF model stays nominal.
+        {
+            "if": {
+                "properties": {"kerf_mm": {"type": "number"}},
+                "required": ["kerf_mm"],
+            },
             "then": {"properties": {"format": {"enum": ["dxf", "svg"]}}},
         },
     ]
@@ -1535,6 +1599,10 @@ def _export_part() -> ToolDecl:
                 "target": {"anyOf": [_STR, {"type": "null"}], "default": None},
                 "layout": _enum(["as_built", "nested_sheet"], "as_built"),
                 "blank": {"anyOf": [_BLANK, {"type": "null"}], "default": None},
+                "kerf_mm": {
+                    "anyOf": [{"type": "number", "minimum": 0.0}, {"type": "null"}],
+                    "default": None,
+                },
             },
             ["name", "format"],
             extra={"allOf": conditional},
@@ -1546,6 +1614,7 @@ def _export_part() -> ToolDecl:
                     "source_artifact_ref": _STR,
                     "source_input_hashes": _dict(),
                     "export_hashes": _dict(),
+                    "kerf": _KERF,
                 },
                 ["paths", "source_artifact_ref"],
             ),
