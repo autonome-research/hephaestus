@@ -33,7 +33,12 @@ from hephaestus.core.executor.sandbox.base import (
     Rlimits,
     SandboxSpec,
 )
-from hephaestus.core.executor.sandbox.bwrap import BwrapBackend, interpreter_ro_binds
+from hephaestus.core.executor.sandbox.bwrap import (
+    BwrapBackend,
+    build_bwrap_argv,
+    describe_argv,
+    interpreter_ro_binds,
+)
 
 __all__ = [
     "PROBE_CACHE_FILENAME",
@@ -162,16 +167,27 @@ def probe_bwrap(
             rlimits=_PROBE_RLIMITS,
             wall_clock_s=_PROBE_WALL_CLOCK_S,
         )
+        # The mount plan the probe actually attempted. A launch/exec failure is
+        # almost always a MISSING MOUNT, and the bwrap message names the binary
+        # it could not exec rather than the file that was really absent (a
+        # missing dynamic loader reports as ENOENT on the interpreter). Carrying
+        # the argv into the structured error makes the next failure diagnosable
+        # from the CI log alone.
+        try:
+            plan = describe_argv(build_bwrap_argv(bwrap, spec))
+        except (ValueError, OSError) as exc:  # pragma: no cover - defensive
+            plan = f"argv unavailable: {exc}"
+
         try:
             outcome = backend.execute(spec, b"")
         except (SandboxDeniedError, OSError, ValueError) as exc:
-            return _unavailable(f"sandboxed probe launch failed: {exc}")
+            return _unavailable(f"sandboxed probe launch failed: {exc}; {plan}")
         if outcome.timed_out:
-            return _unavailable("sandboxed probe timed out")
+            return _unavailable(f"sandboxed probe timed out; {plan}")
         if outcome.exit_code != 0:
             tail = outcome.stderr.decode("utf-8", errors="replace")[-300:]
             return _unavailable(
-                f"sandboxed probe exited {outcome.exit_code}; stderr tail: {tail!r}"
+                f"sandboxed probe exited {outcome.exit_code}; stderr tail: {tail!r}; {plan}"
             )
         features = _parse_probe_stdout(outcome.stdout)
         if features is None:

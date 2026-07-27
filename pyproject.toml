@@ -48,6 +48,7 @@ target-version = "py311"
 # server/tests/fixtures/ (the recorded bracket-101 seed-2 failure the Stage 2V
 # critique tests assert over — reformatting it would edit the evidence).
 extend-exclude = [
+    "bench",
     "spikes",
     "corpus",
     "registries",

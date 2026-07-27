@@ -1,10 +1,25 @@
 # ci.yml — every-PR gate per verification.md §CI contract.
 #
-# Scope note (v1, stock ubuntu runners): render goldens are valid only inside
-# the pinned CI container image (exact Mesa/llvmpipe — Stage S disposition), and
-# the bubblewrap escape suites need unrestricted user namespaces; both run
-# locally today and move here when the pinned image lands. Every other Tier 1
-# suite runs in full.
+# Scope note (v1, stock ubuntu runners). Exactly ONE suite is excluded, and it
+# is excluded for a documented reason rather than to make CI pass:
+#
+#   * tests/render (Gate G1 render goldens) — the committed PNGs are pinned to
+#     an exact Mesa/llvmpipe build (the sidecars assert the renderer version
+#     string and png_sha256, and the gate compares at SSIM >= 0.995). A stock
+#     ubuntu-latest image ships a different Mesa than the one the goldens were
+#     generated on, so the suite would fail on rasterizer drift rather than on
+#     a real regression. It runs locally today and moves here when the pinned
+#     CI container image lands (Stage S disposition).
+#
+# Everything else runs in full — including the bubblewrap sandbox suites and
+# the escape probes, which the previous revision of this file excluded via
+# `-k "not sandbox and not bwrap"`. Those exclusions are now REMOVED: the
+# sandbox is a security gate and must be exercised on every PR. The functional
+# render tests inside core/tests (offscreen, palette, tessellate, cameras) also
+# run now; only the byte-pinned golden corpus is deferred.
+#
+# No pull_request_target (mission rule 8): this workflow never runs untrusted
+# PR code with repository secrets.
 
 name: ci
 
@@ -13,12 +28,25 @@ on:
     branches: [main]
   pull_request:
 
+# A newer push to the same ref supersedes an in-flight run.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 env:
   UV_PYTHON: "3.13"
+  NODE_VERSION: "22.19.0"
+  PNPM_VERSION: "10"
 
 jobs:
+  # ---------------------------------------------------------------- static --
   lint-type:
+    name: lint + type
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -27,8 +55,11 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run pyright opstore core server
 
+  # ------------------------------------------------------------ opstore/0a --
   opstore:
+    name: opstore + stage0a
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -37,41 +68,54 @@ jobs:
           uv run pytest opstore/tests tests/stage0a -q
           --cov=opstore/src/opstore --cov-fail-under=90
 
-  engine:
+  # ------------------------------------------------------------- core engine --
+  core:
+    name: core engine
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      # The no-node gate test builds through the secure executor: bubblewrap +
-      # unrestricted unprivileged user namespaces (Ubuntu 24.04 restricts them
-      # via AppArmor by default).
-      - run: |
-          sudo apt-get update -q && sudo apt-get install -y -q bubblewrap
+      # The sandbox suites need bubblewrap plus unrestricted unprivileged user
+      # namespaces (Ubuntu 24.04 restricts them via AppArmor by default). The
+      # offscreen renderer needs surfaceless EGL, satisfied by Mesa's software
+      # (llvmpipe) driver on GPU-less runners.
+      - name: sandbox + renderer prerequisites
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q bubblewrap libegl1 libgl1 libgl1-mesa-dri libglx-mesa0
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: uv sync --dev
-      # Sandbox escape-probe and render-golden suites are excluded until the
-      # pinned CI image lands; see scope note above.
-      - run: >
-          uv run pytest core/tests tests/stage0b -q
-          -k "not sandbox and not bwrap and not render"
+      - run: uv run pytest core/tests -q
 
-  agent-node:
+  # ------------------------------------------------------------- stage gates --
+  stage0b:
+    name: stage0b adapter gate
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
       - uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: ${{ env.PNPM_VERSION }}
       - uses: actions/setup-node@v4
         with:
-          node-version: "22.19.0"
+          node-version: ${{ env.NODE_VERSION }}
+      # test_adapter_no_node.py builds with node absent, which MUST go through
+      # the secure executor — bubblewrap is load-bearing for this gate.
+      - name: sandbox + renderer prerequisites
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q bubblewrap libegl1 libgl1 libgl1-mesa-dri libglx-mesa0
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: uv sync --dev
       - run: pnpm --dir agent install --frozen-lockfile
-      - run: pnpm --dir agent typecheck
-      - run: pnpm --dir agent lint
-      - run: pnpm --dir agent test
+      - run: pnpm --dir agent build
+      - run: uv run pytest tests/stage0b -q
 
-  server-bridge:
+  stages:
+    name: stage gates 1-6
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -79,19 +123,81 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: ${{ env.PNPM_VERSION }}
       - uses: actions/setup-node@v4
         with:
-          node-version: "22.19.0"
-      # inspect_part/query_snapshot render through surfaceless EGL; Mesa's
-      # software (llvmpipe) driver satisfies it on GPU-less runners.
-      - run: |
+          node-version: ${{ env.NODE_VERSION }}
+      - name: sandbox + renderer prerequisites
+        run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q bubblewrap libegl1 libgl1-mesa-dri libglx-mesa0
+          sudo apt-get install -y -q bubblewrap libegl1 libgl1 libgl1-mesa-dri libglx-mesa0
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: uv sync --dev
       - run: pnpm --dir agent install --frozen-lockfile
       - run: pnpm --dir agent build
+      # tests/render is deliberately absent — see the scope note at the top.
       - run: >
-          uv run pytest server/tests -q
-          -k "not sandbox and not bwrap"
+          uv run pytest
+          tests/stage1 tests/stage2 tests/stage2v tests/stage3 tests/stage6 -q
+
+  # ------------------------------------------------------- server + bridge --
+  server:
+    name: server (shard ${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      # inspect_part/query_snapshot render through surfaceless EGL; the DFM
+      # predicates are sandboxed registry content and need bubblewrap.
+      - name: sandbox + renderer prerequisites
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q bubblewrap libegl1 libgl1 libgl1-mesa-dri libglx-mesa0
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: uv sync --dev
+      - run: pnpm --dir agent install --frozen-lockfile
+      - run: pnpm --dir agent build
+      # server/tests is ~769 tests / ~15 min unsharded. Split the test FILES
+      # round-robin so every file lands in exactly one shard and the union is
+      # the whole suite (no -k filtering, so nothing is silently skipped).
+      - name: run shard
+        run: |
+          set -euo pipefail
+          mapfile -t FILES < <(
+            ls server/tests/test_*.py | sort | awk "NR % 3 == ${{ matrix.shard }}"
+          )
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "shard ${{ matrix.shard }} matched no test files" >&2
+            exit 1
+          fi
+          printf 'shard %s: %d files\n' "${{ matrix.shard }}" "${#FILES[@]}"
+          uv run pytest "${FILES[@]}" -q
+
+  # ------------------------------------------------------------ agent (node) --
+  agent-node:
+    name: agent (node)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: pnpm --dir agent install --frozen-lockfile
+      - run: pnpm --dir agent typecheck
+      - run: pnpm --dir agent lint
+      - run: pnpm --dir agent test

@@ -7,6 +7,7 @@ import json
 import os
 import socket
 import sys
+import sysconfig
 import textwrap
 import time
 from pathlib import Path
@@ -20,9 +21,12 @@ from hephaestus.core.executor.sandbox.base import (
 )
 from hephaestus.core.executor.sandbox.bwrap import (
     BwrapBackend,
+    base_os_argv,
     build_bwrap_argv,
+    describe_argv,
     find_bwrap,
     interpreter_ro_binds,
+    prune_binds,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -350,3 +354,168 @@ class TestArgvConstruction:
         )
         with pytest.raises(ValueError, match="ro_bind"):
             build_bwrap_argv("/usr/bin/bwrap", spec)
+
+
+class TestInterpreterBinds:
+    """The bind set must be correct BY CONSTRUCTION, not by guessing prefixes."""
+
+    def test_binds_cover_the_interpreters_final_symlink_target(self) -> None:
+        binds = interpreter_ro_binds()
+        # sys.executable is typically .venv/bin/python -> ... -> the real binary;
+        # the directory holding the FINAL target must be exposed.
+        final_dir = Path(os.path.realpath(sys.executable)).parent
+        assert any(final_dir == b or b in final_dir.parents for b in binds), (
+            f"no bind exposes the real interpreter directory {final_dir}: {binds}"
+        )
+
+    def test_binds_cover_site_packages(self) -> None:
+        binds = interpreter_ro_binds()
+        purelib = Path(sysconfig.get_path("purelib"))
+        assert any(purelib == b or b in purelib.parents for b in binds), (
+            f"no bind exposes site-packages {purelib}: {binds}"
+        )
+
+    def test_binds_cover_every_hop_of_the_executable_chain(self) -> None:
+        binds = interpreter_ro_binds()
+        hop = Path(sys.executable)
+        for _ in range(64):
+            parent = hop.parent
+            assert any(parent == b or b in parent.parents for b in binds), (
+                f"symlink hop {hop} is not exposed by any bind: {binds}"
+            )
+            if not os.path.islink(hop):
+                break
+            target = os.readlink(hop)
+            hop = Path(os.path.normpath(os.path.join(hop.parent, target)))
+
+    def test_binds_are_deterministic_and_non_nested(self) -> None:
+        binds = interpreter_ro_binds()
+        assert binds == interpreter_ro_binds()
+        assert len(set(binds)) == len(binds)
+        for a in binds:
+            for b in binds:
+                assert a == b or a not in b.parents, f"{b} nests inside bound {a}"
+
+    def test_prune_drops_nested_paths_and_sorts(self) -> None:
+        pruned = prune_binds([Path("/a/b/c"), Path("/a"), Path("/z"), Path("/a/b"), Path("/a")])
+        assert pruned == (Path("/a"), Path("/z"))
+
+    def test_argv_keeps_the_stated_form_of_a_symlinked_bind(self, tmp_path: Path) -> None:
+        """worker_cmd names STATED paths; binding only the resolved target
+        leaves the stated path dangling inside the sandbox."""
+        real = tmp_path / "real"
+        real.mkdir()
+        (real / "data.txt").write_text("x")
+        link = tmp_path / "link"
+        link.symlink_to(real)
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        spec = SandboxSpec(
+            worker_cmd=(sys.executable, "-c", "pass"),
+            ro_binds=(link,),
+            rw_out_dir=out_dir,
+            rlimits=Rlimits(cpu_seconds=60, address_space_bytes=GIB, nproc=64),
+            wall_clock_s=30.0,
+        )
+        argv = build_bwrap_argv("/usr/bin/bwrap", spec)
+        ro_pairs = [(argv[i + 1], argv[i + 2]) for i, a in enumerate(argv) if a == "--ro-bind"]
+        assert (str(link), str(link)) in ro_pairs
+        assert (str(real), str(real)) in ro_pairs
+
+
+class TestBaseOsLayout:
+    """The regression that broke CI: /lib64's shape is distro-specific.
+
+    Arch has ``/lib64 -> usr/lib``; Debian/Ubuntu has ``/lib64 -> usr/lib64``,
+    a real directory holding only ``ld-linux-x86-64.so.2``. CPython's PT_INTERP
+    is the absolute ``/lib64/ld-linux-x86-64.so.2``, so hardcoding the Arch
+    shape made the dynamic loader unreachable on Ubuntu runners and bwrap
+    reported ``execvp <python>: No such file or directory``.
+    """
+
+    def test_top_level_entries_mirror_the_host(self) -> None:
+        argv = base_os_argv()
+        assert argv[:3] == ("--ro-bind", "/usr", "/usr")
+        for entry in ("/lib", "/lib64", "/bin", "/sbin"):
+            if os.path.islink(entry):
+                assert ("--symlink", os.readlink(entry), entry) == tuple(
+                    argv[argv.index(entry) - 2 : argv.index(entry) + 1]
+                ), f"{entry} must reproduce the host symlink"
+            elif os.path.isdir(entry):
+                assert ("--ro-bind", entry, entry) == tuple(
+                    argv[argv.index(entry) - 2 : argv.index(entry) + 1]
+                ), f"{entry} is a real directory on this host and must be bound"
+
+    def test_dynamic_loader_is_reachable_inside_the_sandbox(self, tmp_path: Path) -> None:
+        """End-to-end: the loader path named by PT_INTERP must exist in-sandbox."""
+        code = textwrap.dedent(
+            """
+            import json, os
+            print(json.dumps({"loader": os.path.exists("/lib64/ld-linux-x86-64.so.2")}))
+            """
+        )
+        outcome = BwrapBackend().execute(make_spec(tmp_path, code), b"")
+        assert outcome.exit_code == 0, outcome.stderr.decode(errors="replace")
+        assert last_json(outcome)["loader"] is True
+
+    def test_real_build123d_build_with_project_dir_in_a_tmp_path(self, tmp_path: Path) -> None:
+        """The CI shape: the sandboxed project dir lives in a tmp path that
+        shares NO ancestor with the venv, so the interpreter binds alone must
+        carry the build."""
+        project = tmp_path / "proj"
+        project.mkdir()
+        code = textwrap.dedent(
+            """
+            import json
+            from build123d import Box
+            part = Box(4, 3, 2)
+            print(json.dumps({"volume": part.volume}))
+            """
+        )
+        spec = make_spec(tmp_path, code, extra_ro=(project,))
+        outcome = BwrapBackend().execute(spec, b"")
+        assert outcome.exit_code == 0, outcome.stderr.decode(errors="replace")
+        assert last_json(outcome)["volume"] == pytest.approx(24.0, abs=1e-6)
+
+
+class TestDiagnostics:
+    def test_describe_argv_reports_binds_and_truncates(self, tmp_path: Path) -> None:
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        spec = SandboxSpec(
+            worker_cmd=(sys.executable, "-c", "pass"),
+            ro_binds=interpreter_ro_binds(),
+            rw_out_dir=out_dir,
+            rlimits=Rlimits(cpu_seconds=60, address_space_bytes=GIB, nproc=64),
+            wall_clock_s=30.0,
+        )
+        described = describe_argv(build_bwrap_argv("/usr/bin/bwrap", spec))
+        assert described.startswith("argv=")
+        assert "binds=[" in described
+        assert str(out_dir) in described
+        assert "/usr" in described
+
+    def test_probe_failure_reason_carries_the_mount_plan(self, tmp_path: Path) -> None:
+        """A failing probe must be diagnosable from the CI log alone.
+
+        The regression that broke CI reported only ``execvp <python>: No such
+        file or directory`` — which blamed the interpreter for a missing
+        dynamic loader. The mount plan is what actually identifies the fault.
+        """
+        from hephaestus.core.executor.sandbox import probe as probe_mod
+
+        class FailingBackend(BwrapBackend):
+            def execute(self, spec: SandboxSpec, stdin_payload: bytes) -> ExecOutcome:
+                return ExecOutcome(
+                    exit_code=1,
+                    stdout=b"",
+                    stderr=b"bwrap: execvp /somewhere/python: No such file or directory\n",
+                    timed_out=False,
+                )
+
+        report = probe_mod.probe_bwrap(FailingBackend(), scratch_dir=tmp_path)
+        assert not report.available
+        reason = report.reason or ""
+        assert "argv=" in reason and "binds=[" in reason
+        # the plan names the base-OS mounts, where the real fault lived
+        assert "/usr" in reason

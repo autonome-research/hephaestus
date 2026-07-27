@@ -1,0 +1,4 @@
+# Run archives are evidence, not source: whole projects with model-authored
+# part scripts. The scored summaries under results/ stay trackable (see
+# results/.gitignore); everything under archive/ is kept locally only.
+archive/
