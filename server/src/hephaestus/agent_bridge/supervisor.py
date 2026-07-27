@@ -22,6 +22,23 @@ Design points (architecture §5, digest §6):
   call passes its deadline by ``watchdog_grace_s`` (unresponsive process), then
   hands the set of tracked run ids to the injected recovery hook **before** any
   terminal synthesis, and restarts.
+* **Bounded automatic respawn.** An *unexpected* child exit (a crash, or a
+  bridge torn down by an oversized frame) no longer leaves the supervisor
+  permanently childless waiting for a watchdog that only fires while a call is
+  pending. The order is fixed and observable: the in-flight calls still fail
+  with the structured ``PROCESS_DOWN`` error, the recovery hook still runs
+  **before** anything is respawned (architecture §5 hands recoverable runs to
+  their coordinators before terminal synthesis), and only then is a replacement
+  spawned — through the same :meth:`~Supervisor.start` path, so the spawn hook
+  replays ``runtime.configure`` on it. The respawn is bounded by
+  ``respawn_max_attempts`` with exponential backoff
+  (``respawn_backoff_s`` doubling per attempt, capped at
+  ``respawn_backoff_max_s``);
+  a child that survives ``respawn_cooldown_s`` is deemed healthy and resets the
+  attempt counter, so a crash *loop* exhausts the budget and leaves the
+  supervisor **durably dead** with an error naming the attempt count, instead of
+  thrashing forever. A deliberate :meth:`~Supervisor.close` — or a
+  :meth:`~Supervisor.restart`, which does its own respawn — never triggers it.
 * **Re-configuration on every spawn.** A fresh child is a blank runtime: it has
   never seen ``runtime.configure``. :meth:`Supervisor.set_spawn_hook` registers a
   post-spawn callback that :class:`~.app.BridgeRuntime` uses to replay exactly
@@ -154,6 +171,22 @@ class SupervisorConfig:
     cad_build_timeout_s: float = _CAD_BUILD_SECONDS
     watchdog_interval_s: float = 0.1
     watchdog_grace_s: float = 5.0
+    #: How many times an *unexpected* child exit may be respawned automatically
+    #: before the supervisor gives up and stays dead. Three is chosen so the
+    #: worst case (0.5 + 1.0 + 2.0 s of backoff) still fits comfortably inside
+    #: one `tool_seconds` call deadline: a genuine one-off crash is invisible to
+    #: the caller, while a sidecar that cannot stay up fails loudly in <4 s.
+    respawn_max_attempts: int = 3
+    #: First backoff, doubled per consecutive attempt.
+    respawn_backoff_s: float = 0.5
+    #: Ceiling for the doubling (irrelevant at 3 attempts; a bound on any
+    #: future widening of `respawn_max_attempts`).
+    respawn_backoff_max_s: float = 5.0
+    #: A child that stayed up this long counts as healthy: the next unexpected
+    #: exit starts a fresh attempt budget. Long enough that a crash *loop*
+    #: (sub-second children) can never reset it, short enough that two unrelated
+    #: crashes minutes apart are not charged to the same budget.
+    respawn_cooldown_s: float = 30.0
     env_source: dict[str, str] | None = None
     #: App-owned non-secret settings injected verbatim (e.g. HEPHAESTUS_AGENT_DIR).
     extra_env: dict[str, str] | None = None
@@ -223,6 +256,27 @@ class Supervisor:
         self._restart_generation = 0
         self.last_exit: int | None = None
         self.frame_errors: list[str] = []
+        # -- bounded automatic respawn state --------------------------------
+        #: Set once a child is up (and configured); cleared while an automatic
+        #: respawn is under way, so `call` can wait for the replacement instead
+        #: of failing with "sidecar is not running" during the backoff.
+        self._child_ready = threading.Event()
+        #: Raised by a dead child's reader thread, serviced by the watchdog
+        #: thread (the only long-lived thread that may fork: see `_on_child_exit`).
+        self._respawn_request = threading.Event()
+        #: Serializes respawn chains; also the "a respawn is in progress" flag.
+        self._respawn_lock = threading.Lock()
+        self._respawning = False
+        self._respawn_attempts = 0
+        self._spawned_at = 0.0
+        self._respawn_last_error: str | None = None
+        #: Terminal state: automatic respawn exhausted its attempts. Every later
+        #: `call` fails with this message until an explicit `restart()`.
+        self._respawn_failure: str | None = None
+        #: PIDs of children *we* killed on purpose; their exit is never a crash.
+        self._deliberate_exits: set[int] = set()
+        #: Automatic respawns, by outcome (regression evidence).
+        self.auto_respawns = 0
         #: Post-spawn hook failures, newest last (a watchdog respawn cannot raise
         #: at a caller, so the failure is recorded here instead of vanishing).
         self.spawn_errors: list[str] = []
@@ -273,9 +327,12 @@ class Supervisor:
                 self._watchdog = threading.Thread(target=self._watchdog_loop, daemon=True)
                 self._watchdog.start()
             self.spawn_count += 1
+            self._spawned_at = time.monotonic()
         # Outside the process lock on purpose: the hook issues real requests, and
         # a blocking call under `_plock` would deadlock against the reader thread.
         self._fire_spawn_hook()
+        # Only now is the child usable: the hook has replayed `runtime.configure`.
+        self._child_ready.set()
 
     def _fire_spawn_hook(self) -> None:
         """Replay per-process state onto the fresh child; record any failure."""
@@ -300,6 +357,13 @@ class Supervisor:
             tracked = frozenset(self._tracked_runs)
             self._restart_generation += 1
             generation = self._restart_generation
+            # An explicit restart is operator intent: it clears any durable
+            # automatic-respawn failure and hands back a full attempt budget.
+            self._respawn_failure = None
+            self._respawn_attempts = 0
+            self._child_ready.clear()
+            if proc is not None:
+                self._deliberate_exits.add(proc.pid)
         returncode: int | None = None
         if proc is not None:
             if proc.poll() is None:
@@ -391,6 +455,17 @@ class Supervisor:
     def is_running(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
 
+    @property
+    def respawn_failure(self) -> str | None:
+        """The durable-death reason once automatic respawn exhausted its budget."""
+        with self._plock:
+            return self._respawn_failure
+
+    def wait_for_child(self, timeout: float) -> bool:
+        """Block until a child is up and configured (or the respawn gave up)."""
+        self._child_ready.wait(timeout)
+        return self.is_running()
+
     # -- outbound requests -------------------------------------------------
 
     def call(
@@ -406,10 +481,11 @@ class Supervisor:
         carrying the JSON-RPC error envelope on timeout / error / process loss.
         """
         deadline_s = timeout if timeout is not None else self.config.default_timeout_s
+        self._await_child()
         with self._plock:
             proc = self.proc
             if proc is None or proc.poll() is not None:
-                raise SupervisorError("sidecar is not running")
+                raise SupervisorError(self._respawn_failure or "sidecar is not running")
             self._next_id += 1
             call = _Call(
                 id=self._next_id,
@@ -437,6 +513,41 @@ class Supervisor:
         if call.error is not None:
             raise SupervisorError(f"{method} failed: {call.error}")
         return call.result
+
+    def _await_child(self) -> None:
+        """Block briefly if an automatic respawn is under way; fail if it gave up.
+
+        A crash that is being recovered from is a *transient* absence of a child,
+        so a caller that arrives during the backoff waits for the replacement
+        rather than seeing ``sidecar is not running``. Once the attempt budget is
+        exhausted the absence is permanent and every caller is told so, naming
+        the attempt count.
+        """
+        with self._plock:
+            failure = self._respawn_failure
+            respawning = self._respawning
+        if failure is not None:
+            raise SupervisorError(failure)
+        if self._closing.is_set() or not respawning or self.is_running():
+            return
+        self._child_ready.wait(self._respawn_window_s())
+        with self._plock:
+            failure = self._respawn_failure
+        if failure is not None:
+            raise SupervisorError(failure)
+
+    def _respawn_window_s(self) -> float:
+        """Worst-case wall time a full respawn chain can occupy, plus margin."""
+        total = 0.0
+        for attempt in range(self.config.respawn_max_attempts):
+            total += self._backoff_s(attempt + 1)
+        return total + 5.0
+
+    def _backoff_s(self, attempt: int) -> float:
+        return min(
+            self.config.respawn_backoff_s * (2.0 ** (attempt - 1)),
+            self.config.respawn_backoff_max_s,
+        )
 
     def _hard_wait_s(self, deadline_s: float) -> float:
         """The backstop wait: strictly later than the watchdog's own kill point."""
@@ -547,11 +658,22 @@ class Supervisor:
     def _on_child_exit(self, proc: subprocess.Popen[bytes], *, crash: bool) -> None:
         rc = proc.wait()
         self.last_exit = rc
-        if crash and not self._closing.is_set():
+        with self._plock:
+            deliberate = proc.pid in self._deliberate_exits
+            self._deliberate_exits.discard(proc.pid)
+            superseded = self.proc is not proc
+        # An exit we caused (`restart`, a failed spawn hook) is not a crash, and
+        # neither is the late reaping of a child something else already replaced.
+        unexpected = crash and not self._closing.is_set() and not (deliberate or superseded)
+        if unexpected:
+            self._child_ready.clear()
             with self._plock:
                 tracked = frozenset(self._tracked_runs)
                 self._restart_generation += 1
                 generation = self._restart_generation
+                # Claim the respawn *before* recovery runs, so a caller arriving
+                # in that window waits rather than seeing a childless supervisor.
+                self._respawning = True
             self._fire_recovery(
                 ProcessLossEvent(
                     reason="crash",
@@ -563,6 +685,89 @@ class Supervisor:
         self._fail_all_pending(
             make_error(None, ErrorCode.PROCESS_DOWN, f"sidecar exited (rc={rc})")["error"]
         )
+        if unexpected:
+            # Strictly after the recovery handoff and after the in-flight calls
+            # have their structured error (architecture §5). The respawn itself
+            # is handed to the watchdog thread: `PR_SET_PDEATHSIG` is armed
+            # per-*thread*, so a child forked from this (about to exit) reader
+            # thread would be SIGKILLed the instant this function returns.
+            self._respawn_request.set()
+
+    def _auto_respawn(self) -> None:
+        """Bounded exponential-backoff respawn after an unexpected child exit.
+
+        Runs on the watchdog thread (the only long-lived thread that may fork;
+        see :meth:`_on_child_exit`). The crashed call already has its structured
+        error, so the backoff blocks no caller. Attempts are counted across
+        *consecutive* short-lived children; a child that survives
+        ``respawn_cooldown_s`` resets the budget.
+        """
+        if not self._respawn_lock.acquire(blocking=False):
+            return  # a chain is already running; it owns the attempt budget
+        try:
+            while True:
+                with self._plock:
+                    self._respawning = True
+                    if time.monotonic() - self._spawned_at >= self.config.respawn_cooldown_s:
+                        self._respawn_attempts = 0
+                    if self._respawn_attempts >= self.config.respawn_max_attempts:
+                        self._give_up_locked()
+                        return
+                    self._respawn_attempts += 1
+                    attempt = self._respawn_attempts
+                if self._closing.wait(self._backoff_s(attempt)):
+                    return  # a deliberate shutdown never respawns
+                with self._plock:
+                    if self._closing.is_set() or self.is_running():
+                        self._respawning = False
+                        return
+                try:
+                    self.start()
+                except Exception as exc:  # spawn failure, or a spawn hook that raised
+                    self._respawn_last_error = f"{type(exc).__name__}: {exc}"
+                    self._discard_child()
+                    continue
+                with self._plock:
+                    self._respawning = False
+                    self.auto_respawns += 1
+                if self._closing.is_set():
+                    # Raced a close(): do not leave a child behind.
+                    self._discard_child()
+                return
+        finally:
+            self._respawn_lock.release()
+
+    def _give_up_locked(self) -> None:
+        """Enter the durable dead state (call under ``_plock``)."""
+        self._respawning = False
+        detail = f" (last error: {self._respawn_last_error})" if self._respawn_last_error else ""
+        self._respawn_failure = (
+            "sidecar is not running: automatic respawn gave up after "
+            f"{self.config.respawn_max_attempts} attempts{detail}; "
+            "the supervisor stays dead until restart() is called"
+        )
+        # Release anyone waiting on the replacement; they re-check the failure.
+        self._child_ready.set()
+
+    def _discard_child(self) -> None:
+        """Kill the current child on purpose (its exit must not count as a crash)."""
+        with self._plock:
+            proc = self.proc
+            reader = self._reader
+            if proc is None:
+                return
+            self._deliberate_exits.add(proc.pid)
+        if proc.poll() is None:
+            with contextlib.suppress(OSError):
+                proc.kill()
+        with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+            proc.wait(timeout=5)
+        # Drain its reader before the next spawn, exactly as `restart` does: a
+        # reader still winding down calls `_fail_all_pending`, and after the
+        # replacement is up that would fail the *new* child's calls (the spawn
+        # hook's own `runtime.configure` first of all).
+        if reader is not None:
+            reader.join(timeout=5)
 
     def _fail_all_pending(self, error: dict[str, Any]) -> None:
         with self._plock:
@@ -584,6 +789,15 @@ class Supervisor:
             time.sleep(self.config.watchdog_interval_s)
             if self._closing.is_set():
                 return
+            if self._respawn_request.is_set():
+                # An unexpected exit asked for a replacement. This thread owns
+                # every automatic spawn because `PR_SET_PDEATHSIG` binds the
+                # child's life to the *thread* that forked it, and this one lives
+                # as long as the supervisor does.
+                self._respawn_request.clear()
+                with contextlib.suppress(Exception):
+                    self._auto_respawn()
+                continue
             if not self.is_running():
                 continue
             now = time.monotonic()

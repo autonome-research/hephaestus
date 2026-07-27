@@ -33,6 +33,7 @@ from hephaestus.agent_bridge.cad_ops import dimension_text
 from hephaestus.agent_bridge.cad_ops._drawing import Sheet, sheet_to_pdf
 from hephaestus.bench.harness import (
     BenchTask,
+    DfmRequirement,
     corpus_solutions_dir,
     grade,
     grade_reference_solution,
@@ -663,6 +664,123 @@ def test_the_dfm_repair_seed_really_violates_its_named_rules(
     findings = cast("list[Mapping[str, Any]]", report.dfm[0]["findings"])
     tagged = [f for f in findings if "vent_bore" in cast("list[str]", f.get("tags", []))]
     assert tagged, findings
+
+
+def test_every_dfm_requirement_names_its_own_process(
+    tasks: Mapping[str, BenchTask],
+) -> None:
+    """The 2026-07-26 bench defect, closed at the spec level.
+
+    ``print-bracket`` declared no ``process`` on its DFM requirement, so the pack
+    ran only against ``part.process``. ``run_dfm`` refuses to guess a process —
+    correctly — so a run that never authored the field failed as
+    ``dfm_failed:bracket`` and the three fdm rules the task exists to measure
+    never evaluated. Grading a task on different properties depending on whether
+    the model remembered a metadata line is not grading. A DFM requirement must
+    therefore name the pack itself, and the parser refuses one that does not.
+    """
+    for task in tasks.values():
+        for requirement in task.dfm:
+            assert requirement.process, (
+                f"{task.id}: DFM requirement for {requirement.part!r} names no process"
+            )
+            assert all(
+                rule.startswith(f"{requirement.process}.") for rule in requirement.clean_rules
+            ), f"{task.id}: clean_rules are not all from the {requirement.process} pack"
+
+    with pytest.raises(ValueError, match="declares no process"):
+        DfmRequirement.from_json({"part": "bracket", "clean_rules": ["fdm.overhang_angle"]})
+
+
+@requires_bwrap
+def test_dfm_rules_are_graded_even_when_the_part_omits_its_process(
+    tasks: Mapping[str, BenchTask], tmp_path: Path
+) -> None:
+    """The defect, reproduced on the geometry that exposed it, and then absent.
+
+    ``gpt-5.6-sol`` authored ``part.process = "fdm"`` on ``print-bracket`` seed 1
+    and omitted it on seed 2 — same model, same correct ramped bracket, and seed
+    2 was scored on an unresolvable-process refusal instead of on printability.
+    Here the reference solution is stripped of exactly that one line: the fdm
+    pack must still run and still come back clean on all three named rules, and
+    the *only* thing that fails is the metadata declaration the prompt separately
+    asks for, under a name that says so.
+    """
+    task = tasks["print-bracket"]
+    root = tmp_path / "no-process"
+    seed_project(task, root)
+    source = (corpus_solutions_dir() / "print-bracket" / "parts" / "bracket.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'part.process = "fdm"\n' in source
+    (root / "parts").mkdir(exist_ok=True)
+    (root / "parts" / "bracket.py").write_text(
+        source.replace('part.process = "fdm"\n', ""), encoding="utf-8"
+    )
+    report = grade(task, root)
+
+    # The DFM pack evaluated on the graded geometry and found nothing…
+    assert len(report.dfm) == 1
+    record = report.dfm[0]
+    assert "error" not in record, record
+    assert record.get("process") == "fdm"
+    assert record.get("source_artifact_ref"), record
+    assert [reason for reason in report.reasons if reason.startswith("dfm_")] == []
+    # …and the geometry checks are untouched, so the run fails on one thing only:
+    # the §5.2 process declaration, named as itself.
+    assert not report.passed
+    assert "metadata_missing:bracket:process" in report.reasons
+    assert "metadata_process:bracket:unstated!=fdm" in report.reasons
+    assert [reason for reason in report.reasons if not reason.startswith("metadata_")] == []
+
+
+def test_prompted_metadata_is_gated_by_a_named_metadata_check(
+    tasks: Mapping[str, BenchTask],
+) -> None:
+    """Where a prompt asks for §5.2 metadata, something must check it.
+
+    ``print-bracket`` and ``nest-gusset`` both ask for the manufacturing metadata
+    in as many words and gated none of it: the bracket's process was reachable
+    only as a precondition of the DFM check, and the gusset's ``blank_size`` only
+    as a nesting failure inside the DXF export. Both are now requirements in
+    their own right. The fields listed are the ones the prompt names and no
+    others — a metadata requirement is not a place to add spec.
+    """
+    expected = {
+        "print-bracket": ("bracket", {"description", "material_spec", "process", "stock_form"}),
+        "nest-gusset": (
+            "gusset",
+            {"description", "material_spec", "process", "stock_form", "blank_size"},
+        ),
+        "drawing-shelf": (
+            "shelf",
+            {
+                "description",
+                "material_spec",
+                "process",
+                "stock_form",
+                "general_tolerance",
+                "finish",
+            },
+        ),
+    }
+    for task_id, (part, fields) in expected.items():
+        task = tasks[task_id]
+        assert len(task.metadata) == 1, f"{task_id}: expected exactly one metadata requirement"
+        requirement = task.metadata[0]
+        assert requirement.part == part
+        assert set(requirement.required_fields) == fields, task_id
+        assert requirement.process, f"{task_id}: the prompt names a process; gate it"
+        assert requirement.material_id, f"{task_id}: the prompt names a material; gate it"
+
+    # dfm-repair is the other side of the same rule: its prompt asks the run to
+    # *preserve* the declared process ("repair-only ... the design intent does not
+    # change"), not to author metadata, so that one field is all it gates.
+    repair = tasks["dfm-repair"].metadata
+    assert len(repair) == 1
+    assert repair[0].part == "vent_panel"
+    assert repair[0].process == "laser_cut"
+    assert repair[0].required_fields == () and repair[0].material_id is None
 
 
 def test_corpus_v1_raises_the_aggregate_threshold_to_the_g6_bound() -> None:

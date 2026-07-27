@@ -120,9 +120,14 @@ class ExportRequirement:
     #: stock rectangle too, and it encloses every profile — counting outermost
     #: components across all layers would report *one*. Set for nested layouts.
     profile_layer: str | None = None
-    #: Declared blank the profiles must fit inside, as ``(width_mm, height_mm)``.
-    #: Checked against the ``BLANK`` layer's own rectangle, so a run cannot pass
-    #: by declaring a whole 2500 x 1250 sheet and nesting onto that instead.
+    #: Stock the grader nests onto, as ``(width_mm, height_mm)``. It is passed to
+    #: ``export_part``, so the layout is built on the blank the *task* declares
+    #: and never on whatever the run happened to declare — then read back off the
+    #: exported bytes (the ``BLANK`` rectangle) and used as the fit window for
+    #: every profile. Whether the run declared this stock is a separate,
+    #: separately named requirement (:class:`MetadataRequirement.blank_mm`);
+    #: making it a precondition here failed correct runs as ``export_failed``
+    #: (``nest-gusset``, gpt-5.6-sol 2026-07-26).
     blank_mm: tuple[float, float] | None = None
     blank_layer: str = "BLANK"
 
@@ -145,10 +150,18 @@ class ExportRequirement:
                 "blank_mm needs profile_layer: without it the blank rectangle is "
                 "counted as a profile and the fit test is vacuous"
             )
+        layout = str(data.get("layout", "as_built"))
+        if blank is not None and layout != "nested_sheet":
+            # ``export_part`` ignores ``blank`` unless it is nesting, so a blank
+            # on any other layout would gate nothing while reading as though it
+            # did — and the BLANK layer it then looks for is never drawn.
+            raise ValueError(
+                f"blank_mm is only meaningful on a nested_sheet layout, not {layout!r}"
+            )
         return cls(
             part=str(data["part"]),
             fmt=fmt,
-            layout=str(data.get("layout", "as_built")),
+            layout=layout,
             profile_count=None if raw_count is None else int(cast("int", raw_count)),
             min_bytes=int(cast("int", data.get("min_bytes", 64))),
             profile_layer=None if layer is None else str(layer),
@@ -179,24 +192,44 @@ class DfmRequirement:
     a listed rule that produces a finding (or that fails to evaluate at all)
     fails the task. Rules outside the list are recorded, not gated: the point of
     a repair task is the violations it names, not the whole pack.
+
+    ``process`` is **required, and is the task's declaration — never the run's**
+    (2026-07-26 bench defect). It used to be an optional override falling back to
+    the part's ``part.process``, which made the whole verdict conditional on the
+    run remembering to author that field: ``run_dfm`` refuses to guess a process,
+    correctly, so a run that omitted it failed as ``dfm_failed:<part>`` and the
+    DFM rules — the actual subject of the task — never evaluated at all. Measured
+    on ``print-bracket`` (``gpt-5.6-sol``, which authored the field in seed 1 and
+    not in seed 2): the same model, the same geometry, graded on different
+    properties. Naming the process here makes the pack run on every submission.
+    Whether the part *declares* its own process is a separate, legitimate
+    requirement, and where a task asks for it it is gated as its own
+    :class:`MetadataRequirement`, failing under a name that says so.
     """
 
     part: str
     #: Rule ids that must produce zero findings (and must have evaluated).
     clean_rules: tuple[str, ...]
-    #: Explicit process override; ``None`` uses the part's ``part.process``.
-    process: str | None = None
+    #: The process pack to evaluate. Declared by the task, never inferred.
+    process: str
+
+    def __post_init__(self) -> None:
+        if not self.process:
+            raise ValueError(
+                f"DFM requirement for part {self.part!r} declares no process: name the "
+                "rule pack on the requirement, so the rules evaluate on every run "
+                "instead of only on runs that authored part.process"
+            )
 
     @classmethod
     def from_json(cls, data: Mapping[str, Any]) -> DfmRequirement:
         rules = tuple(str(r) for r in cast("Sequence[Any]", data.get("clean_rules", [])))
         if not rules:
             raise ValueError("a DFM requirement with no clean_rules gates nothing")
-        process = data.get("process")
         return cls(
             part=str(data["part"]),
             clean_rules=rules,
-            process=None if process is None else str(process),
+            process=str(data.get("process", "")),
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -259,6 +292,20 @@ class MetadataRequirement:
     is not an engineering property and is not asked for. (The audit of
     2026-07-26 introduced this to replace a verbatim title-block string match in
     ``drawing-shelf``, which failed correct runs for punctuation.)
+
+    This is also where "the part must declare its process" belongs, and the only
+    place it belongs: a :class:`DfmRequirement` names its own process, so the
+    rule pack is never hostage to the run having authored ``part.process``. A
+    task that asks for the declaration gates it here, where the failure reads
+    ``metadata_process:<part>:unstated!=fdm`` — which says what is missing —
+    rather than as an unresolvable-process refusal inside the DFM check.
+
+    ``blank_mm`` gates the declared stock size the same way: the free-text
+    ``part.blank_size`` must *name* that ``W x H`` blank, whatever else the
+    sentence says. It exists for the same reason: "the part declares its stock"
+    used to be an unnamed precondition of nested-sheet grading and surfaced as
+    ``export_failed`` on a run whose own nested export had succeeded
+    (``VALIDATION.md`` §1 — a check fails for the reason it is named after).
     """
 
     part: str
@@ -268,6 +315,8 @@ class MetadataRequirement:
     process: str | None = None
     #: Materials-registry id ``part.material_spec`` must resolve to, if any.
     material_id: str | None = None
+    #: Stock blank ``part.blank_size`` must name, as ``(width_mm, height_mm)``.
+    blank_mm: tuple[float, float] | None = None
 
     @classmethod
     def from_json(cls, data: Mapping[str, Any]) -> MetadataRequirement:
@@ -277,6 +326,17 @@ class MetadataRequirement:
             raise ValueError(f"unknown metadata fields {unknown} (script contract §5.2)")
         process = data.get("process")
         material = data.get("material_id")
+        raw_blank = data.get("blank_mm")
+        blank: tuple[float, float] | None = None
+        if raw_blank is not None:
+            pair = [float(cast("float", v)) for v in cast("Sequence[Any]", raw_blank)]
+            if len(pair) != 2:
+                raise ValueError(f"blank_mm must be [width, height], got {raw_blank!r}")
+            blank = (pair[0], pair[1])
+            if "blank_size" not in fields:
+                # Absent and wrong are two failures and get two names; the
+                # "absent" half is what ``required_fields`` is for.
+                raise ValueError("blank_mm needs 'blank_size' in required_fields")
         if not fields and process is None and material is None:
             raise ValueError("a metadata requirement with nothing required gates nothing")
         return cls(
@@ -284,6 +344,7 @@ class MetadataRequirement:
             required_fields=fields,
             process=None if process is None else str(process),
             material_id=None if material is None else str(material),
+            blank_mm=blank,
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -292,6 +353,7 @@ class MetadataRequirement:
             "required_fields": list(self.required_fields),
             "process": self.process,
             "material_id": self.material_id,
+            "blank_mm": None if self.blank_mm is None else list(self.blank_mm),
         }
 
 

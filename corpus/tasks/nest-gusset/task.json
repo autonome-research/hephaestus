@@ -22,6 +22,24 @@
   "render_requirements": [],
   "dfm_requirements": [],
   "drawing_requirements": [],
+  "metadata_requirements": [
+    {
+      "part": "gusset",
+      "required_fields": [
+        "description",
+        "material_spec",
+        "process",
+        "stock_form",
+        "blank_size"
+      ],
+      "process": "laser_cut",
+      "material_id": "plywood-baltic-birch",
+      "blank_mm": [
+        210.0,
+        125.0
+      ]
+    }
+  ],
   "protected_paths": [],
-  "notes": "Difficulty 4, and the G6 nesting clause as a bench task: the grader exports the nested_sheet DXF itself and asserts three closed profiles on the CUT layer, a blank rectangle measuring exactly 210 x 125 (so a run cannot pass by declaring a whole sheet) and every profile inside that rectangle (so it cannot pass by nesting off the edge). Nesting refuses rather than overlaps, so a fourth profile or an oversized one fails the export outright. The CHECKS pin one-sheet thickness, the exact combined material volume (which is what makes the web a triangle and not a rectangle) and genus 0. The reference solution is a file overlay, so its call path is counted by hand: 12 calls (read_globals, write_part, build_part, measure, export_part, run_checks plus slack for the metadata); budget 20 leaves ~65% headroom because a nesting refusal is a legitimate retry. Re-authored 2026-07-26 (corpus audit): the material window went from +/-30 mm^3 to +/-150. What it exists to reject is a rectangular web instead of a triangular one, 18000 mm^3 away, so two orders of magnitude of margin remain. Budget unchanged at 20."
+  "notes": "Difficulty 4, and the G6 nesting clause as a bench task: the grader exports the nested_sheet DXF itself and asserts three closed profiles on the CUT layer, a blank rectangle measuring exactly 210 x 125 and every profile inside that rectangle (so it cannot pass by nesting off the edge). Nesting refuses rather than overlaps, so a fourth profile or an oversized one fails the export outright. The CHECKS pin one-sheet thickness, the exact combined material volume (which is what makes the web a triangle and not a rectangle) and genus 0. The reference solution is a file overlay, so its call path is counted by hand: 12 calls (read_globals, write_part, build_part, measure, export_part, run_checks plus slack for the metadata); budget 20 leaves ~65% headroom because a nesting refusal is a legitimate retry. Re-authored 2026-07-26 (corpus audit): the material window went from +/-30 mm^3 to +/-150. What it exists to reject is a rectangular web instead of a triangular one, 18000 mm^3 away, so two orders of magnitude of margin remain. Budget unchanged at 20. Amended 2026-07-26 (bench defect): the prompt asks in as many words for a description, the material, the process, the stock form and the blank size, and nothing gated any of it - the blank was reachable only through the export's 210 x 125 rectangle, so a missing `part.blank_size` surfaced as a nesting failure. Those five §5.2 fields are now a metadata requirement, gated structurally (the free-text material_spec must RESOLVE to plywood-baltic-birch; any wording that names the right stock passes), so each names its own failure. No requirement was added that the prompt does not state. The blank the prompt names is gated twice over, on the two different claims it makes: `metadata_requirements[0].blank_mm` reads the 210 x 125 out of the free-text `part.blank_size` the run authored (the DECLARATION), while the grader nests onto the required 210 x 125 itself and asserts every profile lands inside it (the GEOMETRY). Before this the grader passed no blank and let `part.blank_size` decide, so a correct nested export was failed at grade time with `export_failed ... declares no part.blank_size`."
 }

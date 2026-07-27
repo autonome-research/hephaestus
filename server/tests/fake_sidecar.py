@@ -26,7 +26,15 @@ Env vars:
   tests — a fresh child that was never re-configured must be observably broken;
 * ``FAKE_SIDECAR_CONFIGURE_LOG`` names a file each received ``runtime.configure``
   payload is appended to (one compact JSON object per line), so a test can prove
-  the payload replayed after a respawn is identical to the initial one.
+  the payload replayed after a respawn is identical to the initial one;
+* ``FAKE_SIDECAR_DIE_AFTER_S`` makes the process exit (rc 9) that many seconds
+  after start-up without being asked to — a sidecar that cannot stay up, which
+  is what the bounded-respawn (crash-loop) test needs;
+* ``FAKE_SIDECAR_SPAWN_LOG`` names a file one line is appended to per process
+  start, so a test can count how many children were actually spawned;
+* ``FAKE_SIDECAR_CONFIGURE_FAILS`` makes ``runtime.configure`` answer with an
+  error — a child that starts but can never be made usable, which is what the
+  bounded-respawn test for a failing spawn hook needs.
 """
 
 from __future__ import annotations
@@ -133,7 +141,10 @@ def _handle(msg: dict[str, object]) -> None:
         _respond(req_id, params)
     elif method == "runtime.configure":
         _record_configure(params)
-        _respond(req_id, {"ok": True})
+        if os.environ.get("FAKE_SIDECAR_CONFIGURE_FAILS"):
+            _send({"id": req_id, "error": {"code": -32603, "message": "configure refused"}})
+        else:
+            _respond(req_id, {"ok": True})
     elif method == "session.create":
         _respond(req_id, {"session_id": f"sess-{req_id}"})
     elif method == "session.prompt":
@@ -175,7 +186,31 @@ def _handle(msg: dict[str, object]) -> None:
         _send({"id": req_id, "error": {"code": -32601, "message": f"method not found: {method}"}})
 
 
+def _record_spawn() -> None:
+    path = os.environ.get("FAKE_SIDECAR_SPAWN_LOG")
+    if not path:
+        return
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(f"{os.getpid()} {time.monotonic()}\n")
+
+
+def _arm_suicide() -> None:
+    """Exit unasked after ``FAKE_SIDECAR_DIE_AFTER_S`` seconds (crash-loop mode)."""
+    raw = os.environ.get("FAKE_SIDECAR_DIE_AFTER_S")
+    if not raw:
+        return
+    delay = float(raw)
+
+    def die() -> None:
+        time.sleep(delay)
+        os._exit(9)
+
+    threading.Thread(target=die, daemon=True).start()
+
+
 def main() -> None:
+    _record_spawn()
+    _arm_suicide()
     if os.environ.get("FAKE_SIDECAR_EMIT_READY"):
         _notify("event", {"run_id": "boot", "seq": 0, "kind": "audit", "payload": {"ready": True}})
     print(f"[fake-sidecar] pid={os.getpid()}", file=sys.stderr, flush=True)

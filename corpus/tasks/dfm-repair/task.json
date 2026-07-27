@@ -10,6 +10,7 @@
   "dfm_requirements": [
     {
       "part": "vent_panel",
+      "process": "laser_cut",
       "clean_rules": [
         "laser_cut.min_feature_vs_kerf",
         "laser_cut.min_internal_radius"
@@ -17,6 +18,12 @@
     }
   ],
   "drawing_requirements": [],
+  "metadata_requirements": [
+    {
+      "part": "vent_panel",
+      "process": "laser_cut"
+    }
+  ],
   "protected_paths": [],
-  "notes": "Difficulty 4. The seeded part violates two laser_cut rules with known ids: a 0.5 mm vent bore (below the 0.8 mm minimum cut feature for a 0.2 mm kerf) and R0.3 notch corners (below the 0.5 mm beam radius). Acceptance is independent of the run's own reading: the grader re-runs the pack on a probed secure backend and requires both rule ids clean, and the CHECKS pin the blank envelope, genus 1 (the vent still exists) and the exact repaired volume. The third laser_cut rule (sheet_thickness_match) is deliberately clean in the seed - 6 mm modelled in a material stocked at 3/6/12/18 mm - so the task is exactly the two named violations. The reference solution is a file overlay, so its call path is counted by hand: 8 calls (read_part, read_globals, build_part, run_dfm, edit_part, build_part, run_dfm, run_checks); budget 12 leaves 50% headroom. Re-authored 2026-07-26 (corpus audit): the volume window went from +/-1 mm^3 to +/-4 - the tightest thing it must reject is R2 instead of R3, 12.9 mm^3 away, so a 3x margin remains and the check no longer demands six significant figures of the author's arithmetic. Budget unchanged at 12."
+  "notes": "Difficulty 4. The seeded part violates two laser_cut rules with known ids: a 0.5 mm vent bore (below the 0.8 mm minimum cut feature for a 0.2 mm kerf) and R0.3 notch corners (below the 0.5 mm beam radius). Acceptance is independent of the run's own reading: the grader re-runs the pack on a probed secure backend and requires both rule ids clean, and the CHECKS pin the blank envelope, genus 1 (the vent still exists) and the exact repaired volume. The third laser_cut rule (sheet_thickness_match) is deliberately clean in the seed - 6 mm modelled in a material stocked at 3/6/12/18 mm - so the task is exactly the two named violations. The reference solution is a file overlay, so its call path is counted by hand: 8 calls (read_part, read_globals, build_part, run_dfm, edit_part, build_part, run_dfm, run_checks); budget 12 leaves 50% headroom. Re-authored 2026-07-26 (corpus audit): the volume window went from +/-1 mm^3 to +/-4 - the tightest thing it must reject is R2 instead of R3, 12.9 mm^3 away, so a 3x margin remains and the check no longer demands six significant figures of the author's arithmetic. Budget unchanged at 12. Amended 2026-07-26 (bench defect): the DFM requirement now declares `process: laser_cut` explicitly instead of inheriting whatever `part.process` the edited script ends up carrying, so the two named rules always evaluate on the graded geometry and a repair cannot fail as an unresolvable-process refusal. The prompt's own words - 'the process the part declares', repair-only, design intent unchanged - are gated separately as a metadata requirement, so a run that strips or rewrites the declared process fails as `metadata_process:vent_panel:...` and not under a DFM name."
 }

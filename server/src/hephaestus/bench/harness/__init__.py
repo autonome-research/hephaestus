@@ -12,8 +12,9 @@ The Tier 3 loop (verification.md §Tier 3, digest §8), one run at a time:
 3. **grade** after the terminal: build every part in the project, install the
    task's required CHECKS as project checks, run them project-scoped, then
    validate the required exports (bytes sniffed per format, ``as_built`` DXF
-   profile count where declared, a ``nested_sheet`` layout's profiles counted on
-   their own layer and fitted to the declared blank), required renders, required
+   profile count where declared, a ``nested_sheet`` layout nested on the blank
+   the *requirement* declares and its profiles counted on their own layer and
+   fitted inside that blank), required renders, required
    DFM verdicts (re-run on a probed secure backend) and required drawing sheets
    (dimension strings read out of the generated PDF's text layer). Pass = every
    required check passes AND every export/render/DFM/drawing requirement

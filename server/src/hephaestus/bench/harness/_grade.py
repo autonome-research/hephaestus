@@ -31,12 +31,13 @@ from typing import Any, cast
 from hephaestus.agent_bridge.cad_ops import EXPORT_FORMATS, CadOpError, CadOps
 from hephaestus.core.errors import SandboxDeniedError
 from hephaestus.core.executor.sandbox.probe import secure_backend
+from hephaestus.core.nesting import blank_from_metadata
 from hephaestus.core.project_store.layout import ProjectLayout, load_project
 
 from ..metrics import charged_reasons, harness_reasons
 from ._exports import dxf_layer_extents, dxf_profile_count, pdf_text, validate_export_bytes
 from ._seed import apply_solution, open_cad, restore_protected, seed_project
-from ._tasks import BenchTask, DfmRequirement, ExportRequirement
+from ._tasks import BenchTask, DfmRequirement, ExportRequirement, MetadataRequirement
 
 __all__ = ["GradeReport", "grade", "grade_reference_solution"]
 
@@ -181,6 +182,7 @@ def _validate_exports(
     for index, requirement in enumerate(task.exports):
         record: dict[str, Any] = {"requirement": requirement.to_json()}
         target = f"bench-{requirement.part}-{index}.{EXPORT_FORMATS[requirement.fmt]}"
+        blank = _required_blank(requirement)
         try:
             result = cad.export_part(
                 requirement.part,
@@ -188,6 +190,7 @@ def _validate_exports(
                 artifact_ref=None,
                 target=target,
                 layout=requirement.layout,
+                blank=blank,
                 op_id=f"bench-export-{uuid.uuid4().hex}",
             )
         except Exception as exc:
@@ -231,15 +234,41 @@ def _validate_exports(
     return records, reasons
 
 
+def _required_blank(requirement: ExportRequirement) -> dict[str, Any] | None:
+    """The stock the grader nests onto: the requirement's own declared blank.
+
+    A ``nested_sheet`` export needs a blank, and ``export_part`` resolves it from
+    the explicit argument first and the part's ``part.blank_size`` second. The
+    grader *has* the blank — it is the requirement it is grading against — so it
+    passes it, and the nesting happens on the stock the task names.
+
+    Measured 2026-07-26 (``nest-gusset`` s1-s3, gpt-5.6-sol): omitting it graded
+    against the part's own declaration instead, so a run whose nested export had
+    itself succeeded was failed at grade time with ``export_failed`` carrying
+    "declares no part.blank_size". That is an unnamed precondition wearing an
+    export failure's name (``VALIDATION.md`` §1). Whether the part declares its
+    stock is a *metadata* property and is gated as one, by name
+    (``MetadataRequirement.blank_mm``), rather than by whether grading happened
+    to need it.
+    """
+    if requirement.blank_mm is None:
+        return None
+    width, height = requirement.blank_mm
+    return {"width_mm": width, "height_mm": height}
+
+
 def _validate_blank(
     requirement: ExportRequirement, data: bytes, record: dict[str, Any]
 ) -> list[str]:
-    """Check a nested layout's declared blank and that the profiles fit inside it.
+    """Check a nested layout's blank and that the profiles fit inside it.
 
     Two independent claims, both read off the exported bytes: the blank drawn on
-    the layout really is the stock the task declared (a run cannot pass by
-    nesting onto a whole sheet), and every profile lies inside it (a run cannot
-    pass by nesting off the edge).
+    the layout really is the stock the task requires (the grader nests onto that
+    stock — :func:`_required_blank` — so this reads back what the writer actually
+    drew), and every profile lies inside it, which is the acceptance test that
+    matters: a set that does not fit one blank cannot be nested onto one. That a
+    *run* declared the right stock is judged separately and by name, as the
+    metadata property it is (``metadata_blank_size``).
     """
     reasons: list[str] = []
     part = str(requirement.part)
@@ -440,8 +469,40 @@ def _validate_metadata(
                     f"metadata_material:{requirement.part}:{resolved or 'unresolved'}"
                     f"!={requirement.material_id}"
                 )
+        if requirement.blank_mm is not None:
+            reasons.extend(_validate_declared_blank(requirement, metadata, record))
         records.append(record)
     return records, reasons
+
+
+def _validate_declared_blank(
+    requirement: MetadataRequirement, metadata: Mapping[str, str], record: dict[str, Any]
+) -> list[str]:
+    """Does ``part.blank_size`` name the stock the task requires?
+
+    Structural, like every other metadata verdict: the field is free text by
+    contract (§5.2), so what is gated is the ``W x H`` pair inside it and not the
+    sentence around it — "210 x 125 mm blank, one set per blank" and "one set per
+    210x125 laser blank" both pass. An absent field is *not* reported here: that
+    is ``metadata_missing:<part>:blank_size``, a different failure with its own
+    name.
+    """
+    if requirement.blank_mm is None:
+        return []
+    declared = metadata.get("blank_size", "").strip()
+    if not declared:
+        return []
+    parsed = blank_from_metadata(declared)
+    record["blank_mm"] = None if parsed is None else [parsed.width_mm, parsed.height_mm]
+    width, height = requirement.blank_mm
+    if parsed is None:
+        return [f"metadata_blank_size:{requirement.part}:unparsed!={width}x{height}"]
+    if abs(parsed.width_mm - width) > 0.05 or abs(parsed.height_mm - height) > 0.05:
+        return [
+            f"metadata_blank_size:{requirement.part}:"
+            f"{parsed.width_mm}x{parsed.height_mm}!={width}x{height}"
+        ]
+    return []
 
 
 def _validate_renders(cad: CadOps, task: BenchTask) -> tuple[list[dict[str, Any]], list[str]]:

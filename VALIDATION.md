@@ -59,7 +59,7 @@ no reference solution passes is broken" meta-test could only ever prove a task
 was *passable* — never that it graded correctness rather than the author's
 geometry. `gpt-5.6-sol` exposed it by failing three tasks no model can pass.
 
-Three normative rules follow, enforced by corpus-wide tests:
+The normative rules that follow are enforced by corpus-wide tests:
 
 1. **An acceptance check asserts a functional property** — fits, clears, seals,
    holds this envelope, uses this material, has this count. Never "matches my
@@ -69,6 +69,22 @@ Three normative rules follow, enforced by corpus-wide tests:
    `abs=20.0` justifies nothing and is rejected.
 3. **A check named for a fit is measured as a fit** — against a seeded gauge
    part, not through a volume proxy.
+4. **An acceptance check evaluates on every submission, and fails under its own
+   name** (added 2026-07-26 from a live bench defect). A check may not be
+   conditional on something the run itself had to author, and one requirement
+   may not be another's silent precondition. `print-bracket`'s DFM requirement
+   left its `process` unset, so the fdm rule pack — the subject of the task —
+   ran only when the model happened to write `part.process`; `gpt-5.6-sol` wrote
+   it in seed 1 and not in seed 2 and was graded on printability once and on an
+   unresolvable-process refusal (`dfm_failed:bracket`) once, for the same
+   correct geometry. A task therefore **declares** what its checks need — the
+   DFM process is named on the requirement, and the parser rejects one that
+   omits it — and where the declaration is *itself* asked for by the prompt it
+   is gated as its own named requirement (`metadata_process:bracket:unstated`),
+   never as a precondition. Corollary: **where a prompt asks for §5.2
+   manufacturing metadata, a `metadata_requirements` entry gates it** — and
+   gates only what the prompt states, since a requirement the request never
+   made is a different task.
 
 Every task additionally ships an independent second solution — different
 construction, different dimensions within spec — that must also pass. A check

@@ -26,13 +26,34 @@ from hephaestus.agent_bridge.supervisor import (
 FAKE = Path(__file__).with_name("fake_sidecar.py")
 ORPHAN_PARENT = Path(__file__).with_name("orphan_parent.py")
 
-#: The two knobs the fake sidecar reads for the respawn regression; they travel
+#: The knobs the fake sidecar reads for the respawn regressions; they travel
 #: through the credential allowlist because the sidecar env is minimal by design.
-_FAKE_ENV_NAMES = frozenset({"FAKE_SIDECAR_REQUIRE_CONFIGURE", "FAKE_SIDECAR_CONFIGURE_LOG"})
+_FAKE_ENV_NAMES = frozenset(
+    {
+        "FAKE_SIDECAR_REQUIRE_CONFIGURE",
+        "FAKE_SIDECAR_CONFIGURE_LOG",
+        "FAKE_SIDECAR_DIE_AFTER_S",
+        "FAKE_SIDECAR_SPAWN_LOG",
+        "FAKE_SIDECAR_CONFIGURE_FAILS",
+    }
+)
+
+
+#: The payload the spawn hook replays onto every child (see the respawn tests).
+_CONFIGURE_PAYLOAD: dict[str, Any] = {
+    "providers": [{"id": "fake", "kind": "openai", "base_url": "http://127.0.0.1:9/v1"}],
+    "credentials": {"FAKE_KEY": "secret-value"},
+}
 
 
 def _argv() -> list[str]:
     return [sys.executable, str(FAKE)]
+
+
+def _configure_log(log: Path) -> list[str]:
+    if not log.is_file():
+        return []
+    return [line for line in log.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 @pytest.fixture
@@ -158,28 +179,206 @@ def test_py_handler_exception_becomes_error_frame() -> None:
         sup.close()
 
 
-# -- crash mid-call -> structured error + recovery hook + restart ----------
+# -- crash mid-call -> structured error + recovery hook + bounded respawn ---
+#
+# The bug this covers (bench `gpt-5.6-sol/knob-loft-s2`, `review_error:
+# SupervisorError: sidecar is not running`): a crash used to leave the
+# supervisor permanently childless, because only the watchdog respawned and the
+# watchdog only fires while a call is pending. The contract now is: the in-flight
+# call still fails, recovery still runs *before* anything is respawned, and the
+# NEXT call finds a fresh, re-configured child.
 
 
-def test_crash_midcall_fails_call_and_fires_recovery() -> None:
-    events: list[ProcessLossEvent] = []
-    sup = Supervisor(
-        SupervisorConfig(argv=_argv()),
-        recovery_hook=events.append,
+def _crashy_supervisor(
+    log: Path,
+    *,
+    recovery_hook: Any = None,
+    spawn_log: Path | None = None,
+    die_after_s: float | None = None,
+    **config: Any,
+) -> Supervisor:
+    """A supervisor whose fake sidecar refuses sessions until re-configured."""
+    source = dict(os.environ)
+    source["FAKE_SIDECAR_REQUIRE_CONFIGURE"] = "1"
+    source["FAKE_SIDECAR_CONFIGURE_LOG"] = str(log)
+    if spawn_log is not None:
+        source["FAKE_SIDECAR_SPAWN_LOG"] = str(spawn_log)
+    if die_after_s is not None:
+        source["FAKE_SIDECAR_DIE_AFTER_S"] = str(die_after_s)
+    return Supervisor(
+        SupervisorConfig(
+            argv=_argv(),
+            credential_allowlist=_FAKE_ENV_NAMES,
+            env_source=source,
+            **config,
+        ),
+        recovery_hook=recovery_hook,
+        spawn_hook=lambda sup: sup.call("runtime.configure", _CONFIGURE_PAYLOAD, timeout=5),
     )
+
+
+def test_crash_midcall_fails_call_and_fires_recovery(tmp_path: Path) -> None:
+    log = tmp_path / "configure.jsonl"
+    events: list[ProcessLossEvent] = []
+    #: (spawn_count, is_running) sampled *inside* the hook: proof of ordering.
+    at_recovery: list[tuple[int, bool]] = []
+    sup: Supervisor
+
+    def on_loss(event: ProcessLossEvent) -> None:
+        at_recovery.append((sup.spawn_count, sup.is_running()))
+        events.append(event)
+
+    sup = _crashy_supervisor(log, recovery_hook=on_loss, respawn_backoff_s=0.05)
     sup.start()
     sup.track_run("run-live")
+    first_pid = sup.child_pid
     try:
         with pytest.raises(SupervisorError):
             sup.call("crash", {})
         assert events, "recovery hook must fire before terminal synthesis"
         assert events[0].reason == "crash"
         assert "run-live" in events[0].tracked_run_ids
+        # Recovery ran before any respawn: still one spawn, still no child.
+        assert at_recovery == [(1, False)]
+        # The next call transparently lands on a fresh, re-configured child.
+        assert sup.call("session.create", {"profile": "orchestrator"}, timeout=5)["session_id"]
+        assert sup.child_pid != first_pid
+        assert sup.auto_respawns == 1
+        assert sup.spawn_count == 2
+        assert not sup.spawn_errors, sup.spawn_errors
+        assert sup.respawn_failure is None
+        lines = _configure_log(log)
+        assert len(lines) == 2, lines
+        assert lines[0] == lines[1], "the respawn must replay the *same* payload"
+    finally:
+        sup.close()
+
+
+def test_crash_loop_is_bounded_and_ends_durably_dead(tmp_path: Path) -> None:
+    """A sidecar that cannot stay up fails loudly instead of thrashing."""
+    log = tmp_path / "configure.jsonl"
+    spawns = tmp_path / "spawns.log"
+    events: list[ProcessLossEvent] = []
+    sup = _crashy_supervisor(
+        log,
+        recovery_hook=events.append,
+        spawn_log=spawns,
+        # Comfortably longer than a spawn + `runtime.configure` round trip
+        # (measured 20-60 ms on this fake sidecar), so each child is fully up
+        # before it dies: the test measures the respawn bound, not a race
+        # between the suicide timer and the spawn hook.
+        die_after_s=0.5,
+        respawn_max_attempts=3,
+        respawn_backoff_s=0.05,
+        respawn_cooldown_s=30.0,
+    )
+    sup.start()
+    try:
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and sup.respawn_failure is None:
+            time.sleep(0.02)
+        failure = sup.respawn_failure
+        assert failure is not None, "the crash loop must terminate in a durable failure"
+        assert "3 attempts" in failure
         assert not sup.is_running()
-        # manual restart brings a fresh sidecar back
+        # Bounded: the initial spawn plus exactly `respawn_max_attempts` retries.
+        assert sup.spawn_count == 4, sup.spawn_count
+        assert len(_configure_log(spawns)) == 4
+        assert len(events) == 4, [e.reason for e in events]
+        # Every later call fails with the same clear, attempt-naming error.
+        with pytest.raises(SupervisorError) as excinfo:
+            sup.call("echo", {"n": 1}, timeout=1)
+        assert "3 attempts" in str(excinfo.value)
+        # No thrash: the state stays dead, nothing spawns behind our back.
+        time.sleep(0.5)
+        assert sup.spawn_count == 4
+    finally:
+        sup.close()
+
+
+def test_respawn_gives_up_when_the_spawn_hook_keeps_failing(tmp_path: Path) -> None:
+    """A child that starts but cannot be configured is no better than a dead one.
+
+    The replacement is only useful once ``runtime.configure`` has been replayed
+    onto it, so a spawn hook that raises must consume an attempt, take the
+    half-built child down with it (never leaving an unconfigured sidecar behind),
+    and end in the same durable death naming the attempt count.
+    """
+    log = tmp_path / "configure.jsonl"
+    spawns = tmp_path / "spawns.log"
+    sup = _crashy_supervisor(log, spawn_log=spawns, respawn_backoff_s=0.05, respawn_max_attempts=3)
+    source = sup.config.env_source
+    assert source is not None
+    sup.start()
+    try:
+        # Read at every spawn, so only the *replacements* refuse to configure.
+        source["FAKE_SIDECAR_CONFIGURE_FAILS"] = "1"
+        with pytest.raises(SupervisorError):
+            sup.call("crash", {})
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and sup.respawn_failure is None:
+            time.sleep(0.02)
+        failure = sup.respawn_failure
+        assert failure is not None, "a permanently unconfigurable child must fail loudly"
+        assert "3 attempts" in failure
+        assert "configure refused" in failure, failure
+        assert len(sup.spawn_errors) == 3, sup.spawn_errors
+        assert sup.auto_respawns == 0, "a child the hook could not configure is not a success"
+        assert sup.spawn_count == 4, sup.spawn_count
+        assert len(_configure_log(spawns)) == 4
+        # No half-built child survives: each failed attempt was discarded.
+        assert not sup.is_running()
+        assert not pid_alive(sup.child_pid)
+    finally:
+        sup.close()
+
+
+def test_close_never_respawns(tmp_path: Path) -> None:
+    """A deliberate shutdown is not a crash, whatever the child's exit code."""
+    log = tmp_path / "configure.jsonl"
+    spawns = tmp_path / "spawns.log"
+    events: list[ProcessLossEvent] = []
+    sup = _crashy_supervisor(
+        log, recovery_hook=events.append, spawn_log=spawns, respawn_backoff_s=0.05
+    )
+    sup.start()
+    sup.close()
+    time.sleep(0.5)
+    assert sup.spawn_count == 1
+    assert sup.auto_respawns == 0
+    assert len(_configure_log(spawns)) == 1
+    assert not events, "close() is not a process-loss event"
+    assert not sup.is_running()
+
+
+def test_explicit_restart_clears_a_durable_respawn_failure(tmp_path: Path) -> None:
+    """Operator intent beats the exhausted budget; the child comes back healthy."""
+    log = tmp_path / "configure.jsonl"
+    env = dict(os.environ)
+    env["FAKE_SIDECAR_REQUIRE_CONFIGURE"] = "1"
+    env["FAKE_SIDECAR_CONFIGURE_LOG"] = str(log)
+    env["FAKE_SIDECAR_DIE_AFTER_S"] = "0.5"
+    sup = Supervisor(
+        SupervisorConfig(
+            argv=_argv(),
+            credential_allowlist=_FAKE_ENV_NAMES,
+            env_source=env,
+            respawn_max_attempts=2,
+            respawn_backoff_s=0.05,
+        ),
+        spawn_hook=lambda s: s.call("runtime.configure", _CONFIGURE_PAYLOAD, timeout=5),
+    )
+    sup.start()
+    try:
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and sup.respawn_failure is None:
+            time.sleep(0.02)
+        assert sup.respawn_failure is not None
+        # A sidecar that can stay up plus an explicit restart resurrects it.
+        env.pop("FAKE_SIDECAR_DIE_AFTER_S")
         sup.restart(reason="manual")
-        assert sup.is_running()
-        assert sup.call("echo", {"n": 1}) == {"n": 1}
+        assert sup.respawn_failure is None
+        assert sup.call("session.create", {"profile": "orchestrator"}, timeout=5)["session_id"]
     finally:
         sup.close()
 
@@ -222,12 +421,6 @@ def test_watchdog_kills_unresponsive_sidecar() -> None:
 # `-32600 runtime.configure has not run yet` — silently, long after the restart.
 
 
-_CONFIGURE_PAYLOAD: dict[str, Any] = {
-    "providers": [{"id": "fake", "kind": "openai", "base_url": "http://127.0.0.1:9/v1"}],
-    "credentials": {"FAKE_KEY": "secret-value"},
-}
-
-
 def _wedging_supervisor(log: Path) -> Supervisor:
     """A supervisor over a fake sidecar that *refuses* an unconfigured session.
 
@@ -248,12 +441,6 @@ def _wedging_supervisor(log: Path) -> Supervisor:
         ),
         spawn_hook=lambda sup: sup.call("runtime.configure", _CONFIGURE_PAYLOAD, timeout=5),
     )
-
-
-def _configure_log(log: Path) -> list[str]:
-    if not log.is_file():
-        return []
-    return [line for line in log.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def _wedge_until_respawned(sup: Supervisor, log: Path) -> None:
