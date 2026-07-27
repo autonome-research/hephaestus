@@ -574,6 +574,30 @@ SHA; tag `v0.1.0` is cut.
 
 ---
 
+## Stage 8 — Frontier capability (amendment 2026-07-27, maintainer-directed)
+
+Priority decision recorded: the optimal CAD harness outranks the soonest
+release, so Stage 7H (headless packaging) moves AFTER Stage 8 and ships a
+stronger tool. Stage 8 lands in four gated sub-stages, each with its own
+normative spec; the module reshape (hephaestus.geom / hephaestus.contract /
+hephaestus.bench, commit 3669a7a) is its foundation.
+
+- **8A — Ingest** (`INGEST.md`): `import_step` as an expression term with
+  harness-resolved reads and content-addressed inputs; operator-supplied
+  reference documents/images with ledger-citable provenance. Gate G8A per
+  `INGEST.md`.
+- **8B — Solid comparison**: shape/interface/topology diff in
+  `hephaestus.geom` serving import round-trips, regression diffing, and
+  external-benchmark scoring. Spec to be committed with the stage.
+- **8C — Assemblies and constraints**: mates/joints as declared constraints
+  that must hold, replacing post-hoc interference discovery. Spec to be
+  committed with the stage.
+- **8D — External evaluation**: a CADGenBench adapter (generation via
+  reference images, editing via STEP import), submission packaging and
+  scoring, plus the clean corpus-v1 re-run that closes G6's bench clause.
+  The external benchmark is the gate — a corpus we did not author cannot
+  fall into the reproduction trap the 2026-07-26 audit closed.
+
 ## Mission-wide rules
 
 1. **Gates are commands.** Every criterion above maps to a CI job; the
