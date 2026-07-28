@@ -45,7 +45,9 @@ from dataclasses import dataclass, replace
 from typing import Any, Final, cast
 
 from hephaestus.contract.tools_decl import REQUIREMENT_ID_PATTERN, REQUIREMENT_SOURCES
+from hephaestus.core.errors import AddressingError
 from hephaestus.core.project_store.locks import PROJECT_CONFIG_LOCK, LockManager
+from hephaestus.core.project_store.references import ReferenceRegistry
 from hephaestus.core.project_store.store import (
     artifact_ref as make_artifact_ref,
 )
@@ -71,6 +73,7 @@ __all__ = [
     "REQUIREMENT_SOURCES",
     "RUNTIME_ONLY_FIELDS",
     "LedgerState",
+    "RequirementCite",
     "RequirementEntry",
     "RequirementOps",
     "entry_views",
@@ -119,6 +122,48 @@ def _text(raw: JSONValue | None) -> str | None:
 
 
 @dataclass(frozen=True)
+class RequirementCite:
+    """A citation of an operator-supplied reference (``INGEST.md`` §2).
+
+    The alternative to a prompt ``quote`` for a ``specified`` entry: the spec was
+    not in the request, it was on the drawing. ``page`` is 1-based and documents
+    only. A *document* citation is machine-verifiable — ``heph lint`` checks the
+    quote against the reference's extracted text — while an *image* citation
+    (a callout on a scanned drawing) is lint-unverifiable by construction and is
+    routed to the §5 termination reviewer's vision channel instead.
+    """
+
+    reference: str
+    quote: str
+    page: int | None = None
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {"reference": self.reference, "page": self.page, "quote": self.quote}
+
+    @classmethod
+    def from_json(cls, entry_id: str, data: Mapping[str, JSONValue]) -> RequirementCite:
+        reference = data.get("reference")
+        if not isinstance(reference, str) or not reference.strip():
+            raise CadOpError(
+                "invalid_requirement",
+                f"requirement {entry_id}: cite.reference must name a registered reference",
+            )
+        quote = data.get("quote")
+        if not isinstance(quote, str) or not quote.strip():
+            raise CadOpError(
+                "invalid_requirement",
+                f"requirement {entry_id}: cite.quote is required — cite what the reference says",
+            )
+        page = data.get("page")
+        if page is not None and (isinstance(page, bool) or not isinstance(page, int) or page < 1):
+            raise CadOpError(
+                "invalid_requirement",
+                f"requirement {entry_id}: cite.page must be a 1-based page number",
+            )
+        return cls(reference=reference, quote=quote, page=None if page is None else int(page))
+
+
+@dataclass(frozen=True)
 class RequirementEntry:
     """One ledger entry, exactly the shape ``VALIDATION.md`` §2 fixes."""
 
@@ -126,6 +171,8 @@ class RequirementEntry:
     text: str
     source: str
     quote: str | None = None
+    #: ``INGEST.md`` §2: a reference citation standing in for the prompt quote.
+    cite: RequirementCite | None = None
     from_ids: tuple[str, ...] = ()
     rationale: str | None = None
     material: bool | None = None
@@ -155,6 +202,7 @@ class RequirementEntry:
             "text": self.text,
             "source": self.source,
             "quote": self.quote,
+            "cite": None if self.cite is None else self.cite.to_json(),
             "from": list(self.from_ids),
             "rationale": self.rationale,
             "material": self.material,
@@ -212,11 +260,21 @@ class RequirementEntry:
             raise CadOpError(
                 "invalid_requirement", f"requirement {raw_id}: asked must be a boolean"
             )
+        raw_cite = data.get("cite")
+        cite: RequirementCite | None = None
+        if isinstance(raw_cite, dict):
+            cite = RequirementCite.from_json(raw_id, cast("Mapping[str, JSONValue]", raw_cite))
+        elif raw_cite is not None:
+            raise CadOpError(
+                "invalid_requirement",
+                f"requirement {raw_id}: cite must be {{reference, page?, quote}} (INGEST.md §2)",
+            )
         return cls(
             id=raw_id,
             text=text,
             source=source,
             quote=_text(data.get("quote")),
+            cite=cite,
             from_ids=from_ids,
             rationale=_text(data.get("rationale")),
             material=material,
@@ -229,10 +287,11 @@ class RequirementEntry:
 
     def validated(self) -> RequirementEntry:
         """Enforce the per-source obligations of §2 (raises, never repairs)."""
-        if self.source == "specified" and not (self.quote or "").strip():
+        if self.source == "specified" and not (self.quote or "").strip() and self.cite is None:
             raise CadOpError(
                 "invalid_requirement",
-                f"requirement {self.id}: source='specified' requires a quote from the request",
+                f"requirement {self.id}: source='specified' requires a quote from the request "
+                "or a cite={reference, page?, quote} of a registered reference (INGEST.md §2)",
             )
         if self.source == "derived" and not self.from_ids:
             raise CadOpError(
@@ -401,6 +460,7 @@ class RequirementOps(CadOpsState):
             "text",
             "source",
             "quote",
+            "cite",
             "from",
             "rationale",
             "material",
@@ -463,7 +523,7 @@ class RequirementOps(CadOpsState):
         try:
             with locks.holding(PROJECT_CONFIG_LOCK):
                 current = self.ledger_state()
-                validated = _validate_all(apply(current))
+                validated = _validate_all(apply(current), cite_check=self._check_cite)
                 candidate = LedgerState(
                     generation=current.generation + 1,
                     entries=validated,
@@ -489,6 +549,41 @@ class RequirementOps(CadOpsState):
             # retry with the same invocation id is not a payload mismatch.
             self._store.wal.recover(outcome.op_key)
             raise
+
+    def _check_cite(self, entry: RequirementEntry) -> None:
+        """``INGEST.md`` §2: a citation must name a *registered* reference.
+
+        Checked structurally for the same reason ``quote`` is: a citation of a
+        reference the project does not carry is not a weaker specification, it is
+        a fabricated one, and nothing downstream could tell the difference later.
+        """
+        cite = entry.cite
+        if cite is None:
+            return
+        registry = ReferenceRegistry(self.layout, self._store)
+        try:
+            reference = registry.get(cite.reference)
+        except AddressingError as exc:
+            raise CadOpError(
+                "invalid_requirement",
+                f"requirement {entry.id}: cite names reference {cite.reference!r}, which is not "
+                f"registered ({', '.join(exc.candidates) or 'none registered'}) — "
+                "list_references() shows what this project carries",
+            ) from exc
+        if cite.page is None:
+            return
+        if reference.kind != "document":
+            raise CadOpError(
+                "invalid_requirement",
+                f"requirement {entry.id}: cite.page is for documents; "
+                f"{cite.reference!r} is an image",
+            )
+        if reference.pages is not None and cite.page > reference.pages:
+            raise CadOpError(
+                "invalid_requirement",
+                f"requirement {entry.id}: cite.page {cite.page} is past the end of "
+                f"{cite.reference!r} ({reference.pages} page(s))",
+            )
 
     def _replayed(self, response: str | None) -> LedgerState:
         """The generation a committed same-id call produced (immutable, so exact)."""
@@ -520,11 +615,21 @@ def _merge(
     return tuple(merged)
 
 
-def _validate_all(entries: Sequence[RequirementEntry]) -> tuple[RequirementEntry, ...]:
-    """Per-entry obligations plus cross-entry ``derived``-from resolution."""
+def _validate_all(
+    entries: Sequence[RequirementEntry],
+    *,
+    cite_check: Callable[[RequirementEntry], None] | None = None,
+) -> tuple[RequirementEntry, ...]:
+    """Per-entry obligations plus cross-entry ``derived``-from resolution.
+
+    ``cite_check`` resolves an ``INGEST.md`` §2 citation against the project's
+    reference registry; it is injected so this function stays a pure validator.
+    """
     known = {entry.id for entry in entries}
     for entry in entries:
         entry.validated()
+        if cite_check is not None:
+            cite_check(entry)
         missing = [ref for ref in entry.from_ids if ref not in known]
         if missing:
             raise CadOpError(

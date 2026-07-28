@@ -92,6 +92,10 @@ class BuildOps(CadOpsState):
         transient = {k: str(v) for k, v in (params or {}).items()}
         preview = bool(transient)
         publisher = self._publisher()
+        # INGEST.md §1: refresh the live imports/ state first, so a file the
+        # operator replaced between builds marks its importers stale and
+        # publication revalidation sees the current tree (mirrors the CLI).
+        publisher.sync_import_state()
         try:
             inputs = publisher.freeze_inputs(name)
         except LeaseHeldError as exc:
@@ -109,6 +113,8 @@ class BuildOps(CadOpsState):
                 out_dir=out_dir,
                 part_overrides=part_overrides,
                 project_overrides=self._project_overrides(),
+                imports=inputs.imports,
+                import_errors=inputs.import_errors,
                 baseline=publisher.baseline_for(name),
             )
             if build.result.status == "ok":

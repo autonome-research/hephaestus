@@ -27,8 +27,10 @@ from opstore import OpStore
 __all__ = [
     "CHECKS_DIRNAME",
     "GLOBALS_FILENAME",
+    "IMPORTS_DIRNAME",
     "MANIFEST_FILENAME",
     "PARTS_DIRNAME",
+    "REFERENCES_DIRNAME",
     "STORE_DIRNAME",
     "ProjectLayout",
     "ProjectManifest",
@@ -42,6 +44,10 @@ MANIFEST_FILENAME = "hephaestus.toml"
 GLOBALS_FILENAME = "globals.py"
 PARTS_DIRNAME = "parts"
 CHECKS_DIRNAME = "checks"
+#: Operator-supplied STEP files a part script may ``import_step`` (INGEST.md §1).
+IMPORTS_DIRNAME = "imports"
+#: Operator-supplied reference documents and images (INGEST.md §2).
+REFERENCES_DIRNAME = "references"
 STORE_DIRNAME = ".heph"
 JOURNAL_DIRNAME = "journal"
 EXPORTS_DIRNAME = "exports"
@@ -138,6 +144,16 @@ class ProjectLayout:
     @property
     def checks_dir(self) -> Path:
         return self.root / CHECKS_DIRNAME
+
+    @property
+    def imports_dir(self) -> Path:
+        """``imports/`` — the ONLY directory ``import_step`` may reach (INGEST.md §1)."""
+        return self.root / IMPORTS_DIRNAME
+
+    @property
+    def references_dir(self) -> Path:
+        """``references/`` — operator-supplied context, never model-writable (§2)."""
+        return self.root / REFERENCES_DIRNAME
 
     @property
     def store_root(self) -> Path:

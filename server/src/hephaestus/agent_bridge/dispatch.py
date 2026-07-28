@@ -145,6 +145,11 @@ CAD_TOOLS: frozenset[str] = frozenset(
         "read_requirements",
         "update_requirement",
         "read_artifact",
+        # INGEST.md §2 — read-only, freely retryable. There is deliberately no
+        # `add_reference`: registration is operator-side, so the model's only
+        # relationship with references/ is reading them.
+        "list_references",
+        "read_reference",
         "export_part",
         "query_snapshot",
         "run_dfm",
@@ -168,6 +173,12 @@ _IDENT_RE = re.compile(IDENT_PATTERN)
 
 #: Selector-bearing arguments whose ``"<part>/<selector>"`` prefix addresses a part.
 _SELECTOR_FIELDS: tuple[str, ...] = ("a", "b")
+
+#: Tools whose ``name`` argument is NOT a part id, so object-scope enforcement
+#: must not read it as one: a skill name, and (INGEST.md §2) a reference name.
+_NON_PART_NAME_TOOLS: frozenset[str] = frozenset(
+    {"load_skill", "read_reference", "list_references"}
+)
 
 
 class DispatchError(ProtocolError):
@@ -403,7 +414,7 @@ class ToolDispatcher:
         """Part ids the arguments address (for object-scope enforcement)."""
         parts: list[str] = []
         name = arguments.get("name")
-        if isinstance(name, str) and name and decl.name != "load_skill":
+        if isinstance(name, str) and name and decl.name not in _NON_PART_NAME_TOOLS:
             parts.append(name)
         part = arguments.get("part")
         if isinstance(part, str) and part:
@@ -470,6 +481,8 @@ class ToolDispatcher:
             "read_requirements": self._read_requirements,
             "update_requirement": self._update_requirement,
             "read_artifact": self._read_artifact,
+            "list_references": self._list_references,
+            "read_reference": self._read_reference,
             "export_part": self._export_part,
             "query_snapshot": self._query_snapshot,
             "run_dfm": self._run_dfm,
@@ -770,6 +783,26 @@ class ToolDispatcher:
         page = int(arguments.get("max_bytes", READ_ARTIFACT_PAGE_MAX))
         page = max(1, min(READ_ARTIFACT_PAGE_MAX, page))
         return cad.read_artifact(str(arguments["ref"]), offset, page)
+
+    # -- references (INGEST.md §2) -----------------------------------------
+
+    def _list_references(
+        self, _p: Principal, cad: CadOps, _arguments: dict[str, Any], _inv: Invocation
+    ) -> list[dict[str, Any]]:
+        return cast("list[dict[str, Any]]", cad.list_references())
+
+    def _read_reference(
+        self, _p: Principal, cad: CadOps, arguments: dict[str, Any], _inv: Invocation
+    ) -> dict[str, Any]:
+        raw_page = arguments.get("page")
+        page = (
+            int(raw_page) if isinstance(raw_page, int) and not isinstance(raw_page, bool) else None
+        )
+        return cad.read_reference(
+            str(arguments["name"]),
+            page=page,
+            offset_bytes=max(0, int(arguments.get("offset_bytes", 0))),
+        )
 
     # -- export ------------------------------------------------------------
 

@@ -83,6 +83,10 @@ class InputHashes:
     part_params: str
     effective_params: str
     toolchain: str
+    #: ``INGEST.md`` §1: ``{path relative to imports/: sha256}`` for every STEP
+    #: file this build imported. A changed file is a changed input — it
+    #: invalidates the current pointer exactly as an edited script does.
+    imports: Mapping[str, str] = field(default_factory=dict[str, str])
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -91,16 +95,21 @@ class InputHashes:
             "part_params": self.part_params,
             "effective_params": self.effective_params,
             "toolchain": self.toolchain,
+            "imports": {name: self.imports[name] for name in sorted(self.imports)},
         }
 
     @classmethod
     def from_json(cls, data: Mapping[str, JSONValue]) -> InputHashes:
+        # ``imports`` is absent from records written before Stage 8A; an empty
+        # map is the honest reading of "this build imported nothing".
+        imports = _str_map(data, "imports") if "imports" in data else {}
         return cls(
             script=_req(data, "script", str),
             hc_dependencies=_req(data, "hc_dependencies", str),
             part_params=_req(data, "part_params", str),
             effective_params=_req(data, "effective_params", str),
             toolchain=_req(data, "toolchain", str),
+            imports=imports,
         )
 
 

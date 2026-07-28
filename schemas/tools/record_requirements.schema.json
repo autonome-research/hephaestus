@@ -20,6 +20,42 @@
               ],
               "default": null
             },
+            "cite": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "page": {
+                      "anyOf": [
+                        {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null
+                    },
+                    "quote": {
+                      "type": "string"
+                    },
+                    "reference": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "reference",
+                    "quote"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "from": {
               "default": [],
               "items": {
@@ -144,6 +180,42 @@
             },
             "asked": {
               "type": "boolean"
+            },
+            "cite": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "page": {
+                      "anyOf": [
+                        {
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null
+                    },
+                    "quote": {
+                      "type": "string"
+                    },
+                    "reference": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "reference",
+                    "quote"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
             },
             "from": {
               "default": [],

@@ -65,6 +65,10 @@ class PartProjection:
     consumed: Mapping[str, JSONValue]
     artifact_ref: str
     audit_revision: int
+    #: INGEST.md §1: ``{imports/ path: sha256}`` this build actually consumed.
+    #: The import analogue of ``consumed``: only a part that imported a file
+    #: goes stale when that file changes.
+    imports: Mapping[str, str] = field(default_factory=dict[str, str])
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -72,6 +76,7 @@ class PartProjection:
             "consumed": dict(self.consumed),
             "artifact_ref": self.artifact_ref,
             "audit_revision": self.audit_revision,
+            "imports": {name: self.imports[name] for name in sorted(self.imports)},
         }
 
     @classmethod
@@ -88,11 +93,20 @@ class PartProjection:
             or not isinstance(consumed, dict)
         ):
             raise ValidationError("malformed part projection record", kind="contract")
+        imports_raw = data.get("imports", {})
+        if not isinstance(imports_raw, dict):
+            raise ValidationError("part projection imports must be an object", kind="contract")
+        imports: dict[str, str] = {}
+        for name, value in imports_raw.items():
+            if not isinstance(value, str):
+                raise ValidationError("import hashes must be strings", kind="contract")
+            imports[name] = value
         return cls(
             part=part,
             consumed=dict(consumed),
             artifact_ref=artifact,
             audit_revision=revision,
+            imports=imports,
         )
 
 
@@ -104,6 +118,9 @@ class ProjectionState:
     hc_state: Mapping[str, JSONValue] = field(default_factory=dict[str, "JSONValue"])
     stale: Mapping[str, str] = field(default_factory=dict[str, str])
     projections: Mapping[str, PartProjection] = field(default_factory=dict[str, PartProjection])
+    #: INGEST.md §1: the live ``{imports/ path: sha256}`` tree state, the import
+    #: analogue of ``hc_state``.
+    import_state: Mapping[str, str] = field(default_factory=dict[str, str])
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -113,6 +130,7 @@ class ProjectionState:
             "projections": {
                 part: self.projections[part].to_json() for part in sorted(self.projections)
             },
+            "import_state": {name: self.import_state[name] for name in sorted(self.import_state)},
         }
 
     @classmethod
@@ -139,11 +157,20 @@ class ProjectionState:
             if not isinstance(raw, dict):
                 raise ValidationError("part projections must be objects", kind="contract")
             projections[part] = PartProjection.from_json(raw)
+        import_state_raw = data.get("import_state", {})
+        if not isinstance(import_state_raw, dict):
+            raise ValidationError("import_state must be an object", kind="contract")
+        import_state: dict[str, str] = {}
+        for name, value in import_state_raw.items():
+            if not isinstance(value, str):
+                raise ValidationError("import hashes must be strings", kind="contract")
+            import_state[name] = value
         return cls(
             audit_revision=revision,
             hc_state=dict(hc_state),
             stale=stale_map,
             projections=projections,
+            import_state=import_state,
         )
 
 
@@ -274,12 +301,68 @@ class Projections:
         finally:
             self._locks.release(PROJECT_CONFIG_LOCK)
 
+    def apply_import_state(
+        self,
+        import_state: Mapping[str, str],
+        *,
+        reason: str = "imported file changed",
+    ) -> StaleReport:
+        """Advance the audit revision to a new live ``imports/`` tree state.
+
+        The import twin of :meth:`apply_hc_state`, and deliberately the same
+        shape: marks stale **exactly** the parts whose recorded imports differ
+        under the new state (a file no part imported invalidates nobody; a part
+        that imports nothing is never stale from here). Same lock order —
+        project-config, then the affected part locks lexically.
+        """
+        self._locks.acquire(PROJECT_CONFIG_LOCK)
+        try:
+            state, pointer = self._load()
+            changed: dict[str, tuple[str, ...]] = {}
+            for part in sorted(state.projections):
+                projection = state.projections[part]
+                names = tuple(
+                    sorted(
+                        path
+                        for path, digest in projection.imports.items()
+                        if import_state.get(path) != digest
+                    )
+                )
+                if names:
+                    changed[part] = names
+            stale = dict(state.stale)
+            part_refs = [part_lock(part) for part in sorted(changed)]
+            for ref in part_refs:
+                self._locks.acquire(ref)
+            try:
+                for part, names in changed.items():
+                    stale[part] = f"{reason}: {', '.join(names)}"
+                new_state = ProjectionState(
+                    audit_revision=state.audit_revision + 1,
+                    hc_state=dict(state.hc_state),
+                    stale=stale,
+                    projections=dict(state.projections),
+                    import_state=dict(import_state),
+                )
+                self._swap(new_state, pointer)
+            finally:
+                for ref in reversed(part_refs):
+                    self._locks.release(ref)
+            return StaleReport(
+                audit_revision=new_state.audit_revision,
+                stale=tuple(sorted(changed)),
+                changed=changed,
+            )
+        finally:
+            self._locks.release(PROJECT_CONFIG_LOCK)
+
     def record_current(
         self,
         part: str,
         *,
         consumed: Mapping[str, JSONValue],
         artifact_ref: str,
+        imports: Mapping[str, str] | None = None,
     ) -> ProjectionState:
         """Record a successful current publication's projection; clears its stale.
 
@@ -293,18 +376,27 @@ class Projections:
             )
         state, pointer = self._load()
         projections = dict(state.projections)
+        recorded_imports = dict(imports or {})
         projections[part] = PartProjection(
             part=part,
             consumed=dict(consumed),
             artifact_ref=artifact_ref,
             audit_revision=state.audit_revision,
+            imports=recorded_imports,
         )
         stale = {name: why for name, why in state.stale.items() if name != part}
+        # The published build's import hashes ARE live at this point (publication
+        # revalidated them under these locks), so folding them into the live
+        # import state keeps a first-ever build from marking itself stale on the
+        # next sync.
+        import_state = dict(state.import_state)
+        import_state.update(recorded_imports)
         new_state = ProjectionState(
             audit_revision=state.audit_revision,
             hc_state=dict(state.hc_state),
             stale=stale,
             projections=projections,
+            import_state=import_state,
         )
         self._swap(new_state, pointer)
         return new_state

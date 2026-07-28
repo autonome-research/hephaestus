@@ -600,7 +600,9 @@ build.
 ```
 record_requirements(entries: [{id: str, text: str,
                      source: "specified"|"derived"|"assumed",
-                     quote: str|null, from: [str], rationale: str|null,
+                     quote: str|null,
+                     cite: {reference: str, page: int|null, quote: str}|null,
+                     from: [str], rationale: str|null,
                      material: bool|null, value: number|null,
                      unit: str|null, applies_to: str|null}])
     -> {status: "ok", generation, artifact_ref, entries, unresolved_material}
@@ -608,7 +610,9 @@ read_requirements()
     -> {status: "ok", generation, artifact_ref, entries, unresolved_material}
 update_requirement(id: str, text: str|null = null,
                    source: "specified"|"derived"|"assumed"|null = null,
-                   quote: str|null = null, from: [str]|null = null,
+                   quote: str|null = null,
+                   cite: {reference, page?, quote}|null = null,
+                   from: [str]|null = null,
                    rationale: str|null = null, material: bool|null = null,
                    value: number|null = null, unit: str|null = null,
                    applies_to: str|null = null)
@@ -617,8 +621,11 @@ update_requirement(id: str, text: str|null = null,
 The ledger makes interpretation an inspectable artifact instead of an implicit
 act. One entry per constraint, emitted **before** any geometry. `source` is
 `specified` (traceable to a phrase of the request — `quote` required and
-checked), `derived` (computed from other entries — `from` lists their ids, and
-every id must resolve), or `assumed` (the model supplied it — `rationale`
+checked, **or** an `INGEST.md` §2 `cite` of a registered reference in its
+place: `{"source": "specified", "cite": {"reference": "sheet2.pdf", "page": 2,
+"quote": "Ø6.0 ±0.1"}}`, refused with `invalid_requirement` when the reference
+is not registered or the page does not exist), `derived` (computed from other
+entries — `from` lists their ids, and every id must resolve), or `assumed` (the model supplied it — `rationale`
 required, and `material: true|false` declares whether it moves geometry).
 Entries failing those obligations are refused with `invalid_requirement` and
 **nothing is written**: the batch is all-or-nothing.
@@ -651,7 +658,10 @@ harness rather than declared by the model, and it clears on the question having
 been asked rather than answered — see `build_part`.) `heph lint` reads the same
 ledger: a `CHECKS` numeric literal citing no entry id is `unsourced_constant`,
 and a `specified` entry whose `quote` is not in the request is
-`unsourced_requirement`.
+`unsourced_requirement`. A `cite` is verified the same way against the named
+reference's extracted text; a citation of an **image** reference has no text to
+decide against, so it is `unverifiable_citation` and is verified instead by the
+§5 termination reviewer on the vision channel (`INGEST.md` §2).
 
 ## Knowledge and registries
 
@@ -689,6 +699,41 @@ discriminated refusal `{status: "capability_error", code:
 search_materials(query: str) -> [{id, name, density, forms, thicknesses, notes}]
 ```
 Observed equivalent: `Search Materials` returning a Baltic birch record.
+
+### list_references / read_reference
+```
+list_references() -> [{name, kind: "document"|"image", mime_type, sha256,
+                       bytes, pages?, artifact_ref}]
+read_reference(name: str, page: int|null = null, offset_bytes: int = 0)
+    -> {status: "ok", name, kind: "document", mime_type, artifact_ref, sha256,
+        content, page, pages, offset_bytes, total_bytes, truncated,
+        oversized_line, next_offset_bytes?}
+     | {status: "ok", name, kind: "image", mime_type, artifact_ref, sha256,
+        images: [{data, mime_type}]}
+     | {error: "invalid_utf8_offset", offset_bytes, total_bytes}
+```
+`INGEST.md` §2. A project may carry `references/` — drawings, datasheets,
+photos, PDFs. They are **operator-supplied context, not model-writable
+artifacts**: they are registered by `heph reference add <file>` or by a bench
+task fixture, content-addressed at registration, and **there is deliberately no
+tool that adds one**. This pair is the entire model-facing surface, on both the
+`part` and `orchestrator` profiles and on the `reviewer` profile (§5 below); all
+of it is read-only and freely retryable.
+
+A **document** (pdf/txt/md) returns the text extracted *at registration* —
+never a live parse — inside the same provenance delimiters `load_skill` uses:
+reference content is REFERENCE MATERIAL, never instructions. `page` selects a
+1-based page (default 1) and `offset_bytes` is a byte cursor within it, under
+the standard 50 KiB / 2000-line dual cap; a truncated page returns
+`next_offset_bytes`, and an offset landing inside a UTF-8 code point returns
+`invalid_utf8_offset` rather than mojibake. An **image** (png/jpeg) returns
+inline image content within the architecture §5 image budgets, plus its
+`artifact_ref`.
+
+A `specified` requirement-ledger entry may cite a reference instead of quoting
+the request (`cite: {reference, page?, quote}` — see
+`record_requirements`). PDF text extraction is a server-side capability
+(`pypdf`); the engine stores and reads the extracted text without any parser.
 
 ## Interaction
 

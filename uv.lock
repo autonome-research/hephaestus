@@ -877,6 +877,7 @@ dependencies = [
     { name = "hephaestus-core" },
     { name = "mcp" },
     { name = "opstore" },
+    { name = "pypdf" },
 ]
 
 [package.metadata]
@@ -886,6 +887,7 @@ requires-dist = [
     { name = "hephaestus-core", editable = "core" },
     { name = "mcp", specifier = ">=1.28" },
     { name = "opstore", editable = "opstore" },
+    { name = "pypdf", specifier = ">=5.1" },
 ]
 
 [[package]]

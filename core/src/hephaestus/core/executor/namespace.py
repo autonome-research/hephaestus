@@ -3,7 +3,8 @@
 Builds the execution globals for part scripts and ``globals.py``:
 ``build123d`` complete (``from build123d import *``), ``math``, ``Param`` /
 ``PARAMS`` / ``p`` (§3), ``hc`` (§4, read-tracking), ``part`` (§5), ``tag``
-(§5.3), ``check`` / ``CHECKS`` / ``approx`` (§6) — and nothing else.
+(§5.3), ``check`` / ``CHECKS`` / ``approx`` (§6), ``import_step`` (INGEST.md
+§1) — and nothing else.
 ``open``, ``__import__``, ``exec``/``eval``/``compile``, filesystem and
 network access are absent from the builtins; attempting a well-known denied
 name raises ``sandbox_denied``, which the worker surfaces as a build error.
@@ -16,6 +17,7 @@ from __future__ import annotations
 import builtins as _builtins
 import math as _math
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from hephaestus.core.errors import SandboxDeniedError, ValidationError
@@ -37,6 +39,9 @@ METADATA_FIELDS: tuple[str, ...] = (
     "assembly_method",
     "joint",
 )
+
+#: The §2 injected name for STEP ingest (``INGEST.md`` §1).
+_IMPORT_STEP = "import_step"
 
 #: Builtins deliberately absent; attempting them raises ``sandbox_denied``.
 DENIED_BUILTINS: tuple[str, ...] = (
@@ -332,6 +337,66 @@ class PartOutput:
         return {name: feature.to_json() for name, feature in features.items()}
 
 
+class ImportRegistry:
+    """The ``import_step`` implementation inside the worker (``INGEST.md`` §1).
+
+    Harness-resolved, never script I/O: the executor read, hashed and converted
+    each declared file OUTSIDE the sandbox and staged the BRep in this build's
+    input area. ``import_step(name)`` is therefore a lookup plus a
+    deserialization — it opens exactly one staged path and never a project
+    path, so the §2 rule that the namespace has no filesystem access still
+    holds exactly as written.
+
+    ``failures`` carries the resolver's verdict for a declared name that could
+    not be staged (missing file, unreadable STEP, refused path). Raising it
+    HERE, when the statement runs, is what makes an unresolvable import a §8
+    build error at the ``import_step`` statement rather than an opaque
+    pre-build exception.
+    """
+
+    def __init__(
+        self,
+        staged: Mapping[str, Path],
+        *,
+        failures: Mapping[str, str] | None = None,
+    ) -> None:
+        self._staged = dict(staged)
+        self._failures = dict(failures or {})
+        self.used: list[str] = []
+
+    def import_step(self, name: str) -> object:
+        """Deserialize the staged shape for ``name`` (script contract §2)."""
+        if not isinstance(name, str) or not name:  # pyright: ignore[reportUnnecessaryIsInstance]
+            raise ValidationError(
+                "import_step(name) requires a non-empty path relative to imports/",
+                kind="contract",
+            )
+        failure = self._failures.get(name)
+        if failure is not None:
+            raise ValidationError(failure, kind="contract")
+        staged = self._staged.get(name)
+        if staged is None:
+            available = ", ".join(sorted(self._staged)) or "(none)"
+            raise ValidationError(
+                f"import_step({name!r}): no such import was staged for this build; "
+                f"imports are resolved from the declared string literals in this script "
+                f"(staged: {available})",
+                kind="contract",
+            )
+        from hephaestus.geom.step_io import shape_from_brep
+
+        # Deserialized afresh per call: two ``import_step`` calls on one file
+        # must yield two independent shapes, never one aliased object a later
+        # placement could move under both names.
+        shape = shape_from_brep(staged.read_bytes(), source=name)
+        self._record(name)
+        return shape
+
+    def _record(self, name: str) -> None:
+        if name not in self.used:
+            self.used.append(name)
+
+
 class Approx:
     """§6 ``approx(value, abs=tol)``: deterministic tolerant numeric comparison."""
 
@@ -396,12 +461,13 @@ def build_namespace(
     part: PartOutput | None = None,
     tag_registry: TagRegistry | None = None,
     check_registry: CheckRegistry | None = None,
+    imports: ImportRegistry | None = None,
 ) -> dict[str, object]:
     """Assemble the §2 injected namespace as execution globals.
 
-    Part mode passes ``part`` + ``tag_registry``; globals mode omits them
-    (globals.py declares values, not geometry — §4). ``__builtins__`` is the
-    restricted mapping from :func:`safe_builtins`.
+    Part mode passes ``part`` + ``tag_registry`` (+ ``imports``, INGEST.md §1);
+    globals mode omits them (globals.py declares values, not geometry — §4).
+    ``__builtins__`` is the restricted mapping from :func:`safe_builtins`.
     """
     namespace: dict[str, object] = {}
     namespace.update(_build123d_exports())
@@ -416,6 +482,8 @@ def build_namespace(
         namespace["tag"] = tag_registry.tag
     if check_registry is not None:
         namespace["check"] = check_registry.register
+    if imports is not None:
+        namespace[_IMPORT_STEP] = imports.import_step
     namespace["approx"] = approx
     namespace["__builtins__"] = safe_builtins()
     namespace["__name__"] = "__hephaestus_script__"

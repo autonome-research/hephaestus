@@ -1,0 +1,171 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/read_reference.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Read one reference: delimited document text (paged) or an inline image.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "type": "string"
+      },
+      "offset_bytes": {
+        "default": 0,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "page": {
+        "anyOf": [
+          {
+            "minimum": 1,
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "type": "object"
+  },
+  "result": {
+    "oneOf": [
+      {
+        "additionalProperties": true,
+        "properties": {
+          "artifact_ref": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "kind": {
+            "const": "document"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "next_offset_bytes": {
+            "type": "integer"
+          },
+          "offset_bytes": {
+            "type": "integer"
+          },
+          "oversized_line": {
+            "type": "boolean"
+          },
+          "oversized_line_offset_bytes": {
+            "type": "integer"
+          },
+          "page": {
+            "type": "integer"
+          },
+          "pages": {
+            "type": "integer"
+          },
+          "status": {
+            "const": "ok"
+          },
+          "total_bytes": {
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "status",
+          "name",
+          "kind",
+          "content",
+          "artifact_ref",
+          "truncated"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": true,
+        "properties": {
+          "artifact_ref": {
+            "type": "string"
+          },
+          "images": {
+            "items": {
+              "additionalProperties": true,
+              "properties": {
+                "data": {
+                  "type": "string"
+                },
+                "mime_type": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "data",
+                "mime_type"
+              ],
+              "type": "object"
+            },
+            "maxItems": 4,
+            "type": "array"
+          },
+          "kind": {
+            "const": "image"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "const": "ok"
+          }
+        },
+        "required": [
+          "status",
+          "name",
+          "kind",
+          "images",
+          "artifact_ref"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": true,
+        "properties": {
+          "error": {
+            "const": "invalid_utf8_offset"
+          },
+          "offset_bytes": {
+            "type": "integer"
+          },
+          "total_bytes": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      }
+    ]
+  },
+  "title": "read_reference",
+  "x-hephaestus-tool": {
+    "idempotent": false,
+    "maxUtf8Fields": {},
+    "name": "read_reference",
+    "profiles": [
+      "part",
+      "orchestrator",
+      "reviewer"
+    ],
+    "sequential": false
+  }
+}

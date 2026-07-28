@@ -27,6 +27,7 @@ from hephaestus.core.executor.fingerprint import (
     compare,
     descriptors_from_json,
 )
+from hephaestus.core.executor.imports import ImportResolutionError, stage_import
 from hephaestus.core.executor.sandbox.base import ExecBackend, Rlimits, SandboxSpec
 from hephaestus.core.executor.sandbox.bwrap import interpreter_ro_binds
 from hephaestus.core.hashing import (
@@ -108,6 +109,14 @@ class BuildRequest:
     )
     origin: BuildOrigin = "local"
     wall_clock_s: float = DEFAULT_WALL_CLOCK_S
+    #: INGEST.md §1: the FROZEN bytes of each declared ``imports/`` file, keyed
+    #: by the path as written in the script. Bytes rather than paths so a
+    #: lost-response retry replays the original content even if the file has
+    #: since been replaced — exactly as the frozen script text does.
+    imports: Mapping[str, bytes] = field(default_factory=dict[str, bytes])
+    #: Declared imports the resolver refused (path -> named refusal). Surfaced
+    #: as a build error at the ``import_step`` statement, not before it.
+    import_errors: Mapping[str, str] = field(default_factory=dict[str, str])
 
 
 @dataclass(frozen=True)
@@ -165,6 +174,37 @@ def _require_dict(value: JSONValue, what: str) -> dict[str, JSONValue]:
     return value
 
 
+def import_hashes(request: BuildRequest) -> dict[str, str]:
+    """§8 ``input_hashes.imports``: ``{declared path: sha256}`` of the frozen bytes."""
+    return {path: sha256_bytes(data) for path, data in sorted(request.imports.items())}
+
+
+def stage_request_imports(
+    request: BuildRequest, out_dir: Path
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Convert every frozen import ONCE and stage it read-only for the worker.
+
+    Returns ``({declared path: staged filename}, {declared path: refusal})``.
+    Conversion happens here, in the parent, outside the sandbox: the worker
+    receives BRep in its own input area and never a project path (``INGEST.md``
+    §1). A payload OCCT cannot read is not raised — it joins ``import_errors``
+    so the build fails at the ``import_step`` statement that named it, with the
+    full §8 error record.
+    """
+    staged: dict[str, str] = {}
+    errors: dict[str, str] = dict(request.import_errors)
+    for path, data in sorted(request.imports.items()):
+        if path in errors:
+            continue
+        try:
+            file = stage_import(data, path=path, content_hash=sha256_bytes(data), out_dir=out_dir)
+        except ImportResolutionError as exc:
+            errors[path] = exc.message
+            continue
+        staged[path] = file.name
+    return staged, errors
+
+
 def run_build(
     request: BuildRequest,
     *,
@@ -187,6 +227,7 @@ def run_build(
             f"execution backend {report.backend!r} unavailable: {report.reason}"
         )
     out_dir.mkdir(parents=True, exist_ok=True)
+    staged, import_errors = stage_request_imports(request, out_dir)
     job: dict[str, JSONValue] = {
         "part": request.part,
         "script": request.script,
@@ -196,6 +237,8 @@ def run_build(
         "out_dir": str(out_dir),
         "origin": request.origin,
         "mode": "build",
+        "imports": cast("dict[str, JSONValue]", dict(staged)),
+        "import_errors": cast("dict[str, JSONValue]", dict(import_errors)),
     }
     payload = json.dumps(job).encode("utf-8")
     spec = SandboxSpec(
@@ -271,6 +314,7 @@ def assemble_build(
         part_params=sha256_canonical_json(declaration),
         effective_params=effective_params_hash(effective),
         toolchain=toolchain_hash(),
+        imports=import_hashes(request),
     )
     audit_hashes = AuditHashes(
         globals_source=hash_text(request.globals_source or ""),

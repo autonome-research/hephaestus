@@ -168,6 +168,8 @@ class CheckOps(CadOpsState):
                 out_dir=out_dir,
                 part_overrides=dict(self.params.read("part", name).values),
                 project_overrides=self._project_overrides(),
+                imports=inputs.imports,
+                import_errors=inputs.import_errors,
                 baseline=publisher.baseline_for(name),
             )
             # preview=True: evidence is durable (refs resolve) but nothing becomes

@@ -33,8 +33,10 @@ from opstore import (
 )
 
 __all__ = [
+    "IMPORT_REF_PREFIX",
     "SNAPSHOT_REF_PREFIX",
     "DriftEvidence",
+    "ImportSnapshot",
     "ProjectStore",
     "SourceSnapshot",
     "WriteConflictError",
@@ -45,6 +47,8 @@ __all__ = [
 
 #: Ref prefix for registered source snapshots (part scripts and globals.py).
 SNAPSHOT_REF_PREFIX = "artifact:part-snapshot:"
+#: Ref prefix for registered ``imports/`` payload snapshots (INGEST.md §1).
+IMPORT_REF_PREFIX = "artifact:import:"
 #: Reserved name for the globals.py snapshot.
 GLOBALS_NAME = "globals"
 
@@ -71,6 +75,22 @@ class SourceSnapshot:
     content: str
     content_hash: str  # "sha256:<hex>" of the file bytes
     snapshot_ref: str  # SNAPSHOT_REF_PREFIX + content_hash
+
+
+@dataclass(frozen=True)
+class ImportSnapshot:
+    """An immutable, registered read of one ``imports/`` file (INGEST.md §1).
+
+    Binary, unlike :class:`SourceSnapshot`: a STEP payload is not text and is
+    never decoded. The bytes are registered as an opstore blob at read time, so
+    the build that froze them can replay the ORIGINAL content on a
+    lost-response retry even after the file on disk has been replaced.
+    """
+
+    path: str  # as declared in the script, relative to imports/
+    data: bytes
+    content_hash: str  # "sha256:<hex>" of the file bytes
+    snapshot_ref: str  # IMPORT_REF_PREFIX + content_hash
 
 
 @dataclass(frozen=True)
@@ -166,6 +186,52 @@ class ProjectStore:
         if not path.is_file():
             return None
         return self._register(GLOBALS_NAME, path, path.read_bytes())
+
+    def read_import(self, path: str) -> ImportSnapshot:
+        """Read one ``imports/`` file under path confinement, registering its bytes.
+
+        Resolution is the executor's ``read_import`` walk (no-follow/beneath,
+        rechecked at read time): traversal, absolute paths and symlink escapes
+        raise the named ``ImportResolutionError`` from
+        :mod:`hephaestus.core.executor.imports` rather than reading anything.
+        """
+        from hephaestus.core.executor.imports import read_import as confined_read
+
+        data = confined_read(self.layout.imports_dir, path)
+        content_hash = self._store.blobs.put(data)
+        return ImportSnapshot(
+            path=path,
+            data=data,
+            content_hash=content_hash,
+            snapshot_ref=IMPORT_REF_PREFIX + content_hash,
+        )
+
+    def import_hash(self, path: str) -> str | None:
+        """Live hash of one ``imports/`` file (``None`` when it cannot be read).
+
+        Used by publication revalidation and staleness: a file that is gone,
+        replaced by a symlink, or otherwise unreadable is "not the frozen
+        bytes", which is all either caller needs to know.
+        """
+        from hephaestus.core.executor.imports import ImportResolutionError
+        from hephaestus.core.executor.imports import read_import as confined_read
+
+        try:
+            return sha256_bytes(confined_read(self.layout.imports_dir, path))
+        except ImportResolutionError:
+            return None
+
+    def list_imports(self) -> tuple[str, ...]:
+        """Every regular file beneath ``imports/``, as posix-relative paths, sorted."""
+        root = self.layout.imports_dir
+        if not root.is_dir():
+            return ()
+        out: list[str] = []
+        for path in sorted(root.rglob("*")):
+            if path.is_symlink() or not path.is_file():
+                continue
+            out.append(path.relative_to(root).as_posix())
+        return tuple(out)
 
     # -- drift --------------------------------------------------------------
 

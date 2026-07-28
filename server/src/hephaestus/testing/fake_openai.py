@@ -55,6 +55,12 @@ class FakeOpenAI:
     _script: list[TurnResolver] = field(default_factory=list["TurnResolver"])
     _cursor: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock)
+    #: The first exception a turn resolver raised, captured so it can FAIL the
+    #: test. Resolvers run on the handler thread, where ``http.server`` turns an
+    #: escaping exception into a printed traceback and a truncated SSE stream —
+    #: so without this every ``assert`` inside a script was decorative, and a
+    #: test could assert nothing while reading as if it asserted a whole turn.
+    script_error: BaseException | None = None
 
     @property
     def base_url(self) -> str:
@@ -64,6 +70,18 @@ class FakeOpenAI:
         with self._lock:
             self._script = list(script)
             self._cursor = 0
+            self.script_error = None
+
+    def raise_script_error(self) -> None:
+        """Re-raise (on the test thread) whatever a turn resolver raised."""
+        with self._lock:
+            error = self.script_error
+            self.script_error = None
+        if error is not None:
+            raise AssertionError(
+                "a FakeOpenAI turn resolver raised; the scripted turn never reached "
+                "the agent and any assertion after it is meaningless"
+            ) from error
 
     def provider_spec(self) -> dict[str, Any]:
         """A ``runtime.configure`` provider spec pointing at this server.
@@ -92,6 +110,9 @@ class FakeOpenAI:
         self._server.shutdown()
         self._server.server_close()
         self._thread.join(timeout=5)
+        # Teardown is the last chance to surface a resolver that blew up on the
+        # handler thread; without it the test passes having asserted nothing.
+        self.raise_script_error()
 
     # -- turn selection (called from the handler thread) -------------------
 
@@ -102,7 +123,15 @@ class FakeOpenAI:
                 self._cursor += 1
         if resolver is None:
             return {"kind": "text", "chunks": ["HEPH_DONE"]}
-        return resolver(info) if callable(resolver) else resolver
+        if not callable(resolver):
+            return resolver
+        try:
+            return resolver(info)
+        except BaseException as exc:  # recorded here, re-raised on the test thread
+            with self._lock:
+                if self.script_error is None:
+                    self.script_error = exc
+            return {"kind": "text", "chunks": ["HEPH_SCRIPT_ERROR"]}
 
 
 def _chunk(model: str, delta: dict[str, Any], finish: str | None) -> bytes:

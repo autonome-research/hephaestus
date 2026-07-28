@@ -38,7 +38,8 @@
         "hc_dependencies",
         "part_params",
         "effective_params",
-        "toolchain"
+        "toolchain",
+        "imports"
       ],
       "additionalProperties": false,
       "properties": {
@@ -46,7 +47,12 @@
         "hc_dependencies": { "$ref": "#/$defs/sha256" },
         "part_params": { "$ref": "#/$defs/sha256" },
         "effective_params": { "$ref": "#/$defs/sha256" },
-        "toolchain": { "$ref": "#/$defs/sha256" }
+        "toolchain": { "$ref": "#/$defs/sha256" },
+        "imports": {
+          "description": "INGEST.md section 1: sha256 of each imported STEP file, keyed by its path relative to imports/.",
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/sha256" }
+        }
       }
     },
     "audit_hashes": {

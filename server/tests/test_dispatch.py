@@ -293,6 +293,10 @@ _ARGS: dict[str, dict[str, object]] = {
     "update_requirement": {"id": "R1", "value": 1.0},
     "load_skill": {"name": "booleans"},
     "list_skills": {},
+    # INGEST.md §2. ``name`` here is a reference, not a part — the reason
+    # object-scope enforcement exempts these two from reading it as one.
+    "list_references": {},
+    "read_reference": {"name": "sheet.pdf"},
     "search_parts_store": {"query": "m5"},
     "instance_store_part": {"id": "m5", "params": {}},
     "search_materials": {"query": "ply"},

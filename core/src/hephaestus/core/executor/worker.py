@@ -12,7 +12,12 @@ and tag fingerprints. Artifacts are written ONLY under the job's out dir —
 the parent (runner) moves them into CAS and mints refs.
 
 Job JSON: ``{"part", "script", "globals_source", "part_overrides",
-"project_overrides", "out_dir", "origin", "mode"}``.
+"project_overrides", "out_dir", "origin", "mode", "imports",
+"import_errors"}`` — the last two carry the parent's import resolution
+(``INGEST.md`` §1): ``imports`` maps each declared path to its staged BRep
+filename under the out dir's input area, ``import_errors`` maps a declared path
+the parent could NOT resolve to the refusal the worker must raise when that
+``import_step`` statement runs.
 """
 
 from __future__ import annotations
@@ -33,8 +38,14 @@ from hephaestus.core.executor.globals_exec import (
     ensure_no_shadowing,
     execute_globals,
 )
+from hephaestus.core.executor.imports import (
+    DynamicImportPathError,
+    declared_imports,
+    staged_paths,
+)
 from hephaestus.core.executor.namespace import (
     CheckRegistry,
+    ImportRegistry,
     ParamState,
     PartOutput,
     build_namespace,
@@ -342,6 +353,7 @@ def execute_job(job: Mapping[str, JSONValue]) -> dict[str, JSONValue]:
         "consumed_hc": {},
         "hc_state": {},
         "geometry_index": {"labels": [], "bindings": {}, "tags": []},
+        "imports_used": [],
         "geometries": [],
         "source_map": None,
         "tag_fingerprints": {},
@@ -376,12 +388,17 @@ def execute_job(job: Mapping[str, JSONValue]) -> dict[str, JSONValue]:
     part = PartOutput()
     tag_registry = TagRegistry()
     check_registry = CheckRegistry()
+    imports = ImportRegistry(
+        staged_paths(out_dir, _string_map(job.get("imports"), "imports")),
+        failures=_string_map(job.get("import_errors"), "import_errors"),
+    )
     namespace = build_namespace(
         param_state=param_state,
         hc=hc,
         part=part,
         tag_registry=tag_registry,
         check_registry=check_registry,
+        imports=imports,
     )
     injected = frozenset(namespace)
 
@@ -399,6 +416,25 @@ def execute_job(job: Mapping[str, JSONValue]) -> dict[str, JSONValue]:
             last_good_shape=None,
             out_dir=out_dir,
         )
+        result["error"] = record
+        return result
+
+    # INGEST.md §1: every import_step argument must be a string literal, so the
+    # file can be frozen, hashed and staged before this worker ran. A computed
+    # path is a §8 build error at its own statement.
+    try:
+        declared_imports(module, source=script)
+    except DynamicImportPathError as exc:
+        record, _ = _error_record(
+            exc=exc,
+            source=script,
+            filename=PART_FILENAME,
+            fallback_line=exc.lineno,
+            built_through=None,
+            last_good_shape=None,
+            out_dir=out_dir,
+        )
+        record["col"] = exc.col
         result["error"] = record
         return result
 
@@ -470,6 +506,7 @@ def execute_job(job: Mapping[str, JSONValue]) -> dict[str, JSONValue]:
     result["effective_params"] = dict(param_state.effective or {})
     result["consumed_hc"] = hc.consumed_projection()
     result["metadata"] = part.metadata()
+    result["imports_used"] = cast("list[JSONValue]", list(imports.used))
     feature_metadata: dict[str, JSONValue] = dict(part.feature_metadata())
     result["feature_metadata"] = feature_metadata
 
@@ -624,6 +661,15 @@ def _run_part_checks(
     except Exception as exc:  # facade wiring failure: fail every check, not the build
         failure: JSONValue = {"error": {"type": type(exc).__name__, "message": str(exc)}}
         return {name: {"pass": False, "measured": failure} for name in checks}
+
+
+def _string_map(raw: JSONValue | None, what: str) -> dict[str, str]:
+    """A ``{str: str}`` job field (absent or malformed => empty)."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"{what} must be an object")
+    return {str(k): str(v) for k, v in raw.items() if isinstance(v, str)}
 
 
 def _override_value(value: JSONValue, name: str) -> int | float | str:

@@ -62,7 +62,11 @@ describe("profile tool subsets", () => {
 
   it("reviewer gets the read-only measurement/render subset only", () => {
     const reviewer = toolsForProfile("reviewer");
-    expect(reviewer.sort()).toEqual(["inspect_part", "measure", "read_artifact"].sort());
+    // INGEST.md §2: an image citation is lint-unverifiable, so the §5 reviewer is
+    // the only thing that can verify it — hence the two read-only reference tools.
+    expect(reviewer.sort()).toEqual(
+      ["inspect_part", "measure", "read_artifact", "list_references", "read_reference"].sort(),
+    );
     // No mutation, no delegation, and not the agent's own checks (VALIDATION §5).
     for (const name of [...ORCHESTRATOR_ONLY, "write_part", "edit_part", "build_part", "run_checks", "export_part", "set_params", "record_requirements", "update_requirement"]) {
       expect(reviewer).not.toContain(name);

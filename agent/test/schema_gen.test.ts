@@ -4,11 +4,16 @@ import { TOOLS, TOOL_NAMES } from "../src/tools/schema.gen.js";
 import { PROMPT_MAX_UTF8_BYTES } from "../src/limits.js";
 
 describe("generated tool surface", () => {
-  it("declares the Stage 2 surface, the Stage 2V ledger and Stage 6 (33 tools)", () => {
-    expect(TOOL_NAMES).toHaveLength(33);
+  it("declares the Stage 2 surface, the Stage 2V ledger, Stage 6 and Stage 8A references (35 tools)", () => {
+    expect(TOOL_NAMES).toHaveLength(35);
     for (const ledger of ["record_requirements", "read_requirements", "update_requirement"]) {
       expect(TOOL_NAMES).toContain(ledger);
     }
+    // INGEST.md §2: the model may read operator-supplied references, never add them.
+    for (const reference of ["list_references", "read_reference"]) {
+      expect(TOOL_NAMES).toContain(reference);
+    }
+    expect(TOOL_NAMES).not.toContain("add_reference");
     expect(Object.keys(TOOLS).sort()).toEqual([...TOOL_NAMES].sort());
   });
 

@@ -30,6 +30,10 @@ communicates its output by assigning to `part.*`.
 - **`tag`** — topology tagging (§5.3).
 - **`check`, `CHECKS`, `approx`** — EXTENSION, persistent assertions and the
   deterministic numeric comparison helper used by those assertions (§6).
+- **`import_step(name)`** — EXTENSION (`INGEST.md` §1), the imported STEP solid
+  as a term in the expression. `name` MUST be a string literal path relative to
+  the project's `imports/`; the executor resolves, hashes and stages the file
+  before the worker runs, so this is not script I/O and `open` stays absent.
 - Nothing else. `open`, `__import__`, filesystem and network access are
   absent; attempting them is a build error.
 
@@ -231,7 +235,8 @@ record:
   "project_snapshot_ref": "artifact:project-snapshot:sha256:…" | null,
   "input_hashes": { "script": "sha256:…",
                     "hc_dependencies": "sha256:…", "part_params": "sha256:…",
-                    "effective_params": "sha256:…", "toolchain": "sha256:…" },
+                    "effective_params": "sha256:…", "toolchain": "sha256:…",
+                    "imports": {"bracket.step": "sha256:…"} },
   "audit_hashes": { "globals_source": "sha256:…",
                     "project_param_state": "sha256:…" },
   "metrics": { "solids": 25, "faces": 438, "bbox_mm": [380.0, 280.0, 250.0],
@@ -256,7 +261,9 @@ record:
 
 `input_hashes` identify the immutable snapshot used by the build, including
 canonical effective values after request-local overrides, the exact consumed
-`hc` name/value projection, and the pinned toolchain. Full `globals.py` and
+`hc` name/value projection, the pinned toolchain, and (`INGEST.md` §1) the
+sha256 of every `imports/` file the script imported — a changed imported file
+is a changed input exactly as an edited script is. Full `globals.py` and
 project-param state are audit hashes, not invalidators when the consumed
 projection is unchanged. `current` is true only when `status="ok"`, persisted
 script/part-param/toolchain hashes and the consumed-`hc` projection still match

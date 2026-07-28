@@ -73,6 +73,15 @@ def _steps() -> list[Step]:
         ("list_skills", lambda seen: {}),
         ("load_skill", lambda seen: {"name": "build123d-idioms", "limit_lines": 40}),
         ("search_materials", lambda seen: {"query": "plywood"}),
+        # -- references (INGEST.md §2): read-only, operator-registered --------
+        ("list_references", lambda seen: {}),
+        (
+            "read_reference",
+            lambda seen: {
+                "name": str(cast("list[Any]", seen["list_references"])[0]["name"]),
+                "page": 1,
+            },
+        ),
         ("search_parts_store", lambda seen: {"query": "screw", "max_results": 3}),
         (
             "instance_store_part",
@@ -248,6 +257,32 @@ class Chain:
         return tool_call(name, arguments, f"call_{self.index}")
 
 
+#: The one operator-supplied reference this chain reads (INGEST.md §2). Markdown,
+#: so the extraction needed to register it is core's own — no server-side parser
+#: is in play here; what is exercised is that the *model* can list and read it.
+REFERENCE_NAME = "datasheet.md"
+REFERENCE_TEXT = "# Widget datasheet\n\nOverall width 40.0 mm.\n"
+
+
+def _register_reference(project_root: Any) -> None:
+    """Register a reference the way an operator does — before any session runs.
+
+    Deliberately not a tool call: INGEST.md §2 gives the model no way to add a
+    reference, so the chain below can only ever list and read this one.
+    """
+    from hephaestus.core.project_store.layout import load_project, open_store
+    from hephaestus.core.project_store.references import ReferenceRegistry
+
+    layout = load_project(project_root)
+    store = open_store(layout)
+    try:
+        ReferenceRegistry(layout, store).add_bytes(
+            REFERENCE_TEXT.encode("utf-8"), name=REFERENCE_NAME
+        )
+    finally:
+        store.close()
+
+
 @pytest.fixture
 def surface(tmp_path: Any, sidecar_dist: Any) -> Any:
     from _g2 import scaffold_project
@@ -255,6 +290,7 @@ def surface(tmp_path: Any, sidecar_dist: Any) -> Any:
     # The chain records its own ledger and asserts its generations, so the
     # project must start with none (VALIDATION.md §2).
     project = scaffold_project(tmp_path / "surface", seed_ledger=False)
+    _register_reference(project)
     harness = G2Harness(project, sidecar_dist, snapshot=True, sandbox=True)
     try:
         yield harness
@@ -303,6 +339,15 @@ def test_every_generated_tool_flows_through_the_real_bridge(surface: G2Harness) 
     skill = cast("dict[str, Any]", seen["load_skill"])
     assert "BEGIN REFERENCE" in skill["content"] or "REFERENCE" in skill["content"]
     assert skill["artifact_ref"].startswith("artifact:")
+    # -- references: listed and read, still provenance-delimited -------------
+    references = cast("list[Any]", seen["list_references"])
+    assert [entry["name"] for entry in references] == [REFERENCE_NAME]
+    assert references[0]["kind"] == "document" and references[0]["pages"] == 1
+    reference = cast("dict[str, Any]", seen["read_reference"])
+    assert "Overall width 40.0 mm." in reference["content"]
+    assert "REFERENCE" in reference["content"], "reference text is never bare instructions"
+    assert reference["artifact_ref"].startswith("artifact:reference:")
+    assert reference["truncated"] is False
     materials = cast("list[Any]", seen["search_materials"])
     assert any("plywood" in str(entry["id"]) for entry in materials)
     store = cast("list[Any]", seen["search_parts_store"])

@@ -22,8 +22,12 @@ inside a ``CHECKS`` predicate that cites no requirement-ledger entry — a
 threshold nobody can trace to the request is exactly how a misreading gets
 frozen into a passing test. ``unsourced_requirement`` reports a ledger entry
 claiming ``source: "specified"`` whose ``quote`` does not actually occur in the
-request. Both are decided mechanically here; neither can be satisfied by asking
-the model to be careful.
+request — or, under ``INGEST.md`` §2, whose ``cite`` does not occur in the named
+reference's extracted text. Both are decided mechanically here; neither can be
+satisfied by asking the model to be careful. A citation of an *image* reference
+has no text to decide against, so it is reported ``unverifiable_citation`` and
+handed to the ``VALIDATION.md`` §5 reviewer's vision channel rather than being
+silently accepted.
 """
 
 from __future__ import annotations
@@ -32,7 +36,7 @@ import ast
 import io
 import re
 import tokenize
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Container, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
@@ -651,24 +655,50 @@ def _normalize(text: str) -> str:
 
 
 def lint_requirements(
-    entries: Sequence[Mapping[str, Any]], request: str
+    entries: Sequence[Mapping[str, Any]],
+    request: str,
+    *,
+    references: Mapping[str, Sequence[str]] | None = None,
+    image_references: Sequence[str] | None = None,
 ) -> tuple[LintFinding, ...]:
-    """VALIDATION.md §2: a ``specified`` entry must quote the request verbatim.
+    """VALIDATION.md §2 / INGEST.md §2: a ``specified`` entry must cite something real.
 
     ``entries`` are ledger entries as plain JSON objects (``id``/``source``/
-    ``quote``); ``request`` is the original request text. Comparison collapses
-    whitespace and case so a quote spanning a line break still matches, and
-    nothing else is forgiven — an entry whose quote is absent from the request
-    is a fabricated citation, reported as an ``error``.
+    ``quote``/``cite``); ``request`` is the original request text. Comparison
+    collapses whitespace and case so a quote spanning a line break still
+    matches, and nothing else is forgiven — an entry whose quote is absent from
+    the request is a fabricated citation, reported as an ``error``.
+
+    An entry may instead carry an ``INGEST.md`` §2 ``cite``
+    (``{reference, page?, quote}``), because a real spec often lives on the
+    drawing rather than in the prompt. Then:
+
+    * a **document** citation is verified exactly like a prompt quote, against
+      the reference's extracted text passed in ``references`` (``{name: pages}``,
+      page 1 first) — a quote that is not there is the same ``error``;
+    * an **image** citation is *unverifiable here by construction*: no text
+      exists to match. It is reported as ``unverifiable_citation`` (a warning,
+      not a pass) precisely so it is routed onward — ``VALIDATION.md`` §5's
+      termination reviewer verifies it through the vision channel.
 
     Findings carry ``line=0``: a ledger entry has no position in a source file.
     """
     haystack = _normalize(request)
+    pages_by_name = {name: list(pages) for name, pages in (references or {}).items()}
+    images = set(image_references or ())
     findings: list[LintFinding] = []
     for index, entry in enumerate(entries):
         if str(entry.get("source", "")) != "specified":
             continue
         entry_id = str(entry.get("id", f"#{index}"))
+        raw_cite = entry.get("cite")
+        if isinstance(raw_cite, Mapping):
+            finding = _lint_cite(
+                entry_id, cast("Mapping[str, Any]", raw_cite), pages_by_name, images
+            )
+            if finding is not None:
+                findings.append(finding)
+            continue
         raw_quote = entry.get("quote")
         quote = "" if raw_quote is None else str(raw_quote)
         if quote.strip() and _normalize(quote) in haystack:
@@ -688,6 +718,88 @@ def lint_requirements(
             )
         )
     return tuple(findings)
+
+
+def _lint_cite(
+    entry_id: str,
+    cite: Mapping[str, Any],
+    pages_by_name: Mapping[str, Sequence[str]],
+    images: Container[str],
+) -> LintFinding | None:
+    """Verify one ``INGEST.md`` §2 reference citation (``None`` when it holds)."""
+    name = str(cite.get("reference", ""))
+    quote = str(cite.get("quote") or "")
+    raw_page = cite.get("page")
+    page = raw_page if isinstance(raw_page, int) and not isinstance(raw_page, bool) else None
+    if name in images:
+        return LintFinding(
+            code="unverifiable_citation",
+            severity="warning",
+            line=0,
+            col=0,
+            message=(
+                f"requirement {entry_id} cites the image reference {name!r}, which has no "
+                "extracted text — the termination reviewer must confirm it on the vision "
+                "channel (INGEST.md §2)"
+            ),
+            name=entry_id,
+        )
+    pages = pages_by_name.get(name)
+    if pages is None:
+        return LintFinding(
+            code="unsourced_requirement",
+            severity="error",
+            line=0,
+            col=0,
+            message=(
+                f"requirement {entry_id} cites reference {name!r}, which this project does "
+                "not carry — it is an assumption, not a specification (INGEST.md §2)"
+            ),
+            name=entry_id,
+        )
+    if not quote.strip():
+        return LintFinding(
+            code="unsourced_requirement",
+            severity="error",
+            line=0,
+            col=0,
+            message=(
+                f"requirement {entry_id} cites {name!r} but quotes nothing from it (INGEST.md §2)"
+            ),
+            name=entry_id,
+        )
+    # A page number narrows the search; without one the whole document counts.
+    if page is not None and 1 <= page <= len(pages):
+        candidates = [pages[page - 1]]
+    elif page is not None:
+        return LintFinding(
+            code="unsourced_requirement",
+            severity="error",
+            line=0,
+            col=0,
+            message=(
+                f"requirement {entry_id} cites {name!r} page {page}, which does not exist "
+                f"({len(pages)} page(s)) (INGEST.md §2)"
+            ),
+            name=entry_id,
+        )
+    else:
+        candidates = list(pages)
+    needle = _normalize(quote)
+    if any(needle in _normalize(text) for text in candidates):
+        return None
+    where = "" if page is None else f" page {page}"
+    return LintFinding(
+        code="unsourced_requirement",
+        severity="error",
+        line=0,
+        col=0,
+        message=(
+            f"requirement {entry_id} claims source='specified' but quote {quote!r} is not in "
+            f"{name!r}{where} — it is an assumption, not a specification (INGEST.md §2)"
+        ),
+        name=entry_id,
+    )
 
 
 def requirement_entries(document: Any) -> list[Mapping[str, Any]]:

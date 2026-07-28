@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal, cast
 
@@ -29,11 +29,12 @@ from hephaestus.core.executor.fingerprint import (
     descriptors_from_json,
     descriptors_to_json,
 )
+from hephaestus.core.executor.imports import ImportResolutionError, static_import_paths
 from hephaestus.core.executor.runner import UnpublishedBuild
 from hephaestus.core.hashing import consumed_hc_hash, toolchain_hash
 from hephaestus.core.project_store.layout import ProjectLayout
 from hephaestus.core.project_store.locks import PROJECT_CONFIG_LOCK, LockManager, part_lock
-from hephaestus.core.project_store.projections import Projections
+from hephaestus.core.project_store.projections import Projections, StaleReport
 from hephaestus.core.project_store.retention import last_failure_pointer
 from hephaestus.core.project_store.store import (
     ProjectStore,
@@ -92,6 +93,16 @@ class FrozenBuildInputs:
     globals_source: str | None
     globals_snapshot_ref: str | None
     manifest_params: Mapping[str, int | float]
+    #: INGEST.md §1: the frozen bytes of every ``imports/`` file the script
+    #: declares, keyed by the path as written. Frozen exactly like the script
+    #: text so a lost-response retry replays the original content.
+    imports: Mapping[str, bytes] = field(default_factory=dict[str, bytes])
+    #: Declared imports the resolver refused, path -> named refusal. Carried
+    #: rather than raised: the build reports it at the ``import_step``
+    #: statement with the full §8 error record.
+    import_errors: Mapping[str, str] = field(default_factory=dict[str, str])
+    #: ``{path: artifact:import:sha256:…}`` for each frozen import.
+    import_refs: Mapping[str, str] = field(default_factory=dict[str, str])
 
 
 @dataclass(frozen=True)
@@ -149,6 +160,7 @@ class Publisher:
         with self.locks.holding(PROJECT_CONFIG_LOCK, part_lock(part)):
             script = self.parts.read_part(part)
             globals_snapshot: SourceSnapshot | None = self.parts.read_globals()
+            imports, import_errors, import_refs = self._freeze_imports(script.content)
         return FrozenBuildInputs(
             part=part,
             script=script.content,
@@ -159,7 +171,48 @@ class Publisher:
                 None if globals_snapshot is None else globals_snapshot.snapshot_ref
             ),
             manifest_params=dict(self.layout.manifest.params),
+            imports=imports,
+            import_errors=import_errors,
+            import_refs=import_refs,
         )
+
+    def _freeze_imports(
+        self, script: str
+    ) -> tuple[dict[str, bytes], dict[str, str], dict[str, str]]:
+        """Read + register every ``import_step`` declaration of ``script``.
+
+        The declarations are read statically from the script (INGEST.md §1), so
+        the freeze covers exactly the files this build will use — no directory
+        scan, no file the script never names. A refusal is RECORDED, never
+        raised: a missing or unreadable import must surface as the §8 build
+        error at its own statement, with a frame and a built-through, not as an
+        exception out of the freeze.
+        """
+        imports: dict[str, bytes] = {}
+        errors: dict[str, str] = {}
+        refs: dict[str, str] = {}
+        for path in static_import_paths(script):
+            try:
+                snapshot = self.parts.read_import(path)
+            except ImportResolutionError as exc:
+                errors[path] = exc.message
+                continue
+            imports[path] = snapshot.data
+            refs[path] = snapshot.snapshot_ref
+        return imports, errors, refs
+
+    def sync_import_state(self) -> StaleReport | None:
+        """Advance the projection state to the live ``imports/`` hashes.
+
+        A replaced import file is a changed build input, so its consumers go
+        stale exactly as consumers of a changed ``hc`` name do (INGEST.md §1).
+        Returns ``None`` when nothing moved — an unchanged tree must not bump
+        the audit revision.
+        """
+        live = {path: self.parts.import_hash(path) or "" for path in self.parts.list_imports()}
+        if dict(self.projections.state().import_state) == live:
+            return None
+        return self.projections.apply_import_state(live)
 
     # -- current bundle reads ------------------------------------------------
 
@@ -322,6 +375,15 @@ class Publisher:
             declared = sha256_canonical_json(declaration)
             if declared != expected.part_params:
                 mismatches.append(f"part_params: frozen {expected.part_params}, live {declared}")
+        # INGEST.md §1: a changed import file is a changed input. Revalidation
+        # compares the live bytes against the frozen hashes, so a build that
+        # raced a replaced STEP file can never flip the current pointer.
+        for path, frozen in sorted(expected.imports.items()):
+            live_import = self.parts.import_hash(path)
+            if live_import != frozen:
+                mismatches.append(
+                    f"imports[{path}]: frozen {frozen}, live {live_import or 'unreadable'}"
+                )
         live_hc = self.projections.state().hc_state
         missing = sorted(name for name in build.consumed_hc if name not in live_hc)
         if missing:
@@ -398,7 +460,12 @@ class Publisher:
         artifact_ref = published.artifact_ref
         if artifact_ref is None:  # pragma: no cover - ok builds always carry a ref
             raise ValidationError("successful build has no artifact ref", kind="contract")
-        self.projections.record_current(part, consumed=build.consumed_hc, artifact_ref=artifact_ref)
+        self.projections.record_current(
+            part,
+            consumed=build.consumed_hc,
+            artifact_ref=artifact_ref,
+            imports=published.input_hashes.imports,
+        )
         for blob in (record_blob, *evidence_blobs):
             self._store.gc.link(bundle_blob, blob)
         return PublicationOutcome(

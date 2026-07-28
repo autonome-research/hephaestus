@@ -10,6 +10,9 @@ dependencies = [
     "hephaestus-core",
     "mcp>=1.28",
     "opstore",
+    # INGEST.md §2: PDF reference text extraction. Server-side only — the core
+    # engine stores and reads the extracted text without any parser.
+    "pypdf>=5.1",
 ]
 
 [build-system]

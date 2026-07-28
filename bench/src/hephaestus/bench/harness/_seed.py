@@ -6,6 +6,11 @@ task-owned evidence — inspection gauges, broken fixtures — restored from the
 seed before grading, so a run that rewrites a gauge to make itself pass changes
 nothing. Reference solutions are overlaid through the same real ``CadOps`` paths
 a run would use.
+
+A fixture may also ship ``INGEST.md`` §2 ``references/`` and §1 ``imports/``.
+Imports are just files the build resolves; references become project state only
+once registered, and registration is operator-side — here
+(:func:`seed_references`), never through anything the run can call.
 """
 
 from __future__ import annotations
@@ -24,7 +29,13 @@ from hephaestus.core.project_store.layout import GLOBALS_FILENAME, load_project,
 
 from ._tasks import BenchTask, solution_dir
 
-__all__ = ["apply_solution", "open_cad", "restore_protected", "seed_project"]
+__all__ = [
+    "apply_solution",
+    "open_cad",
+    "restore_protected",
+    "seed_project",
+    "seed_references",
+]
 
 
 def seed_project(task: BenchTask, project_root: Path) -> Path:
@@ -53,7 +64,44 @@ def seed_project(task: BenchTask, project_root: Path) -> Path:
     if task.is_seeded:
         for name, source in task.check_sources().items():
             (checks_dir / f"{name}.py").write_text(source, encoding="utf-8")
+    seed_references(project_root)
     return project_root
+
+
+def seed_references(project_root: Path) -> tuple[str, ...]:
+    """Register every file a task fixture shipped in ``references/`` (INGEST.md §2).
+
+    A fixture seeds ``references/`` (and ``imports/``) as plain files in its seed
+    tree; those files are only *project state* once they are registered, which is
+    an operator-side act. The bench is the operator here, so this is where it
+    happens — the run itself still has no way to add one.
+
+    ``imports/`` needs no counterpart: an import is resolved from the file at
+    build time, so copying it in is the whole seeding step.
+    """
+    from hephaestus.core.project_store.layout import load_project, open_store
+    from hephaestus.core.project_store.references import ReferenceRegistry
+
+    references_dir = project_root / "references"
+    if not references_dir.is_dir() or not any(references_dir.iterdir()):
+        return ()
+    extractor = _reference_extractor()
+    layout = load_project(project_root)
+    store = open_store(layout)
+    try:
+        registered = ReferenceRegistry(layout, store).seed_directory(extractor=extractor)
+    finally:
+        store.close()
+    return tuple(entry.name for entry in registered)
+
+
+def _reference_extractor() -> Any:
+    """The server's pypdf extractor when installed (bench always has it)."""
+    try:
+        from hephaestus.agent_bridge.references_pdf import pdf_extractor
+    except ImportError:  # pragma: no cover - bench depends on the server package
+        return None
+    return pdf_extractor()
 
 
 def restore_protected(task: BenchTask, project_root: Path) -> list[str]:

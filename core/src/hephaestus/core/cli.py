@@ -19,7 +19,13 @@
   ids become the accepted ``CHECKS`` citations (``VALIDATION.md`` §2
   ``unsourced_constant``); adding ``--request`` also checks every
   ``source: "specified"`` entry's quote against the request text
-  (``unsourced_requirement``).
+  (``unsourced_requirement``). An entry carrying an ``INGEST.md`` §2 ``cite``
+  is verified against the *project's registered references* instead — their
+  extracted text is resolved automatically, so no extra flag is needed — and a
+  citation of an image reference is reported ``unverifiable_citation``, which
+  is the ``VALIDATION.md`` §5 reviewer's job, not lint's.
+- ``heph reference add|list|remove`` registers operator-supplied reference
+  documents and images (``INGEST.md`` §2); see ``hephaestus.core.cli_references``.
 
 Exit codes: 0 success, 1 failure (build failed / raced, failing checks,
 sandbox unavailable), 2 usage (bad arguments, no project, unknown part).
@@ -215,6 +221,10 @@ def _build_and_publish(
     preview: bool,
 ) -> tuple[BuildResult, PublicationKind]:
     """One part through the full pipeline: freeze -> build -> sync -> publish."""
+    # INGEST.md §1: an imports/ file replaced since the last build is a changed
+    # input — refresh the live import state first so its consumers are stale
+    # before this build (and so an unchanged tree stays a no-op).
+    publisher.sync_import_state()
     inputs = publisher.freeze_inputs(part)
     baseline = publisher.baseline_for(part)
     merged_project: dict[str, int | float | str] = dict(inputs.manifest_params)
@@ -226,6 +236,10 @@ def _build_and_publish(
         part_overrides=dict(part_overrides),
         project_overrides=merged_project,
         origin="local",
+        # INGEST.md §1: the frozen bytes of every declared imports/ file travel
+        # with the request; a refused import is reported at its statement.
+        imports=dict(inputs.imports),
+        import_errors=dict(inputs.import_errors),
     )
     out_dir = layout.store_root / "builds" / f"{part}-{uuid.uuid4().hex[:12]}"
     try:
@@ -324,6 +338,9 @@ def _cmd_build(args: argparse.Namespace) -> int:
     if stale:
         if part is None:
             _sync_via_probe(publisher, layout, backend)
+        # INGEST.md §1: a replaced imports/ file makes its importers stale, and
+        # --stale must see that before it picks the rebuild set.
+        publisher.sync_import_state()
         stale_parts = [
             name for name in sorted(publisher.projections.state().stale) if name not in built
         ]
@@ -400,6 +417,31 @@ def _cmd_check(args: argparse.Namespace) -> int:
     return 0 if all(outcome.passed for outcome in report.checks.values()) else 1
 
 
+def _reference_text(root: Path | None) -> tuple[dict[str, tuple[str, ...]], tuple[str, ...]]:
+    """``({document: pages}, image_names)`` from the project's reference registry.
+
+    Extraction happened at registration (``INGEST.md`` §2), so this reads stored
+    text and needs no parser. A project with no store yet simply has no
+    references, which is not an error.
+    """
+    if root is None:
+        return ({}, ())
+    from hephaestus.core.project_store.references import ReferenceRegistry
+
+    layout = load_project(root)
+    store = open_store(layout)
+    try:
+        registry = ReferenceRegistry(layout, store)
+        entries = registry.list_references()
+        documents = {
+            entry.name: registry.pages(entry) for entry in entries if entry.kind == "document"
+        }
+        images = tuple(entry.name for entry in entries if entry.kind == "image")
+    finally:
+        store.close()
+    return (documents, images)
+
+
 def _cmd_lint(args: argparse.Namespace) -> int:
     json_out = bool(args.json)
     path = Path(cast("str", args.path))
@@ -438,7 +480,17 @@ def _cmd_lint(args: argparse.Namespace) -> int:
         request_path = Path(raw_request)
         if not request_path.is_file():
             raise _UsageError(f"no such request file: {request_path}")
-        findings = findings + lint_requirements(entries, request_path.read_text(encoding="utf-8"))
+        # INGEST.md §2: a citation is checked against the project's own
+        # registered references, so the text a lint verifies is exactly the text
+        # `read_reference` showed the model. Resolved only when the script lives
+        # in a project; a standalone lint has no registry to consult.
+        documents, images = _reference_text(root)
+        findings = findings + lint_requirements(
+            entries,
+            request_path.read_text(encoding="utf-8"),
+            references=documents,
+            image_references=images,
+        )
     if json_out:
         print(json.dumps([finding.to_json() for finding in findings]))
     else:
@@ -526,6 +578,14 @@ def build_parser() -> argparse.ArgumentParser:
     from hephaestus.core import cli_registry
 
     cli_registry.add_subparsers(sub)
+
+    # Stage 8A reference verbs (heph reference add/list/remove) likewise: the
+    # operator-side half of INGEST.md §2. There is deliberately no model-facing
+    # counterpart — a reference enters a project through this verb or a bench
+    # fixture, never through a tool call.
+    from hephaestus.core import cli_references
+
+    cli_references.add_subparsers(sub)
 
     # Stage 2 agent verb (heph agent) ships with the server package; the engine
     # CLI stays Node-free and fully functional when it is not installed.

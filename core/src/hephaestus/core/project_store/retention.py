@@ -41,8 +41,17 @@ def protected_pointer_names(layout: ProjectLayout) -> tuple[str, ...]:
     from hephaestus.core.checks.engine import STATE_POINTER as CHECK_STATE_POINTER
     from hephaestus.core.project_store.projections import SNAPSHOT_POINTER, STATE_POINTER
     from hephaestus.core.project_store.publication import current_pointer
+    from hephaestus.core.project_store.references import REFERENCES_POINTER
 
-    names: list[str] = [STATE_POINTER, SNAPSHOT_POINTER, CHECK_STATE_POINTER, INTENT_POINTER]
+    names: list[str] = [
+        STATE_POINTER,
+        SNAPSHOT_POINTER,
+        CHECK_STATE_POINTER,
+        INTENT_POINTER,
+        # Operator-supplied reference material is project state, not run output
+        # (INGEST.md §2): the live registry generation is a protected root.
+        REFERENCES_POINTER,
+    ]
     for part in layout.part_names():
         names.append(current_pointer(part))
         names.append(last_failure_pointer(part))

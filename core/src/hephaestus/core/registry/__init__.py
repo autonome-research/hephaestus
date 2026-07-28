@@ -96,6 +96,7 @@ from ._reference import (
     REFERENCE_START,
     TEXT_MAX_BYTES,
     TEXT_MAX_LINES,
+    json_bytes,
     wrap_reference,
 )
 from ._set import RegistrySet
@@ -139,6 +140,7 @@ __all__ = [
     "bundled_pins",
     "bundled_registries_root",
     "instance_prefix",
+    "json_bytes",
     "load_pack",
     "load_registry",
     "merkle_digest",

@@ -114,6 +114,20 @@ declares whether it moves geometry).
   numeric literal in a `CHECKS` predicate with no citation, and
   `unsourced_requirement` for a ledger entry with `source:"specified"` whose
   `quote` is not a substring of the request.
+- **A `specified` entry may cite a reference instead of the prompt
+  (`INGEST.md` §2).** Real work starts from a drawing or a datasheet, and a
+  spec that lives there is no less specified for it, so in place of `quote` an
+  entry may carry `cite: {reference, page?, quote}` naming an operator-supplied
+  reference. It is not a weaker claim and is not checked more weakly: the
+  ledger op refuses a citation of a reference the project does not carry (or a
+  page past its end) with `invalid_requirement` and nothing written, and
+  `unsourced_requirement` verifies a **document** citation against that
+  reference's extracted text exactly as it verifies a prompt quote against the
+  request. A citation of an **image** reference has no text to decide against,
+  so lint neither passes nor fails it: it is `unverifiable_citation`, and §5's
+  reviewer verifies it through the vision channel with the cited references in
+  its context — which is why §8's channel split now measures document-grounded
+  work too.
 - The ledger is the substrate for §3, §5 and §8: it makes interpretation an
   inspectable artifact rather than an implicit act.
 - **"Before any geometry" is enforced, not advised (2026-07-26).** `build_part`
@@ -255,6 +269,12 @@ turn with no pending tool call) triggers a reviewer child session that receives:
 - multi-view renders: `rgb` at ≥2 standard views, plus a `section` render for
   every part whose geometry has internal features (cavity, boss, bore),
 - the final part scripts and measured metrics,
+- every operator-supplied reference the ledger **cites** (`INGEST.md` §2), by
+  name and artifact ref, which the reviewer opens with `read_reference`. An
+  image citation is lint-*unverifiable* by construction, so this reviewer is the
+  only thing that verifies it, and it does so by looking: such a finding is
+  recorded on the `vision` channel by rule, from the entry rather than from the
+  reviewer's claim about itself,
 - **explicitly NOT** the agent's own `CHECKS` — so it cannot inherit the
   misreading.
 

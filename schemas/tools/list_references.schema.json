@@ -1,0 +1,62 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/list_references.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "List operator-supplied reference documents and images (read-only).",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {},
+    "required": [],
+    "type": "object"
+  },
+  "result": {
+    "items": {
+      "additionalProperties": true,
+      "properties": {
+        "artifact_ref": {
+          "type": "string"
+        },
+        "bytes": {
+          "type": "integer"
+        },
+        "kind": {
+          "enum": [
+            "document",
+            "image"
+          ],
+          "type": "string"
+        },
+        "mime_type": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "pages": {
+          "type": "integer"
+        },
+        "sha256": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "sha256"
+      ],
+      "type": "object"
+    },
+    "type": "array"
+  },
+  "title": "list_references",
+  "x-hephaestus-tool": {
+    "idempotent": false,
+    "maxUtf8Fields": {},
+    "name": "list_references",
+    "profiles": [
+      "part",
+      "orchestrator",
+      "reviewer"
+    ],
+    "sequential": false
+  }
+}

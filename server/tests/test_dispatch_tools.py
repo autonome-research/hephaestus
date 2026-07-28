@@ -964,6 +964,9 @@ def _minimal_args(tool: str) -> dict[str, Any]:
         "read_requirements": {},
         "update_requirement": {"id": "R1", "value": 1.0},
         "read_artifact": {"ref": "artifact:build:sha256:" + "0" * 64},
+        # INGEST.md §2 — read-only, and equally unreachable without CadOps.
+        "list_references": {},
+        "read_reference": {"name": "sheet.pdf"},
         "export_part": {"name": "widget", "format": "step"},
         "query_snapshot": {"name": "widget", "question": "?"},
         "run_dfm": {"name": "widget"},

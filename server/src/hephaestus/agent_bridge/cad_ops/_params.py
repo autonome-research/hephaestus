@@ -123,6 +123,8 @@ class ParamOps(CadOpsState):
                 out_dir=out_dir,
                 part_overrides=dict(self.params.read("part", name).values),
                 project_overrides=self._project_overrides(),
+                imports=inputs.imports,
+                import_errors=inputs.import_errors,
             )
             return self._probe_from(build, declaration_key="params_declaration")
 

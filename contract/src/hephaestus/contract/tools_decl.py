@@ -62,7 +62,12 @@ PROFILES: Final[tuple[str, ...]] = ("part", "orchestrator", "quick_edit", "revie
 #: The measurement/render subset a ``reviewer`` session may call (VALIDATION.md
 #: §5). Declared as data so the structural "no mutation, no delegation" audit has
 #: one place to read; every member also names ``reviewer`` in its ``profiles``.
-REVIEWER_TOOLS: Final[frozenset[str]] = frozenset({"inspect_part", "measure", "read_artifact"})
+#: ``list_references``/``read_reference`` joined with INGEST.md §2: an image
+#: citation is lint-unverifiable, so the §5 reviewer is the only thing that can
+#: verify it — and it can only do that by opening the drawing itself.
+REVIEWER_TOOLS: Final[frozenset[str]] = frozenset(
+    {"inspect_part", "measure", "read_artifact", "list_references", "read_reference"}
+)
 
 # Documented in tool_schema.md but explicitly out of Stage 2 scope; the drift
 # test subtracts these from the heading set before comparing with TOOLS.
@@ -933,6 +938,97 @@ def _list_skills() -> ToolDecl:
     )
 
 
+#: One registered reference as ``list_references`` reports it (INGEST.md §2).
+_REFERENCE_LISTING: Final[JsonSchema] = _obj(
+    {
+        "name": _STR,
+        "kind": _enum(["document", "image"]),
+        "mime_type": _STR,
+        "sha256": _STR,
+        "bytes": _INT,
+        "pages": _INT,
+        "artifact_ref": _STR,
+    },
+    ["name", "kind", "sha256"],
+    additional=True,
+)
+
+
+def _list_references() -> ToolDecl:
+    return ToolDecl(
+        name="list_references",
+        summary="List operator-supplied reference documents and images (read-only).",
+        params=_obj({}, []),
+        result={"type": "array", "items": _REFERENCE_LISTING},
+        profiles=("part", "orchestrator", "reviewer"),
+        sequential=False,
+        idempotent=False,
+    )
+
+
+def _read_reference() -> ToolDecl:
+    return ToolDecl(
+        name="read_reference",
+        summary="Read one reference: delimited document text (paged) or an inline image.",
+        params=_obj(
+            {
+                "name": _STR,
+                "page": {"anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]},
+                "offset_bytes": {"type": "integer", "minimum": 0, "default": 0},
+            },
+            ["name"],
+        ),
+        result=_result(
+            _ok(
+                {
+                    "status": {"const": "ok"},
+                    "name": _STR,
+                    "kind": {"const": "document"},
+                    "mime_type": _STR,
+                    "artifact_ref": _STR,
+                    "content": _STR,
+                    "page": _INT,
+                    "pages": _INT,
+                    "offset_bytes": _INT,
+                    "total_bytes": _INT,
+                    **_PAGING_FIELDS,
+                },
+                ["status", "name", "kind", "content", "artifact_ref", "truncated"],
+            ),
+            _ok(
+                {
+                    "status": {"const": "ok"},
+                    "name": _STR,
+                    "kind": {"const": "image"},
+                    "mime_type": _STR,
+                    "artifact_ref": _STR,
+                    "images": {
+                        "type": "array",
+                        "items": _obj(
+                            {"data": _STR, "mime_type": _STR},
+                            ["data", "mime_type"],
+                            additional=True,
+                        ),
+                        "maxItems": MAX_IMAGES_PER_RESULT,
+                    },
+                },
+                ["status", "name", "kind", "images", "artifact_ref"],
+            ),
+            _ok(
+                {
+                    "error": {"const": "invalid_utf8_offset"},
+                    "offset_bytes": _INT,
+                    "total_bytes": _INT,
+                },
+                ["error"],
+            ),
+        ),
+        profiles=("part", "orchestrator", "reviewer"),
+        sequential=False,
+        idempotent=False,
+    )
+
+
 def _search_parts_store() -> ToolDecl:
     return ToolDecl(
         name="search_parts_store",
@@ -1209,16 +1305,32 @@ def _ask_user() -> ToolDecl:
     )
 
 
+#: ``INGEST.md`` §2: a ``specified`` entry may cite an operator-supplied
+#: reference instead of a phrase of the request. ``reference`` names a registered
+#: reference, ``page`` is 1-based (documents only) and ``quote`` is the cited
+#: text — verified against the extracted text by ``heph lint`` for a document,
+#: and routed to the §5 vision reviewer for an image.
+_REQUIREMENT_CITE: Final[JsonSchema] = _obj(
+    {
+        "reference": _STR,
+        "page": {"anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}], "default": None},
+        "quote": _STR,
+    },
+    ["reference", "quote"],
+)
+
 #: One requirement-ledger entry (``VALIDATION.md`` §2). The per-source
-#: obligations (``specified`` needs ``quote``; ``derived`` needs ``from``;
-#: ``assumed`` needs ``rationale`` + ``material``) are enforced structurally by
-#: the ledger op, which refuses the whole batch — they are not prompt advice.
+#: obligations (``specified`` needs ``quote`` **or** an ``INGEST.md`` §2
+#: ``cite``; ``derived`` needs ``from``; ``assumed`` needs ``rationale`` +
+#: ``material``) are enforced structurally by the ledger op, which refuses the
+#: whole batch — they are not prompt advice.
 _REQUIREMENT_ENTRY: Final[JsonSchema] = _obj(
     {
         "id": {"type": "string", "pattern": REQUIREMENT_ID_PATTERN},
         "text": _STR,
         "source": _enum(list(REQUIREMENT_SOURCES)),
         "quote": {"anyOf": [_STR, {"type": "null"}], "default": None},
+        "cite": {"anyOf": [_REQUIREMENT_CITE, {"type": "null"}], "default": None},
         "from": {"type": "array", "items": _STR, "default": []},
         "rationale": {"anyOf": [_STR, {"type": "null"}], "default": None},
         "material": {"anyOf": [_BOOL, {"type": "null"}], "default": None},
@@ -1422,6 +1534,7 @@ def _update_requirement() -> ToolDecl:
                     "default": None,
                 },
                 "quote": {"anyOf": [_STR, {"type": "null"}], "default": None},
+                "cite": {"anyOf": [_REQUIREMENT_CITE, {"type": "null"}], "default": None},
                 "from": {
                     "anyOf": [{"type": "array", "items": _STR}, {"type": "null"}],
                     "default": None,
@@ -1746,6 +1859,8 @@ TOOLS: Final[tuple[ToolDecl, ...]] = (
     _update_requirement(),
     _load_skill(),
     _list_skills(),
+    _list_references(),
+    _read_reference(),
     _search_parts_store(),
     _instance_store_part(),
     _search_materials(),

@@ -18,7 +18,7 @@ Contract for this package (enforced by
   face records, packed layouts); manufacturability verdicts belong to the DFM
   rule packs and the checks engine that consume them.
 
-Five services, re-exported here as one public surface:
+Six services, re-exported here as one public surface:
 
 * :mod:`hephaestus.geom.metrics` — the §8 ``Metrics`` record and the
   addressing-layer geometry index over a labeled part compound;
@@ -30,7 +30,9 @@ Five services, re-exported here as one public surface:
 * :mod:`hephaestus.geom.kerf` — cut-width compensation, resolved from declared
   process facts or refused;
 * :mod:`hephaestus.geom.nesting` — flat-pattern extraction, shelf packing onto
-  a blank, and the DXF/SVG cut-file writers.
+  a blank, and the DXF/SVG cut-file writers;
+* :mod:`hephaestus.geom.step_io` — STEP <-> shape conversion (``INGEST.md`` §1
+  ingest), with no path, project or hashing policy attached.
 
 Historic import paths (``hephaestus.core.kernel``, ``hephaestus.core.kerf``,
 ``hephaestus.core.nesting``) still resolve: they are compatibility facades that
@@ -91,6 +93,15 @@ from hephaestus.geom.nesting import (
     layout_to_svg,
     shelf_nest,
 )
+from hephaestus.geom.step_io import (
+    STEP_SCHEMAS,
+    StepReadError,
+    read_step,
+    read_step_bytes,
+    shape_from_brep,
+    shape_to_brep,
+    write_step,
+)
 from hephaestus.geom.topology import (
     OVERHANG_SAMPLES,
     PARALLEL_EPS,
@@ -124,6 +135,7 @@ __all__ = [
     "PARALLEL_EPS",
     "PROFILE_LAYER",
     "SCORE_LAYER",
+    "STEP_SCHEMAS",
     "WALL_FACE_LIMIT",
     "AnyShape",
     "Blank",
@@ -139,6 +151,7 @@ __all__ = [
     "Placement",
     "PlanarFaceRecord",
     "Profile",
+    "StepReadError",
     "Vec3",
     "bbox_mm",
     "blank_from_metadata",
@@ -162,9 +175,14 @@ __all__ = [
     "metrics",
     "opposing_planar_pairs",
     "planar_faces",
+    "read_step",
+    "read_step_bytes",
     "resolve_kerf",
     "section",
+    "shape_from_brep",
+    "shape_to_brep",
     "shape_volume",
     "shelf_nest",
     "solid_z_min",
+    "write_step",
 ]

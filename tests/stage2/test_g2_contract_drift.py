@@ -343,7 +343,8 @@ def test_stage2_surface_excludes_deferred_tools_everywhere(md_source: str) -> No
 def test_committed_schema_files_match_the_declared_surface() -> None:
     on_disk = {path.name.removesuffix(".schema.json") for path in SCHEMAS_DIR.glob("*.json")}
     assert on_disk == set(TOOL_NAMES)
-    assert len(TOOL_NAMES) == 33
+    # 33 through Stage 7; +2 for the INGEST.md §2 reference pair (Stage 8A).
+    assert len(TOOL_NAMES) == 35
 
 
 def test_sequential_declarations_cover_the_normative_list() -> None:
@@ -396,12 +397,19 @@ def test_orchestrator_only_families_are_declared_orchestrator_only() -> None:
     # The requirement ledger is the orchestrator's and a delegated part agent's
     # (VALIDATION.md §2/§3); a quick-edit session never authors interpretation.
     ledger_family = {"record_requirements", "read_requirements", "update_requirement"}
+    # References are the canonical pipeline's, plus the reviewer's: an image
+    # citation is lint-unverifiable, so §5's reviewer must be able to open the
+    # drawing itself (INGEST.md §2). A quick-edit session interprets nothing, so
+    # it reads no reference material either.
+    reference_family = {"list_references", "read_reference"}
     for name in TOOL_NAMES:
         profiles = set(tools_decl.get_tool(name).profiles)
         if name in orchestrator_only:
             assert profiles == {"orchestrator"}, f"{name} leaked outside the orchestrator"
         elif name in ledger_family:
             assert profiles == {"part", "orchestrator"}, f"{name} profiles drifted"
+        elif name in reference_family:
+            assert profiles == {"part", "orchestrator", "reviewer"}, f"{name} profiles drifted"
         else:
             assert "part" in profiles and "quick_edit" in profiles, name
 

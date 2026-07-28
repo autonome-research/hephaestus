@@ -231,8 +231,19 @@ def solution_script(task_id: str, part: str) -> str:
 
 
 def bracket_script(fake: FakeOpenAI) -> None:
-    """Script the model through create -> write -> build for ``bracket-101``."""
+    """Script the model through ledger -> create -> write -> build for ``bracket-101``.
+
+    The ledger turn is a precondition, not decoration: ``clarification_gate``
+    refuses ``build_part`` outright while the project's ledger is empty
+    (``reason: "no_ledger"``, VALIDATION.md §2). Ledger calls are not charged
+    against the tool-call budget, so the *counted* call path is unchanged.
+    """
     script = solution_script("bracket-101", "bracket")
+
+    def create(info: RequestInfo) -> dict[str, Any]:
+        recorded = last_tool_result(info)
+        assert recorded.get("generation") is not None, recorded
+        return tool_call("create_part", {"name": "bracket", "template": "blank"}, "c0")
 
     def write(info: RequestInfo) -> dict[str, Any]:
         created = last_tool_result(info)
@@ -254,7 +265,27 @@ def bracket_script(fake: FakeOpenAI) -> None:
 
     fake.set_script(
         [
-            tool_call("create_part", {"name": "bracket", "template": "blank"}, "c0"),
+            tool_call(
+                "record_requirements",
+                {
+                    "entries": [
+                        {
+                            "id": "R1",
+                            "text": "the base plate is 60 mm by 40 mm and 6 mm thick",
+                            "source": "specified",
+                            "quote": "a 60 mm (X) by 40 mm (Y) base plate, 6 mm thick",
+                        },
+                        {
+                            "id": "R2",
+                            "text": "two 6 mm diameter through-holes pierce the base plate",
+                            "source": "specified",
+                            "quote": "Drill two 6 mm diameter through-holes in the base plate",
+                        },
+                    ]
+                },
+                "c-ledger",
+            ),
+            create,
             write,
             build,
             finish,
@@ -263,7 +294,16 @@ def bracket_script(fake: FakeOpenAI) -> None:
 
 
 def repair_script(fake: FakeOpenAI) -> None:
-    """Script the model through read -> edit -> build for ``repair-fillet``."""
+    """Script the model through ledger -> read -> edit -> build for ``repair-fillet``.
+
+    As in :func:`bracket_script`, the ledger turn satisfies the §2 precondition
+    that ``build_part`` enforces; it is not charged against the tool budget.
+    """
+
+    def read_part(info: RequestInfo) -> dict[str, Any]:
+        recorded = last_tool_result(info)
+        assert recorded.get("generation") is not None, recorded
+        return tool_call("read_part", {"name": "plate"}, "c0")
 
     def edit(info: RequestInfo) -> dict[str, Any]:
         read = last_tool_result(info)
@@ -289,7 +329,28 @@ def repair_script(fake: FakeOpenAI) -> None:
         assert built.get("status") == "ok", built
         return {"kind": "text", "chunks": ["blend radius reduced to 5 mm; the plate builds"]}
 
-    fake.set_script([tool_call("read_part", {"name": "plate"}, "c0"), edit, build, finish])
+    fake.set_script(
+        [
+            tool_call(
+                "record_requirements",
+                {
+                    "entries": [
+                        {
+                            "id": "R1",
+                            "text": "the inner corner of the notch carries a 5 mm radius blend",
+                            "source": "specified",
+                            "quote": "The inner corner of the notch needs a 5 mm radius blend",
+                        }
+                    ]
+                },
+                "c-ledger",
+            ),
+            read_part,
+            edit,
+            build,
+            finish,
+        ]
+    )
 
 
 def assert_archived(run_dir: Path, record: RunRecord) -> list[dict[str, Any]]:
@@ -362,7 +423,9 @@ def test_bench_run_bracket_101_with_a_scripted_model(
     assert int(cast("int", export["bytes"])) >= 1024
 
     events = assert_archived(archive / "bracket-101-s1", run)
-    assert sum(1 for e in events if e["kind"] == "tool_call") == 3
+    # The archive keeps the RAW stream, so the ledger turn shows up here (4) even
+    # though it is not charged against the budget (run.tool_calls == 3 above).
+    assert sum(1 for e in events if e["kind"] == "tool_call") == 4
     assert any(e["kind"] == "tool_result" for e in events)
 
 
@@ -629,6 +692,24 @@ def stateless_bracket_resolver() -> Any:
     def resolve(info: RequestInfo) -> dict[str, Any]:
         last = last_tool_result(info)
         if not last:  # {} = no tool result yet in this session's transcript
+            # §2 precondition: build_part is refused outright on an empty ledger.
+            return tool_call(
+                "record_requirements",
+                {
+                    "entries": [
+                        {
+                            "id": "R1",
+                            "text": "the base plate is 60 mm by 40 mm and 6 mm thick",
+                            "source": "specified",
+                            "quote": "a 60 mm (X) by 40 mm (Y) base plate, 6 mm thick",
+                        }
+                    ]
+                },
+                "c-ledger",
+            )
+        # Only the ledger result carries generation+entries alongside status "ok";
+        # a successful build has status "ok" but neither key.
+        if last.get("status") == "ok" and "generation" in last and "entries" in last:
             return tool_call("create_part", {"name": "bracket"}, "c0")
         if "content_hash" in last and "applied" not in last and "status" not in last:
             return tool_call(

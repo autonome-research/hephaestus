@@ -41,6 +41,9 @@ mixin per domain so each domain reads independently:
                  material, what a clarification question must look like, and what
                  an answer does to the ledger — all by rule.
 ``_artifacts``   ``read_artifact`` byte-cursor paging.
+``_references``  ``INGEST.md`` §2 ``list_references``/``read_reference``: the
+                 model's READ-ONLY view of the operator-supplied ``references/``
+                 registry (registration itself is not on this surface at all).
 ``_exports``     the §7 export contract (WAL, path confinement, pins, format
                  writers) as one reusable operation, plus ``export_part``.
 ``_drawing``     ``generate_drawing``: render-service views, artifact-measured
@@ -145,12 +148,14 @@ from ._gate import (
 )
 from ._measure import MeasureOps
 from ._params import SYNC_PART, ParamOps, ParamProbe
+from ._references import REFERENCE_WRAPPER_REGISTRY, ReferenceOps
 from ._requirements import (
     REQUIREMENT_ARTIFACT_KIND,
     REQUIREMENT_ID_PATTERN,
     REQUIREMENT_SOURCES,
     REQUIREMENTS_POINTER,
     LedgerState,
+    RequirementCite,
     RequirementEntry,
     RequirementOps,
     entry_views,
@@ -176,6 +181,7 @@ __all__ = [
     "MAX_INTERFERENCE_PAIRS",
     "PART_PARAMS_POINTER_PREFIX",
     "PROJECT_PARAMS_POINTER",
+    "REFERENCE_WRAPPER_REGISTRY",
     "REQUIREMENTS_POINTER",
     "REQUIREMENT_ARTIFACT_KIND",
     "REQUIREMENT_ID_PATTERN",
@@ -203,7 +209,9 @@ __all__ = [
     "ParamProbe",
     "ParamState",
     "ParamStore",
+    "ReferenceOps",
     "RequestNumber",
+    "RequirementCite",
     "RequirementEntry",
     "Sheet",
     "answer_text",
@@ -254,6 +262,7 @@ class CadOps(
     DocOps,
     ExportOps,
     RequirementOps,
+    ReferenceOps,
     DimensionFindingOps,
     DfmOps,
 ):
