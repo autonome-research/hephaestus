@@ -951,6 +951,18 @@ def _minimal_args(tool: str) -> dict[str, Any]:
         "measure": {"kind": "bbox", "a": "part", "part": "widget"},
         # COMPARE.md §2 — read-only, and equally unreachable without CadOps.
         "compare_solids": {"part": "widget", "target": "part:widget"},
+        # ASSEMBLY.md §3 — the constraint quartet needs the engine just as much.
+        "declare_constraint": {
+            "id": "c-fit",
+            "kind": "clearance_min",
+            "a": "widget",
+            "b": "widget",
+            "value_mm": 0.2,
+            "provenance": {"assumed": True, "reason": "fixture"},
+        },
+        "update_constraint": {"id": "c-fit", "patch": {"value_mm": 0.3}, "reason": "fixture"},
+        "read_constraints": {},
+        "check_assembly": {},
         "run_checks": {"name": "widget"},
         "record_requirements": {
             "entries": [

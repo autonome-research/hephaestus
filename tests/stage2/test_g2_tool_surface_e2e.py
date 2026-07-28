@@ -172,6 +172,36 @@ def _steps() -> list[Step]:
             "compare_solids",
             lambda seen: {"part": "widget", "target": "part:widget", "align": "as_posed"},
         ),
+        # -- declared constraints (ASSEMBLY.md §3) --------------------------
+        # One part is enough to exercise the quartet end to end: the widget's
+        # distance to itself is 0 mm, resolved through the `part` anchor rule and
+        # measured against the artifact the build above published — a real
+        # evaluation with a real (satisfied) residual, not a stub. (A
+        # no_interference self-constraint would be *violated*, correctly: a solid
+        # overlaps itself entirely.)
+        (
+            "declare_constraint",
+            lambda seen: {
+                "id": "c-widget-solid",
+                "kind": "distance",
+                "a": "widget",
+                "b": "widget",
+                "value_mm": 0.0,
+                "tol_mm": 0.01,
+                "provenance": {"requirement": "R1"},
+                "note": "the widget is where it is",
+            },
+        ),
+        (
+            "update_constraint",
+            lambda seen: {
+                "id": "c-widget-solid",
+                "patch": {"note": "kept as a self-check of the addressing layer"},
+                "reason": "clarified what the constraint is for",
+            },
+        ),
+        ("read_constraints", lambda seen: {}),
+        ("check_assembly", lambda seen: {}),
         ("run_checks", lambda seen: {"scope": "part", "name": "widget"}),
         (
             "read_artifact",
@@ -404,6 +434,18 @@ def test_every_generated_tool_flows_through_the_real_bridge(surface: G2Harness) 
     assert comparison["a"]["artifact_ref"] == build["artifact_ref"]
     assert comparison["diff"]["volume"]["iou"] == pytest.approx(1.0, abs=1e-9)
     assert comparison["diff"]["surface"]["max_deviation_mm"] == pytest.approx(0.0, abs=1e-9)
+    # -- constraints: declared, revised, evaluated against the built artifact
+    declared = cast("dict[str, Any]", seen["declare_constraint"])
+    assert declared["generation"] == 1 and declared["change"]["kind"] == "declare"
+    revised = cast("dict[str, Any]", seen["update_constraint"])
+    assert revised["generation"] == 2 and revised["change"]["reason"]
+    read = cast("dict[str, Any]", seen["read_constraints"])
+    assert [entry["id"] for entry in read["entries"]] == ["c-widget-solid"]
+    checked = cast("dict[str, Any]", seen["check_assembly"])
+    status = cast("dict[str, Any]", checked["assembly"])
+    assert checked["partial"] is False
+    assert status["counts"]["unresolvable"] == 0, status["constraints"]
+    assert status["blocking"] == [], status["constraints"]
     assert seen["run_checks"]["checks"]["wide_enough"]["pass"] is True
     assert seen["read_artifact"]["total_bytes"] > 0
 

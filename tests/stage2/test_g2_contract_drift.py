@@ -344,8 +344,9 @@ def test_committed_schema_files_match_the_declared_surface() -> None:
     on_disk = {path.name.removesuffix(".schema.json") for path in SCHEMAS_DIR.glob("*.json")}
     assert on_disk == set(TOOL_NAMES)
     # 33 through Stage 7; +2 for the INGEST.md §2 reference pair (Stage 8A);
-    # +1 for COMPARE.md §2 compare_solids (Stage 8B).
-    assert len(TOOL_NAMES) == 36
+    # +1 for COMPARE.md §2 compare_solids (Stage 8B); +4 for the ASSEMBLY.md §3
+    # constraint quartet (Stage 8C).
+    assert len(TOOL_NAMES) == 40
 
 
 def test_sequential_declarations_cover_the_normative_list() -> None:
@@ -408,11 +409,22 @@ def test_orchestrator_only_families_are_declared_orchestrator_only() -> None:
     # work with a ledger behind it, not a quick edit, and the §5 reviewer reads
     # published evidence rather than re-running comparisons.
     comparison_family = {"compare_solids"}
+    # ASSEMBLY.md §3 declares the constraint quartet on the CANONICAL PIPELINE
+    # only ("part + orchestrator profiles"): declaring a cross-part mate is
+    # interpretation work with a ledger behind it, not a quick edit, and the §5
+    # reviewer is HANDED the assembly status rather than re-measuring it (a
+    # reviewer that could write constraints would be grading its own claim).
+    constraint_family = {
+        "declare_constraint",
+        "update_constraint",
+        "read_constraints",
+        "check_assembly",
+    }
     for name in TOOL_NAMES:
         profiles = set(tools_decl.get_tool(name).profiles)
         if name in orchestrator_only:
             assert profiles == {"orchestrator"}, f"{name} leaked outside the orchestrator"
-        elif name in ledger_family or name in comparison_family:
+        elif name in ledger_family or name in comparison_family or name in constraint_family:
             assert profiles == {"part", "orchestrator"}, f"{name} profiles drifted"
         elif name in reference_family:
             assert profiles == {"part", "orchestrator", "reviewer"}, f"{name} profiles drifted"

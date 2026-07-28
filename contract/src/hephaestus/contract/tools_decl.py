@@ -9,7 +9,9 @@ headings are drift-tested against each other in CI.
 
 Scope: the full ``tool_schema.md`` surface **except** the deferred ``run_fea`` /
 ``import_geometry``. ``run_dfm``, ``generate_drawing`` and ``generate_doc``
-joined the surface with mission Stage 6. ``export_part`` keeps
+joined the surface with mission Stage 6; the ``ASSEMBLY.md`` §3 constraint
+quartet (``declare_constraint`` / ``update_constraint`` / ``read_constraints`` /
+``check_assembly``) joined with Stage 8C. ``export_part`` keeps
 ``layout="nested_sheet"`` in the schema (permitted only with
 ``format="dxf"|"svg"``).
 
@@ -28,6 +30,11 @@ from pathlib import Path
 from typing import Any, Final, cast
 
 __all__ = [
+    "CONSTRAINT_ANCHOR_PATTERN",
+    "CONSTRAINT_ID_PATTERN",
+    "CONSTRAINT_KINDS",
+    "CONSTRAINT_PARAMS",
+    "CONSTRAINT_STATES",
     "IDENT_PATTERN",
     "PROFILES",
     "REQUIREMENT_ID_PATTERN",
@@ -1698,6 +1705,291 @@ def _update_requirement() -> ToolDecl:
     )
 
 
+# --------------------------------------------------------------------------
+# ASSEMBLY.md §3 — the constraint quartet
+#
+# The vocabulary below is RESTATED here, not invented: the authority is
+# ``hephaestus.geom.constraints`` (``CONSTRAINT_KINDS`` / ``REQUIRED_PARAMS`` /
+# ``OPTIONAL_PARAMS``) and ``hephaestus.core.project_store.constraints`` (the id
+# and anchor grammars). This module may not import either — the contract package
+# is pure declaration and geom binds the CAD kernel at import time — so the
+# equality is asserted by a drift test instead
+# (``server/tests/test_assembly_tools.py::test_declared_constraint_vocabulary_matches_geom``).
+
+#: The 8C kinds (``ASSEMBLY.md`` §1). Each later kind is a contract amendment.
+CONSTRAINT_KINDS: Final[tuple[str, ...]] = (
+    "no_interference",
+    "clearance_min",
+    "distance",
+    "coincident",
+    "concentric",
+    "parallel",
+    "perpendicular",
+    "fit",
+)
+
+#: Every declared parameter name any kind takes, name-sorted. Which ones a given
+#: kind *requires* is enforced structurally by the constraint set, which refuses
+#: a wrong set with ``invalid_constraint`` and writes nothing — the same division
+#: the requirement ledger's per-source obligations already use, and for the same
+#: reason: one authority (the evaluator's own tables), not a JSON Schema restating
+#: it in a second place where it could drift.
+CONSTRAINT_PARAMS: Final[tuple[str, ...]] = (
+    "axis_eps_deg",
+    "max_mm",
+    "min_mm",
+    "normal_eps_deg",
+    "tol_deg",
+    "tol_mm",
+    "tol_mm3",
+    "value_mm",
+)
+
+#: Constraint ids: a stable handle a requirement, a tool call, a reviewer finding
+#: and a bench reason all name — so, like a ledger id, plain and pattern-checked.
+CONSTRAINT_ID_PATTERN: Final[str] = r"^[A-Za-z][A-Za-z0-9._-]{0,63}$"
+
+#: An anchor is ``part[:selector]`` (``ASSEMBLY.md`` §1): a §5.3 tag, a geometry
+#: label or a binding name in the part's existing §7 namespace, or a bare part
+#: meaning the whole compound. The separator is a colon, never the ``part/selector``
+#: slash of a §7 cross-part measurement selector — an anchor already names its part.
+CONSTRAINT_ANCHOR_PATTERN: Final[str] = r"^[A-Za-z_][A-Za-z0-9_]*(:[^\s:]+)?$"
+
+#: The three per-constraint states (``ASSEMBLY.md`` §2). ``unresolvable`` is its
+#: own state on purpose: a constraint that could not be checked is neither a pass
+#: nor a violation, and collapsing it into either would be a lie about evidence.
+CONSTRAINT_STATES: Final[tuple[str, ...]] = ("satisfied", "violated", "unresolvable")
+
+_CONSTRAINT_ID: Final[JsonSchema] = {"type": "string", "pattern": CONSTRAINT_ID_PATTERN}
+_CONSTRAINT_ANCHOR: Final[JsonSchema] = {
+    "type": "string",
+    "pattern": CONSTRAINT_ANCHOR_PATTERN,
+}
+
+#: Why this constraint is claimed to hold (``ASSEMBLY.md`` §1: provenance is
+#: MANDATORY). Either it cites a requirement-ledger id, or it is an assumption
+#: with a reason — a constraint IS an interpretation of intent, so it says whose.
+#: Neither present is refused ``invalid_constraint`` with nothing written.
+_CONSTRAINT_PROVENANCE: Final[JsonSchema] = _obj(
+    {
+        "requirement": {
+            "anyOf": [{"type": "string", "pattern": REQUIREMENT_ID_PATTERN}, {"type": "null"}],
+            "default": None,
+        },
+        "assumed": {"anyOf": [_BOOL, {"type": "null"}], "default": None},
+        "reason": {"anyOf": [_STR, {"type": "null"}], "default": None},
+    },
+    [],
+)
+
+#: Declared numbers ride at the entry's top level, exactly as ``ASSEMBLY.md`` §1
+#: writes an entry (``value_mm`` next to ``id``), so the wire shape and the stored
+#: shape are one shape.
+_CONSTRAINT_NUMBERS: Final[dict[str, JsonSchema]] = {
+    name: {"anyOf": [_NUM, {"type": "null"}], "default": None} for name in CONSTRAINT_PARAMS
+}
+
+_CONSTRAINT_ENTRY: Final[JsonSchema] = _obj(
+    {
+        "id": _CONSTRAINT_ID,
+        "kind": _enum(list(CONSTRAINT_KINDS)),
+        "a": _CONSTRAINT_ANCHOR,
+        "b": _CONSTRAINT_ANCHOR,
+        "provenance": _CONSTRAINT_PROVENANCE,
+        "note": {"anyOf": [_STR, {"type": "null"}], "default": None},
+        **_CONSTRAINT_NUMBERS,
+    },
+    ["id", "kind", "a", "b", "provenance"],
+)
+
+#: The same entry as it is *reported*: lenient, and carrying what a withdrawal
+#: recorded. A withdrawn entry is never evaluated and never erased (``ASSEMBLY.md``
+#: §3), so what a project stopped claiming — and why — stays readable.
+_CONSTRAINT_ENTRY_OUT: Final[JsonSchema] = _ok(
+    {
+        **cast("dict[str, JsonSchema]", _CONSTRAINT_ENTRY["properties"]),
+        "withdrawn": _BOOL,
+        "withdrawn_reason": {"anyOf": [_STR, {"type": "null"}]},
+    },
+    ["id", "kind", "a", "b"],
+)
+
+#: What the geometry measured, next to what was declared (``ASSEMBLY.md`` §2).
+#: ``satisfied`` here is arithmetic — the declared numbers restated against the
+#: measurement — never a verdict about the design.
+_CONSTRAINT_RESIDUAL: Final[JsonSchema] = _ok(
+    {
+        "kind": _STR,
+        "measured": _NUM,
+        "unit": _enum(["mm", "mm3", "deg"]),
+        "slack": _NUM,
+        "satisfied": _BOOL,
+        "declared": {"type": "array"},
+        "values": {"type": "array"},
+        "worst_points": {"type": "array"},
+    },
+    ["kind", "measured", "unit", "slack", "satisfied"],
+)
+
+#: How one anchor resolved: the §7 rule that matched and the artifact it was read
+#: from. Present even when resolution failed (``rule``/``artifact_ref`` null), so
+#: an unresolvable constraint still says how far it got.
+_CONSTRAINT_ANCHOR_REF: Final[JsonSchema] = _ok(
+    {
+        "anchor": _STR,
+        "part": _STR,
+        "selector": _STR,
+        "rule": {"anyOf": [_STR, {"type": "null"}]},
+        "artifact_ref": {"anyOf": [_STR, {"type": "null"}]},
+    },
+    ["anchor", "part", "selector"],
+)
+
+_CONSTRAINT_OUTCOME: Final[JsonSchema] = _ok(
+    {
+        "id": _STR,
+        "kind": _STR,
+        "a": _CONSTRAINT_ANCHOR_REF,
+        "b": _CONSTRAINT_ANCHOR_REF,
+        "state": _enum(list(CONSTRAINT_STATES)),
+        # A violated outcome always carries the residual; an unresolvable one
+        # always carries a named reason and a detail. Never both, which is what
+        # keeps "not checked" from reading like a measurement.
+        "residual": {"anyOf": [_CONSTRAINT_RESIDUAL, {"type": "null"}]},
+        "reason": {"anyOf": [_STR, {"type": "null"}]},
+        "detail": {"anyOf": [_STR, {"type": "null"}]},
+        "provenance": _dict(),
+        "note": {"anyOf": [_STR, {"type": "null"}]},
+    },
+    ["id", "kind", "a", "b", "state"],
+)
+
+#: One whole evaluation (``ASSEMBLY.md`` §2). ``blocking`` is the ids the
+#: ``VALIDATION.md`` §5 never-green rule fires on — violated AND unresolvable,
+#: because an unchecked constraint is not a passing one. ``stale`` names parts
+#: rebuilt since this status was computed.
+_ASSEMBLY_STATUS: Final[JsonSchema] = _ok(
+    {
+        "generation": _INT,
+        "constraints": {"type": "array", "items": _CONSTRAINT_OUTCOME},
+        "artifact_refs": _dict(_STR),
+        "stale": {"type": "array", "items": _STR},
+        "counts": _dict(_INT),
+        "blocking": {"type": "array", "items": _STR},
+    },
+    ["generation", "constraints", "counts", "blocking"],
+)
+
+#: The result the three constraint-set tools share: the generation that is now
+#: current, its immutable ref, what changed, every entry (withdrawn ones included)
+#: and the LAST evaluation — ``assembly: null`` meaning *never evaluated*, which
+#: is not a pass. Re-measuring is ``check_assembly``, never a side effect of a read.
+_CONSTRAINT_SET_RESULT: Final[JsonSchema] = _ok(
+    {
+        "status": {"const": "ok"},
+        "generation": _INT,
+        "artifact_ref": {"anyOf": [_STR, {"type": "null"}]},
+        "change": {"anyOf": [_dict(), {"type": "null"}]},
+        "entries": {"type": "array", "items": _CONSTRAINT_ENTRY_OUT},
+        "assembly": {"anyOf": [_ASSEMBLY_STATUS, {"type": "null"}]},
+        "assembly_ref": {"anyOf": [_STR, {"type": "null"}]},
+    },
+    ["status", "generation", "artifact_ref", "entries", "assembly"],
+)
+
+
+def _declare_constraint() -> ToolDecl:
+    return ToolDecl(
+        name="declare_constraint",
+        summary="Declare one cross-part constraint (ASSEMBLY.md §1); advances one generation.",
+        params=_CONSTRAINT_ENTRY,
+        result=_CONSTRAINT_SET_RESULT,
+        profiles=("part", "orchestrator"),
+        sequential=True,
+        idempotent=True,
+    )
+
+
+def _update_constraint() -> ToolDecl:
+    return ToolDecl(
+        name="update_constraint",
+        summary="Revise or withdraw one constraint with a recorded reason; one generation.",
+        params=_obj(
+            {
+                "id": _CONSTRAINT_ID,
+                # Merged onto the stored entry and revalidated as a whole, so a
+                # patch cannot produce an entry that could not have been declared.
+                # `withdrawn: true` is the withdrawal path (ASSEMBLY.md §3): a new
+                # generation that stops claiming the constraint, never an erasure.
+                "patch": _obj(
+                    {
+                        "kind": {"anyOf": [_enum(list(CONSTRAINT_KINDS)), {"type": "null"}]},
+                        "a": {"anyOf": [_CONSTRAINT_ANCHOR, {"type": "null"}]},
+                        "b": {"anyOf": [_CONSTRAINT_ANCHOR, {"type": "null"}]},
+                        "provenance": {"anyOf": [_CONSTRAINT_PROVENANCE, {"type": "null"}]},
+                        "note": {"anyOf": [_STR, {"type": "null"}]},
+                        "withdrawn": {"anyOf": [_BOOL, {"type": "null"}]},
+                        **_CONSTRAINT_NUMBERS,
+                    },
+                    [],
+                ),
+                # Compulsory and recorded ON THE GENERATION: a silently revised
+                # tolerance is exactly what ASSEMBLY.md §3 forbids.
+                "reason": _STR,
+            },
+            ["id", "patch", "reason"],
+        ),
+        result=_CONSTRAINT_SET_RESULT,
+        profiles=("part", "orchestrator"),
+        sequential=True,
+        idempotent=True,
+    )
+
+
+def _read_constraints() -> ToolDecl:
+    return ToolDecl(
+        name="read_constraints",
+        summary="Read the constraint set and the latest assembly evaluation (no re-measure).",
+        params=_obj({}, []),
+        result=_CONSTRAINT_SET_RESULT,
+        profiles=("part", "orchestrator"),
+        sequential=False,
+        idempotent=False,
+    )
+
+
+def _check_assembly() -> ToolDecl:
+    return ToolDecl(
+        name="check_assembly",
+        summary="Evaluate declared constraints against the current builds; return AssemblyStatus.",
+        params=_obj(
+            {
+                # Omitted: every active constraint, and the result is projected as
+                # the project's assembly status. A named subset is deliberately NOT
+                # projected — a projection covering some constraints would report a
+                # set the project does not have.
+                "ids": {
+                    "anyOf": [{"type": "array", "items": _CONSTRAINT_ID}, {"type": "null"}],
+                    "default": None,
+                },
+            },
+            [],
+        ),
+        result=_ok(
+            {
+                "status": {"const": "ok"},
+                "assembly": _ASSEMBLY_STATUS,
+                "artifact_ref": {"anyOf": [_STR, {"type": "null"}]},
+                "partial": _BOOL,
+            },
+            ["status", "assembly", "partial"],
+        ),
+        profiles=("part", "orchestrator"),
+        sequential=False,
+        idempotent=False,
+    )
+
+
 #: One artifact-bound topology address a finding points at (§ run_dfm). Never a
 #: mutable mask id: ``solid_id``/``topology_index`` enumerate the *artifact*.
 _TOPOLOGY_DESCRIPTOR: Final[JsonSchema] = _obj(
@@ -2002,6 +2294,13 @@ TOOLS: Final[tuple[ToolDecl, ...]] = (
     _record_requirements(),
     _read_requirements(),
     _update_requirement(),
+    # ASSEMBLY.md §3: declaring is cheap and reversible, so unlike the reference
+    # registry the constraint set IS model-writable — the ledger's compelled-
+    # honesty pattern rather than the registry's operator-only one.
+    _declare_constraint(),
+    _update_constraint(),
+    _read_constraints(),
+    _check_assembly(),
     _load_skill(),
     _list_skills(),
     _list_references(),

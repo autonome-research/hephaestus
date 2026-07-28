@@ -23,6 +23,9 @@ mixin per domain so each domain reads independently:
 ``_compare``     ``COMPARE.md`` §2 ``compare_solids``: the editing loop's
                  convergence signal, over a part and a ``part:``/``import:``
                  target, attributed to the artifact refs and import hash used.
+``_assembly``    the ``ASSEMBLY.md`` §3 constraint quartet: thin ops over the
+                 project's generational constraint set and the engine evaluator,
+                 keeping the tool surface's refusal vocabulary and nothing else.
 ``_requirements`` the ``VALIDATION.md`` §2 requirement ledger: immutable
                  generations under the project-config lock, and the typed
                  :func:`~._requirements.ledger_state` reader every later
@@ -72,6 +75,7 @@ from hephaestus.core.project_store.layout import ProjectLayout
 from opstore import OpStore
 
 from ._artifacts import BINARY_ARTIFACT_KINDS, TEXT_ARTIFACT_MIME, ArtifactOps
+from ._assembly import AssemblyOps
 from ._base import (
     PART_PARAMS_POINTER_PREFIX,
     PROJECT_PARAMS_POINTER,
@@ -195,6 +199,7 @@ __all__ = [
     "SYNC_PART",
     "TEXT_ARTIFACT_MIME",
     "TITLE_BLOCK_FIELDS",
+    "AssemblyOps",
     "BomRow",
     "CadOpError",
     "CadOps",
@@ -269,6 +274,7 @@ class CadOps(
     DocOps,
     ExportOps,
     RequirementOps,
+    AssemblyOps,
     ReferenceOps,
     DimensionFindingOps,
     DfmOps,

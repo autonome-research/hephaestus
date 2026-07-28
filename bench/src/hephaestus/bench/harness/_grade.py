@@ -63,6 +63,8 @@ class GradeReport:
     drawings: tuple[Mapping[str, Any], ...] = ()
     #: One record per §5.2 metadata requirement (material/process/fields).
     metadata: tuple[Mapping[str, Any], ...] = ()
+    #: ``ASSEMBLY.md`` §3: one record per declared constraint, with its residual.
+    constraints: tuple[Mapping[str, Any], ...] = ()
     tool_calls: int | None = None
     budget_tool_calls: int | None = None
     within_budget: bool = True
@@ -94,6 +96,7 @@ class GradeReport:
             "dfm": [dict(d) for d in self.dfm],
             "drawings": [dict(d) for d in self.drawings],
             "metadata": [dict(m) for m in self.metadata],
+            "constraints": [dict(c) for c in self.constraints],
             "tool_calls": self.tool_calls,
             "budget_tool_calls": self.budget_tool_calls,
             "within_budget": self.within_budget,
@@ -505,6 +508,99 @@ def _validate_declared_blank(
     return []
 
 
+def _validate_constraints(cad: CadOps, task: BenchTask) -> tuple[list[dict[str, Any]], list[str]]:
+    """Declare the task's constraints and evaluate them through the engine path.
+
+    ``ASSEMBLY.md`` §3. The task's entries are installed over whatever the run
+    declared — the same rule the required CHECKS follow, and for the same reason:
+    the acceptance spec is the task's, so a run cannot pass by declaring a weaker
+    mate (or by declaring none). Evaluation goes through
+    :class:`~hephaestus.core.assembly.AssemblyEvaluator` with the ids named, so
+    the numbers here are the numbers ``check_assembly`` reports and the partial
+    evaluation is deliberately not projected over the run's own status.
+
+    Each of the three states gets its own reason token, because they call for
+    different fixes and ``VALIDATION.md`` §1 requires a check to fail under the
+    name of what actually failed.
+    """
+    if not task.constraints:
+        return [], []
+    records: list[dict[str, Any]] = []
+    reasons: list[str] = []
+    constraints = cad.constraint_set()
+    declared = constraints.state().by_id
+    for requirement in task.constraints:
+        entry = requirement.declaration()
+        try:
+            if requirement.id in declared:
+                # The run declared this id too: the task's version replaces it,
+                # with the substitution recorded as the generation's reason.
+                # ``withdrawn: False`` is part of the replacement, not decoration:
+                # a withdrawn entry is never evaluated, so a run that declared the
+                # task's id and then withdrew it would otherwise leave the
+                # acceptance constraint unmeasurable — the run escaping the mate by
+                # paperwork, which is exactly what "the task owns it" forbids.
+                patch = {key: value for key, value in entry.items() if key != "id"}
+                patch["withdrawn"] = False
+                constraints.update(
+                    requirement.id,
+                    patch,
+                    "replaced by the bench task's acceptance constraint",
+                    op_id=f"bench-constraint-{uuid.uuid4().hex}",
+                )
+            else:
+                constraints.declare(entry, op_id=f"bench-constraint-{uuid.uuid4().hex}")
+        except Exception as exc:
+            records.append(
+                {"requirement": requirement.to_json(), "error": f"{type(exc).__name__}: {exc}"}
+            )
+            # The entry is the TASK's, so a refusal here is our bug, not the
+            # agent's: named as a harness error so it does not charge the run.
+            reasons.append(f"harness_error:constraint_undeclarable:{requirement.id}")
+            continue
+        records.append({"requirement": requirement.to_json()})
+    wanted = [
+        requirement.id for requirement in task.constraints if not _errored(records, requirement.id)
+    ]
+    if not wanted:
+        return records, reasons
+    try:
+        status = cad.assembly_evaluator().evaluate(wanted, record=False)
+    except Exception as exc:  # pragma: no cover - a broken store, not a verdict
+        reasons.append(f"harness_error:assembly_evaluation_failed:{type(exc).__name__}")
+        return records, reasons
+    outcomes = {outcome.id: outcome for outcome in status.constraints}
+    expected = {requirement.id: requirement.expect for requirement in task.constraints}
+    for record in records:
+        requirement_id = str(cast("Mapping[str, Any]", record["requirement"])["entry"]["id"])
+        outcome = outcomes.get(requirement_id)
+        if outcome is None:
+            if "error" not in record:  # pragma: no cover - evaluate() covers every id
+                reasons.append(f"harness_error:constraint_not_evaluated:{requirement_id}")
+            continue
+        record["outcome"] = outcome.to_json()
+        want = expected[requirement_id]
+        if outcome.state == want:
+            continue
+        if outcome.state == "unresolvable":
+            # Never conflated with a violation: nothing was measured at all.
+            reasons.append(f"constraint_unresolvable:{requirement_id}:{outcome.reason}")
+        elif outcome.state == "violated":
+            reasons.append(f"constraint_violated:{requirement_id}:{outcome.measured}")
+        else:
+            reasons.append(f"constraint_state:{requirement_id}:{outcome.state}!={want}")
+    return records, reasons
+
+
+def _errored(records: Sequence[Mapping[str, Any]], constraint_id: str) -> bool:
+    """True when declaring this constraint already failed (nothing to evaluate)."""
+    for record in records:
+        entry = cast("Mapping[str, Any]", record["requirement"])["entry"]
+        if str(cast("Mapping[str, Any]", entry)["id"]) == constraint_id:
+            return "error" in record
+    return False
+
+
 def _validate_renders(cad: CadOps, task: BenchTask) -> tuple[list[dict[str, Any]], list[str]]:
     """Produce + record every required render (e.g. a ``+Z`` midplane section)."""
     records: list[dict[str, Any]] = []
@@ -560,6 +656,7 @@ def grade(
     dfm: list[dict[str, Any]] = []
     drawings: list[dict[str, Any]] = []
     metadata: list[dict[str, Any]] = []
+    constraints: list[dict[str, Any]] = []
     graded = False
     with open_cad(project_root) as cad:
         layout = cad.layout
@@ -581,6 +678,9 @@ def grade(
             metadata_records, metadata_reasons = _validate_metadata(cad, task, builds)
             metadata = metadata_records
             reasons.extend(metadata_reasons)
+            constraint_records, constraint_reasons = _validate_constraints(cad, task)
+            constraints = constraint_records
+            reasons.extend(constraint_reasons)
     if graded:
         # Outside the ops object above on purpose: DFM predicates run on a probed
         # secure backend, which the grading ops object deliberately is not.
@@ -603,6 +703,7 @@ def grade(
         dfm=tuple(dfm),
         drawings=tuple(drawings),
         metadata=tuple(metadata),
+        constraints=tuple(constraints),
         tool_calls=tool_calls,
         budget_tool_calls=task.budget_tool_calls,
         within_budget=within_budget,

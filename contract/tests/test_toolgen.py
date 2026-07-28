@@ -95,19 +95,28 @@ def test_no_drift_between_declaration_and_tool_schema_md() -> None:
     assert decl.isdisjoint(excluded)
 
 
-def test_full_tool_surface_is_36_tools() -> None:
+def test_full_tool_surface_is_40_tools() -> None:
     # 27 Stage-2 tools, the Stage 2V requirement-ledger family, the Stage 6
     # manufacturing tools (run_dfm, generate_drawing, generate_doc), the
-    # Stage 8A read-only reference pair (INGEST.md §2), and the Stage 8B
-    # comparison tool (COMPARE.md §2) — a declared addition, not drift.
-    assert len(tools_decl.tool_names()) == 36
-    assert len(set(tools_decl.tool_names())) == 36
+    # Stage 8A read-only reference pair (INGEST.md §2), the Stage 8B
+    # comparison tool (COMPARE.md §2), and the Stage 8C constraint quartet
+    # (ASSEMBLY.md §3) — declared additions, not drift.
+    assert len(tools_decl.tool_names()) == 40
+    assert len(set(tools_decl.tool_names())) == 40
     assert {"record_requirements", "read_requirements", "update_requirement"} <= set(
         tools_decl.tool_names()
     )
     assert {"run_dfm", "generate_drawing", "generate_doc"} <= set(tools_decl.tool_names())
     assert {"list_references", "read_reference"} <= set(tools_decl.tool_names())
     assert "compare_solids" in tools_decl.tool_names()
+    # ASSEMBLY.md §3: model-writable, because declaring a mate is cheap,
+    # reversible and measured — unlike a reference, which is operator-only.
+    assert {
+        "declare_constraint",
+        "update_constraint",
+        "read_constraints",
+        "check_assembly",
+    } <= set(tools_decl.tool_names())
 
 
 def test_delegate_prompt_carries_max_utf8_keyword() -> None:

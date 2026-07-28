@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal, cast
 
 from hephaestus.core.errors import IncoherentProjectSnapshotError, ValidationError
@@ -35,6 +35,7 @@ __all__ = [
     "PROJECT_SNAPSHOT_REF_PREFIX",
     "SNAPSHOT_POINTER",
     "STATE_POINTER",
+    "AssemblyProjection",
     "PartProjection",
     "ProjectSnapshot",
     "ProjectionState",
@@ -50,6 +51,24 @@ STATE_POINTER = "project-state"
 SNAPSHOT_POINTER = "project-snapshot"
 #: Ref prefix for immutable project-snapshot manifests.
 PROJECT_SNAPSHOT_REF_PREFIX = "artifact:project-snapshot:"
+
+
+def _restale_assembly(
+    assembly: AssemblyProjection | None, part: str, artifact_ref: str
+) -> AssemblyProjection | None:
+    """Mark the assembly projection stale when a constrained part's build moves.
+
+    ``ASSEMBLY.md`` §2: rebuilding any part a constraint anchors marks the
+    assembly projection stale. Only the anchored parts matter (a constraint set
+    that never mentions a part is not invalidated by building it), and only a
+    *different* artifact ref counts — the same selectivity ``apply_hc_state``
+    applies to consumed names.
+    """
+    if assembly is None or part not in assembly.parts:
+        return assembly
+    if assembly.parts[part] == artifact_ref or part in assembly.stale:
+        return assembly
+    return replace(assembly, stale=tuple(sorted({*assembly.stale, part})))
 
 
 def _same_value(a: JSONValue, b: JSONValue) -> bool:
@@ -111,6 +130,73 @@ class PartProjection:
 
 
 @dataclass(frozen=True)
+class AssemblyProjection:
+    """The last evaluated assembly status, and what it was computed against.
+
+    ``ASSEMBLY.md`` §2: constraint status is recomputed on demand and PROJECTED
+    at publication, so a status a reader sees is either fresh or **named
+    stale** — never quietly out of date. ``parts`` records the artifact ref each
+    anchored part contributed at evaluation time (``""`` when the part had no
+    current build then, which is itself a fact the next build invalidates), and
+    :attr:`stale` names every anchored part whose current build has moved since.
+
+    Staleness here is the same rule ``hc``/import staleness follows: a *changed*
+    input, not merely a rebuild — republishing byte-identical geometry moves no
+    artifact ref and therefore invalidates nothing.
+    """
+
+    status_blob: str
+    generation: int
+    audit_revision: int
+    parts: Mapping[str, str] = field(default_factory=dict[str, str])
+    stale: tuple[str, ...] = ()
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "status_blob": self.status_blob,
+            "generation": self.generation,
+            "audit_revision": self.audit_revision,
+            "parts": {name: self.parts[name] for name in sorted(self.parts)},
+            "stale": list(self.stale),
+        }
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, JSONValue]) -> AssemblyProjection:
+        status_blob = data.get("status_blob")
+        generation = data.get("generation")
+        revision = data.get("audit_revision")
+        if (
+            not isinstance(status_blob, str)
+            or not isinstance(generation, int)
+            or isinstance(generation, bool)
+            or not isinstance(revision, int)
+            or isinstance(revision, bool)
+        ):
+            raise ValidationError("malformed assembly projection record", kind="contract")
+        parts_raw = data.get("parts", {})
+        if not isinstance(parts_raw, dict):
+            raise ValidationError("assembly projection parts must be an object", kind="contract")
+        parts: dict[str, str] = {}
+        for name, value in cast("Mapping[str, JSONValue]", parts_raw).items():
+            if not isinstance(value, str):
+                raise ValidationError("assembly projection refs must be strings", kind="contract")
+            parts[name] = value
+        stale_raw = data.get("stale", [])
+        stale: tuple[str, ...] = ()
+        if isinstance(stale_raw, list):
+            stale = tuple(
+                item for item in cast("list[JSONValue]", stale_raw) if isinstance(item, str)
+            )
+        return cls(
+            status_blob=status_blob,
+            generation=generation,
+            audit_revision=revision,
+            parts=parts,
+            stale=stale,
+        )
+
+
+@dataclass(frozen=True)
 class ProjectionState:
     """The persisted projection state behind the ``project-state`` pointer."""
 
@@ -121,6 +207,9 @@ class ProjectionState:
     #: INGEST.md §1: the live ``{imports/ path: sha256}`` tree state, the import
     #: analogue of ``hc_state``.
     import_state: Mapping[str, str] = field(default_factory=dict[str, str])
+    #: ASSEMBLY.md §2: the projected assembly status, or ``None`` before the
+    #: first evaluation (an unevaluated constraint set is not a passing one).
+    assembly: AssemblyProjection | None = None
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -131,6 +220,7 @@ class ProjectionState:
                 part: self.projections[part].to_json() for part in sorted(self.projections)
             },
             "import_state": {name: self.import_state[name] for name in sorted(self.import_state)},
+            "assembly": None if self.assembly is None else self.assembly.to_json(),
         }
 
     @classmethod
@@ -165,12 +255,17 @@ class ProjectionState:
             if not isinstance(value, str):
                 raise ValidationError("import hashes must be strings", kind="contract")
             import_state[name] = value
+        assembly_raw = data.get("assembly")
+        assembly: AssemblyProjection | None = None
+        if isinstance(assembly_raw, dict):
+            assembly = AssemblyProjection.from_json(cast("Mapping[str, JSONValue]", assembly_raw))
         return cls(
             audit_revision=revision,
             hc_state=dict(hc_state),
             stale=stale_map,
             projections=projections,
             import_state=import_state,
+            assembly=assembly,
         )
 
 
@@ -238,6 +333,16 @@ class Projections:
 
     def _swap(self, new_state: ProjectionState, expected_pointer: str | None) -> str:
         blob = self._store.blobs.put(canonical_json(new_state.to_json()).encode("utf-8"))
+        # ASSEMBLY.md §2: the projected status document hangs off the
+        # projection-state blob, which is the protected GC root. The edge has to
+        # be re-recorded on EVERY swap, not only on record_assembly: the pointer
+        # moves to a new blob on each rebuild, and an edge left behind on the
+        # previous one would leave the status the project still points at
+        # unreachable — collected at the retention horizon, after which a stale
+        # status reads as "never evaluated", which is a different (and false)
+        # claim about the project.
+        if new_state.assembly is not None:
+            self._store.gc.link(blob, new_state.assembly.status_blob)
         self._store.blobs.cas_swap(STATE_POINTER, expected_pointer, blob)
         return blob
 
@@ -288,6 +393,12 @@ class Projections:
                     hc_state=dict(hc_state),
                     stale=stale,
                     projections=dict(state.projections),
+                    # Carried, not recomputed: an ``hc`` change is not an
+                    # imports/ change and not an assembly evaluation, and
+                    # dropping either here would silently reset live state
+                    # that this call knows nothing about.
+                    import_state=dict(state.import_state),
+                    assembly=state.assembly,
                 )
                 self._swap(new_state, pointer)
             finally:
@@ -343,6 +454,7 @@ class Projections:
                     stale=stale,
                     projections=dict(state.projections),
                     import_state=dict(import_state),
+                    assembly=state.assembly,
                 )
                 self._swap(new_state, pointer)
             finally:
@@ -397,9 +509,40 @@ class Projections:
             stale=stale,
             projections=projections,
             import_state=import_state,
+            assembly=_restale_assembly(state.assembly, part, artifact_ref),
         )
         self._swap(new_state, pointer)
         return new_state
+
+    def record_assembly(self, projection: AssemblyProjection) -> ProjectionState:
+        """Project one evaluated assembly status (``ASSEMBLY.md`` §2).
+
+        Replaces any previous projection: the status a project carries is the
+        last one actually computed, and it starts life fresh (``stale=()``)
+        because it was just measured against the refs it records. Publication
+        marks it stale again when a part it anchors is rebuilt into different
+        geometry. Takes the project-config lock, like every other state swap.
+        """
+        already_held = self._locks.holds(PROJECT_CONFIG_LOCK)
+        if not already_held:
+            self._locks.acquire(PROJECT_CONFIG_LOCK)
+        try:
+            state, pointer = self._load()
+            new_state = ProjectionState(
+                audit_revision=state.audit_revision,
+                hc_state=dict(state.hc_state),
+                stale=dict(state.stale),
+                projections=dict(state.projections),
+                import_state=dict(state.import_state),
+                assembly=projection,
+            )
+            # ``_swap`` records the status document's reachability edge (it has
+            # to do so on every swap, not just this one) — see its comment.
+            self._swap(new_state, pointer)
+            return new_state
+        finally:
+            if not already_held:
+                self._locks.release(PROJECT_CONFIG_LOCK)
 
     # -- coherent snapshot manifests ----------------------------------------
 

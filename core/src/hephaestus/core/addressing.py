@@ -238,6 +238,7 @@ def resolve(selector: str, index: GeometryIndex) -> Resolution:
             + "; ".join(_describe(m) for m in label_matches),
             selector=selector,
             candidates=tuple(_describe(m) for m in label_matches),
+            reason="ambiguous",
         )
     if label_matches:
         return label_matches[0]
@@ -248,6 +249,7 @@ def resolve(selector: str, index: GeometryIndex) -> Resolution:
             + "; ".join(_describe(m) for m in binding_matches),
             selector=selector,
             candidates=tuple(_describe(m) for m in binding_matches),
+            reason="ambiguous",
         )
     if binding_matches:
         return binding_matches[0]

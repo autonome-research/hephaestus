@@ -42,6 +42,7 @@ __all__ = [
     "SPEC_PROSE",
     "SPEC_SEEDED",
     "BenchTask",
+    "ConstraintRequirement",
     "DfmRequirement",
     "DrawingRequirement",
     "ExportRequirement",
@@ -279,6 +280,68 @@ class DrawingRequirement:
 
 
 @dataclass(frozen=True)
+class ConstraintRequirement:
+    """One declared cross-part constraint the graded assembly must satisfy.
+
+    ``ASSEMBLY.md`` §3: an assembly task scores on **declared fits holding**, not
+    on a volume window. The entry is the task's own — it is declared into the
+    graded project's constraint set and evaluated through the same engine path
+    the ``check_assembly`` tool uses, exactly as the task's CHECKS are installed
+    over whatever the run authored. Nothing in the verdict comes from what the
+    run said about its own mates; a run that declared the same id gets the task's
+    version of it.
+
+    ``expect`` is the state the graded geometry must produce. It defaults to
+    ``satisfied`` and is spelled out rather than assumed, because ``unresolvable``
+    is a real third state: a task may legitimately require that a mate be
+    *checkable*, and a grader that treated "could not measure" as "measured fine"
+    would be scoring the absence of evidence.
+    """
+
+    #: The ``ASSEMBLY.md`` §1 entry, minus provenance (supplied below).
+    entry: Mapping[str, Any]
+    expect: str = "satisfied"
+
+    @property
+    def id(self) -> str:
+        return str(self.entry["id"])
+
+    def declaration(self) -> dict[str, Any]:
+        """The entry as declared into the graded project.
+
+        Provenance is the task's: the constraint is part of the acceptance spec,
+        so it is an assumption *of the task* with a reason naming that. Inventing
+        a requirement citation the project does not carry would be the dishonest
+        alternative.
+        """
+        declared = dict(self.entry)
+        declared.setdefault(
+            "provenance",
+            {"assumed": True, "reason": "declared by the bench task's acceptance spec"},
+        )
+        return declared
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> ConstraintRequirement:
+        raw = data.get("entry")
+        if not isinstance(raw, dict):
+            raise ValueError("a constraint requirement needs an 'entry' object (ASSEMBLY.md §1)")
+        entry = cast("Mapping[str, Any]", raw)
+        for field in ("id", "kind", "a", "b"):
+            if not entry.get(field):
+                raise ValueError(f"constraint requirement entry is missing {field!r}")
+        expect = str(data.get("expect", "satisfied"))
+        if expect not in ("satisfied", "violated", "unresolvable"):
+            raise ValueError(
+                f"constraint requirement expect must be a constraint state, got {expect!r}"
+            )
+        return cls(entry=dict(entry), expect=expect)
+
+    def to_json(self) -> dict[str, Any]:
+        return {"entry": dict(self.entry), "expect": self.expect}
+
+
+@dataclass(frozen=True)
 class MetadataRequirement:
     """§5.2 manufacturing metadata the graded part must really carry.
 
@@ -409,6 +472,8 @@ class BenchTask:
     #: §5.2 manufacturing metadata the graded parts must carry (structural: a
     #: registry-resolvable material and a process token, never authored prose).
     metadata: tuple[MetadataRequirement, ...] = ()
+    #: ``ASSEMBLY.md`` §3: declared mates the grader evaluates through the engine.
+    constraints: tuple[ConstraintRequirement, ...] = ()
     #: Seeded, task-owned files (inspection gauges, broken fixtures) restored
     #: from ``seed/`` before grading, so a run cannot pass by editing them.
     protected_paths: tuple[str, ...] = ()
@@ -497,6 +562,7 @@ class BenchTask:
         dfm_raw = data.get("dfm_requirements", [])
         drawings_raw = data.get("drawing_requirements", [])
         metadata_raw = data.get("metadata_requirements", [])
+        constraints_raw = data.get("constraint_requirements", [])
         task = cls(
             id=task_id,
             directory=directory,
@@ -523,6 +589,10 @@ class BenchTask:
                 MetadataRequirement.from_json(cast("Mapping[str, Any]", item))
                 for item in cast("Sequence[Any]", metadata_raw)
             ),
+            constraints=tuple(
+                ConstraintRequirement.from_json(cast("Mapping[str, Any]", item))
+                for item in cast("Sequence[Any]", constraints_raw)
+            ),
             protected_paths=tuple(
                 str(item) for item in cast("Sequence[Any]", data.get("protected_paths", []))
             ),
@@ -544,6 +614,7 @@ class BenchTask:
             "dfm_requirements": [d.to_json() for d in self.dfm],
             "drawing_requirements": [d.to_json() for d in self.drawings],
             "metadata_requirements": [m.to_json() for m in self.metadata],
+            "constraint_requirements": [c.to_json() for c in self.constraints],
             "protected_paths": list(self.protected_paths),
         }
 

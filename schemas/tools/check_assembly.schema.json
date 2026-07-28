@@ -1,0 +1,296 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/check_assembly.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Evaluate declared constraints against the current builds; return AssemblyStatus.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "ids": {
+        "anyOf": [
+          {
+            "items": {
+              "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "result": {
+    "additionalProperties": true,
+    "properties": {
+      "artifact_ref": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "assembly": {
+        "additionalProperties": true,
+        "properties": {
+          "artifact_refs": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "blocking": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "constraints": {
+            "items": {
+              "additionalProperties": true,
+              "properties": {
+                "a": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "anchor": {
+                      "type": "string"
+                    },
+                    "artifact_ref": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "part": {
+                      "type": "string"
+                    },
+                    "rule": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "selector": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "anchor",
+                    "part",
+                    "selector"
+                  ],
+                  "type": "object"
+                },
+                "b": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "anchor": {
+                      "type": "string"
+                    },
+                    "artifact_ref": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "part": {
+                      "type": "string"
+                    },
+                    "rule": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "selector": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "anchor",
+                    "part",
+                    "selector"
+                  ],
+                  "type": "object"
+                },
+                "detail": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "note": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "provenance": {
+                  "type": "object"
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "residual": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": true,
+                      "properties": {
+                        "declared": {
+                          "type": "array"
+                        },
+                        "kind": {
+                          "type": "string"
+                        },
+                        "measured": {
+                          "type": "number"
+                        },
+                        "satisfied": {
+                          "type": "boolean"
+                        },
+                        "slack": {
+                          "type": "number"
+                        },
+                        "unit": {
+                          "enum": [
+                            "mm",
+                            "mm3",
+                            "deg"
+                          ],
+                          "type": "string"
+                        },
+                        "values": {
+                          "type": "array"
+                        },
+                        "worst_points": {
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "measured",
+                        "unit",
+                        "slack",
+                        "satisfied"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "state": {
+                  "enum": [
+                    "satisfied",
+                    "violated",
+                    "unresolvable"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "a",
+                "b",
+                "state"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "generation": {
+            "type": "integer"
+          },
+          "stale": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "generation",
+          "constraints",
+          "counts",
+          "blocking"
+        ],
+        "type": "object"
+      },
+      "partial": {
+        "type": "boolean"
+      },
+      "status": {
+        "const": "ok"
+      }
+    },
+    "required": [
+      "status",
+      "assembly",
+      "partial"
+    ],
+    "type": "object"
+  },
+  "title": "check_assembly",
+  "x-hephaestus-tool": {
+    "idempotent": false,
+    "maxUtf8Fields": {},
+    "name": "check_assembly",
+    "profiles": [
+      "part",
+      "orchestrator"
+    ],
+    "sequential": false
+  }
+}

@@ -26,6 +26,9 @@
   is the ``VALIDATION.md`` §5 reviewer's job, not lint's.
 - ``heph reference add|list|remove`` registers operator-supplied reference
   documents and images (``INGEST.md`` §2); see ``hephaestus.core.cli_references``.
+- ``heph assembly [--json]`` / ``heph assembly check`` show and re-evaluate the
+  project's declared cross-part constraints (``ASSEMBLY.md`` §3); see
+  ``hephaestus.core.cli_assembly``.
 
 Exit codes: 0 success, 1 failure (build failed / raced, failing checks,
 sandbox unavailable), 2 usage (bad arguments, no project, unknown part).
@@ -592,6 +595,14 @@ def build_parser() -> argparse.ArgumentParser:
     from hephaestus.core import cli_diff
 
     cli_diff.add_subparsers(sub)
+
+    # Stage 8C assembly verbs (heph assembly / heph assembly check): the
+    # operator's view of the declared constraint set and its latest residuals
+    # (ASSEMBLY.md §3). Evaluation loads the geometry kernel, so the module is
+    # imported only when one of its verbs runs.
+    from hephaestus.core import cli_assembly
+
+    cli_assembly.add_subparsers(sub)
 
     # Stage 2 agent verb (heph agent) ships with the server package; the engine
     # CLI stays Node-free and fully functional when it is not installed.

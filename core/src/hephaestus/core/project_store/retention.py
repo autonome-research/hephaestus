@@ -39,6 +39,7 @@ def protected_pointer_names(layout: ProjectLayout) -> tuple[str, ...]:
     # modules, so a top-level import here would be circular.
     from hephaestus.core.checks.engine import INTENT_POINTER
     from hephaestus.core.checks.engine import STATE_POINTER as CHECK_STATE_POINTER
+    from hephaestus.core.project_store.constraints import CONSTRAINTS_POINTER
     from hephaestus.core.project_store.projections import SNAPSHOT_POINTER, STATE_POINTER
     from hephaestus.core.project_store.publication import current_pointer
     from hephaestus.core.project_store.references import REFERENCES_POINTER
@@ -51,6 +52,10 @@ def protected_pointer_names(layout: ProjectLayout) -> tuple[str, ...]:
         # Operator-supplied reference material is project state, not run output
         # (INGEST.md §2): the live registry generation is a protected root.
         REFERENCES_POINTER,
+        # Declared constraints are project state too (ASSEMBLY.md §1): the live
+        # generation is a protected root, and its parent chain is reachable
+        # through the gc links each generation records.
+        CONSTRAINTS_POINTER,
     ]
     for part in layout.part_names():
         names.append(current_pointer(part))

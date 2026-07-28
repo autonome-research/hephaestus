@@ -713,6 +713,76 @@ reference's extracted text; a citation of an **image** reference has no text to
 decide against, so it is `unverifiable_citation` and is verified instead by the
 §5 termination reviewer on the vision channel (`INGEST.md` §2).
 
+## Assemblies (declared constraints — `ASSEMBLY.md` §3)
+
+### declare_constraint / update_constraint / read_constraints / check_assembly
+```
+declare_constraint(id: str, kind: "no_interference"|"clearance_min"|"distance"|
+                        "coincident"|"concentric"|"parallel"|"perpendicular"|"fit",
+                   a: str, b: str,
+                   provenance: {requirement: str|null, assumed: bool|null,
+                                reason: str|null},
+                   note: str|null = null,
+                   axis_eps_deg: number|null = null, max_mm: number|null = null,
+                   min_mm: number|null = null, normal_eps_deg: number|null = null,
+                   tol_deg: number|null = null, tol_mm: number|null = null,
+                   tol_mm3: number|null = null, value_mm: number|null = null)
+    -> {status: "ok", generation, artifact_ref, change, entries,
+        assembly, assembly_ref}
+update_constraint(id: str, patch: {...entry fields, withdrawn: bool|null},
+                  reason: str)
+    -> {status: "ok", generation, artifact_ref, change, entries,
+        assembly, assembly_ref}
+read_constraints()
+    -> {status: "ok", generation, artifact_ref, change, entries,
+        assembly, assembly_ref}
+check_assembly(ids: [str]|null = null)
+    -> {status: "ok", assembly: {generation, constraints, artifact_refs,
+                                 stale, counts, blocking},
+        artifact_ref, partial}
+```
+A constraint spans parts, so it cannot live in any one part script: the project
+carries a **constraint set** as generational state, exactly like the requirement
+ledger (immutable content-addressed generations naming their parent, CAS-published
+under the project-config lock, idempotent on the invocation id). Anchors are
+`part[:selector]` where the selector is a §5.3 tag, a geometry label or a binding
+name — the existing addressing layer, no new naming scheme — and a bare `part`
+anchors the whole compound. Declared numbers ride at the entry's top level, and
+which ones a kind takes is the evaluator's own table: a missing or unknown one is
+refused `invalid_constraint` with nothing written.
+
+**Provenance is mandatory.** An entry cites a ledger requirement id or is
+`{"assumed": true, "reason": …}` — a constraint IS an interpretation of intent,
+so it carries the same honesty taxonomy as a `VALIDATION.md` §2 ledger entry, and
+an entry with neither is refused `invalid_constraint`.
+
+**Nothing is erased.** `update_constraint` merges the patch onto the stored entry
+and re-validates the whole result (so a patch cannot produce an entry that could
+not have been declared), and `patch: {"withdrawn": true}` is the withdrawal path:
+a new generation that stops claiming the constraint while keeping it — and the
+reason — readable. A revision without a `reason`, a patch of `id`, and a patch or
+withdrawal naming an unknown id are refused (`invalid_constraint` /
+`unknown_constraint`).
+
+**There is no solver.** Scripts position geometry; constraints verify, they never
+move anything, and a constraint that would need motion to satisfy is simply
+unsatisfied. `check_assembly` resolves each anchor against the parts' **current
+successful build artifacts** and reports each constraint as
+`satisfied | violated | unresolvable`. `unresolvable` is its own state, never
+silently skipped and never conflated with `violated`; its `reason` names what is
+wrong and therefore what would fix it (`missing_part`, `no_current_build`,
+`missing_artifact`, `dangling_selector`, `ambiguous_selector`,
+`unaddressable_anchor`, `shape_refused`, `invalid_constraint`).
+
+A full `check_assembly()` is projected as the project's assembly status;
+`ids=[…]` evaluates that subset only and is deliberately **not** projected
+(`partial: true`), because a projection covering some constraints would report a
+set the project does not have. Reading never measures: `read_constraints` returns
+the *last* evaluation, with `stale` naming parts rebuilt since it was taken, and
+`assembly: null` meaning never evaluated — which is not a pass. At termination
+review a `violated` or `unresolvable` constraint is a blocking finding **by rule**
+(`VALIDATION.md` §5).
+
 ## Knowledge and registries
 
 ### load_skill

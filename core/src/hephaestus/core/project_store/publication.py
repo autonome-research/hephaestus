@@ -223,6 +223,17 @@ class Publisher:
         raw = json.loads(self._store.blobs.get(pointer).decode("utf-8"))
         return cast("Mapping[str, JSONValue]", raw)
 
+    def current_bundle(self, part: str) -> Mapping[str, JSONValue] | None:
+        """The published bundle document behind ``part``'s current pointer.
+
+        Lock-free, and the only route to what publication recorded *about* a
+        build — its §7 geometry index, its tag fingerprints — rather than to the
+        §8 BuildResult inside it. ``ASSEMBLY.md`` §2 anchor resolution needs
+        exactly that: the selector namespace of a build whose worker is long
+        gone.
+        """
+        return self._current_bundle(part)
+
     def current_result(self, part: str) -> BuildResult | None:
         """The last published current BuildResult of ``part`` (lock-free read)."""
         bundle = self._current_bundle(part)
@@ -416,6 +427,13 @@ class Publisher:
             "result": published.to_json(),
             "artifact_ref": published.artifact_ref,
             "tag_fingerprints": descriptors_to_json(build.tag_fingerprints),
+            # ASSEMBLY.md §2: the §7 namespace this build published. Recorded
+            # beside the fingerprints because both answer the same question
+            # about a *reloaded* artifact — which selectors it admits — that the
+            # BRep bytes themselves cannot: constraint anchors are resolved
+            # against a current build long after the worker that knew its labels
+            # and tags has exited.
+            "geometry_index": dict(build.geometry_index_json or {}),
             "consumed_hc": dict(build.consumed_hc),
             "audit_revision": self.projections.state().audit_revision,
         }

@@ -275,6 +275,9 @@ turn with no pending tool call) triggers a reviewer child session that receives:
   only thing that verifies it, and it does so by looking: such a finding is
   recorded on the `vision` channel by rule, from the entry rather than from the
   reviewer's claim about itself,
+- the full **assembly status** of the project's declared cross-part constraints
+  (`ASSEMBLY.md` §3), each with its measured residual or its named
+  `unresolvable` reason,
 - **explicitly NOT** the agent's own `CHECKS` — so it cannot inherit the
   misreading.
 
@@ -283,6 +286,16 @@ supporting measurement or render observation, and **treats `assumed` entries
 as fail-unless-confirmed**. It records `channel: "vision" | "numeric"` for each
 finding — this is where vision earns its keep (feature on the wrong face, joint
 that does not mate) versus the numeric channel (dimension errors).
+
+A `violated` or `unresolvable` constraint at termination review is a **blocking
+finding by rule** (`ASSEMBLY.md` §3 — the never-green invariant extended to
+assemblies). It is stamped from the assembly status the engine produced, not
+from the reviewer's report about itself, exactly as an image citation's `vision`
+channel is; no verdict is solicited for a constraint id and none is accepted.
+The two states stay apart, because they call for different fixes: `violated`
+says the delivered geometry does not meet a declared mate, `unresolvable` says
+the mate was never checked — and an unchecked constraint is not a passing one.
+Only the operator may waive either, and a waiver is recorded as a waiver.
 
 The reviewer is a Pi child with the measurement/render tool subset, no
 mutation tools, no delegation, and its own budget; it cannot edit the project.

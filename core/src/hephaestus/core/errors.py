@@ -15,6 +15,11 @@ from typing import Literal
 
 ValidationKind = Literal["syntax", "contract", "sandbox", "evaluation"]
 
+#: Why an :class:`AddressingError` was raised: nothing matched the selector, or
+#: several interpretations did. ``unresolved`` is the default so every existing
+#: raise site keeps its meaning unchanged.
+AddressingReason = Literal["unresolved", "ambiguous"]
+
 VALIDATION_KINDS: tuple[ValidationKind, ...] = (
     "syntax",
     "contract",
@@ -39,6 +44,11 @@ class AddressingError(HephaestusError):
     ``candidates`` lists the concrete resolvable names that matched
     ambiguously, or the near-misses when nothing matched — never empty
     prose without alternatives when alternatives exist.
+
+    ``reason`` says *which* of those two happened. Both are addressing errors
+    and both carry candidates, but a caller that must report them as distinct
+    named states — ``ASSEMBLY.md`` §2 forbids conflating a dangling selector
+    with an ambiguous one — would otherwise have to read the message text.
     """
 
     code = "addressing_error"
@@ -49,10 +59,12 @@ class AddressingError(HephaestusError):
         *,
         selector: str,
         candidates: tuple[str, ...] = (),
+        reason: AddressingReason = "unresolved",
     ) -> None:
         super().__init__(message)
         self.selector = selector
         self.candidates = candidates
+        self.reason: AddressingReason = reason
 
 
 class ParamOutOfBoundsError(HephaestusError):

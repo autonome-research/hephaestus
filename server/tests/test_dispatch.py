@@ -312,6 +312,21 @@ _ARGS: dict[str, dict[str, object]] = {
     "compare_solids": {"part": "widget", "target": "part:widget"},
     "generate_drawing": {"name": "widget", "kind": "dimensioned"},
     "generate_doc": {"name": "widget", "kind": "bom"},
+    # ASSEMBLY.md §3: a constraint spans parts by nature, so its anchors are
+    # deliberately NOT object-scope-enforced part names — a bound part session
+    # may declare a mate between its own part and another, which is the whole
+    # point of the constraint set. Availability is what this matrix asserts.
+    "declare_constraint": {
+        "id": "c-fit",
+        "kind": "clearance_min",
+        "a": "widget",
+        "b": "widget",
+        "value_mm": 0.2,
+        "provenance": {"assumed": True, "reason": "matrix fixture"},
+    },
+    "update_constraint": {"id": "c-fit", "patch": {"value_mm": 0.3}, "reason": "matrix fixture"},
+    "read_constraints": {},
+    "check_assembly": {},
 }
 
 

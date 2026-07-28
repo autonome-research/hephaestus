@@ -146,6 +146,13 @@ CAD_TOOLS: frozenset[str] = frozenset(
         "record_requirements",
         "read_requirements",
         "update_requirement",
+        # ASSEMBLY.md §3 — the constraint quartet. Model-writable (declaring is
+        # cheap, reversible and measured), but never erasing: a withdrawal is a
+        # new generation carrying its reason.
+        "declare_constraint",
+        "update_constraint",
+        "read_constraints",
+        "check_assembly",
         "read_artifact",
         # INGEST.md §2 — read-only, freely retryable. There is deliberately no
         # `add_reference`: registration is operator-side, so the model's only
@@ -496,6 +503,10 @@ class ToolDispatcher:
             "record_requirements": self._record_requirements,
             "read_requirements": self._read_requirements,
             "update_requirement": self._update_requirement,
+            "declare_constraint": self._declare_constraint,
+            "update_constraint": self._update_constraint,
+            "read_constraints": self._read_constraints,
+            "check_assembly": self._check_assembly,
             "read_artifact": self._read_artifact,
             "list_references": self._list_references,
             "read_reference": self._read_reference,
@@ -796,6 +807,45 @@ class ToolDispatcher:
         return cad.update_requirement(
             str(arguments["id"]), cast("Mapping[str, Any]", fields), op_id=inv.op_id
         ).to_json()
+
+    # -- constraints (ASSEMBLY.md §3) --------------------------------------
+
+    def _declare_constraint(
+        self, _p: Principal, cad: CadOps, arguments: dict[str, Any], inv: Invocation
+    ) -> dict[str, Any]:
+        # The whole entry is the argument object: ASSEMBLY.md §1 puts the declared
+        # numbers at the entry's top level, so the wire shape and the stored shape
+        # are one shape and nothing has to be re-assembled here.
+        return cad.declare_constraint(cast("Mapping[str, Any]", arguments), op_id=inv.op_id)
+
+    def _update_constraint(
+        self, _p: Principal, cad: CadOps, arguments: dict[str, Any], inv: Invocation
+    ) -> dict[str, Any]:
+        raw = arguments.get("patch")
+        if not isinstance(raw, dict):
+            raise DispatchError("invalid_params", "update_constraint requires a patch object")
+        reason = arguments.get("reason")
+        if not isinstance(reason, str):
+            raise DispatchError("invalid_params", "update_constraint requires a reason")
+        return cad.update_constraint(
+            str(arguments["id"]), cast("Mapping[str, Any]", raw), reason, op_id=inv.op_id
+        )
+
+    def _read_constraints(
+        self, _p: Principal, cad: CadOps, _arguments: dict[str, Any], _inv: Invocation
+    ) -> dict[str, Any]:
+        return cad.read_constraints()
+
+    def _check_assembly(
+        self, _p: Principal, cad: CadOps, arguments: dict[str, Any], _inv: Invocation
+    ) -> dict[str, Any]:
+        raw = arguments.get("ids")
+        ids: list[str] | None = None
+        if isinstance(raw, list):
+            ids = [str(item) for item in cast("list[Any]", raw)]
+        elif raw is not None:
+            raise DispatchError("invalid_params", "check_assembly ids must be an array")
+        return cad.check_assembly(ids)
 
     # -- artifacts ---------------------------------------------------------
 

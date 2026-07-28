@@ -1,0 +1,719 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/update_constraint.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Revise or withdraw one constraint with a recorded reason; one generation.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+        "type": "string"
+      },
+      "patch": {
+        "additionalProperties": false,
+        "properties": {
+          "a": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "axis_eps_deg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "b": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "no_interference",
+                  "clearance_min",
+                  "distance",
+                  "coincident",
+                  "concentric",
+                  "parallel",
+                  "perpendicular",
+                  "fit"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "max_mm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "min_mm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "normal_eps_deg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provenance": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "assumed": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "reason": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "requirement": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  }
+                },
+                "required": [],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tol_deg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tol_mm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tol_mm3": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "value_mm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "withdrawn": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "reason": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "id",
+      "patch",
+      "reason"
+    ],
+    "type": "object"
+  },
+  "result": {
+    "additionalProperties": true,
+    "properties": {
+      "artifact_ref": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "assembly": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "properties": {
+              "artifact_refs": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "blocking": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "constraints": {
+                "items": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "a": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "anchor": {
+                          "type": "string"
+                        },
+                        "artifact_ref": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "part": {
+                          "type": "string"
+                        },
+                        "rule": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "selector": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "anchor",
+                        "part",
+                        "selector"
+                      ],
+                      "type": "object"
+                    },
+                    "b": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "anchor": {
+                          "type": "string"
+                        },
+                        "artifact_ref": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "part": {
+                          "type": "string"
+                        },
+                        "rule": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "selector": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "anchor",
+                        "part",
+                        "selector"
+                      ],
+                      "type": "object"
+                    },
+                    "detail": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "note": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "provenance": {
+                      "type": "object"
+                    },
+                    "reason": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "residual": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": true,
+                          "properties": {
+                            "declared": {
+                              "type": "array"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "measured": {
+                              "type": "number"
+                            },
+                            "satisfied": {
+                              "type": "boolean"
+                            },
+                            "slack": {
+                              "type": "number"
+                            },
+                            "unit": {
+                              "enum": [
+                                "mm",
+                                "mm3",
+                                "deg"
+                              ],
+                              "type": "string"
+                            },
+                            "values": {
+                              "type": "array"
+                            },
+                            "worst_points": {
+                              "type": "array"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "measured",
+                            "unit",
+                            "slack",
+                            "satisfied"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "state": {
+                      "enum": [
+                        "satisfied",
+                        "violated",
+                        "unresolvable"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind",
+                    "a",
+                    "b",
+                    "state"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "counts": {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              "generation": {
+                "type": "integer"
+              },
+              "stale": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "generation",
+              "constraints",
+              "counts",
+              "blocking"
+            ],
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "assembly_ref": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "change": {
+        "anyOf": [
+          {
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "entries": {
+        "items": {
+          "additionalProperties": true,
+          "properties": {
+            "a": {
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+              "type": "string"
+            },
+            "axis_eps_deg": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "b": {
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+              "type": "string"
+            },
+            "id": {
+              "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "no_interference",
+                "clearance_min",
+                "distance",
+                "coincident",
+                "concentric",
+                "parallel",
+                "perpendicular",
+                "fit"
+              ],
+              "type": "string"
+            },
+            "max_mm": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "min_mm": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "normal_eps_deg": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "note": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "provenance": {
+              "additionalProperties": false,
+              "properties": {
+                "assumed": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "requirement": {
+                  "anyOf": [
+                    {
+                      "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                }
+              },
+              "required": [],
+              "type": "object"
+            },
+            "tol_deg": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "tol_mm": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "tol_mm3": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "value_mm": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "withdrawn": {
+              "type": "boolean"
+            },
+            "withdrawn_reason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "a",
+            "b"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "generation": {
+        "type": "integer"
+      },
+      "status": {
+        "const": "ok"
+      }
+    },
+    "required": [
+      "status",
+      "generation",
+      "artifact_ref",
+      "entries",
+      "assembly"
+    ],
+    "type": "object"
+  },
+  "title": "update_constraint",
+  "x-hephaestus-tool": {
+    "idempotent": true,
+    "maxUtf8Fields": {},
+    "name": "update_constraint",
+    "profiles": [
+      "part",
+      "orchestrator"
+    ],
+    "sequential": true
+  }
+}

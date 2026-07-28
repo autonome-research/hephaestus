@@ -4,8 +4,8 @@ import { TOOLS, TOOL_NAMES } from "../src/tools/schema.gen.js";
 import { PROMPT_MAX_UTF8_BYTES } from "../src/limits.js";
 
 describe("generated tool surface", () => {
-  it("declares the Stage 2 surface, the Stage 2V ledger, Stage 6, Stage 8A references and Stage 8B compare_solids (36 tools)", () => {
-    expect(TOOL_NAMES).toHaveLength(36);
+  it("declares the Stage 2 surface, the Stage 2V ledger, Stage 6, Stage 8A references, Stage 8B compare_solids and the Stage 8C constraint quartet (40 tools)", () => {
+    expect(TOOL_NAMES).toHaveLength(40);
     for (const ledger of ["record_requirements", "read_requirements", "update_requirement"]) {
       expect(TOOL_NAMES).toContain(ledger);
     }
@@ -16,6 +16,15 @@ describe("generated tool surface", () => {
     expect(TOOL_NAMES).not.toContain("add_reference");
     // COMPARE.md §2: the editing loop's convergence signal, read-only.
     expect(TOOL_NAMES).toContain("compare_solids");
+    // ASSEMBLY.md §3: declared mates, model-writable and never erasable.
+    for (const constraint of [
+      "declare_constraint",
+      "update_constraint",
+      "read_constraints",
+      "check_assembly",
+    ]) {
+      expect(TOOL_NAMES).toContain(constraint);
+    }
     expect(Object.keys(TOOLS).sort()).toEqual([...TOOL_NAMES].sort());
   });
 
