@@ -1,0 +1,8 @@
+description: >
+  Bring the two long walls of the plate inward by 2mm.
+
+task_type: editing
+input_files:
+  - input.step
+
+input_type: text+step

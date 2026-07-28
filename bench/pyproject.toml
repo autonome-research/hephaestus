@@ -6,6 +6,11 @@ requires-python = ">=3.11,<3.15"
 license = "Apache-2.0"
 dependencies = [
     "hephaestus-server",
+    # EXTERNAL_EVAL.md §2 (the CADGenBench adapter): the dataset is fetched from
+    # the HF hub into an out-of-repo cache, and its per-sample spec is YAML.
+    # Package-level only — the engine never sees either.
+    "huggingface-hub>=0.26",
+    "pyyaml>=6.0",
 ]
 
 [build-system]

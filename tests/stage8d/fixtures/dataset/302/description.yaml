@@ -1,0 +1,8 @@
+description: >
+  Sculpt something.
+
+task_type: sculpting
+input_files:
+  - input.png
+
+input_type: text+image

@@ -11,6 +11,9 @@ imported only when a bench verb actually runs.
   ``VALIDATION.md`` §5/§6 termination-review ladder runs on every run unless
   ``--no-review`` is passed. ``--dry-run`` lists the planned (task, seed) prompts
   and makes **no** model call.
+- ``heph bench cadgenbench {fetch,convert,run,package,score}`` is the external
+  evaluation adapter (``EXTERNAL_EVAL.md`` §2); see
+  :mod:`hephaestus.bench.cadgenbench`.
 - ``heph bench score DIR [--model ID] [--date D] [--out FILE] [--json]`` scores an
   archived run directory and writes ``bench/results/<model>/<date>.json``, plus
   the ``VALIDATION.md`` §1 split table (prose and seeded, never averaged; the
@@ -250,6 +253,13 @@ def add_subparsers(
     run.add_argument("--dry-run", action="store_true", help="list planned runs; no model calls")
     run.add_argument("--json", action="store_true", help="emit JSON")
     run.set_defaults(func=_cmd_run)
+
+    # EXTERNAL_EVAL.md §2: the external adapter rides the same `heph bench`
+    # surface. Registering it is cheap — every working import inside it is
+    # deferred into a handler, so `heph bench --help` still pulls in nothing.
+    from hephaestus.bench.cadgenbench._cli import add_parser as add_cadgenbench_parser
+
+    add_cadgenbench_parser(inner)
 
     score = inner.add_parser("score", help="score an archived run directory")
     score.add_argument("directory", help="bench/results/<model>/<date> directory")

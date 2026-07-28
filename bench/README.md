@@ -75,3 +75,41 @@ The gate is the one-sided **lower 90% Wilson bound** of the aggregate pass rate
 over 8 tasks × ≥3 seeds (n ≥ 24), plus `repair-fillet` passing every seed.
 `heph bench score` exits 0 only when both hold. Thresholds are mission-tunable
 *upward* only.
+
+## External evaluation: the CADGenBench adapter
+
+`hephaestus.bench.cadgenbench` (`EXTERNAL_EVAL.md` §2) adapts the external
+benchmark onto this harness. It lives entirely in `bench/` — the engine never
+imports it — and rides Stage 8A ingest (generation = drawings seeded as
+`references/`, editing = the starting solid seeded under `imports/`) and Stage
+8B comparison, so it adds no engine capability. The facts it is written against
+are recorded in `bench/CADGENBENCH_FACTS.md`.
+
+```sh
+uv run heph bench cadgenbench fetch                       # public inputs -> ~/.cache/hephaestus/cadgenbench
+uv run heph bench cadgenbench convert --tasks-dir tasks   # samples -> bench tasks (refusals are named)
+uv run heph bench cadgenbench run --provider providers.json --model <id> \
+    --tasks-dir tasks --outputs outputs [--samples 101,201] [--parallel N]
+uv run heph bench cadgenbench package --outputs outputs --out submission.zip \
+    --submitter "…" --submission "…" --agree-to-publish
+uv run heph bench cadgenbench score --outputs outputs
+```
+
+Four rules this surface enforces rather than documents:
+
+- **No external data is ever committed.** The dataset is ODC-BY (geometry
+  courtesy of Mecado) and is cached outside the repository; a `--dest` inside
+  the working tree is refused. The committed fixtures under
+  `tests/stage8d/fixtures/` are synthetic mini-samples in the same layout.
+- **A malformed sample is refused by name, never skipped.** `convert` exits
+  non-zero and names every refusal, and `run` will not proceed on a partial
+  corpus.
+- **`--agree-to-publish` is required.** `meta.json`'s `agree_to_publish` is the
+  leaderboard's only consent gate; it is the operator's declaration to make.
+- **`score` is a floor, and says so.** Ground truth is private to the
+  leaderboard Space, so no local computation is a CAD Score. The artifact is
+  labelled `local floor` and reports validity plus, for editing samples,
+  `score_step_files` facts against the sample's *own starting solid*.
+
+Uploading the ZIP is an operator act; the machine-checkable gate ends at the
+packaged, sanity-checked submission.

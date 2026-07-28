@@ -1,0 +1,7 @@
+description: >
+  Reproduce the geometry from the drawing.
+
+input_files:
+  - input.png
+
+input_type: text+image
