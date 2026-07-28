@@ -366,6 +366,19 @@ class ImportRegistry:
 
     def import_step(self, name: str) -> object:
         """Deserialize the staged shape for ``name`` (script contract §2)."""
+        shape = self.resolve(name)
+        self._record(name)
+        return shape
+
+    def resolve(self, name: str) -> object:
+        """The staged shape for ``name``, without recording it as script-used.
+
+        The comparison targets of ``m.diff`` (``COMPARE.md`` §2) are staged by
+        the same machinery and read through here: a check comparing against
+        ``imports/target.step`` did not put that solid in the part, so it does
+        not belong in ``imports_used``, which reports what the *script* built
+        with.
+        """
         if not isinstance(name, str) or not name:  # pyright: ignore[reportUnnecessaryIsInstance]
             raise ValidationError(
                 "import_step(name) requires a non-empty path relative to imports/",
@@ -388,9 +401,7 @@ class ImportRegistry:
         # Deserialized afresh per call: two ``import_step`` calls on one file
         # must yield two independent shapes, never one aliased object a later
         # placement could move under both names.
-        shape = shape_from_brep(staged.read_bytes(), source=name)
-        self._record(name)
-        return shape
+        return shape_from_brep(staged.read_bytes(), source=name)
 
     def _record(self, name: str) -> None:
         if name not in self.used:

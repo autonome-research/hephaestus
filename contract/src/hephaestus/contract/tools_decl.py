@@ -852,6 +852,150 @@ def _measure() -> ToolDecl:
     )
 
 
+#: ``COMPARE.md`` §1 records, as the tool reports them. The nesting is the
+#: record's own (``dataclasses.asdict(SolidDiff)``) so the wire shape cannot
+#: drift from the geometry layer's definition; every leaf is a fact, and
+#: ``align`` is repeated on the sub-records that it actually affects.
+_VOLUME_DIFF: Final[JsonSchema] = _obj(
+    {
+        "common_mm3": _NUM,
+        "a_only_mm3": _NUM,
+        "b_only_mm3": _NUM,
+        "iou": _NUM,
+        "align": _STR,
+    },
+    ["common_mm3", "a_only_mm3", "b_only_mm3", "iou", "align"],
+    additional=True,
+)
+
+_SURFACE_DISTANCE: Final[JsonSchema] = _obj(
+    {
+        "a_to_b_mean_mm": _NUM,
+        "b_to_a_mean_mm": _NUM,
+        "chamfer_mm": _NUM,
+        "max_deviation_mm": _NUM,
+        # Reported, never optional: a chamfer computed from four points is not
+        # the same claim as one computed from four thousand (COMPARE.md §1).
+        "a_samples": _INT,
+        "b_samples": _INT,
+        "align": _STR,
+    },
+    [
+        "a_to_b_mean_mm",
+        "b_to_a_mean_mm",
+        "chamfer_mm",
+        "max_deviation_mm",
+        "a_samples",
+        "b_samples",
+        "align",
+    ],
+    additional=True,
+)
+
+_TOPOLOGY_CENSUS: Final[JsonSchema] = _obj(
+    {
+        "solids": _INT,
+        "faces": _INT,
+        "edges": _INT,
+        "planar_faces": _INT,
+        "cylindrical_faces": _INT,
+        "other_faces": _INT,
+        "genus": _INT,
+        "sealed": _BOOL,
+    },
+    ["solids", "faces", "edges", "genus", "sealed"],
+    additional=True,
+)
+
+_TOPOLOGY_DIFF: Final[JsonSchema] = _obj(
+    {
+        "a": _TOPOLOGY_CENSUS,
+        "b": _TOPOLOGY_CENSUS,
+        "solids_delta": _INT,
+        "faces_delta": _INT,
+        "edges_delta": _INT,
+        "planar_faces_delta": _INT,
+        "cylindrical_faces_delta": _INT,
+        "other_faces_delta": _INT,
+        "genus_delta": _INT,
+        "sealed_changed": _BOOL,
+    },
+    ["a", "b", "solids_delta", "faces_delta", "edges_delta", "genus_delta", "sealed_changed"],
+    additional=True,
+)
+
+_TRIPLE: Final[JsonSchema] = {
+    "type": "array",
+    "items": _NUM,
+    "minItems": 3,
+    "maxItems": 3,
+}
+
+_SOLID_DIFF: Final[JsonSchema] = _obj(
+    {
+        "align": _STR,
+        "volume": _VOLUME_DIFF,
+        "surface": _SURFACE_DISTANCE,
+        "topology": _TOPOLOGY_DIFF,
+        "a_bbox_mm": _TRIPLE,
+        "b_bbox_mm": _TRIPLE,
+        "a_volume_mm3": _NUM,
+        "b_volume_mm3": _NUM,
+    },
+    ["align", "volume", "surface", "topology", "a_volume_mm3", "b_volume_mm3"],
+    additional=True,
+)
+
+
+def _compare_solids() -> ToolDecl:
+    return ToolDecl(
+        name="compare_solids",
+        summary="Solid diff between a part and a part:/import: target (volume, surface, topology).",
+        params=_obj(
+            {
+                "part": _ident(),
+                "target": _STR,
+                # COMPARE.md §1: alignment is a declared choice, never a silent
+                # normalization, so it has a default but no implicit meaning —
+                # the answer always names the mode it was computed in.
+                "align": _enum(["as_posed", "principal"], "as_posed"),
+            },
+            ["part", "target"],
+        ),
+        result=_ok(
+            {
+                "status": {"const": "ok"},
+                "align": _STR,
+                "a": _obj(
+                    {"kind": {"const": "part"}, "name": _STR, "artifact_ref": _STR},
+                    ["kind", "name", "artifact_ref"],
+                    additional=True,
+                ),
+                # An import target is attributed to the content hash it was read
+                # at, so a comparison can be re-run against the same bytes.
+                "b": _obj(
+                    {
+                        "kind": _enum(["part", "import"]),
+                        "name": _STR,
+                        "path": _STR,
+                        "artifact_ref": _STR,
+                        "sha256": _STR,
+                        "snapshot_ref": _STR,
+                    },
+                    ["kind"],
+                    additional=True,
+                ),
+                "diff": _SOLID_DIFF,
+                "resolved_artifact_refs": {"type": "array", "items": _STR},
+            },
+            ["status", "align", "a", "b", "diff"],
+        ),
+        profiles=("part", "orchestrator"),
+        sequential=False,
+        idempotent=False,
+    )
+
+
 def _run_checks() -> ToolDecl:
     conditional = [
         {
@@ -1853,6 +1997,7 @@ TOOLS: Final[tuple[ToolDecl, ...]] = (
     _query_snapshot(),
     _read_artifact(),
     _measure(),
+    _compare_solids(),
     _run_checks(),
     _record_requirements(),
     _read_requirements(),

@@ -20,6 +20,9 @@ mixin per domain so each domain reads independently:
                  template, and both ``run_checks`` scopes.
 ``_measure``     ``measure`` and its single-part / coherent-snapshot /
                  explicit-ref geometry resolution.
+``_compare``     ``COMPARE.md`` §2 ``compare_solids``: the editing loop's
+                 convergence signal, over a part and a ``part:``/``import:``
+                 target, attributed to the artifact refs and import hash used.
 ``_requirements`` the ``VALIDATION.md`` §2 requirement ledger: immutable
                  generations under the project-config lock, and the typed
                  :func:`~._requirements.ledger_state` reader every later
@@ -85,6 +88,7 @@ from ._checks import (
     CheckOps,
     check_template,
 )
+from ._compare import ALIGN_MODES, CompareOps
 from ._critique import (
     DFM_WARNING_SEVERITIES,
     MAX_INTERFERENCE_PAIRS,
@@ -163,6 +167,7 @@ from ._requirements import (
 )
 
 __all__ = [
+    "ALIGN_MODES",
     "BINARY_ARTIFACT_KINDS",
     "BINDING_WARNING_KINDS",
     "CHECK_DESCRIPTION_SENTINEL",
@@ -195,6 +200,7 @@ __all__ = [
     "CadOps",
     "ClarificationGate",
     "ClarificationOutcome",
+    "CompareOps",
     "DfmOps",
     "DfmTarget",
     "Dimension",
@@ -257,6 +263,7 @@ class CadOps(
     ParamOps,
     CheckOps,
     MeasureOps,
+    CompareOps,
     ArtifactOps,
     DrawingOps,
     DocOps,

@@ -2392,6 +2392,339 @@
     {
       "_meta": {
         "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "a": {
+              "additionalProperties": true,
+              "properties": {
+                "artifact_ref": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "part"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "name",
+                "artifact_ref"
+              ],
+              "type": "object"
+            },
+            "align": {
+              "type": "string"
+            },
+            "b": {
+              "additionalProperties": true,
+              "properties": {
+                "artifact_ref": {
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "part",
+                    "import"
+                  ],
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "sha256": {
+                  "type": "string"
+                },
+                "snapshot_ref": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            "diff": {
+              "additionalProperties": true,
+              "properties": {
+                "a_bbox_mm": {
+                  "items": {
+                    "type": "number"
+                  },
+                  "maxItems": 3,
+                  "minItems": 3,
+                  "type": "array"
+                },
+                "a_volume_mm3": {
+                  "type": "number"
+                },
+                "align": {
+                  "type": "string"
+                },
+                "b_bbox_mm": {
+                  "items": {
+                    "type": "number"
+                  },
+                  "maxItems": 3,
+                  "minItems": 3,
+                  "type": "array"
+                },
+                "b_volume_mm3": {
+                  "type": "number"
+                },
+                "surface": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "a_samples": {
+                      "type": "integer"
+                    },
+                    "a_to_b_mean_mm": {
+                      "type": "number"
+                    },
+                    "align": {
+                      "type": "string"
+                    },
+                    "b_samples": {
+                      "type": "integer"
+                    },
+                    "b_to_a_mean_mm": {
+                      "type": "number"
+                    },
+                    "chamfer_mm": {
+                      "type": "number"
+                    },
+                    "max_deviation_mm": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "a_to_b_mean_mm",
+                    "b_to_a_mean_mm",
+                    "chamfer_mm",
+                    "max_deviation_mm",
+                    "a_samples",
+                    "b_samples",
+                    "align"
+                  ],
+                  "type": "object"
+                },
+                "topology": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "a": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "cylindrical_faces": {
+                          "type": "integer"
+                        },
+                        "edges": {
+                          "type": "integer"
+                        },
+                        "faces": {
+                          "type": "integer"
+                        },
+                        "genus": {
+                          "type": "integer"
+                        },
+                        "other_faces": {
+                          "type": "integer"
+                        },
+                        "planar_faces": {
+                          "type": "integer"
+                        },
+                        "sealed": {
+                          "type": "boolean"
+                        },
+                        "solids": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "solids",
+                        "faces",
+                        "edges",
+                        "genus",
+                        "sealed"
+                      ],
+                      "type": "object"
+                    },
+                    "b": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "cylindrical_faces": {
+                          "type": "integer"
+                        },
+                        "edges": {
+                          "type": "integer"
+                        },
+                        "faces": {
+                          "type": "integer"
+                        },
+                        "genus": {
+                          "type": "integer"
+                        },
+                        "other_faces": {
+                          "type": "integer"
+                        },
+                        "planar_faces": {
+                          "type": "integer"
+                        },
+                        "sealed": {
+                          "type": "boolean"
+                        },
+                        "solids": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "solids",
+                        "faces",
+                        "edges",
+                        "genus",
+                        "sealed"
+                      ],
+                      "type": "object"
+                    },
+                    "cylindrical_faces_delta": {
+                      "type": "integer"
+                    },
+                    "edges_delta": {
+                      "type": "integer"
+                    },
+                    "faces_delta": {
+                      "type": "integer"
+                    },
+                    "genus_delta": {
+                      "type": "integer"
+                    },
+                    "other_faces_delta": {
+                      "type": "integer"
+                    },
+                    "planar_faces_delta": {
+                      "type": "integer"
+                    },
+                    "sealed_changed": {
+                      "type": "boolean"
+                    },
+                    "solids_delta": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "a",
+                    "b",
+                    "solids_delta",
+                    "faces_delta",
+                    "edges_delta",
+                    "genus_delta",
+                    "sealed_changed"
+                  ],
+                  "type": "object"
+                },
+                "volume": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "a_only_mm3": {
+                      "type": "number"
+                    },
+                    "align": {
+                      "type": "string"
+                    },
+                    "b_only_mm3": {
+                      "type": "number"
+                    },
+                    "common_mm3": {
+                      "type": "number"
+                    },
+                    "iou": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "common_mm3",
+                    "a_only_mm3",
+                    "b_only_mm3",
+                    "iou",
+                    "align"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "align",
+                "volume",
+                "surface",
+                "topology",
+                "a_volume_mm3",
+                "b_volume_mm3"
+              ],
+              "type": "object"
+            },
+            "resolved_artifact_refs": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "status": {
+              "const": "ok"
+            }
+          },
+          "required": [
+            "status",
+            "align",
+            "a",
+            "b",
+            "diff"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": false,
+          "maxUtf8Fields": {},
+          "name": "compare_solids",
+          "profiles": [
+            "part",
+            "orchestrator"
+          ],
+          "sequential": false
+        }
+      },
+      "description": "Solid diff between a part and a part:/import: target (volume, surface, topology).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "align": {
+            "default": "as_posed",
+            "enum": [
+              "as_posed",
+              "principal"
+            ],
+            "type": "string"
+          },
+          "part": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "part",
+          "target"
+        ],
+        "type": "object"
+      },
+      "name": "compare_solids"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
           "oneOf": [
             {
               "additionalProperties": true,

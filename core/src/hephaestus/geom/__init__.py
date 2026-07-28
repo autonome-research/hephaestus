@@ -18,7 +18,7 @@ Contract for this package (enforced by
   face records, packed layouts); manufacturability verdicts belong to the DFM
   rule packs and the checks engine that consume them.
 
-Six services, re-exported here as one public surface:
+Seven services, re-exported here as one public surface:
 
 * :mod:`hephaestus.geom.metrics` — the §8 ``Metrics`` record and the
   addressing-layer geometry index over a labeled part compound;
@@ -32,13 +32,37 @@ Six services, re-exported here as one public surface:
 * :mod:`hephaestus.geom.nesting` — flat-pattern extraction, shelf packing onto
   a blank, and the DXF/SVG cut-file writers;
 * :mod:`hephaestus.geom.step_io` — STEP <-> shape conversion (``INGEST.md`` §1
-  ingest), with no path, project or hashing policy attached.
+  ingest), with no path, project or hashing policy attached;
+* :mod:`hephaestus.geom.compare` — solid comparison (``COMPARE.md`` §1):
+  volume/surface/topology diffs and the canonical principal pose, with the
+  alignment mode always declared and never silently applied.
 
 Historic import paths (``hephaestus.core.kernel``, ``hephaestus.core.kerf``,
 ``hephaestus.core.nesting``) still resolve: they are compatibility facades that
 re-export from here.
 """
 
+from hephaestus.geom.compare import (
+    AXIS_DECIMALS,
+    AXIS_EPS,
+    MAX_FACE_SAMPLES,
+    MIN_FACE_SAMPLES,
+    MOMENT_TIE_REL,
+    SAMPLES_PER_MM2,
+    SKEW_EPS,
+    Alignment,
+    AlignMode,
+    SolidDiff,
+    SurfaceDistance,
+    TopologyCensus,
+    TopologyDiff,
+    VolumeDiff,
+    principal_alignment,
+    solid_diff,
+    surface_distance,
+    topology_diff,
+    volume_diff,
+)
 from hephaestus.geom.kerf import (
     KERF_UNCOMPENSATED,
     KerfDecision,
@@ -119,6 +143,8 @@ from hephaestus.geom.topology import (
 )
 
 __all__ = [
+    "AXIS_DECIMALS",
+    "AXIS_EPS",
     "BLANK_LAYER",
     "COORD_DECIMALS",
     "CURVE_SEGMENT_MM",
@@ -129,14 +155,21 @@ __all__ = [
     "KERF_UNCOMPENSATED",
     "LAYER_COLORS",
     "MAX_CURVE_SEGMENTS",
+    "MAX_FACE_SAMPLES",
     "MIN_CURVE_SEGMENTS",
+    "MIN_FACE_SAMPLES",
+    "MOMENT_TIE_REL",
     "OVERHANG_SAMPLES",
     "OVERLAP_EPS_MM3",
     "PARALLEL_EPS",
     "PROFILE_LAYER",
+    "SAMPLES_PER_MM2",
     "SCORE_LAYER",
+    "SKEW_EPS",
     "STEP_SCHEMAS",
     "WALL_FACE_LIMIT",
+    "AlignMode",
+    "Alignment",
     "AnyShape",
     "Blank",
     "CylinderRecord",
@@ -151,8 +184,13 @@ __all__ = [
     "Placement",
     "PlanarFaceRecord",
     "Profile",
+    "SolidDiff",
     "StepReadError",
+    "SurfaceDistance",
+    "TopologyCensus",
+    "TopologyDiff",
     "Vec3",
+    "VolumeDiff",
     "bbox_mm",
     "blank_from_metadata",
     "blank_size_literal",
@@ -175,6 +213,7 @@ __all__ = [
     "metrics",
     "opposing_planar_pairs",
     "planar_faces",
+    "principal_alignment",
     "read_step",
     "read_step_bytes",
     "resolve_kerf",
@@ -183,6 +222,10 @@ __all__ = [
     "shape_to_brep",
     "shape_volume",
     "shelf_nest",
+    "solid_diff",
     "solid_z_min",
+    "surface_distance",
+    "topology_diff",
+    "volume_diff",
     "write_step",
 ]

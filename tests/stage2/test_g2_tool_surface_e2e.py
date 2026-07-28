@@ -164,6 +164,14 @@ def _steps() -> list[Step]:
         ("build_part", lambda seen: {"name": "widget"}),
         ("inspect_part", lambda seen: {"name": "widget", "views": ["iso"]}),
         ("measure", lambda seen: {"kind": "bbox", "a": "part", "part": "widget"}),
+        # The convergence signal (COMPARE.md §2). No import is registered in this
+        # project — the model has no tool that could add one — so the target the
+        # chain can reach is a part, and comparing the widget with itself is the
+        # identity case the diff must report as a perfect match.
+        (
+            "compare_solids",
+            lambda seen: {"part": "widget", "target": "part:widget", "align": "as_posed"},
+        ),
         ("run_checks", lambda seen: {"scope": "part", "name": "widget"}),
         (
             "read_artifact",
@@ -390,6 +398,12 @@ def test_every_generated_tool_flows_through_the_real_bridge(surface: G2Harness) 
     assert images, "inspect_part must stream at least one public image event"
     assert payload_of(images[0])["mimeType"] == "image/png"
     assert seen["measure"]["units"] == "mm"
+    comparison = cast("dict[str, Any]", seen["compare_solids"])
+    assert comparison["align"] == "as_posed"
+    assert comparison["a"] == comparison["b"]
+    assert comparison["a"]["artifact_ref"] == build["artifact_ref"]
+    assert comparison["diff"]["volume"]["iou"] == pytest.approx(1.0, abs=1e-9)
+    assert comparison["diff"]["surface"]["max_deviation_mm"] == pytest.approx(0.0, abs=1e-9)
     assert seen["run_checks"]["checks"]["wide_enough"]["pass"] is True
     assert seen["read_artifact"]["total_bytes"] > 0
 

@@ -949,6 +949,8 @@ def _minimal_args(tool: str) -> dict[str, Any]:
             "new_str": "b",
         },
         "measure": {"kind": "bbox", "a": "part", "part": "widget"},
+        # COMPARE.md §2 — read-only, and equally unreachable without CadOps.
+        "compare_solids": {"part": "widget", "target": "part:widget"},
         "run_checks": {"name": "widget"},
         "record_requirements": {
             "entries": [

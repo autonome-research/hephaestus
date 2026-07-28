@@ -11,6 +11,12 @@ Every measurement is appended to a deterministic trace so the checks engine
 can report the measured values behind each predicate (§8 ``checks`` —
 ``{"pass": ..., "measured": ...}``). Facades are cheap; the engine binds a
 fresh one per check so traces never mix.
+
+``m.diff`` (``COMPARE.md`` §2) is the one call whose second operand is not a
+selector: it names a whole comparison *target* — another part, or a file under
+``imports/``. Import targets are resolved by an injected callable rather than by
+this module, because who may read ``imports/`` and under what confinement is a
+project question, not a measurement one.
 """
 
 from __future__ import annotations
@@ -18,14 +24,20 @@ from __future__ import annotations
 import importlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Protocol, cast, final, runtime_checkable
+from typing import Any, Protocol, cast, final, runtime_checkable
 
 from hephaestus.core.addressing import GeometryIndex, Resolution, resolve_in_project
 from hephaestus.core.checks.approx import Triple
+from hephaestus.core.errors import ValidationError
 from opstore.types import JSONValue
 
 __all__ = [
+    "ALIGN_MODES",
+    "IMPORT_TARGET_PREFIX",
+    "PART_TARGET_PREFIX",
+    "DiffFacts",
     "GeometrySource",
+    "ImportResolver",
     "KernelOps",
     "MappedGeometry",
     "Measurement",
@@ -34,6 +46,19 @@ __all__ = [
     "part_measurement",
     "project_measurement",
 ]
+
+#: ``COMPARE.md`` §1 alignment modes, mirrored here so the facade can refuse an
+#: unknown one without importing the geometry layer.
+ALIGN_MODES: tuple[str, ...] = ("as_posed", "principal")
+
+#: ``m.diff`` target naming another part of this project.
+PART_TARGET_PREFIX = "part:"
+
+#: ``m.diff`` target naming a file beneath the project's ``imports/``.
+IMPORT_TARGET_PREFIX = "import:"
+
+#: Resolves an ``imports/``-relative path to a shape the bound ops understand.
+ImportResolver = Callable[[str], object]
 
 #: Density used for ``m.mass`` when neither the call nor the part supplies one.
 DEFAULT_DENSITY = 1.0
@@ -83,6 +108,8 @@ class KernelOps(Protocol):
     def sealed(self, shape: object) -> bool: ...
 
     def genus(self, shape: object) -> int: ...
+
+    def diff(self, a: object, b: object, align: str) -> Mapping[str, JSONValue]: ...
 
 
 class _MetricsLike(Protocol):
@@ -145,10 +172,118 @@ class _LazyKernelOps:
     def genus(self, shape: object) -> int:
         return int(self._metrics(shape).genus)
 
+    def diff(self, a: object, b: object, align: str) -> Mapping[str, JSONValue]:
+        import dataclasses
+
+        module = importlib.import_module("hephaestus.geom.compare")
+        fn = cast("Callable[..., object]", module.solid_diff)
+        # ``SolidDiff`` and everything it nests are frozen dataclasses, so
+        # ``asdict`` IS the JSON shape — the facade never re-derives field names
+        # and can therefore never drift from the record COMPARE.md §1 defines.
+        return cast(
+            "Mapping[str, JSONValue]", dataclasses.asdict(cast("Any", fn(a, b, align=align)))
+        )
+
 
 def default_kernel_ops() -> KernelOps:
     """The production :class:`KernelOps` backed by ``hephaestus.geom``."""
     return _LazyKernelOps()
+
+
+# --------------------------------------------------------------------------
+# diff facts (COMPARE.md §2: the CHECKS view of one SolidDiff)
+
+
+def _number(raw: Mapping[str, JSONValue], key: str) -> float:
+    value = raw.get(key)
+    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else 0.0
+
+
+def _count(raw: Mapping[str, JSONValue], key: str) -> int:
+    value = raw.get(key)
+    return int(value) if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _section(raw: Mapping[str, JSONValue], key: str) -> Mapping[str, JSONValue]:
+    value = raw.get(key)
+    return cast("Mapping[str, JSONValue]", value) if isinstance(value, dict) else {}
+
+
+def _triple(raw: Mapping[str, JSONValue], key: str) -> Triple:
+    value = raw.get(key)
+    if isinstance(value, list | tuple) and len(cast("list[JSONValue]", value)) == 3:
+        items = list(cast("list[JSONValue]", value))
+        return Triple(*(float(cast("float", item)) for item in items))
+    return Triple(0.0, 0.0, 0.0)
+
+
+@dataclass(frozen=True)
+class DiffFacts:
+    """One ``SolidDiff`` as a CHECKS predicate reads it (``COMPARE.md`` §2).
+
+    Flattened on purpose: an acceptance check asserts a *number* against a named
+    tolerance, so ``m.diff("bracket", "import:target.step").iou >= 0.995`` must
+    reach ``iou`` without walking the record. Nothing is dropped — :attr:`raw`
+    is the whole nested ``SolidDiff`` (volume/surface/topology, both censuses),
+    and it is what the check report records as the measured value.
+
+    Facts, never a verdict: ``align`` says which question these numbers answer,
+    and ``a_samples``/``b_samples`` say how coarse the surface figures are, so a
+    predicate can refuse to trust a chamfer computed from four points.
+    """
+
+    align: str
+    iou: float
+    common_mm3: float
+    a_only_mm3: float
+    b_only_mm3: float
+    chamfer_mm: float
+    max_deviation_mm: float
+    a_to_b_mean_mm: float
+    b_to_a_mean_mm: float
+    a_samples: int
+    b_samples: int
+    solids_delta: int
+    faces_delta: int
+    edges_delta: int
+    genus_delta: int
+    sealed_changed: bool
+    a_volume_mm3: float
+    b_volume_mm3: float
+    a_bbox_mm: Triple
+    b_bbox_mm: Triple
+    raw: Mapping[str, JSONValue]
+
+    @classmethod
+    def from_json(cls, raw: Mapping[str, JSONValue]) -> DiffFacts:
+        """Flatten a ``dataclasses.asdict(SolidDiff)`` mapping."""
+        volume = _section(raw, "volume")
+        surface = _section(raw, "surface")
+        topology = _section(raw, "topology")
+        align = raw.get("align")
+        return cls(
+            align=align if isinstance(align, str) else "as_posed",
+            iou=_number(volume, "iou"),
+            common_mm3=_number(volume, "common_mm3"),
+            a_only_mm3=_number(volume, "a_only_mm3"),
+            b_only_mm3=_number(volume, "b_only_mm3"),
+            chamfer_mm=_number(surface, "chamfer_mm"),
+            max_deviation_mm=_number(surface, "max_deviation_mm"),
+            a_to_b_mean_mm=_number(surface, "a_to_b_mean_mm"),
+            b_to_a_mean_mm=_number(surface, "b_to_a_mean_mm"),
+            a_samples=_count(surface, "a_samples"),
+            b_samples=_count(surface, "b_samples"),
+            solids_delta=_count(topology, "solids_delta"),
+            faces_delta=_count(topology, "faces_delta"),
+            edges_delta=_count(topology, "edges_delta"),
+            genus_delta=_count(topology, "genus_delta"),
+            sealed_changed=bool(topology.get("sealed_changed")),
+            a_volume_mm3=_number(raw, "a_volume_mm3"),
+            b_volume_mm3=_number(raw, "b_volume_mm3"),
+            a_bbox_mm=_triple(raw, "a_bbox_mm"),
+            b_bbox_mm=_triple(raw, "b_bbox_mm"),
+            raw=dict(raw),
+        )
 
 
 @dataclass(frozen=True)
@@ -177,11 +312,13 @@ class Measurement:
         current_part: str | None,
         ops: KernelOps | None = None,
         densities: Mapping[str, float] | None = None,
+        imports: ImportResolver | None = None,
     ) -> None:
         self._sources: dict[str, GeometrySource] = dict(sources)
         self._current = current_part
         self._ops: KernelOps = ops if ops is not None else default_kernel_ops()
         self._densities: dict[str, float] = dict(densities or {})
+        self._imports = imports
         self._trace: list[MeasurementEntry] = []
 
     @property
@@ -269,6 +406,56 @@ class Measurement:
         self._record("genus", (selector,), value)
         return value
 
+    def _resolve_target(self, target: str) -> object:
+        """The shape a ``m.diff`` target names (``COMPARE.md`` §2)."""
+        if target.startswith(PART_TARGET_PREFIX):
+            name = target[len(PART_TARGET_PREFIX) :]
+            if not name:
+                raise ValidationError(f"diff target {target!r} names no part", kind="contract")
+            _, shape = self._resolve(f"{name}/part")
+            return shape
+        if target.startswith(IMPORT_TARGET_PREFIX):
+            path = target[len(IMPORT_TARGET_PREFIX) :]
+            if not path:
+                raise ValidationError(
+                    f"diff target {target!r} names no imports/ file", kind="contract"
+                )
+            if self._imports is None:
+                raise ValidationError(
+                    f"diff target {target!r} cannot be resolved here: this measurement is "
+                    "not bound to a project's imports/ (COMPARE.md §2)",
+                    kind="contract",
+                )
+            return self._imports(path)
+        raise ValidationError(
+            f"diff target {target!r} must be {PART_TARGET_PREFIX!r}<part> or "
+            f"{IMPORT_TARGET_PREFIX!r}<path under imports/> (COMPARE.md §2)",
+            kind="contract",
+        )
+
+    def diff(self, a: str, target: str, align: str = "as_posed") -> DiffFacts:
+        """Solid-diff facts between an addressed geometry and a target.
+
+        ``COMPARE.md`` §1-§2: the facts, never a verdict — the threshold is the
+        predicate's, which is exactly why a check reads like
+        ``m.diff("bracket", "import:target.step").iou >= 0.995``. ``align``
+        defaults to ``"as_posed"`` (a moved part *is* different); pass
+        ``"principal"`` to compare canonical poses instead. The measured value
+        recorded for the report is the whole ``SolidDiff``, so the evidence
+        behind a failing check is every number, not the one that was read.
+        """
+        if align not in ALIGN_MODES:
+            raise ValidationError(
+                f"diff align must be one of {', '.join(ALIGN_MODES)}, got {align!r}",
+                kind="contract",
+            )
+        _, shape_a = self._resolve(a)
+        shape_b = self._resolve_target(target)
+        raw = self._ops.diff(shape_a, shape_b, align)
+        facts = DiffFacts.from_json(raw)
+        self._record("diff", (a, target, align), cast("JSONValue", dict(raw)))
+        return facts
+
 
 def part_measurement(
     part: str,
@@ -276,10 +463,17 @@ def part_measurement(
     *,
     ops: KernelOps | None = None,
     density: float | None = None,
+    imports: ImportResolver | None = None,
 ) -> Measurement:
     """Part-scoped facade: selectors resolve inside ``part`` only (§6 CHECKS)."""
     densities = {} if density is None else {part: density}
-    return Measurement(sources={part: source}, current_part=part, ops=ops, densities=densities)
+    return Measurement(
+        sources={part: source},
+        current_part=part,
+        ops=ops,
+        densities=densities,
+        imports=imports,
+    )
 
 
 def project_measurement(
@@ -288,6 +482,13 @@ def project_measurement(
     current_part: str | None = None,
     ops: KernelOps | None = None,
     densities: Mapping[str, float] | None = None,
+    imports: ImportResolver | None = None,
 ) -> Measurement:
     """Project-scoped facade: cross-part ``"<part>/<selector>"`` addressing enabled."""
-    return Measurement(sources=sources, current_part=current_part, ops=ops, densities=densities)
+    return Measurement(
+        sources=sources,
+        current_part=current_part,
+        ops=ops,
+        densities=densities,
+        imports=imports,
+    )

@@ -191,6 +191,32 @@ in Results, CI, and the agent's context. A failing check does not abort the
 build; it fails the report. Cross-part checks live in `checks/*.py` with the
 same shape but a facade that can address any part.
 
+`m.diff(part, target, align="as_posed")` (`COMPARE.md` §2) returns the §1
+solid-diff facts against another part (`"part:<name>"`) or a file under
+`imports/` (`"import:<relpath>"`), flattened so a predicate reads the number it
+asserts on:
+
+```python
+CHECKS = {
+    "matches_target": lambda m: m.diff("part", "import:target.step").iou >= 0.995,
+}
+```
+
+Fields: `iou`, `common_mm3`, `a_only_mm3`, `b_only_mm3`, `chamfer_mm`,
+`max_deviation_mm`, `a_to_b_mean_mm`, `b_to_a_mean_mm`, `a_samples`,
+`b_samples`, `solids_delta`, `faces_delta`, `edges_delta`, `genus_delta`,
+`sealed_changed`, `a_volume_mm3`, `b_volume_mm3`, `a_bbox_mm`, `b_bbox_mm`,
+`align`, and `raw` (the whole nested record, which is what the check report
+records as the measured value). An `import:` target is a **build input**: it is
+frozen, hashed and staged with the script's own imports, so changed bytes are a
+changed build exactly as for `import_step`. Because that freezing is what a
+build does, `import:` targets are available to a **part script's** `CHECKS`
+only; the cross-part `checks/*.py` facade runs outside any one build and
+refuses an `import:` target by name rather than reading bytes no build input
+attests to. Cross-part checks compare with `part:` targets, or the part's own
+script carries the `m.diff` threshold. The threshold is the predicate's —
+`m.diff` reports, it never decides.
+
 This is the load-bearing difference from the reference product: Smith's
 `Measure Overlap` verifies once, in-loop, and the evidence evaporates;
 Hephaestus checks are artifacts with history.

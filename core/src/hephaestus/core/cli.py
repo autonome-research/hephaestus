@@ -587,6 +587,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     cli_references.add_subparsers(sub)
 
+    # Stage 8B comparison verb (heph diff): the operator's view of exactly the
+    # facts the compare_solids tool returns (COMPARE.md §2).
+    from hephaestus.core import cli_diff
+
+    cli_diff.add_subparsers(sub)
+
     # Stage 2 agent verb (heph agent) ships with the server package; the engine
     # CLI stays Node-free and fully functional when it is not installed.
     try:

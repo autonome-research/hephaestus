@@ -522,6 +522,56 @@ project-snapshot manifest or an explicit immutable `project_snapshot_ref`; stale
 dependency projections return `incoherent_project_snapshot` rather than
 comparing incompatible geometry.
 
+### compare_solids
+```
+compare_solids(part: str, target: str,
+               align: "as_posed"|"principal" = "as_posed")
+    -> {status: "ok", align,
+        a: {kind: "part", name, artifact_ref},
+        b: {kind: "part", name, artifact_ref}
+         | {kind: "import", path, sha256, snapshot_ref},
+        diff: {align,
+               volume: {common_mm3, a_only_mm3, b_only_mm3, iou, align},
+               surface: {a_to_b_mean_mm, b_to_a_mean_mm, chamfer_mm,
+                         max_deviation_mm, a_samples, b_samples, align},
+               topology: {a: census, b: census, solids_delta, faces_delta,
+                          edges_delta, planar_faces_delta,
+                          cylindrical_faces_delta, other_faces_delta,
+                          genus_delta, sealed_changed},
+               a_bbox_mm, b_bbox_mm, a_volume_mm3, b_volume_mm3},
+        resolved_artifact_refs}
+```
+`COMPARE.md` §2. How far a part is from a target, as **facts** — this is what
+closes the editing loop (`import_step` → modify → `compare_solids` → converge)
+with the harness measuring convergence instead of the model asserting it.
+Read-only, freely retryable, stores nothing; on the `part` and `orchestrator`
+profiles.
+
+`part` is compared as its **current successful build artifact**, never a live
+build, exactly as `measure` resolves geometry. `target` is `"part:<name>"`
+(another part's current artifact) or `"import:<relpath>"` — resolved through the
+`INGEST.md` §1 import machinery, so the same confinement walk applies
+(traversal, absolute paths and symlink escapes are refused with their own
+`unknown_import` / `path_confinement` / `invalid_import_path` /
+`unreadable_step` tokens) and the response **attributes the comparison to the
+import's content hash**, so it can be re-run against provably the same bytes. A
+bound part session may not reach another part through a `part:` target.
+
+`align` is a declared choice, never a silent normalization: `as_posed` compares
+the solids where they sit (an edit that must preserve pose wants this — a moved
+part *is* wrong), `principal` moves each into its own canonical inertia frame
+first (a comparison that should not punish a rigid transform wants this). The
+mode is echoed on every record it affects. `a_bbox_mm`/`b_bbox_mm` are always
+the shapes **as posed**. `align="principal"` on a shape enclosing no volume has
+no inertia frame and refuses with `no_solid_geometry` rather than inventing one.
+`a_samples`/`b_samples` are the surface-sample counts behind the chamfer means,
+so a number computed on a coarse grid is never read as if it were fine.
+
+**No thresholds live here.** "iou ≥ 0.995 is a pass" is a claim owned by a
+`CHECKS` predicate (`m.diff`, script contract §6), a DFM rule, or a bench task
+policy, cited like any other requirement under `VALIDATION.md` §1. There are no
+`build:<id>` targets in Stage 8B.
+
 ### run_checks
 ```
 run_checks(scope: "part"|"project" = "part", name: str|null = null,

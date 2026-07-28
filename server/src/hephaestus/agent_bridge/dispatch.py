@@ -140,6 +140,8 @@ CAD_TOOLS: frozenset[str] = frozenset(
         "read_project_check",
         "edit_project_check",
         "measure",
+        # COMPARE.md §2 — read-only, freely retryable, stores nothing.
+        "compare_solids",
         "run_checks",
         "record_requirements",
         "read_requirements",
@@ -173,6 +175,9 @@ _IDENT_RE = re.compile(IDENT_PATTERN)
 
 #: Selector-bearing arguments whose ``"<part>/<selector>"`` prefix addresses a part.
 _SELECTOR_FIELDS: tuple[str, ...] = ("a", "b")
+
+#: ``compare_solids`` target prefix naming another part (COMPARE.md §2).
+_PART_TARGET_PREFIX: str = "part:"
 
 #: Tools whose ``name`` argument is NOT a part id, so object-scope enforcement
 #: must not read it as one: a skill name, and (INGEST.md §2) a reference name.
@@ -419,6 +424,16 @@ class ToolDispatcher:
         part = arguments.get("part")
         if isinstance(part, str) and part:
             parts.append(part)
+        if decl.name == "compare_solids":
+            # COMPARE.md §2: a "part:<name>" target addresses that part, so a
+            # bound session may not reach another part through it. An
+            # "import:<path>" target addresses no part — confinement for it is
+            # the INGEST.md §1 walk, one layer down.
+            target = arguments.get("target")
+            if isinstance(target, str) and target.startswith(_PART_TARGET_PREFIX):
+                name = target[len(_PART_TARGET_PREFIX) :]
+                if _IDENT_RE.match(name):
+                    parts.append(name)
         if decl.name == "measure":
             # A cross-part "<part>/<selector>" resolves outside a bound session.
             for field in _SELECTOR_FIELDS:
@@ -476,6 +491,7 @@ class ToolDispatcher:
             "read_project_check": self._read_project_check,
             "edit_project_check": self._edit_project_check,
             "measure": self._measure,
+            "compare_solids": self._compare_solids,
             "run_checks": self._run_checks,
             "record_requirements": self._record_requirements,
             "read_requirements": self._read_requirements,
@@ -721,6 +737,15 @@ class ToolDispatcher:
             part=part,
             artifact_ref=_opt_str(arguments, "artifact_ref"),
             project_snapshot_ref=_opt_str(arguments, "project_snapshot_ref"),
+        )
+
+    def _compare_solids(
+        self, _p: Principal, cad: CadOps, arguments: dict[str, Any], _inv: Invocation
+    ) -> dict[str, Any]:
+        return cad.compare_solids(
+            str(arguments["part"]),
+            str(arguments["target"]),
+            align=str(arguments.get("align", "as_posed")),
         )
 
     def _run_checks(

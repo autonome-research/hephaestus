@@ -592,7 +592,7 @@ def execute_job(job: Mapping[str, JSONValue]) -> dict[str, JSONValue]:
                 checks[key] = value
     result["check_names"] = cast("list[JSONValue]", sorted(checks))
     result["checks"] = _run_part_checks(
-        part_name, geometry, checks, namespace, injected, tag_registry
+        part_name, geometry, checks, namespace, injected, tag_registry, imports
     )
 
     result["metrics"] = _shape_metrics(geometry)
@@ -609,6 +609,7 @@ def _run_part_checks(
     namespace: Mapping[str, object],
     injected: frozenset[str],
     tag_registry: TagRegistry,
+    imports: ImportRegistry,
 ) -> dict[str, JSONValue]:
     """Evaluate part-scope CHECKS inside the sandbox (§6: run on every build).
 
@@ -656,7 +657,13 @@ def _run_part_checks(
 
         source = MappedGeometry(index=index, resolver=resolver)
         predicates = cast("dict[str, CheckPredicate]", dict(checks))
-        results = run_checks(predicates, lambda: part_measurement(part_name, source))
+        # COMPARE.md §2: an ``m.diff`` import target was frozen and staged with
+        # the script's own imports, so resolving it here is the same staged-BRep
+        # lookup — the sandbox still opens no project path.
+        results = run_checks(
+            predicates,
+            lambda: part_measurement(part_name, source, imports=imports.resolve),
+        )
         return {name: outcome.to_json() for name, outcome in results.items()}
     except Exception as exc:  # facade wiring failure: fail every check, not the build
         failure: JSONValue = {"error": {"type": type(exc).__name__, "message": str(exc)}}

@@ -42,6 +42,8 @@ from typing import Literal
 from hephaestus.core.errors import ValidationError
 
 __all__ = [
+    "DIFF_METHOD_NAME",
+    "DIFF_TARGET_PREFIX",
     "IMPORTS_DIRNAME",
     "STAGE_DIRNAME",
     "DynamicImportPathError",
@@ -49,6 +51,7 @@ __all__ = [
     "ImportResolutionError",
     "ImportResolutionReason",
     "declared_imports",
+    "diff_import_targets",
     "import_step_name",
     "read_import",
     "stage_dir",
@@ -64,6 +67,11 @@ IMPORTS_DIRNAME = "imports"
 STAGE_DIRNAME = "inputs"
 #: The §2 injected name whose argument declares an import.
 import_step_name = "import_step"
+#: The §6 measurement-facade method whose target may name an import
+#: (``COMPARE.md`` §2: ``m.diff("part", "import:target.step")``).
+DIFF_METHOD_NAME = "diff"
+#: Prefix marking a ``m.diff`` target as an ``imports/`` file.
+DIFF_TARGET_PREFIX = "import:"
 
 ImportResolutionReason = Literal[
     "invalid_import_path",
@@ -159,25 +167,61 @@ def declared_imports(
     return tuple(out)
 
 
+def diff_import_targets(module: ast.Module) -> tuple[str, ...]:
+    """``imports/`` paths named by ``m.diff(..., "import:<path>")`` in ``module``.
+
+    ``COMPARE.md`` §2 lets a ``CHECKS`` predicate compare the built part against
+    a file under ``imports/``. That file is then a **build input** exactly as an
+    ``import_step`` argument is: the check's verdict changes when the bytes
+    change, so it must be frozen, hashed and staged with the rest (INGEST.md §1)
+    rather than read live at check time from inside the sandbox — which the §2
+    namespace forbids anyway.
+
+    Only string literals are collected, and only ones that are arguments of a
+    ``.diff(...)`` call. A computed target is not an error here: unlike
+    ``import_step`` it is not a statement the build must run, and the facade
+    refuses it at check time with an unresolvable-target message.
+    """
+    out: list[str] = []
+    for node in ast.walk(module):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute) or func.attr != DIFF_METHOD_NAME:
+            continue
+        arguments: list[ast.expr] = [*node.args, *(kw.value for kw in node.keywords)]
+        for argument in arguments:
+            if not isinstance(argument, ast.Constant) or not isinstance(argument.value, str):
+                continue
+            if argument.value.startswith(DIFF_TARGET_PREFIX):
+                out.append(argument.value[len(DIFF_TARGET_PREFIX) :])
+    return tuple(out)
+
+
 def static_import_paths(script: str) -> tuple[str, ...]:
     """Declared import paths of ``script``, deduplicated, in source order.
 
-    Tolerant on purpose: a syntax error or a dynamic path yields the
-    declarations found so far (``()`` in the syntax-error case). Freezing must
-    not raise on a script that the build itself is about to reject at the
-    offending statement with a full §8 error record.
+    Both declaration sites count: every ``import_step`` argument (INGEST.md §1)
+    and every ``m.diff`` import target in the script's ``CHECKS``
+    (:func:`diff_import_targets`). Tolerant on purpose: a syntax error or a
+    dynamic path yields the declarations found so far (``()`` in the
+    syntax-error case). Freezing must not raise on a script that the build
+    itself is about to reject at the offending statement with a full §8 error
+    record.
     """
     try:
         module = ast.parse(script)
     except SyntaxError:
         return ()
+    seen: dict[str, None] = {}
     try:
         declarations = declared_imports(module, source=script)
     except DynamicImportPathError:
         return ()
-    seen: dict[str, None] = {}
     for declaration in declarations:
         seen.setdefault(declaration.path, None)
+    for path in diff_import_targets(module):
+        seen.setdefault(path, None)
     return tuple(seen)
 
 

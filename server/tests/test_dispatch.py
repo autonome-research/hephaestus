@@ -306,6 +306,10 @@ _ARGS: dict[str, dict[str, object]] = {
     "ask_user": {"question": "q", "options": ["a"]},
     "export_part": {"name": "widget", "format": "step"},
     "run_dfm": {"name": "widget"},
+    # COMPARE.md §2: a bound part session compares its OWN part, so the matrix
+    # entry names widget on both sides (a cross-part target is scope_denied,
+    # which tests/stage8b asserts on its own).
+    "compare_solids": {"part": "widget", "target": "part:widget"},
     "generate_drawing": {"name": "widget", "kind": "dimensioned"},
     "generate_doc": {"name": "widget", "kind": "bom"},
 }

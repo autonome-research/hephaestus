@@ -95,17 +95,19 @@ def test_no_drift_between_declaration_and_tool_schema_md() -> None:
     assert decl.isdisjoint(excluded)
 
 
-def test_full_tool_surface_is_35_tools() -> None:
+def test_full_tool_surface_is_36_tools() -> None:
     # 27 Stage-2 tools, the Stage 2V requirement-ledger family, the Stage 6
-    # manufacturing tools (run_dfm, generate_drawing, generate_doc), and the
-    # Stage 8A read-only reference pair (INGEST.md §2).
-    assert len(tools_decl.tool_names()) == 35
-    assert len(set(tools_decl.tool_names())) == 35
+    # manufacturing tools (run_dfm, generate_drawing, generate_doc), the
+    # Stage 8A read-only reference pair (INGEST.md §2), and the Stage 8B
+    # comparison tool (COMPARE.md §2) — a declared addition, not drift.
+    assert len(tools_decl.tool_names()) == 36
+    assert len(set(tools_decl.tool_names())) == 36
     assert {"record_requirements", "read_requirements", "update_requirement"} <= set(
         tools_decl.tool_names()
     )
     assert {"run_dfm", "generate_drawing", "generate_doc"} <= set(tools_decl.tool_names())
     assert {"list_references", "read_reference"} <= set(tools_decl.tool_names())
+    assert "compare_solids" in tools_decl.tool_names()
 
 
 def test_delegate_prompt_carries_max_utf8_keyword() -> None:

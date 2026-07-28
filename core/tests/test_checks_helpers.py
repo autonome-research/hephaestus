@@ -7,10 +7,12 @@ values per resolved selection without any geometry kernel.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from hephaestus.core.addressing import GeometryIndex, Resolution
 from hephaestus.core.checks.facade import MappedGeometry
+from opstore.types import JSONValue
 
 
 def make_source(part: str, index: GeometryIndex) -> MappedGeometry:
@@ -40,6 +42,10 @@ class FakeOps:
     clearances: dict[frozenset[str], float] = field(default_factory=dict[frozenset[str], float])
     distances: dict[frozenset[str], float] = field(default_factory=dict[frozenset[str], float])
     sealed_map: dict[str, bool] = field(default_factory=dict[str, bool])
+    #: ``m.diff`` iou per unordered shape-id pair (default: identical solids).
+    ious: dict[frozenset[str], float] = field(default_factory=dict[frozenset[str], float])
+    #: ``m.diff`` chamfer (mm) per unordered pair (default: coincident surfaces).
+    chamfers: dict[frozenset[str], float] = field(default_factory=dict[frozenset[str], float])
     genus_map: dict[str, int] = field(default_factory=dict[str, int])
 
     def _pair(self, table: dict[frozenset[str], float], a: object, b: object) -> float:
@@ -68,6 +74,63 @@ class FakeOps:
 
     def genus(self, shape: object) -> int:
         return self.genus_map.get(str(shape), 0)
+
+    def diff(self, a: object, b: object, align: str) -> Mapping[str, JSONValue]:
+        """A ``dataclasses.asdict(SolidDiff)``-shaped record, without a kernel.
+
+        The field names are the geom record's (COMPARE.md §1) because the facade
+        flattens exactly those; ``core/tests/test_geom_compare.py`` is where the
+        real numbers are asserted.
+        """
+        pair = frozenset({str(a), str(b)})
+        iou = self.ious.get(pair, 1.0)
+        chamfer = self.chamfers.get(pair, 0.0)
+        volume = self.volumes.get(str(a), 0.0)
+        census: dict[str, JSONValue] = {
+            "solids": 1,
+            "faces": 6,
+            "edges": 12,
+            "planar_faces": 6,
+            "cylindrical_faces": 0,
+            "other_faces": 0,
+            "genus": 0,
+            "sealed": True,
+        }
+        return {
+            "align": align,
+            "volume": {
+                "common_mm3": volume * iou,
+                "a_only_mm3": volume * (1.0 - iou),
+                "b_only_mm3": 0.0,
+                "iou": iou,
+                "align": align,
+            },
+            "surface": {
+                "a_to_b_mean_mm": chamfer,
+                "b_to_a_mean_mm": chamfer,
+                "chamfer_mm": chamfer,
+                "max_deviation_mm": chamfer,
+                "a_samples": 64,
+                "b_samples": 64,
+                "align": align,
+            },
+            "topology": {
+                "a": dict(census),
+                "b": dict(census),
+                "solids_delta": 0,
+                "faces_delta": 0,
+                "edges_delta": 0,
+                "planar_faces_delta": 0,
+                "cylindrical_faces_delta": 0,
+                "other_faces_delta": 0,
+                "genus_delta": 0,
+                "sealed_changed": False,
+            },
+            "a_bbox_mm": list(self.bboxes.get(str(a), (0.0, 0.0, 0.0))),
+            "b_bbox_mm": list(self.bboxes.get(str(b), (0.0, 0.0, 0.0))),
+            "a_volume_mm3": volume,
+            "b_volume_mm3": self.volumes.get(str(b), volume),
+        }
 
 
 PRIMARY_INDEX = GeometryIndex(

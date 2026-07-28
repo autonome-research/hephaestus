@@ -32,10 +32,18 @@ Every run also contributes to the §8 metric table
 
 This module deliberately imports nothing from the agent bridge: scoring an
 archived run directory never needs Node, a provider, or the CAD stack.
+
+:func:`score_step_files` (``COMPARE.md`` §3) is the other kind of scoring the
+same module owns: two STEP files, a task-declared threshold policy, a verdict
+with every underlying fact attached. Its only engine dependency is
+``hephaestus.geom`` — no executor, no project store, no bridge — because an
+external benchmark (CADGenBench) scores a submitted file where none of those
+exist. ``tests/stage8b/test_g8b_scoring.py`` proves the reach.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 from collections.abc import Iterable, Mapping, Sequence
@@ -57,6 +65,7 @@ from .metrics import (
 
 __all__ = [
     "CORPUS_V1_TASKS",
+    "DEFAULT_STEP_POLICY",
     "G2_AGGREGATE_THRESHOLD",
     "G6_AGGREGATE_THRESHOLD",
     "PERFECT_TASKS",
@@ -67,12 +76,15 @@ __all__ = [
     "Z_LOWER_90",
     "BenchScore",
     "SplitScore",
+    "StepFileScore",
+    "StepScorePolicy",
     "TaskScore",
     "aggregate_threshold",
     "load_run_records",
     "record_seeded_baseline",
     "score_directory",
     "score_records",
+    "score_step_files",
     "wilson_lower_bound",
     "write_score",
 ]
@@ -529,3 +541,184 @@ def write_score(score: BenchScore, path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(score.to_json(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return path
+
+
+# --------------------------------------------------------------------------
+# External STEP scoring (COMPARE.md §3 — the 8D substrate)
+
+
+#: The policy applied when a task declares none: compare where the solids sit
+#: and assert nothing. A policy that names no tolerance yields **no verdict**
+#: (:attr:`StepFileScore.passed` is ``None``) rather than a free pass — an
+#: unstated threshold is a missing claim, not a satisfied one.
+DEFAULT_STEP_POLICY: Mapping[str, Any] = {"align": "as_posed"}
+
+
+@dataclass(frozen=True)
+class StepScorePolicy:
+    """A task's declared thresholds for scoring one STEP file against another.
+
+    Every field is optional and every one is a *claim the task owns*
+    (``COMPARE.md`` §1: thresholds do not live in the geometry layer). ``align``
+    is part of the policy because it decides which question is being asked: a
+    generation task that must not punish an arbitrary pose declares
+    ``"principal"``; an editing task that must preserve pose leaves it
+    ``"as_posed"``.
+    """
+
+    iou_min: float | None = None
+    chamfer_max_mm: float | None = None
+    align: str = "as_posed"
+
+    @classmethod
+    def from_json(cls, raw: Mapping[str, Any] | None) -> StepScorePolicy:
+        """Read a task-declared policy document (absent fields stay unclaimed)."""
+        data = dict(raw or {})
+        align = data.get("align", "as_posed")
+        if align not in ("as_posed", "principal"):
+            raise ValueError(f"policy align must be as_posed or principal, got {align!r}")
+        return cls(
+            iou_min=_optional_number(data, "iou_min"),
+            chamfer_max_mm=_optional_number(data, "chamfer_max_mm"),
+            align=str(align),
+        )
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "iou_min": self.iou_min,
+            "chamfer_max_mm": self.chamfer_max_mm,
+            "align": self.align,
+        }
+
+    @property
+    def declares_threshold(self) -> bool:
+        return self.iou_min is not None or self.chamfer_max_mm is not None
+
+
+def _optional_number(raw: Mapping[str, Any], key: str) -> float | None:
+    value = raw.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"policy {key} must be a number, got {value!r}")
+    return float(value)
+
+
+@dataclass(frozen=True)
+class StepFileScore:
+    """One scored candidate: the verdict, the criteria behind it, every fact.
+
+    ``passed`` is ``None`` when the policy declared no threshold — there is
+    nothing to have passed. ``criteria`` shows each declared threshold against
+    the number that was actually measured, so a score is auditable without
+    re-running it, and ``diff`` carries the whole ``SolidDiff`` beneath.
+
+    ``notes`` records the facts that make a number less trustworthy than it
+    looks: a canonical frame that two rigid copies might not share, or a
+    chamfer computed from an empty surface sample. They never change the
+    verdict — reporting them and deciding are different jobs.
+    """
+
+    passed: bool | None
+    policy: StepScorePolicy
+    diff: Mapping[str, Any] = field(default_factory=dict[str, Any])
+    criteria: tuple[Mapping[str, Any], ...] = ()
+    notes: tuple[str, ...] = ()
+    error: str | None = None
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "passed": self.passed,
+            "policy": self.policy.to_json(),
+            "criteria": [dict(row) for row in self.criteria],
+            "notes": list(self.notes),
+            "error": self.error,
+            "diff": dict(self.diff),
+        }
+
+
+def _criterion(name: str, threshold: float, measured: float, passed: bool) -> dict[str, Any]:
+    return {"name": name, "threshold": threshold, "measured": measured, "passed": passed}
+
+
+def score_step_files(
+    candidate: Path | str,
+    truth: Path | str,
+    policy: Mapping[str, Any] | StepScorePolicy | None = None,
+) -> StepFileScore:
+    """Score one STEP file against a ground-truth STEP file (``COMPARE.md`` §3).
+
+    Reads both through ``geom.step_io``, produces one ``SolidDiff``, applies the
+    task-declared policy, and returns the verdict with every underlying fact
+    attached. The candidate is the ``a`` side, so ``a_only_mm3`` is material the
+    submission added and ``b_only_mm3`` is material it is missing.
+
+    An unreadable candidate is a **failed score, not an exception**: a benchmark
+    must be able to score a broken submission alongside the others. An
+    unreadable *ground truth* is a broken task, so that one does raise.
+
+    The only engine dependency is :mod:`hephaestus.geom`: no executor, no
+    project store, no agent bridge — CADGenBench scoring runs where those do not
+    exist.
+    """
+    from hephaestus.geom.compare import AlignMode, principal_alignment, solid_diff
+    from hephaestus.geom.step_io import StepReadError, read_step
+
+    resolved = policy if isinstance(policy, StepScorePolicy) else StepScorePolicy.from_json(policy)
+    # Paths arrive as strings from a harness argv as often as from a Path; the
+    # scorer is an external entry point, so it takes either.
+    truth_shape = read_step(Path(truth))
+    try:
+        candidate_shape = read_step(Path(candidate))
+    except StepReadError as exc:
+        # A submission that will not parse scores 0, with the reason recorded.
+        return StepFileScore(passed=False, policy=resolved, error=exc.message)
+
+    align = cast("AlignMode", resolved.align)
+    notes: list[str] = []
+    if align == "principal":
+        try:
+            degenerate = any(
+                principal_alignment(shape).degenerate for shape in (candidate_shape, truth_shape)
+            )
+        except ValueError as exc:
+            return StepFileScore(passed=False, policy=resolved, error=str(exc))
+        if degenerate:
+            # COMPARE.md §1: the frame is reproducible for each shape, but a
+            # symmetric solid may canonicalize two rigid copies differently —
+            # so a `principal` iou here is worth less than it looks.
+            notes.append("degenerate_principal_frame")
+
+    record = solid_diff(candidate_shape, truth_shape, align=align)
+    diff = cast("Mapping[str, Any]", dataclasses.asdict(record))
+    if record.surface.a_samples == 0 or record.surface.b_samples == 0:
+        # A 0.0 chamfer from an empty sample is not agreement.
+        notes.append("empty_surface_sample")
+
+    criteria: list[Mapping[str, Any]] = []
+    if resolved.iou_min is not None:
+        criteria.append(
+            _criterion(
+                "iou_min",
+                resolved.iou_min,
+                record.volume.iou,
+                record.volume.iou >= resolved.iou_min,
+            )
+        )
+    if resolved.chamfer_max_mm is not None:
+        criteria.append(
+            _criterion(
+                "chamfer_max_mm",
+                resolved.chamfer_max_mm,
+                record.surface.chamfer_mm,
+                record.surface.chamfer_mm <= resolved.chamfer_max_mm,
+            )
+        )
+    passed = all(bool(row["passed"]) for row in criteria) if resolved.declares_threshold else None
+    return StepFileScore(
+        passed=passed,
+        policy=resolved,
+        diff=diff,
+        criteria=tuple(criteria),
+        notes=tuple(notes),
+    )
