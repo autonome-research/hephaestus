@@ -1,0 +1,11 @@
+{
+  "date": "2026-07-29",
+  "model": "gpt-5.6-sol",
+  "n": 31,
+  "note": "VALIDATION.md \u00a71: baselined on first measurement; not a gate, and never comparable to the pre-2026-07-26 prose baseline.",
+  "pass_rate": 0.7741935483870968,
+  "passes": 24,
+  "spec": "seeded",
+  "threshold": null,
+  "wilson_lower_90": 0.6656024066981306
+}
