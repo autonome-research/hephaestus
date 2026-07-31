@@ -82,12 +82,15 @@ needs a verdict must decide what to do about it.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Final, Literal, TypeAlias
+from typing import Any, Final, Literal, TypeAlias, TypeVar
 
 from hephaestus.geom.measure import OVERLAP_EPS_MM3, interference
 from hephaestus.geom.metrics import AnyShape, bbox_mm, genus, is_sealed, shape_volume
 from hephaestus.geom.topology import Vec3
+
+_T = TypeVar("_T")
 
 __all__ = [
     "AXIS_DECIMALS",
@@ -99,6 +102,7 @@ __all__ = [
     "SKEW_EPS",
     "AlignMode",
     "Alignment",
+    "CompareBooleanError",
     "SolidDiff",
     "SurfaceDistance",
     "TopologyCensus",
@@ -426,6 +430,32 @@ def _aligned_pair(a: AnyShape, b: AnyShape, align: AlignMode) -> tuple[AnyShape,
 # --------------------------------------------------------------------------
 
 
+class CompareBooleanError(ValueError):
+    """An OCCT boolean produced a null shape, so no volume fact can be stated.
+
+    OCCT signals a failed boolean by handing back a null ``TopoDS_Shape``
+    (surfaced by build123d as ``ValueError("Null TopoDS_Shape object")`` deep
+    in ``downcast``). Reporting 0.0 for that would state a fact the kernel
+    never computed, so the comparison refuses with the operation named —
+    the same honesty rule as ``ConstraintShapeError``. First seen on
+    CADGenBench editing sample geometry (2026-07-29).
+    """
+
+    def __init__(self, op: str) -> None:
+        super().__init__(f"boolean {op!r} produced a null TopoDS shape (OCCT boolean failure)")
+        self.op = op
+
+
+def _null_guard(op: str, fn: Callable[[], _T]) -> _T:
+    """Run one boolean op, converting build123d's null-shape ValueError."""
+    try:
+        return fn()
+    except ValueError as exc:
+        if "Null TopoDS_Shape" in str(exc):
+            raise CompareBooleanError(op) from exc
+        raise
+
+
 def _boolean_volume(result: object) -> float:
     """Volume of a boolean result, with ``measure.interference``'s guards.
 
@@ -448,13 +478,13 @@ def _cut_volume(a: AnyShape, b: AnyShape) -> float:
         return 0.0
     if not b.solids():
         return max(0.0, shape_volume(a))
-    return _boolean_volume(a.cut(b))
+    return _boolean_volume(_null_guard("cut", lambda: a.cut(b)))
 
 
 def volume_diff(a: AnyShape, b: AnyShape, *, align: AlignMode = "as_posed") -> VolumeDiff:
     """Boolean symmetric difference of ``a`` and ``b`` (``COMPARE.md`` §1)."""
     pa, pb = _aligned_pair(a, b, align)
-    common = interference(pa, pb)
+    common = _null_guard("common", lambda: interference(pa, pb))
     a_only = _cut_volume(pa, pb)
     b_only = _cut_volume(pb, pa)
     union = common + a_only + b_only

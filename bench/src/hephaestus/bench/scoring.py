@@ -661,7 +661,12 @@ def score_step_files(
     project store, no agent bridge — CADGenBench scoring runs where those do not
     exist.
     """
-    from hephaestus.geom.compare import AlignMode, principal_alignment, solid_diff
+    from hephaestus.geom.compare import (
+        AlignMode,
+        CompareBooleanError,
+        principal_alignment,
+        solid_diff,
+    )
     from hephaestus.geom.step_io import StepReadError, read_step
 
     resolved = policy if isinstance(policy, StepScorePolicy) else StepScorePolicy.from_json(policy)
@@ -689,7 +694,12 @@ def score_step_files(
             # so a `principal` iou here is worth less than it looks.
             notes.append("degenerate_principal_frame")
 
-    record = solid_diff(candidate_shape, truth_shape, align=align)
+    try:
+        record = solid_diff(candidate_shape, truth_shape, align=align)
+    except CompareBooleanError as exc:
+        # A candidate whose boolean against the reference fails in the kernel
+        # scores 0 with the reason — the same rule as an unparseable one.
+        return StepFileScore(passed=False, policy=resolved, error=str(exc))
     diff = cast("Mapping[str, Any]", dataclasses.asdict(record))
     if record.surface.a_samples == 0 or record.surface.b_samples == 0:
         # A 0.0 chamfer from an empty sample is not agreement.

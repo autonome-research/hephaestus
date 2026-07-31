@@ -282,3 +282,43 @@ def _subprocess_diff(align: AlignMode) -> dict[str, Any]:
     assert result.returncode == 0, result.stderr
     payload: dict[str, Any] = json.loads(result.stdout)
     return payload
+
+
+class TestBooleanNullGuard:
+    """A failed OCCT boolean refuses with a named error (CompareBooleanError).
+
+    Regression: CADGenBench editing-sample geometry drove `a.cut(b)` to a null
+    TopoDS result, which crashed the external scorer from deep inside
+    build123d's downcast instead of stating a refusal (2026-07-29).
+    """
+
+    def test_null_cut_raises_named_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from build123d.topology import Shape
+        from hephaestus.geom import CompareBooleanError
+
+        a, b = bracket(), drilled_plate()
+
+        def null_cut(self: Any, *args: Any, **kwargs: Any) -> Any:
+            raise ValueError("Null TopoDS_Shape object")
+
+        monkeypatch.setattr(Shape, "cut", null_cut)
+        with pytest.raises(CompareBooleanError) as excinfo:
+            volume_diff(a, b)
+        assert excinfo.value.op == "cut"
+        assert "OCCT boolean failure" in str(excinfo.value)
+
+    def test_unrelated_valueerror_propagates_unwrapped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from build123d.topology import Shape
+        from hephaestus.geom import CompareBooleanError
+
+        a, b = bracket(), drilled_plate()
+
+        def other_error(self: Any, *args: Any, **kwargs: Any) -> Any:
+            raise ValueError("some other kernel complaint")
+
+        monkeypatch.setattr(Shape, "cut", other_error)
+        with pytest.raises(ValueError) as excinfo:
+            volume_diff(a, b)
+        assert not isinstance(excinfo.value, CompareBooleanError)

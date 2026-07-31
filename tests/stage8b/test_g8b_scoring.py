@@ -208,3 +208,26 @@ def test_scoring_reaches_nothing_outside_geom(files: dict[str, Path]) -> None:
     assert not forbidden, "bench scoring pulled in forbidden modules:\n" + "\n".join(forbidden)
     assert "hephaestus.geom.compare" in reported["modules"]
     assert "hephaestus.geom.step_io" in reported["modules"]
+
+
+def test_boolean_failure_scores_zero_with_reason(
+    monkeypatch: pytest.MonkeyPatch, files: dict[str, Path]
+) -> None:
+    """A kernel-failed boolean is a failed score with the reason, not a crash.
+
+    Regression: a CADGenBench editing candidate drove the comparison boolean to
+    a null TopoDS result and the exception escaped through score_step_files,
+    killing the whole 81-sample local-floor report (2026-07-29).
+    """
+    import hephaestus.geom.compare as compare
+    from hephaestus.geom.compare import CompareBooleanError
+
+    def failing_diff(*args: object, **kwargs: object) -> object:
+        raise CompareBooleanError("cut")
+
+    monkeypatch.setattr(compare, "solid_diff", failing_diff)
+    score = score_step_files(
+        files["plate_holed"], files["plate"], {"iou_min": 0.5, "align": "as_posed"}
+    )
+    assert score.passed is False
+    assert score.error is not None and "OCCT boolean failure" in score.error
