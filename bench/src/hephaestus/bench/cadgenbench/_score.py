@@ -21,10 +21,13 @@ to avoid.
 
 from __future__ import annotations
 
+import multiprocessing
+import os
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from ._package import CANDIDATE_NAMES
 from ._samples import EDITING, SampleError, load_sample
@@ -32,10 +35,19 @@ from ._validity import ValidityFacts, step_validity
 
 __all__ = [
     "LOCAL_FLOOR_LABEL",
+    "SAMPLE_TIMEOUT_S",
     "SampleFloor",
     "SubmissionFloor",
     "score_outputs",
 ]
+
+#: Wall-clock ceiling for ONE sample's floor computation, process-killed with
+#: no retry — CADGenBench's own MESH_TIMEOUT_S policy, applied to ours. OCCT
+#: booleans on pathological candidates can grind for hours (one CADGenBench
+#: editing candidate held a single core for ~19 h on 2026-07-30), so unbounded
+#: per-sample work turns an 81-sample report into a hang. Env-overridable via
+#: ``HEPHAESTUS_CGB_SAMPLE_TIMEOUT_S``, exactly as the benchmark's ceilings are.
+SAMPLE_TIMEOUT_S: Final[float] = 300.0
 
 #: The words every score artifact carries, literally.
 LOCAL_FLOOR_LABEL = (
@@ -121,15 +133,80 @@ def _editing_start(dataset_root: Path | None, sample_id: str) -> Path | None:
     return sample.input_path(sample.step_inputs[0])
 
 
+def _floor_child(
+    conn: Any,
+    candidate: str,
+    start: str | None,
+    policy: dict[str, Any] | None,
+) -> None:  # pragma: no cover - runs in a spawned child process
+    """One sample's floor, computed where a kill cannot take the report down."""
+    from hephaestus.bench.scoring import score_step_files
+
+    facts = step_validity(Path(candidate))
+    score_json: dict[str, Any] | None = None
+    if start is not None:
+        score_json = score_step_files(Path(candidate), Path(start), policy).to_json()
+    conn.send((facts, score_json))
+    conn.close()
+
+
+def _bounded_floor(
+    candidate: Path,
+    start: Path | None,
+    policy: Mapping[str, Any] | None,
+    timeout_s: float,
+) -> tuple[ValidityFacts, dict[str, Any] | None] | str:
+    """Run one sample's floor under the wall-clock ceiling.
+
+    Returns the facts, or a string naming why there are none: ``timeout``
+    (process-killed at the ceiling) or ``crashed:<exitcode>``.
+    """
+    ctx = multiprocessing.get_context("spawn")
+    parent, child = ctx.Pipe(duplex=False)
+    proc = ctx.Process(
+        target=_floor_child,
+        args=(child, str(candidate), None if start is None else str(start),
+              None if policy is None else dict(policy)),
+    )
+    proc.start()
+    child.close()
+    result: tuple[ValidityFacts, dict[str, Any] | None] | str = "timeout"
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if parent.poll(0.25):
+            result = parent.recv()
+            break
+        if not proc.is_alive():
+            result = f"crashed:{proc.exitcode}"
+            break
+    if proc.is_alive():
+        proc.kill()
+    proc.join()
+    parent.close()
+    return result
+
+
 def score_outputs(
     outputs_dir: Path,
     sample_ids: Sequence[str],
     *,
     dataset_root: Path | None = None,
     policy: Mapping[str, Any] | None = None,
+    sample_timeout_s: float | None = None,
 ) -> SubmissionFloor:
-    """Apply the floor to every produced candidate under ``outputs_dir``."""
-    from hephaestus.bench.scoring import score_step_files
+    """Apply the floor to every produced candidate under ``outputs_dir``.
+
+    Each sample computes in its own spawned process under
+    ``sample_timeout_s`` (default :data:`SAMPLE_TIMEOUT_S`, env-overridable
+    via ``HEPHAESTUS_CGB_SAMPLE_TIMEOUT_S``): a sample that exceeds it or
+    crashes the kernel is ``invalid`` with the reason in its note, and the
+    other 80 still report — one pathological candidate is one row, never a
+    hung report.
+    """
+    if sample_timeout_s is None:
+        sample_timeout_s = float(
+            os.environ.get("HEPHAESTUS_CGB_SAMPLE_TIMEOUT_S", SAMPLE_TIMEOUT_S)
+        )
 
     entries: list[SampleFloor] = []
     for sample_id in sample_ids:
@@ -138,20 +215,29 @@ def score_outputs(
         if candidate is None:
             entries.append(SampleFloor(sample_id=sample_id, status="missing"))
             continue
-        facts = step_validity(candidate)
-        status = "valid" if facts.ok else "invalid"
         start = _editing_start(dataset_root, sample_id)
-        if start is None:
+        outcome = _bounded_floor(candidate, start, policy, sample_timeout_s)
+        if isinstance(outcome, str):
+            reason = (
+                f"floor computation exceeded {sample_timeout_s:g}s and was "
+                "process-killed (CADGenBench MESH_TIMEOUT_S policy applied locally)"
+                if outcome == "timeout"
+                else f"floor computation died in the kernel ({outcome})"
+            )
+            entries.append(SampleFloor(sample_id=sample_id, status="invalid", note=reason))
+            continue
+        facts, score_json = outcome
+        status = "valid" if facts.ok else "invalid"
+        if score_json is None:
             entries.append(SampleFloor(sample_id=sample_id, status=status, validity=facts))
             continue
-        score = score_step_files(candidate, start, policy)
         entries.append(
             SampleFloor(
                 sample_id=sample_id,
                 status=status,
                 validity=facts,
                 reference="editing_start",
-                step_score=score.to_json(),
+                step_score=score_json,
                 note=(
                     "measured against the sample's own starting solid, not ground "
                     "truth: this quantifies how much the edit changed, never whether "

@@ -107,3 +107,19 @@ def test_the_floor_scores_a_broken_candidate_instead_of_crashing(tmp_path: Path)
     assert entry.step_score is not None
     assert entry.step_score["passed"] is False
     assert entry.step_score["error"]
+
+
+def test_a_sample_that_blows_the_ceiling_is_one_invalid_row(tmp_path: Path) -> None:
+    """The per-sample wall-clock ceiling turns a grind into a row, not a hang.
+
+    Regression: one CADGenBench editing candidate held a single core for ~19 h
+    inside an OCCT boolean (2026-07-30) because the floor had no per-sample
+    bound. A timeout no child can meet must yield status=invalid with the
+    reason, while other samples still report.
+    """
+    outputs = outputs_with(tmp_path, {"101": STEPS / "plate.step"})
+    floor = score_outputs(outputs, ("101",), sample_timeout_s=0.001)
+    (entry,) = floor.entries
+    assert entry.status == "invalid"
+    assert entry.note is not None and "process-killed" in entry.note
+    assert entry.validity is None
