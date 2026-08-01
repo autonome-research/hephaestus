@@ -142,11 +142,15 @@ def _floor_child(
     """One sample's floor, computed where a kill cannot take the report down."""
     from hephaestus.bench.scoring import score_step_files
 
+    # Validity ships the moment it is known: it is the load-bearing local fact
+    # (the leaderboard zeroes invalid samples), and the diff half below can be
+    # orders of magnitude more expensive — a ceiling kill after this send
+    # still leaves a validity row behind.
     facts = step_validity(Path(candidate))
-    score_json: dict[str, Any] | None = None
+    conn.send(("validity", facts))
     if start is not None:
         score_json = score_step_files(Path(candidate), Path(start), policy).to_json()
-    conn.send((facts, score_json))
+        conn.send(("score", score_json))
     conn.close()
 
 
@@ -155,11 +159,14 @@ def _bounded_floor(
     start: Path | None,
     policy: Mapping[str, Any] | None,
     timeout_s: float,
-) -> tuple[ValidityFacts, dict[str, Any] | None] | str:
+) -> tuple[ValidityFacts | None, dict[str, Any] | None, str | None]:
     """Run one sample's floor under the wall-clock ceiling.
 
-    Returns the facts, or a string naming why there are none: ``timeout``
-    (process-killed at the ceiling) or ``crashed:<exitcode>``.
+    Returns ``(validity, score_json, refusal)``. The child streams validity
+    the moment it is known, so a ceiling kill in the (far more expensive)
+    diff half still returns the validity facts; ``refusal`` is ``None`` on a
+    complete run, else ``timeout`` or ``crashed:<exitcode>`` naming what cut
+    the computation short.
     """
     ctx = multiprocessing.get_context("spawn")
     parent, child = ctx.Pipe(duplex=False)
@@ -170,20 +177,33 @@ def _bounded_floor(
     )
     proc.start()
     child.close()
-    result: tuple[ValidityFacts, dict[str, Any] | None] | str = "timeout"
+    validity: ValidityFacts | None = None
+    score_json: dict[str, Any] | None = None
+    refusal: str | None = "timeout"
+    expect_score = start is not None
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         if parent.poll(0.25):
-            result = parent.recv()
-            break
-        if not proc.is_alive():
-            result = f"crashed:{proc.exitcode}"
+            kind, payload = parent.recv()
+            if kind == "validity":
+                validity = payload
+                if not expect_score:
+                    refusal = None
+                    break
+            else:
+                score_json = payload
+                refusal = None
+                break
+        elif not proc.is_alive():
+            refusal = None if (validity is not None and not expect_score) else (
+                f"crashed:{proc.exitcode}"
+            )
             break
     if proc.is_alive():
         proc.kill()
     proc.join()
     parent.close()
-    return result
+    return validity, score_json, refusal
 
 
 def score_outputs(
@@ -216,26 +236,41 @@ def score_outputs(
             entries.append(SampleFloor(sample_id=sample_id, status="missing"))
             continue
         start = _editing_start(dataset_root, sample_id)
-        outcome = _bounded_floor(candidate, start, policy, sample_timeout_s)
-        if isinstance(outcome, str):
-            reason = (
+        validity, score_json, refusal = _bounded_floor(
+            candidate, start, policy, sample_timeout_s
+        )
+        if refusal is not None:
+            cut_short = (
                 f"floor computation exceeded {sample_timeout_s:g}s and was "
                 "process-killed (CADGenBench MESH_TIMEOUT_S policy applied locally)"
-                if outcome == "timeout"
-                else f"floor computation died in the kernel ({outcome})"
+                if refusal == "timeout"
+                else f"floor computation died in the kernel ({refusal})"
             )
-            entries.append(SampleFloor(sample_id=sample_id, status="invalid", note=reason))
+            if validity is None:
+                entries.append(
+                    SampleFloor(sample_id=sample_id, status="invalid", note=cut_short)
+                )
+            else:
+                # Validity landed before the kill; only the diff facts are lost.
+                entries.append(
+                    SampleFloor(
+                        sample_id=sample_id,
+                        status="valid" if validity.ok else "invalid",
+                        validity=validity,
+                        note=f"step_score facts unavailable: {cut_short}",
+                    )
+                )
             continue
-        facts, score_json = outcome
-        status = "valid" if facts.ok else "invalid"
+        assert validity is not None  # refusal is None only after a validity send
+        status = "valid" if validity.ok else "invalid"
         if score_json is None:
-            entries.append(SampleFloor(sample_id=sample_id, status=status, validity=facts))
+            entries.append(SampleFloor(sample_id=sample_id, status=status, validity=validity))
             continue
         entries.append(
             SampleFloor(
                 sample_id=sample_id,
                 status=status,
-                validity=facts,
+                validity=validity,
                 reference="editing_start",
                 step_score=score_json,
                 note=(
