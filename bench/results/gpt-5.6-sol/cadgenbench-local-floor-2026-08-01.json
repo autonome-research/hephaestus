@@ -1,0 +1,2102 @@
+{
+  "entries": [
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "101",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          200.0,
+          144.0,
+          45.000000000004036
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/101/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 580480.1130162454
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "102",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          368.32080287324004,
+          310.0,
+          29.5
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/102/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 1183018.1158423603
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "103",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          370.0,
+          230.0,
+          112.0
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/103/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 121025.1508058104
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "104",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          123.8000001,
+          116.5,
+          111.6
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/104/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 122782.19351294539
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "105",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          100.0,
+          89.00000000000489,
+          100.0000002
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/105/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 255166.37675256666
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "106",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          168.6,
+          203.0,
+          49.6
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/106/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 103457.26747018911
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "107",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          72.0,
+          135.6,
+          22.7
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/107/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 15986.788745536964
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "108",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          87.6,
+          88.8,
+          22.6
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/108/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 25486.16501352409
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "109",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          130.94,
+          130.94,
+          420.0
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/109/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 1895377.5330096022
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "110",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          270.0,
+          148.77474524904,
+          123.6
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/110/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 200335.08018845596
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "111",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          316.70000000000385,
+          275.7,
+          65.0
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/111/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 1245347.2626385589
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "112",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          55.0,
+          10.0,
+          38.0
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/112/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 3128.4396979750863
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "113",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          184.8,
+          248.6,
+          100.0
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/113/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 65192.777783108686
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "114",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          70.0,
+          23.9,
+          98.0
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/114/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 15388.385974616085
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "115",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          100.0,
+          85.0,
+          17.2
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/115/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 10203.318366095671
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "116",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          235.0,
+          75.0,
+          153.0000001
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/116/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 319811.7700071262
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "117",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          300.0,
+          215.5,
+          138.0
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/117/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 5264373.876052682
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "118",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          145.0,
+          68.0,
+          10.0
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/118/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 23499.712400355562
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "119",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          32.0,
+          29.5,
+          18.75
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/119/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 5497.388109684436
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "120",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          327.0000002,
+          250.0000002,
+          175.00000020000002
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/120/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 351332.33330101427
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "121",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          273.0800000000005,
+          273.0800000000004,
+          65.0
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/121/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 838822.2124089932
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "122",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          100.00000010000002,
+          139.2000001,
+          25.000000200000002
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/122/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 43505.17950161153
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "123",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          488.0000001,
+          275.0000002,
+          115.0
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/123/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 2490423.3359843157
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "124",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          198.8,
+          78.9,
+          40.0
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/124/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 138552.7569313341
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "125",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          255.0,
+          210.0,
+          146.0
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/125/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 387120.55308131786
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "126",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          926.0,
+          500.0,
+          345.0
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/126/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 51529050.3707236
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "127",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          957.09,
+          292.6,
+          305.0
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/127/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 14799616.063775808
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "128",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          750.0,
+          750.0,
+          370.02
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/128/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 51206060.720328294
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "129",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          240.7,
+          146.1,
+          81.9
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/129/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 128214.81055369694
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "130",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          138.5,
+          150.0,
+          39.2
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/130/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 38089.43576698394
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "131",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          145.32000000000693,
+          198.85000000000318,
+          50.0
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/131/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 155331.45604400805
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "132",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          130.0,
+          130.0,
+          140.0
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/132/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 292466.22870744095
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "133",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          181.4700000000068,
+          40.0000000000001,
+          108.96000000000001
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/133/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 401944.1454665757
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "134",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          270.5743148932718,
+          269.0,
+          338.0
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/134/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 777455.0696216732
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "135",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          254.0,
+          114.0,
+          19.0
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/135/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 43598.81176946195
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "136",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          788.72,
+          658.63,
+          105.0
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/136/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 10143293.968738973
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "137",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          80.81,
+          54.4,
+          30.0
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/137/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 6420.662860672386
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "138",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          120.0,
+          14.400000000000002,
+          75.4
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/138/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 10734.314982599704
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "139",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          328.0,
+          328.0,
+          270.0
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/139/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 16519680.820718013
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "140",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          240.00000000000003,
+          220.0000001,
+          130.0
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/140/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 914594.3542353363
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "141",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          383.41478093824,
+          383.41478093824,
+          124.00000019999999
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/141/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 3208426.037674981
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "142",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          195.0,
+          84.00000000000001,
+          140.95000000000056
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/142/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 181175.02123505625
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "143",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          340.0,
+          166.0,
+          43.08
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/143/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 695241.0397096442
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "145",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          116.00000020000002,
+          116.0000002,
+          20.00000020000188
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/145/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 84540.30838148833
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "146",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          216.00000020000394,
+          115.00000020000002,
+          120.0000001
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/146/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 945851.2701021779
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "147",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          200.0,
+          200.0,
+          31.0
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/147/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 277965.66978568415
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "148",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          170.0000000000004,
+          195.00000000000006,
+          217.50000010000002
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/148/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 1566844.6661384057
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "149",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          150.0,
+          150.0,
+          25.0
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/149/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 216545.95438872516
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "150",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          650.0,
+          201.5,
+          40.0
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/150/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 1567668.647914225
+      }
+    },
+    {
+      "note": "step_score facts unavailable: floor computation exceeded 300s and was process-killed (CADGenBench MESH_TIMEOUT_S policy applied locally)",
+      "reference": null,
+      "sample_id": "201",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          431.0099436991667,
+          264.40248253818237,
+          90.00000019999901
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/201/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 2564229.662198572
+      }
+    },
+    {
+      "note": "step_score facts unavailable: floor computation exceeded 300s and was process-killed (CADGenBench MESH_TIMEOUT_S policy applied locally)",
+      "reference": null,
+      "sample_id": "202",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          449.506702758503,
+          355.0000002,
+          255.773102092076
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/202/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 4398077.770542904
+      }
+    },
+    {
+      "note": "measured against the sample's own starting solid, not ground truth: this quantifies how much the edit changed, never whether it changed the right thing",
+      "reference": "editing_start",
+      "sample_id": "203",
+      "status": "invalid",
+      "step_score": {
+        "criteria": [],
+        "diff": {},
+        "error": "boolean 'cut' produced a null TopoDS shape (OCCT boolean failure)",
+        "notes": [],
+        "passed": false,
+        "policy": {
+          "align": "as_posed",
+          "chamfer_max_mm": null,
+          "iou_min": null
+        }
+      },
+      "validity": {
+        "bbox_mm": [
+          360.0000002,
+          360.0000002,
+          133.81321639957298
+        ],
+        "error": null,
+        "failures": [
+          "unsealed"
+        ],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/203/output.step",
+        "readable": true,
+        "sealed": false,
+        "volume_mm3": 2185533.7082458944
+      }
+    },
+    {
+      "note": "measured against the sample's own starting solid, not ground truth: this quantifies how much the edit changed, never whether it changed the right thing",
+      "reference": "editing_start",
+      "sample_id": "204",
+      "status": "valid",
+      "step_score": {
+        "criteria": [],
+        "diff": {
+          "a_bbox_mm": [
+            140.50612755656982,
+            62.5000002,
+            50.47159463393997
+          ],
+          "a_volume_mm3": 4877.019745808455,
+          "align": "as_posed",
+          "b_bbox_mm": [
+            140.5061275565695,
+            62.5000002,
+            50.47159463393997
+          ],
+          "b_volume_mm3": 4878.081011249367,
+          "surface": {
+            "a_samples": 3455,
+            "a_to_b_mean_mm": 0.0033212470136915542,
+            "align": "as_posed",
+            "b_samples": 3455,
+            "b_to_a_mean_mm": 0.0033212470136915816,
+            "chamfer_mm": 0.003321247013691568,
+            "max_deviation_mm": 5.766983137750488
+          },
+          "topology": {
+            "a": {
+              "cylindrical_faces": 56,
+              "edges": 424,
+              "faces": 186,
+              "genus": 6,
+              "other_faces": 88,
+              "planar_faces": 42,
+              "sealed": true,
+              "solids": 1
+            },
+            "b": {
+              "cylindrical_faces": 56,
+              "edges": 424,
+              "faces": 186,
+              "genus": 6,
+              "other_faces": 88,
+              "planar_faces": 42,
+              "sealed": true,
+              "solids": 1
+            },
+            "cylindrical_faces_delta": 0,
+            "edges_delta": 0,
+            "faces_delta": 0,
+            "genus_delta": 0,
+            "other_faces_delta": 0,
+            "planar_faces_delta": 0,
+            "sealed_changed": false,
+            "solids_delta": 0
+          },
+          "volume": {
+            "a_only_mm3": 0.0,
+            "align": "as_posed",
+            "b_only_mm3": 0.0,
+            "common_mm3": 4871.23162572607,
+            "iou": 1.0
+          }
+        },
+        "error": null,
+        "notes": [],
+        "passed": null,
+        "policy": {
+          "align": "as_posed",
+          "chamfer_max_mm": null,
+          "iou_min": null
+        }
+      },
+      "validity": {
+        "bbox_mm": [
+          140.50612755656982,
+          62.5000002,
+          50.47159463393997
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/204/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 4877.019745808455
+      }
+    },
+    {
+      "note": "step_score facts unavailable: floor computation exceeded 300s and was process-killed (CADGenBench MESH_TIMEOUT_S policy applied locally)",
+      "reference": null,
+      "sample_id": "205",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          174.083269331956,
+          170.0000002,
+          108.16653846392
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/205/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 438749.5825108555
+      }
+    },
+    {
+      "note": "step_score facts unavailable: floor computation exceeded 300s and was process-killed (CADGenBench MESH_TIMEOUT_S policy applied locally)",
+      "reference": null,
+      "sample_id": "206",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          200.990340442853,
+          195.03242079776,
+          80.000000199999
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/206/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 849899.0238237977
+      }
+    },
+    {
+      "note": "step_score facts unavailable: floor computation exceeded 300s and was process-killed (CADGenBench MESH_TIMEOUT_S policy applied locally)",
+      "reference": null,
+      "sample_id": "207",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          145.83096589250297,
+          84.943689138855,
+          65.00099761594615
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/207/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 100269.55305342922
+      }
+    },
+    {
+      "note": "step_score facts unavailable: floor computation exceeded 300s and was process-killed (CADGenBench MESH_TIMEOUT_S policy applied locally)",
+      "reference": null,
+      "sample_id": "208",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          300.0000002,
+          300.00000020017274,
+          217.53615869837
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/208/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 2107061.8807043163
+      }
+    },
+    {
+      "note": "measured against the sample's own starting solid, not ground truth: this quantifies how much the edit changed, never whether it changed the right thing",
+      "reference": "editing_start",
+      "sample_id": "209",
+      "status": "valid",
+      "step_score": {
+        "criteria": [],
+        "diff": {
+          "a_bbox_mm": [
+            320.0000002,
+            92.263279676888,
+            44.386697758756696
+          ],
+          "a_volume_mm3": 116777.39784606647,
+          "align": "as_posed",
+          "b_bbox_mm": [
+            320.0000002,
+            92.263279676888,
+            41.886697758756696
+          ],
+          "b_volume_mm3": 77895.75990016056,
+          "surface": {
+            "a_samples": 4649,
+            "a_to_b_mean_mm": 0.5936371740588638,
+            "align": "as_posed",
+            "b_samples": 3570,
+            "b_to_a_mean_mm": 1.1298423989244659e-14,
+            "chamfer_mm": 0.2968185870294376,
+            "max_deviation_mm": 2.5
+          },
+          "topology": {
+            "a": {
+              "cylindrical_faces": 82,
+              "edges": 355,
+              "faces": 130,
+              "genus": 14,
+              "other_faces": 14,
+              "planar_faces": 34,
+              "sealed": true,
+              "solids": 1
+            },
+            "b": {
+              "cylindrical_faces": 76,
+              "edges": 318,
+              "faces": 118,
+              "genus": 14,
+              "other_faces": 14,
+              "planar_faces": 28,
+              "sealed": true,
+              "solids": 1
+            },
+            "cylindrical_faces_delta": -6,
+            "edges_delta": -37,
+            "faces_delta": -12,
+            "genus_delta": 0,
+            "other_faces_delta": 0,
+            "planar_faces_delta": -6,
+            "sealed_changed": false,
+            "solids_delta": 0
+          },
+          "volume": {
+            "a_only_mm3": 38881.545501076034,
+            "align": "as_posed",
+            "b_only_mm3": 0.0,
+            "common_mm3": 77895.7775501794,
+            "iou": 0.6670454118561161
+          }
+        },
+        "error": null,
+        "notes": [],
+        "passed": null,
+        "policy": {
+          "align": "as_posed",
+          "chamfer_max_mm": null,
+          "iou_min": null
+        }
+      },
+      "validity": {
+        "bbox_mm": [
+          320.0000002,
+          92.263279676888,
+          44.386697758756696
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/209/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 116777.39784606647
+      }
+    },
+    {
+      "note": "step_score facts unavailable: floor computation exceeded 300s and was process-killed (CADGenBench MESH_TIMEOUT_S policy applied locally)",
+      "reference": null,
+      "sample_id": "211",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          597.65386836428,
+          299.87625101321,
+          137.00000020008
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/211/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 3086940.390797613
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "212",
+      "status": "missing",
+      "step_score": null,
+      "validity": null
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "214",
+      "status": "missing",
+      "step_score": null,
+      "validity": null
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "215",
+      "status": "missing",
+      "step_score": null,
+      "validity": null
+    },
+    {
+      "note": "measured against the sample's own starting solid, not ground truth: this quantifies how much the edit changed, never whether it changed the right thing",
+      "reference": "editing_start",
+      "sample_id": "217",
+      "status": "valid",
+      "step_score": {
+        "criteria": [],
+        "diff": {},
+        "error": "boolean 'common' produced a null TopoDS shape (OCCT boolean failure)",
+        "notes": [],
+        "passed": false,
+        "policy": {
+          "align": "as_posed",
+          "chamfer_max_mm": null,
+          "iou_min": null
+        }
+      },
+      "validity": {
+        "bbox_mm": [
+          132.61036984128498,
+          126.974782937034,
+          60.000000200445015
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/217/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 221103.17896951054
+      }
+    },
+    {
+      "note": null,
+      "reference": null,
+      "sample_id": "218",
+      "status": "missing",
+      "step_score": null,
+      "validity": null
+    },
+    {
+      "note": "measured against the sample's own starting solid, not ground truth: this quantifies how much the edit changed, never whether it changed the right thing",
+      "reference": "editing_start",
+      "sample_id": "224",
+      "status": "valid",
+      "step_score": {
+        "criteria": [],
+        "diff": {
+          "a_bbox_mm": [
+            80.000000201343,
+            57.68421370314003,
+            49.0000002
+          ],
+          "a_volume_mm3": 76175.72086365674,
+          "align": "as_posed",
+          "b_bbox_mm": [
+            80.000000201343,
+            57.68421370314003,
+            49.0000002
+          ],
+          "b_volume_mm3": 75590.04390361815,
+          "surface": {
+            "a_samples": 4089,
+            "a_to_b_mean_mm": 0.006166440799535173,
+            "align": "as_posed",
+            "b_samples": 4472,
+            "b_to_a_mean_mm": 0.0007195715334533298,
+            "chamfer_mm": 0.0034430061664942513,
+            "max_deviation_mm": 3.2179238976019997
+          },
+          "topology": {
+            "a": {
+              "cylindrical_faces": 47,
+              "edges": 328,
+              "faces": 124,
+              "genus": 11,
+              "other_faces": 4,
+              "planar_faces": 73,
+              "sealed": true,
+              "solids": 1
+            },
+            "b": {
+              "cylindrical_faces": 48,
+              "edges": 344,
+              "faces": 127,
+              "genus": 11,
+              "other_faces": 4,
+              "planar_faces": 75,
+              "sealed": true,
+              "solids": 1
+            },
+            "cylindrical_faces_delta": 1,
+            "edges_delta": 16,
+            "faces_delta": 3,
+            "genus_delta": 0,
+            "other_faces_delta": 0,
+            "planar_faces_delta": 2,
+            "sealed_changed": false,
+            "solids_delta": 0
+          },
+          "volume": {
+            "a_only_mm3": 585.818903680864,
+            "align": "as_posed",
+            "b_only_mm3": 0.0,
+            "common_mm3": 75589.95355087692,
+            "iou": 0.9923096427537991
+          }
+        },
+        "error": null,
+        "notes": [],
+        "passed": null,
+        "policy": {
+          "align": "as_posed",
+          "chamfer_max_mm": null,
+          "iou_min": null
+        }
+      },
+      "validity": {
+        "bbox_mm": [
+          80.000000201343,
+          57.68421370314003,
+          49.0000002
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/224/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 76175.72086365674
+      }
+    },
+    {
+      "note": "step_score facts unavailable: floor computation exceeded 300s and was process-killed (CADGenBench MESH_TIMEOUT_S policy applied locally)",
+      "reference": null,
+      "sample_id": "225",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          300.33747148904,
+          198.315296975043,
+          48.0000001
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/225/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 420089.4933294097
+      }
+    },
+    {
+      "note": "measured against the sample's own starting solid, not ground truth: this quantifies how much the edit changed, never whether it changed the right thing",
+      "reference": "editing_start",
+      "sample_id": "229",
+      "status": "valid",
+      "step_score": {
+        "criteria": [],
+        "diff": {
+          "a_bbox_mm": [
+            147.74306296575904,
+            109.62176637274837,
+            65.5000001
+          ],
+          "a_volume_mm3": 390937.70724880137,
+          "align": "as_posed",
+          "b_bbox_mm": [
+            147.74306296575904,
+            109.62176647274836,
+            65.5000001
+          ],
+          "b_volume_mm3": 383613.01095275866,
+          "surface": {
+            "a_samples": 6668,
+            "a_to_b_mean_mm": 0.24146412421983024,
+            "align": "as_posed",
+            "b_samples": 7549,
+            "b_to_a_mean_mm": 8.044813317509146e-16,
+            "chamfer_mm": 0.12073206210991552,
+            "max_deviation_mm": 7.5000000000000036
+          },
+          "topology": {
+            "a": {
+              "cylindrical_faces": 36,
+              "edges": 233,
+              "faces": 103,
+              "genus": 7,
+              "other_faces": 50,
+              "planar_faces": 17,
+              "sealed": true,
+              "solids": 1
+            },
+            "b": {
+              "cylindrical_faces": 48,
+              "edges": 282,
+              "faces": 120,
+              "genus": 7,
+              "other_faces": 56,
+              "planar_faces": 16,
+              "sealed": true,
+              "solids": 1
+            },
+            "cylindrical_faces_delta": 12,
+            "edges_delta": 49,
+            "faces_delta": 17,
+            "genus_delta": 0,
+            "other_faces_delta": 6,
+            "planar_faces_delta": -1,
+            "sealed_changed": false,
+            "solids_delta": 0
+          },
+          "volume": {
+            "a_only_mm3": 7422.012644106047,
+            "align": "as_posed",
+            "b_only_mm3": 0.0,
+            "common_mm3": 383516.31199016934,
+            "iou": 0.9810148758092485
+          }
+        },
+        "error": null,
+        "notes": [],
+        "passed": null,
+        "policy": {
+          "align": "as_posed",
+          "chamfer_max_mm": null,
+          "iou_min": null
+        }
+      },
+      "validity": {
+        "bbox_mm": [
+          147.74306296575904,
+          109.62176637274837,
+          65.5000001
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/229/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 390937.70724880137
+      }
+    },
+    {
+      "note": "step_score facts unavailable: floor computation exceeded 300s and was process-killed (CADGenBench MESH_TIMEOUT_S policy applied locally)",
+      "reference": null,
+      "sample_id": "230",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          565.0300002,
+          211.6944089152646,
+          196.94386049243826
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/230/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 2699638.1435547424
+      }
+    },
+    {
+      "note": "measured against the sample's own starting solid, not ground truth: this quantifies how much the edit changed, never whether it changed the right thing",
+      "reference": "editing_start",
+      "sample_id": "231",
+      "status": "valid",
+      "step_score": {
+        "criteria": [],
+        "diff": {
+          "a_bbox_mm": [
+            188.956369450922,
+            186.0,
+            70.0
+          ],
+          "a_volume_mm3": 643729.684655591,
+          "align": "as_posed",
+          "b_bbox_mm": [
+            188.956369450922,
+            186.0,
+            70.0
+          ],
+          "b_volume_mm3": 639467.6984431953,
+          "surface": {
+            "a_samples": 8082,
+            "a_to_b_mean_mm": 0.10318896861053867,
+            "align": "as_posed",
+            "b_samples": 9220,
+            "b_to_a_mean_mm": 1.0502098290327993e-14,
+            "chamfer_mm": 0.051594484305274586,
+            "max_deviation_mm": 5.000000000016916
+          },
+          "topology": {
+            "a": {
+              "cylindrical_faces": 29,
+              "edges": 242,
+              "faces": 93,
+              "genus": 4,
+              "other_faces": 29,
+              "planar_faces": 35,
+              "sealed": true,
+              "solids": 1
+            },
+            "b": {
+              "cylindrical_faces": 39,
+              "edges": 255,
+              "faces": 98,
+              "genus": 4,
+              "other_faces": 30,
+              "planar_faces": 29,
+              "sealed": true,
+              "solids": 1
+            },
+            "cylindrical_faces_delta": 10,
+            "edges_delta": 13,
+            "faces_delta": 5,
+            "genus_delta": 0,
+            "other_faces_delta": 1,
+            "planar_faces_delta": -6,
+            "sealed_changed": false,
+            "solids_delta": 0
+          },
+          "volume": {
+            "a_only_mm3": 4261.966360494968,
+            "align": "as_posed",
+            "b_only_mm3": 0.0,
+            "common_mm3": 639467.699924832,
+            "iou": 0.993379260606259
+          }
+        },
+        "error": null,
+        "notes": [],
+        "passed": null,
+        "policy": {
+          "align": "as_posed",
+          "chamfer_max_mm": null,
+          "iou_min": null
+        }
+      },
+      "validity": {
+        "bbox_mm": [
+          188.956369450922,
+          186.0,
+          70.0
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/231/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 643729.684655591
+      }
+    },
+    {
+      "note": "step_score facts unavailable: floor computation exceeded 300s and was process-killed (CADGenBench MESH_TIMEOUT_S policy applied locally)",
+      "reference": null,
+      "sample_id": "238",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          144.27028434796603,
+          132.50000019999698,
+          49.97637470000129
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/238/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 403810.34564021137
+      }
+    },
+    {
+      "note": "step_score facts unavailable: floor computation exceeded 300s and was process-killed (CADGenBench MESH_TIMEOUT_S policy applied locally)",
+      "reference": null,
+      "sample_id": "240",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          113.81743709277336,
+          102.541330041814,
+          41.000000099994004
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/240/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 100265.39914884277
+      }
+    },
+    {
+      "note": "step_score facts unavailable: floor computation exceeded 300s and was process-killed (CADGenBench MESH_TIMEOUT_S policy applied locally)",
+      "reference": null,
+      "sample_id": "241",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          745.3208041582185,
+          531.4551377072797,
+          221.1582597251787
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/241/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 937361.5419440125
+      }
+    },
+    {
+      "note": "step_score facts unavailable: floor computation exceeded 300s and was process-killed (CADGenBench MESH_TIMEOUT_S policy applied locally)",
+      "reference": null,
+      "sample_id": "242",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          204.23392894012,
+          125.00000019999901,
+          64.12092988629702
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/242/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 427388.8942939311
+      }
+    },
+    {
+      "note": "step_score facts unavailable: floor computation exceeded 300s and was process-killed (CADGenBench MESH_TIMEOUT_S policy applied locally)",
+      "reference": null,
+      "sample_id": "243",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          132.927264163763,
+          100.00000363284225,
+          100.0000000999911
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/243/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 297267.8739819765
+      }
+    },
+    {
+      "note": "measured against the sample's own starting solid, not ground truth: this quantifies how much the edit changed, never whether it changed the right thing",
+      "reference": "editing_start",
+      "sample_id": "244",
+      "status": "valid",
+      "step_score": {
+        "criteria": [],
+        "diff": {
+          "a_bbox_mm": [
+            184.9310449788785,
+            100.000000199992,
+            68.00000010000424
+          ],
+          "a_volume_mm3": 315934.695365074,
+          "align": "as_posed",
+          "b_bbox_mm": [
+            184.9310449788785,
+            100.000000199992,
+            68.00000010000424
+          ],
+          "b_volume_mm3": 315914.460168144,
+          "surface": {
+            "a_samples": 9439,
+            "a_to_b_mean_mm": 0.013471646948693352,
+            "align": "as_posed",
+            "b_samples": 9635,
+            "b_to_a_mean_mm": 2.289989970181464e-13,
+            "chamfer_mm": 0.006735823474461175,
+            "max_deviation_mm": 6.090761704877591
+          },
+          "topology": {
+            "a": {
+              "cylindrical_faces": 114,
+              "edges": 619,
+              "faces": 278,
+              "genus": 0,
+              "other_faces": 103,
+              "planar_faces": 61,
+              "sealed": true,
+              "solids": 1
+            },
+            "b": {
+              "cylindrical_faces": 127,
+              "edges": 682,
+              "faces": 309,
+              "genus": 0,
+              "other_faces": 125,
+              "planar_faces": 57,
+              "sealed": true,
+              "solids": 1
+            },
+            "cylindrical_faces_delta": 13,
+            "edges_delta": 63,
+            "faces_delta": 31,
+            "genus_delta": 0,
+            "other_faces_delta": 22,
+            "planar_faces_delta": -4,
+            "sealed_changed": false,
+            "solids_delta": 0
+          },
+          "volume": {
+            "a_only_mm3": 20.022349988803263,
+            "align": "as_posed",
+            "b_only_mm3": 0.0,
+            "common_mm3": 315914.6178299902,
+            "iou": 0.9999366250247919
+          }
+        },
+        "error": null,
+        "notes": [],
+        "passed": null,
+        "policy": {
+          "align": "as_posed",
+          "chamfer_max_mm": null,
+          "iou_min": null
+        }
+      },
+      "validity": {
+        "bbox_mm": [
+          184.9310449788785,
+          100.000000199992,
+          68.00000010000424
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/244/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 315934.695365074
+      }
+    },
+    {
+      "note": "measured against the sample's own starting solid, not ground truth: this quantifies how much the edit changed, never whether it changed the right thing",
+      "reference": "editing_start",
+      "sample_id": "245",
+      "status": "valid",
+      "step_score": {
+        "criteria": [],
+        "diff": {
+          "a_bbox_mm": [
+            380.0000000000002,
+            168.35623912179489,
+            42.22594687808501
+          ],
+          "a_volume_mm3": 124458.0986960451,
+          "align": "as_posed",
+          "b_bbox_mm": [
+            380.0000000000002,
+            168.35623912179489,
+            37.22594687808501
+          ],
+          "b_volume_mm3": 121083.59493091318,
+          "surface": {
+            "a_samples": 12918,
+            "a_to_b_mean_mm": 2.0071354685185128,
+            "align": "as_posed",
+            "b_samples": 13158,
+            "b_to_a_mean_mm": 1.8108812188216865,
+            "chamfer_mm": 1.9090083436700995,
+            "max_deviation_mm": 5.0000000000000036
+          },
+          "topology": {
+            "a": {
+              "cylindrical_faces": 158,
+              "edges": 974,
+              "faces": 340,
+              "genus": 25,
+              "other_faces": 8,
+              "planar_faces": 174,
+              "sealed": true,
+              "solids": 1
+            },
+            "b": {
+              "cylindrical_faces": 174,
+              "edges": 1112,
+              "faces": 450,
+              "genus": 25,
+              "other_faces": 8,
+              "planar_faces": 268,
+              "sealed": true,
+              "solids": 1
+            },
+            "cylindrical_faces_delta": 16,
+            "edges_delta": 138,
+            "faces_delta": 110,
+            "genus_delta": 0,
+            "other_faces_delta": 0,
+            "planar_faces_delta": 94,
+            "sealed_changed": false,
+            "solids_delta": 0
+          },
+          "volume": {
+            "a_only_mm3": 78895.35607699152,
+            "align": "as_posed",
+            "b_only_mm3": 75520.8733818093,
+            "common_mm3": 45562.42647009926,
+            "iou": 0.22783644713713053
+          }
+        },
+        "error": null,
+        "notes": [],
+        "passed": null,
+        "policy": {
+          "align": "as_posed",
+          "chamfer_max_mm": null,
+          "iou_min": null
+        }
+      },
+      "validity": {
+        "bbox_mm": [
+          380.0000000000002,
+          168.35623912179489,
+          42.22594687808501
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/245/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 124458.0986960451
+      }
+    },
+    {
+      "note": "step_score facts unavailable: floor computation exceeded 300s and was process-killed (CADGenBench MESH_TIMEOUT_S policy applied locally)",
+      "reference": null,
+      "sample_id": "246",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          210.0000002,
+          155.0000001,
+          63.00000019999101
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/246/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 599743.773013666
+      }
+    },
+    {
+      "note": "step_score facts unavailable: floor computation exceeded 300s and was process-killed (CADGenBench MESH_TIMEOUT_S policy applied locally)",
+      "reference": null,
+      "sample_id": "247",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          1005.2283076254591,
+          815.5031993427981,
+          220.00000019996997
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/247/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 45844013.34906507
+      }
+    },
+    {
+      "note": "step_score facts unavailable: floor computation exceeded 300s and was process-killed (CADGenBench MESH_TIMEOUT_S policy applied locally)",
+      "reference": null,
+      "sample_id": "248",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          1130.7006364858098,
+          942.4331430795502,
+          110.00000009999101
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/248/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 33152455.8925088
+      }
+    },
+    {
+      "note": "step_score facts unavailable: floor computation exceeded 300s and was process-killed (CADGenBench MESH_TIMEOUT_S policy applied locally)",
+      "reference": null,
+      "sample_id": "249",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          420.83745852712,
+          404.2606312051396,
+          38.13706629561661
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/249/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 1520916.5701660258
+      }
+    },
+    {
+      "note": "step_score facts unavailable: floor computation exceeded 300s and was process-killed (CADGenBench MESH_TIMEOUT_S policy applied locally)",
+      "reference": null,
+      "sample_id": "250",
+      "status": "valid",
+      "step_score": null,
+      "validity": {
+        "bbox_mm": [
+          259.104885351534,
+          223.49504200168798,
+          167.00000019999902
+        ],
+        "error": null,
+        "failures": [],
+        "path": "/home/solarmonk/.cache/hephaestus/cadgenbench/outputs/250/output.step",
+        "readable": true,
+        "sealed": true,
+        "volume_mm3": 636543.1876923379
+      }
+    }
+  ],
+  "label": "local floor: geom validity (sealed, positive volume, finite bbox) plus score_step_files facts where the public dataset ships reference geometry. This is NOT the CADGenBench cad_score \u2014 ground truth is private to the leaderboard, and no local computation can produce that number.",
+  "n_invalid": 1,
+  "n_missing": 4,
+  "n_samples": 81,
+  "n_valid": 76
+}
