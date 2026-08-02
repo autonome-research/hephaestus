@@ -24,7 +24,19 @@
 
 import http from "node:http";
 import path from "node:path";
+import { registerBunOAuthFlows } from "@earendil-works/pi-ai/bun-oauth";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+
+// pi-ai loads OAuth flow modules (openai-codex, anthropic, ...) through a
+// *variable-specifier* dynamic import that bundlers cannot follow — inside the
+// esbuild-bundled sidecar that import cannot resolve at runtime, so every
+// pi_native OAuth turn died in ~2 ms with "OAuth auth derivation failed"
+// (2026-08-02: 15 zero-event live runs; tsc output was unaffected, and
+// FakeModel providers need no OAuth flow, which is why every test stayed
+// green). Pi's own standalone binary solves this with static registration;
+// the sidecar is exactly that case. Idempotent, and a no-op for keyed
+// providers.
+registerBunOAuthFlows();
 
 // ── configure payload ────────────────────────────────────────────────────────
 

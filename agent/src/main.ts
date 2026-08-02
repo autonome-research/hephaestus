@@ -200,7 +200,26 @@ peer.on("session.prompt", async (params) => {
 
   // Live normalization: Pi streaming events become public Hephaestus events as
   // they happen, on the same run-monotonic sequence as the synthetic ones.
+  //
+  // An assistant turn that ERRORS (provider/auth/stream failure) does not make
+  // `session.prompt` reject — Pi records stopReason "error" on the persisted
+  // message and resolves. Without watching for it the run reported `completed`
+  // with zero events, which is how 15 live runs silently no-opped on
+  // 2026-08-02 while the real cause ("OAuth auth derivation failed") sat
+  // unread in the session file. An errored turn is a FAILED run, loudly.
+  let turnError: string | undefined;
   const unsubscribe = managed.session.subscribe((ev) => {
+    const raw = ev as unknown as {
+      type?: string;
+      message?: { role?: string; stopReason?: string; errorMessage?: string };
+    };
+    if (
+      raw.type === "message_end" &&
+      raw.message?.role === "assistant" &&
+      raw.message.stopReason === "error"
+    ) {
+      turnError = raw.message.errorMessage ?? "assistant turn failed (no error message)";
+    }
     for (const normalized of normalizeLiveEvent(ev, runId, next)) {
       emitEvent(normalized);
     }
@@ -218,7 +237,12 @@ peer.on("session.prompt", async (params) => {
   let errorMessage: string | undefined;
   try {
     await managed.session.prompt(promptText);
-    if (controller.signal.aborted) state = "cancelled";
+    if (controller.signal.aborted) {
+      state = "cancelled";
+    } else if (turnError !== undefined) {
+      state = "failed";
+      errorMessage = turnError;
+    }
     // Drive the context policy off post-turn usage (compaction/escalation).
     await applyContextPolicy(managed, runId, policy);
   } catch (err) {

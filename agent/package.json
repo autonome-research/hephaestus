@@ -18,8 +18,9 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "0.80.10",
     "@autonome-research/thread-phase": "6.0.0",
+    "@earendil-works/pi-ai": "0.80.10",
+    "@earendil-works/pi-coding-agent": "0.80.10",
     "@sinclair/typebox": "0.34.52"
   },
   "devDependencies": {
