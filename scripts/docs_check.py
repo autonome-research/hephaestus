@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 import sys
 from collections.abc import Iterable, Iterator
 from pathlib import Path
@@ -153,6 +154,17 @@ def _prose_lines(path: Path) -> Iterator[tuple[int, str]]:
             yield lineno, line
 
 
+def _gitignored(path: str) -> bool:
+    """Is ``path`` matched by the repository's gitignore rules?"""
+    proc = subprocess.run(
+        ["git", "check-ignore", "-q", "--", path],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=False,
+    )
+    return proc.returncode == 0
+
+
 def _resolves(token: str) -> bool:
     """Does ``token`` name something in the repository?
 
@@ -169,6 +181,13 @@ def _resolves(token: str) -> bool:
     if not path:
         return True
     if (REPO_ROOT / path).exists():
+        return True
+    # A path that is absent but GITIGNORED is a declared build output
+    # (agent/dist/, the staged sidecar, dist/ wheels): packaging docs must be
+    # able to name those, and they never exist on the bare checkout CI runs
+    # this checker on (run 30758817258 failed exactly there). git is the
+    # authority on what counts as build output; nothing is hard-coded here.
+    if _gitignored(path):
         return True
     head, _, rest = path.partition("/")
     if not rest:

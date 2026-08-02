@@ -155,8 +155,14 @@ def test_cancel_after_close_is_a_quiet_noop(tmp_path: Path) -> None:
     from hephaestus.agent_bridge.app import BridgeRuntime
 
     project = make_project(tmp_path / "proj")
+    # dist_main bypasses sidecar resolution (the documented harness escape
+    # hatch): this test never starts the runtime, and a bare CI checkout has
+    # no built sidecar to resolve.
+    fake_main = tmp_path / "fake-sidecar.js"
+    fake_main.write_text("// never spawned\n")
     runtime = BridgeRuntime(
         project_root=project.root,
+        dist_main=fake_main,
         providers=[
             {
                 "id": "fake",
