@@ -13,6 +13,15 @@ htmlcov/
 # Node
 node_modules/
 dist/
+# The bundled sidecar: build output of `pnpm --dir agent run bundle`.
+agent/build/
+# The sidecar staged into the wheel by scripts/stage_sidecar.py. Build output,
+# not source — `server/hatch_build.py` refuses to build a wheel without it.
+server/src/hephaestus/agent_bridge/_sidecar/
+# The canonical schemas/bridge_limits.json staged into hephaestus-core by
+# core/hatch_build.py. Build output; the source of truth is schemas/.
+core/src/hephaestus/core/_data/
+contract/src/hephaestus/contract/_data/
 
 # Hephaestus design-project state
 .heph/

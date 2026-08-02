@@ -62,6 +62,7 @@ from .delegation import DelegationPhase, DelegationRow, DelegationService
 from .dispatch import DispatchError, Invocation, Principal, ToolDispatcher
 from .jobstore import CheckpointRecord, JobStore
 from .protocol import ErrorCode, ProtocolError
+from .sidecar import resolve_sidecar
 from .supervisor import Supervisor, SupervisorConfig, SupervisorError
 
 __all__ = [
@@ -124,8 +125,14 @@ class WorkflowError(Exception):
 
 
 def default_workflow_runner_main() -> Path:
-    """The packaged workflow runner entry (``agent/dist/workflows/runner.js``)."""
-    return Path(__file__).resolve().parents[4] / "agent" / "dist" / "workflows" / "runner.js"
+    """The verified workflow-runner entry the workflow supervisor spawns.
+
+    Delegates to the single resolver. It previously re-derived ``parents[4]`` and
+    appended a literal path *without* reusing ``app.repo_root()`` — two
+    hard-coded copies of the same assumption, free to drift, and both wrong in an
+    installed wheel. The two entry points now come from one verified resolution.
+    """
+    return resolve_sidecar().runner
 
 
 # ---------------------------------------------------------------------------

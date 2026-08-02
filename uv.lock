@@ -12,6 +12,7 @@ resolution-markers = [
 [manifest]
 members = [
     "hephaestus-bench",
+    "hephaestus-cad",
     "hephaestus-contract",
     "hephaestus-core",
     "hephaestus-server",
@@ -857,6 +858,32 @@ requires-dist = [
 ]
 
 [[package]]
+name = "hephaestus-cad"
+version = "0.1.0"
+source = { editable = "packaging" }
+dependencies = [
+    { name = "hephaestus-contract" },
+    { name = "hephaestus-core" },
+    { name = "hephaestus-server" },
+    { name = "opstore" },
+]
+
+[package.optional-dependencies]
+bench = [
+    { name = "hephaestus-bench" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "hephaestus-bench", marker = "extra == 'bench'", editable = "bench" },
+    { name = "hephaestus-contract", editable = "contract" },
+    { name = "hephaestus-core", editable = "core" },
+    { name = "hephaestus-server", editable = "server" },
+    { name = "opstore", editable = "opstore" },
+]
+provides-extras = ["bench"]
+
+[[package]]
 name = "hephaestus-contract"
 version = "0.1.0"
 source = { editable = "contract" }
@@ -922,6 +949,7 @@ source = { virtual = "." }
 [package.dev-dependencies]
 dev = [
     { name = "hephaestus-bench" },
+    { name = "hephaestus-cad" },
     { name = "hephaestus-contract" },
     { name = "hephaestus-core" },
     { name = "hephaestus-server" },
@@ -941,6 +969,7 @@ dev = [
 [package.metadata.requires-dev]
 dev = [
     { name = "hephaestus-bench", editable = "bench" },
+    { name = "hephaestus-cad", editable = "packaging" },
     { name = "hephaestus-contract", editable = "contract" },
     { name = "hephaestus-core", editable = "core" },
     { name = "hephaestus-server", editable = "server" },

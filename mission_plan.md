@@ -1,3 +1,8 @@
+<!--
+Copyright 2026 The Hephaestus Authors
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # 04 — Mission Plan
 
 The droid mission implementing Hephaestus. A de-risking spike plus eight build

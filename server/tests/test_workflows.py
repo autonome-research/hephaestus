@@ -9,9 +9,10 @@ Two tiers:
   durable job/event/checkpoint rows: replay that survives a store restart,
   orphaned ``RUNNING`` jobs projected as ``interrupted``, and one interrupted
   terminal when the runner process is confirmed lost.
-* **Through the REAL Node runner** (``node agent/dist/workflows/runner.js``,
-  built by ``pnpm --dir agent build``) over the private framed bridge, against a
-  real opstore-backed project:
+* **Through the REAL Node runner** (``node <sidecar>/workflows/runner.js`` — the
+  bundled, integrity-manifested artifact the wheel ships, built and staged by
+  :func:`hephaestus.testing.sidecar.build_agent_dist`) over the private framed
+  bridge, against a real opstore-backed project:
   - a workflow run to a durable terminal whose events replay identically after
     both processes are gone;
   - cooperative cancellation of a run that is blocked inside a delegation;
@@ -31,9 +32,7 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import socket
-import subprocess
 import threading
 import time
 from collections.abc import Iterator
@@ -63,7 +62,6 @@ from hephaestus.agent_bridge.workflows import (
     WorkflowRun,
     WorkflowRunnerProcess,
     WorkflowService,
-    default_workflow_runner_main,
 )
 from hephaestus.testing.fake_openai import (
     FakeOpenAI,
@@ -71,7 +69,7 @@ from hephaestus.testing.fake_openai import (
     TurnResolver,
     start_fake_openai,
 )
-from hephaestus.testing.sidecar import node_executable
+from hephaestus.testing.sidecar import build_agent_dist, node_executable
 from hephaestus.testing.workflow_harness import (
     ORCH,
     SHELF_CLEAR_SRC,
@@ -508,19 +506,20 @@ def test_cad_workflow_request_builds_the_runner_payload() -> None:
 
 @pytest.fixture(scope="session")
 def agent_dist() -> Path:
-    """Build the packaged sidecar once; skip cleanly when Node/pnpm are absent."""
-    node = node_executable()
-    pnpm = shutil.which("pnpm")
-    if node is None or pnpm is None:
+    """Build the packaged sidecar once; skip cleanly when Node/pnpm are absent.
+
+    Delegates to :func:`hephaestus.testing.sidecar.build_agent_dist`, the one
+    place that knows how to produce the artifact a release ships. This fixture
+    used to derive the agent workspace as
+    ``default_workflow_runner_main().parents[2]`` — a fourth independent copy of
+    the "the runner lives at ``<repo>/agent/dist/workflows/runner.js``"
+    assumption, which stopped being true the moment the runner moved into the
+    packaged sidecar.
+    """
+    built = build_agent_dist()
+    if built is None:
         pytest.skip("node/pnpm are required to run the packaged workflow runner")
-    agent_dir = default_workflow_runner_main().parents[2]
-    build = subprocess.run(
-        [pnpm, "--dir", str(agent_dir), "build"], capture_output=True, text=True, check=False
-    )
-    runner = default_workflow_runner_main()
-    if build.returncode != 0 or not runner.exists():
-        pytest.fail(f"agent build failed:\n{build.stdout}\n{build.stderr}")
-    return runner
+    return built[1]
 
 
 def test_workflow_runs_to_a_durable_terminal_and_replays_after_both_processes_die(

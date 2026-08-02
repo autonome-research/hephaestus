@@ -1,3 +1,8 @@
+<!--
+Copyright 2026 The Hephaestus Authors
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # 08 — Solid comparison (Stage 8B)
 
 Normative. Fills the Stage 8B slot in `mission_plan.md` ("shape/interface/

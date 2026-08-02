@@ -342,7 +342,19 @@ def test_hostile_ambient_config_changes_nothing(
         assert not (hostile_home / "hijack").exists()
 
         # The sidecar we spawned is the packaged artifact, never a global binary.
-        assert str(sidecar_dist).endswith("agent/dist/main.js")
+        # Asserted through the resolver rather than a path literal: what matters
+        # is that the entry came from a *verified* sidecar tree this project
+        # owns, and that its integrity manifest still checks out after the run.
+        from hephaestus.agent_bridge.sidecar import resolve_sidecar, verify_sidecar
+
+        resolution = resolve_sidecar()
+        assert resolution.source in {"packaged", "development"}
+        assert sidecar_dist == resolution.main
+        assert sidecar_dist.is_file()
+        verify_sidecar(resolution.root)
+        # Nothing resembling a global Pi/thread-phase install is what we ran.
+        for global_bin in ("/usr/bin", "/usr/local/bin", str(Path.home() / ".local" / "bin")):
+            assert not str(sidecar_dist).startswith(global_bin)
     finally:
         harness.close()
         harness.assert_no_orphans()

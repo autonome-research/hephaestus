@@ -1,3 +1,8 @@
+<!--
+Copyright 2026 The Hephaestus Authors
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # 01 — Part-Script Contract
 
 The contract every Hephaestus part script is written against, and the contract

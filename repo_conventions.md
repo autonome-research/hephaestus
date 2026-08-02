@@ -1,3 +1,8 @@
+<!--
+Copyright 2026 The Hephaestus Authors
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # 05 — Repo Conventions
 
 ## Layout
@@ -93,6 +98,18 @@ docs/       generated/site-only mkdocs content and assets; links to root docs.
   fastmcp 3.4.4 + mcp 1.28.1 (protocol 2025-11-25);
   `@earendil-works/pi-coding-agent@0.80.10`;
   `@autonome-research/thread-phase@6.0.0`; bubblewrap 0.11.2.
+- **Stage 7H additions** (packaging; see `PACKAGING.md`): `@sinclair/typebox`
+  is a *runtime* dependency of the sidecar, exact-pinned at `0.34.52` — it was
+  declared under `devDependencies` with a caret through Stage 7G, so a
+  production install produced a sidecar that died on its first import.
+  `esbuild@0.28.1` (devDependency) bundles the two sidecar entry points into the
+  bounded artifact the wheel ships. The bundle leaves exactly two bare
+  specifiers unresolved — `bufferutil` and `utf-8-validate`, ws's optional
+  native accelerators, required inside a try/catch — and contains zero `.node`
+  files, which is how "no required native Node addon" is now discharged. The
+  `openai` clause is satisfied strictly: thread-phase contributes **zero**
+  import edges into `openai`; the SDK present in the bundle is reached only
+  through `@earendil-works/pi-ai`'s lazily dynamic-imported provider adapters.
   Spike dispositions, binding on later stages:
   1. STEP hashing normalizes the `FILE_NAME` header timestamp
      (`spikes/cad_kernel/box_build.py::normalize_step`); STL is hashed raw.

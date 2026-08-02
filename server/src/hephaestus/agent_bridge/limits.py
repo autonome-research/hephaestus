@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, cast
 
+from hephaestus.core.limits import limits_path as core_limits_path
+
 __all__ = [
     "LIMITS",
     "ImageDims",
@@ -33,32 +35,21 @@ __all__ = [
 ]
 
 
-def _find_limits_file() -> Path:
-    """Locate ``schemas/bridge_limits.json`` by walking up from this module.
-
-    Works from the source tree and an editable install; an explicit override is
-    honoured via the ``HEPHAESTUS_BRIDGE_LIMITS`` environment variable.
-    """
-    import os
-
-    override = os.environ.get("HEPHAESTUS_BRIDGE_LIMITS")
-    if override:
-        return Path(override)
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        candidate = parent / "schemas" / "bridge_limits.json"
-        if candidate.is_file():
-            return candidate
-    raise FileNotFoundError("schemas/bridge_limits.json not found above " + str(here))
-
-
 def limits_path() -> Path:
-    """Absolute path to the loaded limits file (for provenance/logging)."""
-    return _find_limits_file()
+    """Absolute path to the loaded limits file (for provenance/logging).
+
+    Delegates to :func:`hephaestus.core.limits.limits_path`. This module used to
+    carry its own copy of the walk-up search, which meant two resolvers for one
+    file — and both were wrong in an installed wheel, where the walk climbs out
+    of ``site-packages`` and finds nothing. ``hephaestus-server`` already depends
+    on ``hephaestus-core``, so the core resolver (which knows about the packaged
+    copy the wheel ships) is the one that should answer for both.
+    """
+    return core_limits_path()
 
 
 def _load() -> dict[str, Any]:
-    with _find_limits_file().open("r", encoding="utf-8") as fh:
+    with limits_path().open("r", encoding="utf-8") as fh:
         data: dict[str, Any] = json.load(fh)
     return data
 

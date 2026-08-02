@@ -1,3 +1,8 @@
+<!--
+Copyright 2026 The Hephaestus Authors
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # 00 — Architecture
 
 Status: draft for droid mission. Normative language: MUST / SHOULD / MAY.

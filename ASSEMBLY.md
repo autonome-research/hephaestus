@@ -1,3 +1,8 @@
+<!--
+Copyright 2026 The Hephaestus Authors
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # 09 — Assemblies and constraints (Stage 8C)
 
 Normative. Fills the Stage 8C slot in `mission_plan.md` ("mates/joints as

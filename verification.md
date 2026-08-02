@@ -1,3 +1,8 @@
+<!--
+Copyright 2026 The Hephaestus Authors
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # 03 — Verification Harness
 
 Hephaestus is developed as a droid mission with machine-verifiable stage

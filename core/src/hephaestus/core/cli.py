@@ -81,6 +81,7 @@ from hephaestus.core.project_store.projections import SnapshotRejectedError
 from hephaestus.core.project_store.publication import PublicationKind, Publisher
 from hephaestus.core.project_store.store import blob_hash_of_ref
 from hephaestus.core.types import BuildResult
+from hephaestus.core.version import version as _version
 from opstore.types import JSONValue
 
 from opstore import canonical_json
@@ -515,6 +516,15 @@ def _cmd_lint(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="heph", description="Hephaestus CAD engine CLI (engine-first: no server)"
+    )
+    # Answers before any subcommand is required, and without importing anything
+    # that could need Node — G7H lane (a) runs `heph --version` on a machine
+    # with no Node at all, as the first proof that the wheel installed cleanly.
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"heph {_version()}",
+        help="print the installed Hephaestus version and exit",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 

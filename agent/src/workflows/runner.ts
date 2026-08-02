@@ -582,11 +582,26 @@ export async function runWorkflowSidecar(options: WorkflowSidecarOptions = {}): 
   log(`started pid=${process.pid} hv=${FRAME_VERSION}`);
 }
 
-/** True when this module is the process entry point (`node .../runner.js`). */
+/**
+ * True when this process was started as the workflow runner
+ * (`node .../workflows/runner.js`).
+ *
+ * Deliberately asks only about `process.argv[1]` — what the supervisor spawned.
+ * An earlier version also required `import.meta.url` to end in
+ * `/workflows/runner.js`, which held for `tsc` output (one module per file) but
+ * is false for the bundled sidecar the wheel ships: code splitting hoists this
+ * module's body into a shared chunk, so `import.meta.url` names the chunk and
+ * the runner silently exited 0 at every spawn. `argv[1]` states the intent
+ * directly and is independent of how the code was packaged.
+ *
+ * The dropped half guarded against this module being *imported* by a different
+ * entry that happened to be invoked as `runner.js` — which cannot occur: the
+ * session sidecar is spawned as `main.js`, so the check is false there.
+ */
 function isProcessEntry(): boolean {
   const entry = process.argv[1];
   if (entry === undefined) return false;
-  return import.meta.url.endsWith("/workflows/runner.js") && entry.endsWith("workflows/runner.js");
+  return entry.endsWith("workflows/runner.js");
 }
 
 if (isProcessEntry()) {

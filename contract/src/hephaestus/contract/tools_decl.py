@@ -84,17 +84,40 @@ JsonSchema = dict[str, Any]
 
 
 def _find_limits_file() -> Path:
+    """Locate ``schemas/bridge_limits.json``: override, then packaged, then repo.
+
+    The packaged branch is what makes an installed wheel work. This module reads
+    the file at *import* time (the delegation deadline bounds below are module
+    constants), and the repo walk-up climbs out of ``site-packages`` and finds
+    nothing, so before Stage 7H a wheel failed on ``import hephaestus.contract``.
+    ``hephaestus-contract`` declares no dependencies, so it carries its own
+    staged copy (see ``contract/hatch_build.py``) rather than importing
+    ``hephaestus.core`` for one.
+    """
     import os
+    from importlib import resources
 
     override = os.environ.get("HEPHAESTUS_BRIDGE_LIMITS")
     if override:
         return Path(override)
+
+    packaged = (
+        Path(str(resources.files(__package__ or "hephaestus.contract")))
+        / "_data"
+        / "bridge_limits.json"
+    )
+    if packaged.is_file():
+        return packaged
+
     here = Path(__file__).resolve()
     for parent in here.parents:
         candidate = parent / "schemas" / "bridge_limits.json"
         if candidate.is_file():
             return candidate
-    raise FileNotFoundError("schemas/bridge_limits.json not found above " + str(here))
+    raise FileNotFoundError(
+        f"schemas/bridge_limits.json not found: no packaged copy at {packaged}, "
+        f"and none above {here}"
+    )
 
 
 def limits_document() -> dict[str, Any]:

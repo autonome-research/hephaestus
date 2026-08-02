@@ -27,8 +27,6 @@ Hephaestus events, never raw frames.
 
 from __future__ import annotations
 
-import os
-import shutil
 import threading
 import uuid
 from collections.abc import Callable, Sequence
@@ -48,6 +46,7 @@ from .cad_ops import CadOps, question_refusal, record_answers
 from .dispatch import DispatchError, Principal, ToolDispatcher
 from .events import EventPump, PerClientQueue
 from .protocol import ErrorCode, ProtocolError
+from .sidecar import SidecarResolution, node_executable, resolve_sidecar
 from .supervisor import ProcessLossEvent, Supervisor, SupervisorConfig
 
 __all__ = [
@@ -75,13 +74,23 @@ ProviderSpec = dict[str, Any]
 
 
 def repo_root() -> Path:
-    """The repository root (…/hephaestus), four levels above this file."""
+    """The repository root (…/hephaestus), four levels above this file.
+
+    Only meaningful inside a source checkout, and retained only for the test
+    helpers that legitimately need the tree. Sidecar resolution must NOT use it:
+    in an installed wheel this arithmetic lands somewhere above
+    ``site-packages``. See :mod:`hephaestus.agent_bridge.sidecar`.
+    """
     return Path(__file__).resolve().parents[4]
 
 
 def default_dist_main() -> Path:
-    """The packaged sidecar entry the supervisor spawns (``agent/dist/main.js``)."""
-    return repo_root() / "agent" / "dist" / "main.js"
+    """The verified sidecar entry the supervisor spawns.
+
+    Delegates to the single resolver so the wheel, the override, and the source
+    checkout all answer through one ordered, fail-closed policy.
+    """
+    return resolve_sidecar().main
 
 
 @dataclass
@@ -174,10 +183,8 @@ def link_auth_source(agent_dir: Path, auth_source: Path) -> Path:
 
 
 def _node_executable() -> str:
-    node = os.environ.get("HEPHAESTUS_NODE") or shutil.which("node")
-    if node is None:
-        raise RuntimeError("node executable not found (set HEPHAESTUS_NODE or install Node)")
-    return node
+    """Node, after the explicit ≥22.19 compatibility check (`repo_conventions`)."""
+    return node_executable()
 
 
 class BridgeRuntime:
@@ -225,7 +232,19 @@ class BridgeRuntime:
         # authenticate with and fails loudly instead of borrowing an ambient login.
         if auth_source is not None:
             link_auth_source(agent_dir, auth_source)
-        argv = [_node_executable(), str(dist_main or default_dist_main())]
+        # Resolution and integrity verification happen HERE, before any child is
+        # spawned — a tampered or missing packaged sidecar raises a named
+        # SidecarError rather than degrading to a global pi/thread-phase binary.
+        # An explicit `dist_main` names one exact entry file (the harness escape
+        # hatch); everything else goes through the ordered policy and is verified.
+        self._sidecar: SidecarResolution | None
+        if dist_main is None:
+            self._sidecar = resolve_sidecar()
+            entry = self._sidecar.main
+        else:
+            self._sidecar = None
+            entry = dist_main
+        argv = [_node_executable(), str(entry)]
         # HEPHAESTUS_AGENT_DIR is app-owned configuration, not a credential: it is
         # injected explicitly (never sourced from the ambient environment) so the
         # sidecar's auth.json / models-store.json live under the project's
@@ -251,6 +270,17 @@ class BridgeRuntime:
         )
 
     # -- lifecycle ---------------------------------------------------------
+
+    @property
+    def sidecar(self) -> SidecarResolution | None:
+        """The verified sidecar this runtime spawns, or ``None`` under an
+        explicit ``dist_main`` override.
+
+        Exposed so G7H's packaged-sidecar test can assert on the *resolution the
+        runtime actually used* — its source branch and root path — instead of
+        re-deriving one and hoping the two agree.
+        """
+        return self._sidecar
 
     @property
     def configure_payload(self) -> dict[str, Any]:

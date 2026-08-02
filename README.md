@@ -1,3 +1,8 @@
+<!--
+Copyright 2026 The Hephaestus Authors
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Hephaestus
 
 **An open agentic CAD harness.** Hephaestus pairs a language model with a real

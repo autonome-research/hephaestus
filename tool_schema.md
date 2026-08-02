@@ -1,3 +1,8 @@
+<!--
+Copyright 2026 The Hephaestus Authors
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # 02 — Agent Tool Schema
 
 The tool surface exposed to Pi by `agent/`, over MCP by `server/`, and through

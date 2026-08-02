@@ -7,7 +7,7 @@
 // (with unpaired-surrogate rejection — never replacement-character coercion), and
 // a PNG/JPEG header parser that recovers dimensions before any full decode.
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 export interface DelegationLimits {
@@ -46,14 +46,42 @@ export interface BridgeLimits {
   readonly text_result: { readonly max_bytes: number; readonly max_lines: number };
 }
 
-// agent/src/limits.ts -> ../../schemas resolves to the repo-root schemas/ both
-// from the TS source (vitest / tsx) and the compiled agent/dist/limits.js.
-const LIMITS_URL = new URL("../../schemas/bridge_limits.json", import.meta.url);
+// `schemas/bridge_limits.json` is the single source of truth for these bounds:
+// Python reads the same file, so a limit can never be raised on one side of the
+// bridge alone. That makes *where* it is on disk layout-dependent, and there are
+// two layouts:
+//
+//   - source / `tsc` output: agent/src/limits.ts and agent/dist/limits.js both
+//     sit two levels under the repo root, so `../../schemas/` finds it;
+//   - the bundled sidecar shipped in the wheel: there is no repo. The bundler
+//     copies the schema to `schemas/bridge_limits.json` beside the entry point,
+//     where it is covered by the sidecar's integrity manifest — so a tampered
+//     limits file is a fail-closed refusal, not a silently widened bound.
+//
+// Candidates are tried in order and the first that exists wins. An explicit
+// HEPHAESTUS_BRIDGE_LIMITS still overrides both (tests pin bounds with it).
+const LIMITS_CANDIDATES = [
+  new URL("../../schemas/bridge_limits.json", import.meta.url),
+  new URL("./schemas/bridge_limits.json", import.meta.url),
+];
 
 function loadLimits(): BridgeLimits {
   const override = process.env.HEPHAESTUS_BRIDGE_LIMITS;
-  const path = override ?? fileURLToPath(LIMITS_URL);
-  return JSON.parse(readFileSync(path, "utf8")) as BridgeLimits;
+  if (override !== undefined) {
+    return JSON.parse(readFileSync(override, "utf8")) as BridgeLimits;
+  }
+  const tried: string[] = [];
+  for (const candidate of LIMITS_CANDIDATES) {
+    const path = fileURLToPath(candidate);
+    tried.push(path);
+    if (existsSync(path)) {
+      return JSON.parse(readFileSync(path, "utf8")) as BridgeLimits;
+    }
+  }
+  throw new Error(
+    `bridge_limits.json not found (tried: ${tried.join(", ")}); ` +
+      "set HEPHAESTUS_BRIDGE_LIMITS to name it explicitly",
+  );
 }
 
 export const LIMITS: BridgeLimits = loadLimits();

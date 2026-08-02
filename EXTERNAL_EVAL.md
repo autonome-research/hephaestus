@@ -1,3 +1,8 @@
+<!--
+Copyright 2026 The Hephaestus Authors
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # 10 — External evaluation (Stage 8D)
 
 Normative. Fills the Stage 8D slot in `mission_plan.md` ("a CADGenBench

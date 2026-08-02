@@ -1,3 +1,8 @@
+<!--
+Copyright 2026 The Hephaestus Authors
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # 06 — Validation Ladder (Stage 2V)
 
 Normative. Amends `mission_plan.md` (new gated stage 2V), `verification.md`

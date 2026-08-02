@@ -3,7 +3,14 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["dist/**", "node_modules/**", "src/tools/schema.gen.ts", "coverage/**"],
+    // `build/**` is the bundled sidecar: 14 MB of generated third-party code.
+    ignores: [
+      "dist/**",
+      "build/**",
+      "node_modules/**",
+      "src/tools/schema.gen.ts",
+      "coverage/**",
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

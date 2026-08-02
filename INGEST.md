@@ -1,3 +1,8 @@
+<!--
+Copyright 2026 The Hephaestus Authors
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # 07 — Ingest (Stage 8A)
 
 Normative. Amends `mission_plan.md` (Stage 8), `script_contract.md` (one new

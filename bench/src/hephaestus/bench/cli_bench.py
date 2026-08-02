@@ -18,6 +18,10 @@ imported only when a bench verb actually runs.
   archived run directory and writes ``bench/results/<model>/<date>.json``, plus
   the ``VALIDATION.md`` §1 split table (prose and seeded, never averaged; the
   gate names the prose split) and the §8 validation metrics.
+- ``heph bench leaderboard [--results-dir DIR] [--out FILE] [--check]``
+  regenerates the Stage 7H model-leaderboard page from those artifacts; see
+  :mod:`hephaestus.bench.leaderboard`. ``--check`` writes nothing and exits 1 on
+  drift, which is how CI notices a scored run whose page was never regenerated.
 
 Exit codes: 0 success (for ``score``: the gate is met), 1 error / gate not met,
 2 usage. ``run`` exits 1 when any run failed so CI surfaces a red bench.
@@ -160,6 +164,32 @@ def _cmd_score(args: argparse.Namespace) -> int:
     return 0 if score.meets_gate else 1
 
 
+def _cmd_leaderboard(args: argparse.Namespace) -> int:
+    from hephaestus.bench import leaderboard
+
+    results_dir = Path(cast("str", args.results_dir))
+    out_path = Path(cast("str", args.out))
+    text = leaderboard.render(leaderboard.load_rows(results_dir))
+    if bool(args.check):
+        # The page is a committed artifact; drift means someone scored a run and
+        # did not regenerate. Say which file, and do not rewrite it.
+        current = out_path.read_text(encoding="utf-8") if out_path.is_file() else None
+        if current == text:
+            print(f"{out_path}: up to date")
+            return 0
+        missing = "does not exist" if current is None else "is out of date"
+        print(
+            f"heph bench leaderboard: {out_path} {missing}; "
+            f"regenerate with `heph bench leaderboard --out {out_path}`",
+            file=sys.stderr,
+        )
+        return 1
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(text, encoding="utf-8")
+    print(f"wrote {out_path}")
+    return 0
+
+
 def _rate(value: float | None) -> str:
     """Rates that were never measured print as ``-``, never as ``0.000``."""
     return "-" if value is None else f"{value:.3f}"
@@ -268,6 +298,27 @@ def add_subparsers(
     score.add_argument("--out", help="output path (default <dir>/../<date>.json)")
     score.add_argument("--json", action="store_true", help="emit JSON")
     score.set_defaults(func=_cmd_score)
+
+    board = inner.add_parser(
+        "leaderboard",
+        help="regenerate the model-leaderboard page from archived result artifacts",
+    )
+    board.add_argument(
+        "--results-dir",
+        default="bench/results",
+        help="archive root holding <model>/<date>.json (default bench/results)",
+    )
+    board.add_argument(
+        "--out",
+        default="docs/leaderboard.md",
+        help="page to write (default docs/leaderboard.md)",
+    )
+    board.add_argument(
+        "--check",
+        action="store_true",
+        help="exit 1 if the page on disk differs from the generated page; write nothing",
+    )
+    board.set_defaults(func=_cmd_leaderboard)
 
 
 def main(argv: list[str] | None = None) -> int:

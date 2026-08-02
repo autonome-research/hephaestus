@@ -54,6 +54,7 @@ from typing import Any, TextIO, cast
 from hephaestus.core.project_store.layout import find_project_root
 
 from .app import AskUserAnswerer, AuthLinkError, BridgeRuntime, PromptResult
+from .sidecar import SidecarError
 from .supervisor import SupervisorError
 
 __all__ = ["AgentConsole", "ProviderConfig", "add_subparsers", "load_provider_config", "main"]
@@ -317,6 +318,15 @@ def _cmd_agent(args: argparse.Namespace) -> int:
         )
     except AuthLinkError as exc:
         print(f"heph: {exc}", file=sys.stderr)
+        return 2
+    except SidecarError as exc:
+        # The packaged sidecar is missing, tampered, or Node is absent/too old.
+        # `repo_conventions.md` requires this to be a named refusal — the
+        # constructor already declined to spawn anything, and there is
+        # deliberately no fallback to a global `pi`/`thread-phase` to suggest.
+        # The code is printed so an operator (or a CI lane) can distinguish
+        # "rebuild the wheel" from "install a newer Node".
+        print(f"heph: {exc.code}: {exc}", file=sys.stderr)
         return 2
     try:
         runtime.start()

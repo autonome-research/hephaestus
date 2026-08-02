@@ -1,0 +1,180 @@
+# bench.yml — Tier 3 corpus + the model-leaderboard artifact.
+#
+# Copyright 2026 The Hephaestus Authors
+# SPDX-License-Identifier: Apache-2.0
+#
+# verification.md §"CI contract": "`bench.yml`: Tier 3 corpus — manual dispatch
+# + weekly schedule (API cost control), publishing the results artifact."
+# mission_plan.md Gate G7H: "`bench.yml` publishes the leaderboard artifact".
+#
+# Two jobs, deliberately split by what they cost:
+#
+#   leaderboard — free. Regenerates `docs/leaderboard.md` from the artifacts
+#                 already committed under `bench/results/*/<date>.json`, fails
+#                 if the committed page disagrees with them, and uploads the
+#                 page as the artifact G7H names. Runs on the weekly schedule
+#                 and on every manual dispatch. No credentials, no model calls.
+#   corpus      — costs money. Only ever runs when a dispatcher opts in with
+#                 `run_corpus: true` and names a model; the schedule never
+#                 triggers it. Uploads the raw run directory as evidence.
+#
+# The corpus job never writes to `bench/results/` in the repository: archived
+# evidence is committed by a human in a reviewed PR (VALIDATION.md §8 —
+# leaderboard rows are transcribed from archived artifacts, never recomputed by
+# the page generator). CI publishes artifacts; it does not author history.
+#
+# No `pull_request_target` (mission rule 8).
+
+name: bench
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_corpus:
+        description: "Also run the Tier 3 corpus against a model (costs API budget)"
+        type: boolean
+        default: false
+      model:
+        description: "Model id declared by the provider config"
+        type: string
+        default: ""
+      tasks:
+        description: "Comma-separated task ids (default: the whole corpus)"
+        type: string
+        default: ""
+      seeds:
+        description: "Seeds per task"
+        type: string
+        default: "3"
+  schedule:
+    # Mondays 04:17 UTC. Off the hour so it does not queue behind the crowd.
+    - cron: "17 4 * * 1"
+
+concurrency:
+  group: bench-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  UV_PYTHON: "3.13"
+  NODE_VERSION: "22.19.0"
+  PNPM_VERSION: "10"
+
+jobs:
+  # ------------------------------------------------------------ leaderboard --
+  leaderboard:
+    name: model leaderboard
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --dev
+
+      # The committed page must already agree with the committed artifacts —
+      # the same check ci.yml runs, repeated here so a scheduled run notices a
+      # page that drifted after an artifact landed.
+      - name: the committed page matches the archived artifacts
+        run: uv run heph bench leaderboard --check
+
+      # Regenerate into a scratch path and publish that. `bench/results/` and
+      # the committed page are read-only to this workflow.
+      - name: regenerate the page from bench/results/
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/board"
+          uv run heph bench leaderboard --out "$RUNNER_TEMP/board/leaderboard.md"
+          diff -u docs/leaderboard.md "$RUNNER_TEMP/board/leaderboard.md"
+          cp bench/results/*/*.json "$RUNNER_TEMP/board/" 2>/dev/null || true
+          ls -l "$RUNNER_TEMP/board"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: leaderboard
+          path: ${{ runner.temp }}/board/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: publish the page into the run summary
+        run: cat docs/leaderboard.md >> "$GITHUB_STEP_SUMMARY"
+
+  # ----------------------------------------------------------------- corpus --
+  corpus:
+    name: tier 3 corpus (${{ inputs.model }})
+    # Manual dispatch, opted in, with a model named. The weekly schedule reaches
+    # the leaderboard job only — API cost control, per the CI contract.
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.run_corpus && inputs.model != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      # The bench drives real agent sessions: builds run under the secure
+      # executor and the renderer needs surfaceless EGL, same as ci.yml.
+      - name: sandbox + renderer prerequisites
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q bubblewrap libegl1 libgl1 libgl1-mesa-dri libglx-mesa0
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: uv sync --dev
+      - run: pnpm --dir agent install --frozen-lockfile
+      - name: build the sidecar the bench spawns
+        run: |
+          pnpm --dir agent run bundle
+          uv run python scripts/stage_sidecar.py
+
+      # Only the credentials the provider config allowlists ever reach a run;
+      # the supervisor builds a minimal environment around them.
+      - name: write the provider config
+        env:
+          BENCH_PROVIDER_CONFIG: ${{ secrets.BENCH_PROVIDER_CONFIG }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BENCH_PROVIDER_CONFIG:-}" ]; then
+            echo "secrets.BENCH_PROVIDER_CONFIG is unset; the corpus cannot run" >&2
+            exit 1
+          fi
+          printf '%s' "$BENCH_PROVIDER_CONFIG" > "$RUNNER_TEMP/provider.json"
+          python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$RUNNER_TEMP/provider.json"
+
+      - name: run the corpus
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          ARGS=(--provider "$RUNNER_TEMP/provider.json" --model "${{ inputs.model }}"
+                --seeds "${{ inputs.seeds }}" --results-dir "$RUNNER_TEMP/results" --json)
+          if [ -n "${{ inputs.tasks }}" ]; then
+            ARGS+=(--tasks "${{ inputs.tasks }}")
+          fi
+          uv run heph bench run "${ARGS[@]}" | tee "$RUNNER_TEMP/run.json"
+
+      - name: score the archived run
+        run: |
+          set -euo pipefail
+          for dir in "$RUNNER_TEMP"/results/*/*/; do
+            [ -d "$dir" ] || continue
+            uv run heph bench score "$dir" --json | tee -a "$RUNNER_TEMP/scores.json"
+          done
+
+      # Evidence, not history: this is the "results artifact" the CI contract
+      # names. Landing a row on the leaderboard means committing the scored
+      # artifact under bench/results/ in a reviewed PR and regenerating the page.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-results-${{ inputs.model }}
+          path: ${{ runner.temp }}/results/
+          if-no-files-found: error
+          retention-days: 90

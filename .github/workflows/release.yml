@@ -1,0 +1,704 @@
+# release.yml — Gate G7H's clean-machine matrix, lanes (a)-(d), as CI.
+#
+# Copyright 2026 The Hephaestus Authors
+# SPDX-License-Identifier: Apache-2.0
+#
+# mission_plan.md §"Stage 7H — Headless release" adopts G7's matrix verbatim:
+#
+#   (a) Python-only `pipx install` -> `heph --version` -> import/lint/schema
+#       smoke with no script execution and no Node, on every packaging lane;
+#   (b) core build/check through the secure executor -> packaged-sidecar
+#       integrity / native-addon audit -> Python-backed JobStore initialization
+#       -> `heph agent` fake-model -> MCP smoke, on the supported secure Linux
+#       x86_64 lane, which also runs the secure-executor escape suite;
+#   (c) the same fake-model/MCP smoke and executor escape suite on a macOS lane
+#       through a *detected* OCI backend;
+#   (d) explicit fail-closed agent/server script execution on lanes without a
+#       passing secure backend.
+#
+# Two structural rules this file obeys, because they are what make the matrix
+# mean anything:
+#
+#   1. Every lane installs THE BUILT WHEEL, downloaded from the `wheelhouse`
+#      job's artifact. No lane installs from the source tree — an in-tree
+#      install resolves the development sidecar at `agent/build/sidecar` and the
+#      gate's central claim ("the wheel uses its packaged sidecar") becomes
+#      untestable. `HEPHAESTUS_WHEELHOUSE` points the Stage 7H pytest suites at
+#      that same artifact so they, too, measure the released bytes.
+#   2. A lane never "passes by absence". Lane (a) asserts Node is gone rather
+#      than hoping; lane (c) FAILS when no OCI backend is detected (it exists to
+#      prove the backend path, so a skip is a false green); lane (d) asserts the
+#      named refusal rather than a skipped test.
+#
+# No `pull_request_target` (mission rule 8). This workflow never runs untrusted
+# PR code, and it holds no write permission on the repository: it does not cut
+# the `v0.1.0-headless` tag, it verifies that a pushed tag is coherent with the
+# version the wheels declare.
+
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+# Releases are not superseded by a newer push: a tag build must finish.
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  checks: read
+
+env:
+  UV_PYTHON: "3.13"
+  NODE_VERSION: "22.19.0"
+  PNPM_VERSION: "10"
+  # The aggregate distribution users install (repo_conventions.md §Naming).
+  DISTRIBUTION: hephaestus-cad
+
+jobs:
+  # ------------------------------------------------------------- wheelhouse --
+  # Built exactly once, by the documented sequence in PACKAGING.md. Every lane
+  # consumes this artifact; nothing downstream may rebuild.
+  wheelhouse:
+    name: build the wheels
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: uv sync --dev
+      - run: pnpm --dir agent install --frozen-lockfile
+      - name: bundle the sidecar
+        run: pnpm --dir agent run bundle
+      - name: stage the sidecar into hephaestus-server
+        run: uv run python scripts/stage_sidecar.py
+      # server/hatch_build.py refuses a missing or stale staged sidecar, so this
+      # step failing is the packaging integrity check, not a build hiccup.
+      - name: build every distribution
+        run: uv build --all-packages --out-dir dist
+      - name: record what was built
+        run: |
+          set -euo pipefail
+          ls -l dist/
+          sha256sum dist/*.whl dist/*.tar.gz | tee dist/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheelhouse
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  # ---------------------------------------------------------------- lane (a) --
+  # Python-only, no Node, no script execution — on EVERY packaging lane, which
+  # is why this is a matrix rather than a single ubuntu job.
+  lane-a:
+    name: lane (a) python-only (${{ matrix.os }})
+    needs: wheelhouse
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      # Deliberately NO actions/setup-node: this lane is the Node-free claim.
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheelhouse
+          path: dist
+
+      # GitHub's hosted images ship Node preinstalled, so "no Node" has to be
+      # made true rather than assumed: drop every PATH entry that contains a
+      # node binary, then assert the result. Uninstalling is not an option on a
+      # hosted image; a PATH shim that "fails loudly" would still make Node
+      # *present*, which is not what the lane claims.
+      - name: remove Node from PATH and prove it is gone
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEEP=""
+          IFS=':' read -ra ENTRIES <<< "$PATH"
+          for entry in "${ENTRIES[@]}"; do
+            [ -n "$entry" ] || continue
+            if [ -x "$entry/node" ] || [ -x "$entry/nodejs" ]; then
+              echo "dropping $entry (contains node)"
+              continue
+            fi
+            KEEP="${KEEP:+$KEEP:}$entry"
+          done
+          echo "PATH=$KEEP" >> "$GITHUB_ENV"
+
+      # A hostile global `pi` / `thread-phase` ON PATH. repo_conventions.md:
+      # `heph` must never execute one. They record their own invocation, and a
+      # later step fails if the witness file exists. No `node` shim is planted:
+      # a runnable `node` anywhere on PATH would defeat this lane's whole claim.
+      - name: plant hostile global pi / thread-phase on PATH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/hostile"
+          for name in pi thread-phase; do
+            printf '#!/bin/sh\necho "$0 $@" >> "%s/hostile-invoked"\nexit 97\n' \
+              "$RUNNER_TEMP" > "$RUNNER_TEMP/hostile/$name"
+            chmod +x "$RUNNER_TEMP/hostile/$name"
+          done
+          echo "$RUNNER_TEMP/hostile" >> "$GITHUB_PATH"
+
+      - name: node is absent; the hostile globals are present and must stay unused
+        shell: bash
+        run: |
+          set -euo pipefail
+          for binary in node nodejs; do
+            if command -v "$binary" >/dev/null 2>&1; then
+              echo "$binary is on PATH; lane (a) is invalid" >&2
+              exit 1
+            fi
+          done
+          for binary in pi thread-phase; do
+            command -v "$binary" >/dev/null 2>&1 || {
+              echo "the hostile $binary shim is missing; the lane would prove nothing" >&2
+              exit 1
+            }
+          done
+
+      - name: pipx install the built wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --user --quiet pipx
+          python3 -m pipx ensurepath
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          WHEEL=$(ls dist/hephaestus_cad-*.whl)
+          # --find-links lets the four sibling Hephaestus wheels resolve from
+          # this build; third-party dependencies still come from the index.
+          python3 -m pipx install "$WHEEL" --pip-args="--find-links=$PWD/dist"
+
+      # Every Hephaestus distribution must have been installed from a local
+      # file. Without this, a resolver free to reach PyPI could satisfy
+      # `hephaestus-core` from some *published* release and the lane would
+      # cheerfully report that a different artifact works.
+      - name: every hephaestus distribution came from this build
+        shell: bash
+        run: |
+          set -euo pipefail
+          VENV="$HOME/.local/pipx/venvs/hephaestus-cad"
+          [ -d "$VENV" ] || VENV="$HOME/.local/share/pipx/venvs/hephaestus-cad"
+          PY=$(ls "$VENV"/bin/python)
+          "$PY" - <<'PY'
+          import json, pathlib, sys
+          from importlib.metadata import distributions
+          expected = {"hephaestus-cad", "hephaestus-core", "hephaestus-contract",
+                      "hephaestus-server", "opstore"}
+          seen = {}
+          for dist in distributions():
+              name = (dist.metadata["Name"] or "").lower()
+              if name not in expected:
+                  continue
+              raw = dist.read_text("direct_url.json")
+              assert raw, f"{name} has no direct_url.json: it came from an index"
+              url = json.loads(raw)["url"]
+              assert url.startswith("file://"), f"{name} resolved from {url}"
+              seen[name] = url
+          missing = expected - set(seen)
+          assert not missing, f"not installed: {sorted(missing)}"
+          print(json.dumps(seen, indent=2))
+          PY
+
+      - name: heph --version
+        run: heph --version
+
+      - name: every Node-free verb registers
+        shell: bash
+        run: |
+          set -euo pipefail
+          heph --help
+          for verb in build check lint render goldens registry reference diff assembly; do
+            heph "$verb" --help >/dev/null
+          done
+
+      - name: import smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          VENV="$HOME/.local/pipx/venvs/hephaestus-cad"
+          [ -d "$VENV" ] || VENV="$HOME/.local/share/pipx/venvs/hephaestus-cad"
+          "$VENV/bin/python" -c "import hephaestus.core, hephaestus.geom, hephaestus.contract, hephaestus.agent_bridge, opstore; print('imports ok')"
+
+      - name: lint + registry smoke (no script execution)
+        shell: bash
+        run: |
+          set -euo pipefail
+          heph lint corpus/public_fixtures/assembly/parts/bracket.py
+          heph lint corpus/public_fixtures/assembly/parts/primary.py
+          # `registry list` reads and hashes trees; it never executes registry
+          # content, which `registry verify` would also not do — but verify
+          # fails on the fixture by design (it is deliberately unpinned, so
+          # registry-pinning docs have something to demonstrate against).
+          (cd corpus/public_fixtures/assembly && heph registry list --json)
+
+      - name: schema smoke — installed contract equals the committed schemas
+        shell: bash
+        run: |
+          set -euo pipefail
+          VENV="$HOME/.local/pipx/venvs/hephaestus-cad"
+          [ -d "$VENV" ] || VENV="$HOME/.local/share/pipx/venvs/hephaestus-cad"
+          "$VENV/bin/python" - "$PWD" <<'PY'
+          import hashlib, pathlib, sys
+          from hephaestus.contract.toolgen import generate_json_schemas
+          repo = pathlib.Path(sys.argv[1])
+          generated = generate_json_schemas()
+          assert generated, "the installed contract declared no tools"
+          bad = []
+          for rel, text in generated.items():
+              committed = repo / rel
+              if not committed.is_file():
+                  bad.append(f"{rel}: declared by the wheel, not committed")
+              elif hashlib.sha256(committed.read_bytes()).hexdigest() != hashlib.sha256(
+                  text.encode()
+              ).hexdigest():
+                  bad.append(f"{rel}: committed schema differs from the wheel's")
+          assert not bad, "\n".join(bad)
+          print(f"{len(generated)} schemas match the committed contract")
+          PY
+
+      # Nothing above may have built a part: lane (a) is explicitly "no script
+      # execution". A build would have created a store under .heph/.
+      - name: no part script was executed, no global binary was invoked
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -e "$RUNNER_TEMP/hostile-invoked" ]; then
+            echo "a global pi/thread-phase/node was invoked:" >&2
+            cat "$RUNNER_TEMP/hostile-invoked" >&2
+            exit 1
+          fi
+          if [ -d corpus/public_fixtures/assembly/.heph ]; then
+            echo "lane (a) executed a part script (.heph store exists)" >&2
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------- lane (b) --
+  # The supported secure lane: Linux x86_64 with probed bubblewrap and Node.
+  lane-b:
+    name: lane (b) secure linux x86_64
+    needs: wheelhouse
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheelhouse
+          path: dist
+      # Same prerequisites as ci.yml's sandbox jobs: bubblewrap plus
+      # unrestricted unprivileged user namespaces, and Mesa for the renderer.
+      - name: sandbox + renderer prerequisites
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q bubblewrap libegl1 libgl1 libgl1-mesa-dri libglx-mesa0
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: uv sync --dev
+
+      # A hostile global `pi` and `thread-phase` are on PATH for the whole lane.
+      # Every sidecar spawn below happens with them present, so "the wheel uses
+      # its packaged sidecar" is asserted against a machine that offers an
+      # alternative.
+      - name: plant hostile global pi / thread-phase on PATH
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/hostile"
+          for name in pi thread-phase; do
+            printf '#!/bin/sh\necho "$0 $@" >> "%s/hostile-invoked"\nexit 97\n' \
+              "$RUNNER_TEMP" > "$RUNNER_TEMP/hostile/$name"
+            chmod +x "$RUNNER_TEMP/hostile/$name"
+          done
+          echo "$RUNNER_TEMP/hostile" >> "$GITHUB_PATH"
+
+      - name: pipx install the built wheel
+        run: |
+          set -euo pipefail
+          python3 -m pip install --user --quiet pipx
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          WHEEL=$(ls dist/hephaestus_cad-*.whl)
+          python3 -m pipx install "$WHEEL" --pip-args="--find-links=$PWD/dist"
+
+      # 1. core build/check through the secure executor. No
+      #    --unsafe-local-executor anywhere: a probed bwrap sandbox or nothing.
+      - name: core build + check through the secure executor
+        run: |
+          set -euo pipefail
+          cp -r corpus/public_fixtures/assembly "$RUNNER_TEMP/proj"
+          cd "$RUNNER_TEMP/proj"
+          heph build primary --json
+          heph check --json
+
+      # 2. packaged-sidecar integrity + native-addon audit, 3. JobStore init,
+      #    4. `heph agent` fake-model, all against the DOWNLOADED wheels.
+      - name: stage 7H wheel suite (integrity, addon audit, jobstore, agent)
+        env:
+          HEPHAESTUS_WHEELHOUSE: ${{ github.workspace }}/dist
+        run: uv run pytest tests/stage7h -q
+
+      # 5. Stage-3 MCP smoke (stdio + HTTP, stock client, zero Hephaestus
+      #    imports on the client side).
+      - name: MCP smoke
+        env:
+          HEPHAESTUS_SKIP_SIDECAR_BUILD: "1"
+        run: uv run pytest tests/stage3 -q
+
+      # 6. Release-lane-only: the secure-executor escape suite.
+      - name: secure-executor escape suite
+        run: |
+          uv run pytest \
+            core/tests/test_sandbox_base.py \
+            core/tests/test_sandbox_bwrap.py \
+            core/tests/test_sandbox_probe.py \
+            core/tests/test_registry_sandbox.py -q
+
+      - name: no global pi / thread-phase was ever invoked
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -e "$RUNNER_TEMP/hostile-invoked" ]; then
+            echo "a global pi/thread-phase was invoked:" >&2
+            cat "$RUNNER_TEMP/hostile-invoked" >&2
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------- lane (c) --
+  # macOS, through a DETECTED OCI backend. repo_conventions.md: "macOS is
+  # supported for agent execution only through a capability-tested
+  # Docker/Podman/OrbStack-compatible OCI backend running the pinned Linux
+  # executor profile."
+  #
+  # KNOWN RED until that backend exists in the product. `secure_backend()` in
+  # hephaestus.core.executor.sandbox.probe constructs a BwrapBackend and nothing
+  # else, so on macOS it raises `sandbox_unavailable` — correct fail-closed
+  # behaviour, and exactly why this lane must fail rather than skip. The lane is
+  # authored now so the gap is a red check with a name, not an omission. G7H
+  # cannot be declared green on lane (c) until the OCI backend lands.
+  lane-c:
+    name: lane (c) macOS via OCI backend
+    needs: wheelhouse
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheelhouse
+          path: dist
+      - run: uv sync --dev
+
+      # Detection, not installation-by-faith: whichever of colima/docker/podman
+      # answers is the backend. If none answers the lane FAILS — it exists to
+      # prove the backend path, and a skip here would publish a false green.
+      - name: detect an OCI backend
+        run: |
+          set -euo pipefail
+          if ! command -v colima >/dev/null 2>&1; then
+            brew install colima docker || true
+          fi
+          if command -v colima >/dev/null 2>&1; then
+            colima start --cpu 2 --memory 4 --disk 20 || true
+          fi
+          BACKEND=""
+          for candidate in docker podman; do
+            if command -v "$candidate" >/dev/null 2>&1 && "$candidate" info >/dev/null 2>&1; then
+              BACKEND="$candidate"
+              break
+            fi
+          done
+          if [ -z "$BACKEND" ]; then
+            echo "no Docker/Podman/OrbStack-compatible backend answered;" >&2
+            echo "lane (c) exists to prove the backend path, so this is a failure," >&2
+            echo "never a skip (mission_plan.md G7 lane (c))." >&2
+            exit 1
+          fi
+          echo "OCI_BACKEND=$BACKEND" >> "$GITHUB_ENV"
+
+      # The executor profile architecture.md §Sandboxing names, probed directly
+      # against the backend and independently of any Hephaestus code: read-only
+      # root, no network, dropped capabilities, bounded resources.
+      - name: capability-probe the executor profile
+        run: |
+          set -euo pipefail
+          IMAGE="python:3.13-slim"
+          "$OCI_BACKEND" pull "$IMAGE"
+          "$OCI_BACKEND" run --rm --read-only --network none \
+            --cap-drop ALL --memory 512m --pids-limit 128 \
+            --tmpfs /tmp:rw,size=64m "$IMAGE" \
+            python -c "
+          import socket, sys
+          try:
+              socket.create_connection(('1.1.1.1', 443), timeout=3)
+          except OSError:
+              pass
+          else:
+              sys.exit('the probe container reached the network')
+          try:
+              open('/proof', 'w')
+          except OSError:
+              print('profile ok: no network, read-only root')
+          else:
+              sys.exit('the probe container wrote to a read-only root')
+          "
+
+      - name: pipx install the built wheel
+        run: |
+          set -euo pipefail
+          python3 -m pip install --user --quiet --break-system-packages pipx || python3 -m pip install --user --quiet pipx
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          WHEEL=$(ls dist/hephaestus_cad-*.whl)
+          python3 -m pipx install "$WHEEL" --pip-args="--find-links=$PWD/dist"
+
+      # The product must accept this backend as a *secure* backend. Today it
+      # does not — see the KNOWN RED note above.
+      - name: hephaestus accepts the detected backend as secure
+        run: |
+          set -euo pipefail
+          cp -r corpus/public_fixtures/assembly "$RUNNER_TEMP/proj"
+          cd "$RUNNER_TEMP/proj"
+          heph build primary --json
+
+      - name: fake-model + MCP smoke
+        env:
+          HEPHAESTUS_WHEELHOUSE: ${{ github.workspace }}/dist
+        run: |
+          uv run pytest tests/stage7h -q
+          uv run pytest tests/stage3 -q
+
+      - name: executor escape suite through the OCI backend
+        run: |
+          uv run pytest \
+            core/tests/test_sandbox_base.py \
+            core/tests/test_sandbox_probe.py \
+            core/tests/test_registry_sandbox.py -q
+
+  # ---------------------------------------------------------------- lane (d) --
+  # No passing secure backend anywhere on the machine. Script execution must
+  # REFUSE by name; the assertion is the refusal, never a skipped test.
+  lane-d:
+    name: lane (d) fail-closed, no secure backend
+    needs: wheelhouse
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheelhouse
+          path: dist
+      # Deliberately NO "sandbox prerequisites" step: bubblewrap is not
+      # installed, so no secure backend can pass its probe.
+      - run: uv sync --dev
+
+      - name: no secure backend is available
+        run: |
+          set -euo pipefail
+          if command -v bwrap >/dev/null 2>&1; then
+            echo "bwrap is installed; lane (d) is invalid" >&2
+            exit 1
+          fi
+          # Docker is present on hosted ubuntu images. It is irrelevant while
+          # bwrap is the only backend `secure_backend()` can construct — and
+          # tests/stage7h/test_lane_fail_closed.py asserts exactly that, so the
+          # day an OCI backend lands this lane fails loudly instead of lying.
+          echo "no bubblewrap; the only implemented secure backend is unavailable"
+
+      - name: pipx install the built wheel
+        run: |
+          set -euo pipefail
+          python3 -m pip install --user --quiet pipx
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          WHEEL=$(ls dist/hephaestus_cad-*.whl)
+          python3 -m pipx install "$WHEEL" --pip-args="--find-links=$PWD/dist"
+
+      # The Node-free engine surface still works: fail-closed is about script
+      # EXECUTION, not about the whole tool going dark.
+      - name: the non-executing surface still works
+        run: |
+          set -euo pipefail
+          heph --version
+          heph lint corpus/public_fixtures/assembly/parts/bracket.py
+
+      - name: script execution refuses by name
+        run: |
+          set -euo pipefail
+          cp -r corpus/public_fixtures/assembly "$RUNNER_TEMP/proj"
+          cd "$RUNNER_TEMP/proj"
+          set +e
+          OUT=$(heph build primary --json 2>&1)
+          CODE=$?
+          set -e
+          echo "$OUT"
+          if [ "$CODE" -eq 0 ]; then
+            echo "heph build succeeded with no secure backend" >&2
+            exit 1
+          fi
+          echo "$OUT" | grep -q "sandbox_unavailable" || {
+            echo "the refusal did not name sandbox_unavailable" >&2
+            exit 1
+          }
+
+      - name: the fail-closed suite (serve, registry, agent)
+        env:
+          HEPHAESTUS_WHEELHOUSE: ${{ github.workspace }}/dist
+        run: uv run pytest tests/stage7h/test_lane_fail_closed.py -q
+
+  # ------------------------------------------------------------ prior gates --
+  # G7H: "Gates GS, G0A, G0B, G1, G2, G2V, G3 and G6 are green on the release
+  # SHA". Those gates are ci.yml jobs, so the check is: every required ci.yml
+  # job concluded `success` for this exact commit. Read-only, no re-run.
+  prior-gates:
+    name: prior gates green on the release SHA
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: every required ci.yml check succeeded on this SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/commits/${SHA}/check-runs?per_page=100" \
+            --jq '.check_runs[] | [.name, .conclusion] | @tsv' > runs.tsv || true
+          cat runs.tsv
+          required=(
+            "lint + type"                 # ruff + pyright strict
+            "docs + license headers"      # G7H docs clause
+            "opstore + stage0a"           # G0A
+            "core engine"                 # engine Tier 1
+            "stage0b adapter gate"        # G0B
+            "stage gates 1-6"             # G1, G2, G2V, G3, G6
+            "agent (node)"                # GS pins / sidecar toolchain
+            "stage7h packaging invariants"
+            "server (shard 0/3)"
+            "server (shard 1/3)"
+            "server (shard 2/3)"
+          )
+          fail=0
+          for name in "${required[@]}"; do
+            conclusion=$(awk -F'\t' -v n="$name" '$1 == n {print $2}' runs.tsv | head -1)
+            if [ "$conclusion" != "success" ]; then
+              echo "gate check '$name' is '${conclusion:-missing}' on $SHA" >&2
+              fail=1
+            fi
+          done
+          exit "$fail"
+
+  # ------------------------------------------------------------------ gate --
+  # The aggregation G7H names. It asserts; it does not publish and it does not
+  # tag (this workflow holds no write permission). On a tag push it additionally
+  # requires the tag to agree with the version the wheels declare.
+  release-gate:
+    name: G7H gate
+    needs: [wheelhouse, lane-a, lane-b, lane-c, lane-d, prior-gates]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheelhouse
+          path: dist
+      - run: uv sync --dev
+
+      - name: headless docs build without warnings
+        run: |
+          set -euo pipefail
+          uv run python scripts/docs_check.py
+          uv run python scripts/license_headers.py --check
+
+      - name: the leaderboard page matches the archived bench artifacts
+        run: uv run heph bench leaderboard --check
+
+      # G7H requires G6 green on the release SHA, and G6's Tier 3 clause is a
+      # MEASURED number: some archived scoring artifact must clear its bar.
+      # `leaderboard --check` only proves the page is CURRENT with the
+      # artifacts, so without this step the workflow would go green the day
+      # lane (c) lands even with every archived run failing the gate — a
+      # latent false green (mission rule 1: tighten, never waive).
+      - name: an archived bench artifact meets the Tier 3 gate
+        run: |
+          uv run python - <<'EOF'
+          import json
+          import pathlib
+          import sys
+
+          rows: list[tuple[str, bool]] = []
+          for path in sorted(pathlib.Path("bench/results").glob("*/*.json")):
+              try:
+                  data = json.loads(path.read_text(encoding="utf-8"))
+              except (OSError, ValueError):
+                  continue
+              if isinstance(data, dict) and "meets_gate" in data:
+                  rows.append((str(path), bool(data["meets_gate"])))
+          for path, met in rows:
+              print(f"{'MET  ' if met else 'unmet'} {path}")
+          if not any(met for _, met in rows):
+              print(
+                  "G6's Tier 3 bench clause is OPEN: no archived scoring "
+                  "artifact has meets_gate=true (see tests/stage7h/CI_ONLY.md §5).",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          EOF
+
+      - name: the tag agrees with the built version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          WHEEL=$(ls dist/hephaestus_cad-*.whl)
+          VERSION=$(basename "$WHEEL" | cut -d- -f2)
+          TAG="${GITHUB_REF_NAME}"
+          case "$TAG" in
+            "v${VERSION}"|"v${VERSION}-headless") ;;
+            *)
+              echo "tag $TAG does not match built version $VERSION" >&2
+              exit 1
+              ;;
+          esac
+          echo "tag $TAG is coherent with $WHEEL"
+
+      - name: summary
+        run: |
+          {
+            echo "## Gate G7H"
+            echo
+            echo "| clause | lane |"
+            echo "|---|---|"
+            echo "| (a) python-only install, no Node, no script execution | lane-a (ubuntu, macos) |"
+            echo "| (b) secure executor, sidecar integrity, JobStore, agent, MCP, escapes | lane-b |"
+            echo "| (c) macOS fake-model/MCP/escapes via OCI backend | lane-c |"
+            echo "| (d) fail-closed script execution with no secure backend | lane-d |"
+            echo "| prior gates on the release SHA | prior-gates |"
+            echo "| docs build, leaderboard currency | release-gate |"
+          } >> "$GITHUB_STEP_SUMMARY"

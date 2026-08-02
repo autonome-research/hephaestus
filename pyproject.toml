@@ -14,11 +14,14 @@ members = [
     "server",
     "contract",
     "bench",
+    # The aggregate `hephaestus-cad` release distribution (Stage 7H).
+    "packaging",
 ]
 
 [dependency-groups]
 dev = [
     "opstore",
+    "hephaestus-cad",
     "hephaestus-core",
     "hephaestus-server",
     "hephaestus-contract",
@@ -32,6 +35,9 @@ dev = [
     "scikit-image>=0.26",
     "pypdf>=5.1",
 ]
+
+[tool.uv.sources.hephaestus-cad]
+workspace = true
 
 [tool.uv.sources.hephaestus-core]
 workspace = true
@@ -81,6 +87,11 @@ exclude = [
     "**/__pycache__",
     "**/.*",
     "server/tests/fixtures",
+    # Hatchling build hooks. They import `hatchling.builders.*`, which exists
+    # only inside the isolated build environment the backend creates — it is not
+    # (and must not become) a dev dependency of the project itself, so pyright
+    # has no stubs to resolve the base class against.
+    "*/hatch_build.py",
 ]
 typeCheckingMode = "strict"
 pythonVersion = "3.13"
@@ -108,3 +119,9 @@ reportUnknownArgumentType = false
 [tool.pytest.ini_options]
 testpaths = ["opstore/tests", "tests"]
 addopts = "-ra"
+markers = [
+    # Stage 7H packaging lanes: build every wheel and install into a fresh venv.
+    # Minutes, not seconds — but they MUST run locally, so they are marked, not
+    # skipped by default. Deselect with `-m "not slow"`.
+    "slow: builds artifacts or provisions an environment (Stage 7H wheel lanes)",
+]

@@ -1,0 +1,81 @@
+# Copyright 2026 The Hephaestus Authors
+# SPDX-License-Identifier: Apache-2.0
+
+# `hephaestus-cad` — the headless release distribution (Stage 7H).
+#
+# `repo_conventions.md` §Naming and packaging: "PyPI: publish as `hephaestus-cad`
+# … the import package is `hephaestus` regardless". `mission_plan.md` §Stage 7H
+# says "the PyPI wheel", singular — this is that wheel.
+#
+# It carries no code. The `hephaestus` import namespace is split across four
+# distributions and `opstore` is a fifth; re-homing them into one package would
+# mean either vendoring source (four copies to keep in sync) or flattening the
+# workspace (losing the per-package test/typecheck boundaries the whole tree is
+# organised around). A dependency-only aggregate gives users the single
+# `pip install hephaestus-cad` the mission asks for while the components stay
+# exactly where they are tested.
+#
+# The compiled Node sidecar is NOT here: it ships inside `hephaestus-server`,
+# alongside `hephaestus.agent_bridge`, the only code that resolves and spawns it.
+# See scripts/stage_sidecar.py for why.
+
+[project]
+name = "hephaestus-cad"
+version = "0.1.0"
+description = "Hephaestus: agent-native parametric CAD — heph CLI, MCP server, packaged agent sidecar"
+readme = "README.md"
+requires-python = ">=3.11,<3.15"
+license = "Apache-2.0"
+keywords = ["cad", "parametric", "agent", "mcp", "build123d", "cam"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Manufacturing",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    # The engine and the `heph` entry point. Node-free (G7H lane a).
+    "hephaestus-core",
+    # The canonical tool-surface contract + committed schemas.
+    "hephaestus-contract",
+    # The agent bridge, the MCP server, and the packaged compiled sidecar.
+    "hephaestus-server",
+    # Durable op/WAL store: an internal wheel component, not a separate release.
+    "opstore",
+]
+
+# `hephaestus-bench` is deliberately NOT a dependency of the product wheel. It
+# is evaluation tooling and pulls `huggingface-hub`, which no user building a
+# part should have to install. `core/cli.py` registers `heph bench` /
+# `heph cadgenbench` only when the package imports, so the verbs appear for
+# anyone who asks for the extra and are cleanly absent otherwise.
+[project.optional-dependencies]
+bench = ["hephaestus-bench"]
+
+[project.urls]
+Homepage = "https://github.com/autonome-research/hephaestus"
+Documentation = "https://github.com/autonome-research/hephaestus/tree/main/docs"
+Source = "https://github.com/autonome-research/hephaestus"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# A metadata-only wheel. Hatchling needs to be told there is nothing to collect;
+# without this it errors out looking for a package matching the project name.
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
+
+[tool.hatch.build.targets.sdist]
+include = ["README.md"]
+
+[tool.uv.sources]
+hephaestus-core = { workspace = true }
+hephaestus-contract = { workspace = true }
+hephaestus-server = { workspace = true }
+hephaestus-bench = { workspace = true }
+opstore = { workspace = true }

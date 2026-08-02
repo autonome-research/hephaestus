@@ -20,5 +20,13 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/hephaestus"]
 
+# `bench/results/` and `bench/archive/` are archived run evidence, not package
+# payload: hundreds of MB of transcripts, and — because a recorded run captures a
+# whole project directory — an absolute `.heph/agent/auth.json` symlink that makes
+# the sdist tarball unextractable ("external symlinks are not allowed"). The
+# wheel never saw them (they are outside `src/`); only the sdist swept them in.
+[tool.hatch.build.targets.sdist]
+exclude = ["results", "archive", "corpus"]
+
 [tool.uv.sources]
 hephaestus-server = { workspace = true }
