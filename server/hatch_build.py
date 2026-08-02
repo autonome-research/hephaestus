@@ -55,6 +55,16 @@ class SidecarBuildHook(BuildHookInterface[Any]):
     PLUGIN_NAME = "custom"
 
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
+        # ``version`` is hatchling's build flavor: "standard" for a real wheel,
+        # "editable" for a dev install (``uv sync``, ``pip install -e``). The
+        # sidecar requirement is a RELEASE-artifact property: a dev tree
+        # resolves its sidecar from the repo (agent/build) and must be able to
+        # ``uv sync`` on a bare checkout — CI's every Python job does exactly
+        # that (run 30758605794 failed workspace-wide when this hook demanded
+        # a staged sidecar from ``build_editable``).
+        if version == "editable":
+            self.app.display_info("editable build: packaged-sidecar check deferred to wheel build")
+            return
         root = Path(self.root) / SIDECAR
         if not root.is_dir():
             raise RuntimeError(f"no packaged sidecar at {root}.\n{_STAGE_HINT}")

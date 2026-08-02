@@ -462,3 +462,41 @@ def test_heph_agent_reports_a_tampered_sidecar_as_a_named_cli_refusal(
     # Either the sidecar refusal or an earlier config refusal is acceptable —
     # what must never happen is a spawn.
     assert "heph:" in combined
+
+
+class TestEditableBuildsSkipTheSidecarGate:
+    """`uv sync` on a bare checkout must not demand a staged sidecar.
+
+    Regression: the hook refused `build_editable` too, so every Python CI job
+    died inside `uv sync --dev` on a bare checkout (run 30758605794) — the
+    sidecar is a release-artifact property, and dev trees resolve theirs from
+    agent/build. A standard wheel build keeps refusing (covered by the wheel
+    tests above, which stage a real sidecar first).
+    """
+
+    def test_editable_install_passes_without_a_sidecar(self, tmp_path: Path) -> None:
+        import sys
+
+        repo = Path.cwd()
+        staged = repo / "server" / "src" / "hephaestus" / "agent_bridge" / "_sidecar"
+        stash = tmp_path / "_sidecar_stash"
+        moved = staged.is_dir()
+        if moved:
+            shutil.move(staged, stash)
+        try:
+            venv = tmp_path / "venv"
+            subprocess.run(
+                ["uv", "venv", str(venv), "--python", sys.executable],
+                check=True,
+                capture_output=True,
+            )
+            proc = subprocess.run(
+                ["uv", "pip", "install", "--no-deps", "-e", str(repo / "server")],
+                env={**os.environ, "VIRTUAL_ENV": str(venv)},
+                capture_output=True,
+                text=True,
+            )
+            assert proc.returncode == 0, proc.stderr[-2000:]
+        finally:
+            if moved:
+                shutil.move(stash, staged)
