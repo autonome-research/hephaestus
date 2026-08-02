@@ -162,6 +162,36 @@ jobs:
           uv run pytest
           tests/stage1 tests/stage2 tests/stage2v tests/stage3 tests/stage6 -q
 
+  # ------------------------------------------------------- stage gates 8A-8D --
+  # Gates G8A (ingest), G8B (solid comparison), G8C (assemblies/constraints),
+  # G8D (CADGenBench adapter). Same prerequisites as the stage 1-6 job: the
+  # ingest/compare/assembly suites build through the secure executor and the
+  # 8A/8D end-to-end scenarios drive the FakeModel sidecar.
+  stages8:
+    name: stage gates 8A-8D
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: sandbox + renderer prerequisites
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q bubblewrap libegl1 libgl1 libgl1-mesa-dri libglx-mesa0
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: uv sync --dev
+      - run: pnpm --dir agent install --frozen-lockfile
+      - run: pnpm --dir agent build
+      - run: >
+          uv run pytest
+          tests/stage8a tests/stage8b tests/stage8c tests/stage8d -q
+
   # ------------------------------------------------------- server + bridge --
   server:
     name: server (shard ${{ matrix.shard }}/3)

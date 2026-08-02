@@ -139,3 +139,37 @@ def test_holding_releases_project_config_lock_when_part_lock_is_busy(
         holder.release(part_lock("widget"))
     finally:
         project.close()
+
+
+def test_cancel_after_close_is_a_quiet_noop(tmp_path: Path) -> None:
+    """A daemon-thread cancel that loses the race with close() must not write.
+
+    Regression (2026-07-28/29 long-sweep SIGSEGV): the bench budget guard
+    cancels via ``threading.Thread(target=runtime.cancel, daemon=True)``, and
+    a cancel still in flight while ``BridgeRuntime.close()`` closed the
+    opstore executed on a freed sqlite connection — a native use-after-free.
+    ``cancel`` after ``close`` now returns without touching the store, and
+    ``opstore.db.Database.close`` additionally waits out any in-flight
+    transaction under the transaction lock (covered in opstore/tests).
+    """
+    from hephaestus.agent_bridge.app import BridgeRuntime
+
+    project = make_project(tmp_path / "proj")
+    runtime = BridgeRuntime(
+        project_root=project.root,
+        providers=[
+            {
+                "id": "fake",
+                "kind": "openai_compatible",
+                "baseUrl": "http://127.0.0.1:9",
+                "credential": "X",
+                "models": [{"id": "m"}],
+            }
+        ],
+        credentials={"X": "unused"},
+    )
+    # Never started: close() must still be safe, and a straggler cancel after
+    # it must be a no-op rather than an admission write through a closed store.
+    runtime.close()
+    runtime.cancel("any-run-id")  # must not raise, must not touch the store
+    runtime.cancel("any-run-id")  # idempotent

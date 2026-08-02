@@ -120,7 +120,16 @@ class Database:
         return db
 
     def close(self) -> None:
-        self.conn.close()
+        # Under the transaction lock: a daemon thread (e.g. a bench cancel)
+        # still inside ``transaction()`` holds ``_txn_lock``, and closing the
+        # connection out from under its in-flight ``execute`` is a native
+        # use-after-free — the SIGSEGV that killed two long bench sweeps
+        # (2026-07-28/29, cores in coredumpctl). With the lock, close waits
+        # for the transaction to finish; a later transaction on the closed
+        # connection raises sqlite3.ProgrammingError — a Python error, not a
+        # crash.
+        with self._txn_lock:
+            self.conn.close()
 
     def __enter__(self) -> Database:
         return self

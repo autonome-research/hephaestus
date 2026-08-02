@@ -597,6 +597,7 @@ jobs:
             "core engine"                 # engine Tier 1
             "stage0b adapter gate"        # G0B
             "stage gates 1-6"             # G1, G2, G2V, G3, G6
+            "stage gates 8A-8D"           # G8A, G8B, G8C, G8D
             "agent (node)"                # GS pins / sidecar toolchain
             "stage7h packaging invariants"
             "server (shard 0/3)"

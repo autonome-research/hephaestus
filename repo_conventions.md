@@ -51,7 +51,10 @@ docs/       generated/site-only mkdocs content and assets; links to root docs.
   private workspace package compiled into a bounded sidecar artifact and
   bundled in the Python wheel; it is not a second public product package in
   v0.1.
-- `heph build/check/render/export` MUST work without Node. The v0.1 native
+- `heph build/check/render` MUST work without Node (export ships as the
+  `export_part` tool/MCP surface rather than a CLI verb in v0.1; a `heph
+  export` verb, if added, joins this no-Node set — see `docs/cli.md`
+  "Verbs that do not exist"). The v0.1 native
   secure agent/server platform is Linux x86_64 with probed bubblewrap
   isolation. macOS is supported for agent execution only through a capability-
   tested Docker/Podman/OrbStack-compatible OCI backend running the pinned Linux
@@ -143,8 +146,11 @@ docs/       generated/site-only mkdocs content and assets; links to root docs.
 - Conventional commits; PR-only main; required checks = the current stage's
   gate workflows plus `ci.yml`.
 - Design-project convention (user-facing): Hephaestus projects are ordinary
-  git repos; `heph init` scaffolds `hephaestus.toml`, `globals.py`, `parts/`,
-  `.gitignore` (ignoring `.heph/`), and a starter check.
+  git repos laid out as `hephaestus.toml`, `globals.py`, `parts/`, and a
+  `.gitignore` ignoring `.heph/`. A `heph init` scaffolding verb is planned
+  but NOT shipped in v0.1 (`docs/cli.md` "Verbs that do not exist" records
+  this); until it lands, projects are laid out by hand or copied from a
+  fixture.
 
 ## Licensing and provenance policy
 

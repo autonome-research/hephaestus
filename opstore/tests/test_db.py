@@ -167,3 +167,48 @@ def test_cross_process_visibility(db: Database, store_root: Path) -> None:
     with Database.connect(store_root / "state.db") as other:
         row = other.conn.execute("SELECT created_at FROM pins WHERE ref = 'shared'").fetchone()
         assert row is not None and row["created_at"] == 1
+
+
+def test_close_waits_for_an_in_flight_transaction(db: Database) -> None:
+    """close() must not free the connection under another thread's execute.
+
+    Regression: a bench cancel on a daemon thread was mid-``transaction()``
+    while the runtime closed the store — a native use-after-free that killed
+    two long sweeps with SIGSEGV (2026-07-28/29). close() now takes the
+    transaction lock: it waits for the in-flight transaction, and later
+    transactions on the closed connection raise sqlite3.ProgrammingError —
+    a Python error, never a crash.
+    """
+    import threading
+    import time
+
+    entered = threading.Event()
+    release = threading.Event()
+    result: dict[str, object] = {}
+
+    def writer() -> None:
+        try:
+            with db.transaction() as conn:
+                conn.execute("INSERT INTO meta (key, value) VALUES ('close-race', 'x')")
+                entered.set()
+                release.wait(timeout=5)
+            result["ok"] = True
+        except Exception as exc:  # pragma: no cover - the failure this guards
+            result["error"] = repr(exc)
+
+    thread = threading.Thread(target=writer)
+    thread.start()
+    assert entered.wait(timeout=5)
+
+    closer = threading.Thread(target=db.close)
+    closer.start()
+    # close() must be blocked on the transaction lock while the writer holds it.
+    time.sleep(0.2)
+    assert closer.is_alive(), "close() returned while a transaction was in flight"
+    release.set()
+    thread.join(timeout=5)
+    closer.join(timeout=5)
+    assert result.get("ok") is True, result
+
+    with pytest.raises(sqlite3.ProgrammingError), db.transaction():
+        pass

@@ -224,6 +224,13 @@ class BridgeRuntime:
         self._runs: dict[str, _Run] = {}
         self._answerers: dict[str, AskUserAnswerer] = {}
         self._lock = threading.RLock()
+        # Serializes cancel() against close(): cancels arrive on daemon
+        # threads (bench budget ceilings, timeouts) and write through the
+        # opstore, so a cancel in flight while close() tears the store down
+        # was a native use-after-free (the long-sweep SIGSEGV). After close,
+        # cancel is a quiet no-op — the runtime it would cancel is gone.
+        self._teardown_lock = threading.Lock()
+        self._closed = False
 
         agent_dir = agent_dir or (self._layout.store_root / "agent")
         agent_dir.mkdir(parents=True, exist_ok=True)
@@ -315,7 +322,9 @@ class BridgeRuntime:
             self._sup.notify("cancel", {"run_id": "*"})
         finally:
             self._sup.close()
-            self._store.close()
+            with self._teardown_lock:
+                self._closed = True
+                self._store.close()
 
     def __enter__(self) -> BridgeRuntime:
         self.start()
@@ -429,8 +438,15 @@ class BridgeRuntime:
         return PromptResult(run_id=run_id, status=status, events=run.events, terminal=run.terminal)
 
     def cancel(self, run_id: str) -> None:
-        """Request cancellation of a run (aborts only its stream + tool children)."""
-        self._admission.request_cancel(run_id)
+        """Request cancellation of a run (aborts only its stream + tool children).
+
+        Safe to call from daemon threads at any time: after :meth:`close` it
+        is a quiet no-op instead of a write through a closed store.
+        """
+        with self._teardown_lock:
+            if self._closed:
+                return
+            self._admission.request_cancel(run_id)
         self._sup.notify("cancel", {"run_id": run_id})
 
     def history_page(self, session_id: str, cursor: str | None = None) -> dict[str, Any]:
