@@ -112,3 +112,40 @@ in bench, imports geom/bench freely, and the engine never imports it).
 The G6-closure run is gated by command, not by pytest: a completed
 archived corpus-v1 run on the current tree with the measured Wilson bound
 recorded in the stage report — whatever the number is.
+
+## 5. Editing-harness fixes (2026-08-02 amendment, post-sweep audit)
+
+The 2026-07-29 sweep's autopsy: 13 of 14 failed editing runs had built a
+correct-status candidate; the failures were the harness's. Four fixes, each
+rule-enforced:
+
+- **Deliverable-scoped grading.** A converted CADGenBench task declares its
+  deliverable part (`candidate`). Adapter grading fails on the DELIVERABLE's
+  build/export only; other parts' build failures are recorded as facts,
+  never fail reasons — a model probing geometry with scratch parts is doing
+  good work, not failing. Corpus tasks are UNCHANGED (there, the multi-part
+  project is the deliverable).
+- **Harness faults are not charged.** A tool call whose result is a harness
+  fault (named timeout, sidecar restart, bridge error) does not count
+  against the tool-call budget — the model must never pay for our failure,
+  twice over when it retries. Charged/uncharged is recorded per call in the
+  archive.
+- **Editing budget is measured, not guessed.** The editing-task budget is
+  set from the observe-mode distribution of completed runs (2026-07-29
+  data: passing editing runs and correct-but-over runs cluster 60-90);
+  100 calls, recorded here as the calibrated v1 number.
+- **Sidecar evidence is archived.** Each run's archive carries the sidecar
+  stderr tail and every supervisor restart with its reason — the sweep's
+  restarts were diagnosable only by inference from event-stream shape.
+
+**Salvage export** (packaging amendment): `heph bench cadgenbench package`
+gains `--from-archive`: a sample whose run built a current, successful
+deliverable but never exported it is exported FROM the archived build
+artifact — same geometry, same provenance chain, the artifact ref recorded
+in the packaging notes. It never resurrects a failed build.
+
+Gate addendum: `tests/stage8d` additionally proves deliverable-scoped
+grading (broken scratch part + ok candidate ⇒ pass with the scratch failure
+recorded as a fact), the uncharged harness-fault call, the from-archive
+export (and its refusal on a failed build), and the archived restart
+evidence.

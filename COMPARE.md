@@ -101,3 +101,29 @@ its named threshold; `heph diff` CLI (human + `--json`);
 import-boundary proof that scoring reaches nothing outside `hephaestus.
 geom`. Existing suites stay green; the geom/contract/core boundary tests
 keep all seams clean.
+
+## 5. Bounded execution (2026-08-02 amendment, CADGenBench audit)
+
+Comparison on pathological B-reps is unbounded in the kernel: a boolean or
+chamfer pass over a heavy imported solid can grind for hours (measured: one
+editing sample held a core for ~19 h; five of six live-run infrastructure
+deaths in the 2026-07-29 sweep ended on an unanswered `compare_solids`).
+An interactive tool that can outlive its session is a harness defect, so:
+
+- **The engine surface is bounded.** `compare_solids`, `m.diff`, and `heph
+  diff` compute the `SolidDiff` in a killable subprocess under a wall-clock
+  ceiling (named constant, env-overridable — the local-floor pattern). The
+  cheap facts (topology census, bboxes, volumes) are computed and streamed
+  FIRST; a ceiling kill returns a named `compare_timeout` refusal that
+  CARRIES the partial facts and says which halves (volume boolean, surface
+  sampling) were lost. The model gets signal it can act on — never a dead
+  session, never a silently coarse number.
+- **`geom.compare` itself stays pure and unbounded** — process management
+  is an engine concern; external scorers already bound it their own way
+  (`bench` local floor) and `score_step_files` callers own their budgets.
+- A `CHECKS` predicate over `m.diff` whose diff times out is `unverifiable`
+  for that build (named, recorded), not a pass and not a crash.
+
+Gate addendum: `tests/stage8b` additionally proves the ceiling (a diff that
+cannot finish returns `compare_timeout` with census+bbox facts within
+bounds; the subprocess is dead afterwards), and the unverifiable-check path.
