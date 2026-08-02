@@ -64,8 +64,10 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from io import BufferedReader
 from typing import Any, cast
 
@@ -83,6 +85,8 @@ from .protocol import (
 
 __all__ = [
     "BASE_ENV_VARS",
+    "STDERR_TAIL_LINES",
+    "STDERR_TAIL_LINE_CHARS",
     "ProcessLossEvent",
     "PyRequestHandler",
     "SpawnHook",
@@ -100,6 +104,12 @@ _CAD_BUILD_SECONDS: float = float(LIMITS["timeouts"]["cad_build_seconds"])
 
 # Linux prctl option to receive a signal when the parent thread dies.
 _PR_SET_PDEATHSIG = 1
+
+#: Bound on the retained sidecar stderr: the newest lines only, each truncated.
+#: A tail, not the firehose — the evidence a crash diagnosis needs is the last
+#: page of logs, and an unbounded buffer over a chatty child is a memory leak.
+STDERR_TAIL_LINES: int = 200
+STDERR_TAIL_LINE_CHARS: int = 500
 
 #: Sync handler for a ``py.*`` request: ``(method, params) -> result``.
 #: Raising :class:`ProtocolError` maps to its code; any other exception maps to
@@ -282,6 +292,15 @@ class Supervisor:
         self.spawn_errors: list[str] = []
         #: Successful spawns, including the initial one (regression evidence).
         self.spawn_count = 0
+        #: Every child loss/replacement with its reason, newest last — one row
+        #: per explicit ``restart()`` (manual/watchdog) and per unexpected exit.
+        #: ``EXTERNAL_EVAL.md`` §5: restarts must be archived evidence, not
+        #: something inferred from event-stream shape after the fact.
+        self.restart_events: list[dict[str, Any]] = []
+        #: Rolling bounded tail of the child's stderr, across every child this
+        #: supervisor spawned (a crash's last words arrive just before the
+        #: replacement's first). Read it for the archive; never unbounded.
+        self.stderr_tail: deque[str] = deque(maxlen=STDERR_TAIL_LINES)
 
         self._atexit = self._kill_now
         atexit.register(self._atexit)
@@ -370,6 +389,7 @@ class Supervisor:
                 proc.kill()
             returncode = proc.wait()
         self.last_exit = returncode
+        self._record_restart(reason=reason, returncode=returncode, generation=generation)
         self._fire_recovery(
             ProcessLossEvent(
                 reason=reason,
@@ -421,6 +441,17 @@ class Supervisor:
         if proc is not None and proc.poll() is None:
             with contextlib.suppress(OSError):
                 proc.kill()
+
+    def _record_restart(self, *, reason: str, returncode: int | None, generation: int) -> None:
+        """One archived-evidence row per lost/replaced child, with its reason."""
+        self.restart_events.append(
+            {
+                "reason": reason,
+                "returncode": returncode,
+                "restart_generation": generation,
+                "at": datetime.now(UTC).isoformat(),
+            }
+        )
 
     def _safe_unregister_atexit(self) -> None:
         # unregister must never raise, whatever atexit's internal state.
@@ -591,8 +622,12 @@ class Supervisor:
 
     def _drain_stderr(self, proc: subprocess.Popen[bytes]) -> None:
         assert proc.stderr is not None
-        for _line in proc.stderr:
-            pass  # logs are the sidecar's; the supervisor does not surface them
+        # The logs are still the sidecar's — nothing here is parsed or acted on.
+        # A bounded tail is retained purely as archive evidence (EXTERNAL_EVAL.md
+        # §5): the 2026-07-29 sweep's crashes left no stderr anywhere.
+        for line in proc.stderr:
+            text = line.decode("utf-8", errors="replace").rstrip("\n")
+            self.stderr_tail.append(text[:STDERR_TAIL_LINE_CHARS])
 
     def _on_frame(self, raw: bytes) -> None:
         try:
@@ -674,6 +709,7 @@ class Supervisor:
                 # Claim the respawn *before* recovery runs, so a caller arriving
                 # in that window waits rather than seeing a childless supervisor.
                 self._respawning = True
+            self._record_restart(reason="crash", returncode=rc, generation=generation)
             self._fire_recovery(
                 ProcessLossEvent(
                     reason="crash",

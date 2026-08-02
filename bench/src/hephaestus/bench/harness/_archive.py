@@ -19,7 +19,9 @@ from hephaestus.agent_bridge.app import repo_root
 
 __all__ = [
     "ARCHIVE_EVENTS_FILENAME",
+    "ARCHIVE_RESTARTS_FILENAME",
     "ARCHIVE_RESULT_FILENAME",
+    "ARCHIVE_SIDECAR_LOG_FILENAME",
     "BENCH_RESULTS_DIRNAME",
     "BenchRun",
     "RunRecord",
@@ -33,6 +35,10 @@ BENCH_RESULTS_DIRNAME = "bench"
 
 ARCHIVE_EVENTS_FILENAME = "events.jsonl"
 ARCHIVE_RESULT_FILENAME = "result.json"
+#: ``EXTERNAL_EVAL.md`` §5 sidecar evidence, one of each per run directory:
+#: every supervisor restart with its reason, and a bounded sidecar stderr tail.
+ARCHIVE_RESTARTS_FILENAME = "restarts.json"
+ARCHIVE_SIDECAR_LOG_FILENAME = "sidecar.log"
 
 
 def results_root(root: Path | None = None) -> Path:
@@ -76,6 +82,12 @@ class RunRecord:
     #: Harness-compelled ladder calls, counted but never charged against the
     #: budget (see ``COMPELLED_TOOLS``): the exemption stays visible per run.
     compelled_tool_calls: int = 0
+    #: ``EXTERNAL_EVAL.md`` §5: charged calls whose result was a named harness
+    #: fault, refunded from ``tool_calls``. The per-call evidence rides in
+    #: ``uncharged_calls`` (``{tool_call_id, name, fault}`` each), so the
+    #: charged/uncharged split is auditable against the archived events.
+    uncharged_tool_calls: int = 0
+    uncharged_calls: tuple[Mapping[str, Any], ...] = ()
     #: Calls spent when the budget was first exceeded — ``None`` when the run
     #: stayed inside it. Recorded because cancelling AT the budget censors the
     #: number: "needed one more" and "needed triple" both look like budget+1.
@@ -117,6 +129,8 @@ class RunRecord:
             "tool_calls": self.tool_calls,
             "budget_tool_calls": self.budget_tool_calls,
             "compelled_tool_calls": self.compelled_tool_calls,
+            "uncharged_tool_calls": self.uncharged_tool_calls,
+            "uncharged_calls": [dict(call) for call in self.uncharged_calls],
             "budget_exceeded_at": self.budget_exceeded_at,
             "hit_observe_ceiling": self.hit_observe_ceiling,
             "reasons": list(self.reasons),

@@ -479,6 +479,13 @@ class BenchTask:
     protected_paths: tuple[str, ...] = ()
     #: Free-text note kept in the archive (never shown to the model).
     notes: str = ""
+    #: ``EXTERNAL_EVAL.md`` §5: the single part this task is graded on. When
+    #: set (converted CADGenBench tasks name their ``candidate``), the grader
+    #: fails only on THIS part's build; other parts' failures are recorded as
+    #: facts, never fail reasons — a model probing geometry with scratch parts
+    #: is doing good work. Corpus tasks leave it unset: there, the multi-part
+    #: project is the deliverable and every part's build is graded.
+    deliverable: str | None = None
     #: ``VALIDATION.md`` §1 spec variant: ``prose`` (infer it) or ``seeded``
     #: (the acceptance checks are installed as an independent spec).
     spec: str = SPEC_PROSE
@@ -598,12 +605,19 @@ class BenchTask:
             ),
             notes=str(data.get("notes", "")),
             spec=spec,
+            deliverable=(
+                None if data.get("deliverable") is None else str(data["deliverable"])
+            ),
         )
         task.check_sources()  # fail fast on a task whose check source is missing
         return task
 
     def to_json(self) -> dict[str, Any]:
+        # ``deliverable`` is omitted when unset so a corpus task's serialized
+        # spec is byte-identical to what it was before EXTERNAL_EVAL.md §5.
+        extra = {} if self.deliverable is None else {"deliverable": self.deliverable}
         return {
+            **extra,
             "id": self.id,
             "spec": self.spec,
             "prompt": self.prompt,

@@ -572,6 +572,17 @@ no inertia frame and refuses with `no_solid_geometry` rather than inventing one.
 `a_samples`/`b_samples` are the surface-sample counts behind the chamfer means,
 so a number computed on a coarse grid is never read as if it were fine.
 
+**Bounded execution** (`COMPARE.md` §5). The diff is computed in a killable
+subprocess under a wall-clock ceiling (`HEPHAESTUS_COMPARE_TIMEOUT_S`, default
+300 s). The cheap facts — topology census, both bboxes, both volumes — are
+computed and streamed first; a comparison that cannot finish (or whose
+subprocess dies) refuses with **`compare_timeout`**, and the refusal's data
+carries whatever partial facts arrived (`partial`, or `null` when nothing did)
+plus `lost` naming the halves that were cut short (`volume_boolean`,
+`surface_sampling`, and `topology_census` when even the first look was lost).
+The call can never outlive its session on a pathological B-rep; act on the
+partial facts, ask a cheaper question, or raise the ceiling.
+
 **No thresholds live here.** "iou ≥ 0.995 is a pass" is a claim owned by a
 `CHECKS` predicate (`m.diff`, script contract §6), a DFM rule, or a bench task
 policy, cited like any other requirement under `VALIDATION.md` §1. There are no

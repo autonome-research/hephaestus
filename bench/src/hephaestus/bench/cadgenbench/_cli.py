@@ -84,11 +84,12 @@ def _convert(args: argparse.Namespace) -> tuple[Any, int]:
     from ._fetch import resolve_dataset_root
 
     root = resolve_dataset_root(_optional_path(cast("str | None", args.source)))
+    budget = cast("int | None", args.budget)
     report = convert_samples(
         root,
         _tasks_dir(cast("str | None", args.tasks_dir)),
         ids=_samples_argument(cast("str | None", args.samples)),
-        budget_tool_calls=int(cast("int", args.budget)),
+        budget_tool_calls=None if budget is None else int(budget),
     )
     for refusal in report.refusals:
         print(f"refused {refusal.sample_id}: {refusal.reason} {refusal.detail}", file=sys.stderr)
@@ -179,6 +180,7 @@ def _sample_set(args: argparse.Namespace) -> list[str]:
 
 def _cmd_package(args: argparse.Namespace) -> int:
     from ._package import PackagingError, SubmissionMeta, package_submission, resolve_sanity_check
+    from ._salvage import salvage_from_archive
 
     if not bool(args.agree_to_publish):
         print(
@@ -193,6 +195,24 @@ def _cmd_package(args: argparse.Namespace) -> int:
     except (OSError, ValueError) as exc:
         print(f"heph bench cadgenbench package: {exc}", file=sys.stderr)
         return 1
+
+    salvage = None
+    from_archive = _optional_path(cast("str | None", args.from_archive))
+    if from_archive is not None:
+        # EXTERNAL_EVAL.md §5 salvage: a sample whose run built a current,
+        # successful deliverable but never exported gets its STEP from the
+        # archived artifact. Refusals are named per sample; the report (with
+        # every artifact ref) lands in salvage.json and the packaging output.
+        salvage = salvage_from_archive(
+            from_archive, Path(cast("str", args.outputs)), sample_ids=sample_ids
+        )
+        for entry in salvage.exported:
+            print(f"salvaged {entry.sample_id} from {entry.artifact_ref}", file=sys.stderr)
+        for entry in salvage.refusals:
+            detail = f" ({entry.detail})" if entry.detail else ""
+            print(
+                f"salvage refused {entry.sample_id}: {entry.status}{detail}", file=sys.stderr
+            )
 
     sanity: Path | None = None
     if not bool(args.skip_sanity_check):
@@ -228,15 +248,19 @@ def _cmd_package(args: argparse.Namespace) -> int:
         for reason in exc.reasons:
             print(f"heph bench cadgenbench package: {reason}", file=sys.stderr)
         return 1
-    _emit(
-        args,
-        report.to_json(),
-        [
-            f"wrote {report.zip_path}",
-            f"{report.n_solved}/{len(report.entries)} samples carry a candidate "
-            f"(sanity check: {report.sanity_check})",
-        ],
-    )
+    document = report.to_json()
+    lines = [
+        f"wrote {report.zip_path}",
+        f"{report.n_solved}/{len(report.entries)} samples carry a candidate "
+        f"(sanity check: {report.sanity_check})",
+    ]
+    if salvage is not None:
+        document["salvage"] = salvage.to_json()
+        lines.append(
+            f"salvaged {len(salvage.exported)} from archive; "
+            f"refused {len(salvage.refusals)} (see salvage.json)"
+        )
+    _emit(args, document, lines)
     return 0
 
 
@@ -291,8 +315,12 @@ def _add_source(parser: argparse.ArgumentParser) -> None:
 
 def add_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:  # pyright: ignore[reportPrivateUsage]
     """Register ``cadgenbench`` under the ``heph bench`` verb."""
-    from ._convert import DEFAULT_BUDGET_TOOL_CALLS
+    from ._convert import DEFAULT_BUDGET_TOOL_CALLS, EDITING_BUDGET_TOOL_CALLS
 
+    budget_help = (
+        "tool-call budget per task (default: "
+        f"{DEFAULT_BUDGET_TOOL_CALLS} generation / {EDITING_BUDGET_TOOL_CALLS} editing)"
+    )
     parser = sub.add_parser(
         "cadgenbench", help="external evaluation: the CADGenBench adapter (EXTERNAL_EVAL.md §2)"
     )
@@ -307,18 +335,14 @@ def add_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None
     convert = inner.add_parser("convert", help="convert samples into bench tasks")
     _add_source(convert)
     convert.add_argument("--tasks-dir", help="where converted tasks are written")
-    convert.add_argument(
-        "--budget", type=int, default=DEFAULT_BUDGET_TOOL_CALLS, help="tool-call budget per task"
-    )
+    convert.add_argument("--budget", type=int, default=None, help=budget_help)
     convert.add_argument("--json", action="store_true", help="emit JSON")
     convert.set_defaults(func=_cmd_convert)
 
     run = inner.add_parser("run", help="run converted tasks through the session harness")
     _add_source(run)
     run.add_argument("--tasks-dir", help="where converted tasks are written")
-    run.add_argument(
-        "--budget", type=int, default=DEFAULT_BUDGET_TOOL_CALLS, help="tool-call budget per task"
-    )
+    run.add_argument("--budget", type=int, default=None, help=budget_help)
     run.add_argument("--provider", required=True, help="JSON provider config")
     run.add_argument("--model", help="model id declared by the provider config")
     run.add_argument("--outputs", default="cadgenbench-outputs", help="submission outputs root")
@@ -356,6 +380,15 @@ def add_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None
         "--allow-missing",
         action="store_true",
         help="record a sample with no output folder as unsolved instead of failing",
+    )
+    package.add_argument(
+        "--from-archive",
+        help=(
+            "bench results archive dir (bench/results/<model>/<date>): a sample "
+            "with no exported candidate whose run holds a CURRENT successful "
+            "deliverable build is exported from the archived artifact; a failed "
+            "or absent build is refused by name (EXTERNAL_EVAL.md §5)"
+        ),
     )
     package.add_argument("--json", action="store_true", help="emit JSON")
     package.set_defaults(func=_cmd_package)

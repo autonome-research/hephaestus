@@ -16,7 +16,7 @@ Read-only and freely retryable: nothing here writes, publishes or stores.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from hephaestus.core.executor.imports import ImportResolutionError
 from hephaestus.core.project_compare import (
@@ -24,8 +24,10 @@ from hephaestus.core.project_compare import (
     IMPORT_TARGET_PREFIX,
     PART_TARGET_PREFIX,
     CompareRefusal,
+    CompareTimeout,
     ProjectComparer,
 )
+from opstore.types import JSONValue
 
 from ._base import CadOpError, CadOpsState
 
@@ -45,6 +47,7 @@ _IMPORT_REFUSALS: Final[dict[str, str]] = {
 
 #: :class:`CompareRefusal.reason` -> the tool's refusal token.
 _COMPARE_REFUSALS: Final[dict[str, str]] = {
+    "compare_timeout": "compare_timeout",
     "invalid_align": "invalid_params",
     "invalid_target": "invalid_params",
     "missing_artifact": "invalid_params",
@@ -67,6 +70,19 @@ class CompareOps(CadOpsState):
                     _IMPORT_REFUSALS.get(exc.reason, "unknown_import"),
                     exc.message,
                     data={"path": exc.path, "reason": exc.reason},
+                ) from exc
+            except CompareTimeout as exc:
+                # COMPARE.md §5: the ceiling kill is a structured refusal the
+                # model can read — the streamed partial facts ride inline, and
+                # ``lost`` names the halves that never arrived.
+                raise CadOpError(
+                    "compare_timeout",
+                    exc.message,
+                    data={
+                        "timeout_s": exc.timeout_s,
+                        "partial": cast("JSONValue", exc.partial),
+                        "lost": cast("JSONValue", list(exc.lost)),
+                    },
                 ) from exc
             except CompareRefusal as exc:
                 raise CadOpError(

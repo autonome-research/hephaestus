@@ -26,7 +26,9 @@ from ..metrics import ledger_snapshot
 from ..scoring import RUNS_FILENAME
 from ._archive import (
     ARCHIVE_EVENTS_FILENAME,
+    ARCHIVE_RESTARTS_FILENAME,
     ARCHIVE_RESULT_FILENAME,
+    ARCHIVE_SIDECAR_LOG_FILENAME,
     BenchRun,
     RunRecord,
     results_root,
@@ -42,6 +44,7 @@ __all__ = [
     "COMPELLED_TOOLS",
     "DEFAULT_PROMPT_TIMEOUT",
     "DEFAULT_SEEDS",
+    "HARNESS_FAULTS",
     "OBSERVE_CEILING_FACTOR",
     "OBSERVE_CEILING_FLOOR",
     "ProviderConfig",
@@ -53,6 +56,7 @@ __all__ = [
     "default_review_hook",
     "default_runtime_factory",
     "dry_run",
+    "harness_fault",
     "observe_ceiling",
     "run_bench",
     "run_task",
@@ -349,6 +353,46 @@ COMPELLED_TOOLS: frozenset[str] = frozenset(
 )
 
 
+#: ``EXTERNAL_EVAL.md`` §5: a tool call whose RESULT is a *harness fault* is
+#: never charged against the budget — the model must not pay for our failure,
+#: twice over when it retries. The vocabulary is the event stream's own, matched
+#: as a prefix of the error result's text (the sidecar proxy prefixes the stable
+#: machine ``reason`` onto every structured refusal, and the bridge's own
+#: transport errors are fixed strings):
+#:
+#: ``compare_timeout:``
+#:     the bounded-diff ceiling kill (COMPARE.md §5) — the harness's wall clock,
+#:     not the model's geometry, ended the call.
+#: ``no response for py.tool_dispatch``
+#:     the sidecar's RPC deadline on a Python dispatch that never answered
+#:     (5/6 infra deaths in the 2026-07-29 sweep ended on exactly this, under
+#:     an unanswered ``compare_solids``).
+#: ``pending request queue full``
+#:     bridge backpressure: the sidecar refused to even send the call.
+#: ``sidecar restarted`` / ``sidecar exited``
+#:     the supervisor lost or replaced the child while the call was in flight.
+HARNESS_FAULTS: Final[tuple[tuple[str, str], ...]] = (
+    ("compare_timeout:", "compare_timeout"),
+    ("no response for py.tool_dispatch", "bridge_timeout"),
+    ("pending request queue full", "bridge_backpressure"),
+    ("sidecar restarted", "sidecar_restarted"),
+    ("sidecar exited", "sidecar_exited"),
+)
+
+
+def harness_fault(payload: Mapping[str, Any]) -> str | None:
+    """The named harness fault a ``tool_result`` payload carries, if any."""
+    if not bool(payload.get("isError")):
+        return None
+    text = payload.get("text")
+    if not isinstance(text, str):
+        return None
+    for prefix, name in HARNESS_FAULTS:
+        if text.startswith(prefix):
+            return name
+    return None
+
+
 #: Hard ceiling on an observed (non-enforcing) run, as a multiple of the budget.
 #: Generous enough that "how many calls does this actually take?" is answered,
 #: bounded so a non-converging run cannot spin forever. A run that hits it did
@@ -385,6 +429,13 @@ class _BudgetGuard:
 
     Harness-compelled ladder calls (:data:`COMPELLED_TOOLS`) are tallied into
     ``compelled_tool_calls`` and never charged in either mode.
+
+    A charged call whose *result* turns out to be a named harness fault
+    (:data:`HARNESS_FAULTS` — the bounded-compare ceiling, a bridge timeout or
+    backpressure refusal, a sidecar loss) is **refunded** when that result
+    arrives: the charge is reversed, the call is recorded per-id in
+    :attr:`uncharged_calls`, and a budget-exceeded mark that the refund undoes
+    is cleared. ``EXTERNAL_EVAL.md`` §5: the model never pays for our failure.
     """
 
     def __init__(
@@ -398,6 +449,11 @@ class _BudgetGuard:
         self._cancelled = False
         self.tool_calls = 0
         self.compelled_tool_calls = 0
+        #: Charged calls awaiting their result: ``tool_call_id -> tool name``.
+        self._pending_charges: dict[str, str] = {}
+        #: One record per refunded call: ``{tool_call_id, name, fault}`` — the
+        #: per-call charged/uncharged evidence the run record archives.
+        self.uncharged_calls: list[dict[str, Any]] = []
         #: Calls spent when the budget was first exceeded (None if never).
         self.budget_exceeded_at: int | None = None
         #: True when the run was stopped by the observe ceiling, not the budget.
@@ -411,6 +467,9 @@ class _BudgetGuard:
             if isinstance(payload, dict):
                 self.questions.append(cast("Mapping[str, Any]", payload))
             return
+        if kind == "tool_result":
+            self._on_tool_result(event)
+            return
         if kind != "tool_call":
             return
         payload = event.get("payload")
@@ -421,6 +480,9 @@ class _BudgetGuard:
             self.compelled_tool_calls += 1
             return
         self.tool_calls += 1
+        call_id = event.get("tool_call_id")
+        if isinstance(call_id, str) and call_id:
+            self._pending_charges[call_id] = name
         if self.tool_calls > self._budget and self.budget_exceeded_at is None:
             self.budget_exceeded_at = self.tool_calls
         if self.tool_calls > self._ceiling and not self._cancelled:
@@ -429,6 +491,31 @@ class _BudgetGuard:
             # Cancel off the reader thread: the notification sink must not block
             # on the supervisor's stdin writer.
             threading.Thread(target=self._runtime.cancel, args=(self._run_id,), daemon=True).start()
+
+    def _on_tool_result(self, event: Mapping[str, Any]) -> None:
+        """Refund a charged call whose result names a harness fault."""
+        call_id = event.get("tool_call_id")
+        if not isinstance(call_id, str):
+            return
+        name = self._pending_charges.pop(call_id, None)
+        if name is None:
+            return
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            return
+        fault = harness_fault(cast("Mapping[str, Any]", payload))
+        if fault is None:
+            return
+        self.tool_calls -= 1
+        self.uncharged_calls.append({"tool_call_id": call_id, "name": name, "fault": fault})
+        # The refund can put the run back inside its budget; the mark follows
+        # the truth (a budget "exceeded" only by our faults was never exceeded).
+        if self.budget_exceeded_at is not None and self.tool_calls <= self._budget:
+            self.budget_exceeded_at = None
+
+    @property
+    def uncharged_tool_calls(self) -> int:
+        return len(self.uncharged_calls)
 
     @property
     def cancelled_for_budget(self) -> bool:
@@ -513,8 +600,36 @@ def run_task(
         with contextlib.suppress(Exception):
             runtime.close()
 
+    # EXTERNAL_EVAL.md §5: the sidecar's own evidence — every supervisor restart
+    # with its reason, and a bounded stderr tail — is archived with the run. The
+    # sweep's restarts were diagnosable only by inference from event-stream
+    # shape; the evidence object survives `close()`, so it is read afterwards.
+    # A test double that offers none records none.
+    with contextlib.suppress(Exception):
+        evidence = runtime.sidecar_evidence()
+        restarts = evidence.get("restarts", [])
+        (run_dir / ARCHIVE_RESTARTS_FILENAME).write_text(
+            json.dumps(
+                {
+                    "restarts": restarts,
+                    "auto_respawns": evidence.get("auto_respawns", 0),
+                    "spawn_count": evidence.get("spawn_count", 0),
+                    "spawn_errors": evidence.get("spawn_errors", []),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        tail = cast("Sequence[Any]", evidence.get("stderr_tail", []))
+        (run_dir / ARCHIVE_SIDECAR_LOG_FILENAME).write_text(
+            "".join(f"{line}\n" for line in tail), encoding="utf-8"
+        )
+
     tool_calls = guard.tool_calls if guard is not None else 0
     compelled_calls = guard.compelled_tool_calls if guard is not None else 0
+    uncharged_calls = tuple(guard.uncharged_calls) if guard is not None else ()
     exceeded_at = guard.budget_exceeded_at if guard is not None else None
     hit_ceiling = guard.hit_ceiling if guard is not None else False
     questions = tuple(guard.questions) if guard is not None else ()
@@ -571,6 +686,8 @@ def run_task(
         status=status,
         tool_calls=tool_calls,
         compelled_tool_calls=compelled_calls,
+        uncharged_tool_calls=len(uncharged_calls),
+        uncharged_calls=uncharged_calls,
         budget_exceeded_at=exceeded_at,
         hit_observe_ceiling=hit_ceiling,
         budget_tool_calls=task.budget_tool_calls,

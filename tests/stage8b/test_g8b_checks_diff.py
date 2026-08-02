@@ -152,3 +152,46 @@ def test_an_unresolvable_target_fails_the_check_not_the_build(project: Project) 
     check = cast("dict[str, Any]", _checks(project, "widget_f")["matches_target"])
     assert check["pass"] is False
     assert "error" in cast("dict[str, Any]", check["measured"])
+
+
+# ==========================================================================
+# bounded execution (COMPARE.md §5): the unverifiable-check path
+
+#: A cross-part check over ``m.diff`` — runs engine-side (run_checks scope=
+#: project), where the bounded subprocess path applies.
+CONVERGES_CHECK_SRC = """# converges: widget must match bracket
+CHECKS = {
+    "converged": lambda m: m.diff("widget/part", "part:bracket").iou >= 0.99,
+}
+"""
+
+
+def test_a_timed_out_diff_makes_the_check_unverifiable_not_a_pass_or_crash(
+    project: Project, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Gate addendum clause (COMPARE.md §5): a ``CHECKS`` predicate whose diff
+    hits the ceiling is ``unverifiable`` for that run — named, recorded in the
+    check report with the streamed partial facts, distinct from both a failing
+    measurement and a crashing predicate."""
+    import hephaestus.core.project_compare as project_compare
+    from _g8b_grind import CHEAP_FACTS, grinding_child
+
+    build_ok(project, "widget")
+    build_ok(project, "bracket")
+    (project.root / "checks" / "converges.py").write_text(CONVERGES_CHECK_SRC, encoding="utf-8")
+    monkeypatch.setattr(project_compare, "_diff_child", grinding_child)
+    monkeypatch.setenv(project_compare.COMPARE_TIMEOUT_ENV, "3.0")
+
+    report = cast("dict[str, Any]", project.call("run_checks", {"scope": "project"}))
+
+    assert report["status"] == "ok"  # the run completed; one check did not
+    outcome = cast(
+        "dict[str, Any]", cast("dict[str, Any]", report["checks"])["converges:converged"]
+    )
+    assert outcome["pass"] is False
+    measured = cast("dict[str, Any]", outcome["measured"])
+    assert "error" not in measured  # not the crash shape
+    refusal = cast("dict[str, Any]", measured["unverifiable"])
+    assert refusal["reason"] == "compare_timeout"
+    assert refusal["partial"] == CHEAP_FACTS
+    assert refusal["lost"] == ["volume_boolean", "surface_sampling"]

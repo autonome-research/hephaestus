@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import textwrap
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 import pytest
 from hephaestus.core.checks.approx import approx
@@ -13,9 +13,18 @@ from hephaestus.core.checks.engine import (
     load_check_module,
     run_checks,
 )
-from hephaestus.core.checks.facade import Measurement, part_measurement
+from hephaestus.core.checks.facade import Measurement, part_measurement, project_measurement
 from hephaestus.core.errors import ValidationError
-from test_checks_helpers import PLATE, PRIMARY_PART, RIB, FakeOps, primary_source
+from hephaestus.core.project_compare import CompareTimeout
+from opstore.types import JSONValue
+from test_checks_helpers import (
+    PLATE,
+    PRIMARY_PART,
+    RIB,
+    FakeOps,
+    bracket_source,
+    primary_source,
+)
 
 
 def factory_with(ops: FakeOps) -> Callable[[], Measurement]:
@@ -93,6 +102,43 @@ class TestRunChecks:
         error = measured["error"]
         assert isinstance(error, dict)
         assert error["code"] == "addressing_error"
+
+    def test_a_timed_out_diff_is_unverifiable_not_a_pass_and_not_a_crash(self) -> None:
+        """COMPARE.md §5: a ceiling-killed ``m.diff`` leaves the predicate
+        unanswered. The entry is not a pass, and it is not the generic
+        ``error`` shape a crash records — it is the named ``compare_timeout``
+        refusal, streamed partial facts included, under ``unverifiable``."""
+
+        class TimingOutOps(FakeOps):
+            def diff(self, a: object, b: object, align: str) -> Mapping[str, JSONValue]:
+                _ = (a, b, align)
+                raise CompareTimeout(
+                    "solid diff did not finish within 300s and was killed",
+                    timeout_s=300.0,
+                    partial={"a_volume_mm3": 4000.0},
+                    lost=("volume_boolean", "surface_sampling"),
+                )
+
+        def factory() -> Measurement:
+            return project_measurement(
+                {"primary": primary_source(), "bracket": bracket_source()},
+                current_part="primary",
+                ops=TimingOutOps(),
+            )
+
+        results = run_checks(
+            {"converged": lambda m: m.diff("part", "part:bracket").iou >= 0.99}, factory
+        )
+        outcome = results["converged"]
+        assert outcome.passed is False
+        measured = outcome.measured
+        assert isinstance(measured, dict)
+        assert "error" not in measured  # unverifiable is not the crash shape
+        refusal = measured["unverifiable"]
+        assert isinstance(refusal, dict)
+        assert refusal["reason"] == "compare_timeout"
+        assert refusal["partial"] == {"a_volume_mm3": 4000.0}
+        assert refusal["lost"] == ["volume_boolean", "surface_sampling"]
 
     def test_fresh_facade_per_check(self) -> None:
         ops = FakeOps(volumes={PRIMARY_PART: 5.0})

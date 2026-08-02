@@ -25,6 +25,7 @@ __all__ = [
     "artifact_source",
     "load_brep_shape",
     "part_only_source",
+    "write_brep_shape",
 ]
 
 
@@ -45,6 +46,21 @@ def load_brep_shape(data: bytes, *, scratch_dir: Path | None = None) -> object:
         return importers.import_brep(path)
     finally:
         path.unlink(missing_ok=True)
+
+
+def write_brep_shape(shape: object, path: Path) -> None:
+    """Serialize a build123d shape to BRep at ``path`` (the loader's inverse).
+
+    OCCT's native BRep text format is lossless — the same writer the worker
+    uses for build artifacts — which is what lets the bounded comparison path
+    (``COMPARE.md`` §5) hand a shape to a killable subprocess and still produce
+    exactly the numbers the direct in-process diff would have.
+    """
+    from OCP.BRepTools import BRepTools  # pyright: ignore[reportAttributeAccessIssue]
+
+    wrapped = shape.wrapped  # pyright: ignore[reportAttributeAccessIssue]
+    if not BRepTools.Write_s(wrapped, str(path)):
+        raise OSError(f"failed to write BRep to {path}")
 
 
 def part_only_source(shape: object) -> MappedGeometry:

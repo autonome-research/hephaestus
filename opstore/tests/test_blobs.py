@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from conftest import CrashRunner, FakeClock
+from _optest import CrashRunner, FakeClock
 from hypothesis import given
 from hypothesis import strategies as st
 from opstore.blobs import (

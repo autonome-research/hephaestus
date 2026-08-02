@@ -44,12 +44,14 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 __all__ = [
     "DEFAULT_BUDGET_TOOL_CALLS",
+    "EDITING_BUDGET_TOOL_CALLS",
     "PART_NAME",
     "SAMPLE_PROVENANCE_FILENAME",
     "TASK_ID_PREFIX",
     "ConversionReport",
     "convert_sample",
     "convert_samples",
+    "default_budget",
     "sample_id_for_task",
     "sample_prompt",
     "task_id_for_sample",
@@ -64,10 +66,17 @@ TASK_ID_PREFIX = "cadgenbench-"
 #: the harness knows before the run starts.
 PART_NAME = "candidate"
 
-#: Tool-call budget per converted task. CADGenBench parts are real mechanical
-#: parts read off a drawing, so the budget is well above the corpus norm; it is
-#: a harness parameter, not a benchmark rule, and the CLI can override it.
+#: Tool-call budget per converted *generation* task. CADGenBench parts are real
+#: mechanical parts read off a drawing, so the budget is well above the corpus
+#: norm; it is a harness parameter, not a benchmark rule, and the CLI can
+#: override it.
 DEFAULT_BUDGET_TOOL_CALLS = 60
+
+#: Tool-call budget per converted *editing* task — measured, not guessed
+#: (``EXTERNAL_EVAL.md`` §5): the 2026-07-29 observe-mode distribution of
+#: completed editing runs (passing and correct-but-over) clusters at 60-90
+#: calls, so 100 is the calibrated v1 number. Generation is unchanged.
+EDITING_BUDGET_TOOL_CALLS = 100
 
 #: Provenance sidecar written beside ``task.json``: which sample this task came
 #: from, so packaging maps a run back to its submission folder without
@@ -182,17 +191,25 @@ def _write_seed(sample: CadGenSample, seed_dir: Path) -> None:
         shutil.copy2(sample.input_path(filename), target / filename)
 
 
+def default_budget(sample: CadGenSample) -> int:
+    """The per-split default budget: editing is calibrated separately (§5)."""
+    return EDITING_BUDGET_TOOL_CALLS if sample.is_editing else DEFAULT_BUDGET_TOOL_CALLS
+
+
 def convert_sample(
     sample: CadGenSample,
     dest_root: Path,
     *,
-    budget_tool_calls: int = DEFAULT_BUDGET_TOOL_CALLS,
+    budget_tool_calls: int | None = None,
 ) -> BenchTask:
     """Write one converted bench task under ``dest_root`` and load it back.
 
     Loading it back is deliberate: the task the runner will use is the task that
     was written, parsed by the same strict loader the corpus goes through, so a
     conversion that produced an invalid task fails here rather than mid-run.
+
+    ``budget_tool_calls`` left unset picks the split's own default
+    (:func:`default_budget`); an explicit value overrides both splits.
     """
     from hephaestus.bench.harness import BenchTask
 
@@ -200,14 +217,19 @@ def convert_sample(
     directory = dest_root / task_id
     directory.mkdir(parents=True, exist_ok=True)
     _write_seed(sample, directory / "seed")
+    budget = default_budget(sample) if budget_tool_calls is None else int(budget_tool_calls)
     spec: dict[str, Any] = {
         "id": task_id,
         "prompt": sample_prompt(sample),
-        "budget_tool_calls": int(budget_tool_calls),
+        "budget_tool_calls": budget,
         "required_checks": [],
         # The submission artifact is a build artifact: it comes out of the
         # normal export path, from the graded geometry (EXTERNAL_EVAL.md §2).
         "export_requirements": [{"part": PART_NAME, "format": "step"}],
+        # EXTERNAL_EVAL.md §5 (deliverable-scoped grading): the one part this
+        # task is graded on. Scratch parts a run probes geometry with are
+        # recorded as facts, never fail reasons.
+        "deliverable": PART_NAME,
         "notes": f"{_ATTRIBUTION}; sample {sample.id} ({sample.task_type})",
     }
     (directory / "task.json").write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
@@ -243,7 +265,7 @@ def convert_samples(
     dest_root: Path,
     *,
     ids: Sequence[str] | None = None,
-    budget_tool_calls: int = DEFAULT_BUDGET_TOOL_CALLS,
+    budget_tool_calls: int | None = None,
 ) -> ConversionReport:
     """Convert every sample (or the named ones) under a dataset snapshot root.
 

@@ -37,7 +37,9 @@ from __future__ import annotations
 
 from ._archive import (
     ARCHIVE_EVENTS_FILENAME,
+    ARCHIVE_RESTARTS_FILENAME,
     ARCHIVE_RESULT_FILENAME,
+    ARCHIVE_SIDECAR_LOG_FILENAME,
     BENCH_RESULTS_DIRNAME,
     BenchRun,
     RunRecord,
@@ -50,6 +52,7 @@ from ._run import (
     BENCH_ANSWER,
     DEFAULT_PROMPT_TIMEOUT,
     DEFAULT_SEEDS,
+    HARNESS_FAULTS,
     ProviderConfig,
     ReviewHook,
     RunContext,
@@ -59,6 +62,7 @@ from ._run import (
     default_review_hook,
     default_runtime_factory,
     dry_run,
+    harness_fault,
     run_bench,
     run_task,
 )
@@ -90,11 +94,14 @@ from ._tasks import (
 
 __all__ = [
     "ARCHIVE_EVENTS_FILENAME",
+    "ARCHIVE_RESTARTS_FILENAME",
     "ARCHIVE_RESULT_FILENAME",
+    "ARCHIVE_SIDECAR_LOG_FILENAME",
     "BENCH_ANSWER",
     "BENCH_RESULTS_DIRNAME",
     "DEFAULT_PROMPT_TIMEOUT",
     "DEFAULT_SEEDS",
+    "HARNESS_FAULTS",
     "PROMPT_SUFFIXES",
     "SEEDED_SUFFIX",
     "SPECS",
@@ -128,6 +135,7 @@ __all__ = [
     "dxf_profile_count",
     "grade",
     "grade_reference_solution",
+    "harness_fault",
     "load_tasks",
     "open_cad",
     "pdf_text",

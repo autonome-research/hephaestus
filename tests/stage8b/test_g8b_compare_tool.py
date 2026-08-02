@@ -351,3 +351,53 @@ def test_two_calls_return_identical_records(plated: Project) -> None:
     second = compare(plated, "holed", "import:plate.step")
 
     assert first["diff"] == second["diff"]
+
+
+# ==========================================================================
+# bounded execution (COMPARE.md §5)
+
+
+def test_a_diff_that_cannot_finish_is_a_structured_refusal_with_the_facts(
+    plated: Project, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """Gate addendum clause: a diff that cannot finish returns
+    ``compare_timeout`` with the census+bbox facts, within bounds, and the
+    subprocess is dead afterwards — the model reads the streamed first look and
+    the names of the lost halves out of the error, instead of holding a dead
+    session (five of six 2026-07-29 sweep deaths ended on an unanswered
+    ``compare_solids``), and the 19-hour grind is not still burning a core
+    behind the refusal."""
+    import os
+    import time
+
+    import hephaestus.core.project_compare as project_compare
+    from _g8b_grind import CHEAP_FACTS, PID_FILE_ENV, grinding_child
+
+    write_script(plated, "plate", PLATE_SRC)
+    build_ok(plated, "plate")
+    pid_file = tmp_path_factory.mktemp("grind") / "child.pid"
+    monkeypatch.setattr(project_compare, "_diff_child", grinding_child)
+    monkeypatch.setenv(project_compare.COMPARE_TIMEOUT_ENV, "3.0")
+    monkeypatch.setenv(PID_FILE_ENV, str(pid_file))
+
+    started = time.monotonic()
+    with pytest.raises(DispatchError) as excinfo:
+        compare(plated, "plate", "import:plate.step")
+    elapsed = time.monotonic() - started
+
+    refusal = excinfo.value
+    assert refusal.reason == "compare_timeout"
+    assert refusal.data["partial"] == CHEAP_FACTS
+    assert refusal.data["lost"] == ["volume_boolean", "surface_sampling"]
+    assert refusal.data["timeout_s"] == 3.0
+    # The message says what happened and where the ceiling lives.
+    assert "COMPARE.md" in str(refusal)
+    assert "HEPHAESTUS_COMPARE_TIMEOUT_S" in str(refusal)
+    # Within bounds: the grinder would sleep 600 s; the refusal arrived on the
+    # ceiling's clock, not the grinder's.
+    assert elapsed < 60.0
+    # …and the killed subprocess is dead — reaped by the ceiling kill, not
+    # orphaned to keep grinding behind the refusal.
+    pid = int(pid_file.read_text(encoding="utf-8"))
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)

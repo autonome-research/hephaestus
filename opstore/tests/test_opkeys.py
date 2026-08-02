@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from conftest import FakeClock
+from _optest import FakeClock
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from opstore.db import Database

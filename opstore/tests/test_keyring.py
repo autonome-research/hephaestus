@@ -7,7 +7,7 @@ import stat
 from pathlib import Path
 
 import pytest
-from conftest import FakeClock
+from _optest import FakeClock
 from opstore.errors import KeyringCorruptError, KeyringMissingError, NotFoundError
 from opstore.keyring import KEYS_DIRNAME, Keyring
 

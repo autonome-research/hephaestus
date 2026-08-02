@@ -127,3 +127,52 @@ def test_a_traversing_target_is_refused_by_the_cli_too(
 
     err = capsys.readouterr().err
     assert "SECRET-CONTENT-42" not in err
+
+
+# ==========================================================================
+# bounded execution (COMPARE.md §5)
+
+
+def test_a_timed_out_diff_prints_the_partial_facts_and_the_note(
+    built: Project, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The operator gets the same signal the model gets: the streamed first
+    look, the named lost halves, and a non-zero exit — never a hung terminal."""
+    import hephaestus.core.project_compare as project_compare
+    from _g8b_grind import grinding_child
+
+    monkeypatch.setattr(project_compare, "_diff_child", grinding_child)
+    monkeypatch.setenv(project_compare.COMPARE_TIMEOUT_ENV, "3.0")
+
+    assert run(built.root, monkeypatch, "diff", "holed", "part:plate") == 1
+
+    out = capsys.readouterr().out
+    assert "comparison timed out" in out
+    # The partial facts that arrived are printed, not discarded…
+    assert "partial facts" in out
+    assert "topology (delta = b - a)" in out
+    assert "a volume 4000.000000" in out
+    # …the lost halves are named, and the knob is pointed at.
+    assert "lost: volume_boolean, surface_sampling" in out
+    assert "HEPHAESTUS_COMPARE_TIMEOUT_S" in out
+
+
+def test_a_timed_out_diff_in_json_is_the_refusal_shape(
+    built: Project, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``--json`` carries the same ``compare_timeout`` document the tool error
+    carries, so a script and a model read one shape either way."""
+    import hephaestus.core.project_compare as project_compare
+    from _g8b_grind import CHEAP_FACTS, grinding_child
+
+    monkeypatch.setattr(project_compare, "_diff_child", grinding_child)
+    monkeypatch.setenv(project_compare.COMPARE_TIMEOUT_ENV, "3.0")
+
+    assert run(built.root, monkeypatch, "diff", "holed", "part:plate", "--json") == 1
+
+    reported = cast("dict[str, Any]", json.loads(capsys.readouterr().out))
+    assert reported["status"] == "compare_timeout"
+    assert reported["reason"] == "compare_timeout"
+    assert reported["timeout_s"] == 3.0
+    assert reported["partial"] == CHEAP_FACTS
+    assert reported["lost"] == ["volume_boolean", "surface_sampling"]

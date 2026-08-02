@@ -8,7 +8,7 @@ from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 
 import pytest
-from conftest import CrashRunner
+from _optest import CrashRunner
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from opstore.blobs import BlobStore

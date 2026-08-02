@@ -238,8 +238,16 @@ def run_checks(
     """Evaluate every check against a fresh facade; never raises (§6).
 
     A predicate exception (including addressing errors) fails that check's
-    report entry with the error recorded as its measured value.
+    report entry with the error recorded as its measured value. One exception
+    is discriminated further (``COMPARE.md`` §5): an ``m.diff`` whose bounded
+    subprocess hit the wall-clock ceiling makes the check **unverifiable** —
+    the predicate was never answered, so the entry records the named
+    ``compare_timeout`` refusal (with whatever partial facts arrived) under
+    ``measured.unverifiable`` instead of an ``error``. Not a pass, and not a
+    crash: the report says the measurement was cut short, not that it failed.
     """
+    from hephaestus.core.project_compare import CompareTimeout
+
     results: dict[str, CheckResult] = {}
     for name, predicate in checks.items():
         measurement = measurement_factory()
@@ -247,6 +255,9 @@ def run_checks(
         try:
             passed = bool(predicate(measurement))
             measured = measurement.measured_json()
+        except CompareTimeout as exc:
+            passed = False
+            measured = {"unverifiable": cast("JSONValue", exc.to_json())}
         except HephaestusError as exc:
             passed = False
             measured = {
@@ -373,7 +384,18 @@ def run_bundle(
     Fails closed with ``invalid_check_generation`` (diagnostics included in
     the message) when the generation is persisted invalid. Check names are
     reported as ``"<file stem>:<check name>"`` in lexical file order.
+
+    When no backend is injected, measurement runs on the bounded production
+    ops (``COMPARE.md`` §5): ``run_bundle`` is the engine-side surface — the
+    ``run_checks`` tool's project scope and ``heph check`` — where an unbounded
+    ``m.diff`` could outlive the session. (Part-scope ``CHECKS`` inside the
+    sandboxed build worker call :func:`run_checks` directly and keep the
+    unbounded in-process diff: the worker itself is the killable subprocess.)
     """
+    if ops is None:
+        from hephaestus.core.project_compare import bounded_kernel_ops
+
+        ops = bounded_kernel_ops()
     if bundle.state.status == "invalid":
         raise InvalidCheckGenerationError(
             f"check-set generation {bundle.state.generation} is invalid and fails closed; "

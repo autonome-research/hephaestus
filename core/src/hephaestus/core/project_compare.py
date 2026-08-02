@@ -26,10 +26,15 @@ returned. Reading "iou 0.994" as a failure is a claim, and claims belong to a
 from __future__ import annotations
 
 import dataclasses
+import multiprocessing
+import os
+import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Final, Literal, cast
 
+from hephaestus.core.checks.facade import KernelOps, default_kernel_ops
 from hephaestus.core.errors import AddressingError, ValidationError
 from hephaestus.core.project_store.layout import ProjectLayout
 from hephaestus.core.project_store.publication import Publisher
@@ -40,13 +45,22 @@ from opstore import OpStore
 
 __all__ = [
     "ALIGN_MODES",
+    "COMPARE_TIMEOUT_ENV",
+    "COMPARE_TIMEOUT_S",
     "IMPORT_TARGET_PREFIX",
+    "LOST_SURFACE",
+    "LOST_TOPOLOGY",
+    "LOST_VOLUME",
     "PART_TARGET_PREFIX",
     "CompareOperand",
     "CompareRefusal",
     "CompareRefusalReason",
+    "CompareTimeout",
     "ProjectComparer",
     "SolidComparison",
+    "bounded_kernel_ops",
+    "bounded_solid_diff",
+    "compare_timeout_s",
 ]
 
 #: ``COMPARE.md`` §1 alignment modes.
@@ -58,7 +72,39 @@ PART_TARGET_PREFIX = "part:"
 #: Target naming a file beneath ``imports/``.
 IMPORT_TARGET_PREFIX = "import:"
 
+#: Wall-clock ceiling for ONE ``SolidDiff`` computation, process-killed with no
+#: retry (``COMPARE.md`` §5). Comparison on pathological B-reps is unbounded in
+#: the kernel — one CADGenBench editing sample held a core for ~19 h, and five
+#: of six live-run infrastructure deaths in the 2026-07-29 sweep ended on an
+#: unanswered ``compare_solids`` — so every engine surface computes the diff in
+#: a killable spawned subprocess under this ceiling (the ``bench`` local-floor
+#: pattern). Env-overridable via :data:`COMPARE_TIMEOUT_ENV`.
+COMPARE_TIMEOUT_S: Final[float] = 300.0
+
+#: Environment override for :data:`COMPARE_TIMEOUT_S` (seconds, float).
+COMPARE_TIMEOUT_ENV: Final[str] = "HEPHAESTUS_COMPARE_TIMEOUT_S"
+
+#: The parts of a ``SolidDiff`` a ceiling kill can lose, by cost order: the
+#: cheap first look (census + bboxes + volumes), the boolean half, and the
+#: surface-sampling half. ``CompareTimeout.lost`` names exactly which were cut.
+LOST_TOPOLOGY: Final[str] = "topology_census"
+LOST_VOLUME: Final[str] = "volume_boolean"
+LOST_SURFACE: Final[str] = "surface_sampling"
+
+
+def compare_timeout_s() -> float:
+    """The effective diff ceiling: :data:`COMPARE_TIMEOUT_ENV` else the default."""
+    raw = os.environ.get(COMPARE_TIMEOUT_ENV)
+    if raw is None:
+        return COMPARE_TIMEOUT_S
+    try:
+        return float(raw)
+    except ValueError:
+        return COMPARE_TIMEOUT_S
+
+
 CompareRefusalReason = Literal[
+    "compare_timeout",
     "invalid_align",
     "invalid_target",
     "missing_artifact",
@@ -79,6 +125,42 @@ class CompareRefusal(ValidationError):
     def __init__(self, message: str, *, reason: CompareRefusalReason) -> None:
         super().__init__(message, kind="contract")
         self.reason: CompareRefusalReason = reason
+
+
+class CompareTimeout(CompareRefusal):
+    """The diff subprocess hit the wall-clock ceiling or died (``COMPARE.md`` §5).
+
+    Not an empty-handed refusal: ``partial`` CARRIES whatever facts the child
+    streamed before the kill (topology census, both bboxes, both volumes — the
+    cheap first look), and ``lost`` names exactly which halves of the record
+    (:data:`LOST_VOLUME`, :data:`LOST_SURFACE`, and :data:`LOST_TOPOLOGY` when
+    nothing arrived at all) were cut short. The caller gets signal it can act
+    on — never a dead session, never a silently coarse number.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        timeout_s: float,
+        partial: dict[str, JSONValue] | None,
+        lost: tuple[str, ...],
+    ) -> None:
+        super().__init__(message, reason="compare_timeout")
+        self.timeout_s = timeout_s
+        self.partial: dict[str, JSONValue] | None = partial
+        self.lost: tuple[str, ...] = lost
+
+    def to_json(self) -> dict[str, JSONValue]:
+        """The refusal shape every surface carries (tool error data, CLI --json)."""
+        return {
+            "status": "compare_timeout",
+            "reason": "compare_timeout",
+            "message": self.message,
+            "timeout_s": self.timeout_s,
+            "partial": cast("JSONValue", self.partial),
+            "lost": cast("JSONValue", list(self.lost)),
+        }
 
 
 @dataclass(frozen=True)
@@ -166,7 +248,10 @@ class ProjectComparer:
             align=align,
             a=a_operand,
             b=b_operand,
-            diff=self.solid_diff(a_shape, b_shape, align=align),
+            # COMPARE.md §5: the measurement runs in a killable subprocess under
+            # the wall-clock ceiling; a completed diff is the same numbers the
+            # direct geom call produces (the BRep hand-off is lossless).
+            diff=bounded_solid_diff(a_shape, b_shape, align=align, scratch=scratch),
         )
 
     # -- operands -----------------------------------------------------------
@@ -254,3 +339,185 @@ class ProjectComparer:
                 reason="no_solid_geometry",
             ) from exc
         return cast("dict[str, JSONValue]", dataclasses.asdict(record))
+
+
+# --------------------------------------------------------------------------
+# bounded execution (COMPARE.md §5)
+
+
+def _diff_child(conn: Any, a_path: str, b_path: str, align: str) -> None:  # pragma: no cover
+    """One ``SolidDiff``, computed where a kill cannot take the session down.
+
+    Runs in a spawned subprocess. The cheap facts (topology census, bboxes,
+    volumes) are computed and streamed FIRST — the boolean and surface halves
+    below can be orders of magnitude more expensive, so a ceiling kill after
+    the first send still leaves the caller holding the first look. Message
+    protocol, in order: ``("cheap", facts)``, then exactly one of
+    ``("full", asdict(SolidDiff))`` or ``("refusal", message)``.
+    """
+    from hephaestus.core.executor.artifact_geometry import load_brep_shape
+    from hephaestus.geom.compare import AlignMode, solid_diff, topology_diff
+    from hephaestus.geom.metrics import bbox_mm, shape_volume
+
+    a = cast("Any", load_brep_shape(Path(a_path).read_bytes()))
+    b = cast("Any", load_brep_shape(Path(b_path).read_bytes()))
+    cheap: dict[str, JSONValue] = {
+        "topology": cast("JSONValue", dataclasses.asdict(topology_diff(a, b))),
+        "a_bbox_mm": cast("JSONValue", bbox_mm(a)),
+        "b_bbox_mm": cast("JSONValue", bbox_mm(b)),
+        "a_volume_mm3": shape_volume(a),
+        "b_volume_mm3": shape_volume(b),
+    }
+    conn.send(("cheap", cheap))
+    try:
+        record = solid_diff(a, b, align=cast("AlignMode", align))
+    except ValueError as exc:
+        conn.send(("refusal", str(exc)))
+    else:
+        conn.send(("full", dataclasses.asdict(record)))
+    conn.close()
+
+
+def bounded_solid_diff(
+    a: object,
+    b: object,
+    *,
+    align: str,
+    timeout_s: float | None = None,
+    scratch: Path | None = None,
+) -> dict[str, JSONValue]:
+    """``ProjectComparer.solid_diff`` under the wall-clock ceiling (COMPARE.md §5).
+
+    Both shapes cross to a spawned child as BRep files (lossless, so a
+    completed diff is bit-for-bit the direct geom call's record); the child
+    streams the cheap facts first and the full record second, and the parent
+    kills it at the deadline. A ceiling kill or a child death raises
+    :class:`CompareTimeout` carrying whatever arrived; the one geom refusal
+    (``no_solid_geometry``) keeps its identity across the process boundary.
+    ``timeout_s`` defaults to :func:`compare_timeout_s`, resolved per call so
+    the env override applies to long-lived engines too.
+    """
+    from hephaestus.core.executor.artifact_geometry import write_brep_shape
+
+    if timeout_s is None:
+        timeout_s = compare_timeout_s()
+    with tempfile.TemporaryDirectory(prefix="heph-diff-", dir=scratch) as tmp:
+        a_path = Path(tmp) / "a.brep"
+        b_path = Path(tmp) / "b.brep"
+        write_brep_shape(a, a_path)
+        write_brep_shape(b, b_path)
+
+        ctx = multiprocessing.get_context("spawn")
+        parent, child = ctx.Pipe(duplex=False)
+        proc = ctx.Process(target=_diff_child, args=(child, str(a_path), str(b_path), align))
+        proc.start()
+        child.close()
+
+        cheap: dict[str, JSONValue] | None = None
+        outcome: tuple[str, Any] | None = None
+        died = False
+        cut_short = f"did not finish within {timeout_s:g}s and was killed"
+        deadline = time.monotonic() + timeout_s
+
+        def _receive() -> bool:
+            """Consume one message; True when it was terminal (full/refusal)."""
+            nonlocal cheap, outcome
+            kind, payload = parent.recv()
+            if kind == "cheap":
+                cheap = cast("dict[str, JSONValue]", payload)
+                return False
+            outcome = (str(kind), payload)
+            return True
+
+        try:
+            while outcome is None and time.monotonic() < deadline:
+                try:
+                    if parent.poll(0.05):
+                        _receive()
+                    elif not proc.is_alive():
+                        # Death, not a deadline — drain what it sent first, so a
+                        # result that raced the exit is never misread as a crash.
+                        while parent.poll(0.2) and not _receive():
+                            pass
+                        died = outcome is None
+                        break
+                except EOFError:
+                    # The pipe closed before a terminal message: the child is
+                    # crashing.  Give it a moment to finish dying so the
+                    # refusal carries its real exit code (reading it before
+                    # the reap yields None; killing it here would forge -9);
+                    # a child that hangs instead meets the kill in `finally`.
+                    proc.join(5.0)
+                    died = True
+                    break
+        finally:
+            if proc.is_alive():
+                proc.kill()
+            proc.join()
+            parent.close()
+        if died:
+            cut_short = f"subprocess died (exit code {proc.exitcode})"
+
+    if outcome is not None:
+        kind, payload = outcome
+        if kind == "full":
+            return cast("dict[str, JSONValue]", payload)
+        raise CompareRefusal(
+            f"align={align!r} needs both shapes to enclose volume: {payload}",
+            reason="no_solid_geometry",
+        )
+    lost = ((LOST_TOPOLOGY,) if cheap is None else ()) + (LOST_VOLUME, LOST_SURFACE)
+    raise CompareTimeout(
+        f"solid diff {cut_short} (COMPARE.md §5, ceiling {timeout_s:g}s via "
+        f"{COMPARE_TIMEOUT_ENV}); lost: {', '.join(lost)}",
+        timeout_s=timeout_s,
+        partial=cheap,
+        lost=lost,
+    )
+
+
+class _BoundedKernelOps:
+    """The production :class:`KernelOps` with ``diff`` under the §5 ceiling.
+
+    Every other measurement delegates to :func:`default_kernel_ops` unchanged —
+    only the diff can grind for hours on a pathological B-rep, so only the diff
+    pays the subprocess round-trip. Engine-side check runs use this backend by
+    default; the sandboxed build worker deliberately does NOT (its whole
+    process already runs under RLIMIT_CPU and a parent wall-clock kill).
+    """
+
+    def __init__(self, timeout_s: float | None = None) -> None:
+        self._inner = default_kernel_ops()
+        self._timeout_s = timeout_s
+
+    def interference(self, a: object, b: object) -> float:
+        return self._inner.interference(a, b)
+
+    def clearance(self, a: object, b: object) -> float:
+        return self._inner.clearance(a, b)
+
+    def distance(self, a: object, b: object) -> float:
+        return self._inner.distance(a, b)
+
+    def mass(self, shape: object, density: float) -> float:
+        return self._inner.mass(shape, density)
+
+    def bbox(self, shape: object) -> tuple[float, float, float]:
+        return self._inner.bbox(shape)
+
+    def volume(self, shape: object) -> float:
+        return self._inner.volume(shape)
+
+    def sealed(self, shape: object) -> bool:
+        return self._inner.sealed(shape)
+
+    def genus(self, shape: object) -> int:
+        return self._inner.genus(shape)
+
+    def diff(self, a: object, b: object, align: str) -> dict[str, JSONValue]:
+        return bounded_solid_diff(a, b, align=align, timeout_s=self._timeout_s)
+
+
+def bounded_kernel_ops(timeout_s: float | None = None) -> KernelOps:
+    """:func:`default_kernel_ops` with ``diff`` bounded per ``COMPARE.md`` §5."""
+    return _BoundedKernelOps(timeout_s)

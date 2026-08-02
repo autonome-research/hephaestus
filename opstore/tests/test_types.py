@@ -7,7 +7,7 @@ import subprocess
 import time
 
 import pytest
-from conftest import CrashRunner, FakeClock, FakeLiveness
+from _optest import CrashRunner, FakeClock, FakeLiveness
 from opstore.types import (
     CRASH_ENV_VAR,
     Clock,

@@ -25,10 +25,15 @@ from pathlib import Path
 from typing import Any, cast
 
 from hephaestus.core.errors import HephaestusError
-from hephaestus.core.project_compare import ALIGN_MODES, ProjectComparer, SolidComparison
+from hephaestus.core.project_compare import (
+    ALIGN_MODES,
+    CompareTimeout,
+    ProjectComparer,
+    SolidComparison,
+)
 from hephaestus.core.project_store.layout import find_project_root, load_project, open_store
 
-__all__ = ["add_subparsers", "format_comparison"]
+__all__ = ["add_subparsers", "format_comparison", "format_timeout"]
 
 
 def _number(raw: Mapping[str, Any], key: str) -> float:
@@ -99,6 +104,39 @@ def format_comparison(comparison: SolidComparison) -> str:
     return "\n".join(lines)
 
 
+def format_timeout(refusal: CompareTimeout) -> str:
+    """The ceiling kill for a human: the partial facts, then what was lost.
+
+    ``COMPARE.md`` §5: an operator gets the same signal the model gets — the
+    cheap facts that arrived before the kill, and the names of the halves that
+    did not — never a silently absent number.
+    """
+    lines = [f"comparison timed out: {refusal.message}", ""]
+    partial = refusal.partial
+    if partial is None:
+        lines.append("partial facts: none arrived before the kill")
+    else:
+        topology = _section(partial, "topology")
+        lines.extend(
+            [
+                "partial facts (streamed before the kill)",
+                "  topology (delta = b - a)",
+                f"    solids      {topology.get('solids_delta', 0):+d}",
+                f"    faces       {topology.get('faces_delta', 0):+d}",
+                f"    edges       {topology.get('edges_delta', 0):+d}",
+                f"    genus       {topology.get('genus_delta', 0):+d}",
+                f"    sealed      {'changed' if topology.get('sealed_changed') else 'unchanged'}",
+                f"  a volume {_number(partial, 'a_volume_mm3'):.6f} mm^3   "
+                f"bbox {_extent(partial, 'a_bbox_mm')} mm",
+                f"  b volume {_number(partial, 'b_volume_mm3'):.6f} mm^3   "
+                f"bbox {_extent(partial, 'b_bbox_mm')} mm",
+            ]
+        )
+    lines.append(f"lost: {', '.join(refusal.lost)}")
+    lines.append("note: raise HEPHAESTUS_COMPARE_TIMEOUT_S to allow more time (COMPARE.md §5)")
+    return "\n".join(lines)
+
+
 def _cmd_diff(args: argparse.Namespace) -> int:
     root = find_project_root(Path.cwd())
     layout = load_project(root)
@@ -109,6 +147,14 @@ def _cmd_diff(args: argparse.Namespace) -> int:
             cast("str", args.target),
             align=cast("str", args.align),
         )
+    except CompareTimeout as exc:
+        # COMPARE.md §5: the partial facts are the report; the exit code says
+        # the comparison did not complete.
+        if bool(args.json):
+            print(json.dumps(exc.to_json(), sort_keys=True))
+        else:
+            print(format_timeout(exc))
+        return 1
     finally:
         store.close()
     if bool(args.json):

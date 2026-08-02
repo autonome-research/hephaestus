@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 import pytest
-from conftest import REPO_ROOT, CrashRunner, FakeClock, FakeLiveness
+from _optest import REPO_ROOT, CrashRunner, FakeClock, FakeLiveness
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from opstore.blobs import BlobStore

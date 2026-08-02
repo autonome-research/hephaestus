@@ -34,12 +34,14 @@ from __future__ import annotations
 
 from ._convert import (
     DEFAULT_BUDGET_TOOL_CALLS,
+    EDITING_BUDGET_TOOL_CALLS,
     PART_NAME,
     SAMPLE_PROVENANCE_FILENAME,
     TASK_ID_PREFIX,
     ConversionReport,
     convert_sample,
     convert_samples,
+    default_budget,
     sample_id_for_task,
     sample_prompt,
     task_id_for_sample,
@@ -70,6 +72,12 @@ from ._package import (
     run_sanity_check,
 )
 from ._run import RunOutcome, collect_outputs, exported_step_path, run_converted
+from ._salvage import (
+    SALVAGE_REPORT_FILENAME,
+    SalvageEntry,
+    SalvageReport,
+    salvage_from_archive,
+)
 from ._samples import (
     DESCRIPTION_FILENAME,
     EDITING,
@@ -91,6 +99,7 @@ __all__ = [
     "DEFAULT_BUDGET_TOOL_CALLS",
     "DESCRIPTION_FILENAME",
     "EDITING",
+    "EDITING_BUDGET_TOOL_CALLS",
     "FETCH_RECORD_FILENAME",
     "GENERATION",
     "LOCAL_FLOOR_LABEL",
@@ -98,6 +107,7 @@ __all__ = [
     "NOTES_MAX_CHARS",
     "PART_NAME",
     "REQUIRED_META_KEYS",
+    "SALVAGE_REPORT_FILENAME",
     "SAMPLE_PROVENANCE_FILENAME",
     "SANITY_CHECK_FILENAME",
     "SUBMISSION_CANDIDATE",
@@ -109,6 +119,8 @@ __all__ = [
     "PackageReport",
     "PackagingError",
     "RunOutcome",
+    "SalvageEntry",
+    "SalvageReport",
     "SampleError",
     "SampleFloor",
     "SubmissionFloor",
@@ -117,6 +129,7 @@ __all__ = [
     "collect_outputs",
     "convert_sample",
     "convert_samples",
+    "default_budget",
     "default_cache_dir",
     "discover_samples",
     "exported_step_path",
@@ -128,6 +141,7 @@ __all__ = [
     "resolve_sanity_check",
     "run_converted",
     "run_sanity_check",
+    "salvage_from_archive",
     "sample_id_for_task",
     "sample_prompt",
     "score_outputs",

@@ -70,6 +70,11 @@ class GradeReport:
     within_budget: bool = True
     #: Protected task files the run had modified (restored before grading).
     restored_protected: tuple[str, ...] = ()
+    #: ``EXTERNAL_EVAL.md`` §5 (deliverable-scoped grading): build failures of
+    #: parts *other than* the task's declared deliverable. Facts, never fail
+    #: reasons — they are recorded here, outside :attr:`reasons`, so they can
+    #: never reach the verdict. Empty on every corpus task (no deliverable).
+    other_build_failures: tuple[str, ...] = ()
 
     @property
     def harness_errors(self) -> tuple[str, ...]:
@@ -101,6 +106,7 @@ class GradeReport:
             "budget_tool_calls": self.budget_tool_calls,
             "within_budget": self.within_budget,
             "restored_protected": list(self.restored_protected),
+            "other_build_failures": list(self.other_build_failures),
         }
 
 
@@ -140,6 +146,40 @@ def _build_all(cad: CadOps, layout: ProjectLayout) -> tuple[dict[str, Any], list
         elif not bool(result.get("current")):
             reasons.append(f"build_not_current:{part}")
     return builds, reasons
+
+
+def _build_deliverable_scoped(
+    cad: CadOps, layout: ProjectLayout, deliverable: str
+) -> tuple[dict[str, Any], list[str], list[str]]:
+    """Build every part; only the deliverable's failures are fail reasons.
+
+    ``EXTERNAL_EVAL.md`` §5 (deliverable-scoped grading, converted CADGenBench
+    tasks): other parts' failures land in the third element — recorded facts
+    that never charge the verdict, because a scratch part a model probed
+    geometry with is good work, not a failure. A deliverable that was never
+    authored fails under its own name: it is the one part the task is about.
+    Corpus tasks never come here — :func:`_build_all` is their unchanged path.
+    """
+    builds: dict[str, Any] = {}
+    reasons: list[str] = []
+    facts: list[str] = []
+    parts = layout.part_names()
+    if not parts:
+        return builds, ["no_parts_authored"], facts
+    if deliverable not in parts:
+        reasons.append(f"deliverable_not_authored:{deliverable}")
+    for part in parts:
+        sink = reasons if part == deliverable else facts
+        result = _build_with_lease_retry(cad, part)
+        if result is None:
+            sink.append(f"build_lease_busy:{part}")
+            continue
+        builds[part] = result
+        if result.get("status") != "ok":
+            sink.append(f"build_failed:{part}")
+        elif not bool(result.get("current")):
+            sink.append(f"build_not_current:{part}")
+    return builds, reasons, facts
 
 
 def _run_required_checks(
@@ -660,11 +700,26 @@ def grade(
     graded = False
     with open_cad(project_root) as cad:
         layout = cad.layout
-        builds, build_reasons = _build_all(cad, layout)
+        if task.deliverable is None:
+            builds, build_reasons = _build_all(cad, layout)
+            build_facts: list[str] = []
+        else:
+            builds, build_reasons, build_facts = _build_deliverable_scoped(
+                cad, layout, task.deliverable
+            )
         reasons.extend(build_reasons)
         if not build_reasons:
             graded = True
-            check_status, required, other, check_reasons = _run_required_checks(cad, task)
+            if task.deliverable is not None and not task.required_checks:
+                # Deliverable-scoped task with no required checks: running the
+                # project-scoped check bundle anyway would assemble a snapshot
+                # over EVERY part, and a broken scratch part makes that snapshot
+                # incoherent — failing the run on the scratch part through the
+                # back door, which §5 exists to forbid. Nothing to run, so
+                # nothing is run.
+                check_reasons: list[str] = []
+            else:
+                check_status, required, other, check_reasons = _run_required_checks(cad, task)
             reasons.extend(check_reasons)
             export_records, export_reasons = _validate_exports(cad, task, layout)
             exports = export_records
@@ -708,6 +763,7 @@ def grade(
         budget_tool_calls=task.budget_tool_calls,
         within_budget=within_budget,
         restored_protected=tuple(tampered),
+        other_build_failures=tuple(build_facts),
     )
 
 

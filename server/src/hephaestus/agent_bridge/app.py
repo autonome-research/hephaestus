@@ -337,6 +337,22 @@ class BridgeRuntime:
     def child_pid(self) -> int:
         return self._sup.child_pid
 
+    def sidecar_evidence(self) -> dict[str, Any]:
+        """The supervisor's own record of this runtime's sidecar lifecycle.
+
+        ``EXTERNAL_EVAL.md`` §5: every restart with its reason plus a bounded
+        stderr tail, read for the bench archive (``restarts.json`` /
+        ``sidecar.log``). The state lives on the supervisor object, so it is
+        still readable after :meth:`close` — which is when the harness asks.
+        """
+        return {
+            "restarts": [dict(event) for event in self._sup.restart_events],
+            "stderr_tail": list(self._sup.stderr_tail),
+            "auto_respawns": self._sup.auto_respawns,
+            "spawn_count": self._sup.spawn_count,
+            "spawn_errors": list(self._sup.spawn_errors),
+        }
+
     @property
     def admission(self) -> BridgeAdmission:
         return self._admission

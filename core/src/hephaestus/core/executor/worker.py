@@ -617,6 +617,15 @@ def _run_part_checks(
     here; the measurement facade resolves selectors against the live built
     geometry. A failing/crashing check fails its report entry, never the
     build (``run_checks`` guarantees it).
+
+    ``m.diff`` here runs in-process on the default (unbounded) kernel ops, and
+    that is deliberate (``COMPARE.md`` §5): this worker IS the killable
+    subprocess. The sandbox applies ``RLIMIT_CPU`` in its pre-exec hook and the
+    parent enforces ``spec.wall_clock_s`` with a process-group kill
+    (``sandbox/base.py``, ``sandbox/bwrap.py``), so a diff that grinds takes
+    down this one build — never the session. The engine-side surfaces
+    (``compare_solids``, project-scope check runs, ``heph diff``) have no such
+    enclosing ceiling and use the bounded subprocess path instead.
     """
     if not checks:
         return {}
