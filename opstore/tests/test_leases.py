@@ -315,6 +315,15 @@ def test_cross_process_exclusive_contention(store_root: Path) -> None:
         while not (sync / "winner").exists():
             assert time.monotonic() < deadline, "no process won the lease in time"
             time.sleep(0.02)
+        # Release only after the LOSER has exited. Releasing on the winner
+        # marker alone is a race: a descheduled loser (slow CI runner) can
+        # sleep straight through win -> release and then legitimately acquire
+        # the freed lease — two sequential WINs with mutual exclusion never
+        # violated, which is not what this test measures (seen on run
+        # 30760944877).
+        while sum(1 for proc in procs if proc.poll() is not None) == 0:
+            assert time.monotonic() < deadline, "no loser settled in time"
+            time.sleep(0.02)
         (sync / "release").write_text("go")
         outputs = [proc.communicate(timeout=60) for proc in procs]
     finally:

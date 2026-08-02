@@ -155,14 +155,24 @@ def _prose_lines(path: Path) -> Iterator[tuple[int, str]]:
 
 
 def _gitignored(path: str) -> bool:
-    """Is ``path`` matched by the repository's gitignore rules?"""
-    proc = subprocess.run(
-        ["git", "check-ignore", "-q", "--", path],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        check=False,
-    )
-    return proc.returncode == 0
+    """Is ``path`` matched by the repository's gitignore rules?
+
+    Probed twice: the path itself, and a hypothetical child. A directory
+    pattern like ``dist/`` cannot match a NON-EXISTENT path (git has no way
+    to know it would be a directory) — which is exactly the case this helper
+    exists for on a bare CI checkout — but any child of an ignored directory
+    is ignored, so the child probe answers for the directory.
+    """
+    for candidate in (path, path.rstrip("/") + "/_probe"):
+        proc = subprocess.run(
+            ["git", "check-ignore", "-q", "--", candidate],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            check=False,
+        )
+        if proc.returncode == 0:
+            return True
+    return False
 
 
 def _resolves(token: str) -> bool:
