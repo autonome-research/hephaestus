@@ -212,3 +212,39 @@ class TestCheckRegistry:
         registry = CheckRegistry()
         with pytest.raises(ValidationError):
             registry.register("bad", 42)
+
+
+class TestUnknownPartAttributeRefused:
+    """Unknown `part.*` assignment is a contract error naming the real fields.
+
+    Regression (2026-07-29 corpus sweep): models wrote `part.metadata = {...}`
+    — a reasonable reading of "give the part its manufacturing metadata" —
+    the namespace swallowed it silently, and the grade later reported the
+    metadata missing with no signal the model could act on.
+    """
+
+    def test_dict_style_metadata_is_refused_with_the_field_list(self) -> None:
+        from hephaestus.core.executor.namespace import PartOutput
+
+        part = PartOutput()
+        with pytest.raises(ValidationError) as excinfo:
+            part.metadata = {"process": "fdm"}  # type: ignore[attr-defined]
+        message = str(excinfo.value)
+        assert "part.metadata is not a part attribute" in message
+        assert "material_spec" in message and "part.feature(name)" in message
+
+    def test_misspelled_field_is_refused(self) -> None:
+        from hephaestus.core.executor.namespace import PartOutput
+
+        part = PartOutput()
+        with pytest.raises(ValidationError):
+            part.material = "PLA"  # type: ignore[attr-defined]
+
+    def test_every_contract_field_still_assigns(self) -> None:
+        from hephaestus.core.executor.namespace import METADATA_FIELDS, PartOutput
+
+        part = PartOutput()
+        part.geometry = "placeholder"
+        for field in METADATA_FIELDS:
+            setattr(part, field, "value")
+        assert part.metadata() == dict.fromkeys(METADATA_FIELDS, "value")

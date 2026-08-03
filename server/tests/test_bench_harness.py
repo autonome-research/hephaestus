@@ -814,3 +814,64 @@ def test_enforce_mode_still_cancels_at_the_budget(
     assert run.status == "cancelled"
     assert run.tool_calls == tight.budget_tool_calls + 1
     assert not run.passed
+
+
+class TestDeclaredScopedCorpusGrading:
+    """Corpus grading scopes to the parts the task's acceptance names.
+
+    Regression (2026-07-29 sweep autopsy): 2 of 12 nest-gusset/print-bracket
+    failures were probe-part casualties — the declared deliverable built OK
+    and the run failed on a throwaway part the task never asked about.
+    """
+
+    @staticmethod
+    def _task(tmp_path: Path) -> harness.BenchTask:
+        directory = tmp_path / "task"
+        (directory / "checks").mkdir(parents=True)
+        (directory / "checks" / "widget_ok.py").write_text(
+            'CHECKS = {"widget_ok": lambda m: m.volume("widget/part") > 0.0}\n',
+            encoding="utf-8",
+        )
+        return harness.BenchTask(
+            id="declared-scope-fixture",
+            directory=directory,
+            prompt="unused",
+            budget_tool_calls=10,
+            required_checks=("widget_ok",),
+            metadata=(
+                harness.MetadataRequirement(part="widget", required_fields=("description",)),
+            ),
+        )
+
+    @staticmethod
+    def _project(tmp_path: Path) -> Path:
+        project = tmp_path / "project"
+        (project / "parts").mkdir(parents=True)
+        (project / "hephaestus.toml").write_text('[project]\nname = "fixture"\n')
+        (project / "globals.py").write_text("")
+        (project / "parts" / "widget.py").write_text(
+            'part.geometry = Box(10, 10, 10)\npart.description = "a widget"\n',
+            encoding="utf-8",
+        )
+        return project
+
+    def test_a_broken_scratch_part_is_a_fact_not_a_failure(self, tmp_path: Path) -> None:
+        task = self._task(tmp_path)
+        assert task.declared_parts() == frozenset({"widget"})
+        project = self._project(tmp_path)
+        (project / "parts" / "probe.py").write_text("this is not python (", encoding="utf-8")
+        report = harness.grade(task, project)
+        assert "build_failed:probe" not in report.reasons
+        assert "build_failed:probe" in report.other_build_failures
+        assert report.passed, (report.reasons, report.other_build_failures)
+
+    def test_a_declared_part_never_authored_fails_by_name(self, tmp_path: Path) -> None:
+        task = self._task(tmp_path)
+        project = self._project(tmp_path)
+        (project / "parts" / "widget.py").unlink()
+        (project / "parts" / "probe.py").write_text(
+            "part.geometry = Box(1, 1, 1)\n", encoding="utf-8"
+        )
+        report = harness.grade(task, project)
+        assert "declared_part_missing:widget" in report.reasons
+        assert not report.passed

@@ -129,6 +129,14 @@ part.assembly_method   # "PVA-laminate each face first; register the six faces�
 part.joint             # "PVA-laminated beam; each ply has two top tabs…"
 ```
 
+These nine names plus `part.geometry` are the WHOLE assignable `part.*`
+surface. Assigning anything else (`part.metadata = {...}`, `part.material =
+...`) is a §8 build error at the statement, naming the valid fields —
+never a silent no-op. Added 2026-08-02: the corpus sweep showed models
+writing their metadata as a dict the namespace swallowed, then failing
+grades for "missing" metadata they had reasonably believed they wrote.
+Per-feature metadata goes through `part.feature(name).<field>` (§5.3).
+
 `part.process` values that match a DFM registry pack (`laser_cut`,
 `cnc_router`, `fdm`, …) make that pack's rules runnable against the part.
 

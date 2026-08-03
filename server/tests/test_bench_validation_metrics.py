@@ -468,8 +468,17 @@ def test_grade_restores_protected_paths_before_it_builds_anything(
         return ["checks/envelope.py"]
 
     def fake_build_all(cad: Any, layout: Any) -> tuple[dict[str, Any], list[str]]:
-        calls.append("_build_all")
+        calls.append("_build")
         return {}, ["stop_here"]
+
+    def fake_build_scoped(
+        cad: Any, layout: Any, declared: Any
+    ) -> tuple[dict[str, Any], list[str], list[str]]:
+        # bracket-101 declares parts, so grading routes through the
+        # declared-scoped builder; the pinned property (restore BEFORE any
+        # build) is the same either way.
+        calls.append("_build")
+        return {}, ["stop_here"], []
 
     class _NullCad:
         layout = None
@@ -483,11 +492,12 @@ def test_grade_restores_protected_paths_before_it_builds_anything(
 
     monkeypatch.setattr(_grade, "restore_protected", fake_restore)
     monkeypatch.setattr(_grade, "_build_all", fake_build_all)
+    monkeypatch.setattr(_grade, "_build_declared_scoped", fake_build_scoped)
     monkeypatch.setattr(_grade, "open_cad", fake_open_cad)
 
     task = seeded_variant(load_tasks(["bracket-101"], specs=("prose",))[0])
     report = _grade.grade(task, tmp_path)
-    assert calls == ["restore_protected", "open_cad", "_build_all"]
+    assert calls == ["restore_protected", "open_cad", "_build"]
     assert report.restored_protected == ("checks/envelope.py",)
     assert report.passed is False
 

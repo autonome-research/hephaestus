@@ -7,8 +7,8 @@ Two of the four fixes live at surfaces this suite owns:
 * **deliverable-scoped grading** — a converted task names its deliverable
   (``candidate``), and the grader fails on THAT part's build/export only: a
   broken scratch part plus an ok candidate passes, with the scratch failure
-  recorded as a fact under the grade's non-charging key. Corpus grading is
-  untouched — the same project graded without a deliverable still fails.
+  recorded as a fact under the grade's non-charging key. Corpus tasks get
+  the same honesty through their declared-parts scope (2026-08-02).
 * **the calibrated editing budget** — editing samples convert with the
   measured 100-call budget; generation keeps 60; an explicit override wins.
 
@@ -94,10 +94,19 @@ def test_a_broken_scratch_part_is_a_fact_not_a_fail_reason(tmp_path: Path) -> No
     assert "invalid" not in export and "error" not in export
 
 
-def test_without_a_deliverable_the_same_project_still_fails(tmp_path: Path) -> None:
-    """Corpus grading is untouched: no deliverable means every part is graded."""
+def test_without_a_deliverable_declared_parts_scope_the_grade(tmp_path: Path) -> None:
+    """No deliverable: grading scopes to the task's DECLARED parts.
+
+    Amended 2026-08-02 (corpus autopsy): this test previously pinned "no
+    deliverable means every part is graded", which is the policy that failed
+    otherwise-correct nest-gusset/print-bracket runs on throwaway probe
+    parts. The declared set (here: the export requirement's part) now plays
+    the deliverable's role, and only a task naming no parts at all keeps the
+    every-part rule.
+    """
     task = convert_sample(load_sample(DATASET / "101"), tmp_path / "tasks")
     corpus_scope = replace(task, deliverable=None)
+    assert corpus_scope.declared_parts() == frozenset({PART_NAME})
     project = tmp_path / "project"
     harness.seed_project(corpus_scope, project)
     (project / "parts" / f"{PART_NAME}.py").write_text(CANDIDATE_SRC, encoding="utf-8")
@@ -105,9 +114,13 @@ def test_without_a_deliverable_the_same_project_still_fails(tmp_path: Path) -> N
 
     report = harness.grade(corpus_scope, project)
 
-    assert not report.passed
-    assert "build_failed:scratch" in report.reasons
-    assert report.other_build_failures == ()
+    assert "build_failed:scratch" not in report.reasons
+    assert "build_failed:scratch" in report.other_build_failures
+    # The declared part itself still gates: break IT and the run fails.
+    (project / "parts" / f"{PART_NAME}.py").write_text("broken (", encoding="utf-8")
+    failing = harness.grade(corpus_scope, project)
+    assert not failing.passed
+    assert f"build_failed:{PART_NAME}" in failing.reasons
 
 
 def test_a_deliverable_that_was_never_authored_fails_by_name(tmp_path: Path) -> None:

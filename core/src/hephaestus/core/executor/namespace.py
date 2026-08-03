@@ -296,6 +296,10 @@ class FeatureMetadata:
         return {name: jsonify(value) for name, value in fields.items()}
 
 
+#: Every assignable ``part.*`` name: the geometry plus the §5.2 metadata set.
+PART_FIELDS: frozenset[str] = frozenset(METADATA_FIELDS) | {"geometry"}
+
+
 class PartOutput:
     """The ``part`` output object (§5): geometry, metadata fields, features."""
 
@@ -304,6 +308,22 @@ class PartOutput:
         object.__setattr__(self, "_features", {})
 
     def __setattr__(self, name: str, value: object) -> None:
+        # An unknown assignment is a build error AT THE STATEMENT, never a
+        # silent no-op. The 2026-07-29 corpus sweep showed why: models wrote
+        # `part.metadata = {...}` — a perfectly reasonable reading of "give
+        # the part its manufacturing metadata" — the namespace swallowed it,
+        # and the grade later said the metadata was "missing" with no signal
+        # the model could have acted on. Naming the real fields here lets the
+        # author self-correct inside the same run (mission rule 1: a silently
+        # ignored contract is a defect resolved by tightening).
+        if name not in PART_FIELDS:
+            raise ValidationError(
+                f"part.{name} is not a part attribute. Assignable fields are "
+                f"part.geometry and the manufacturing metadata fields: "
+                f"{', '.join(METADATA_FIELDS)}. Per-feature metadata goes "
+                f"through part.feature(name).<field>.",
+                kind="contract",
+            )
         fields: dict[str, object] = object.__getattribute__(self, "_fields")
         fields[name] = value
 

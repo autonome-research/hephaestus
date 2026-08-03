@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final, cast
 
@@ -190,8 +190,20 @@ class CheckOps(CadOpsState):
             payload["error"] = result.error.to_json()
         return payload
 
-    def run_project_checks(self, project_snapshot_ref: str | None) -> dict[str, Any]:
-        """Freeze the authorized cross-part bundle and run it (fails closed)."""
+    def run_project_checks(
+        self,
+        project_snapshot_ref: str | None,
+        *,
+        parts: Sequence[str] | None = None,
+    ) -> dict[str, Any]:
+        """Freeze the authorized cross-part bundle and run it (fails closed).
+
+        ``parts`` scopes the assembled snapshot to those part names (the bench
+        grader's declared-parts scope — an undeclared scratch part with no
+        successful build must not veto the snapshot the acceptance checks run
+        on). ``None`` keeps the whole-project snapshot, and it is ignored when
+        an explicit ``project_snapshot_ref`` is supplied.
+        """
         check_set = self._check_set()
         bundle = check_set.capture()
         state = bundle.state
@@ -209,7 +221,8 @@ class CheckOps(CadOpsState):
         with self._scratch("heph-checks-") as scratch:
             if project_snapshot_ref is None:
                 try:
-                    snapshot = publisher.projections.assemble_snapshot(self._layout.part_names())
+                    names = list(parts) if parts is not None else self._layout.part_names()
+                    snapshot = publisher.projections.assemble_snapshot(names)
                 except SnapshotRejectedError as exc:
                     raise CadOpError(
                         "incoherent_project_snapshot",

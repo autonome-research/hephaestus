@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -489,6 +490,36 @@ class BenchTask:
     #: ``VALIDATION.md`` §1 spec variant: ``prose`` (infer it) or ``seeded``
     #: (the acceptance checks are installed as an independent spec).
     spec: str = SPEC_PROSE
+
+    def declared_parts(self) -> frozenset[str]:
+        """Every part the task's own acceptance names.
+
+        The union of the ``part`` fields across export/render/DFM/drawing/
+        metadata requirements plus the part component of every constraint
+        anchor. This IS the task's deliverable set: grading fails on these
+        parts' builds, while an undeclared scratch part's failure is a
+        recorded fact (2026-08-02 corpus autopsy — models probe geometry
+        with throwaway parts, and 2 of 12 nest-gusset/print-bracket failures
+        were probe-part casualties on otherwise-correct deliverables).
+        """
+        names: set[str] = set()
+        for req in (*self.exports, *self.renders, *self.dfm, *self.drawings, *self.metadata):
+            names.add(req.part)
+        for constraint in self.constraints:
+            for side in ("a", "b"):
+                anchor = str(constraint.entry.get(side, ""))
+                if anchor:
+                    names.add(anchor.split(":", 1)[0])
+        # Parts the task's OWN check sources address ("<part>/<selector>"
+        # string literals) are declared too: gauge parts like bracket-101's
+        # hole_gauge exist only inside the acceptance checks, and a snapshot
+        # scoped without them would fail the checks that measure through them.
+        # Check sources are task-authored (trusted), so a lexical scan is an
+        # honest reading of what they measure.
+        for source in self.check_sources().values():
+            for head in re.findall(r'["\']([A-Za-z0-9_-]+)/', source):
+                names.add(head)
+        return frozenset(name for name in names if name)
 
     @property
     def seed_dir(self) -> Path:

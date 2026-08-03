@@ -254,8 +254,18 @@ def test_grading_restores_the_spec_before_it_builds(
         order.append("build")
         return {}, ["stop"]
 
+    def fake_build_scoped(
+        cad: Any, layout: Any, declared: Any
+    ) -> tuple[dict[str, Any], list[str], list[str]]:
+        # bracket-101 declares parts, so grading routes through the
+        # declared-scoped builder (2026-08-02); the pinned ordering property
+        # is identical on every build path.
+        order.append("build")
+        return {}, ["stop"], []
+
     monkeypatch.setattr(_grade, "restore_protected", fake_restore)
     monkeypatch.setattr(_grade, "_build_all", fake_build_all)
+    monkeypatch.setattr(_grade, "_build_declared_scoped", fake_build_scoped)
     monkeypatch.setattr(_grade, "open_cad", fake_open_cad)
 
     task = seeded_variant(load_tasks(["bracket-101"], specs=("prose",))[0])

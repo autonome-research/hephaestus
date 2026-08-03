@@ -182,14 +182,57 @@ def _build_deliverable_scoped(
     return builds, reasons, facts
 
 
+def _build_declared_scoped(
+    cad: CadOps, layout: ProjectLayout, declared: frozenset[str]
+) -> tuple[dict[str, Any], list[str], list[str]]:
+    """Build every part; only task-declared parts' failures are fail reasons.
+
+    Corpus grading scoped to :meth:`BenchTask.declared_parts` (2026-08-02
+    autopsy): the task's own acceptance names its deliverable set, so an
+    undeclared scratch part a model probed geometry with lands in the facts,
+    exactly as the adapter's deliverable-scoped path treats it. A DECLARED
+    part that was never authored fails by name — the acceptance would fail
+    on it downstream anyway, but here the reason says what is actually wrong.
+    """
+    builds: dict[str, Any] = {}
+    reasons: list[str] = []
+    facts: list[str] = []
+    parts = layout.part_names()
+    if not parts:
+        return builds, ["no_parts_authored"], facts
+    for part in sorted(declared - set(parts)):
+        reasons.append(f"declared_part_missing:{part}")
+    for part in parts:
+        sink = reasons if part in declared else facts
+        result = _build_with_lease_retry(cad, part)
+        if result is None:
+            sink.append(f"build_lease_busy:{part}")
+            continue
+        builds[part] = result
+        if result.get("status") != "ok":
+            sink.append(f"build_failed:{part}")
+        elif not bool(result.get("current")):
+            sink.append(f"build_not_current:{part}")
+    return builds, reasons, facts
+
+
 def _run_required_checks(
-    cad: CadOps, task: BenchTask
+    cad: CadOps,
+    task: BenchTask,
+    *,
+    parts: frozenset[str] | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, Any], list[str]]:
-    """Install the task's CHECKS, run them project-scoped, split the results."""
+    """Install the task's CHECKS, run them over the graded parts' snapshot.
+
+    ``parts`` (the task's declared set, or the deliverable) scopes the
+    snapshot: the acceptance checks measure the parts the task names, and an
+    undeclared scratch part with no successful build must not veto them
+    through an incoherent whole-project snapshot.
+    """
     reasons: list[str] = []
     for name, source in task.check_sources().items():
         cad.write_check(name, source, op_id=f"bench-check-{uuid.uuid4().hex}")
-    report = cad.run_project_checks(None)
+    report = cad.run_project_checks(None, parts=sorted(parts) if parts else None)
     status = str(report.get("status", "error"))
     required: dict[str, Any] = {}
     other: dict[str, Any] = {}
@@ -700,13 +743,18 @@ def grade(
     graded = False
     with open_cad(project_root) as cad:
         layout = cad.layout
-        if task.deliverable is None:
-            builds, build_reasons = _build_all(cad, layout)
-            build_facts: list[str] = []
-        else:
+        declared = task.declared_parts()
+        if task.deliverable is not None:
             builds, build_reasons, build_facts = _build_deliverable_scoped(
                 cad, layout, task.deliverable
             )
+        elif declared:
+            builds, build_reasons, build_facts = _build_declared_scoped(cad, layout, declared)
+        else:
+            # A task that names no parts anywhere keeps the original
+            # every-part rule — there is nothing to scope to.
+            builds, build_reasons = _build_all(cad, layout)
+            build_facts = []
         reasons.extend(build_reasons)
         if not build_reasons:
             graded = True
@@ -719,7 +767,14 @@ def grade(
                 # nothing is run.
                 check_reasons: list[str] = []
             else:
-                check_status, required, other, check_reasons = _run_required_checks(cad, task)
+                scope = (
+                    frozenset({task.deliverable})
+                    if task.deliverable is not None
+                    else (declared or None)
+                )
+                check_status, required, other, check_reasons = _run_required_checks(
+                    cad, task, parts=scope
+                )
             reasons.extend(check_reasons)
             export_records, export_reasons = _validate_exports(cad, task, layout)
             exports = export_records

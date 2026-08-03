@@ -123,8 +123,13 @@ rule-enforced:
   deliverable part (`candidate`). Adapter grading fails on the DELIVERABLE's
   build/export only; other parts' build failures are recorded as facts,
   never fail reasons — a model probing geometry with scratch parts is doing
-  good work, not failing. Corpus tasks are UNCHANGED (there, the multi-part
-  project is the deliverable).
+  good work, not failing. Amended 2026-08-02 (corpus autopsy): corpus tasks
+  get the same honesty through their OWN declarations — grading scopes to
+  the parts the task's acceptance names (export/render/DFM/drawing/metadata
+  requirements + constraint anchors), an undeclared scratch part's failure
+  is a recorded fact, and a DECLARED part never authored fails by name. A
+  task naming no parts anywhere keeps the original every-part rule. Corpus
+  task files themselves are untouched.
 - **Harness faults are not charged.** A tool call whose result is a harness
   fault (named timeout, sidecar restart, bridge error) does not count
   against the tool-call budget — the model must never pay for our failure,
