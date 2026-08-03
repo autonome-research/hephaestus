@@ -324,6 +324,20 @@ class PartOutput:
                 f"through part.feature(name).<field>.",
                 kind="contract",
             )
+        # §5.2 metadata fields are STRING-valued — enforced here for the same
+        # reason unknown names are refused: the 2026-08-03 re-run showed a
+        # model writing part.blank_size = (hc.blank_len, hc.blank_width,
+        # hc.sheet_t) — semantically right, silently stored, and failed later
+        # as "missing" when the grader's blank parser saw a list. The loud
+        # error names the expected form so the author converts in-run.
+        if name != "geometry" and not isinstance(value, str):
+            raise ValidationError(
+                f"part.{name} is a string-valued §5.2 metadata field "
+                f"(got {type(value).__name__}). Write it as prose, e.g. "
+                f'part.blank_size = "210 x 125 x 6 mm" — f-strings over hc '
+                f"values are fine.",
+                kind="contract",
+            )
         fields: dict[str, object] = object.__getattribute__(self, "_fields")
         fields[name] = value
 

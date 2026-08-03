@@ -248,3 +248,13 @@ class TestUnknownPartAttributeRefused:
         for field in METADATA_FIELDS:
             setattr(part, field, "value")
         assert part.metadata() == dict.fromkeys(METADATA_FIELDS, "value")
+
+    def test_a_non_string_metadata_value_is_refused_with_the_expected_form(self) -> None:
+        from hephaestus.core.executor.namespace import PartOutput
+
+        part = PartOutput()
+        with pytest.raises(ValidationError) as excinfo:
+            part.blank_size = (210.0, 125.0, 6.0)  # type: ignore[assignment]
+        message = str(excinfo.value)
+        assert "string-valued" in message and "210 x 125 x 6 mm" in message
+        part.geometry = object()  # geometry stays type-free

@@ -132,7 +132,10 @@ part.joint             # "PVA-laminated beam; each ply has two top tabs…"
 These nine names plus `part.geometry` are the WHOLE assignable `part.*`
 surface. Assigning anything else (`part.metadata = {...}`, `part.material =
 ...`) is a §8 build error at the statement, naming the valid fields —
-never a silent no-op. Added 2026-08-02: the corpus sweep showed models
+never a silent no-op. The string-valuedness is ENFORCED the same way: a
+non-string value (`part.blank_size = (210, 125, 6)`) is a build error
+naming the expected prose form, because a silently stored tuple resurfaces
+later as "missing" metadata the author reasonably believes they wrote. Added 2026-08-02: the corpus sweep showed models
 writing their metadata as a dict the namespace swallowed, then failing
 grades for "missing" metadata they had reasonably believed they wrote.
 Per-feature metadata goes through `part.feature(name).<field>` (§5.3).
