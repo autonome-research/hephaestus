@@ -407,6 +407,14 @@ def assemble_build(
         source_map_ref=source_map_ref,
         warnings=tuple(warnings),
         error=error,
+        metadata={
+            str(k): str(v)
+            for k, v in cast(
+                "dict[str, object]",
+                worker_result.get("metadata") or {},
+            ).items()
+            if isinstance(v, str)
+        },
     )
     geometry_index_raw = worker_result.get("geometry_index")
     geometry_index_json = geometry_index_raw if isinstance(geometry_index_raw, dict) else None

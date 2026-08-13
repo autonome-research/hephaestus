@@ -388,6 +388,13 @@ class BuildResult:
     source_map_ref: str | None
     warnings: tuple[Warning, ...]
     error: ErrorRecord | None
+    #: §5.2 manufacturing metadata as the WORKER evaluated it — the runtime
+    #: truth, so an f-string over ``hc`` values is carried exactly like a
+    #: literal. Empty map on records written before 2026-08-03 (the worker
+    #: always computed this; the record used to drop it, which forced every
+    #: downstream reader into literal-only static script parsing — the
+    #: nest-gusset "missing" blank_size the model had in fact written).
+    metadata: Mapping[str, str] = field(default_factory=dict[str, str])
 
     def __post_init__(self) -> None:
         if self.status not in ("ok", "failed"):
@@ -415,6 +422,7 @@ class BuildResult:
             "source_map_ref": self.source_map_ref,
             "warnings": [warning.to_json() for warning in self.warnings],
             "error": None if self.error is None else self.error.to_json(),
+            "metadata": dict(self.metadata),
         }
 
     @classmethod
@@ -477,6 +485,8 @@ class BuildResult:
             source_map_ref=_opt_str(data, "source_map_ref"),
             warnings=tuple(warnings),
             error=error,
+            # Absent from pre-2026-08-03 records; {} is the honest reading.
+            metadata=_str_map(data, "metadata") if "metadata" in data else {},
         )
 
     def __eq__(self, other: object) -> bool:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from hephaestus.core.errors import (
     ParamOutOfBoundsError,
@@ -258,3 +260,40 @@ class TestUnknownPartAttributeRefused:
         message = str(excinfo.value)
         assert "string-valued" in message and "210 x 125 x 6 mm" in message
         part.geometry = object()  # geometry stays type-free
+
+
+def test_runtime_metadata_reaches_the_build_record(tmp_path: Path) -> None:
+    """An f-string §5.2 field is carried by BuildResult exactly like a literal.
+
+    Regression (2026-08-03 sweep, nest-gusset 0/6): the worker evaluated
+    part.blank_size = f"{hc.blank_len} x ..." correctly, the record dropped
+    it, and the static literal fallback reported the metadata "missing".
+    """
+    from hephaestus.testing.tools_fixture import make_project
+
+    p = make_project(tmp_path / "proj")
+    try:
+        (p.root / "globals.py").write_text("blank_len = 210.0\nblank_width = 125.0\n")
+        script = (
+            "part.description = 'probe'\n"
+            'part.blank_size = f"{hc.blank_len} x {hc.blank_width} x 6 mm"\n'
+            "part.geometry = Box(10, 10, 6)\n"
+        )
+        p.call("create_part", {"name": "probe"})
+        current = p.call("read_part", {"name": "probe"})
+        p.call(
+            "write_part",
+            {"name": "probe", "script": script, "expected_hash": current["content_hash"]},
+        )
+        built = p.call("build_part", {"name": "probe"})
+        assert built["status"] == "ok"
+        result = p.cad.frozen_result("probe", built["artifact_ref"])
+        assert result is not None
+        assert result.metadata["blank_size"] == "210.0 x 125.0 x 6 mm"
+        assert result.metadata["description"] == "probe"
+        assert (
+            p.cad.frozen_script_metadata("probe", built["artifact_ref"])["blank_size"]
+            == "210.0 x 125.0 x 6 mm"
+        )
+    finally:
+        p.close()

@@ -287,6 +287,7 @@ record:
   "geometries": [ {"label": "outer_top_panel", "solids": 1, …}, … ],
   "params": { "groove_count": 5, … },
   "source_map_ref": "artifact:source-map:sha256:…",
+  "metadata": { "description": "…", "blank_size": "210.0 x 125.0 x 6 mm", … },
   "warnings": [ {"kind": "tag_descriptor_changed", "tag": "tread_top", "detail": "…"} ],
   "error": null | {
       "line": 46, "col": 14, "type": "ValueError",

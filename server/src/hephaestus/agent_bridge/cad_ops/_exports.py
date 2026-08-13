@@ -338,6 +338,13 @@ class FrozenMetadataOps(CadOpsState):
             return {}
         if snapshot.content_hash != result.input_hashes.script:
             return {}
+        # The build record carries the WORKER's runtime evaluation of the §5.2
+        # fields (2026-08-03) — the metadata of the geometry actually graded,
+        # including f-strings over hc values that a static literal read cannot
+        # see. Static extraction remains the fallback for records written
+        # before the field existed.
+        if result.metadata:
+            return dict(result.metadata)
         return script_metadata(snapshot.content)
 
     def frozen_result(self, name: str, source_ref: str) -> BuildResult | None:
