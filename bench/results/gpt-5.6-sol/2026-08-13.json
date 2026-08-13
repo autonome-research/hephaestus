@@ -1,0 +1,319 @@
+{
+  "aggregate": 0.8333333333333334,
+  "date": "2026-08-13",
+  "gated_split": "prose",
+  "interpretation_gap": 0.13888888888888884,
+  "meets_gate": true,
+  "metrics": {
+    "clarification_rate": 0.09090909090909091,
+    "counts": {
+      "build_failures": 63,
+      "build_recoveries": 33,
+      "caught_failures": 13,
+      "caught_numeric": 4,
+      "caught_vision": 9,
+      "clarification_refusals": 8,
+      "harness_error_runs": 0,
+      "ledger_entries": 878,
+      "material_assumptions": 11,
+      "material_assumptions_asked": 1,
+      "protected_runs": 57,
+      "reviewed_requirements": 878,
+      "reviewed_runs": 72,
+      "tampered_runs": 0,
+      "verdicts_verifiable": 13
+    },
+    "error_recovery_rate": 0.5238095238095238,
+    "harness_error_rate": 0.0,
+    "n": 72,
+    "requirement_coverage": 0.014806378132118452,
+    "review_catch_rate": 0.014806378132118452,
+    "review_catch_rate_numeric": 0.004555808656036446,
+    "review_catch_rate_vision": 0.010250569476082005,
+    "spec_tampering_rate": 0.0
+  },
+  "model": "gpt-5.6-sol",
+  "n": 36,
+  "n_total": 72,
+  "pass_rate_prose": 0.8333333333333334,
+  "pass_rate_seeded": 0.9722222222222222,
+  "passes": 30,
+  "passes_total": 65,
+  "per_task": {
+    "bracket-101": {
+      "budget_tool_calls": 20,
+      "mean_tokens": null,
+      "mean_tool_calls": 15.0,
+      "n": 3,
+      "pass_rate": 1.0,
+      "passes": 3
+    },
+    "bracket-101@seeded": {
+      "budget_tool_calls": 20,
+      "mean_tokens": null,
+      "mean_tool_calls": 11.0,
+      "n": 3,
+      "pass_rate": 1.0,
+      "passes": 3
+    },
+    "cat-step": {
+      "budget_tool_calls": 52,
+      "mean_tokens": null,
+      "mean_tool_calls": 33.333333333333336,
+      "n": 3,
+      "pass_rate": 1.0,
+      "passes": 3
+    },
+    "cat-step@seeded": {
+      "budget_tool_calls": 52,
+      "mean_tokens": null,
+      "mean_tool_calls": 25.333333333333332,
+      "n": 3,
+      "pass_rate": 1.0,
+      "passes": 3
+    },
+    "dfm-repair": {
+      "budget_tool_calls": 12,
+      "mean_tokens": null,
+      "mean_tool_calls": 10.0,
+      "n": 3,
+      "pass_rate": 1.0,
+      "passes": 3
+    },
+    "dfm-repair@seeded": {
+      "budget_tool_calls": 12,
+      "mean_tokens": null,
+      "mean_tool_calls": 11.333333333333334,
+      "n": 3,
+      "pass_rate": 0.6666666666666666,
+      "passes": 2
+    },
+    "drawing-shelf": {
+      "budget_tool_calls": 18,
+      "mean_tokens": null,
+      "mean_tool_calls": 18.333333333333332,
+      "n": 3,
+      "pass_rate": 0.3333333333333333,
+      "passes": 1
+    },
+    "drawing-shelf@seeded": {
+      "budget_tool_calls": 18,
+      "mean_tokens": null,
+      "mean_tool_calls": 14.333333333333334,
+      "n": 3,
+      "pass_rate": 1.0,
+      "passes": 3
+    },
+    "enclosure-bosses": {
+      "budget_tool_calls": 38,
+      "mean_tokens": null,
+      "mean_tool_calls": 26.666666666666668,
+      "n": 3,
+      "pass_rate": 1.0,
+      "passes": 3
+    },
+    "enclosure-bosses@seeded": {
+      "budget_tool_calls": 38,
+      "mean_tokens": null,
+      "mean_tool_calls": 21.0,
+      "n": 3,
+      "pass_rate": 1.0,
+      "passes": 3
+    },
+    "knob-loft": {
+      "budget_tool_calls": 26,
+      "mean_tokens": null,
+      "mean_tool_calls": 20.333333333333332,
+      "n": 3,
+      "pass_rate": 1.0,
+      "passes": 3
+    },
+    "knob-loft@seeded": {
+      "budget_tool_calls": 26,
+      "mean_tokens": null,
+      "mean_tool_calls": 21.0,
+      "n": 3,
+      "pass_rate": 1.0,
+      "passes": 3
+    },
+    "nest-gusset": {
+      "budget_tool_calls": 20,
+      "mean_tokens": null,
+      "mean_tool_calls": 15.666666666666666,
+      "n": 3,
+      "pass_rate": 1.0,
+      "passes": 3
+    },
+    "nest-gusset@seeded": {
+      "budget_tool_calls": 20,
+      "mean_tokens": null,
+      "mean_tool_calls": 14.666666666666666,
+      "n": 3,
+      "pass_rate": 1.0,
+      "passes": 3
+    },
+    "param-retune": {
+      "budget_tool_calls": 10,
+      "mean_tokens": null,
+      "mean_tool_calls": 10.333333333333334,
+      "n": 3,
+      "pass_rate": 0.6666666666666666,
+      "passes": 2
+    },
+    "param-retune@seeded": {
+      "budget_tool_calls": 10,
+      "mean_tokens": null,
+      "mean_tool_calls": 9.0,
+      "n": 3,
+      "pass_rate": 1.0,
+      "passes": 3
+    },
+    "print-bracket": {
+      "budget_tool_calls": 26,
+      "mean_tokens": null,
+      "mean_tool_calls": 14.333333333333334,
+      "n": 3,
+      "pass_rate": 1.0,
+      "passes": 3
+    },
+    "print-bracket@seeded": {
+      "budget_tool_calls": 26,
+      "mean_tokens": null,
+      "mean_tool_calls": 16.666666666666668,
+      "n": 3,
+      "pass_rate": 1.0,
+      "passes": 3
+    },
+    "repair-fillet": {
+      "budget_tool_calls": 12,
+      "mean_tokens": null,
+      "mean_tool_calls": 4.666666666666667,
+      "n": 3,
+      "pass_rate": 1.0,
+      "passes": 3
+    },
+    "repair-fillet@seeded": {
+      "budget_tool_calls": 12,
+      "mean_tokens": null,
+      "mean_tool_calls": 4.0,
+      "n": 3,
+      "pass_rate": 1.0,
+      "passes": 3
+    },
+    "sheet-box": {
+      "budget_tool_calls": 32,
+      "mean_tokens": null,
+      "mean_tool_calls": 21.666666666666668,
+      "n": 3,
+      "pass_rate": 1.0,
+      "passes": 3
+    },
+    "sheet-box@seeded": {
+      "budget_tool_calls": 32,
+      "mean_tokens": null,
+      "mean_tool_calls": 22.0,
+      "n": 3,
+      "pass_rate": 1.0,
+      "passes": 3
+    },
+    "store-hardware": {
+      "budget_tool_calls": 27,
+      "mean_tokens": null,
+      "mean_tool_calls": 30.0,
+      "n": 3,
+      "pass_rate": 0.0,
+      "passes": 0
+    },
+    "store-hardware@seeded": {
+      "budget_tool_calls": 27,
+      "mean_tokens": null,
+      "mean_tool_calls": 18.666666666666668,
+      "n": 3,
+      "pass_rate": 1.0,
+      "passes": 3
+    }
+  },
+  "perfect_task_failures": [],
+  "perfect_tasks": [
+    "repair-fillet"
+  ],
+  "splits": {
+    "prose": {
+      "meets_threshold": true,
+      "metrics": {
+        "clarification_rate": 0.14285714285714285,
+        "counts": {
+          "build_failures": 26,
+          "build_recoveries": 16,
+          "caught_failures": 8,
+          "caught_numeric": 3,
+          "caught_vision": 5,
+          "clarification_refusals": 5,
+          "harness_error_runs": 0,
+          "ledger_entries": 440,
+          "material_assumptions": 7,
+          "material_assumptions_asked": 1,
+          "protected_runs": 21,
+          "reviewed_requirements": 440,
+          "reviewed_runs": 36,
+          "tampered_runs": 0,
+          "verdicts_verifiable": 8
+        },
+        "error_recovery_rate": 0.6153846153846154,
+        "harness_error_rate": 0.0,
+        "n": 36,
+        "requirement_coverage": 0.01818181818181818,
+        "review_catch_rate": 0.01818181818181818,
+        "review_catch_rate_numeric": 0.006818181818181818,
+        "review_catch_rate_vision": 0.011363636363636364,
+        "spec_tampering_rate": 0.0
+      },
+      "n": 36,
+      "pass_rate": 0.8333333333333334,
+      "passes": 30,
+      "spec": "prose",
+      "threshold": 0.7,
+      "wilson_lower_90": 0.7395975905114166
+    },
+    "seeded": {
+      "meets_threshold": null,
+      "metrics": {
+        "clarification_rate": 0.0,
+        "counts": {
+          "build_failures": 37,
+          "build_recoveries": 17,
+          "caught_failures": 5,
+          "caught_numeric": 1,
+          "caught_vision": 4,
+          "clarification_refusals": 3,
+          "harness_error_runs": 0,
+          "ledger_entries": 438,
+          "material_assumptions": 4,
+          "material_assumptions_asked": 0,
+          "protected_runs": 36,
+          "reviewed_requirements": 438,
+          "reviewed_runs": 36,
+          "tampered_runs": 0,
+          "verdicts_verifiable": 5
+        },
+        "error_recovery_rate": 0.4594594594594595,
+        "harness_error_rate": 0.0,
+        "n": 36,
+        "requirement_coverage": 0.01141552511415525,
+        "review_catch_rate": 0.01141552511415525,
+        "review_catch_rate_numeric": 0.00228310502283105,
+        "review_catch_rate_vision": 0.0091324200913242,
+        "spec_tampering_rate": 0.0
+      },
+      "n": 36,
+      "pass_rate": 0.9722222222222222,
+      "passes": 35,
+      "spec": "seeded",
+      "threshold": null,
+      "wilson_lower_90": 0.9115835346849511
+    }
+  },
+  "threshold": 0.7,
+  "wilson_lower_90": 0.7395975905114166,
+  "z": 1.281552
+}
