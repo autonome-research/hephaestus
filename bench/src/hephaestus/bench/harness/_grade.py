@@ -267,7 +267,15 @@ def _validate_exports(
     reasons: list[str] = []
     for index, requirement in enumerate(task.exports):
         record: dict[str, Any] = {"requirement": requirement.to_json()}
-        target = f"bench-{requirement.part}-{index}.{EXPORT_FORMATS[requirement.fmt]}"
+        # Unique per grade: export targets are O_EXCL/never-overwritten by
+        # design, so a deterministic name made RE-grading the same project
+        # fail as export_failed (2026-08-13: three false failures on a
+        # nest-gusset diagnostic re-run into reused dirs). The uuid mirrors
+        # the op_id every other grader operation already carries.
+        target = (
+            f"bench-{requirement.part}-{index}-{uuid.uuid4().hex[:8]}"
+            f".{EXPORT_FORMATS[requirement.fmt]}"
+        )
         blank = _required_blank(requirement)
         try:
             result = cad.export_part(

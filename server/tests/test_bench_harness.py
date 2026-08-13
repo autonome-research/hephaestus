@@ -875,3 +875,21 @@ class TestDeclaredScopedCorpusGrading:
         report = harness.grade(task, project)
         assert "declared_part_missing:widget" in report.reasons
         assert not report.passed
+
+
+def test_grading_the_same_project_twice_is_idempotent(tmp_path: Path) -> None:
+    """A re-grade must not fail on its own previous export.
+
+    Regression (2026-08-13): export targets are never-overwritten by design,
+    and the grader's deterministic export name collided with the file its own
+    first grade wrote — three false export_failed rows on a diagnostic
+    re-run. Grade names are unique per invocation now.
+    """
+    (task,) = load_tasks(["repair-fillet"])
+    project = tmp_path / "project"
+    harness.seed_project(task, project)
+    harness.apply_solution(task, project)
+    first = harness.grade(task, project)
+    assert first.passed, first.reasons
+    second = harness.grade(task, project)
+    assert second.passed, second.reasons
