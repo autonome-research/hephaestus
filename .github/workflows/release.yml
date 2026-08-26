@@ -202,9 +202,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VENV="$HOME/.local/pipx/venvs/hephaestus-cad"
-          [ -d "$VENV" ] || VENV="$HOME/.local/share/pipx/venvs/hephaestus-cad"
-          PY=$(ls "$VENV"/bin/python)
+          # Ask pipx where its venvs live: hosted ubuntu images preinstall
+          # pipx with PIPX_HOME=/opt/pipx, macOS resolves under $HOME —
+          # guessing paths failed one lane per OS (runs 32936762552/-7722341).
+          VENVS=$(python3 -m pipx environment --value PIPX_LOCAL_VENVS)
+          PY=$(ls "$VENVS"/hephaestus-cad/bin/python)
           "$PY" - <<'PY'
           import json, pathlib, sys
           from importlib.metadata import distributions
@@ -368,6 +370,18 @@ jobs:
           heph build primary --json
           heph build bracket --json
           heph check --json
+
+      # The stage 7H suite covers BOTH resolution paths: the wheel's packaged
+      # sidecar (pinned by dedicated site-packages tests against the
+      # downloaded artifact) and the source checkout's built bundle. The
+      # latter needs the bundle to exist here, exactly as PACKAGING.md's
+      # sequence builds it (run 32937722341 caught the missing prep).
+      - name: build the checkout's sidecar bundle for the repo-resolution tests
+        run: |
+          set -euo pipefail
+          pnpm --dir agent install --frozen-lockfile
+          pnpm --dir agent run bundle
+          uv run python scripts/stage_sidecar.py
 
       # 2. packaged-sidecar integrity + native-addon audit, 3. JobStore init,
       #    4. `heph agent` fake-model, all against the DOWNLOADED wheels.
