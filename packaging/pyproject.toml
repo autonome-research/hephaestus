@@ -53,6 +53,15 @@ dependencies = [
 # part should have to install. `core/cli.py` registers `heph bench` /
 # `heph cadgenbench` only when the package imports, so the verbs appear for
 # anyone who asks for the extra and are cleanly absent otherwise.
+# pipx installs an APPLICATION: it refuses a distribution that exposes no
+# entry point of its own, even when a dependency provides one (the release
+# matrix caught exactly this on its first full run — every lane failed at
+# `pipx install hephaestus-cad`, 2026-08-26). The script targets the same
+# function `hephaestus-core` exposes, so a plain-pip environment gets one
+# `heph` with identical content from either wheel.
+[project.scripts]
+heph = "hephaestus.core.cli:main"
+
 [project.optional-dependencies]
 bench = ["hephaestus-bench"]
 

@@ -115,3 +115,20 @@ def test_the_manifest_format_the_build_hook_validates_matches_the_producer() -> 
     manifest = json.loads((resolve_sidecar().root / MANIFEST_NAME).read_text(encoding="utf-8"))
     assert {"version", "algorithm", "entrypoints", "entries"} <= set(manifest)
     assert manifest["algorithm"] == "sha256"
+
+
+def test_the_aggregate_wheel_exposes_the_heph_entry_point() -> None:
+    """`pipx install hephaestus-cad` must find an application, not just deps.
+
+    Regression (release run 32924618755, first full lane execution): the
+    aggregate wheel carried only dependencies, and pipx — unlike a plain pip
+    venv install — refuses a distribution with no entry point of its own, so
+    every lane died at `pipx install the built wheel`. The script targets the
+    same function hephaestus-core exposes.
+    """
+    spec = tomllib.loads((REPO / "packaging" / "pyproject.toml").read_text(encoding="utf-8"))
+    core = tomllib.loads((REPO / "core" / "pyproject.toml").read_text(encoding="utf-8"))
+    assert spec["project"]["scripts"]["heph"] == core["project"]["scripts"]["heph"], (
+        "the aggregate and core wheels must expose the SAME heph target — "
+        "two different entry points would race in a plain-pip environment"
+    )
