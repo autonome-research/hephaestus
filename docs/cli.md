@@ -30,6 +30,33 @@ for something impossible (bad usage, a refused capability).
 
 ## Engine verbs — no Node, no network
 
+### `heph init [DIR]`
+
+Scaffold a new project: the four-file convention `repo_conventions.md` records
+(`hephaestus.toml`, `globals.py`, `parts/`, a `.gitignore` ignoring `.heph/`)
+plus `checks/` seeded with the same safe cross-part template the
+`create_project_check` tool installs. The example part is real — it builds with
+nothing edited:
+
+```console
+$ heph init /tmp/gadget
+initialized Hephaestus project 'gadget' at /tmp/gadget
+  hephaestus.toml
+  globals.py
+  parts/example.py
+  checks/project.py
+  .gitignore
+next: cd there and run `heph build example`
+
+$ cd /tmp/gadget && heph build example
+example: ok (current) artifact=artifact:build:sha256:2f6e01c4a51b83d2…
+```
+
+`heph init` never overwrites: a non-empty target — including a directory it
+already initialized — is refused with the named `init_target_not_empty` error
+(exit 1) and nothing is written. The project name is the target directory's
+name; with no argument the current (empty) directory is initialized.
+
 ### `heph build [PART]`
 
 Build a part and publish the result. With no argument, builds every part in the
@@ -348,14 +375,12 @@ through the same engine path rather than a bespoke one.
 
 ## Verbs that do not exist (and why)
 
-- **`heph init`.** `repo_conventions.md` describes it as the scaffolding
-  convention; it is not implemented in v0.1.0-headless. Creating a project is
-  four files and [conventions.md](conventions.md) spells them out.
 - **`heph export`.** Exports are a *tool* surface (`export_part`), reachable
   from the agent and over MCP, not a CLI verb. `repo_conventions.md` names
   `heph export` in a list of Node-free capabilities; that clause is about the
   engine's independence from Node, which holds, and not about a verb that
   shipped.
 
-Both are recorded here rather than quietly omitted, because a docs set that
+It is recorded here rather than quietly omitted, because a docs set that
 promises a verb the binary does not have is worse than one that admits the gap.
+(`heph init` used to be listed here too; it shipped — see its section above.)

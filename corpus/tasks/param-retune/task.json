@@ -1,7 +1,7 @@
 {
   "id": "param-retune",
   "prompt": "The wall shelf in this project is built and passing its checks at 300 x 200. The hallway it is going into is wider than I measured, so it needs re-sizing.\n\nNew numbers: the tread must be 420 mm wide and 260 mm deep, and the gusset under it must reach 190 mm out from the wall and drop 220 mm below the tread. Everything else stays as it is - same 18 mm panel, same 25 mm front corner radius, same shape.\n\nThis project is fully parameterised: do it with project-scoped `set_params` only. Do not edit `globals.py` and do not edit any part script - if you find yourself writing geometry code, you are solving it the wrong way. Rebuild both parts afterwards so the new sizes are real.",
-  "budget_tool_calls": 10,
+  "budget_tool_calls": 13,
   "required_checks": [
     "param_retune"
   ],
@@ -13,5 +13,5 @@
     "parts/wall_plane.py",
     "globals.py"
   ],
-  "notes": "Difficulty 6. Every script is a protected path, so the only way to move the envelope is project-scoped set_params: geometry edits are restored before grading. Checks: the new tread/gusset envelopes plus every original invariant (corner radius and triangular profile via material budgets, sealed genus 0, gusset-to-tread contact, both parts flush to the wall gauge). The two volume checks were renamed and widened to match cat-step's in the 2026-07-26 corpus audit, even though this is the one task with no room for a different implementation at all - so a later edit to either task cannot leave one of them demanding an identity. Budget unchanged at 10."
+  "notes": "Difficulty 6. Every script is a protected path, so the only way to move the envelope is project-scoped set_params: geometry edits are restored before grading. Checks: the new tread/gusset envelopes plus every original invariant (corner radius and triangular profile via material budgets, sealed genus 0, gusset-to-tread contact, both parts flush to the wall gauge). The two volume checks were renamed and widened to match cat-step's in the 2026-07-26 corpus audit, even though this is the one task with no room for a different implementation at all - so a later edit to either task cannot leave one of them demanding an identity. Budget unchanged at 10. Budget recalibrated 2026-08-25 (operator decision; policy: VALIDATION.md §7 'Budgets are calibrated from measurement'): 10 -> 13. Derivation: observed passing max 10 tool_calls over n=15 passing runs, re-derived from the archived observe-mode journals bench/results/gpt-5.6-sol/*/runs.jsonl (the reference solution is a file overlay whose hand-counted call path is well under the observed max, so the observed term binds); ceil(1.3 x 10) = 13. The old budget left zero headroom over the observed passing max — the exact failure mode of the 2026-08-13 closing sweep, where every residual corpus failure was a small overrun. No archived artifact is re-scored: the G6 closure of 2026-08-13 stands as measured under the pre-amendment budgets."
 }

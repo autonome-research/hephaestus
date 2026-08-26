@@ -1,0 +1,4 @@
+# hinge-mate bench task: a fresh two-part assembly project.
+[project]
+name = "hinge_mate"
+description = "Two-leaf hinge, open flat, mated along a shared pin axis"

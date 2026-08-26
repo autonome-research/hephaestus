@@ -13,18 +13,21 @@ than a YAML linter — is that each lane still *makes the claim its clause names
 * lane (b) installs bubblewrap, runs the escape suite, and plants a hostile
   global ``pi``/``thread-phase`` so "uses its packaged sidecar" is asserted
   against a machine that offers an alternative;
-* lane (c) FAILS when no OCI backend answers — the failure mode this suite
-  guards hardest, because a lane that skips is indistinguishable from a lane
-  that passed;
-* lane (d) does not install a secure backend and asserts the named refusal;
+* lane (c) does not exist: it is DEFERRED post-v0.1 by the dated G7H
+  amendment (2026-08-13, ``mission_plan.md`` §"Stage 7H"), and the suite pins
+  the deferral itself — no lane-c job may reappear without the amendment
+  being revisited, and the deferral record may not quietly vanish either;
+* lane (d) does not install a secure backend and asserts the named refusal —
+  under the amendment this clause explicitly covers macOS as well;
 * every lane installs the built wheel from the shared ``wheelhouse`` artifact,
   never from the source tree — an in-tree install resolves the *development*
   sidecar and makes the gate's central claim untestable.
 
 These are the invariants that decay silently. A future edit that adds
-``continue-on-error: true`` to lane (c), or drops the escape suite from lane
-(b), keeps the workflow perfectly valid and quietly guts the gate; each one
-fails a test below.
+``continue-on-error: true`` to lane (d), drops the escape suite from lane
+(b), or reintroduces a lane-c job without revisiting the amendment, keeps the
+workflow perfectly valid and quietly guts the gate; each one fails a test
+below.
 """
 
 from __future__ import annotations
@@ -84,7 +87,10 @@ def _uses(job: dict[str, Any]) -> list[str]:
     return [str(step["uses"]) for step in _steps(job) if "uses" in step]
 
 
-LANES = ("lane-a", "lane-b", "lane-c", "lane-d")
+#: The clean-machine matrix after the 2026-08-13 amendment: lane-c is DEFERRED
+#: post-v0.1 (see the lane (c) section below) and must NOT appear here — the
+#: parametrized invariants would otherwise demand a job the gate no longer has.
+LANES = ("lane-a", "lane-b", "lane-d")
 
 
 # --------------------------------------------------------------------------
@@ -332,57 +338,75 @@ def test_lane_b_points_the_wheel_suites_at_the_built_artifact(
 
 
 # --------------------------------------------------------------------------
-# lane (c) — macOS through a detected OCI backend
+# lane (c) — DEFERRED (2026-08-13 G7H amendment, mission_plan.md §"Stage 7H")
+#
+# Until 2026-08-13 this block pinned the lane's content: runs-on macos-latest,
+# detection-by-response, the capability probe, the shared smokes, and a KNOWN
+# RED marker (test_lane_c_is_documented_as_red_until_the_oci_backend_lands).
+# The dated operator decision deferred lane (c) to the post-v0.1 roadmap as a
+# named Stage 7 deliverable, so those tests are REPOINTED here (mission rule:
+# repoint, never delete without replacement) to pin the deferral itself —
+# resurrecting the lane silently and forgetting macOS silently must both fail.
 
 
-def test_lane_c_runs_on_macos(release: dict[str, Any]) -> None:
-    assert _job(release, "lane-c")["runs-on"] == "macos-latest"
+def test_lane_c_is_deferred_not_silently_dropped(release: dict[str, Any]) -> None:
+    """No lane-c job exists, and the deferral is a dated record, not a gap.
 
-
-def test_lane_c_fails_when_no_backend_answers(release: dict[str, Any]) -> None:
-    """The lane exists to prove the backend path. A skip would be a false green.
-
-    Detection is by *response* (``docker info`` / ``podman info``), not by the
-    binary being on PATH: an installed-but-dead Docker must not count.
+    Repointed from ``test_lane_c_is_documented_as_red_until_the_oci_backend_lands``
+    under the 2026-08-13 G7H amendment: the load-bearing comment is no longer
+    "this lane is red" but "this lane was deferred, on this date, and returns
+    with Stage 7". Both halves are asserted: the job's absence (a reappearing
+    lane-c must arrive through a new amendment, not a quiet revert) and the
+    record's presence in every normative location.
     """
-    script = _script(_job(release, "lane-c"))
-    assert "docker info" in script or '"$candidate" info' in script
-    assert "exit 1" in script
-    assert "never a skip" in script, "the lane no longer records why a missing backend is a failure"
-    assert "pytest.skip" not in script
+    assert "lane-c" not in release["jobs"], (
+        "a lane-c job reappeared in release.yml; the 2026-08-13 deferral must "
+        "be formally revisited (mission_plan.md §'Stage 7H') before the lane returns"
+    )
+    text = RELEASE.read_text()
+    assert "DEFERRED" in text and "2026-08-13" in text and "OCI backend" in text, (
+        "release.yml no longer carries the dated lane (c) deferral record"
+    )
+    plan = (REPO / "mission_plan.md").read_text(encoding="utf-8")
+    assert "G7H amendment (2026-08-13" in plan
+    assert "DEFERRED to the post-v0.1" in plan
+    ci_only = (REPO / "tests" / "stage7h" / "CI_ONLY.md").read_text(encoding="utf-8")
+    assert "DEFERRED (2026-08-13" in ci_only, (
+        "CI_ONLY.md §3 no longer records the lane (c) deferral"
+    )
 
 
-def test_lane_c_probes_the_executor_profile_before_trusting_the_backend(
-    release: dict[str, Any],
-) -> None:
-    """architecture.md: "Stage S must prove this profile rather than trusting
-    backend presence."
-    """
-    script = _script(_job(release, "lane-c"))
-    for flag in ("--read-only", "--network none", "--cap-drop ALL"):
-        assert flag in script, f"the capability probe dropped {flag}"
+def test_the_deferral_record_preserves_what_the_lane_proved() -> None:
+    """Repointed from the lane-c content tests (macOS runner, detection by
+    response, the capability probe, the shared smokes).
 
-
-def test_lane_c_runs_the_same_smokes_as_the_linux_lane(
-    release: dict[str, Any],
-) -> None:
-    script = _script(_job(release, "lane-c"))
-    assert "tests/stage7h" in script  # fake-model
-    assert "tests/stage3" in script  # MCP
-    assert "test_sandbox_probe.py" in script  # escape suite
-
-
-def test_lane_c_is_documented_as_red_until_the_oci_backend_lands() -> None:
-    """The honest state, recorded where a reader will hit it.
-
-    ``secure_backend()`` constructs a ``BwrapBackend`` and nothing else, so on
-    macOS it refuses — correct fail-closed behaviour, and exactly why the lane
-    must fail rather than skip. The comment is load-bearing: it is the only
-    place that says G7H's lane (c) clause is not yet satisfiable.
+    The job is gone, so its *specification* must survive in the deferral
+    record — otherwise the Stage 7 reauthoring starts from nothing and the
+    deferral quietly becomes a drop.
     """
     text = RELEASE.read_text()
-    assert "KNOWN RED" in text
-    assert "OCI backend" in text
+    for fact in (
+        "macOS",  # where the lane ran
+        "DETECTED",  # detection, never assumption
+        "capability probe",  # the profile was probed, not trusted
+        "read-only root",  # …and what the probe proved
+        "no network",
+        "escape suite",  # the shared smokes/suites
+        "Stage 7",  # where the clause returns
+    ):
+        assert fact in text, f"the lane (c) deferral record lost {fact!r}"
+
+
+def test_the_amended_fail_closed_clause_names_macos() -> None:
+    """Lane (d)'s clause, as amended, explicitly covers macOS.
+
+    "On macOS the product refuses script execution by design in v0.1" is the
+    half of the amendment that keeps macOS users told the truth; losing the
+    sentence from the workflow's gate transcription would be forgetting them.
+    """
+    text = RELEASE.read_text()
+    assert "on macOS the product refuses script execution" in text
+    assert "by design in v0.1" in text
 
 
 # --------------------------------------------------------------------------
@@ -457,12 +481,13 @@ def test_the_prior_gate_check_names_every_ci_job(release: dict[str, Any]) -> Non
 
 
 def test_the_gate_job_waits_for_every_lane(release: dict[str, Any]) -> None:
+    """Every lane of the amended matrix — lane-c is deferred (2026-08-13), so
+    its absence from ``needs`` is asserted equality, not an oversight."""
     gate = _job(release, "release-gate")
     assert set(gate["needs"]) == {
         "wheelhouse",
         "lane-a",
         "lane-b",
-        "lane-c",
         "lane-d",
         "prior-gates",
     }

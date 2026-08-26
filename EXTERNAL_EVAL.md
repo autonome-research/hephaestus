@@ -134,7 +134,14 @@ rule-enforced:
   fault (named timeout, sidecar restart, bridge error) does not count
   against the tool-call budget — the model must never pay for our failure,
   twice over when it retries. Charged/uncharged is recorded per call in the
-  archive.
+  archive. Amended 2026-08-25: an assistant turn that errors on a NAMED
+  transient provider class (the 2026-08-02 pair 214/218 died on one
+  "WebSocket error" each with correct geometry built) gets exactly ONE
+  automatic retry per run — the sidecar re-prompts with a continuation
+  prompt and records a `turn_retry` audit event carrying the fault message;
+  the fault itself stays uncharged, the retry turn's tool calls are charged
+  normally (the model is working), and a second errored turn fails the run
+  exactly as before.
 - **Editing budget is measured, not guessed.** The editing-task budget is
   set from the observe-mode distribution of completed runs (2026-07-29
   data: passing editing runs and correct-but-over runs cluster 60-90);

@@ -1,7 +1,7 @@
 {
   "id": "knob-loft",
   "prompt": "Design a turned control knob as the part `knob`. It is a body of revolution about the Z axis, standing on z = 0, and it is printed in PETG - no knurling, no flats, nothing that breaks the revolve.\n\nProfile, bottom to top (the diameters and heights are in `globals.py`; read them through `hc`):\n\n- a base flange 40 mm in diameter and 8 mm tall, sitting on z = 0;\n- from the top of the flange at z = 8, a smooth lofted transition up to the 24 mm diameter grip at z = 14 - a straight taper between the two circles, not a step;\n- the 24 mm grip carries on up to the top of the knob at z = 30;\n- the top rim is rounded over with a 6 mm radius crown.\n\nThe project also contains two gauge parts, `core_gauge` and `sleeve_gauge` - reference geometry the acceptance checks measure the grip's form against. Leave them exactly as they are.\n\nBuild the knob and export it as 3MF for the printer when the geometry is right.",
-  "budget_tool_calls": 26,
+  "budget_tool_calls": 33,
   "required_checks": [
     "knob_loft"
   ],
@@ -18,5 +18,5 @@
     "parts/core_gauge.py",
     "parts/sleeve_gauge.py"
   ],
-  "notes": "Difficulty 7. Checks: envelope, sealed genus 0, equal X/Y extents, grip form held inside a 0.05 mm radial band by the seeded go-plug/no-go sleeve gauges (the measured form of revolve symmetry), and a material budget covering the loft and the R6 crown. Export: 3MF. The 2026-07-26 corpus audit left this task's windows alone - the grip is already measured as a fit and the +/-220 mm^3 budget (1.0%) is the widest in the corpus - and only renamed material_volume to material_budget for consistency."
+  "notes": "Difficulty 7. Checks: envelope, sealed genus 0, equal X/Y extents, grip form held inside a 0.05 mm radial band by the seeded go-plug/no-go sleeve gauges (the measured form of revolve symmetry), and a material budget covering the loft and the R6 crown. Export: 3MF. The 2026-07-26 corpus audit left this task's windows alone - the grip is already measured as a fit and the +/-220 mm^3 budget (1.0%) is the widest in the corpus - and only renamed material_volume to material_budget for consistency. Budget recalibrated 2026-08-25 (operator decision; policy: VALIDATION.md §7 'Budgets are calibrated from measurement'): 26 -> 33. Derivation: observed passing max 25 tool_calls over n=17 passing runs, re-derived from the archived observe-mode journals bench/results/gpt-5.6-sol/*/runs.jsonl (the reference solution is a file overlay whose hand-counted call path is well under the observed max, so the observed term binds); ceil(1.3 x 25) = 33. The old budget left only 1 call of headroom over the observed passing max. No archived artifact is re-scored: the G6 closure of 2026-08-13 stands as measured under the pre-amendment budgets."
 }

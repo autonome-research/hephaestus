@@ -40,6 +40,7 @@ from typing import Literal, cast
 
 from hephaestus.core.checks.facade import (
     GeometrySource,
+    ImportResolver,
     KernelOps,
     Measurement,
     project_measurement,
@@ -378,6 +379,7 @@ def run_bundle(
     ops: KernelOps | None = None,
     densities: Mapping[str, float] | None = None,
     project_snapshot_ref: str | None = None,
+    imports: ImportResolver | None = None,
 ) -> CheckReport:
     """Execute a frozen bundle's cross-part checks and build the CheckReport.
 
@@ -391,6 +393,15 @@ def run_bundle(
     ``m.diff`` could outlive the session. (Part-scope ``CHECKS`` inside the
     sandboxed build worker call :func:`run_checks` directly and keep the
     unbounded in-process diff: the worker itself is the killable subprocess.)
+
+    ``imports`` resolves an ``m.diff(..., "import:<path>")`` target to a shape
+    (``COMPARE.md`` §2: acceptance checks may assert against a seeded import).
+    The resolver is injected by the caller that owns the project — the engine
+    does not decide who may read ``imports/`` — and when it is absent an
+    import-target diff keeps its discriminated facade refusal. Added
+    2026-08-25: the corpus-v2 editing task ``flange-edit`` grades through
+    project-scoped checks, which previously had no resolver at all, so the
+    predicate ``COMPARE.md`` §2 promises could never run at grade time.
     """
     if ops is None:
         from hephaestus.core.project_compare import bounded_kernel_ops
@@ -409,7 +420,7 @@ def run_bundle(
             checks[f"{stem}:{name}"] = predicate
 
     def _factory() -> Measurement:
-        return project_measurement(sources, ops=ops, densities=densities)
+        return project_measurement(sources, ops=ops, densities=densities, imports=imports)
 
     return CheckReport(
         part=part,
@@ -775,6 +786,7 @@ class CheckSet:
         ops: KernelOps | None = None,
         densities: Mapping[str, float] | None = None,
         project_snapshot_ref: str | None = None,
+        imports: ImportResolver | None = None,
     ) -> CheckReport:
         """Capture under the lock, release, then execute (architecture §3.4)."""
         bundle = self.capture()
@@ -785,4 +797,5 @@ class CheckSet:
             ops=ops,
             densities=densities,
             project_snapshot_ref=project_snapshot_ref,
+            imports=imports,
         )

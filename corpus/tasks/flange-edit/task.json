@@ -1,0 +1,22 @@
+{
+  "id": "flange-edit",
+  "prompt": "Our vendor's pipe flange is in this project as imports/flange.step - it is the solid we bolt to the pump body today. The pump nozzle has been upsized, so the flange's centre bore has to grow from 25 mm to 30 mm diameter. Start from the vendor file rather than remodelling the flange: import it and open the centre bore to 30 mm, straight through. Everything else - the outer diameter, the thickness, the four bolt holes and the flange's position - must stay exactly as the vendor ships it.\n\nThe project also contains an inspection gauge part (`bore_gauge`) whose go-pin the acceptance checks fit through the new bore - leave it exactly as it is.\n\nName the part `flange`, build it, and export it as STEP when the geometry is right.",
+  "budget_tool_calls": 16,
+  "required_checks": [
+    "flange_edit"
+  ],
+  "export_requirements": [
+    {
+      "part": "flange",
+      "format": "step",
+      "layout": "as_built",
+      "min_bytes": 1024
+    }
+  ],
+  "render_requirements": [],
+  "protected_paths": [
+    "parts/bore_gauge.py",
+    "imports/flange.step"
+  ],
+  "notes": "Difficulty 2. Corpus-v2 addition (2026-08-25 operator decision): the Stage 8A editing shape - a seeded vendor STEP the run must start from (INGEST.md §1/§2). Checks: the edit is measured against the seeded import itself via m.diff('flange/part', 'import:flange.step') as_posed (COMPARE.md §2) - material removed equals the Ø25->Ø30 bore annulus (1727.88 mm^3, +/-120: a factor ~2 below the smallest wrong removal it must reject, one Ø9 bolt hole opened to Ø11 at 251 mm^3), nothing added (a_only <= 1 mm^3), vendor pose/envelope/genus preserved - plus the new bore measured as a fit against the seeded Ø29.9 go-pin gauge, and sealed genus 5. The import and the gauge are protected paths, so a run cannot pass by replacing the comparison target or the pin. Budget derivation (policy: VALIDATION.md §7 'Budgets are calibrated from measurement'): budget = ceil(1.3 x max(hand-counted reference path, observed passing max)). No observe-mode corpus journal data exists for this task yet (it is new in corpus-v2), so the observed term is empty and the hand count binds: 12 calls (create_part, write_part, build_part, inspect_part, measure, compare_solids against the import, run_checks, export_part, plus slack for one corrective write+build+diff readback); ceil(1.3 x 12) = 16. Ledger calls are compelled and uncharged. To be re-derived from archived observe-mode journals once they exist."
+}

@@ -69,9 +69,12 @@ host. Any probe that does not block raises `sandbox_unavailable`.
 
 - **Linux x86_64 with bubblewrap ≥ 0.11** is the supported secure lane. Install
   `bubblewrap` from your distribution.
-- **macOS** is supported for agent execution through a capability-tested
-  Docker/Podman/OrbStack-compatible OCI backend running the pinned Linux
-  executor profile.
+- **macOS**: in v0.1.0-headless, script execution refuses by design
+  (deferred 2026-08-13, operator decision). The planned macOS path — a
+  capability-tested Docker/Podman/OrbStack-compatible OCI backend running the
+  pinned Linux executor profile — ships post-v0.1. Everything that does not
+  execute part scripts (`heph lint`, schema/contract reads, `heph --version`)
+  works on macOS today.
 - **Anywhere else**, script execution **fails closed**. `heph build` exits
   non-zero with a structured capability error; it never silently downgrades.
 

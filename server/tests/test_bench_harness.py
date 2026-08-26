@@ -407,7 +407,8 @@ def test_bench_run_bracket_101_with_a_scripted_model(
     assert run.passed, run.reasons
     # create_part + write_part + build_part, counted from the normalized stream.
     assert run.tool_calls == 3
-    assert run.tool_calls <= run.budget_tool_calls == 20
+    # 25 is the 2026-08-25 measured-budget recalibration (VALIDATION.md §7).
+    assert run.tool_calls <= run.budget_tool_calls == 25
 
     grade = cast("dict[str, Any]", run.grade)
     assert grade["within_budget"] is True
@@ -459,6 +460,76 @@ def test_bench_run_repair_fillet_with_a_scripted_model(
     assert cast("list[Any]", grade["exports"]) == []
     assert cast("dict[str, Any]", grade["builds"])["plate"]["status"] == "ok"
     assert_archived(archive / "repair-fillet-s2", run)
+
+
+def test_one_transient_provider_fault_mid_run_is_retried_and_the_run_passes(
+    tmp_path: Path,
+    fake_model: FakeOpenAI,
+    provider: ProviderConfig,
+    runtime_factory: harness.RuntimeFactory,
+) -> None:
+    """EXTERNAL_EVAL.md §5 end to end: the model never pays for a provider blip.
+
+    The scripted provider fails exactly one mid-run request with an HTTP 500
+    ("WebSocket error" — the archived 2026-08-02 fault class verbatim). The
+    sidecar's transient-fault retry (``agent/src/session/retry.ts``) must give
+    the run its single automatic continuation, so the whole thing — retry,
+    audit trail, charging — is asserted on the *product* path a real bench run
+    takes: real sidecar, real tools, the bench's own grading and archive.
+
+    * the run completes and PASSES: the fault cost the model nothing;
+    * the archive's events.jsonl carries the ``turn_retry`` audit event with
+      the fault message and its named transient class;
+    * the charged count is exactly the model's own three design calls — the
+      errored turn added no charge, and the ledger turn stays compelled.
+    """
+    (task,) = load_tasks(["repair-fillet"])
+    repair_script(fake_model)
+    # Splice one transient fault into the scripted turns after read_part: the
+    # cursor-based script simply resumes on the retry's continuation prompt.
+    script = list(fake_model._script)  # pyright: ignore[reportPrivateUsage]
+    script.insert(2, {"kind": "error", "message": "WebSocket error", "status": 500})
+    fake_model.set_script(script)
+    archive = tmp_path / "results" / provider.model_slug / "2026-08-25"
+
+    run = harness.run_task(
+        task,
+        1,
+        provider=provider,
+        archive_dir=archive,
+        runtime_factory=runtime_factory,
+        prompt_timeout=PROMPT_TIMEOUT,
+        date="2026-08-25",
+    )
+
+    # The single named transient fault must not fail the run, let alone the bench.
+    assert run.error is None, run.error
+    assert run.status == "completed"
+    assert run.passed, run.reasons
+
+    # Charging: read_part + edit_part + build_part and nothing else. The fault
+    # itself is uncharged (it is not a tool call), the retry turn's calls are
+    # charged normally, and the compelled ledger call stays exempt.
+    assert run.tool_calls == 3
+    assert run.compelled_tool_calls == 1
+    assert run.uncharged_tool_calls == 0
+    assert run.budget_exceeded_at is None
+    assert cast("dict[str, Any]", run.grade)["within_budget"] is True
+
+    # The archive shows the fault and the single retry: the audit event is in
+    # the run's events.jsonl (audit events are never coalesced or dropped).
+    events = assert_archived(archive / "repair-fillet-s1", run)
+    audits = [
+        cast("dict[str, Any]", e["payload"])
+        for e in events
+        if e["kind"] == "audit"
+        and cast("dict[str, Any]", e["payload"]).get("event") == "turn_retry"
+    ]
+    assert len(audits) == 1, "exactly one turn_retry audit event"
+    assert "WebSocket error" in str(audits[0]["error"])
+    assert audits[0]["transient_class"] == "websocket"
+    # The retried run still reaches one durable completed terminal.
+    assert run.terminal_state == "completed"
 
 
 def test_a_review_hook_outcome_is_archived_and_scored(

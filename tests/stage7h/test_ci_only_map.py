@@ -103,22 +103,31 @@ def test_every_cited_step_exists_in_its_job() -> None:
 
 
 def test_every_lane_of_the_matrix_is_accounted_for() -> None:
-    """All four clean-machine lanes appear, plus the two aggregation jobs."""
+    """Every lane G7 named appears — the live ones, the DEFERRED lane-c
+    (2026-08-13 amendment; accounted for is the whole point of a deferral, as
+    opposed to a drop) — plus the two aggregation jobs."""
     text = _doc()
     for job in ("lane-a", "lane-b", "lane-c", "lane-d", "prior-gates", "release-gate"):
         assert f"`{job}`" in text, f"CI_ONLY.md never mentions {job}"
 
 
-def test_the_known_red_lane_names_the_tests_that_pin_it() -> None:
-    """Lane (c) is red; the document must point at the tests holding it visible.
+def test_the_deferred_lane_names_the_tests_that_pin_it() -> None:
+    """Lane (c) is DEFERRED; the document must point at the tests holding the
+    deferral honest in both directions.
 
-    If either named test is renamed away, the KNOWN RED entry loses its tripwire
-    and the gap can rot back into an omission.
+    Repointed from ``test_the_known_red_lane_names_the_tests_that_pin_it``
+    under the G7H amendment (2026-08-13, ``mission_plan.md`` §"Stage 7H"): the
+    lane-c job was removed from ``release.yml``, so the entry to keep visible
+    is no longer a KNOWN RED gap but the dated deferral itself. If either
+    named test is renamed away, the DEFERRED entry loses its tripwire and the
+    clause can rot into a silent drop (or a silent resurrection).
     """
     text = _doc()
-    assert "KNOWN RED" in text
+    assert "DEFERRED (2026-08-13" in text, (
+        "CI_ONLY.md §3 no longer carries the dated lane (c) deferral"
+    )
     for pin in (
-        "test_lane_c_is_documented_as_red_until_the_oci_backend_lands",
+        "test_lane_c_is_deferred_not_silently_dropped",
         "test_bwrap_is_still_the_only_secure_backend",
     ):
         assert pin in text, f"CI_ONLY.md does not name the pinning test {pin}"
@@ -126,6 +135,28 @@ def test_the_known_red_lane_names_the_tests_that_pin_it() -> None:
         assert any(pin in p.read_text(encoding="utf-8") for p in hits), (
             f"CI_ONLY.md names {pin}, but no test in tests/stage7h defines it"
         )
+
+
+def test_the_deferral_agrees_with_the_mission_plan_and_the_workflow() -> None:
+    """The three normative locations tell one story.
+
+    ``mission_plan.md`` records the dated operator decision, ``CI_ONLY.md``
+    carries the DEFERRED entry, and ``release.yml`` contains no lane-c job.
+    Any one of them changing alone — the plan un-deferring, the document
+    forgetting, or the workflow resurrecting the lane — is the inconsistency
+    this test exists to catch.
+    """
+    plan = (REPO / "mission_plan.md").read_text(encoding="utf-8")
+    assert "G7H amendment (2026-08-13" in plan, (
+        "mission_plan.md no longer records the dated lane (c) deferral decision"
+    )
+    assert "DEFERRED to the post-v0.1" in plan
+    assert "DEFERRED (2026-08-13" in _doc()
+    release = _workflow("release.yml")
+    assert "lane-c" not in release["jobs"], (
+        "release.yml grew a lane-c job while CI_ONLY.md still records the "
+        "clause as deferred; revisit the 2026-08-13 amendment first"
+    )
 
 
 def test_the_g6_bench_clause_is_marked_red_for_exactly_as_long_as_it_is_open() -> None:

@@ -1,0 +1,4 @@
+# flange-edit bench task: a vendor STEP seeded under imports/ (INGEST.md §1).
+[project]
+name = "flange_edit"
+description = "Vendor pipe flange whose centre bore is opened from 25 to 30 mm"

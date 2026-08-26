@@ -1,0 +1,28 @@
+{
+  "id": "plate-from-drawing",
+  "prompt": "We lost the CAD for one of our mounting plates and only have the drawing the shop machines it from; it is registered on this project as plate-drawing.png. Look at the drawing and build the part it specifies as the part `plate`: footprint centred on the origin, lying on the XY plane with its underside at z = 0, and the drawing's long direction (the 90 mm width) along X. Every dimension you need is on the sheet - take your numbers from the drawing and record them as requirements citing the drawing itself, not this message.\n\nThe project also contains an inspection gauge part (`hole_gauge`) whose go-pins the acceptance checks fit through the plate's holes - leave it exactly as it is.\n\nBuild the plate and export it as STEP when the geometry is right.",
+  "budget_tool_calls": 19,
+  "required_checks": [
+    "plate_from_drawing"
+  ],
+  "export_requirements": [
+    {
+      "part": "plate",
+      "format": "step",
+      "layout": "as_built",
+      "min_bytes": 1024
+    }
+  ],
+  "render_requirements": [
+    {
+      "part": "plate",
+      "channel": "rgb",
+      "views": ["iso"]
+    }
+  ],
+  "protected_paths": [
+    "parts/hole_gauge.py",
+    "references/plate-drawing.png"
+  ],
+  "notes": "Difficulty 2. Corpus-v2 addition (2026-08-25 operator decision): the Stage 8A generation-from-drawing shape - the spec lives on a seeded image reference (INGEST.md §2), so the run must read the sheet through the vision channel and its ledger citations of the drawing are image citations (lint-unverifiable by construction; VALIDATION.md §2 routes them to the termination reviewer). The prompt asks for the citations in as many words; grading is geometric and does not depend on the reviewer. Checks: envelope window, material BUDGET (+/-350 mm^3 on 29548.98: ~2.3x below the smallest unrequested pocket/boss it must reject at 800 mm^3, ~4x above a cosmetic 0.5 mm edge break at ~75 mm^3), five go-pin gauge fits on the drawn hole centres (position and diameter both), sealed with genus 5. The gauge and the drawing are protected paths, so a run cannot pass by editing the pins or the sheet. Budget derivation (policy: VALIDATION.md §7 'Budgets are calibrated from measurement'): budget = ceil(1.3 x max(hand-counted reference path, observed passing max)). No observe-mode corpus journal data exists for this task yet (it is new in corpus-v2), so the observed term is empty and the hand count binds: 14 calls (list_references, read_reference on the drawing, create_part, write_part, build_part, inspect_part, measure x2, run_checks, export_part, plus slack for one corrective write+build+measure+checks cycle); ceil(1.3 x 14) = 19. Ledger calls are compelled and uncharged. To be re-derived from archived observe-mode journals once they exist."
+}

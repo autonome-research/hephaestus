@@ -21,6 +21,14 @@ from pathlib import Path
 from typing import Any, Final, cast
 
 from hephaestus.core.checks.engine import CheckSetState, load_check_module, run_bundle
+
+# The safe cross-part check template (``create_project_check``) is shared with
+# ``heph init`` and lives in core; re-exported here unchanged.
+from hephaestus.core.checks.template import (
+    CHECK_DESCRIPTION_SENTINEL,
+    CHECK_TEMPLATE_HEADER,
+    check_template,
+)
 from hephaestus.core.errors import AddressingError, InvalidCheckGenerationError, ValidationError
 from hephaestus.core.project_store.projections import SnapshotRejectedError
 from hephaestus.core.project_store.store import (
@@ -34,28 +42,15 @@ from opstore.types import JSONValue
 
 from ._base import CadOpError, CadOpsState
 
-#: The safe cross-part check template (``create_project_check``). The sentinel is
-#: substituted, not ``str.format``-ed, because the body itself contains braces.
-CHECK_DESCRIPTION_SENTINEL: Final[str] = "__DESCRIPTION__"
-CHECK_TEMPLATE_HEADER: Final[str] = (
-    f"# Project check{CHECK_DESCRIPTION_SENTINEL}\n"
-    "#\n"
-    "# Checks receive the measurement facade `m` and the pure `approx` helper\n"
-    '# only. Address another part as "<part>/<selector>".\n'
-    "\n"
-    "CHECKS = {\n"
-    '    "placeholder": lambda m: True,\n'
-    "}\n"
-)
+__all__ = [
+    "CHECK_DESCRIPTION_SENTINEL",
+    "CHECK_TEMPLATE_HEADER",
+    "CheckOps",
+    "check_template",
+]
 
 #: ``summary`` cap for ``list_project_checks`` items (tool_schema: 512 UTF-8 bytes).
 _SUMMARY_MAX_BYTES: Final[int] = 512
-
-
-def check_template(description: str) -> str:
-    """The initial script ``create_project_check`` installs (no-replace)."""
-    suffix = f": {description}" if description else ""
-    return CHECK_TEMPLATE_HEADER.replace(CHECK_DESCRIPTION_SENTINEL, suffix)
 
 
 class CheckOps(CadOpsState):
@@ -154,6 +149,25 @@ class CheckOps(CadOpsState):
             return exc.kind
         return None
 
+    def _import_target_shape(self, path: str) -> object:
+        """Resolve an ``m.diff(..., "import:<path>")`` target (``COMPARE.md`` §2).
+
+        Rides the Stage 8A machinery unchanged through
+        :meth:`~hephaestus.core.project_compare.ProjectComparer.import_operand`:
+        the same ``openat2``-class confinement walk and the same content hash,
+        so a project-scoped acceptance check measures exactly the bytes the
+        operator seeded. A missing file, a traversal or an unreadable STEP
+        keeps its own named refusal, which the checks engine records as that
+        predicate's failure — never a pass, never a crash of the run. Wired
+        2026-08-25: project-scope ``run_checks`` (the bench grader's path)
+        previously had no resolver, so the editing-task predicate
+        ``COMPARE.md`` §2 promises failed as unresolvable at grade time.
+        """
+        from hephaestus.core.project_compare import ProjectComparer
+
+        shape, _operand = ProjectComparer(self._layout, self._store).import_operand(path)
+        return shape
+
     # -- run_checks --------------------------------------------------------
 
     def run_part_checks(self, name: str) -> dict[str, Any]:
@@ -239,6 +253,7 @@ class CheckOps(CadOpsState):
                     sources,
                     part=self._layout.manifest.name,
                     project_snapshot_ref=resolved_ref,
+                    imports=self._import_target_shape,
                 )
             except InvalidCheckGenerationError as exc:  # pragma: no cover - captured above
                 raise CadOpError("invalid_check_generation", exc.message) from exc

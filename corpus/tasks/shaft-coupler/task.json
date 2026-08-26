@@ -1,0 +1,51 @@
+{
+  "id": "shaft-coupler",
+  "prompt": "Model a stepped shaft and the sleeve coupler that slides onto it, as the two parts `shaft` and `coupler`. Every interface number is already in the project's `globals.py` - read them through `hc` instead of repeating them.\n\nThe shaft stands on the XY plane with its axis up +Z, centred on the origin: a 20 mm diameter hub, 8 mm tall, rising from z = 0, and a 12 mm diameter spindle rising coaxially from the hub's top face to an overall height of 58 mm. Tag the spindle's cylindrical surface as `spindle` and the hub's top shoulder face as `shoulder`.\n\nThe coupler is a plain sleeve riding on that spindle: 22 mm outer diameter, 30 mm long, with its lower end face seated 12 mm above the hub shoulder (so it spans z = 20 to z = 50). Bore it for a real sliding fit on the spindle - between 0.02 and 0.08 mm of radial clearance. Do not bore it at the spindle's own diameter: the parts must slide, never touch. Add a single 4 mm diameter set-screw hole radially through the sleeve wall, halfway along the coupler's length, so it breaks through into the bore. Tag the bore wall as `bore` and the lower end face as `seat_end`. Assembly checking addresses the parts through exactly those tag names.\n\nBuild both parts when the geometry is right.",
+  "budget_tool_calls": 16,
+  "required_checks": [
+    "shaft_coupler"
+  ],
+  "export_requirements": [],
+  "render_requirements": [],
+  "constraint_requirements": [
+    {
+      "entry": {
+        "id": "c-sliding-fit",
+        "kind": "fit",
+        "a": "coupler:bore",
+        "b": "shaft:spindle",
+        "min_mm": 0.02,
+        "max_mm": 0.08,
+        "note": "the coupler slides on the spindle: a real clearance fit, never line-to-line"
+      },
+      "expect": "satisfied"
+    },
+    {
+      "entry": {
+        "id": "c-no-interference",
+        "kind": "no_interference",
+        "a": "shaft",
+        "b": "coupler",
+        "note": "a sliding pair shares no volume anywhere, hub included"
+      },
+      "expect": "satisfied"
+    },
+    {
+      "entry": {
+        "id": "c-seat-height",
+        "kind": "distance",
+        "a": "shaft:shoulder",
+        "b": "coupler:seat_end",
+        "value_mm": 12.0,
+        "tol_mm": 0.2,
+        "note": "the coupler's lower end face sits 12 mm above the hub shoulder"
+      },
+      "expect": "satisfied"
+    }
+  ],
+  "protected_paths": [],
+  "notes": "Difficulty 3. Corpus v2 (2026-08-25): the fit-constraint task - the acceptance centrepiece is a declared hole/shaft radial window (0.02-0.08 mm sliding fit) graded through the engine constraint path (ASSEMBLY.md §3), which also refuses two bores or two shafts by class instead of guessing; beside it a no_interference over the whole pair and a distance pinning the seat height above the hub shoulder. The prompt names the anchor tags, so a run that never tags its interfaces fails as constraint_unresolvable, honestly. CHECKS keep the single-part facts: both envelopes, sealed topology (shaft genus 0; coupler genus 2, which is what proves the set-screw hole breaks into the bore), and the whole-pair closest approach inside the same sliding window - position evidence the radius-only fit kind deliberately does not claim. No volume window at all: nothing graded here is a material budget. Budget derivation (measured policy, VALIDATION.md §7): no archived observe-mode journals exist for this task yet, so only the hand-counted reference path binds - record_requirements 1, create_part 2, write_part 2, build_part 2, declare_constraint 3, check_assembly 1, run_checks 1 = 12 calls; ceil(1.3 x 12) = 16. Recalibrate against the observed passing max after the first archived sweep, per the 2026-08-25 measured-budget policy.",
+  "dfm_requirements": [],
+  "drawing_requirements": [],
+  "metadata_requirements": []
+}

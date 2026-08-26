@@ -579,6 +579,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     lint.set_defaults(func=_cmd_lint)
 
+    # The scaffolding verb (heph init) lives in its own module; it needs no CAD
+    # stack at all — it only writes the four-file project convention.
+    from hephaestus.core import cli_init
+
+    cli_init.add_subparsers(sub)
+
     # Stage 1 render verbs (heph render / heph goldens) live in a separate module
     # so the render stack is imported only when those verbs run; every verb above
     # is untouched. See hephaestus.core.cli_render.

@@ -385,6 +385,39 @@ because they are compelled: the rules decide when they fire. Every run record
 reports `compelled_tool_calls` alongside `tool_calls`, so the exemption is
 visible per run rather than hidden.
 
+### Budgets are calibrated from measurement (2026-08-25)
+
+A task's tool-call budget is **derived, not guessed**:
+
+> budget = ceil(1.3 × max(hand-counted reference path, observed passing max))
+
+where the observed passing max is the largest `tool_calls` recorded by any
+*passing* run in the archived observe-mode corpus journals
+(`bench/results/<model>/*/runs.jsonl`), and the ~30% headroom absorbs run-to-run
+variance that a budget sitting exactly at the observed max cannot. That was the
+measured failure mode of the 2026-08-13 closing sweep: four budgets
+(`dfm-repair`, `param-retune`, `drawing-shelf`, `sheet-box`) sat *at* the max of
+their passing runs, and every residual corpus failure in that sweep was a small
+overrun — a calibration artifact, not a capability signal.
+
+Rules of the policy:
+
+- Budgets are **re-derived only from archived observe-mode evidence** — the
+  mode that records true counts instead of censoring at `budget + 1` (above).
+  Each re-derivation is recorded per task, dated, in the task's own
+  `notes` field: the observed max, the n it was taken over, the journal
+  source, and the arithmetic.
+- A task whose standing budget already meets or exceeds the derived number
+  **keeps its number** — calibration raises budgets that measurement shows
+  are too tight; it never tightens a standing budget as a side effect. The
+  task's note records that the calibration was run and did not bind.
+- A budget change **never re-scores an existing archived artifact**. Archived
+  run records carry the budget they were graded under; the G6 closure of
+  2026-08-13 (`bench/results/gpt-5.6-sol/2026-08-13.json`, prose Wilson
+  lower-90% 0.7396 ≥ 0.70) stands as measured under the pre-amendment
+  budgets, and no re-grade under the recalibrated budgets is evidence for or
+  against any gate.
+
 ## 8. Reported metrics (leaderboard + gate evidence)
 
 Per model, per corpus version:

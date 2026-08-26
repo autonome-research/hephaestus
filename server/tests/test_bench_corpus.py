@@ -3,23 +3,31 @@
 verification.md Tier 3 / digest §8: *"Every task must be validated by a
 ``solutions/`` reference implementation passing its own checks in CI — a task no
 reference solution passes is a broken task, not a hard task."* These tests are
-that rule, executed. For each of the **twelve** public tasks they seed a fresh
+that rule, executed. For each of the **sixteen** public tasks they seed a fresh
 project from ``corpus/tasks/<id>/seed/``, overlay ``corpus/solutions/<id>/``
 (scripts and/or a ``params.json`` applied through the real ``set_params`` path),
 and run the *same* grading path a benchmarked model run is graded by: build every
 part, install the task's required CHECKS, run them project-scoped, then validate
-the required exports, renders, DFM verdicts and drawing sheets.
+the required exports, renders, DFM verdicts, drawing sheets and declared
+constraints (ASSEMBLY.md §3).
 
-They also pin the corpus itself: the twelve ids and their tool-call budgets are
-the ones the digest (v0) and mission_plan.md Stage 6 (v1) fix, ``repair-fillet``
+They also pin the corpus itself: the ids are the ones the digest (v0),
+mission_plan.md Stage 6 (v1) and the 2026-08-25 corpus-v2 operator decision
+(the ingest and assembly pairs; see :data:`CORPUS_V2_ADDITIONS`) fix, the tool-call
+budgets are those numbers as recalibrated/derived by the 2026-08-25
+measured-budget amendment (VALIDATION.md §7 "Budgets are calibrated from
+measurement", derivations in each task.json's ``notes``), ``repair-fillet``
 is the task the gate requires perfect, and covering corpus v1 is what raises the
-aggregate Wilson bound from 0.60 to G6's 0.70 on the gated prose split.
+aggregate Wilson bound from 0.60 to G6's 0.70 on the gated prose split (v2 is a
+superset, so a v2 sweep reads the same bound).
 """
 
 from __future__ import annotations
 
 import ast
 import io
+import json
+import math
 import re
 import shutil
 import sys
@@ -41,6 +49,7 @@ from hephaestus.bench.harness import (
     open_cad,
     pdf_text,
     restore_protected,
+    results_root,
     seed_project,
     seeded_prompt,
     task_ids,
@@ -58,31 +67,69 @@ from hephaestus.core.executor.sandbox.bwrap import find_bwrap
 from pypdf import PdfReader
 
 #: The public corpus v0, difficulty-ordered with the budgets fixed by
-#: ``agent/STAGE2_DIGEST.md`` §8 / ``verification.md`` Tier 3.
+#: ``agent/STAGE2_DIGEST.md`` §8 / ``verification.md`` Tier 3, recalibrated by
+#: the 2026-08-25 measured-budget amendment (VALIDATION.md §7 "Budgets are
+#: calibrated from measurement"): ceil(1.3 x max(hand-counted reference path,
+#: observed passing max over the archived gpt-5.6-sol observe-mode journals)),
+#: with tasks already at or above the derived number keeping theirs
+#: (``cat-step`` 52, ``repair-fillet`` 12). Each task.json's ``notes`` carries
+#: the per-task derivation; no archived artifact was re-scored.
 CORPUS_V0: tuple[tuple[str, int], ...] = (
-    ("bracket-101", 20),
-    ("sheet-box", 32),
+    ("bracket-101", 25),
+    ("sheet-box", 42),
     ("cat-step", 52),
-    ("store-hardware", 27),
+    ("store-hardware", 32),
     ("repair-fillet", 12),
-    ("param-retune", 10),
-    ("knob-loft", 26),
-    ("enclosure-bosses", 38),
+    ("param-retune", 13),
+    ("knob-loft", 33),
+    ("enclosure-bosses", 43),
 )
 
 #: The four Stage 6 additions that make corpus v1 (mission_plan.md Stage 6:
 #: "corpus expanded to 12 tasks ... including a DFM-repair task and a drawing
-#: task"). Budgets are calibrated to each reference solution's call path with
-#: headroom, and every one of them is justified in the task's own ``notes``.
+#: task"). Budgets follow the 2026-08-25 measured-budget amendment above —
+#: ``print-bracket`` already met the derived number and kept 26 — and every
+#: one of them is justified in the task's own ``notes``.
 CORPUS_V1_ADDITIONS: tuple[tuple[str, int], ...] = (
-    ("dfm-repair", 12),
-    ("drawing-shelf", 18),
-    ("nest-gusset", 20),
+    ("dfm-repair", 16),
+    ("drawing-shelf", 24),
+    ("nest-gusset", 23),
     ("print-bracket", 26),
 )
 
-#: Corpus v1: the whole public split, and what the G6 bench clause is run over.
-CORPUS: tuple[tuple[str, int], ...] = CORPUS_V0 + CORPUS_V1_ADDITIONS
+#: Corpus v1: the twelve tasks the G6 bench clause was measured over. The G6
+#: closure (bench/results/gpt-5.6-sol/2026-08-13.json) stands on exactly these.
+CORPUS_V1: tuple[tuple[str, int], ...] = CORPUS_V0 + CORPUS_V1_ADDITIONS
+
+#: The corpus-v2 additions (2026-08-25 operator decision, post-G6): two public
+#: ingest tasks exercising the two shapes INGEST.md §2 names as the substrate
+#: for external benchmarks — ``flange-edit`` (editing: a seeded vendor STEP
+#: under ``imports/``, acceptance measured with ``m.diff`` against the import
+#: per COMPARE.md §2) and ``plate-from-drawing`` (generation: a seeded drawing
+#: image under ``references/``, the vision-citation ledger path) — plus two
+#: public Stage 8C assembly tasks, the first corpus tasks scored on declared
+#: constraints through the engine path (ASSEMBLY.md §3 "assembly tasks score
+#: on declared fits holding, not on volume windows"): ``hinge-mate``
+#: (concentric pin bores, coincident knuckle mate faces, a clearance_min swing
+#: gap) and ``shaft-coupler`` (a real hole/shaft ``fit`` window as the
+#: acceptance centrepiece, plus no_interference and a seat-height distance).
+#: They expand the corpus without touching any gate: ``aggregate_threshold``
+#: reads the v1 coverage (a superset still gates at 0.70), and no archived
+#: artifact is re-scored. Budgets are hand-count derivations per the
+#: 2026-08-25 measured-budget policy — no observe-mode journal data exists for
+#: new tasks yet, and each task.json's ``notes`` says so.
+CORPUS_V2_ADDITIONS: tuple[tuple[str, int], ...] = (
+    ("flange-edit", 16),
+    ("plate-from-drawing", 19),
+    ("hinge-mate", 19),
+    ("shaft-coupler", 16),
+)
+
+#: The corpus-v2 assembly pair alone (the constraint-grading coverage tests).
+CONSTRAINT_TASKS: frozenset[str] = frozenset({"hinge-mate", "shaft-coupler"})
+
+#: The whole public split as it stands (corpus v2 = v1 + the v2 additions).
+CORPUS: tuple[tuple[str, int], ...] = CORPUS_V1 + CORPUS_V2_ADDITIONS
 
 #: Tasks whose acceptance re-runs a DFM rule pack. Predicates are registry
 #: content and execute only under a probed secure sandbox (architecture §3.6), so
@@ -99,7 +146,20 @@ requires_bwrap = pytest.mark.skipif(
 #: these prove it is passable by something other than the reference geometry,
 #: which is the only way to show a check grades correctness and not reproduction.
 CORPUS_VARIANTS: Path = Path(__file__).parent / "fixtures" / "corpus_variants"
-VARIANT_TASKS: frozenset[str] = frozenset({"enclosure-bosses", "drawing-shelf", "cat-step"})
+VARIANT_TASKS: frozenset[str] = frozenset(
+    {
+        "enclosure-bosses",
+        "drawing-shelf",
+        "cat-step",
+        # Corpus-v2 (2026-08-25): every NEW task ships its independent second
+        # implementation from day one (VALIDATION.md §1 — a check written from
+        # one implementation cannot detect that it demands that implementation).
+        "flange-edit",
+        "plate-from-drawing",
+        "hinge-mate",
+        "shaft-coupler",
+    }
+)
 
 #: The constants of the checks the audit retired, kept so the guards can measure
 #: that a correct variant really would have failed them.
@@ -166,18 +226,31 @@ def tasks() -> Mapping[str, BenchTask]:
     return {task.id: task for task in load_tasks()}
 
 
-def test_corpus_is_the_twelve_public_tasks() -> None:
+def test_corpus_is_the_sixteen_public_tasks() -> None:
+    """Corpus v2: the twelve v1 tasks plus the four 2026-08-25 additions.
+
+    Repointed from "twelve" by the corpus-v2 amendment (2026-08-25 operator
+    decision, recorded in mission_plan.md's Stage 6 status): the corpus grew by
+    the ingest pair (``flange-edit``, ``plate-from-drawing``) and the Stage 8C
+    assembly pair (``hinge-mate``, ``shaft-coupler``). The v1 pin it used to
+    carry is kept below as a subset assertion — the G6 evidence's corpus is
+    unchanged inside v2, and the four Stage 6 additions are still exactly
+    :data:`CORPUS_V1_TASKS`.
+    """
     prose = {task_id for task_id, _ in CORPUS}
-    assert len(prose) == 12, "corpus v1 is twelve public tasks (mission_plan.md Stage 6)"
-    # The gated split is exactly the twelve public tasks…
+    assert len(prose) == 16, (
+        "corpus v2 is sixteen public tasks (v1 + the ingest pair + the assembly pair)"
+    )
+    # The gated split is exactly the public tasks…
     assert set(task_ids(specs=("prose",))) == prose
     # …and VALIDATION.md §1 ships each of them a second time as a seeded variant,
     # never collapsed into the prose split. Expanding the corpus must not have
-    # opened a hole in that: the four new tasks ship both variants too.
+    # opened a hole in that: the new tasks ship both variants too.
     assert set(task_ids(specs=("seeded",))) == {f"{task_id}@seeded" for task_id in prose}
     assert set(task_ids()) == prose | {f"{task_id}@seeded" for task_id in prose}
-    # The v0 split is still present and unchanged inside v1.
+    # The v0 and v1 splits are still present and unchanged inside v2.
     assert {task_id for task_id, _ in CORPUS_V0} <= prose
+    assert {task_id for task_id, _ in CORPUS_V1} <= prose
     assert set(CORPUS_V1_TASKS) == {task_id for task_id, _ in CORPUS_V1_ADDITIONS}
 
 
@@ -225,6 +298,79 @@ def test_task_spec_matches_the_digest(
     for rel in task.protected_paths:
         assert (task.seed_dir / rel).is_file(), f"{task_id}: protected {rel} is not in seed/"
     assert (corpus_solutions_dir() / task_id).is_dir(), f"{task_id}: no reference solution"
+
+
+#: The measured-budget policy's headroom factor, restated independently of the
+#: harness so a drive-by edit to the policy constant cannot quietly relax this
+#: floor along with the budgets (VALIDATION.md §7 "Budgets are calibrated from
+#: measurement": budget = ceil(1.3 x max(hand-counted path, observed passing max))).
+BUDGET_HEADROOM = 1.3
+
+
+def _archived_passing_max() -> dict[str, int]:
+    """``{base task id: observed passing max}``, recomputed from the archive.
+
+    The independent recomputation of VALIDATION.md §7's "observed passing max":
+    the largest ``tool_calls`` recorded by any *passing* run in the archived
+    corpus journals (``bench/results/<model>/<date>/runs.jsonl``). Seeded and
+    prose records fold onto the base id because the variants share one budget by
+    construction (pinned above). Passing runs carry true counts in both modes —
+    an enforce-mode run that passed was never cancelled — so no mode filter is
+    needed; the observe-mode distinction only matters for *failed* runs, which
+    are censored and excluded here anyway.
+    """
+    observed: dict[str, int] = {}
+    for journal in sorted(results_root().glob("*/*/runs.jsonl")):
+        for line in journal.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            record = cast("Mapping[str, Any]", json.loads(line))
+            if not record.get("passed"):
+                continue
+            base = str(record["task_id"]).split("@", 1)[0]
+            calls = int(cast("int", record["tool_calls"]))
+            observed[base] = max(observed.get(base, 0), calls)
+    return observed
+
+
+def test_every_budget_meets_the_measured_calibration_floor(
+    tasks: Mapping[str, BenchTask],
+) -> None:
+    """VALIDATION.md §7, enforced against an independent recomputation.
+
+    A budget hand-edited below ``ceil(1.3 x observed passing max)`` fails here
+    loudly, because the floor is re-derived from the archived journals at test
+    time rather than trusted from the task's own ``notes``. The archive is
+    read-only evidence: this test never writes under ``bench/results/``.
+
+    Tasks with no archived passing run yet (the corpus-v2 additions) have no
+    measured floor to hold; the policy's other half — a dated hand-count
+    derivation in the task's ``notes`` — is asserted for them instead, so a new
+    task cannot ship a bare guess either.
+    """
+    observed = _archived_passing_max()
+    assert observed, "no archived corpus journals found; the floor cannot be recomputed"
+    unmeasured = {task_id for task_id, _ in CORPUS_V2_ADDITIONS}
+    for task_id, _budget in CORPUS:
+        budget = tasks[task_id].budget_tool_calls
+        if task_id not in observed:
+            assert task_id in unmeasured, (
+                f"{task_id}: a corpus-v1 task lost its archived passing runs; the "
+                "measured floor can no longer be recomputed"
+            )
+            notes = tasks[task_id].notes
+            assert "hand-count" in notes and "2026-08-25" in notes, (
+                f"{task_id}: no archived measurement and no dated hand-count "
+                "derivation in task.json notes — the budget is a bare guess"
+            )
+            continue
+        floor = math.ceil(BUDGET_HEADROOM * observed[task_id])
+        assert budget >= floor, (
+            f"{task_id}: budget {budget} is below the measured calibration floor "
+            f"ceil({BUDGET_HEADROOM} x {observed[task_id]}) = {floor} "
+            "(VALIDATION.md §7: calibration raises budgets measurement shows are "
+            "too tight; a standing budget is never hand-tightened below the floor)"
+        )
 
 
 def test_repair_fillet_is_the_gate_perfect_task() -> None:
@@ -288,6 +434,13 @@ def test_reference_solution_passes_its_own_checks(
         assert record.get("missing_fields") == [], record
         if requirement.material_id is not None:
             assert record.get("material_id") == requirement.material_id, record
+    # Corpus v2 (ASSEMBLY.md §3): every declared constraint was evaluated
+    # through the engine path and landed in the state the task expects.
+    assert len(report.constraints) == len(task.constraints)
+    for record, constraint in zip(report.constraints, task.constraints, strict=True):
+        assert "error" not in record, record
+        outcome = cast("Mapping[str, Any]", record.get("outcome"))
+        assert outcome.get("state") == constraint.expect, record
     assert elapsed < GRADE_SECONDS_CEILING, f"{task_id}: grading took {elapsed:.1f}s"
 
 
@@ -421,6 +574,188 @@ def test_the_re_authored_register_checks_bite(
     assert not report.passed
     failed = {name.split(":", 1)[1] for name in report.reasons if name.startswith("check_failed:")}
     assert {f"enclosure_bosses:{name}" for name in failing_checks} <= failed, report.reasons
+
+
+def test_the_unedited_vendor_flange_fails_the_editing_checks_by_name(
+    tasks: Mapping[str, BenchTask], tmp_path: Path
+) -> None:
+    """The corpus-v2 editing task's negative control (2026-08-25).
+
+    ``flange-edit`` grades through ``m.diff`` against the seeded import — the
+    first acceptance predicate in the corpus that resolves an ``import:``
+    target at grade time (COMPARE.md §2), through the resolver wired into
+    project-scope ``run_checks`` for exactly this task. So the failing
+    direction is asserted, not assumed: a run that imports the vendor file and
+    ships it back UNEDITED — geometry identical to the comparison target, iou
+    1.0 — must fail on the checks that name the edit, and on nothing else.
+    """
+    task = tasks["flange-edit"]
+    root = tmp_path / "unedited"
+    seed_project(task, root)
+    (root / "parts").mkdir(exist_ok=True)
+    (root / "parts" / "flange.py").write_text(
+        "# The vendor file, imported and shipped back without the edit.\n"
+        'part.geometry = import_step("flange.step")\n',
+        encoding="utf-8",
+    )
+    report = grade(task, root)
+
+    assert not report.passed
+    failed = {name for name in report.reasons if name.startswith("check_failed:")}
+    assert failed == {
+        "check_failed:flange_edit:bore_enlarged_by_the_specified_annulus",
+        "check_failed:flange_edit:go_pin_passes_the_new_bore",
+        "check_failed:flange_edit:go_pin_clearance",
+    }, report.reasons
+    # …and only the checks: the export and the build are fine, so nothing else
+    # is charged. An unedited flange is a check failure, not a broken project.
+    assert [r for r in report.reasons if not r.startswith("check_failed:")] == []
+
+
+def test_the_assembly_pair_covers_the_constraint_half_of_the_grader(
+    tasks: Mapping[str, BenchTask],
+) -> None:
+    """Corpus v2 (2026-08-25): ASSEMBLY.md §3's bench clause, made corpus reality.
+
+    ``hinge-mate`` and ``shaft-coupler`` are the only tasks with declared
+    constraints, and between them they exercise six of the eight 8C kinds —
+    including ``fit``, the hole/shaft window the DFM fits vocabulary speaks.
+    Every anchor names a part the task declares (so the grader builds it), and
+    every entry expects ``satisfied``: these tasks assert mates that hold, not
+    the absence of evidence.
+    """
+    constrained = {task.id for task in tasks.values() if task.spec == "prose" and task.constraints}
+    assert constrained == CONSTRAINT_TASKS
+    kinds = {
+        str(constraint.entry["kind"])
+        for task_id in CONSTRAINT_TASKS
+        for constraint in tasks[task_id].constraints
+    }
+    assert kinds == {
+        "concentric",
+        "coincident",
+        "clearance_min",
+        "fit",
+        "no_interference",
+        "distance",
+    }
+    for task_id in sorted(CONSTRAINT_TASKS):
+        task = tasks[task_id]
+        declared = task.declared_parts()
+        for constraint in task.constraints:
+            assert constraint.expect == "satisfied", constraint.id
+            for side in ("a", "b"):
+                anchor = str(constraint.entry[side])
+                assert anchor.split(":", 1)[0] in declared, f"{task_id}: {anchor}"
+        # The prompt names every anchor tag it grades through, so a run can
+        # only fail a constraint it was really asked to satisfy.
+        for constraint in task.constraints:
+            for side in ("a", "b"):
+                anchor = str(constraint.entry[side])
+                if ":" in anchor:
+                    assert f"`{anchor.split(':', 1)[1]}`" in task.prompt, f"{task_id}: {anchor}"
+
+
+def test_a_misaligned_pin_bore_fails_the_declared_concentricity_by_name(
+    tasks: Mapping[str, BenchTask], tmp_path: Path
+) -> None:
+    """The constraint path bites: a 0.2 mm bore offset is a named violation.
+
+    ``leaf_b``'s pin bore is drilled 0.2 mm off the hinge axis — a hinge that
+    will not take its pin. The declared ``concentric`` entry (tol 0.05) fails
+    under its own reason token, carrying the measured offset, exactly as
+    ASSEMBLY.md §3 promises: a violated fit is a named constraint failure, not
+    an interference a CHECKS block happens to catch.
+    """
+    task = tasks["hinge-mate"]
+    root = tmp_path / "offset-bore"
+    seed_project(task, root)
+    (root / "parts").mkdir(exist_ok=True)
+    shutil.copy2(corpus_solutions_dir() / "hinge-mate" / "parts" / "leaf_a.py", root / "parts")
+    source = (corpus_solutions_dir() / "hinge-mate" / "parts" / "leaf_b.py").read_text(
+        encoding="utf-8"
+    )
+    mutation = "bore = (\n    Pos(_x_mid, 0.0, _axis_z)"
+    assert mutation in source
+    (root / "parts" / "leaf_b.py").write_text(
+        source.replace(mutation, "bore = (\n    Pos(_x_mid, 0.2, _axis_z)"), encoding="utf-8"
+    )
+    report = grade(task, root)
+
+    assert not report.passed
+    violated = [r for r in report.reasons if r.startswith("constraint_violated:")]
+    assert violated and violated[0].startswith("constraint_violated:c-pin-bores-concentric:"), (
+        report.reasons
+    )
+    # The reason carries the measurement: the 0.2 mm offset that was authored.
+    assert abs(float(violated[0].rsplit(":", 1)[1]) - 0.2) < 0.01, violated[0]
+    # Nothing came back unresolvable: the mate was measured and found wrong.
+    assert not any(r.startswith("constraint_unresolvable:") for r in report.reasons)
+
+
+def test_a_line_to_line_coupler_fails_the_declared_fit_by_name(
+    tasks: Mapping[str, BenchTask], tmp_path: Path
+) -> None:
+    """The fit window's floor is real: zero clearance is a violation, not a pass.
+
+    The coupler is re-bored at exactly the spindle's diameter — the mistake the
+    prompt warns against in as many words. The measured radial clearance is
+    0.0, under the declared 0.02 minimum, and the run fails on the ``fit``
+    constraint by name (``no_interference`` stays satisfied: line-to-line
+    contact shares no volume, which is exactly why a fit needs its own kind).
+    """
+    task = tasks["shaft-coupler"]
+    root = tmp_path / "line-to-line"
+    seed_project(task, root)
+    (root / "parts").mkdir(exist_ok=True)
+    shutil.copy2(corpus_solutions_dir() / "shaft-coupler" / "parts" / "shaft.py", root / "parts")
+    source = (corpus_solutions_dir() / "shaft-coupler" / "parts" / "coupler.py").read_text(
+        encoding="utf-8"
+    )
+    mutation = "_bore_r = hc.spindle_d / 2.0 + 0.04"
+    assert mutation in source
+    (root / "parts" / "coupler.py").write_text(
+        source.replace(mutation, "_bore_r = hc.spindle_d / 2.0"), encoding="utf-8"
+    )
+    report = grade(task, root)
+
+    assert not report.passed
+    violated = [r for r in report.reasons if r.startswith("constraint_violated:")]
+    assert violated and violated[0].startswith("constraint_violated:c-sliding-fit:"), report.reasons
+    # The reason carries the measurement: a line-to-line 0.0, under the floor.
+    assert abs(float(violated[0].rsplit(":", 1)[1])) < 0.005, violated[0]
+    assert not any("c-no-interference" in r for r in violated)
+
+
+def test_an_untagged_interface_is_unresolvable_never_a_quiet_pass(
+    tasks: Mapping[str, BenchTask], tmp_path: Path
+) -> None:
+    """The third state survives corpus grading: no tag, no measurement, no pass.
+
+    ``leaf_b`` never tags its ``mate_face``. The coincidence cannot be
+    measured, and the run fails as ``constraint_unresolvable`` with the
+    dangling-selector reason — never conflated with ``violated``, and never
+    scored as though an unmeasurable mate held.
+    """
+    task = tasks["hinge-mate"]
+    root = tmp_path / "untagged"
+    seed_project(task, root)
+    (root / "parts").mkdir(exist_ok=True)
+    shutil.copy2(corpus_solutions_dir() / "hinge-mate" / "parts" / "leaf_a.py", root / "parts")
+    source = (corpus_solutions_dir() / "hinge-mate" / "parts" / "leaf_b.py").read_text(
+        encoding="utf-8"
+    )
+    lines = [line for line in source.splitlines() if '"mate_face"' not in line]
+    assert len(lines) < len(source.splitlines())
+    (root / "parts" / "leaf_b.py").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    report = grade(task, root)
+
+    assert not report.passed
+    assert any(
+        r.startswith("constraint_unresolvable:c-knuckles-flush:dangling_selector")
+        for r in report.reasons
+    ), report.reasons
+    assert not any(r.startswith("constraint_violated:c-knuckles-flush") for r in report.reasons)
 
 
 def test_drawing_requirements_gate_dimensions_and_metadata_gates_material(
@@ -789,7 +1124,8 @@ def test_corpus_v1_raises_the_aggregate_threshold_to_the_g6_bound() -> None:
     assert G6_AGGREGATE_THRESHOLD > G2_AGGREGATE_THRESHOLD, "thresholds tune upward only"
 
     v0_ids = [task_id for task_id, _ in CORPUS_V0]
-    v1_ids = [task_id for task_id, _ in CORPUS]
+    v1_ids = [task_id for task_id, _ in CORPUS_V1]
+    v2_ids = [task_id for task_id, _ in CORPUS]
     # A v0 archive keeps the bound it was baselined under…
     assert aggregate_threshold(v0_ids) == G2_AGGREGATE_THRESHOLD
     # …and covering corpus v1 is itself what raises it — including via the
@@ -798,6 +1134,9 @@ def test_corpus_v1_raises_the_aggregate_threshold_to_the_g6_bound() -> None:
     assert aggregate_threshold(f"{task_id}@seeded" for task_id in v1_ids) == (
         G6_AGGREGATE_THRESHOLD
     )
+    # Corpus v2 (2026-08-25) is a superset of v1, so a v2 sweep still reads the
+    # G6 bound: expanding the corpus never relaxed a threshold.
+    assert aggregate_threshold(v2_ids) == G6_AGGREGATE_THRESHOLD
     # 12 tasks x >= 3 seeds = 36 runs: 29 passes clear the bound and 28 do not,
     # so the gate is a real constraint on a full v1 sweep (80.6% vs 77.8% raw).
     assert wilson_lower_bound(29, 36) >= G6_AGGREGATE_THRESHOLD
@@ -828,10 +1167,14 @@ def test_scoring_a_corpus_v1_sweep_gates_at_the_g6_bound() -> None:
 
     assert score.threshold == G6_AGGREGATE_THRESHOLD
     assert score.prose.threshold == G6_AGGREGATE_THRESHOLD
-    assert (score.prose.n, score.prose.passes) == (36, 35)
-    assert score.meets_gate  # 35/36 clears 0.70 and repair-fillet is 3/3
+    # 16 corpus-v2 tasks x 3 seeds, one knob-loft failure (2026-08-25 repoint:
+    # the sweep shape grew from 36 runs with the corpus, the bound did not).
+    assert (score.prose.n, score.prose.passes) == (48, 47)
+    assert score.meets_gate  # 47/48 clears 0.70 and repair-fillet is 3/3
     assert score.seeded.threshold is None
     assert score.seeded.meets_threshold is None
-    # Dropping the four v1 tasks is a v0 sweep again, at the v0 bound.
-    v0_only = [r for r in records if r["task_id"] not in set(CORPUS_V1_TASKS)]
-    assert score_records(v0_only).threshold == G2_AGGREGATE_THRESHOLD
+    # Dropping the four v1 tasks leaves a sweep that no longer covers corpus
+    # v1, so it is read at the v0 bound — the threshold is a fact about the v1
+    # coverage, and the v2 additions neither raise nor relax it.
+    without_v1 = [r for r in records if r["task_id"] not in set(CORPUS_V1_TASKS)]
+    assert score_records(without_v1).threshold == G2_AGGREGATE_THRESHOLD

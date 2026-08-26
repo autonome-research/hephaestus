@@ -181,14 +181,21 @@ else:
 
 
 def test_bwrap_is_still_the_only_secure_backend(installed_venv: Path) -> None:
-    """Lane (d)'s validity condition, asserted rather than assumed.
+    """Lane (d)'s validity condition — and, since the 2026-08-13 G7H amendment,
+    the amendment's own tripwire — asserted rather than assumed.
 
     The CI lane proves "no passing secure backend" by not installing bubblewrap
     — while Docker *is* present on the hosted image. That argument holds only
-    while ``secure_backend`` can construct nothing but ``BwrapBackend``. The day
-    an OCI backend lands (lane (c)'s prerequisite), this test fails and forces
-    lane (d) to disable that backend too, instead of the lane silently becoming
-    a lie.
+    while ``secure_backend`` can construct nothing but ``BwrapBackend``.
+
+    Repointed under the G7H amendment (2026-08-13, ``mission_plan.md``
+    §"Stage 7H"): v0.1.0-headless supports secure script execution on Linux
+    x86_64 via probed bubblewrap ONLY, and macOS via an OCI backend is
+    DEFERRED to Stage 7. This test now pins that decision from the product
+    side: the day an OCI backend lands, it fails and forces the deferral
+    record (``tests/stage7h/CI_ONLY.md`` §3, ``release.yml``'s lane (c)
+    comment block) to be revisited and lane (d) to disable the new backend
+    too, instead of either lane silently becoming a lie.
     """
     payload = json_in_venv(
         installed_venv,

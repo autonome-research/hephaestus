@@ -11,6 +11,14 @@ Turn forms::
     {"kind": "text", "chunks": [...]}
     {"kind": "tool_calls", "calls": [{"name": ..., "arguments": {...}, "id": ...}]}
     {"kind": "stall"}                      # emit one chunk, then hang (abort test)
+    {"kind": "error", "message": ..., "status": ...}   # scripted provider fault
+
+An ``error`` turn fails the request with an HTTP error status (default 500)
+whose OpenAI-style body carries ``message`` — Pi records the turn with
+stopReason "error" and resolves, which is the errored-turn shape the sidecar's
+transient-fault retry (``agent/src/session/retry.ts``) watches for. It mirrors
+``FakeErrorTurn`` in ``agent/src/session/runtime.ts`` so the same fault can be
+scripted from either side of the bridge.
 
 A turn may also be a callable ``(request_info) -> turn`` for request-dependent
 scripting. When the script is exhausted the server returns a terminal text turn
@@ -19,6 +27,7 @@ so the agent loop always settles.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import threading
 import time
@@ -168,17 +177,33 @@ def start_fake_openai(script: list[TurnResolver] | None = None) -> FakeOpenAI:
                 body_text=body,
             )
             fake.requests.append(info)
-            self.send_response(200)
-            self.send_header("content-type", "text/event-stream")
-            self.send_header("cache-control", "no-cache")
-            self.end_headers()
 
             # Tool-less request => compaction/summarization: answer with text.
             if not info.tool_names:
+                self._start_stream()
                 self._write_text(fake.model_id, ["COMPACTED: session summarized."])
                 return
             turn = fake.next_turn(info)
             kind = turn.get("kind")
+            if kind == "error":
+                # The scripted provider fault: an HTTP error whose body message
+                # is what Pi surfaces as the errored turn's errorMessage.
+                payload = json.dumps(
+                    {
+                        "error": {
+                            "message": str(turn.get("message", "fake provider fault")),
+                            "type": "server_error",
+                        }
+                    }
+                ).encode()
+                self.send_response(int(turn.get("status", 500)))
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(payload)))
+                self.end_headers()
+                with contextlib.suppress(OSError):
+                    self.wfile.write(payload)
+                return
+            self._start_stream()
             if kind == "stall":
                 self._safe_write(_chunk(fake.model_id, {"role": "assistant", "content": "…"}, None))
                 # Hang until the client aborts the connection.
@@ -194,6 +219,12 @@ def start_fake_openai(script: list[TurnResolver] | None = None) -> FakeOpenAI:
                 self._write_text(fake.model_id, turn.get("chunks", [""]))
 
         # -- writers -------------------------------------------------------
+
+        def _start_stream(self) -> None:
+            self.send_response(200)
+            self.send_header("content-type", "text/event-stream")
+            self.send_header("cache-control", "no-cache")
+            self.end_headers()
 
         def _safe_write(self, data: bytes) -> None:
             try:

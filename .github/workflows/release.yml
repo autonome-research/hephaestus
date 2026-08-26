@@ -3,7 +3,8 @@
 # Copyright 2026 The Hephaestus Authors
 # SPDX-License-Identifier: Apache-2.0
 #
-# mission_plan.md §"Stage 7H — Headless release" adopts G7's matrix verbatim:
+# mission_plan.md §"Stage 7H — Headless release" adopts G7's matrix, as
+# amended 2026-08-13 (operator decision — see "lane (c)" below):
 #
 #   (a) Python-only `pipx install` -> `heph --version` -> import/lint/schema
 #       smoke with no script execution and no Node, on every packaging lane;
@@ -11,10 +12,9 @@
 #       integrity / native-addon audit -> Python-backed JobStore initialization
 #       -> `heph agent` fake-model -> MCP smoke, on the supported secure Linux
 #       x86_64 lane, which also runs the secure-executor escape suite;
-#   (c) the same fake-model/MCP smoke and executor escape suite on a macOS lane
-#       through a *detected* OCI backend;
 #   (d) explicit fail-closed agent/server script execution on lanes without a
-#       passing secure backend.
+#       passing secure backend — on macOS the product refuses script execution
+#       by design in v0.1.
 #
 # Two structural rules this file obeys, because they are what make the matrix
 # mean anything:
@@ -26,9 +26,10 @@
 #      untestable. `HEPHAESTUS_WHEELHOUSE` points the Stage 7H pytest suites at
 #      that same artifact so they, too, measure the released bytes.
 #   2. A lane never "passes by absence". Lane (a) asserts Node is gone rather
-#      than hoping; lane (c) FAILS when no OCI backend is detected (it exists to
-#      prove the backend path, so a skip is a false green); lane (d) asserts the
-#      named refusal rather than a skipped test.
+#      than hoping; lane (d) asserts the named refusal rather than a skipped
+#      test. A lane that would have to skip does not exist here at all: the
+#      deferred macOS lane (c) was REMOVED, not conditioned, so no green check
+#      can stand in for it.
 #
 # No `pull_request_target` (mission rule 8). This workflow never runs untrusted
 # PR code, and it holds no write permission on the repository: it does not cut
@@ -382,118 +383,31 @@ jobs:
           fi
 
   # ---------------------------------------------------------------- lane (c) --
-  # macOS, through a DETECTED OCI backend. repo_conventions.md: "macOS is
-  # supported for agent execution only through a capability-tested
-  # Docker/Podman/OrbStack-compatible OCI backend running the pinned Linux
-  # executor profile."
+  # DEFERRED (2026-08-13, operator decision — mission_plan.md §"Stage 7H",
+  # G7H amendment). There is no lane-c job in this workflow, on purpose.
   #
-  # KNOWN RED until that backend exists in the product. `secure_backend()` in
-  # hephaestus.core.executor.sandbox.probe constructs a BwrapBackend and nothing
-  # else, so on macOS it raises `sandbox_unavailable` — correct fail-closed
-  # behaviour, and exactly why this lane must fail rather than skip. The lane is
-  # authored now so the gap is a red check with a name, not an omission. G7H
-  # cannot be declared green on lane (c) until the OCI backend lands.
-  lane-c:
-    name: lane (c) macOS via OCI backend
-    needs: wheelhouse
-    runs-on: macos-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-      - uses: actions/download-artifact@v4
-        with:
-          name: wheelhouse
-          path: dist
-      - run: uv sync --dev
-
-      # Detection, not installation-by-faith: whichever of colima/docker/podman
-      # answers is the backend. If none answers the lane FAILS — it exists to
-      # prove the backend path, and a skip here would publish a false green.
-      - name: detect an OCI backend
-        run: |
-          set -euo pipefail
-          if ! command -v colima >/dev/null 2>&1; then
-            brew install colima docker || true
-          fi
-          if command -v colima >/dev/null 2>&1; then
-            colima start --cpu 2 --memory 4 --disk 20 || true
-          fi
-          BACKEND=""
-          for candidate in docker podman; do
-            if command -v "$candidate" >/dev/null 2>&1 && "$candidate" info >/dev/null 2>&1; then
-              BACKEND="$candidate"
-              break
-            fi
-          done
-          if [ -z "$BACKEND" ]; then
-            echo "no Docker/Podman/OrbStack-compatible backend answered;" >&2
-            echo "lane (c) exists to prove the backend path, so this is a failure," >&2
-            echo "never a skip (mission_plan.md G7 lane (c))." >&2
-            exit 1
-          fi
-          echo "OCI_BACKEND=$BACKEND" >> "$GITHUB_ENV"
-
-      # The executor profile architecture.md §Sandboxing names, probed directly
-      # against the backend and independently of any Hephaestus code: read-only
-      # root, no network, dropped capabilities, bounded resources.
-      - name: capability-probe the executor profile
-        run: |
-          set -euo pipefail
-          IMAGE="python:3.13-slim"
-          "$OCI_BACKEND" pull "$IMAGE"
-          "$OCI_BACKEND" run --rm --read-only --network none \
-            --cap-drop ALL --memory 512m --pids-limit 128 \
-            --tmpfs /tmp:rw,size=64m "$IMAGE" \
-            python -c "
-          import socket, sys
-          try:
-              socket.create_connection(('1.1.1.1', 443), timeout=3)
-          except OSError:
-              pass
-          else:
-              sys.exit('the probe container reached the network')
-          try:
-              open('/proof', 'w')
-          except OSError:
-              print('profile ok: no network, read-only root')
-          else:
-              sys.exit('the probe container wrote to a read-only root')
-          "
-
-      - name: pipx install the built wheel
-        run: |
-          set -euo pipefail
-          python3 -m pip install --user --quiet --break-system-packages pipx || python3 -m pip install --user --quiet pipx
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          WHEEL=$(ls dist/hephaestus_cad-*.whl)
-          python3 -m pipx install "$WHEEL" --pip-args="--find-links=$PWD/dist"
-
-      # The product must accept this backend as a *secure* backend. Today it
-      # does not — see the KNOWN RED note above.
-      - name: hephaestus accepts the detected backend as secure
-        run: |
-          set -euo pipefail
-          cp -r corpus/public_fixtures/assembly "$RUNNER_TEMP/proj"
-          cd "$RUNNER_TEMP/proj"
-          heph build primary --json
-
-      - name: fake-model + MCP smoke
-        env:
-          HEPHAESTUS_WHEELHOUSE: ${{ github.workspace }}/dist
-        run: |
-          uv run pytest tests/stage7h -q
-          uv run pytest tests/stage3 -q
-
-      - name: executor escape suite through the OCI backend
-        run: |
-          uv run pytest \
-            core/tests/test_sandbox_base.py \
-            core/tests/test_sandbox_probe.py \
-            core/tests/test_registry_sandbox.py -q
+  # What the lane was: macOS, through a DETECTED (never assumed) OCI backend —
+  # colima/docker/podman answering `info`, a capability probe proving
+  # read-only root / no network / dropped caps / bounded memory+pids directly
+  # against the backend, then the same fake-model/MCP smoke and escape suite the
+  # Linux lane runs. It sat KNOWN RED from the day it was authored:
+  # `secure_backend()` in hephaestus.core.executor.sandbox.probe constructs a
+  # BwrapBackend and nothing else, so on macOS the product raised
+  # `sandbox_unavailable` — correct fail-closed behaviour — and the lane failed
+  # rather than skipped.
+  #
+  # Why deferred: v0.1.0-headless targets Linux x86_64 only; the OCI backend
+  # does not exist in the product and a permanently red required lane on a tag
+  # build blocks the release it cannot inform. The clause was not dropped: it
+  # is a named deliverable of Stage 7 (full release), where G7 keeps lane (c)
+  # verbatim and this job returns with the backend it measures. Meanwhile
+  # lane (d)'s fail-closed clause explicitly covers macOS ("on macOS the
+  # product refuses script execution by design in v0.1"), lane (a) still runs
+  # on macOS, and tests/stage7h/test_lane_fail_closed.py
+  # (test_bwrap_is_still_the_only_secure_backend) fails the day an OCI backend
+  # lands without the amendment being revisited —
+  # tests/stage7h/test_release_lanes.py fails if a lane-c job reappears here
+  # without that reckoning, and also if this deferral record disappears.
 
   # ---------------------------------------------------------------- lane (d) --
   # No passing secure backend anywhere on the machine. Script execution must
@@ -620,7 +534,7 @@ jobs:
   # requires the tag to agree with the version the wheels declare.
   release-gate:
     name: G7H gate
-    needs: [wheelhouse, lane-a, lane-b, lane-c, lane-d, prior-gates]
+    needs: [wheelhouse, lane-a, lane-b, lane-d, prior-gates]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -698,8 +612,8 @@ jobs:
             echo "|---|---|"
             echo "| (a) python-only install, no Node, no script execution | lane-a (ubuntu, macos) |"
             echo "| (b) secure executor, sidecar integrity, JobStore, agent, MCP, escapes | lane-b |"
-            echo "| (c) macOS fake-model/MCP/escapes via OCI backend | lane-c |"
-            echo "| (d) fail-closed script execution with no secure backend | lane-d |"
+            echo "| (c) macOS via OCI backend | DEFERRED post-v0.1 (2026-08-13 amendment; Stage 7 deliverable) |"
+            echo "| (d) fail-closed script execution with no secure backend (incl. macOS by design) | lane-d |"
             echo "| prior gates on the release SHA | prior-gates |"
             echo "| docs build, leaderboard currency | release-gate |"
           } >> "$GITHUB_STEP_SUMMARY"

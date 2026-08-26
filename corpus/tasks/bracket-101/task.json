@@ -1,7 +1,7 @@
 {
   "id": "bracket-101",
   "prompt": "Design an L-bracket in this project as the part `bracket`.\n\nThe bracket is a 60 mm (X) by 40 mm (Y) base plate, 6 mm thick, lying on the XY plane with its footprint centred on the origin and its underside at z = 0. Along the base plate's -Y edge stands a 6 mm thick wall of the same 60 mm length; the wall rises so the bracket's overall height is 40 mm. Blend the inner corner where the wall meets the top of the base plate with a 4 mm radius fillet.\n\nDrill two 6 mm diameter through-holes in the base plate. Their centres are 12 mm in from each end of the plate (12 mm from the -X end and 12 mm from the +X end) and 14 mm in from the plate's +Y edge.\n\nThe project's `globals.py` already carries the plate thickness and the bracket envelope: read them through `hc` instead of repeating the numbers. The project also contains an inspection gauge part (`hole_gauge`) whose go-pins the acceptance checks fit through your holes - leave it exactly as it is.\n\nName the part `bracket`, build it, and export it as STEP when the geometry is right.",
-  "budget_tool_calls": 20,
+  "budget_tool_calls": 25,
   "required_checks": [
     "bracket_101"
   ],
@@ -17,5 +17,5 @@
   "protected_paths": [
     "parts/hole_gauge.py"
   ],
-  "notes": "Difficulty 1. Checks: envelope window, material BUDGET (+/-100 mm^3, 0.38%), go-pin gauge fit (hole pattern), sealed with genus 2. Re-authored 2026-07-26 (corpus audit): the volume check was named material_volume and windowed at +/-60 mm^3 as an identity on the author's arithmetic; the envelope and the gauge already measure the extents and the hole diameters, so the window now exists only to reject a missing R4 inner blend (206 mm^3) and is set a factor of 2 below it. Budget unchanged at 20: nothing about the call path moved."
+  "notes": "Difficulty 1. Checks: envelope window, material BUDGET (+/-100 mm^3, 0.38%), go-pin gauge fit (hole pattern), sealed with genus 2. Re-authored 2026-07-26 (corpus audit): the volume check was named material_volume and windowed at +/-60 mm^3 as an identity on the author's arithmetic; the envelope and the gauge already measure the extents and the hole diameters, so the window now exists only to reject a missing R4 inner blend (206 mm^3) and is set a factor of 2 below it. Budget unchanged at 20: nothing about the call path moved. Budget recalibrated 2026-08-25 (operator decision; policy: VALIDATION.md §7 'Budgets are calibrated from measurement'): 20 -> 25. Derivation: observed passing max 19 tool_calls over n=21 passing runs, re-derived from the archived observe-mode journals bench/results/gpt-5.6-sol/*/runs.jsonl (the hand-counted reference path of 3 calls does not bind); ceil(1.3 x 19) = 25. The old budget left only 1 call of headroom over the observed passing max. No archived artifact is re-scored: the G6 closure of 2026-08-13 stands as measured under the pre-amendment budgets."
 }

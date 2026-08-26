@@ -15,11 +15,11 @@
 import {
   createAgentSession,
   SessionManager as PiSessionManager,
+  SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import type {
   AgentSession,
   ModelRuntime,
-  SettingsManager,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
@@ -121,7 +121,15 @@ export async function defaultSessionFactory(spec: SessionBuildSpec): Promise<Age
     resourceLoader: loader,
     sessionManager: spec.piSessionManager,
   };
-  const options = spec.settings !== undefined ? { ...base, settingsManager: spec.settings } : base;
+  // Pi's OWN provider auto-retry (settings.retry, default enabled x3 with
+  // backoff) is disabled: the single audited transient-fault retry in
+  // main.ts/session/retry.ts is the only retry authority, so the archive shows
+  // every fault and a second one fails the run loudly. A test that passes its
+  // own SettingsManager owns the whole settings surface, this knob included.
+  const options = {
+    ...base,
+    settingsManager: spec.settings ?? SettingsManager.inMemory({ retry: { enabled: false } }),
+  };
   const { session } = await createAgentSession(options);
   return session;
 }

@@ -36,6 +36,7 @@ import {
   formatPinnedSummary,
   type PinnedCadSummary,
 } from "./session/context.js";
+import { promptWithTransientRetry, turnErrorOf } from "./session/retry.js";
 import { ToolProxy, type ProxyContext } from "./tools/proxy.js";
 import { buildAllTools } from "./tools/registry.js";
 import { InvocationTracker, type TrustedInvocation } from "./tools/invocation.js";
@@ -206,20 +207,14 @@ peer.on("session.prompt", async (params) => {
   // message and resolves. Without watching for it the run reported `completed`
   // with zero events, which is how 15 live runs silently no-opped on
   // 2026-08-02 while the real cause ("OAuth auth derivation failed") sat
-  // unread in the session file. An errored turn is a FAILED run, loudly.
+  // unread in the session file. An errored turn is a FAILED run, loudly —
+  // except that a NAMED transient provider fault gets exactly one automatic
+  // retry (session/retry.ts; EXTERNAL_EVAL.md §5: the fault is uncharged, the
+  // retry turn's tool calls are charged normally).
   let turnError: string | undefined;
   const unsubscribe = managed.session.subscribe((ev) => {
-    const raw = ev as unknown as {
-      type?: string;
-      message?: { role?: string; stopReason?: string; errorMessage?: string };
-    };
-    if (
-      raw.type === "message_end" &&
-      raw.message?.role === "assistant" &&
-      raw.message.stopReason === "error"
-    ) {
-      turnError = raw.message.errorMessage ?? "assistant turn failed (no error message)";
-    }
+    const errored = turnErrorOf(ev);
+    if (errored !== undefined) turnError = errored;
     for (const normalized of normalizeLiveEvent(ev, runId, next)) {
       emitEvent(normalized);
     }
@@ -236,13 +231,27 @@ peer.on("session.prompt", async (params) => {
   let state: "completed" | "cancelled" | "failed" = "completed";
   let errorMessage: string | undefined;
   try {
-    await managed.session.prompt(promptText);
-    if (controller.signal.aborted) {
-      state = "cancelled";
-    } else if (turnError !== undefined) {
-      state = "failed";
-      errorMessage = turnError;
-    }
+    const outcome = await promptWithTransientRetry(promptText, {
+      prompt: (text) => managed.session.prompt(text),
+      takeTurnError: () => {
+        const captured = turnError;
+        turnError = undefined;
+        return captured;
+      },
+      aborted: () => controller.signal.aborted,
+      onRetry: (message, transientClass) => {
+        // The archive shows the fault and the single retry (audit events are
+        // never coalesced or dropped).
+        emitEvent({
+          runId,
+          seq: next(),
+          kind: "audit",
+          payload: { event: "turn_retry", error: message, transient_class: transientClass },
+        });
+      },
+    });
+    state = outcome.state;
+    if (outcome.errorMessage !== undefined) errorMessage = outcome.errorMessage;
     // Drive the context policy off post-turn usage (compaction/escalation).
     await applyContextPolicy(managed, runId, policy);
   } catch (err) {

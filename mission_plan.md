@@ -432,20 +432,37 @@ conventions, registry pinning), the model-leaderboard page generated from
 bench artifacts, CONTRIBUTING + registry contribution guide, and Apache-2.0
 headers.
 
-**Gate G7H**: clean-machine matrix lanes (a)-(d) exactly as specified in G7 —
+**Gate G7H** (as amended 2026-08-13, below): clean-machine matrix lanes as
+specified in G7 —
 (a) Python-only `pipx install` → `heph --version` → import/lint/schema smoke
 with no script execution and no Node; (b) core build/check through the secure
 executor → packaged-sidecar integrity/native-addon audit → Python-backed
 JobStore initialization → `heph agent` fake-model → MCP smoke on the supported
-secure Linux x86_64 lane; (c) the same fake-model/MCP smoke and executor escape
-suite on a macOS lane through a detected OCI backend; (d) explicit fail-closed
-agent/server script execution on lanes without a passing secure backend. The
+secure Linux x86_64 lane; (d) explicit fail-closed
+agent/server script execution on lanes without a passing secure backend — on
+macOS the product refuses script execution by design in v0.1. The
 test MUST prove the wheel uses its packaged sidecar. The Linux release lane
 also runs the secure-executor escape suite. Gates GS, G0A, G0B, G1, G2, G2V,
 G3 and G6 are green on the release SHA; headless docs build without warnings;
 `bench.yml` publishes the leaderboard artifact; tag `v0.1.0-headless` is cut.
 `LEGAL-REVIEW.md` is NOT a G7H blocker: it gates publication of the private
 reference fixtures and the full release, not the headless tool.
+
+**G7H amendment (2026-08-13, operator decision).** v0.1.0-headless supports
+secure script execution on **Linux x86_64 via probed bubblewrap ONLY**. Lane
+(c) — the same fake-model/MCP smoke and executor escape suite on a macOS lane
+through a capability-tested OCI backend — is **DEFERRED to the post-v0.1
+roadmap** and is recorded as a named deliverable of Stage 7 (full release),
+not dropped. Lanes (a), (b) and (d) keep their wording verbatim; lane (d)'s
+fail-closed clause now explicitly covers macOS ("on macOS the product refuses
+script execution by design in v0.1"). This is a tightening, not a waiver:
+lane (a) still runs on macOS, `heph agent`/serve on macOS refuse rather than
+run unsandboxed, and `tests/stage7h/test_lane_fail_closed.py`
+(`test_bwrap_is_still_the_only_secure_backend`) fails the day an OCI backend
+lands without this amendment being revisited. The deferral text is pinned in
+`tests/stage7h/CI_ONLY.md` §3 and by
+`tests/stage7h/test_release_lanes.py`, so silently resurrecting lane (c) and
+silently forgetting macOS both fail tests.
 
 ## Stage 4 — Web workspace, read-only
 
@@ -554,13 +571,38 @@ metadata — commits 1016b2e..8be179c), every one regression-tested. All
 seven residual failures in the closing sweep are budget overruns, zero
 correctness or harness failures.
 
+**Corpus-v2 (2026-08-25, operator decision — post-closure, not a gate
+amendment).** The public corpus grows from 12 to 16 tasks with four additions.
+The ingest pair is the two shapes `INGEST.md` §2 names as the substrate for
+external benchmarks: `flange-edit` (editing — a seeded vendor STEP under
+`imports/`, acceptance measured with `m.diff` against the import per
+`COMPARE.md` §2, which required wiring the Stage 8A import resolver into
+project-scope `run_checks`; previously the promised predicate was unresolvable
+at grade time) and `plate-from-drawing` (generation — a seeded drawing image
+under `references/`, the vision-citation ledger path of `VALIDATION.md` §2).
+The assembly pair, `hinge-mate` and `shaft-coupler`, is the first corpus
+coverage of `ASSEMBLY.md` §3 constraint grading (declared fits holding, scored
+through the engine path). Every addition ships prose and seeded variants, a
+reference solution and an independent second solution, and hand-count-derived
+budgets per the 2026-08-25 measured-budget policy (no observe-mode journal
+data exists for new tasks; each task.json's `notes` carries the derivation).
+Nothing about G6 moves: its evidence stands as measured over corpus v1,
+`aggregate_threshold` still keys on the v1 coverage (a superset sweep reads
+the same 0.70), and no archived artifact is re-scored. The corpus-count pins
+in `tests/stage6` and `server/tests/test_bench_corpus.py` are repointed to
+sixteen with this decision cited.
+
 ## Stage 7 — Release
 
 Deliverables: the PyPI wheel with its private compiled agent sidecar per
 `repo_conventions.md` (no public npm publication is required for v0.1), a
 versioned docs site, demo recording script, CONTRIBUTING + registry
 contribution guide, issue templates, Apache-2.0 headers, and a model-leaderboard
-page generated from bench artifacts.
+page generated from bench artifacts. Named deliverable carried in from the
+G7H amendment (2026-08-13): **macOS secure script execution via a
+capability-tested Docker/Podman/OrbStack-compatible OCI backend** running the
+pinned Linux executor profile — G7 lane (c) below — deferred out of
+v0.1.0-headless and owed by this stage.
 
 **Gate G7**: clean-machine matrix tests cover (a) Python-only `pipx install` →
 `heph --version` → import/lint/schema smoke with no script execution and no Node

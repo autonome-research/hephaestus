@@ -1,0 +1,5 @@
+# plate-from-drawing bench task: a dimensioned drawing seeded under references/
+# (INGEST.md §2) is the only place the part's numbers live.
+[project]
+name = "plate_from_drawing"
+description = "Mounting plate rebuilt from its shop drawing"

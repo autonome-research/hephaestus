@@ -47,8 +47,15 @@ from hephaestus.bench.scoring import (
 )
 from hephaestus.core.executor.sandbox.bwrap import find_bwrap
 
-#: The twelve public tasks corpus v1 is (mission_plan.md Stage 6).
-CORPUS_SIZE = 12
+#: The public corpus as it stands: the twelve tasks corpus v1 is
+#: (mission_plan.md Stage 6 — what the G6 clause was measured over) plus the
+#: four corpus-v2 additions (2026-08-25 operator decision, recorded in
+#: mission_plan.md's Stage 6 status): the ingest pair ``flange-edit`` and
+#: ``plate-from-drawing`` (INGEST.md §2) and the assembly pair ``hinge-mate``
+#: and ``shaft-coupler`` (ASSEMBLY.md §3). The G6 evidence is unchanged — v2
+#: is a superset, and ``aggregate_threshold`` still reads 0.70 off the v1
+#: coverage below.
+CORPUS_SIZE = 16
 
 #: The Stage 6 additions the clause names by role.
 DFM_REPAIR_TASK = "dfm-repair"
@@ -69,9 +76,17 @@ def _prose(tasks: Mapping[str, BenchTask]) -> list[BenchTask]:
 # the corpus loads, and it is corpus v1
 
 
-def test_corpus_v1_loads_twelve_public_tasks_with_a_reference_solution_each(
+def test_the_public_corpus_loads_with_a_reference_solution_each(
     tasks: Mapping[str, BenchTask],
 ) -> None:
+    """Repointed 2026-08-25 (corpus-v2 amendment): sixteen tasks, not twelve.
+
+    The clause this test pins — every public task loads and has a reference
+    solution — is unchanged; only the count moved, with the four tasks the
+    corpus-v2 operator decision added (the ingest pair and the assembly pair).
+    The v1 dozen the G6 measurement stands on are all still present (the
+    meta-suite asserts the subset).
+    """
     prose = _prose(tasks)
     assert len(prose) == CORPUS_SIZE
     assert {task.id for task in prose} == set(task_ids(specs=("prose",)))
@@ -190,7 +205,7 @@ def test_a_corpus_v1_archive_is_gated_against_070_on_the_prose_split_alone(
     score = score_records(records)
 
     assert score.threshold == pytest.approx(0.70)
-    assert score.n == len(prose) * 3, "12 tasks x 3 seeds is the gate's own shape"
+    assert score.n == len(prose) * 3, "every public task x 3 seeds is the gate's own shape"
     assert score.prose.threshold == pytest.approx(0.70)
     assert score.splits["seeded"].threshold is None, "the seeded split gates nothing"
     assert score.meets_gate is (score.wilson_lower_90 >= 0.70)

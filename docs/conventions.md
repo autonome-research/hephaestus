@@ -34,9 +34,10 @@ myproject/
 The one thing to get right in `.gitignore` is `.heph/`: it is the build store,
 it is large, and it is fully reproducible from the scripts.
 
-`heph init` is described in `repo_conventions.md` but is not implemented in
-v0.1.0-headless. Creating the four files above by hand is the whole procedure;
-`corpus/public_fixtures/assembly` is a working two-part project to copy.
+`heph init <dir>` scaffolds exactly this shape (see [cli.md](cli.md) for the
+worked example), refusing a non-empty target. Creating the four files by hand
+works just as well; `corpus/public_fixtures/assembly` is a working two-part
+project to copy.
 
 ### `hephaestus.toml`
 

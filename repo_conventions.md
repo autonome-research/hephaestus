@@ -58,7 +58,11 @@ docs/       generated/site-only mkdocs content and assets; links to root docs.
   secure agent/server platform is Linux x86_64 with probed bubblewrap
   isolation. macOS is supported for agent execution only through a capability-
   tested Docker/Podman/OrbStack-compatible OCI backend running the pinned Linux
-  executor profile. Other packaging lanes run core-only tests and MUST fail
+  executor profile — DEFERRED (2026-08-13, operator decision): that OCI
+  backend ships post-v0.1 as a named Stage 7 deliverable, and in
+  v0.1.0-headless macOS refuses script execution by design (see
+  `mission_plan.md` §"Stage 7H", G7H amendment). Other packaging lanes run
+  core-only tests and MUST fail
   closed for agent/server script execution unless that approved backend passes
   its escape/resource probes. `heph agent` and agent-enabled serving require Node ≥22.19,
   perform an explicit startup
@@ -147,10 +151,10 @@ docs/       generated/site-only mkdocs content and assets; links to root docs.
   gate workflows plus `ci.yml`.
 - Design-project convention (user-facing): Hephaestus projects are ordinary
   git repos laid out as `hephaestus.toml`, `globals.py`, `parts/`, and a
-  `.gitignore` ignoring `.heph/`. A `heph init` scaffolding verb is planned
-  but NOT shipped in v0.1 (`docs/cli.md` "Verbs that do not exist" records
-  this); until it lands, projects are laid out by hand or copied from a
-  fixture.
+  `.gitignore` ignoring `.heph/`. The `heph init` scaffolding verb writes
+  exactly that shape (plus `checks/` seeded with the safe cross-part
+  template) and refuses a non-empty target; `docs/cli.md` carries the worked
+  example.
 
 ## Licensing and provenance policy
 

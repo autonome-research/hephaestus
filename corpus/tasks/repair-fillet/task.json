@@ -8,5 +8,5 @@
   "export_requirements": [],
   "render_requirements": [],
   "protected_paths": [],
-  "notes": "Difficulty 5 in the digest ordering; MUST pass 3/3 seeds. Checks: builds clean and sealed, envelope unchanged, R5 blend measured as a material budget (6600 + 32.19 mm^3, +/-3). The 2026-07-26 corpus audit widened that window from +/-1: the nearest wrong radius (R4) is 11.6 mm^3 away, so +/-3 keeps a ~4x margin without pinning the plate to a hundredth of a cubic millimetre."
+  "notes": "Difficulty 5 in the digest ordering; MUST pass 3/3 seeds. Checks: builds clean and sealed, envelope unchanged, R5 blend measured as a material budget (6600 + 32.19 mm^3, +/-3). The 2026-07-26 corpus audit widened that window from +/-1: the nearest wrong radius (R4) is 11.6 mm^3 away, so +/-3 keeps a ~4x margin without pinning the plate to a hundredth of a cubic millimetre. Budget calibration 2026-08-25 (operator decision; policy: VALIDATION.md §7 'Budgets are calibrated from measurement'): the policy budget is ceil(1.3 x max(hand-counted reference path, observed passing max)). Observed passing max 6 tool_calls over n=18 passing runs, re-derived from bench/results/gpt-5.6-sol/*/runs.jsonl, gives ceil(1.3 x 6) = 8; the standing budget 12 already meets or exceeds it. Budget unchanged at 12."
 }

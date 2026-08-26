@@ -1,0 +1,4 @@
+# shaft-coupler bench task: a fresh two-part assembly project.
+[project]
+name = "shaft_coupler"
+description = "Stepped shaft and the sleeve coupler that slides onto it"

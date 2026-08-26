@@ -247,7 +247,18 @@ export interface FakeToolCallsTurn {
 export interface FakeStallTurn {
   readonly kind: "stall";
 }
-export type FakeTurn = FakeTextTurn | FakeToolCallsTurn | FakeStallTurn;
+/**
+ * Fail the request with an HTTP 500 whose body carries `message` — Pi records
+ * the turn with stopReason "error" and resolves (the errored-turn shape the
+ * transient-fault retry in session/retry.ts is tested against).
+ */
+export interface FakeErrorTurn {
+  readonly kind: "error";
+  readonly message?: string;
+  /** HTTP status of the fault (default 500; e.g. 400 for a non-transient one). */
+  readonly status?: number;
+}
+export type FakeTurn = FakeTextTurn | FakeToolCallsTurn | FakeStallTurn | FakeErrorTurn;
 
 export interface FakeRequestInfo {
   readonly index: number;
@@ -368,14 +379,26 @@ export class FakeModel {
         bodyText: body,
       };
       this.requestLog.push(info);
-      res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
 
       // Tool-less request => compaction/summarization: answer, do not advance.
       if (info.toolNames.length === 0) {
+        res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
         this.writeText(res, this.summarize(info));
         return;
       }
       const turn = this.nextTurn(info);
+      if (turn.kind === "error") {
+        // The scripted provider fault: an HTTP 500 whose body message is what
+        // Pi surfaces as the errored turn's errorMessage.
+        res.writeHead(turn.status ?? 500, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            error: { message: turn.message ?? "fake provider fault", type: "server_error" },
+          }),
+        );
+        return;
+      }
+      res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
       if (turn.kind === "stall") {
         res.write(sseChunk(this.modelId, { role: "assistant", content: "thinking..." }, null));
         // Intentionally never end: the caller aborts.

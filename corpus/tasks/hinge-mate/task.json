@@ -1,0 +1,66 @@
+{
+  "id": "hinge-mate",
+  "prompt": "Model a two-leaf hinge, lying open and flat, as the two parts `leaf_a` and `leaf_b`.\n\nThe hinge line is the X axis at z = 7 mm. Every interface number is already in the project's `globals.py` - read them through `hc` instead of repeating them. Each leaf is a flat plate 20 mm wide (X), 30 mm deep (Y) and 4 mm thick, lying on the XY plane with its underside at z = 0, plus a single knuckle: a 10 mm diameter barrel, 20 mm long, centred on the hinge axis and spanning the same 20 mm of X as its own plate - the barrel rides above the plate (its underside 2 mm off the table) and the plate merges into the barrel's flank so the leaf is one solid. `leaf_a` sits on the -Y side of the axis with its plate and knuckle spanning x = -20 to x = 0; `leaf_b` mirrors it on the +Y side spanning x = 0 to x = 20, so the two knuckle end faces meet flush at x = 0. Bore a 6 mm diameter pin hole through each knuckle along the hinge axis. Each plate's inner edge stops 3.5 mm short of the axis - the plates keep a 7 mm swing gap across the joint.\n\nTag the mating interfaces on each leaf: the pin bore wall as `pin_bore`, the knuckle end face at x = 0 as `mate_face`, and the plate's inner edge face (the one facing the other leaf) as `swing_edge`. Assembly checking addresses the leaves through exactly those names.\n\nThe project also seeds an inspection gauge part (`pin_gauge`, a 5.9 mm go-pin on the hinge axis) that the acceptance fits through both bores - leave it exactly as it is.\n\nBuild both leaves and export each as STEP when the geometry is right.",
+  "budget_tool_calls": 19,
+  "required_checks": [
+    "hinge_mate"
+  ],
+  "export_requirements": [
+    {
+      "part": "leaf_a",
+      "format": "step",
+      "layout": "as_built",
+      "min_bytes": 1024
+    },
+    {
+      "part": "leaf_b",
+      "format": "step",
+      "layout": "as_built",
+      "min_bytes": 1024
+    }
+  ],
+  "render_requirements": [],
+  "constraint_requirements": [
+    {
+      "entry": {
+        "id": "c-pin-bores-concentric",
+        "kind": "concentric",
+        "a": "leaf_a:pin_bore",
+        "b": "leaf_b:pin_bore",
+        "tol_mm": 0.05,
+        "note": "one pin must pass both knuckles: the bores share the hinge axis"
+      },
+      "expect": "satisfied"
+    },
+    {
+      "entry": {
+        "id": "c-knuckles-flush",
+        "kind": "coincident",
+        "a": "leaf_a:mate_face",
+        "b": "leaf_b:mate_face",
+        "tol_mm": 0.05,
+        "note": "the knuckle end faces meet flush at x = 0, facing each other"
+      },
+      "expect": "satisfied"
+    },
+    {
+      "entry": {
+        "id": "c-swing-gap",
+        "kind": "clearance_min",
+        "a": "leaf_a:swing_edge",
+        "b": "leaf_b:swing_edge",
+        "value_mm": 7.0,
+        "tol_mm": 0.2,
+        "note": "the plates stand off 3.5 mm each side of the axis so the hinge can fold"
+      },
+      "expect": "satisfied"
+    }
+  ],
+  "protected_paths": [
+    "parts/pin_gauge.py"
+  ],
+  "notes": "Difficulty 3. Corpus v2 (2026-08-25): the first public task graded on declared fits through the engine constraint path (ASSEMBLY.md §3) - concentric pin bores, coincident knuckle mate faces, clearance_min swing gap - with the anchors named in the prompt so a run that never tags its interfaces fails as constraint_unresolvable, honestly. CHECKS keep the single-part facts: per-leaf envelope, the 5.9 mm go-pin gauge through both bores (a bore measured as a bore, never as a volume), no leaf overlap, sealed with genus 1. No volume window at all: every graded property is a fit, an envelope or a topology fact, so there is no material budget for a window to guard. Budget derivation (measured policy, VALIDATION.md §7): no archived observe-mode journals exist for this task yet, so only the hand-counted reference path binds - record_requirements 1, create_part 2, write_part 2, build_part 2, declare_constraint 3, check_assembly 1, run_checks 1, export_part 2 = 14 calls; ceil(1.3 x 14) = 19. Recalibrate against the observed passing max after the first archived sweep, per the 2026-08-25 measured-budget policy.",
+  "dfm_requirements": [],
+  "drawing_requirements": [],
+  "metadata_requirements": []
+}
