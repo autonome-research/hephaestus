@@ -187,7 +187,7 @@ jobs:
           SIBLINGS=""
           for w in dist/hephaestus_core-*.whl dist/hephaestus_contract-*.whl \
                    dist/hephaestus_server-*.whl dist/opstore-*.whl; do
-            SIBLINGS="$SIBLINGS --preinstall $w"
+            SIBLINGS="$SIBLINGS --preinstall $PWD/$w"
           done
           # Sibling wheels preinstalled by PATH (direct-URL installs, so each
           # carries direct_url.json — the origin check's evidence); find-links
@@ -348,7 +348,7 @@ jobs:
           SIBLINGS=""
           for w in dist/hephaestus_core-*.whl dist/hephaestus_contract-*.whl \
                    dist/hephaestus_server-*.whl dist/opstore-*.whl; do
-            SIBLINGS="$SIBLINGS --preinstall $w"
+            SIBLINGS="$SIBLINGS --preinstall $PWD/$w"
           done
           # Sibling wheels preinstalled by PATH (direct-URL installs, so each
           # carries direct_url.json — the origin check's evidence); find-links
@@ -473,7 +473,7 @@ jobs:
           SIBLINGS=""
           for w in dist/hephaestus_core-*.whl dist/hephaestus_contract-*.whl \
                    dist/hephaestus_server-*.whl dist/opstore-*.whl; do
-            SIBLINGS="$SIBLINGS --preinstall $w"
+            SIBLINGS="$SIBLINGS --preinstall $PWD/$w"
           done
           # Sibling wheels preinstalled by PATH (direct-URL installs, so each
           # carries direct_url.json — the origin check's evidence); find-links
