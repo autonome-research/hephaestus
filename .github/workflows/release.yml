@@ -243,8 +243,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VENV="$HOME/.local/pipx/venvs/hephaestus-cad"
-          [ -d "$VENV" ] || VENV="$HOME/.local/share/pipx/venvs/hephaestus-cad"
+          VENV="$(python3 -m pipx environment --value PIPX_LOCAL_VENVS)/hephaestus-cad"
           "$VENV/bin/python" -c "import hephaestus.core, hephaestus.geom, hephaestus.contract, hephaestus.agent_bridge, opstore; print('imports ok')"
 
       - name: lint + registry smoke (no script execution)
@@ -263,8 +262,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VENV="$HOME/.local/pipx/venvs/hephaestus-cad"
-          [ -d "$VENV" ] || VENV="$HOME/.local/share/pipx/venvs/hephaestus-cad"
+          VENV="$(python3 -m pipx environment --value PIPX_LOCAL_VENVS)/hephaestus-cad"
           "$VENV/bin/python" - "$PWD" <<'PY'
           import hashlib, pathlib, sys
           from hephaestus.contract.toolgen import generate_json_schemas
@@ -310,6 +308,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -380,6 +381,10 @@ jobs:
         run: |
           set -euo pipefail
           pnpm --dir agent install --frozen-lockfile
+          # Both agent outputs: the tsc dist (what the MCP/stage suites spawn
+          # in a source checkout) and the esbuild bundle staged as the
+          # packaged sidecar (what the repo-resolution tests verify).
+          pnpm --dir agent build
           pnpm --dir agent run bundle
           uv run python scripts/stage_sidecar.py
 
