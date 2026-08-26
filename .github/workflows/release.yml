@@ -538,7 +538,7 @@ jobs:
   prior-gates:
     name: prior gates green on the release SHA
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: every required ci.yml check succeeded on this SHA
