@@ -184,7 +184,15 @@ jobs:
           WHEEL=$(ls dist/hephaestus_cad-*.whl)
           # --find-links lets the four sibling Hephaestus wheels resolve from
           # this build; third-party dependencies still come from the index.
-          python3 -m pipx install "$WHEEL" --pip-args="--find-links=$PWD/dist"
+          SIBLINGS=""
+          for w in dist/hephaestus_core-*.whl dist/hephaestus_contract-*.whl \
+                   dist/hephaestus_server-*.whl dist/opstore-*.whl; do
+            SIBLINGS="$SIBLINGS --preinstall $w"
+          done
+          # Sibling wheels preinstalled by PATH (direct-URL installs, so each
+          # carries direct_url.json — the origin check's evidence); find-links
+          # stays only for anything transitive.
+          python3 -m pipx install "$WHEEL" $SIBLINGS --pip-args="--find-links=$PWD/dist"
 
       # Every Hephaestus distribution must have been installed from a local
       # file. Without this, a resolver free to reach PyPI could satisfy
@@ -337,7 +345,15 @@ jobs:
           python3 -m pip install --user --quiet pipx
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           WHEEL=$(ls dist/hephaestus_cad-*.whl)
-          python3 -m pipx install "$WHEEL" --pip-args="--find-links=$PWD/dist"
+          SIBLINGS=""
+          for w in dist/hephaestus_core-*.whl dist/hephaestus_contract-*.whl \
+                   dist/hephaestus_server-*.whl dist/opstore-*.whl; do
+            SIBLINGS="$SIBLINGS --preinstall $w"
+          done
+          # Sibling wheels preinstalled by PATH (direct-URL installs, so each
+          # carries direct_url.json — the origin check's evidence); find-links
+          # stays only for anything transitive.
+          python3 -m pipx install "$WHEEL" $SIBLINGS --pip-args="--find-links=$PWD/dist"
 
       # 1. core build/check through the secure executor. No
       #    --unsafe-local-executor anywhere: a probed bwrap sandbox or nothing.
@@ -346,7 +362,11 @@ jobs:
           set -euo pipefail
           cp -r corpus/public_fixtures/assembly "$RUNNER_TEMP/proj"
           cd "$RUNNER_TEMP/proj"
+          # Both parts: checks/fit.py measures bracket against primary, and an
+          # unbuilt part is an addressing error, not a lenient skip (first full
+          # lane execution caught exactly this, run 32936206718).
           heph build primary --json
+          heph build bracket --json
           heph check --json
 
       # 2. packaged-sidecar integrity + native-addon audit, 3. JobStore init,
@@ -450,7 +470,15 @@ jobs:
           python3 -m pip install --user --quiet pipx
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           WHEEL=$(ls dist/hephaestus_cad-*.whl)
-          python3 -m pipx install "$WHEEL" --pip-args="--find-links=$PWD/dist"
+          SIBLINGS=""
+          for w in dist/hephaestus_core-*.whl dist/hephaestus_contract-*.whl \
+                   dist/hephaestus_server-*.whl dist/opstore-*.whl; do
+            SIBLINGS="$SIBLINGS --preinstall $w"
+          done
+          # Sibling wheels preinstalled by PATH (direct-URL installs, so each
+          # carries direct_url.json — the origin check's evidence); find-links
+          # stays only for anything transitive.
+          python3 -m pipx install "$WHEEL" $SIBLINGS --pip-args="--find-links=$PWD/dist"
 
       # The Node-free engine surface still works: fail-closed is about script
       # EXECUTION, not about the whole tool going dark.
@@ -500,9 +528,18 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          gh api --paginate \
-            "repos/${GITHUB_REPOSITORY}/commits/${SHA}/check-runs?per_page=100" \
-            --jq '.check_runs[] | [.name, .conclusion] | @tsv' > runs.tsv || true
+          # A tag pushed together with its commit races the ci run on that
+          # commit: poll (up to 30 min) until every REQUIRED check has a
+          # conclusion instead of failing on a snapshot taken while ci is
+          # still queued (run 32936206718). Only the required ci.yml names
+          # are awaited — this workflow's own in-progress check runs on the
+          # same SHA are not in that list, so it never waits on itself.
+          fetch_runs() {
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/commits/${SHA}/check-runs?per_page=100" \
+              --jq '.check_runs[] | [.name, .status, .conclusion] | @tsv' > runs.tsv || true
+          }
+          fetch_runs
           cat runs.tsv
           required=(
             "lint + type"                 # ruff + pyright strict
@@ -518,9 +555,27 @@ jobs:
             "server (shard 1/3)"
             "server (shard 2/3)"
           )
+          deadline=$((SECONDS + 1800))
+          while :; do
+            pending=0
+            for name in "${required[@]}"; do
+              status=$(awk -F'\t' -v n="$name" '$1 == n {print $2}' runs.tsv | head -1)
+              conclusion=$(awk -F'\t' -v n="$name" '$1 == n {print $3}' runs.tsv | head -1)
+              if [ "$conclusion" != "success" ] && [ "${status:-missing}" != "completed" ]; then
+                pending=1
+              fi
+            done
+            [ "$pending" = 0 ] && break
+            if [ $SECONDS -ge $deadline ]; then
+              echo "required checks still pending after 30 min on $SHA" >&2
+              break
+            fi
+            sleep 60
+            fetch_runs
+          done
           fail=0
           for name in "${required[@]}"; do
-            conclusion=$(awk -F'\t' -v n="$name" '$1 == n {print $2}' runs.tsv | head -1)
+            conclusion=$(awk -F'\t' -v n="$name" '$1 == n {print $3}' runs.tsv | head -1)
             if [ "$conclusion" != "success" ]; then
               echo "gate check '$name' is '${conclusion:-missing}' on $SHA" >&2
               fail=1
