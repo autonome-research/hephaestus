@@ -1,0 +1,177 @@
+{
+  "aggregate": 1.0,
+  "date": "2026-08-27-mechanism-baseline",
+  "gated_split": "prose",
+  "interpretation_gap": 0.0,
+  "meets_gate": false,
+  "metrics": {
+    "clarification_rate": null,
+    "counts": {
+      "build_failures": 7,
+      "build_recoveries": 6,
+      "caught_failures": 0,
+      "caught_numeric": 0,
+      "caught_vision": 0,
+      "clarification_refusals": 0,
+      "harness_error_runs": 4,
+      "ledger_entries": 280,
+      "material_assumptions": 0,
+      "material_assumptions_asked": 0,
+      "protected_runs": 9,
+      "reviewed_requirements": 220,
+      "reviewed_runs": 18,
+      "tampered_runs": 0,
+      "verdicts_verifiable": 0
+    },
+    "error_recovery_rate": 0.8571428571428571,
+    "harness_error_rate": 0.2222222222222222,
+    "n": 18,
+    "requirement_coverage": 0.0,
+    "review_catch_rate": 0.0,
+    "review_catch_rate_numeric": 0.0,
+    "review_catch_rate_vision": 0.0,
+    "spec_tampering_rate": 0.0
+  },
+  "model": "gpt-5.6-sol",
+  "n": 9,
+  "n_total": 18,
+  "pass_rate_prose": 1.0,
+  "pass_rate_seeded": 1.0,
+  "passes": 9,
+  "passes_total": 18,
+  "per_task": {
+    "gripper-jaws": {
+      "budget_tool_calls": 34,
+      "mean_tokens": null,
+      "mean_tool_calls": 23.333333333333332,
+      "n": 3,
+      "pass_rate": 1.0,
+      "passes": 3
+    },
+    "gripper-jaws@seeded": {
+      "budget_tool_calls": 34,
+      "mean_tokens": null,
+      "mean_tool_calls": 20.666666666666668,
+      "n": 3,
+      "pass_rate": 1.0,
+      "passes": 3
+    },
+    "hinge-travel": {
+      "budget_tool_calls": 52,
+      "mean_tokens": null,
+      "mean_tool_calls": 37.0,
+      "n": 3,
+      "pass_rate": 1.0,
+      "passes": 3
+    },
+    "hinge-travel@seeded": {
+      "budget_tool_calls": 52,
+      "mean_tokens": null,
+      "mean_tool_calls": 40.0,
+      "n": 3,
+      "pass_rate": 1.0,
+      "passes": 3
+    },
+    "leadscrew-actuator": {
+      "budget_tool_calls": 41,
+      "mean_tokens": null,
+      "mean_tool_calls": 27.0,
+      "n": 3,
+      "pass_rate": 1.0,
+      "passes": 3
+    },
+    "leadscrew-actuator@seeded": {
+      "budget_tool_calls": 41,
+      "mean_tokens": null,
+      "mean_tool_calls": 24.0,
+      "n": 3,
+      "pass_rate": 1.0,
+      "passes": 3
+    }
+  },
+  "perfect_task_failures": [
+    "repair-fillet"
+  ],
+  "perfect_tasks": [
+    "repair-fillet"
+  ],
+  "splits": {
+    "prose": {
+      "meets_threshold": true,
+      "metrics": {
+        "clarification_rate": null,
+        "counts": {
+          "build_failures": 3,
+          "build_recoveries": 3,
+          "caught_failures": 0,
+          "caught_numeric": 0,
+          "caught_vision": 0,
+          "clarification_refusals": 0,
+          "harness_error_runs": 2,
+          "ledger_entries": 139,
+          "material_assumptions": 0,
+          "material_assumptions_asked": 0,
+          "protected_runs": 0,
+          "reviewed_requirements": 108,
+          "reviewed_runs": 9,
+          "tampered_runs": 0,
+          "verdicts_verifiable": 0
+        },
+        "error_recovery_rate": 1.0,
+        "harness_error_rate": 0.2222222222222222,
+        "n": 9,
+        "requirement_coverage": 0.0,
+        "review_catch_rate": 0.0,
+        "review_catch_rate_numeric": 0.0,
+        "review_catch_rate_vision": 0.0,
+        "spec_tampering_rate": null
+      },
+      "n": 9,
+      "pass_rate": 1.0,
+      "passes": 9,
+      "spec": "prose",
+      "threshold": 0.6,
+      "wilson_lower_90": 0.8456758527009048
+    },
+    "seeded": {
+      "meets_threshold": null,
+      "metrics": {
+        "clarification_rate": null,
+        "counts": {
+          "build_failures": 4,
+          "build_recoveries": 3,
+          "caught_failures": 0,
+          "caught_numeric": 0,
+          "caught_vision": 0,
+          "clarification_refusals": 0,
+          "harness_error_runs": 2,
+          "ledger_entries": 141,
+          "material_assumptions": 0,
+          "material_assumptions_asked": 0,
+          "protected_runs": 9,
+          "reviewed_requirements": 112,
+          "reviewed_runs": 9,
+          "tampered_runs": 0,
+          "verdicts_verifiable": 0
+        },
+        "error_recovery_rate": 0.75,
+        "harness_error_rate": 0.2222222222222222,
+        "n": 9,
+        "requirement_coverage": 0.0,
+        "review_catch_rate": 0.0,
+        "review_catch_rate_numeric": 0.0,
+        "review_catch_rate_vision": 0.0,
+        "spec_tampering_rate": 0.0
+      },
+      "n": 9,
+      "pass_rate": 1.0,
+      "passes": 9,
+      "spec": "seeded",
+      "threshold": null,
+      "wilson_lower_90": 0.8456758527009048
+    }
+  },
+  "threshold": 0.6,
+  "wilson_lower_90": 0.8456758527009048,
+  "z": 1.281552
+}
