@@ -198,6 +198,40 @@ tool — there is no per-script constraint syntax and no placement solver
 belong in the constraint set. The CLI reads and re-evaluates. `--json` emits
 `AssemblyStatus`.
 
+### `heph joints`
+
+Show the declared joint set (kind, parent/child anchors, travel limits,
+provenance — withdrawn entries stay listed with their reasons) and the latest
+per-joint and per-pose motion outcomes.
+
+```console
+$ heph joints
+no joints declared
+```
+
+Joints and poses are **declared by the agent**, through the `declare_joint` /
+`declare_pose` tools — there is no per-script joint syntax and no solver:
+scripts position geometry, poses exist only inside an evaluation
+(`KINEMATICS.md` §1). `--json` emits the machine form.
+
+### `heph motion` / `heph motion check`
+
+Show the motion status, the latest sweep results (worst-sample parameter
+values and measured value for every check), and the coupling table; `check`
+re-evaluates now against current builds — pass ids to re-evaluate a subset.
+
+```console
+$ heph motion
+no joints declared
+$ heph motion check
+no motion checks declared
+```
+
+Sweep verdicts are the closed `KINEMATICS.md` §4 vocabulary —
+`holds_at_samples`, never "holds": a sweep is sampled evidence, not a
+continuous guarantee. `--json` emits `MotionStatus` plus the per-check
+results.
+
 ### `heph registry {list,publish,pin,update,verify}`
 
 See [registry-pinning.md](registry-pinning.md) — it is a topic, not a flag list.

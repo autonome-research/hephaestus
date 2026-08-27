@@ -146,7 +146,7 @@ CONSTRAINT_TASKS: frozenset[str] = frozenset(
 # budget_exceeded, 0 correctness failures; derivations in each task.json notes.
 CORPUS_V3_ADDITIONS: tuple[tuple[str, int], ...] = (
     ("gripper-jaws", 34),
-    ("hinge-travel", 52),
+    ("hinge-travel", 58),  # floor raised by the baseline sweep's 44-call pass
     ("leadscrew-actuator", 41),
 )
 
