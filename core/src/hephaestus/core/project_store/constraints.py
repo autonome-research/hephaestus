@@ -106,8 +106,10 @@ _ANCHOR_RE: Final[re.Pattern[str]] = re.compile(ANCHOR_PATTERN)
 #: Structural keys of an entry. Every OTHER key must be a declared parameter of
 #: the entry's kind — that is what keeps the wire shape of ``ASSEMBLY.md`` §1
 #: (``value_mm`` next to ``id``) from needing a second, restated schema.
+#: ``poses`` is the ``KINEMATICS.md`` §3 amendment: the named poses the entry
+#: is evaluated at (absent means zero, exactly as 8C).
 ENTRY_FIELDS: Final[frozenset[str]] = frozenset(
-    {"id", "kind", "a", "b", "provenance", "note", "withdrawn", "withdrawn_reason"}
+    {"id", "kind", "a", "b", "poses", "provenance", "note", "withdrawn", "withdrawn_reason"}
 )
 
 ConstraintRefusal = Literal["invalid_constraint", "unknown_constraint"]
@@ -295,6 +297,15 @@ class ConstraintEntry:
     #: ``geom.evaluate_residual`` as its ``declared`` mapping.
     values: Mapping[str, float]
     provenance: ConstraintProvenance
+    #: ``KINEMATICS.md`` §3: the named poses this entry is evaluated at, in
+    #: declaration order. Empty means UNBOUND — evaluated at zero exactly as in
+    #: 8C, and serialized without the field so the wire shape stays
+    #: byte-for-byte the existing one (a Gate G9A clause). Validation here is
+    #: structural only (id-shaped, no duplicates): whether a pose exists and
+    #: can be evaluated is the engine's question, with its own named
+    #: unresolvable state — refusing a declaration because the pose comes later
+    #: would make the two sets order-dependent for no honesty gain.
+    poses: tuple[str, ...] = ()
     note: str | None = None
     #: A withdrawn entry stays in every later generation, carrying the reason it
     #: was withdrawn: ``ASSEMBLY.md`` §3 makes withdrawal a new generation, never
@@ -314,6 +325,8 @@ class ConstraintEntry:
 
     def to_json(self) -> dict[str, JSONValue]:
         out: dict[str, JSONValue] = {"id": self.id, "kind": self.kind, "a": self.a, "b": self.b}
+        if self.poses:
+            out["poses"] = list(self.poses)
         for name in sorted(self.values):
             out[name] = self.values[name]
         out["provenance"] = cast("JSONValue", self.provenance.to_json())
@@ -344,6 +357,7 @@ class ConstraintEntry:
             )
         parse_anchor(a, field="a")
         parse_anchor(b, field="b")
+        poses = _declared_poses(raw_id, data.get("poses"))
         values = _declared_values(raw_id, kind, data)
         note = data.get("note")
         if note is not None and not isinstance(note, str):
@@ -363,10 +377,45 @@ class ConstraintEntry:
             b=b,
             values=values,
             provenance=ConstraintProvenance.from_json(raw_id, data.get("provenance")),
+            poses=poses,
             note=note,
             withdrawn=withdrawn,
             withdrawn_reason=withdrawn_reason if withdrawn else None,
         )
+
+
+def _declared_poses(entry_id: str, raw: JSONValue | None) -> tuple[str, ...]:
+    """The ``KINEMATICS.md`` §3 pose binding, structurally validated.
+
+    ``None`` (field absent) is the unbound 8C entry. An explicit empty list is
+    refused rather than treated as absent: "evaluated at no pose" and
+    "evaluated at zero" are different claims, and silently reading one as the
+    other is exactly the kind of repair the declaration path never performs.
+    """
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or not all(
+        isinstance(item, str) for item in cast("list[JSONValue]", raw)
+    ):
+        raise ConstraintError(
+            f"constraint {entry_id}: poses must be an array of pose ids (KINEMATICS.md §3)"
+        )
+    names = cast("list[str]", raw)
+    if not names:
+        raise ConstraintError(
+            f"constraint {entry_id}: poses binds no pose — omit the field to evaluate "
+            "at zero (KINEMATICS.md §3)"
+        )
+    seen: set[str] = set()
+    for name in names:
+        if not _ID_RE.match(name):
+            raise ConstraintError(
+                f"constraint {entry_id}: pose id {name!r} must match {CONSTRAINT_ID_PATTERN}"
+            )
+        if name in seen:
+            raise ConstraintError(f"constraint {entry_id}: pose {name!r} is bound twice")
+        seen.add(name)
+    return tuple(names)
 
 
 def _declared_values(entry_id: str, kind: str, data: Mapping[str, JSONValue]) -> dict[str, float]:

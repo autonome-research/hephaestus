@@ -26,14 +26,22 @@ generations, provenance on every entry). Each entry:
 
 ```json
 {"id": "c-lid-fit", "kind": "clearance_min",
- "a": "enclosure/lid:register_wall", "b": "enclosure/base:register_slot",
+ "a": "enclosure_lid:register_wall", "b": "enclosure_base:register_slot",
  "value_mm": 0.15, "tol_mm": 0.05,
  "provenance": {"requirement": "r-7"}, "note": "slip fit per datasheet"}
 ```
 
 - **Anchors** are `part[:selector]` where the selector is a §5.3 tag, a
   geometry label, or a binding name — the existing addressing layer, no new
-  naming scheme. A bare `part` anchors the whole compound.
+  naming scheme. A bare `part` anchors the whole compound. (Note 2026-08-26:
+  the anchor grammar always was colon-separated legal part idents —
+  `ANCHOR_PATTERN` in `core/src/hephaestus/core/project_store/constraints.py`;
+  the example above originally showed slash-bearing part names, which that
+  grammar refuses, and was corrected in the same change.)
+- **`poses` (optional; amendment 2026-08-26, `KINEMATICS.md` §3)**: a list of
+  named pose ids the entry is evaluated at. Absent, evaluation is at zero
+  exactly as in 8C. Present, the constraint is evaluated at each named pose —
+  the loop-closure and limit-fit vocabulary; outcome shape in §2.
 - **Kinds** (8C set; each later kind is a contract amendment):
   `no_interference(a, b)`, `clearance_min(a, b, value_mm)`,
   `distance(a, b, value_mm, tol_mm)`, `coincident(a, b, tol_mm)` (planar
@@ -65,6 +73,14 @@ generations, provenance on every entry). Each entry:
   with violated. Status is recomputed on demand and PROJECTED at
   publication: rebuilding any part a constraint touches marks the assembly
   projection stale, same machinery as `hc`/import staleness.
+- **Pose-bound outcomes** (amendment 2026-08-26, `KINEMATICS.md` §3): an
+  entry carrying `poses` is evaluated at each named pose (anchors resolved
+  once, transforms applied, residual per pose). Its outcome extends the 8C
+  record explicitly: the row's singular `residual` slot carries the **worst
+  pose's residual**, and a new `pose_residuals` table carries one
+  `(pose_id, verdict, residual)` entry per bound pose. Violated at ANY bound
+  pose is violated; an unresolvable pose makes the row unresolvable. Entries
+  without `poses` keep the existing outcome wire shape byte-for-byte.
 
 ## 3. Surface
 
@@ -89,7 +105,10 @@ generations, provenance on every entry). Each entry:
 
 ## 4. What deliberately does NOT change
 
-No placement solver, no kinematics, no motion studies. No per-script
+No placement solver. No kinematics, no motion studies **in 8C** (amendment
+2026-08-26: posed evaluation of declared joints is Stage 9 per
+`KINEMATICS.md`; the no-solver rule is unchanged — nothing in Stage 9 moves
+what a script authored). No per-script
 constraint syntax — `CHECKS` keeps owning single-part assertions; a `CHECKS`
 predicate may still call `m.interference` (existing checks stay valid), but
 cross-part fits belong in the constraint set. No new persistence machinery

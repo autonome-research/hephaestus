@@ -26,6 +26,10 @@ mixin per domain so each domain reads independently:
 ``_assembly``    the ``ASSEMBLY.md`` §3 constraint quartet: thin ops over the
                  project's generational constraint set and the engine evaluator,
                  keeping the tool surface's refusal vocabulary and nothing else.
+``_motion``      the ``KINEMATICS.md`` §6 Stage 9A kinematics tools: thin ops
+                 over the generational joint and pose sets and the engine
+                 motion evaluator, keeping the tool surface's refusal
+                 vocabulary and nothing else (motion checks are 9B).
 ``_requirements`` the ``VALIDATION.md`` §2 requirement ledger: immutable
                  generations under the project-config lock, and the typed
                  :func:`~._requirements.ledger_state` reader every later
@@ -155,6 +159,7 @@ from ._gate import (
     requirement_ids,
 )
 from ._measure import MeasureOps
+from ._motion import MotionOps
 from ._params import SYNC_PART, ParamOps, ParamProbe
 from ._references import REFERENCE_WRAPPER_REGISTRY, ReferenceOps
 from ._requirements import (
@@ -216,6 +221,7 @@ __all__ = [
     "DrawingOps",
     "ExportOutput",
     "LedgerState",
+    "MotionOps",
     "ParamConflict",
     "ParamProbe",
     "ParamState",
@@ -275,6 +281,7 @@ class CadOps(
     ExportOps,
     RequirementOps,
     AssemblyOps,
+    MotionOps,
     ReferenceOps,
     DimensionFindingOps,
     DfmOps,

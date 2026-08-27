@@ -650,6 +650,28 @@ hephaestus.bench, commit 3669a7a) is its foundation.
   The external benchmark is the gate — a corpus we did not author cannot
   fall into the reproduction trap the 2026-07-26 audit closed.
 
+## Stage 9 — Kinematics and motion (amendment 2026-08-26, maintainer-directed)
+
+Priority decision restated: Stage 9 is frontier-capability work under the same
+engine-first decision recorded for Stage 8 — the optimal CAD harness outranks
+the soonest release. Normative spec: `KINEMATICS.md` (posed evaluation of
+declared joints — no placement solver, no dynamics; authored positions stay
+authored). Stage 9 lands in three gated sub-stages, strictly ordered:
+
+- **9A — Joints and posed evaluation** (`KINEMATICS.md` §1–§3): joint and pose
+  sets as generational project state, pure forward kinematics in
+  `hephaestus.geom.kinematics`, engine `MotionStatus`, and 8C constraints
+  evaluated at named poses. Gate G9A: `uv run pytest tests/stage9a -q` exits 0
+  per `KINEMATICS.md` "Gates"; existing suites stay green.
+- **9B — Motion checks** (`KINEMATICS.md` §4, §6): sampled sweeps with the
+  closed five-verdict vocabulary, `m.at_pose`/`m.sweep` in project-scope
+  checks, posed-scene renders, and the reviewer's motion-blocking rule. Gate
+  G9B: `uv run pytest tests/stage9b -q` exits 0 per `KINEMATICS.md` "Gates".
+- **9C — Couplings and the mechanism bench** (`KINEMATICS.md` §5, §6): linear
+  joint couplings and the corpus v3 mechanism tasks with their own Tier 3
+  splits. Gate G9C: `uv run pytest tests/stage9c -q` exits 0 per
+  `KINEMATICS.md` "Gates".
+
 ## Mission-wide rules
 
 1. **Gates are commands.** Every criterion above maps to a CI job; the

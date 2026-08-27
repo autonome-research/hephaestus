@@ -36,6 +36,9 @@ __all__ = [
     "CONSTRAINT_PARAMS",
     "CONSTRAINT_STATES",
     "IDENT_PATTERN",
+    "JOINT_ID_PATTERN",
+    "JOINT_KINDS",
+    "MOTION_OUTCOME_STATES",
     "PROFILES",
     "REQUIREMENT_ID_PATTERN",
     "REQUIREMENT_SOURCES",
@@ -1820,6 +1823,14 @@ _CONSTRAINT_ENTRY: Final[JsonSchema] = _obj(
         "b": _CONSTRAINT_ANCHOR,
         "provenance": _CONSTRAINT_PROVENANCE,
         "note": {"anyOf": [_STR, {"type": "null"}], "default": None},
+        # KINEMATICS.md §3 (Stage 9A): an entry may bind named poses for
+        # per-pose evaluation. Absent (or null), evaluation and the outcome
+        # wire shape are byte-for-byte the 8C ones; which ids are real poses
+        # is the store's and the evaluator's own judgement, not this schema's.
+        "poses": {
+            "anyOf": [{"type": "array", "items": _STR}, {"type": "null"}],
+            "default": None,
+        },
         **_CONSTRAINT_NUMBERS,
     },
     ["id", "kind", "a", "b", "provenance"],
@@ -1951,6 +1962,10 @@ def _update_constraint() -> ToolDecl:
                         "b": {"anyOf": [_CONSTRAINT_ANCHOR, {"type": "null"}]},
                         "provenance": {"anyOf": [_CONSTRAINT_PROVENANCE, {"type": "null"}]},
                         "note": {"anyOf": [_STR, {"type": "null"}]},
+                        # KINEMATICS.md §3 (Stage 9A): pose bindings are entry
+                        # fields, so a patch may revise them; the merged entry
+                        # is revalidated as a whole by the store.
+                        "poses": {"anyOf": [{"type": "array", "items": _STR}, {"type": "null"}]},
                         "withdrawn": {"anyOf": [_BOOL, {"type": "null"}]},
                         **_CONSTRAINT_NUMBERS,
                     },
@@ -2006,6 +2021,326 @@ def _check_assembly() -> ToolDecl:
                 "partial": _BOOL,
             },
             ["status", "assembly", "partial"],
+        ),
+        profiles=("part", "orchestrator"),
+        sequential=False,
+        idempotent=False,
+    )
+
+
+# --------------------------------------------------------------------------
+# KINEMATICS.md §6 — the Stage 9A kinematics tools
+#
+# The vocabulary below is RESTATED here, not invented, on exactly the 8C
+# constraint-quartet rule above: the authority is
+# ``hephaestus.core.project_store.kinematics`` (``JOINT_KINDS`` /
+# ``JOINT_ID_PATTERN`` / the shared 8C anchor grammar) and
+# ``hephaestus.core.motion`` (``MOTION_OUTCOME_STATES``). This module may not
+# import either, so the equality is asserted by a drift test instead
+# (``server/tests/test_motion_tools.py::test_declared_joint_vocabulary_matches_engine``).
+
+#: The Stage 9 joint kinds (``KINEMATICS.md`` §1); each later kind is a
+#: contract amendment, so the set is closed here rather than extensible.
+JOINT_KINDS: Final[tuple[str, ...]] = ("fixed", "revolute", "prismatic", "cylindrical")
+
+#: Joint and pose ids: stable handles a requirement, a tool call and a reviewer
+#: finding all name — pattern-checked exactly like constraint ids.
+JOINT_ID_PATTERN: Final[str] = r"^[A-Za-z][A-Za-z0-9._-]{0,63}$"
+
+#: The two per-joint and per-pose states (``KINEMATICS.md`` §2). Closed on
+#: purpose: a joint set has nothing to satisfy or violate — those are the
+#: constraint vocabulary — so "could not be evaluated" has exactly one spelling
+#: here, and it is not a pass.
+MOTION_OUTCOME_STATES: Final[tuple[str, ...]] = ("resolved", "unresolvable")
+
+_JOINT_ID: Final[JsonSchema] = {"type": "string", "pattern": JOINT_ID_PATTERN}
+
+#: One declared travel range (``min < max``, in the kind's own unit).
+_JOINT_LIMIT_PAIR: Final[JsonSchema] = _obj({"min": _NUM, "max": _NUM}, ["min", "max"])
+
+#: Which limit shape a kind requires (one pair for revolute/prismatic, the two
+#: named pairs for cylindrical, none for fixed) is enforced structurally by the
+#: joint set, which refuses a wrong shape with ``invalid_joint`` and writes
+#: nothing — one authority (the store's own tables), the CONSTRAINT_PARAMS rule.
+_JOINT_LIMITS: Final[JsonSchema] = {
+    "anyOf": [
+        _JOINT_LIMIT_PAIR,
+        _obj(
+            {"rotation": _JOINT_LIMIT_PAIR, "translation": _JOINT_LIMIT_PAIR},
+            ["rotation", "translation"],
+        ),
+        {"type": "null"},
+    ],
+    "default": None,
+}
+
+#: A joint entry, exactly the ``KINEMATICS.md`` §1 shape. Anchors are the 8C
+#: anchor grammar verbatim (§1: "no new naming scheme"); provenance carries the
+#: same compulsion as a constraint's, under this set's own refusal token.
+_JOINT_ENTRY: Final[JsonSchema] = _obj(
+    {
+        "id": _JOINT_ID,
+        "kind": _enum(list(JOINT_KINDS)),
+        "parent": _CONSTRAINT_ANCHOR,
+        "child": _CONSTRAINT_ANCHOR,
+        "limits": _JOINT_LIMITS,
+        # §1: the authored positions ARE parameter zero — the only value in the
+        # 9A contract; a numeric zero offset is a 9C amendment candidate.
+        "zero": _enum(["as_built"], "as_built"),
+        "provenance": _CONSTRAINT_PROVENANCE,
+        "note": {"anyOf": [_STR, {"type": "null"}], "default": None},
+    },
+    ["id", "kind", "parent", "child", "provenance"],
+)
+
+#: The same entry as it is *reported*: lenient, and carrying what a withdrawal
+#: recorded — a withdrawn joint is never evaluated and never erased (the 8C
+#: read-tool shape: generational state is honest only if every generation stays
+#: readable).
+_JOINT_ENTRY_OUT: Final[JsonSchema] = _ok(
+    {
+        **cast("dict[str, JsonSchema]", _JOINT_ENTRY["properties"]),
+        "withdrawn": _BOOL,
+        "withdrawn_reason": {"anyOf": [_STR, {"type": "null"}]},
+    },
+    ["id", "kind", "parent", "child"],
+)
+
+#: A named pose, exactly the ``KINEMATICS.md`` §3 shape: parameter values by
+#: joint id. Joints omitted take their zero value, so ``{}`` is legal and means
+#: "everything as built".
+_POSE_ENTRY: Final[JsonSchema] = _obj(
+    {
+        "id": _JOINT_ID,
+        "joints": _dict(_NUM),
+        "provenance": _CONSTRAINT_PROVENANCE,
+        "note": {"anyOf": [_STR, {"type": "null"}], "default": None},
+    },
+    ["id", "joints", "provenance"],
+)
+
+_POSE_ENTRY_OUT: Final[JsonSchema] = _ok(
+    {
+        **cast("dict[str, JsonSchema]", _POSE_ENTRY["properties"]),
+        "withdrawn": _BOOL,
+        "withdrawn_reason": {"anyOf": [_STR, {"type": "null"}]},
+    },
+    ["id", "joints"],
+)
+
+#: One joint's state at one evaluation (``KINEMATICS.md`` §2). The anchor refs
+#: reuse the 8C shape: how far resolution got, even on failure.
+_JOINT_OUTCOME: Final[JsonSchema] = _ok(
+    {
+        "id": _STR,
+        "kind": _STR,
+        "parent": _CONSTRAINT_ANCHOR_REF,
+        "child": _CONSTRAINT_ANCHOR_REF,
+        "state": _enum(list(MOTION_OUTCOME_STATES)),
+        "reason": {"anyOf": [_STR, {"type": "null"}]},
+        "detail": {"anyOf": [_STR, {"type": "null"}]},
+        "provenance": _dict(),
+        "note": {"anyOf": [_STR, {"type": "null"}]},
+    },
+    ["id", "kind", "parent", "child", "state"],
+)
+
+#: One pose's state at one evaluation, with its binding restated. This is where
+#: ``orphaned_pose`` lives (§2/§3): a per-POSE unresolvable state naming the
+#: withdrawn joint in its detail, never a joint failure and never erased.
+_POSE_OUTCOME: Final[JsonSchema] = _ok(
+    {
+        "id": _STR,
+        "joints": _dict(_NUM),
+        "state": _enum(list(MOTION_OUTCOME_STATES)),
+        "reason": {"anyOf": [_STR, {"type": "null"}]},
+        "detail": {"anyOf": [_STR, {"type": "null"}]},
+        "provenance": _dict(),
+        "note": {"anyOf": [_STR, {"type": "null"}]},
+    },
+    ["id", "joints", "state"],
+)
+
+#: One whole motion evaluation (``KINEMATICS.md`` §2): the TWO sections, the
+#: artifact refs actually read for the joint forest, ``stale`` naming forest
+#: parts rebuilt since, and ``blocking`` — the ids the (9B-amended) never-green
+#: rule would fire on, because an unresolvable joint or pose is not a passing one.
+_MOTION_STATUS: Final[JsonSchema] = _ok(
+    {
+        "joint_generation": _INT,
+        "pose_generation": _INT,
+        "joints": {"type": "array", "items": _JOINT_OUTCOME},
+        "poses": {"type": "array", "items": _POSE_OUTCOME},
+        "artifact_refs": _dict(_STR),
+        "stale": {"type": "array", "items": _STR},
+        "counts": _dict(_dict(_INT)),
+        "blocking": {"type": "array", "items": _STR},
+    },
+    ["joint_generation", "pose_generation", "joints", "poses", "counts", "blocking"],
+)
+
+#: The result the three joint-set tools share (the 8C constraint-set shape):
+#: the generation now current, its immutable ref, what changed, every entry
+#: (withdrawn ones included) and the LAST evaluation — ``motion: null`` meaning
+#: *never evaluated*, which is not a pass. Re-measuring is ``check_motion``,
+#: never a side effect of a read.
+_JOINT_SET_RESULT: Final[JsonSchema] = _ok(
+    {
+        "status": {"const": "ok"},
+        "generation": _INT,
+        "artifact_ref": {"anyOf": [_STR, {"type": "null"}]},
+        "change": {"anyOf": [_dict(), {"type": "null"}]},
+        "entries": {"type": "array", "items": _JOINT_ENTRY_OUT},
+        "motion": {"anyOf": [_MOTION_STATUS, {"type": "null"}]},
+        "motion_ref": {"anyOf": [_STR, {"type": "null"}]},
+    },
+    ["status", "generation", "artifact_ref", "entries", "motion"],
+)
+
+_POSE_SET_RESULT: Final[JsonSchema] = _ok(
+    {
+        "status": {"const": "ok"},
+        "generation": _INT,
+        "artifact_ref": {"anyOf": [_STR, {"type": "null"}]},
+        "change": {"anyOf": [_dict(), {"type": "null"}]},
+        "entries": {"type": "array", "items": _POSE_ENTRY_OUT},
+        "motion": {"anyOf": [_MOTION_STATUS, {"type": "null"}]},
+        "motion_ref": {"anyOf": [_STR, {"type": "null"}]},
+    },
+    ["status", "generation", "artifact_ref", "entries", "motion"],
+)
+
+
+def _declare_joint() -> ToolDecl:
+    return ToolDecl(
+        name="declare_joint",
+        summary="Declare one joint between two parts (KINEMATICS.md §1); advances one generation.",
+        params=_JOINT_ENTRY,
+        result=_JOINT_SET_RESULT,
+        profiles=("part", "orchestrator"),
+        sequential=True,
+        idempotent=True,
+    )
+
+
+def _update_joint() -> ToolDecl:
+    return ToolDecl(
+        name="update_joint",
+        summary="Revise or withdraw one joint with a recorded reason; one generation.",
+        params=_obj(
+            {
+                "id": _JOINT_ID,
+                # Merged onto the stored entry and revalidated as a whole
+                # (including the forest check — a re-parented joint can close a
+                # cycle a declaration could not). `withdrawn: true` is the
+                # withdrawal path: a new generation that stops claiming the
+                # joint, never an erasure. A pose that binds it is deliberately
+                # untouched — it becomes `orphaned_pose` at evaluation (§2/§3).
+                "patch": _obj(
+                    {
+                        "kind": {"anyOf": [_enum(list(JOINT_KINDS)), {"type": "null"}]},
+                        "parent": {"anyOf": [_CONSTRAINT_ANCHOR, {"type": "null"}]},
+                        "child": {"anyOf": [_CONSTRAINT_ANCHOR, {"type": "null"}]},
+                        "limits": _JOINT_LIMITS,
+                        "provenance": {"anyOf": [_CONSTRAINT_PROVENANCE, {"type": "null"}]},
+                        "note": {"anyOf": [_STR, {"type": "null"}]},
+                        "withdrawn": {"anyOf": [_BOOL, {"type": "null"}]},
+                    },
+                    [],
+                ),
+                # Compulsory and recorded ON THE GENERATION, the 8C rule: a
+                # silently revised travel limit is a silently revised claim.
+                "reason": _STR,
+            },
+            ["id", "patch", "reason"],
+        ),
+        result=_JOINT_SET_RESULT,
+        profiles=("part", "orchestrator"),
+        sequential=True,
+        idempotent=True,
+    )
+
+
+def _read_joints() -> ToolDecl:
+    return ToolDecl(
+        name="read_joints",
+        summary="Read the joint set and the latest motion evaluation (no re-measure).",
+        params=_obj({}, []),
+        result=_JOINT_SET_RESULT,
+        profiles=("part", "orchestrator"),
+        sequential=False,
+        idempotent=False,
+    )
+
+
+def _declare_pose() -> ToolDecl:
+    return ToolDecl(
+        name="declare_pose",
+        summary="Declare one named pose binding joint values (KINEMATICS.md §3); one generation.",
+        params=_POSE_ENTRY,
+        result=_POSE_SET_RESULT,
+        profiles=("part", "orchestrator"),
+        sequential=True,
+        idempotent=True,
+    )
+
+
+def _update_pose() -> ToolDecl:
+    return ToolDecl(
+        name="update_pose",
+        summary="Revise or withdraw one pose with a recorded reason; one generation.",
+        params=_obj(
+            {
+                "id": _JOINT_ID,
+                "patch": _obj(
+                    {
+                        "joints": {"anyOf": [_dict(_NUM), {"type": "null"}]},
+                        "provenance": {"anyOf": [_CONSTRAINT_PROVENANCE, {"type": "null"}]},
+                        "note": {"anyOf": [_STR, {"type": "null"}]},
+                        "withdrawn": {"anyOf": [_BOOL, {"type": "null"}]},
+                    },
+                    [],
+                ),
+                "reason": _STR,
+            },
+            ["id", "patch", "reason"],
+        ),
+        result=_POSE_SET_RESULT,
+        profiles=("part", "orchestrator"),
+        sequential=True,
+        idempotent=True,
+    )
+
+
+def _read_poses() -> ToolDecl:
+    return ToolDecl(
+        name="read_poses",
+        summary="Read the pose set and the latest motion evaluation (no re-measure).",
+        params=_obj({}, []),
+        result=_POSE_SET_RESULT,
+        profiles=("part", "orchestrator"),
+        sequential=False,
+        idempotent=False,
+    )
+
+
+def _check_motion() -> ToolDecl:
+    # 9A subset of the KINEMATICS.md §6 surface: motion CHECKS (sweeps, reach)
+    # are Stage 9B, so there are no per-check results here yet and no `ids`
+    # parameter to select them — the deferred-surface rule the doc's
+    # "Deferred" section uses, stated in the summary rather than reserved as a
+    # dead argument.
+    return ToolDecl(
+        name="check_motion",
+        summary="Evaluate joints and poses against current builds; MotionStatus (checks are 9B).",
+        params=_obj({}, []),
+        result=_ok(
+            {
+                "status": {"const": "ok"},
+                "motion": _MOTION_STATUS,
+                "artifact_ref": {"anyOf": [_STR, {"type": "null"}]},
+            },
+            ["status", "motion"],
         ),
         profiles=("part", "orchestrator"),
         sequential=False,
@@ -2324,6 +2659,17 @@ TOOLS: Final[tuple[ToolDecl, ...]] = (
     _update_constraint(),
     _read_constraints(),
     _check_assembly(),
+    # KINEMATICS.md §6 (Stage 9A): the joint and pose quartets ride the 8C
+    # quartet decision unchanged — declaring is cheap, reversible, and measured
+    # against geometry the model didn't choose, so compelled honesty beats
+    # gatekeeping. Motion checks and couplings are 9B/9C amendments.
+    _declare_joint(),
+    _update_joint(),
+    _read_joints(),
+    _declare_pose(),
+    _update_pose(),
+    _read_poses(),
+    _check_motion(),
     _load_skill(),
     _list_skills(),
     _list_references(),

@@ -39,6 +39,21 @@ the build's §7 ``geometry_index`` for which selectors exist, the source map's
 tag placements and the §8 ``geometries`` solid runs for where they are. A
 selector that resolves in the namespace but cannot be located in the published
 artifact is ``unaddressable_anchor``: a named refusal, never a guessed face.
+That resolution layer lives in the public :class:`AnchorResolver` /
+:class:`PartGeometry` pair, because ``KINEMATICS.md`` §2 requires joint anchors
+(:mod:`hephaestus.core.motion`) to ride the SAME path — one implementation of
+"§7 against a published artifact", not two that could disagree.
+
+**Pose-bound evaluation** (``KINEMATICS.md`` §3): a constraint entry may name
+poses. Absent, evaluation is at zero and the outcome wire shape is
+byte-for-byte the 8C one — a gate clause, pinned against recorded evidence.
+Present, the anchors are resolved ONCE, the pose's forward-kinematics
+transforms are applied as placed copies, and the residual is taken per pose:
+the row's singular ``residual`` slot carries the WORST pose's residual (least
+slack) and the new ``pose_residuals`` table carries one
+``(pose_id, verdict, residual)`` entry per bound pose. Violated at ANY bound
+pose is violated; an unresolvable pose makes the row ``unresolvable``
+(``unresolvable_pose``, the detail naming the pose and its own reason).
 """
 
 from __future__ import annotations
@@ -49,7 +64,7 @@ import tempfile
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Final, Literal, cast
+from typing import TYPE_CHECKING, Any, Final, Literal, cast
 
 from hephaestus.core.addressing import GeometryIndex, Resolution, resolve
 from hephaestus.core.errors import AddressingError, ValidationError
@@ -70,15 +85,26 @@ from opstore.types import JSONValue
 
 from opstore import OpStore, canonical_json
 
+if TYPE_CHECKING:
+    # Runtime imports of the motion engine stay lazy (it needs the kernel and,
+    # module-to-module, would be circular: motion rides this module's resolver).
+    from hephaestus.core.motion import MotionResolution
+
 __all__ = [
     "ASSEMBLY_ARTIFACT_KIND",
     "OUTCOME_STATES",
+    "POSE_VERDICTS",
     "UNRESOLVABLE_REASONS",
     "AnchorRef",
+    "AnchorResolver",
     "AssemblyEvaluator",
     "AssemblyStatus",
     "ConstraintOutcome",
     "OutcomeState",
+    "PartGeometry",
+    "PoseResidual",
+    "PoseVerdict",
+    "UnresolvableAnchorError",
     "UnresolvableReason",
     "addressing_refusal",
 ]
@@ -101,6 +127,7 @@ UnresolvableReason = Literal[
     "unaddressable_anchor",
     "shape_refused",
     "invalid_constraint",
+    "unresolvable_pose",
 ]
 
 #: Why a constraint could not be evaluated. Each names a different fix:
@@ -126,6 +153,11 @@ UnresolvableReason = Literal[
 #: * ``invalid_constraint`` — the stored entry is malformed for its kind. The
 #:   declaration path refuses these, so reaching it here means a generation was
 #:   written by an older or foreign writer; it is reported, never evaluated.
+#: * ``unresolvable_pose`` — the entry binds a pose (``KINEMATICS.md`` §3) that
+#:   could not be evaluated: unknown or withdrawn, orphaned by a withdrawn
+#:   joint, out of a joint's declared limits, or riding an unresolvable joint.
+#:   The detail names the pose and its own reason; the row is NOT checked, and
+#:   the ``pose_residuals`` table says which poses were.
 UNRESOLVABLE_REASONS: Final[tuple[UnresolvableReason, ...]] = (
     "missing_part",
     "no_current_build",
@@ -135,11 +167,17 @@ UNRESOLVABLE_REASONS: Final[tuple[UnresolvableReason, ...]] = (
     "unaddressable_anchor",
     "shape_refused",
     "invalid_constraint",
+    "unresolvable_pose",
 )
 
 
-class _Unresolvable(Exception):
-    """Internal: an anchor (or a pair) could not be turned into geometry."""
+class UnresolvableAnchorError(Exception):
+    """An anchor could not be turned into geometry — a named reason plus detail.
+
+    Public because ``KINEMATICS.md`` §2 makes joint-anchor resolution
+    (:mod:`hephaestus.core.motion`) ride this module's anchoring path: the
+    engine that shares :class:`AnchorResolver` also has to catch its refusals.
+    """
 
     def __init__(self, reason: UnresolvableReason, detail: str) -> None:
         super().__init__(detail)
@@ -174,6 +212,56 @@ class AnchorRef:
         }
 
 
+PoseVerdict = Literal["satisfied", "violated", "unresolvable"]
+
+#: Per-pose verdicts inside a pose-bound row (``KINEMATICS.md`` §3): the same
+#: three spellings as :data:`OUTCOME_STATES`, restated as its own alias so the
+#: pose table cannot silently grow a fourth state the row vocabulary lacks.
+POSE_VERDICTS: Final[tuple[PoseVerdict, ...]] = ("satisfied", "violated", "unresolvable")
+
+
+@dataclass(frozen=True)
+class PoseResidual:
+    """One bound pose's verdict for one constraint (``KINEMATICS.md`` §3).
+
+    The ``(pose_id, verdict, residual)`` row of the ``pose_residuals`` table.
+    A measured pose carries its :attr:`residual`; an unresolvable one carries
+    the pose-level :attr:`reason` and :attr:`detail` instead — the same
+    "evidence never crosses states" rule the parent outcome keeps.
+    """
+
+    pose_id: str
+    verdict: PoseVerdict
+    residual: Mapping[str, JSONValue] | None = None
+    reason: str | None = None
+    detail: str | None = None
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "pose_id": self.pose_id,
+            "verdict": self.verdict,
+            "residual": None if self.residual is None else cast("JSONValue", dict(self.residual)),
+            "reason": self.reason,
+            "detail": self.detail,
+        }
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, JSONValue]) -> PoseResidual:
+        verdict = data.get("verdict")
+        if verdict not in POSE_VERDICTS:
+            raise ValidationError(f"invalid pose verdict {verdict!r}", kind="contract")
+        residual = data.get("residual")
+        return cls(
+            pose_id=str(data.get("pose_id", "")),
+            verdict=verdict,
+            residual=(
+                cast("Mapping[str, JSONValue]", residual) if isinstance(residual, dict) else None
+            ),
+            reason=_opt_str(data.get("reason")),
+            detail=_opt_str(data.get("detail")),
+        )
+
+
 @dataclass(frozen=True)
 class ConstraintOutcome:
     """One constraint's state, with the evidence behind it.
@@ -183,6 +271,12 @@ class ConstraintOutcome:
     :attr:`reason` and a human-readable :attr:`detail`. Neither ever carries the
     other's evidence, which is what keeps "not checked" from reading like a
     measurement.
+
+    A pose-bound entry (``KINEMATICS.md`` §3) additionally carries
+    :attr:`pose_residuals` — one row per bound pose — and its singular
+    :attr:`residual` is the worst pose's. The field serializes ONLY when the
+    entry binds poses, so an unbound outcome's wire shape stays byte-for-byte
+    the 8C one (a gate clause).
     """
 
     id: str
@@ -191,15 +285,18 @@ class ConstraintOutcome:
     b: AnchorRef
     state: OutcomeState
     #: ``dataclasses.asdict(ConstraintResidual)`` — geom's own record shape, so
-    #: the wire form cannot drift from ``ASSEMBLY.md`` §2.
+    #: the wire form cannot drift from ``ASSEMBLY.md`` §2. For a pose-bound
+    #: entry: the WORST pose's residual (least slack).
     residual: Mapping[str, JSONValue] | None = None
     reason: UnresolvableReason | None = None
     detail: str | None = None
     provenance: Mapping[str, JSONValue] = field(default_factory=dict[str, "JSONValue"])
     note: str | None = None
+    #: ``KINEMATICS.md`` §3: one entry per bound pose; empty for unbound entries.
+    pose_residuals: tuple[PoseResidual, ...] = ()
 
     def to_json(self) -> dict[str, JSONValue]:
-        return {
+        out: dict[str, JSONValue] = {
             "id": self.id,
             "kind": self.kind,
             "a": cast("JSONValue", self.a.to_json()),
@@ -211,6 +308,9 @@ class ConstraintOutcome:
             "provenance": cast("JSONValue", dict(self.provenance)),
             "note": self.note,
         }
+        if self.pose_residuals:
+            out["pose_residuals"] = [row.to_json() for row in self.pose_residuals]
+        return out
 
     @classmethod
     def from_json(cls, data: Mapping[str, JSONValue]) -> ConstraintOutcome:
@@ -220,6 +320,14 @@ class ConstraintOutcome:
         residual = data.get("residual")
         provenance = data.get("provenance")
         reason = data.get("reason")
+        raw_poses = data.get("pose_residuals")
+        pose_residuals: tuple[PoseResidual, ...] = ()
+        if isinstance(raw_poses, list):
+            pose_residuals = tuple(
+                PoseResidual.from_json(cast("Mapping[str, JSONValue]", item))
+                for item in cast("list[JSONValue]", raw_poses)
+                if isinstance(item, dict)
+            )
         return cls(
             id=str(data.get("id", "")),
             kind=str(data.get("kind", "")),
@@ -235,6 +343,7 @@ class ConstraintOutcome:
                 cast("Mapping[str, JSONValue]", provenance) if isinstance(provenance, dict) else {}
             ),
             note=_opt_str(data.get("note")),
+            pose_residuals=pose_residuals,
         )
 
     @property
@@ -364,7 +473,7 @@ class AssemblyStatus:
 
 
 @dataclass(frozen=True)
-class _PartGeometry:
+class PartGeometry:
     """One part's current artifact, plus everything needed to address into it."""
 
     part: str
@@ -381,7 +490,7 @@ class _PartGeometry:
     runs_partition: bool
 
     def shape_for(self, resolution: Resolution) -> Any:
-        """The concrete geometry one resolution names, or ``_Unresolvable``."""
+        """The concrete geometry one resolution names, or ``UnresolvableAnchorError``."""
         if resolution.kind == "part":
             return self.shape
         if resolution.kind == "tag":
@@ -391,13 +500,13 @@ class _PartGeometry:
     def _tag_shape(self, name: str) -> Any:
         placement = self.placements.get(name)
         if placement is None or placement.solid_index is None or placement.topo_index is None:
-            raise _Unresolvable(
+            raise UnresolvableAnchorError(
                 "unaddressable_anchor",
                 f"tag {name!r} is in {self.part}'s namespace but was not placed in the "
                 "published artifact (it referenced topology outside part.geometry)",
             )
         if placement.solid_index >= len(self.solids):
-            raise _Unresolvable(
+            raise UnresolvableAnchorError(
                 "unaddressable_anchor",
                 f"tag {name!r} names solid {placement.solid_index} of {self.part}, which the "
                 f"published artifact does not have ({len(self.solids)} solids)",
@@ -408,13 +517,13 @@ class _PartGeometry:
         if placement.kind in ("face", "edge"):
             topologies = list(solid.faces() if placement.kind == "face" else solid.edges())
             if placement.topo_index >= len(topologies):
-                raise _Unresolvable(
+                raise UnresolvableAnchorError(
                     "unaddressable_anchor",
                     f"tag {name!r} names {placement.kind} {placement.topo_index} of solid "
                     f"{placement.solid_index}, which the published artifact does not have",
                 )
             return topologies[placement.topo_index]
-        raise _Unresolvable(
+        raise UnresolvableAnchorError(
             "unaddressable_anchor",
             f"tag {name!r} is a {placement.kind}, which a published artifact cannot address "
             "(only solids, faces and edges are relocatable in reloaded BRep)",
@@ -422,14 +531,14 @@ class _PartGeometry:
 
     def _run_shape(self, resolution: Resolution) -> Any:
         if resolution.kind == "binding":
-            raise _Unresolvable(
+            raise UnresolvableAnchorError(
                 "unaddressable_anchor",
                 f"binding {resolution.name!r} contributed no labeled node to {self.part}'s "
                 "published geometry, so there is nothing to measure (§5.1 label-fill gives a "
                 "geometry-bearing binding a label; this one has none)",
             )
         if not self.runs_partition:
-            raise _Unresolvable(
+            raise UnresolvableAnchorError(
                 "unaddressable_anchor",
                 f"{self.part}'s published label rows do not partition its solids (nested "
                 "labels), so a label anchor cannot be mapped to geometry without guessing",
@@ -437,7 +546,7 @@ class _PartGeometry:
         picked: list[Any] = []
         for occurrence in resolution.occurrences:
             if occurrence >= len(self.runs):
-                raise _Unresolvable(
+                raise UnresolvableAnchorError(
                     "unaddressable_anchor",
                     f"label {resolution.name!r} occurrence {occurrence} is outside "
                     f"{self.part}'s published label rows",
@@ -445,7 +554,7 @@ class _PartGeometry:
             _, start, count = self.runs[occurrence]
             picked.extend(self.solids[start : start + count])
         if not picked:
-            raise _Unresolvable(
+            raise UnresolvableAnchorError(
                 "unaddressable_anchor",
                 f"label {resolution.name!r} contributed no solid to {self.part}'s published "
                 "geometry",
@@ -455,6 +564,140 @@ class _PartGeometry:
         from build123d import Compound
 
         return Compound(children=picked)
+
+
+# --------------------------------------------------------------------------
+# shared anchor resolution
+
+
+class AnchorResolver:
+    """One evaluation's addressable view of the project's CURRENT artifacts.
+
+    Extracted from :class:`AssemblyEvaluator` because ``KINEMATICS.md`` §2
+    requires joint anchors to resolve "through the 8C anchoring path" — this
+    class IS that path, so constraint and joint resolution cannot drift apart.
+    Each part's published artifact is loaded and indexed at most once per
+    evaluation (the cache), and every failure is an
+    :class:`UnresolvableAnchorError` carrying a reason from
+    :data:`UNRESOLVABLE_REASONS` — a part that failed to load stays failed for
+    every anchor that names it, with the same reason each time.
+    """
+
+    def __init__(
+        self, layout: ProjectLayout, store: OpStore, publisher: Publisher, scratch: Path
+    ) -> None:
+        self.layout = layout
+        self._store = store
+        self._publisher = publisher
+        self._scratch = scratch
+        self._cache: dict[str, PartGeometry | UnresolvableAnchorError] = {}
+
+    def locate(self, part: str, selector: str) -> tuple[PartGeometry, Resolution]:
+        """The part's geometry and the §7 resolution one anchor names.
+
+        The caller takes ``shape_for(resolution)`` when it wants the concrete
+        geometry — split so it can record the rule and artifact ref that
+        matched even when the published artifact cannot supply the shape.
+        """
+        geometry = self._cache.get(part)
+        if geometry is None:
+            try:
+                geometry = self._load_part(part)
+            except UnresolvableAnchorError as exc:
+                geometry = exc
+            self._cache[part] = geometry
+        if isinstance(geometry, UnresolvableAnchorError):
+            raise geometry
+        try:
+            resolution = resolve(selector, geometry.index)
+        except AddressingError as exc:
+            reason, detail = addressing_refusal(exc)
+            raise UnresolvableAnchorError(reason, detail) from exc
+        return geometry, resolution
+
+    def artifact_refs(self) -> dict[str, str]:
+        """``{part: artifact_ref}`` actually read, ``""`` for a failed load.
+
+        Lexically sorted — the :attr:`AssemblyStatus.artifact_refs` shape the
+        projection compares against on later publications.
+        """
+        return {
+            part: geometry.artifact_ref if isinstance(geometry, PartGeometry) else ""
+            for part, geometry in sorted(self._cache.items())
+        }
+
+    def _load_part(self, part: str) -> PartGeometry:
+        """The part's current artifact as addressable geometry, or a named refusal."""
+        from hephaestus.core.executor.artifact_geometry import load_brep_shape
+
+        known = self.layout.part_names()
+        if part not in known:
+            raise UnresolvableAnchorError(
+                "missing_part",
+                f"no part {part!r} in this project (parts: {', '.join(known) or 'none'})",
+            )
+        result = self._publisher.current_result(part)
+        if result is None or result.artifact_ref is None:
+            raise UnresolvableAnchorError(
+                "no_current_build",
+                f"part {part!r} has no current successful build to measure",
+            )
+        blob = blob_hash_of_ref(result.artifact_ref)
+        if not self._store.blobs.has(blob):
+            raise UnresolvableAnchorError(
+                "missing_artifact",
+                f"artifact {result.artifact_ref} of part {part!r} is not durably stored",
+            )
+        shape = cast("Any", load_brep_shape(self._store.blobs.get(blob), scratch_dir=self._scratch))
+        solids = tuple(cast("list[Any]", shape.solids()))
+        bundle = self._publisher.current_bundle(part) or {}
+        index = _published_index(bundle, result)
+        runs, partition = _solid_runs(index, result, len(solids))
+        return PartGeometry(
+            part=part,
+            artifact_ref=result.artifact_ref,
+            shape=shape,
+            index=index,
+            solids=solids,
+            runs=runs,
+            placements=self._placements(result),
+            runs_partition=partition,
+        )
+
+    def _placements(self, result: BuildResult) -> dict[str, TagPlacement]:
+        """Tag placements from the build's stored source map (§5.3)."""
+        ref = result.source_map_ref
+        if ref is None:
+            return {}
+        blob = blob_hash_of_ref(ref)
+        if not self._store.blobs.has(blob):
+            return {}
+        raw = json.loads(self._store.blobs.get(blob).decode("utf-8"))
+        if not isinstance(raw, dict):  # pragma: no cover - our own JSON
+            return {}
+        tags = cast("Mapping[str, JSONValue]", raw).get("tags")
+        if not isinstance(tags, dict):
+            return {}
+        out: dict[str, TagPlacement] = {}
+        for name, entry in cast("Mapping[str, JSONValue]", tags).items():
+            if not isinstance(entry, dict):
+                continue
+            placement = cast("Mapping[str, JSONValue]", entry)
+            kind = placement.get("kind")
+            solid = placement.get("solid")
+            topo = placement.get("topo_index")
+            if not isinstance(kind, str):
+                continue
+            out[name] = TagPlacement(
+                kind=kind,
+                solid_index=(
+                    solid if isinstance(solid, int) and not isinstance(solid, bool) else None
+                ),
+                topo_index=topo if isinstance(topo, int) and not isinstance(topo, bool) else None,
+                statement_index=-1,
+                line=0,
+            )
+        return out
 
 
 # --------------------------------------------------------------------------
@@ -542,22 +785,41 @@ class AssemblyEvaluator:
     def _evaluate_in(
         self, entries: Sequence[ConstraintEntry], generation: int, scratch: Path
     ) -> AssemblyStatus:
-        cache: dict[str, _PartGeometry | _Unresolvable] = {}
-        outcomes = [self._evaluate_one(entry, cache, scratch) for entry in entries]
-        refs = {
-            part: geometry.artifact_ref if isinstance(geometry, _PartGeometry) else ""
-            for part, geometry in sorted(cache.items())
-        }
+        resolver = AnchorResolver(self.layout, self._store, self._publisher, scratch)
+        posed: MotionResolution | None = None
+        if any(entry.poses for entry in entries):
+            # Lazy on purpose, and only when a pose-bound entry exists: the
+            # motion engine resolves EVERY active joint's anchors (KINEMATICS.md
+            # §2), and an unbound-only project must not pay for — or record —
+            # geometry its constraints never asked about.
+            from hephaestus.core.motion import motion_resolution
+
+            posed = motion_resolution(self.layout, self._store, resolver)
+        outcomes = [self._evaluate_one(entry, resolver, posed) for entry in entries]
         return AssemblyStatus(
-            generation=generation, constraints=tuple(outcomes), artifact_refs=refs
+            generation=generation,
+            constraints=tuple(outcomes),
+            artifact_refs=resolver.artifact_refs(),
         )
 
     def _evaluate_one(
         self,
         entry: ConstraintEntry,
-        cache: dict[str, _PartGeometry | _Unresolvable],
-        scratch: Path,
+        resolver: AnchorResolver,
+        posed: MotionResolution | None,
     ) -> ConstraintOutcome:
+        refs, shapes, failed = self._resolve_pair(entry, resolver)
+        if failed is not None:
+            return failed
+        if entry.poses:
+            assert posed is not None  # _evaluate_in resolves motion when any entry binds
+            return self._measure_posed(entry, refs, shapes[0], shapes[1], posed)
+        return self._measure(entry, refs, shapes[0], shapes[1])
+
+    def _resolve_pair(
+        self, entry: ConstraintEntry, resolver: AnchorResolver
+    ) -> tuple[list[AnchorRef], list[Any], ConstraintOutcome | None]:
+        """Both anchors as geometry — resolved ONCE, whatever the entry binds."""
         anchor_a, anchor_b = entry.anchors
         refs = [
             AnchorRef(anchor=anchor.text, part=anchor.part, selector=anchor.selector)
@@ -566,21 +828,128 @@ class AssemblyEvaluator:
         shapes: list[Any] = []
         for position, anchor in enumerate((anchor_a, anchor_b)):
             try:
-                geometry, resolution = self._resolve(anchor.part, anchor.selector, cache, scratch)
-            except _Unresolvable as exc:
-                return _unresolvable(
+                geometry, resolution = resolver.locate(anchor.part, anchor.selector)
+            except UnresolvableAnchorError as exc:
+                failed = _unresolvable(
                     entry, refs, exc.reason, f"anchor {'ab'[position]}: {exc.detail}"
                 )
+                return refs, shapes, failed
             refs[position] = dataclasses.replace(
                 refs[position], rule=resolution.kind, artifact_ref=geometry.artifact_ref
             )
             try:
                 shapes.append(geometry.shape_for(resolution))
-            except _Unresolvable as exc:
-                return _unresolvable(
+            except UnresolvableAnchorError as exc:
+                failed = _unresolvable(
                     entry, refs, exc.reason, f"anchor {'ab'[position]}: {exc.detail}"
                 )
-        return self._measure(entry, refs, shapes[0], shapes[1])
+                return refs, shapes, failed
+        return refs, shapes, None
+
+    def _measure_posed(
+        self,
+        entry: ConstraintEntry,
+        refs: Sequence[AnchorRef],
+        a: Any,
+        b: Any,
+        posed: MotionResolution,
+    ) -> ConstraintOutcome:
+        """One residual per bound pose (``KINEMATICS.md`` §3).
+
+        The anchors were resolved once by the caller; each pose contributes a
+        forward-kinematics placement applied as a *placed copy* of the same
+        shapes. The row's singular residual is the worst pose's (least slack,
+        first bound wins a tie); violated at any pose is violated; a pose that
+        cannot be evaluated makes the row ``unresolvable_pose``, the detail
+        naming the first failing pose — while the ``pose_residuals`` table
+        still records every bound pose's own verdict, so partial evidence is
+        never discarded.
+
+        A shape-class refusal is pose-invariant (a rigid placement changes no
+        face's class), so it is reported row-level exactly as the unbound path
+        reports it, not once per pose.
+        """
+        from hephaestus.core.motion import BoundPoseError
+        from hephaestus.geom import (
+            ConstraintDeclarationError,
+            ConstraintShapeError,
+            evaluate_residual,
+            transformed_shape,
+        )
+
+        part_a, part_b = entry.anchors[0].part, entry.anchors[1].part
+        rows: list[PoseResidual] = []
+        worst: Mapping[str, JSONValue] | None = None
+        worst_slack = 0.0
+        violated = False
+        failure: tuple[str, str, str] | None = None
+        for pose_id in entry.poses:
+            try:
+                placed = posed.transforms(pose_id, (part_a, part_b))
+            except BoundPoseError as exc:
+                rows.append(
+                    PoseResidual(
+                        pose_id=pose_id,
+                        verdict="unresolvable",
+                        reason=exc.reason,
+                        detail=exc.detail,
+                    )
+                )
+                if failure is None:
+                    failure = (pose_id, exc.reason, exc.detail)
+                continue
+            try:
+                residual = evaluate_residual(
+                    entry.kind,
+                    transformed_shape(a, placed[part_a]),
+                    transformed_shape(b, placed[part_b]),
+                    dict(entry.values),
+                )
+            except ConstraintShapeError as exc:
+                return _unresolvable(
+                    entry,
+                    refs,
+                    "shape_refused",
+                    f"anchor {exc.side}: {exc.reason} — {exc.message}",
+                )
+            except ConstraintDeclarationError as exc:  # pragma: no cover - declaration validates
+                return _unresolvable(entry, refs, "invalid_constraint", exc.message)
+            record = cast("Mapping[str, JSONValue]", dataclasses.asdict(cast("Any", residual)))
+            rows.append(
+                PoseResidual(
+                    pose_id=pose_id,
+                    verdict="satisfied" if residual.satisfied else "violated",
+                    residual=record,
+                )
+            )
+            violated = violated or not residual.satisfied
+            if worst is None or residual.slack < worst_slack:
+                worst, worst_slack = record, residual.slack
+        if failure is not None:
+            pose_id, reason, detail = failure
+            return ConstraintOutcome(
+                id=entry.id,
+                kind=entry.kind,
+                a=refs[0],
+                b=refs[1],
+                state="unresolvable",
+                reason="unresolvable_pose",
+                detail=f"pose {pose_id}: {reason} — {detail}",
+                provenance=entry.provenance.to_json(),
+                note=entry.note,
+                pose_residuals=tuple(rows),
+            )
+        return ConstraintOutcome(
+            id=entry.id,
+            kind=entry.kind,
+            a=refs[0],
+            b=refs[1],
+            state="violated" if violated else "satisfied",
+            residual=worst,
+            provenance=entry.provenance.to_json(),
+            note=entry.note,
+            pose_residuals=tuple(rows),
+        )
 
     def _measure(
         self, entry: ConstraintEntry, refs: Sequence[AnchorRef], a: Any, b: Any
@@ -614,104 +983,6 @@ class AssemblyEvaluator:
             provenance=entry.provenance.to_json(),
             note=entry.note,
         )
-
-    # -- anchor resolution --------------------------------------------------
-
-    def _resolve(
-        self,
-        part: str,
-        selector: str,
-        cache: dict[str, _PartGeometry | _Unresolvable],
-        scratch: Path,
-    ) -> tuple[_PartGeometry, Resolution]:
-        geometry = cache.get(part)
-        if geometry is None:
-            try:
-                geometry = self._load_part(part, scratch)
-            except _Unresolvable as exc:
-                geometry = exc
-            cache[part] = geometry
-        if isinstance(geometry, _Unresolvable):
-            raise geometry
-        try:
-            resolution = resolve(selector, geometry.index)
-        except AddressingError as exc:
-            reason, detail = addressing_refusal(exc)
-            raise _Unresolvable(reason, detail) from exc
-        return geometry, resolution
-
-    def _load_part(self, part: str, scratch: Path) -> _PartGeometry:
-        """The part's current artifact as addressable geometry, or a named refusal."""
-        from hephaestus.core.executor.artifact_geometry import load_brep_shape
-
-        known = self.layout.part_names()
-        if part not in known:
-            raise _Unresolvable(
-                "missing_part",
-                f"no part {part!r} in this project (parts: {', '.join(known) or 'none'})",
-            )
-        result = self._publisher.current_result(part)
-        if result is None or result.artifact_ref is None:
-            raise _Unresolvable(
-                "no_current_build",
-                f"part {part!r} has no current successful build to measure",
-            )
-        blob = blob_hash_of_ref(result.artifact_ref)
-        if not self._store.blobs.has(blob):
-            raise _Unresolvable(
-                "missing_artifact",
-                f"artifact {result.artifact_ref} of part {part!r} is not durably stored",
-            )
-        shape = cast("Any", load_brep_shape(self._store.blobs.get(blob), scratch_dir=scratch))
-        solids = tuple(cast("list[Any]", shape.solids()))
-        bundle = self._publisher.current_bundle(part) or {}
-        index = _published_index(bundle, result)
-        runs, partition = _solid_runs(index, result, len(solids))
-        return _PartGeometry(
-            part=part,
-            artifact_ref=result.artifact_ref,
-            shape=shape,
-            index=index,
-            solids=solids,
-            runs=runs,
-            placements=self._placements(result),
-            runs_partition=partition,
-        )
-
-    def _placements(self, result: BuildResult) -> dict[str, TagPlacement]:
-        """Tag placements from the build's stored source map (§5.3)."""
-        ref = result.source_map_ref
-        if ref is None:
-            return {}
-        blob = blob_hash_of_ref(ref)
-        if not self._store.blobs.has(blob):
-            return {}
-        raw = json.loads(self._store.blobs.get(blob).decode("utf-8"))
-        if not isinstance(raw, dict):  # pragma: no cover - our own JSON
-            return {}
-        tags = cast("Mapping[str, JSONValue]", raw).get("tags")
-        if not isinstance(tags, dict):
-            return {}
-        out: dict[str, TagPlacement] = {}
-        for name, entry in cast("Mapping[str, JSONValue]", tags).items():
-            if not isinstance(entry, dict):
-                continue
-            placement = cast("Mapping[str, JSONValue]", entry)
-            kind = placement.get("kind")
-            solid = placement.get("solid")
-            topo = placement.get("topo_index")
-            if not isinstance(kind, str):
-                continue
-            out[name] = TagPlacement(
-                kind=kind,
-                solid_index=(
-                    solid if isinstance(solid, int) and not isinstance(solid, bool) else None
-                ),
-                topo_index=topo if isinstance(topo, int) and not isinstance(topo, bool) else None,
-                statement_index=-1,
-                line=0,
-            )
-        return out
 
     # -- projection ---------------------------------------------------------
 

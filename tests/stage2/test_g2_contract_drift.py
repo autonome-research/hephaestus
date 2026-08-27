@@ -345,8 +345,9 @@ def test_committed_schema_files_match_the_declared_surface() -> None:
     assert on_disk == set(TOOL_NAMES)
     # 33 through Stage 7; +2 for the INGEST.md §2 reference pair (Stage 8A);
     # +1 for COMPARE.md §2 compare_solids (Stage 8B); +4 for the ASSEMBLY.md §3
-    # constraint quartet (Stage 8C).
-    assert len(TOOL_NAMES) == 40
+    # constraint quartet (Stage 8C); +7 for the KINEMATICS.md Stage 9A
+    # kinematics tools (the joint and pose quartets plus check_motion, §6).
+    assert len(TOOL_NAMES) == 47
 
 
 def test_sequential_declarations_cover_the_normative_list() -> None:
@@ -420,11 +421,28 @@ def test_orchestrator_only_families_are_declared_orchestrator_only() -> None:
         "read_constraints",
         "check_assembly",
     }
+    # KINEMATICS.md Stage 9A (§6) applies the 8C quartet decision unchanged:
+    # the joint and pose sets are canonical-pipeline surfaces ("part +
+    # orchestrator profiles"), for exactly the constraint family's reasons.
+    kinematics_family = {
+        "declare_joint",
+        "update_joint",
+        "read_joints",
+        "declare_pose",
+        "update_pose",
+        "read_poses",
+        "check_motion",
+    }
     for name in TOOL_NAMES:
         profiles = set(tools_decl.get_tool(name).profiles)
         if name in orchestrator_only:
             assert profiles == {"orchestrator"}, f"{name} leaked outside the orchestrator"
-        elif name in ledger_family or name in comparison_family or name in constraint_family:
+        elif (
+            name in ledger_family
+            or name in comparison_family
+            or name in constraint_family
+            or name in kinematics_family
+        ):
             assert profiles == {"part", "orchestrator"}, f"{name} profiles drifted"
         elif name in reference_family:
             assert profiles == {"part", "orchestrator", "reviewer"}, f"{name} profiles drifted"

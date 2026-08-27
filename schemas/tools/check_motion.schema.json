@@ -1,0 +1,297 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/check_motion.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Evaluate joints and poses against current builds; MotionStatus (checks are 9B).",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {},
+    "required": [],
+    "type": "object"
+  },
+  "result": {
+    "additionalProperties": true,
+    "properties": {
+      "artifact_ref": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "motion": {
+        "additionalProperties": true,
+        "properties": {
+          "artifact_refs": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "blocking": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "counts": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            "type": "object"
+          },
+          "joint_generation": {
+            "type": "integer"
+          },
+          "joints": {
+            "items": {
+              "additionalProperties": true,
+              "properties": {
+                "child": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "anchor": {
+                      "type": "string"
+                    },
+                    "artifact_ref": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "part": {
+                      "type": "string"
+                    },
+                    "rule": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "selector": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "anchor",
+                    "part",
+                    "selector"
+                  ],
+                  "type": "object"
+                },
+                "detail": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "note": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "parent": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "anchor": {
+                      "type": "string"
+                    },
+                    "artifact_ref": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "part": {
+                      "type": "string"
+                    },
+                    "rule": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "selector": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "anchor",
+                    "part",
+                    "selector"
+                  ],
+                  "type": "object"
+                },
+                "provenance": {
+                  "type": "object"
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "state": {
+                  "enum": [
+                    "resolved",
+                    "unresolvable"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "parent",
+                "child",
+                "state"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "pose_generation": {
+            "type": "integer"
+          },
+          "poses": {
+            "items": {
+              "additionalProperties": true,
+              "properties": {
+                "detail": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "id": {
+                  "type": "string"
+                },
+                "joints": {
+                  "additionalProperties": {
+                    "type": "number"
+                  },
+                  "type": "object"
+                },
+                "note": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "provenance": {
+                  "type": "object"
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "state": {
+                  "enum": [
+                    "resolved",
+                    "unresolvable"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "joints",
+                "state"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "stale": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "joint_generation",
+          "pose_generation",
+          "joints",
+          "poses",
+          "counts",
+          "blocking"
+        ],
+        "type": "object"
+      },
+      "status": {
+        "const": "ok"
+      }
+    },
+    "required": [
+      "status",
+      "motion"
+    ],
+    "type": "object"
+  },
+  "title": "check_motion",
+  "x-hephaestus-tool": {
+    "idempotent": false,
+    "maxUtf8Fields": {},
+    "name": "check_motion",
+    "profiles": [
+      "part",
+      "orchestrator"
+    ],
+    "sequential": false
+  }
+}

@@ -963,6 +963,25 @@ def _minimal_args(tool: str) -> dict[str, Any]:
         "update_constraint": {"id": "c-fit", "patch": {"value_mm": 0.3}, "reason": "fixture"},
         "read_constraints": {},
         "check_assembly": {},
+        # KINEMATICS.md Stage 9A (§6) — the kinematics tools need the engine
+        # just as much.
+        "declare_joint": {
+            "id": "j-mount",
+            "kind": "fixed",
+            "parent": "widget",
+            "child": "bracket",
+            "provenance": {"assumed": True, "reason": "fixture"},
+        },
+        "update_joint": {"id": "j-mount", "patch": {"note": "n"}, "reason": "fixture"},
+        "read_joints": {},
+        "declare_pose": {
+            "id": "p-zero",
+            "joints": {},
+            "provenance": {"assumed": True, "reason": "fixture"},
+        },
+        "update_pose": {"id": "p-zero", "patch": {"note": "n"}, "reason": "fixture"},
+        "read_poses": {},
+        "check_motion": {},
         "run_checks": {"name": "widget"},
         "record_requirements": {
             "entries": [

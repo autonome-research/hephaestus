@@ -18,7 +18,7 @@ Contract for this package (enforced by
   face records, packed layouts); manufacturability verdicts belong to the DFM
   rule packs and the checks engine that consume them.
 
-Eight services, re-exported here as one public surface:
+Nine services, re-exported here as one public surface:
 
 * :mod:`hephaestus.geom.metrics` — the §8 ``Metrics`` record and the
   addressing-layer geometry index over a labeled part compound;
@@ -40,7 +40,12 @@ Eight services, re-exported here as one public surface:
   §2): one evaluator per mate kind returning the measured value with the
   caller's declared numbers restated beside it. No solver — constraints
   verify, they never move geometry — and a shape of the wrong class for a
-  kind is a named refusal rather than a plausible number.
+  kind is a named refusal rather than a plausible number;
+* :mod:`hephaestus.geom.kinematics` — forward kinematics (``KINEMATICS.md``
+  §2): declared joint values to rigid transforms over a forest of joint
+  frames, applied to shapes as placed copies for posed measurement. No
+  solver and no dynamics — posed evaluation only — and an out-of-limits
+  parameter is a named refusal, never a clamp.
 
 Historic import paths (``hephaestus.core.kernel``, ``hephaestus.core.kerf``,
 ``hephaestus.core.nesting``) still resolve: they are compatibility facades that
@@ -107,6 +112,28 @@ from hephaestus.geom.kerf import (
     KerfSource,
     kerf_compensated_shape,
     resolve_kerf,
+)
+from hephaestus.geom.kinematics import (
+    IDENTITY_TRANSFORM,
+    JOINT_DIRECTION_EPS,
+    JOINT_FRAME_EPS_DEG,
+    JOINT_FRAME_EPS_MM,
+    JOINT_KINDS,
+    JOINT_REFUSALS,
+    JointDeclarationError,
+    JointFrame,
+    JointKind,
+    JointLimitError,
+    JointLimits,
+    JointValue,
+    RigidTransform,
+    compose_transforms,
+    forward_kinematics,
+    frame_axis_angle_deg,
+    frame_radial_offset_mm,
+    joint_transform,
+    transform_point,
+    transformed_shape,
 )
 from hephaestus.geom.measure import (
     OVERLAP_EPS_MM3,
@@ -195,7 +222,13 @@ __all__ = [
     "DEFAULT_SPACING_MM",
     "DIRECTION_EPS",
     "ENGRAVE_LAYER",
+    "IDENTITY_TRANSFORM",
     "INTERFERENCE_TOL_MM3",
+    "JOINT_DIRECTION_EPS",
+    "JOINT_FRAME_EPS_DEG",
+    "JOINT_FRAME_EPS_MM",
+    "JOINT_KINDS",
+    "JOINT_REFUSALS",
     "KERF_UNCOMPENSATED",
     "LAYER_COLORS",
     "LENGTH_UNIT",
@@ -231,6 +264,12 @@ __all__ = [
     "ConstraintShapeError",
     "CylinderRecord",
     "DownwardFace",
+    "JointDeclarationError",
+    "JointFrame",
+    "JointKind",
+    "JointLimitError",
+    "JointLimits",
+    "JointValue",
     "KerfDecision",
     "KerfRefusal",
     "KerfSource",
@@ -242,6 +281,7 @@ __all__ = [
     "PlanarFaceRecord",
     "Profile",
     "ResidualUnit",
+    "RigidTransform",
     "SolidDiff",
     "StepReadError",
     "SurfaceDistance",
@@ -255,6 +295,7 @@ __all__ = [
     "clearance",
     "clearance_min_residual",
     "coincident_residual",
+    "compose_transforms",
     "concentric_residual",
     "cylindrical_faces",
     "distance",
@@ -263,11 +304,15 @@ __all__ = [
     "evaluate_residual",
     "fit_residual",
     "flat_profiles",
+    "forward_kinematics",
+    "frame_axis_angle_deg",
+    "frame_radial_offset_mm",
     "genus",
     "geometry_index",
     "interference",
     "interference_pairs",
     "is_sealed",
+    "joint_transform",
     "kerf_compensated_shape",
     "labeled_nodes",
     "layout_layers",
@@ -293,6 +338,8 @@ __all__ = [
     "solid_z_min",
     "surface_distance",
     "topology_diff",
+    "transform_point",
+    "transformed_shape",
     "volume_diff",
     "write_step",
 ]

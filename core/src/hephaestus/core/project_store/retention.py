@@ -40,6 +40,7 @@ def protected_pointer_names(layout: ProjectLayout) -> tuple[str, ...]:
     from hephaestus.core.checks.engine import INTENT_POINTER
     from hephaestus.core.checks.engine import STATE_POINTER as CHECK_STATE_POINTER
     from hephaestus.core.project_store.constraints import CONSTRAINTS_POINTER
+    from hephaestus.core.project_store.kinematics import JOINTS_POINTER, POSES_POINTER
     from hephaestus.core.project_store.projections import SNAPSHOT_POINTER, STATE_POINTER
     from hephaestus.core.project_store.publication import current_pointer
     from hephaestus.core.project_store.references import REFERENCES_POINTER
@@ -56,6 +57,11 @@ def protected_pointer_names(layout: ProjectLayout) -> tuple[str, ...]:
         # generation is a protected root, and its parent chain is reachable
         # through the gc links each generation records.
         CONSTRAINTS_POINTER,
+        # Declared joints and named poses are project state on the same ledger
+        # pattern (KINEMATICS.md §1/§3): each live generation is a protected
+        # root, with the parent chain reachable through its gc links.
+        JOINTS_POINTER,
+        POSES_POINTER,
     ]
     for part in layout.part_names():
         names.append(current_pointer(part))

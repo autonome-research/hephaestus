@@ -738,7 +738,7 @@ declare_constraint(id: str, kind: "no_interference"|"clearance_min"|"distance"|
                    a: str, b: str,
                    provenance: {requirement: str|null, assumed: bool|null,
                                 reason: str|null},
-                   note: str|null = null,
+                   note: str|null = null, poses: [str]|null = null,
                    axis_eps_deg: number|null = null, max_mm: number|null = null,
                    min_mm: number|null = null, normal_eps_deg: number|null = null,
                    tol_deg: number|null = null, tol_mm: number|null = null,
@@ -765,7 +765,10 @@ under the project-config lock, idempotent on the invocation id). Anchors are
 name — the existing addressing layer, no new naming scheme — and a bare `part`
 anchors the whole compound. Declared numbers ride at the entry's top level, and
 which ones a kind takes is the evaluator's own table: a missing or unknown one is
-refused `invalid_constraint` with nothing written.
+refused `invalid_constraint` with nothing written. `poses` (optional, Stage 9A)
+binds the entry to named poses for per-pose evaluation — `ASSEMBLY.md` §1/§2 as
+amended by `KINEMATICS.md` §3; absent, evaluation and the outcome wire shape are
+byte-for-byte the 8C ones.
 
 **Provenance is mandatory.** An entry cites a ledger requirement id or is
 `{"assumed": true, "reason": …}` — a constraint IS an interpretation of intent,
@@ -798,6 +801,125 @@ the *last* evaluation, with `stale` naming parts rebuilt since it was taken, and
 `assembly: null` meaning never evaluated — which is not a pass. At termination
 review a `violated` or `unresolvable` constraint is a blocking finding **by rule**
 (`VALIDATION.md` §5).
+
+## Kinematics (declared joints and poses — `KINEMATICS.md` §1/§3, Stage 9A)
+
+### declare_joint / update_joint / read_joints
+```
+declare_joint(id: str, kind: "fixed"|"revolute"|"prismatic"|"cylindrical",
+              parent: str, child: str,
+              limits: {min: number, max: number} |
+                      {rotation: {min: number, max: number},
+                       translation: {min: number, max: number}} | null = null,
+              zero: "as_built" = "as_built",
+              provenance: {requirement: str|null, assumed: bool|null,
+                           reason: str|null},
+              note: str|null = null)
+    -> {status: "ok", generation, artifact_ref, change, entries,
+        motion, motion_ref}
+update_joint(id: str, patch: {...entry fields, withdrawn: bool|null},
+             reason: str)
+    -> {status: "ok", generation, artifact_ref, change, entries,
+        motion, motion_ref}
+read_joints()
+    -> {status: "ok", generation, artifact_ref, change, entries,
+        motion, motion_ref}
+```
+A joint relates two parts, so — like a constraint — it cannot live in any one
+part script: the project carries a **joint set** as generational state, exactly
+like the constraint set (immutable content-addressed generations naming their
+parent, CAS-published under the project-config lock, idempotent on the
+invocation id). Anchors are `part[:selector]` under exactly the 8C anchor
+grammar — a slash-bearing anchor is refused `invalid_joint`, the two-grammars
+rule. The selector must resolve to geometry whose class defines a frame (a
+cylindrical face or circular edge for `revolute`/`cylindrical`, a planar face
+or linear edge for `prismatic`, any resolvable anchor for `fixed`); the wrong
+shape class is a named refusal at evaluation, never a guessed frame. **The
+parent anchor's frame is the joint frame**; a child frame diverging beyond the
+named epsilons is `misaligned_joint_anchors`.
+
+Which limit shape a kind requires (one pair for `revolute` degrees /
+`prismatic` mm, the two named pairs for `cylindrical`, none for `fixed`) is the
+joint set's own table: a wrong shape is refused `invalid_joint` with nothing
+written. `zero: "as_built"` — the authored positions ARE parameter zero — is
+the only value in the 9A contract. **The joint graph must be a forest**: a
+cycle (or a part riding two joints) is refused at declaration
+(`cyclic_joint_graph` with the cycle named / `invalid_joint`); closed loops are
+an open chain plus a pose-bound constraint, measured rather than solved.
+
+**Provenance is mandatory** (`invalid_joint` otherwise) and **nothing is
+erased**: `update_joint` merges the patch onto the stored entry and revalidates
+the whole result including the forest check; `patch: {"withdrawn": true}` is
+the withdrawal path — a new generation that stops claiming the joint while
+keeping it, and its reason, readable. A withdrawn joint is never evaluated. A
+pose that binds it is deliberately untouched: it becomes `orphaned_pose` at
+evaluation, because withdrawal is not a failure. A revision without a `reason`,
+a patch of `id`, and a patch or withdrawal naming an unknown id are refused
+(`invalid_joint` / `unknown_joint`).
+
+### declare_pose / update_pose / read_poses
+```
+declare_pose(id: str, joints: {<joint_id>: number},
+             provenance: {requirement: str|null, assumed: bool|null,
+                          reason: str|null},
+             note: str|null = null)
+    -> {status: "ok", generation, artifact_ref, change, entries,
+        motion, motion_ref}
+update_pose(id: str, patch: {...entry fields, withdrawn: bool|null},
+            reason: str)
+    -> {status: "ok", generation, artifact_ref, change, entries,
+        motion, motion_ref}
+read_poses()
+    -> {status: "ok", generation, artifact_ref, change, entries,
+        motion, motion_ref}
+```
+A **named pose** binds joint parameter values (`KINEMATICS.md` §3): degrees for
+`revolute`, mm for `prismatic`. Joints omitted take their zero value, so `{}`
+is legal and means "everything as built". The pose set is its own generational
+state on the same ledger pattern, with the same lifecycle contract
+(`invalid_pose` / `unknown_pose`, withdrawal as a kept generation).
+
+A pose may only bind declared, unwithdrawn joints **at declaration** — naming
+an unknown or already-withdrawn joint is refused `invalid_pose`. A joint
+withdrawn *later* orphans the pose at evaluation instead (`orphaned_pose`, a
+per-pose unresolvable state naming the withdrawn joint id): the pose is not
+erased and the withdrawal is not a failure, so nothing is re-refused
+retroactively. A constraint entry may bind poses (`poses: [...]` on
+`declare_constraint`), evaluating that constraint at each named pose with the
+worst pose's residual in the singular slot and a `pose_residuals` table —
+see `ASSEMBLY.md` §1/§2 as amended by `KINEMATICS.md` §3.
+
+### check_motion
+```
+check_motion()
+    -> {status: "ok",
+        motion: {joint_generation, pose_generation, joints, poses,
+                 artifact_refs, stale, counts, blocking},
+        artifact_ref}
+```
+Evaluates the declared joint and pose sets **now**, against the parts' current
+successful build artifacts, and returns the `MotionStatus` with its **two
+sections** (`KINEMATICS.md` §2): per-joint outcomes — `resolved |
+unresolvable(reason)`, reusing the 8C anchor-resolution reasons verbatim plus
+the joint-level extensions (`cyclic_joint_graph`, `misaligned_joint_anchors`,
+the extended shape-class refusals under `shape_refused`) — and per-pose
+outcomes — `resolved | unresolvable(reason)`, where `orphaned_pose`,
+`unresolvable_joint`, `joint_limit_exceeded` (an evaluation never clamps) and
+`invalid_pose` live. An unresolvable joint makes every pose that binds it
+unresolvable — named, never skipped, never conflated with a violated
+constraint. `blocking` lists the ids the never-green rule fires on: an
+unresolvable joint or pose is not a passing one.
+
+The status is recorded and projected: `read_joints`/`read_poses` return the
+*last* evaluation (`motion: null` meaning never evaluated — which is not a
+pass), with `stale` naming forest parts rebuilt since it was taken. Reading
+never measures; `check_motion` is the only thing that does.
+
+**Motion checks are Stage 9B.** Sweeps (`sweep_clearance`,
+`sweep_no_interference`, `reach`) and their per-check results are deferred with
+the rest of the §4 surface — `check_motion` returns the `MotionStatus` alone,
+with no per-check results and no `ids` selector, rather than reserving dead
+fields (the same rule as the Deferred section below).
 
 ## Knowledge and registries
 

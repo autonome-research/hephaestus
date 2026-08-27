@@ -327,6 +327,26 @@ _ARGS: dict[str, dict[str, object]] = {
     "update_constraint": {"id": "c-fit", "patch": {"value_mm": 0.3}, "reason": "matrix fixture"},
     "read_constraints": {},
     "check_assembly": {},
+    # KINEMATICS.md Stage 9A (§6): a joint spans parts by nature, exactly like
+    # a constraint, so its anchors are deliberately NOT object-scope-enforced
+    # part names. Availability is what this matrix asserts.
+    "declare_joint": {
+        "id": "j-mount",
+        "kind": "fixed",
+        "parent": "widget",
+        "child": "bracket",
+        "provenance": {"assumed": True, "reason": "matrix fixture"},
+    },
+    "update_joint": {"id": "j-mount", "patch": {"note": "n"}, "reason": "matrix fixture"},
+    "read_joints": {},
+    "declare_pose": {
+        "id": "p-zero",
+        "joints": {},
+        "provenance": {"assumed": True, "reason": "matrix fixture"},
+    },
+    "update_pose": {"id": "p-zero", "patch": {"note": "n"}, "reason": "matrix fixture"},
+    "read_poses": {},
+    "check_motion": {},
 }
 
 

@@ -95,14 +95,16 @@ def test_no_drift_between_declaration_and_tool_schema_md() -> None:
     assert decl.isdisjoint(excluded)
 
 
-def test_full_tool_surface_is_40_tools() -> None:
+def test_full_tool_surface_is_47_tools() -> None:
     # 27 Stage-2 tools, the Stage 2V requirement-ledger family, the Stage 6
     # manufacturing tools (run_dfm, generate_drawing, generate_doc), the
     # Stage 8A read-only reference pair (INGEST.md §2), the Stage 8B
-    # comparison tool (COMPARE.md §2), and the Stage 8C constraint quartet
-    # (ASSEMBLY.md §3) — declared additions, not drift.
-    assert len(tools_decl.tool_names()) == 40
-    assert len(set(tools_decl.tool_names())) == 40
+    # comparison tool (COMPARE.md §2), the Stage 8C constraint quartet
+    # (ASSEMBLY.md §3), and the KINEMATICS.md Stage 9A kinematics tools
+    # (the joint and pose quartets plus check_motion, §6) — declared
+    # additions, not drift.
+    assert len(tools_decl.tool_names()) == 47
+    assert len(set(tools_decl.tool_names())) == 47
     assert {"record_requirements", "read_requirements", "update_requirement"} <= set(
         tools_decl.tool_names()
     )
@@ -116,6 +118,17 @@ def test_full_tool_surface_is_40_tools() -> None:
         "update_constraint",
         "read_constraints",
         "check_assembly",
+    } <= set(tools_decl.tool_names())
+    # KINEMATICS.md Stage 9A (§6): the joint and pose sets ride the same
+    # compelled-honesty decision — model-writable, generational, never erasing.
+    assert {
+        "declare_joint",
+        "update_joint",
+        "read_joints",
+        "declare_pose",
+        "update_pose",
+        "read_poses",
+        "check_motion",
     } <= set(tools_decl.tool_names())
 
 

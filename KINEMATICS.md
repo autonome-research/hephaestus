@@ -5,13 +5,13 @@ SPDX-License-Identifier: Apache-2.0
 
 # 11 — Kinematics and motion (Stage 9)
 
-DRAFT — becomes Normative upon the `mission_plan.md` Stage 9 amendment, which
-MUST land in the same change as this document's promotion (a dated Stage 9
-heading carrying the G9A/G9B/G9C gate summaries and citing this spec, the
-Stage 2V / Stage 8 amendment pattern). Revised 2026-08-26 after a 40-agent
-adversarial review against the codebase (31 confirmed findings folded in).
+Normative (promoted 2026-08-26 with the `mission_plan.md` Stage 9 amendment —
+a dated Stage 9 heading carrying the G9A/G9B/G9C gate summaries and citing
+this spec, the Stage 2V / Stage 8 amendment pattern). Revised 2026-08-26
+after a 40-agent adversarial review against the codebase (31 confirmed
+findings folded in).
 
-When promoted, this spec amends: `tool_schema.md` (joint and motion tools);
+This spec amends: `tool_schema.md` (joint and motion tools);
 `VALIDATION.md` §5 (reviewer receives motion status; a violated or
 unresolvable motion check blocks termination by rule); `ASSEMBLY.md` §1 (a
 constraint entry may bind to named poses; the §1 example's slash-bearing part
@@ -22,7 +22,11 @@ studies" sentence is scoped to 8C: posed evaluation of declared joints is
 Stage 9 per this spec; the no-solver rule is unchanged); the `check_assembly`
 result form in `tool_schema.md`; and `script_contract.md` §6 (the
 project-scope measurement facade gains the two read surfaces of §4 below —
-part scripts still declare no joints; see §1).
+part scripts still declare no joints; see §1). Each amendment lands with the
+sub-stage whose machinery ships it: the `VALIDATION.md` §5 and
+`script_contract.md` §6 amendments land with Stage 9B, where the reviewer
+motion surface and the `CHECKS` read surfaces ship — amending them at 9A
+would be doc drift.
 
 Design premise: Stage 8C made *static* fits declared, machine-checked state.
 A mechanism's defining requirements — travel, non-collision through travel,

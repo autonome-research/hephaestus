@@ -202,6 +202,52 @@ def _steps() -> list[Step]:
         ),
         ("read_constraints", lambda seen: {}),
         ("check_assembly", lambda seen: {}),
+        # -- declared joints and poses (KINEMATICS.md §1/§3, Stage 9A) -------
+        # Declaration is structural, exactly like a constraint's: whether the
+        # named parts have builds is an EVALUATION question with its own named
+        # unresolvable states. This one-part project has no second part to
+        # anchor, so the joint honestly resolves to `missing_part` below — a
+        # real named refusal through the real engine, not a stub — while the
+        # empty-binding pose ("everything as built", §3) really resolves.
+        (
+            "declare_joint",
+            lambda seen: {
+                "id": "j-mount",
+                "kind": "fixed",
+                "parent": "widget",
+                "child": "carriage",
+                "provenance": {"requirement": "R1"},
+                "note": "the carriage rides the widget",
+            },
+        ),
+        (
+            "update_joint",
+            lambda seen: {
+                "id": "j-mount",
+                "patch": {"note": "kept as a mount-point claim"},
+                "reason": "clarified what the joint is for",
+            },
+        ),
+        ("read_joints", lambda seen: {}),
+        (
+            "declare_pose",
+            lambda seen: {
+                "id": "p-zero",
+                "joints": {},
+                "provenance": {"requirement": "R1"},
+                "note": "everything as built",
+            },
+        ),
+        (
+            "update_pose",
+            lambda seen: {
+                "id": "p-zero",
+                "patch": {"note": "the reference configuration"},
+                "reason": "clarified what the pose is for",
+            },
+        ),
+        ("read_poses", lambda seen: {}),
+        ("check_motion", lambda seen: {}),
         ("run_checks", lambda seen: {"scope": "part", "name": "widget"}),
         (
             "read_artifact",
@@ -446,6 +492,28 @@ def test_every_generated_tool_flows_through_the_real_bridge(surface: G2Harness) 
     assert checked["partial"] is False
     assert status["counts"]["unresolvable"] == 0, status["constraints"]
     assert status["blocking"] == [], status["constraints"]
+    # -- joints and poses: declared, revised, evaluated (KINEMATICS.md §2/§6)
+    joint_declared = cast("dict[str, Any]", seen["declare_joint"])
+    assert joint_declared["generation"] == 1 and joint_declared["change"]["kind"] == "declare"
+    joint_revised = cast("dict[str, Any]", seen["update_joint"])
+    assert joint_revised["generation"] == 2 and joint_revised["change"]["reason"]
+    joints_read = cast("dict[str, Any]", seen["read_joints"])
+    assert [entry["id"] for entry in joints_read["entries"]] == ["j-mount"]
+    assert joints_read["motion"] is None, "reading never measures"
+    pose_declared = cast("dict[str, Any]", seen["declare_pose"])
+    assert pose_declared["generation"] == 1 and pose_declared["change"]["kind"] == "declare"
+    poses_read = cast("dict[str, Any]", seen["read_poses"])
+    assert [entry["id"] for entry in poses_read["entries"]] == ["p-zero"]
+    motion_checked = cast("dict[str, Any]", seen["check_motion"])
+    motion = cast("dict[str, Any]", motion_checked["motion"])
+    # The joint names a part this project does not have: a real named refusal
+    # through the real engine, never skipped and never a pass.
+    [joint_row] = cast("list[Any]", motion["joints"])
+    assert joint_row["state"] == "unresolvable" and joint_row["reason"] == "missing_part"
+    [pose_row] = cast("list[Any]", motion["poses"])
+    assert pose_row["state"] == "resolved"
+    assert motion["blocking"] == ["j-mount"]
+    assert motion_checked["artifact_ref"].startswith("artifact:motion-status:")
     assert seen["run_checks"]["checks"]["wide_enough"]["pass"] is True
     assert seen["read_artifact"]["total_bytes"] > 0
 

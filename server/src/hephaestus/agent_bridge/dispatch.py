@@ -153,6 +153,16 @@ CAD_TOOLS: frozenset[str] = frozenset(
         "update_constraint",
         "read_constraints",
         "check_assembly",
+        # KINEMATICS.md §6 (Stage 9A) — the joint and pose quartets plus
+        # check_motion, on the 8C quartet decision unchanged: model-writable
+        # because declaring is cheap, reversible and measured, never erasing.
+        "declare_joint",
+        "update_joint",
+        "read_joints",
+        "declare_pose",
+        "update_pose",
+        "read_poses",
+        "check_motion",
         "read_artifact",
         # INGEST.md §2 — read-only, freely retryable. There is deliberately no
         # `add_reference`: registration is operator-side, so the model's only
@@ -507,6 +517,13 @@ class ToolDispatcher:
             "update_constraint": self._update_constraint,
             "read_constraints": self._read_constraints,
             "check_assembly": self._check_assembly,
+            "declare_joint": self._declare_joint,
+            "update_joint": self._update_joint,
+            "read_joints": self._read_joints,
+            "declare_pose": self._declare_pose,
+            "update_pose": self._update_pose,
+            "read_poses": self._read_poses,
+            "check_motion": self._check_motion,
             "read_artifact": self._read_artifact,
             "list_references": self._list_references,
             "read_reference": self._read_reference,
@@ -846,6 +863,65 @@ class ToolDispatcher:
         elif raw is not None:
             raise DispatchError("invalid_params", "check_assembly ids must be an array")
         return cad.check_assembly(ids)
+
+    # -- kinematics (KINEMATICS.md §6, Stage 9A) ---------------------------
+
+    def _declare_joint(
+        self, _p: Principal, cad: CadOps, arguments: dict[str, Any], inv: Invocation
+    ) -> dict[str, Any]:
+        # The whole entry is the argument object: KINEMATICS.md §1 writes a
+        # joint entry as one JSON shape, so the wire shape and the stored shape
+        # are one shape (the declare_constraint rule).
+        return cad.declare_joint(cast("Mapping[str, Any]", arguments), op_id=inv.op_id)
+
+    def _update_joint(
+        self, _p: Principal, cad: CadOps, arguments: dict[str, Any], inv: Invocation
+    ) -> dict[str, Any]:
+        raw = arguments.get("patch")
+        if not isinstance(raw, dict):
+            raise DispatchError("invalid_params", "update_joint requires a patch object")
+        reason = arguments.get("reason")
+        if not isinstance(reason, str):
+            raise DispatchError("invalid_params", "update_joint requires a reason")
+        return cad.update_joint(
+            str(arguments["id"]), cast("Mapping[str, Any]", raw), reason, op_id=inv.op_id
+        )
+
+    def _read_joints(
+        self, _p: Principal, cad: CadOps, _arguments: dict[str, Any], _inv: Invocation
+    ) -> dict[str, Any]:
+        return cad.read_joints()
+
+    def _declare_pose(
+        self, _p: Principal, cad: CadOps, arguments: dict[str, Any], inv: Invocation
+    ) -> dict[str, Any]:
+        return cad.declare_pose(cast("Mapping[str, Any]", arguments), op_id=inv.op_id)
+
+    def _update_pose(
+        self, _p: Principal, cad: CadOps, arguments: dict[str, Any], inv: Invocation
+    ) -> dict[str, Any]:
+        raw = arguments.get("patch")
+        if not isinstance(raw, dict):
+            raise DispatchError("invalid_params", "update_pose requires a patch object")
+        reason = arguments.get("reason")
+        if not isinstance(reason, str):
+            raise DispatchError("invalid_params", "update_pose requires a reason")
+        return cad.update_pose(
+            str(arguments["id"]), cast("Mapping[str, Any]", raw), reason, op_id=inv.op_id
+        )
+
+    def _read_poses(
+        self, _p: Principal, cad: CadOps, _arguments: dict[str, Any], _inv: Invocation
+    ) -> dict[str, Any]:
+        return cad.read_poses()
+
+    def _check_motion(
+        self, _p: Principal, cad: CadOps, _arguments: dict[str, Any], _inv: Invocation
+    ) -> dict[str, Any]:
+        # No ids parameter in 9A: the only selectable subjects would be motion
+        # CHECKS, which are Stage 9B — the full status is always evaluated and
+        # projected, so a read (and the reviewer) sees exactly what was measured.
+        return cad.check_motion()
 
     # -- artifacts ---------------------------------------------------------
 

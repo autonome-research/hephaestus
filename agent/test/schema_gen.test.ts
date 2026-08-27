@@ -4,8 +4,10 @@ import { TOOLS, TOOL_NAMES } from "../src/tools/schema.gen.js";
 import { PROMPT_MAX_UTF8_BYTES } from "../src/limits.js";
 
 describe("generated tool surface", () => {
-  it("declares the Stage 2 surface, the Stage 2V ledger, Stage 6, Stage 8A references, Stage 8B compare_solids and the Stage 8C constraint quartet (40 tools)", () => {
-    expect(TOOL_NAMES).toHaveLength(40);
+  it("declares the Stage 2 surface, the Stage 2V ledger, Stage 6, Stage 8A references, Stage 8B compare_solids, the Stage 8C constraint quartet and the KINEMATICS.md Stage 9A kinematics tools (47 tools)", () => {
+    // Tool count repointed for KINEMATICS.md Stage 9A (§6): +7 for the joint
+    // and pose quartets plus check_motion.
+    expect(TOOL_NAMES).toHaveLength(47);
     for (const ledger of ["record_requirements", "read_requirements", "update_requirement"]) {
       expect(TOOL_NAMES).toContain(ledger);
     }
@@ -24,6 +26,18 @@ describe("generated tool surface", () => {
       "check_assembly",
     ]) {
       expect(TOOL_NAMES).toContain(constraint);
+    }
+    // KINEMATICS.md Stage 9A (§6): declared joints and poses, same decision.
+    for (const kinematic of [
+      "declare_joint",
+      "update_joint",
+      "read_joints",
+      "declare_pose",
+      "update_pose",
+      "read_poses",
+      "check_motion",
+    ]) {
+      expect(TOOL_NAMES).toContain(kinematic);
     }
     expect(Object.keys(TOOLS).sort()).toEqual([...TOOL_NAMES].sort());
   });

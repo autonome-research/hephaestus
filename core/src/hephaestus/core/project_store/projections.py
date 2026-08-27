@@ -36,6 +36,7 @@ __all__ = [
     "SNAPSHOT_POINTER",
     "STATE_POINTER",
     "AssemblyProjection",
+    "MotionProjection",
     "PartProjection",
     "ProjectSnapshot",
     "ProjectionState",
@@ -69,6 +70,25 @@ def _restale_assembly(
     if assembly.parts[part] == artifact_ref or part in assembly.stale:
         return assembly
     return replace(assembly, stale=tuple(sorted({*assembly.stale, part})))
+
+
+def _restale_motion(
+    motion: MotionProjection | None, part: str, artifact_ref: str
+) -> MotionProjection | None:
+    """Mark the motion projection stale when a jointed part's build moves.
+
+    ``KINEMATICS.md`` §2, stated as the ``AssemblyProjection`` precedent and
+    implemented as it: rebuilding any part in the joint forest marks the motion
+    projection stale. Only the forest's parts matter (a joint set that never
+    mentions a part is not invalidated by building it), and only a *different*
+    artifact ref counts — the same selectivity ``apply_hc_state`` applies to
+    consumed names.
+    """
+    if motion is None or part not in motion.parts:
+        return motion
+    if motion.parts[part] == artifact_ref or part in motion.stale:
+        return motion
+    return replace(motion, stale=tuple(sorted({*motion.stale, part})))
 
 
 def _same_value(a: JSONValue, b: JSONValue) -> bool:
@@ -197,6 +217,80 @@ class AssemblyProjection:
 
 
 @dataclass(frozen=True)
+class MotionProjection:
+    """The last evaluated motion status, and what it was computed against.
+
+    ``KINEMATICS.md`` §2: motion status (joint and pose outcomes) is recomputed
+    on demand and PROJECTED at publication — the same *rule* as ``hc``/import/
+    assembly staleness, implemented as its own projection on the
+    :class:`AssemblyProjection` precedent, field for field. ``parts`` records
+    the artifact ref each joint-forest part contributed at evaluation time
+    (``""`` when the part had no current build then, which is itself a fact the
+    next build invalidates); :attr:`stale` names every forest part whose
+    current build has moved since, so a stale status never reads as fresh —
+    and, via the GC edge :meth:`Projections._swap` records, never as "never
+    evaluated" either. Two generations rather than one because a
+    ``MotionStatus`` is measured against both sets at once (§2).
+    """
+
+    status_blob: str
+    joint_generation: int
+    pose_generation: int
+    audit_revision: int
+    parts: Mapping[str, str] = field(default_factory=dict[str, str])
+    stale: tuple[str, ...] = ()
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "status_blob": self.status_blob,
+            "joint_generation": self.joint_generation,
+            "pose_generation": self.pose_generation,
+            "audit_revision": self.audit_revision,
+            "parts": {name: self.parts[name] for name in sorted(self.parts)},
+            "stale": list(self.stale),
+        }
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, JSONValue]) -> MotionProjection:
+        status_blob = data.get("status_blob")
+        joint_generation = data.get("joint_generation")
+        pose_generation = data.get("pose_generation")
+        revision = data.get("audit_revision")
+        if (
+            not isinstance(status_blob, str)
+            or not isinstance(joint_generation, int)
+            or isinstance(joint_generation, bool)
+            or not isinstance(pose_generation, int)
+            or isinstance(pose_generation, bool)
+            or not isinstance(revision, int)
+            or isinstance(revision, bool)
+        ):
+            raise ValidationError("malformed motion projection record", kind="contract")
+        parts_raw = data.get("parts", {})
+        if not isinstance(parts_raw, dict):
+            raise ValidationError("motion projection parts must be an object", kind="contract")
+        parts: dict[str, str] = {}
+        for name, value in cast("Mapping[str, JSONValue]", parts_raw).items():
+            if not isinstance(value, str):
+                raise ValidationError("motion projection refs must be strings", kind="contract")
+            parts[name] = value
+        stale_raw = data.get("stale", [])
+        stale: tuple[str, ...] = ()
+        if isinstance(stale_raw, list):
+            stale = tuple(
+                item for item in cast("list[JSONValue]", stale_raw) if isinstance(item, str)
+            )
+        return cls(
+            status_blob=status_blob,
+            joint_generation=joint_generation,
+            pose_generation=pose_generation,
+            audit_revision=revision,
+            parts=parts,
+            stale=stale,
+        )
+
+
+@dataclass(frozen=True)
 class ProjectionState:
     """The persisted projection state behind the ``project-state`` pointer."""
 
@@ -210,6 +304,9 @@ class ProjectionState:
     #: ASSEMBLY.md §2: the projected assembly status, or ``None`` before the
     #: first evaluation (an unevaluated constraint set is not a passing one).
     assembly: AssemblyProjection | None = None
+    #: KINEMATICS.md §2: the projected motion status, or ``None`` before the
+    #: first evaluation (an unevaluated joint set is not a resolved one).
+    motion: MotionProjection | None = None
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -221,6 +318,7 @@ class ProjectionState:
             },
             "import_state": {name: self.import_state[name] for name in sorted(self.import_state)},
             "assembly": None if self.assembly is None else self.assembly.to_json(),
+            "motion": None if self.motion is None else self.motion.to_json(),
         }
 
     @classmethod
@@ -259,6 +357,13 @@ class ProjectionState:
         assembly: AssemblyProjection | None = None
         if isinstance(assembly_raw, dict):
             assembly = AssemblyProjection.from_json(cast("Mapping[str, JSONValue]", assembly_raw))
+        # Tolerant of pre-Stage-9 records (like ``import_state`` above, and like
+        # ``BuildResult.metadata`` before it): a state blob written before the
+        # motion field existed simply has no motion projection yet.
+        motion_raw = data.get("motion")
+        motion: MotionProjection | None = None
+        if isinstance(motion_raw, dict):
+            motion = MotionProjection.from_json(cast("Mapping[str, JSONValue]", motion_raw))
         return cls(
             audit_revision=revision,
             hc_state=dict(hc_state),
@@ -266,6 +371,7 @@ class ProjectionState:
             projections=projections,
             import_state=import_state,
             assembly=assembly,
+            motion=motion,
         )
 
 
@@ -343,6 +449,12 @@ class Projections:
         # claim about the project.
         if new_state.assembly is not None:
             self._store.gc.link(blob, new_state.assembly.status_blob)
+        # KINEMATICS.md §2: the motion status blob rides the same edge for the
+        # same reason as the assembly edge above — a stale status that got
+        # collected would read as "never evaluated", a different (and false)
+        # claim about the project.
+        if new_state.motion is not None:
+            self._store.gc.link(blob, new_state.motion.status_blob)
         self._store.blobs.cas_swap(STATE_POINTER, expected_pointer, blob)
         return blob
 
@@ -394,11 +506,12 @@ class Projections:
                     stale=stale,
                     projections=dict(state.projections),
                     # Carried, not recomputed: an ``hc`` change is not an
-                    # imports/ change and not an assembly evaluation, and
-                    # dropping either here would silently reset live state
-                    # that this call knows nothing about.
+                    # imports/ change and not an assembly or motion
+                    # evaluation, and dropping any of them here would silently
+                    # reset live state that this call knows nothing about.
                     import_state=dict(state.import_state),
                     assembly=state.assembly,
+                    motion=state.motion,
                 )
                 self._swap(new_state, pointer)
             finally:
@@ -455,6 +568,7 @@ class Projections:
                     projections=dict(state.projections),
                     import_state=dict(import_state),
                     assembly=state.assembly,
+                    motion=state.motion,
                 )
                 self._swap(new_state, pointer)
             finally:
@@ -510,6 +624,7 @@ class Projections:
             projections=projections,
             import_state=import_state,
             assembly=_restale_assembly(state.assembly, part, artifact_ref),
+            motion=_restale_motion(state.motion, part, artifact_ref),
         )
         self._swap(new_state, pointer)
         return new_state
@@ -535,9 +650,43 @@ class Projections:
                 projections=dict(state.projections),
                 import_state=dict(state.import_state),
                 assembly=projection,
+                motion=state.motion,
             )
             # ``_swap`` records the status document's reachability edge (it has
             # to do so on every swap, not just this one) — see its comment.
+            self._swap(new_state, pointer)
+            return new_state
+        finally:
+            if not already_held:
+                self._locks.release(PROJECT_CONFIG_LOCK)
+
+    def record_motion(self, projection: MotionProjection) -> ProjectionState:
+        """Project one evaluated motion status (``KINEMATICS.md`` §2).
+
+        The motion twin of :meth:`record_assembly`, deliberately the same
+        shape: replaces any previous projection (the status a project carries
+        is the last one actually computed), starts life fresh (``stale=()``)
+        because it was just measured against the refs it records, and is
+        marked stale again by publication when a joint-forest part is rebuilt
+        into different geometry. Takes the project-config lock, like every
+        other state swap.
+        """
+        already_held = self._locks.holds(PROJECT_CONFIG_LOCK)
+        if not already_held:
+            self._locks.acquire(PROJECT_CONFIG_LOCK)
+        try:
+            state, pointer = self._load()
+            new_state = ProjectionState(
+                audit_revision=state.audit_revision,
+                hc_state=dict(state.hc_state),
+                stale=dict(state.stale),
+                projections=dict(state.projections),
+                import_state=dict(state.import_state),
+                assembly=state.assembly,
+                motion=projection,
+            )
+            # ``_swap`` records the status document's reachability edge — see
+            # its comment at the assembly edge; the motion edge shares it.
             self._swap(new_state, pointer)
             return new_state
         finally:

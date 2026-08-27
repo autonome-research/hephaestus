@@ -363,6 +363,20 @@
               ],
               "default": null
             },
+            "poses": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "provenance": {
               "additionalProperties": false,
               "properties": {
