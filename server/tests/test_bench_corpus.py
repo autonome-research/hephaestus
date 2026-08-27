@@ -140,10 +140,14 @@ CONSTRAINT_TASKS: frozenset[str] = frozenset(
 #: own to declare). Budgets are dated hand-count derivations per the
 #: 2026-08-25 measured-budget policy — no observe-mode journals exist for
 #: mechanism tasks yet, and each task.json's ``notes`` carries the derivation.
+# Budgets recalibrated 2026-08-27 from the first archived observe-mode sweep
+# (bench/results/gpt-5.6-sol/2026-08-27/runs.jsonl) per VALIDATION.md §7 incl.
+# its zero-passing first-measurement rule — every failure's sole reason was
+# budget_exceeded, 0 correctness failures; derivations in each task.json notes.
 CORPUS_V3_ADDITIONS: tuple[tuple[str, int], ...] = (
-    ("gripper-jaws", 21),
-    ("hinge-travel", 24),
-    ("leadscrew-actuator", 24),
+    ("gripper-jaws", 34),
+    ("hinge-travel", 52),
+    ("leadscrew-actuator", 41),
 )
 
 #: The whole public split as it stands (v1 + the v2 and v3 additions).

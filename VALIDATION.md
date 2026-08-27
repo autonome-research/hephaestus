@@ -438,6 +438,21 @@ Rules of the policy:
   **keeps its number** — calibration raises budgets that measurement shows
   are too tight; it never tightens a standing budget as a side effect. The
   task's note records that the calibration was run and did not bind.
+- **Zero-passing first measurement (2026-08-27).** When a task's first
+  archived observe-mode sweep yields no passing run and every failure's
+  **sole** reason is `budget_exceeded`, the observed *clean-completion* max
+  (the largest `tool_calls` among runs whose grade fails only on
+  `within_budget`) substitutes for the observed passing max in the
+  derivation. A run that built the right geometry, satisfied every declared
+  constraint and motion check, and failed exclusively on the budget
+  arithmetic is the same efficiency evidence as a passing run graded under a
+  larger budget — refusing to learn from it would leave a mis-hand-counted
+  task budget-bound forever. The substitution is recorded as such in the
+  task's note, and it applies only when the failure taxonomy is empty apart
+  from `budget_exceeded`: a single correctness or harness reason anywhere in
+  the sweep keeps this rule out. Measured occasion: the corpus-v3 mechanism
+  trio's first sweep (`bench/results/gpt-5.6-sol/2026-08-27/runs.jsonl`),
+  13/18 runs clean over budget, 0 correctness failures.
 - A budget change **never re-scores an existing archived artifact**. Archived
   run records carry the budget they were graded under; the G6 closure of
   2026-08-13 (`bench/results/gpt-5.6-sol/2026-08-13.json`, prose Wilson
