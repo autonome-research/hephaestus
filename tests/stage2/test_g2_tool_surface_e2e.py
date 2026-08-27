@@ -277,6 +277,33 @@ def _steps() -> list[Step]:
             },
         ),
         ("read_motion_checks", lambda seen: {}),
+        # -- couplings (KINEMATICS.md §5, Stage 9C). The coupling drives the
+        # fixture-seeded j-feed from the chain-declared j-mount — a coupling
+        # relates TWO declared joints, and this chain calls declare_joint
+        # exactly once, so the second joint is seeded engine-side by the
+        # fixture (the _register_reference rationale). j-mount stays FREE (a
+        # coupling PARENT is free), so the sweep above still binds it.
+        (
+            "declare_coupling",
+            lambda seen: {
+                "id": "cp-feed",
+                "parent": "j-mount",
+                "child": "j-feed",
+                "ratio": 0.5,
+                "offset": 0.0,
+                "provenance": {"requirement": "R1"},
+                "note": "the table tracks the carriage at half speed",
+            },
+        ),
+        (
+            "update_coupling",
+            lambda seen: {
+                "id": "cp-feed",
+                "patch": {"note": "kept as a transmission claim"},
+                "reason": "clarified what the coupling is for",
+            },
+        ),
+        ("read_couplings", lambda seen: {}),
         ("check_motion", lambda seen: {}),
         ("run_checks", lambda seen: {"scope": "part", "name": "widget"}),
         (
@@ -397,6 +424,35 @@ def _register_reference(project_root: Any) -> None:
         store.close()
 
 
+def _declare_feed_joint(project_root: Any) -> None:
+    """Seed the second joint the coupling steps need — engine-side, once.
+
+    KINEMATICS.md §5: a coupling relates TWO declared joints, and this chain
+    calls every tool exactly once, so its single ``declare_joint`` step cannot
+    supply both. The second joint is declared through the engine the way an
+    earlier session would have — the ``_register_reference`` rationale: a
+    precondition of the chain, never its subject.
+    """
+    from hephaestus.core.project_store.kinematics import JointSet
+    from hephaestus.core.project_store.layout import load_project, open_store
+
+    layout = load_project(project_root)
+    store = open_store(layout)
+    try:
+        JointSet(layout, store).declare(
+            {
+                "id": "j-feed",
+                "kind": "prismatic",
+                "parent": "table",
+                "child": "carriage",
+                "limits": {"min": -100.0, "max": 100.0},
+                "provenance": {"assumed": True, "reason": "seeded for the coupling steps"},
+            }
+        )
+    finally:
+        store.close()
+
+
 @pytest.fixture
 def surface(tmp_path: Any, sidecar_dist: Any) -> Any:
     from _g2 import scaffold_project
@@ -405,6 +461,7 @@ def surface(tmp_path: Any, sidecar_dist: Any) -> Any:
     # project must start with none (VALIDATION.md §2).
     project = scaffold_project(tmp_path / "surface", seed_ledger=False)
     _register_reference(project)
+    _declare_feed_joint(project)
     harness = G2Harness(project, sidecar_dist, snapshot=True, sandbox=True)
     try:
         yield harness
@@ -523,12 +580,15 @@ def test_every_generated_tool_flows_through_the_real_bridge(surface: G2Harness) 
     assert status["counts"]["unresolvable"] == 0, status["constraints"]
     assert status["blocking"] == [], status["constraints"]
     # -- joints and poses: declared, revised, evaluated (KINEMATICS.md §2/§6)
+    # Generations repointed by Stage 9C: the fixture seeds j-feed (generation
+    # 1) so the coupling steps have a second joint to relate — the chain's own
+    # declaration is therefore generation 2.
     joint_declared = cast("dict[str, Any]", seen["declare_joint"])
-    assert joint_declared["generation"] == 1 and joint_declared["change"]["kind"] == "declare"
+    assert joint_declared["generation"] == 2 and joint_declared["change"]["kind"] == "declare"
     joint_revised = cast("dict[str, Any]", seen["update_joint"])
-    assert joint_revised["generation"] == 2 and joint_revised["change"]["reason"]
+    assert joint_revised["generation"] == 3 and joint_revised["change"]["reason"]
     joints_read = cast("dict[str, Any]", seen["read_joints"])
-    assert [entry["id"] for entry in joints_read["entries"]] == ["j-mount"]
+    assert [entry["id"] for entry in joints_read["entries"]] == ["j-feed", "j-mount"]
     assert joints_read["motion"] is None, "reading never measures"
     pose_declared = cast("dict[str, Any]", seen["declare_pose"])
     assert pose_declared["generation"] == 1 and pose_declared["change"]["kind"] == "declare"
@@ -541,15 +601,28 @@ def test_every_generated_tool_flows_through_the_real_bridge(surface: G2Harness) 
     checks_read = cast("dict[str, Any]", seen["read_motion_checks"])
     assert [entry["id"] for entry in checks_read["entries"]] == ["mc-travel"]
     assert checks_read["results"] is None, "reading never measures"
+    # -- couplings: declared, revised, read (KINEMATICS.md §5, Stage 9C)
+    coupling_declared = cast("dict[str, Any]", seen["declare_coupling"])
+    assert coupling_declared["generation"] == 1
+    assert coupling_declared["change"]["kind"] == "declare"
+    coupling_revised = cast("dict[str, Any]", seen["update_coupling"])
+    assert coupling_revised["generation"] == 2 and coupling_revised["change"]["reason"]
+    couplings_read = cast("dict[str, Any]", seen["read_couplings"])
+    [coupling_entry] = cast("list[Any]", couplings_read["entries"])
+    assert coupling_entry["id"] == "cp-feed" and coupling_entry["ratio"] == 0.5
+    assert couplings_read["motion"] is None, "reading never measures"
     motion_checked = cast("dict[str, Any]", seen["check_motion"])
     motion = cast("dict[str, Any]", motion_checked["motion"])
-    # The joint names a part this project does not have: a real named refusal
-    # through the real engine, never skipped and never a pass.
-    [joint_row] = cast("list[Any]", motion["joints"])
-    assert joint_row["state"] == "unresolvable" and joint_row["reason"] == "missing_part"
+    # Both joints name parts this project does not have: real named refusals
+    # through the real engine, never skipped and never a pass. (Two rows since
+    # Stage 9C seeded j-feed for the coupling steps.)
+    joint_rows = cast("list[Any]", motion["joints"])
+    assert [row["id"] for row in joint_rows] == ["j-feed", "j-mount"]
+    for joint_row in joint_rows:
+        assert joint_row["state"] == "unresolvable" and joint_row["reason"] == "missing_part"
     [pose_row] = cast("list[Any]", motion["poses"])
     assert pose_row["state"] == "resolved"
-    assert motion["blocking"] == ["j-mount"]
+    assert motion["blocking"] == ["j-feed", "j-mount"]
     assert motion_checked["artifact_ref"].startswith("artifact:motion-status:")
     # Stage 9B: the per-check §4 results ride the same result — the sweep over
     # the unresolvable joint is `unresolvable` by name, never skipped.

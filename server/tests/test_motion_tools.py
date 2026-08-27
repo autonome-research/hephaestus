@@ -1,14 +1,15 @@
-"""``KINEMATICS.md`` §6 (Stage 9A/9B): the joint, pose and motion-check tools.
+"""``KINEMATICS.md`` §6 (Stage 9A/9B/9C): the joint, pose, motion-check and coupling tools.
 
 Everything here is asserted through the *real* dispatcher, over real geometry,
 on the ``test_assembly_tools`` precedent — what is tested is the surface a
 model actually meets:
 
-* the ten tools on both declared profiles (part + orchestrator, the 8C
+* the thirteen tools on both declared profiles (part + orchestrator, the 8C
   quartet decision applied unchanged), including every refusal the contract
   names (``invalid_joint`` / ``unknown_joint`` / ``cyclic_joint_graph``,
   ``invalid_pose`` / ``unknown_pose``, ``invalid_motion_check`` /
-  ``unknown_motion_check``) — and the ``quick_edit``/``reviewer`` profiles
+  ``unknown_motion_check``, ``invalid_coupling`` / ``unknown_coupling`` /
+  ``cyclic_coupling``) — and the ``quick_edit``/``reviewer`` profiles
   being denied, which is what keeps a reviewer from writing the motion state
   it will be handed;
 * withdrawal as a new generation that erases nothing, and a pose that binds a
@@ -60,7 +61,14 @@ TRIPLET: tuple[str, ...] = (
     "read_motion_checks",
 )
 
-KINEMATICS_TOOLS: tuple[str, ...] = SEPTET + TRIPLET
+#: The Stage 9C coupling triplet (KINEMATICS.md §5/§6).
+COUPLING_TRIPLET: tuple[str, ...] = (
+    "declare_coupling",
+    "update_coupling",
+    "read_couplings",
+)
+
+KINEMATICS_TOOLS: tuple[str, ...] = SEPTET + TRIPLET + COUPLING_TRIPLET
 
 REVIEWER = Principal(session_id="rv", profile="reviewer", part=None)
 
@@ -646,3 +654,174 @@ def test_a_withdrawn_check_is_never_evaluated_but_its_last_result_stays(
     # …and a re-measure evaluates nothing (withdrawn: never evaluated).
     second = project.call("check_motion", {})
     assert second["results"] == []
+
+
+# ==========================================================================
+# couplings (KINEMATICS.md §5/§6, Stage 9C)
+
+
+def scalar_joints(project: Project) -> None:
+    """Two structurally-declared revolute joints for the coupling tests."""
+    for joint_id, (parent, child) in (
+        ("j-motor", ("motor", "rotor")),
+        ("j-wrist", ("rotor", "hand")),
+    ):
+        project.call(
+            "declare_joint",
+            joint(
+                joint_id,
+                kind="revolute",
+                parent=f"{parent}:bore",
+                child=f"{child}:pin",
+                limits={"min": -180.0, "max": 180.0},
+            ),
+        )
+
+
+def coupling(coupling_id: str = "cp-drive", **fields: Any) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "id": coupling_id,
+        "parent": "j-motor",
+        "child": "j-wrist",
+        "ratio": 0.2,
+        "offset": 0.0,
+        "provenance": {"assumed": True, "reason": "fixture transmission"},
+    }
+    entry.update(fields)
+    return entry
+
+
+def test_coupling_lifecycle_is_three_generations_nothing_erased(project: Project) -> None:
+    scalar_joints(project)
+    declared = project.call("declare_coupling", coupling())
+    assert declared["generation"] == 1
+    assert declared["artifact_ref"].startswith("artifact:couplings:sha256:")
+    assert declared["change"] == {
+        "kind": "declare",
+        "id": "cp-drive",
+        "patch": declared["entries"][0],
+    }
+    assert declared["motion"] is None, "never evaluated, which is not a pass"
+
+    revised = project.call(
+        "update_coupling",
+        {"id": "cp-drive", "patch": {"ratio": 0.25}, "reason": "gearing revised to 4:1"},
+    )
+    assert revised["generation"] == 2
+    assert revised["entries"][0]["ratio"] == 0.25
+    assert revised["change"]["reason"] == "gearing revised to 4:1"
+
+    withdrawn = project.call(
+        "update_coupling",
+        {"id": "cp-drive", "patch": {"withdrawn": True}, "reason": "direct drive now"},
+    )
+    assert withdrawn["generation"] == 3
+    # Withdrawn, not erased: read_couplings returns it WITH its reason.
+    read = project.call("read_couplings", {})
+    assert read["entries"][0]["withdrawn"] is True
+    assert read["entries"][0]["withdrawn_reason"] == "direct drive now"
+
+    # …and every earlier generation is still readable through the engine.
+    history = project.cad.coupling_set().history()
+    assert [state.generation for state in history] == [1, 2, 3]
+    assert history[0].entries[0].ratio == pytest.approx(0.2)
+
+
+def test_coupling_provenance_is_compelled(project: Project) -> None:
+    scalar_joints(project)
+    entry = coupling()
+    del entry["provenance"]
+    with pytest.raises(DispatchError) as excinfo:
+        project.call("declare_coupling", entry)
+    assert excinfo.value.reason == "invalid_coupling"
+    assert "provenance" in excinfo.value.message
+    assert project.call("read_couplings", {})["generation"] == 0
+
+
+def test_an_unknown_joint_ref_is_invalid_coupling(project: Project) -> None:
+    scalar_joints(project)
+    with pytest.raises(DispatchError) as excinfo:
+        project.call("declare_coupling", coupling(child="j-ghost"))
+    assert excinfo.value.reason == "invalid_coupling"
+    assert "j-ghost" in excinfo.value.message
+
+
+def test_a_second_driver_is_refused_naming_the_first(project: Project) -> None:
+    scalar_joints(project)
+    project.call(
+        "declare_joint",
+        joint(
+            "j-aux",
+            kind="revolute",
+            parent="frame:bore",
+            child="motor:pin2",
+            limits={"min": -180.0, "max": 180.0},
+        ),
+    )
+    project.call("declare_coupling", coupling())
+    with pytest.raises(DispatchError) as excinfo:
+        project.call("declare_coupling", coupling("cp-second", parent="j-aux"))
+    assert excinfo.value.reason == "invalid_coupling"
+    assert "cp-drive" in excinfo.value.message
+    assert project.call("read_couplings", {})["generation"] == 1
+
+
+def test_a_coupling_cycle_is_refused_with_the_cycle_named(project: Project) -> None:
+    scalar_joints(project)
+    project.call("declare_coupling", coupling())
+    with pytest.raises(DispatchError) as excinfo:
+        project.call(
+            "declare_coupling",
+            coupling("cp-back", parent="j-wrist", child="j-motor", ratio=5.0),
+        )
+    assert excinfo.value.reason == "cyclic_coupling"
+    for name in ("j-motor", "j-wrist", "cp-drive", "cp-back"):
+        assert name in excinfo.value.message
+
+
+def test_patching_an_unknown_coupling_is_unknown_coupling(project: Project) -> None:
+    with pytest.raises(DispatchError) as excinfo:
+        project.call("update_coupling", {"id": "cp-nope", "patch": {"ratio": 1.0}, "reason": "r"})
+    assert excinfo.value.reason == "unknown_coupling"
+
+
+def test_a_coupling_withdrawal_carrying_field_edits_is_refused(project: Project) -> None:
+    """Two acts, two generations — the update_joint rule, restated."""
+    scalar_joints(project)
+    project.call("declare_coupling", coupling())
+    with pytest.raises(DispatchError) as excinfo:
+        project.call(
+            "update_coupling",
+            {"id": "cp-drive", "patch": {"withdrawn": True, "ratio": 9.0}, "reason": "both"},
+        )
+    assert excinfo.value.reason == "invalid_coupling"
+    assert project.call("read_couplings", {})["generation"] == 1
+
+
+def test_a_pose_or_sweep_over_a_coupled_child_is_refused_naming_the_coupling(
+    project: Project,
+) -> None:
+    """§5: coupled parameters are dependent — declared refusals on both sets."""
+    scalar_joints(project)
+    project.call("declare_coupling", coupling())
+    with pytest.raises(DispatchError) as posed:
+        project.call("declare_pose", pose("p-bent", joints={"j-wrist": 30.0}))
+    assert posed.value.reason == "invalid_pose"
+    assert "cp-drive" in posed.value.message
+    with pytest.raises(DispatchError) as swept:
+        project.call(
+            "declare_motion_check",
+            {
+                "id": "mc-wrist",
+                "kind": "sweep_no_interference",
+                "a": "widget",
+                "b": "bracket",
+                "sweep": {"j-wrist": {"from": -10.0, "to": 10.0}},
+                "samples": 2,
+                "provenance": {"assumed": True, "reason": "fixture check"},
+            },
+        )
+    assert swept.value.reason == "invalid_motion_check"
+    assert "cp-drive" in swept.value.message
+    # The FREE parent is what §5 asks a pose to bind instead.
+    assert project.call("declare_pose", pose("p-run", joints={"j-motor": 90.0}))["generation"] == 1

@@ -1,0 +1,53 @@
+{
+  "joints": [
+    {
+      "id": "j-lid",
+      "kind": "revolute",
+      "parent": "base:hinge_bore",
+      "child": "lid:hinge_bore",
+      "limits": {
+        "min": 0.0,
+        "max": 110.0
+      },
+      "provenance": {
+        "assumed": true,
+        "reason": "closed flat to full open, 0..110 degrees, per the task brief"
+      },
+      "note": "the lid swings on the boss bore axis"
+    }
+  ],
+  "poses": [
+    {
+      "id": "p-open",
+      "joints": {
+        "j-lid": 110.0
+      },
+      "provenance": {
+        "assumed": true,
+        "reason": "the full-open limit configuration, per the task brief"
+      },
+      "note": "lid at the 110 degree open limit"
+    }
+  ],
+  "motion_checks": [
+    {
+      "id": "mc-lid-swing",
+      "kind": "sweep_clearance",
+      "a": "lid",
+      "b": "base:wire_channel",
+      "min_mm": 1.2,
+      "sweep": {
+        "j-lid": {
+          "from": 0.0,
+          "to": 110.0
+        }
+      },
+      "samples": 56,
+      "provenance": {
+        "assumed": true,
+        "reason": "the lid must never crowd the wire channel over its travel, per the task brief"
+      },
+      "note": "the plate's front-bottom edge sweeps closest just off the deck"
+    }
+  ]
+}

@@ -3,25 +3,24 @@
 
 """``heph motion`` CLI verbs: the operator's view of the motion-check state.
 
-``KINEMATICS.md`` §6, operator-CLI bullet — the Stage 9B subset. Two verbs,
-deliberately asymmetric (the ``heph assembly`` shape):
+``KINEMATICS.md`` §6, operator-CLI bullet — the Stage 9B/9C subset. Two
+verbs, deliberately asymmetric (the ``heph assembly`` shape):
 
-- ``heph motion [--json]`` prints the projected ``MotionStatus`` counts and
-  the motion-check table joined with the **latest projected** sweep results —
+- ``heph motion [--json]`` prints the projected ``MotionStatus`` counts, the
+  motion-check table joined with the **latest projected** sweep results —
   what the project last measured, withdrawn entries included with their
-  recorded reasons, plus which parts have been rebuilt since (``stale``). It
-  computes nothing, so it is instant and safe to run anywhere. ``results:
-  null`` / ``not measured`` is said out loud: checks that were never
-  evaluated are not passing ones.
+  recorded reasons, plus which parts have been rebuilt since (``stale``) —
+  and the **coupling table** (Stage 9C, ``KINEMATICS.md`` §5/§6): every
+  declared ``child = ratio * parent + offset`` relationship, withdrawn
+  entries included with their reasons, because generational state is honest
+  only if every generation stays readable. It computes nothing, so it is
+  instant and safe to run anywhere. ``results: null`` / ``not measured`` is
+  said out loud: checks that were never evaluated are not passing ones.
 - ``heph motion check [ID ...] [--json]`` re-evaluates now — the full
   ``MotionStatus`` plus every named (default: every active) motion check's
   bounded grid — and projects a full run's results so a later ``heph
   motion`` (and the §5 reviewer) sees them. A named subset is evaluated but
   deliberately not projected (the ``check_assembly`` rule), and says so.
-
-The coupling table is Stage 9C (``KINEMATICS.md`` §5: ``heph motion --json``
-gains it with the coupling set itself); this module deliberately reports no
-coupling column until that set exists to be read.
 
 Kept out of :mod:`hephaestus.core.cli` for the same reason the assembly and
 joints verbs are: the motion evaluator binds the geometry kernel, and every
@@ -52,7 +51,7 @@ from hephaestus.core.project_store.layout import find_project_root, load_project
 
 if TYPE_CHECKING:  # the motion module binds the geometry kernel; verbs load it lazily
     from hephaestus.core.motion import MotionStatus, SweepResult
-    from hephaestus.core.project_store.kinematics import MotionCheckState
+    from hephaestus.core.project_store.kinematics import CouplingState, MotionCheckState
     from hephaestus.core.project_store.layout import ProjectLayout
 
     from opstore import OpStore
@@ -60,6 +59,7 @@ if TYPE_CHECKING:  # the motion module binds the geometry kernel; verbs load it 
 __all__ = ["add_subparsers"]
 
 _CHECK_HEADER = ("id", "kind", "subject", "sweep", "verdict", "worst", "detail")
+_COUPLING_HEADER = ("id", "child", "=", "provenance", "state", "detail")
 
 #: The §4 success spellings; every other verdict is blocking for the CLI exit
 #: code exactly as it is for the §6 termination reviewer.
@@ -86,12 +86,14 @@ def _cmd_motion(args: argparse.Namespace) -> int:
         results_ref = sweeps.projected_results_ref()
         check_state = sweeps.checks.state()
         check_generation = sweeps.projected_check_generation()
+        coupling_state = sweeps.couplings.state()
     finally:
         store.close()
     json_out = bool(args.json)
     if json_out:
-        # NOTE (KINEMATICS.md §5, Stage 9C): the coupling table joins this
-        # payload when the coupling set ships — not reserved as a dead key.
+        # The coupling table (KINEMATICS.md §5/§6, Stage 9C): the declared
+        # set restated verbatim — withdrawn entries included with their
+        # reasons — on the check-table precedent (generation + entries).
         payload = {
             "status": "ok" if status is not None else "not_evaluated",
             "check_generation": check_state.generation,
@@ -99,12 +101,14 @@ def _cmd_motion(args: argparse.Namespace) -> int:
             "results": (None if results is None else [result.to_json() for result in results]),
             "results_ref": results_ref,
             "results_check_generation": check_generation,
+            "coupling_generation": coupling_state.generation,
+            "couplings": [entry.to_json() for entry in coupling_state.entries],
             "motion": None if status is None else status.to_json(),
             "motion_ref": motion_ref,
         }
         print(json.dumps(payload, sort_keys=True))
         return _exit_code(status, results)
-    if status is None and not check_state.entries:
+    if status is None and not check_state.entries and not coupling_state.entries:
         print("no motion checks declared, motion state never evaluated")
         return 0
     if status is not None:
@@ -119,6 +123,7 @@ def _cmd_motion(args: argparse.Namespace) -> int:
     else:
         print(_NEVER_EVALUATED)
     _emit_checks(check_state, results)
+    _emit_couplings(coupling_state)
     if status is not None and status.stale:
         print(
             f"\nstale: {', '.join(status.stale)} rebuilt since this state was measured — "
@@ -232,6 +237,38 @@ def _emit_checks(
         print("  ".join(cell.ljust(widths[column]) for column, cell in enumerate(row)).rstrip())
 
 
+def _emit_couplings(coupling_state: CouplingState) -> None:
+    """The §5 coupling table: every declared entry, nothing silently skipped.
+
+    ``child = ratio * parent + offset`` spelled out per row, withdrawn
+    entries carrying their recorded reasons. A project with no couplings
+    prints no table — there is no claim to report, so nothing is skipped.
+    """
+    if not coupling_state.entries:
+        return
+    print("\ncouplings:")
+    rows: list[tuple[str, ...]] = [_COUPLING_HEADER]
+    for entry in coupling_state.entries:
+        if entry.withdrawn:
+            state, detail = "WITHDRAWN", entry.withdrawn_reason or ""
+        else:
+            state, detail = "declared", entry.note or ""
+        requirement = entry.provenance.requirement
+        rows.append(
+            (
+                entry.id,
+                entry.child,
+                f"{entry.ratio:g} * {entry.parent} + {entry.offset:g}",
+                requirement if requirement is not None else "assumed",
+                state,
+                detail,
+            )
+        )
+    widths = [max(len(row[column]) for row in rows) for column in range(len(_COUPLING_HEADER))]
+    for row in rows:
+        print("  ".join(cell.ljust(widths[column]) for column, cell in enumerate(row)).rstrip())
+
+
 def _exit_code(status: MotionStatus | None, results: Sequence[SweepResult] | None) -> int:
     """The never-green rule over both sections and every check result."""
     if status is not None and status.blocking():
@@ -260,7 +297,8 @@ def add_subparsers(
 ) -> None:
     """Register the ``motion`` verb group on an existing subparser set."""
     motion = sub.add_parser(
-        "motion", help="show declared motion checks and their latest sweep results"
+        "motion",
+        help="show declared motion checks, their latest sweep results, and couplings",
     )
     motion.add_argument("--json", action="store_true", help="emit the machine form")
     motion.set_defaults(func=_guard(_cmd_motion))

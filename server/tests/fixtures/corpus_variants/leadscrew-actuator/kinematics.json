@@ -1,0 +1,48 @@
+{
+  "joints": [
+    {
+      "id": "j-motor",
+      "kind": "revolute",
+      "parent": "frame:screw_bore",
+      "child": "screw:screw_pilot",
+      "limits": {
+        "min": 0.0,
+        "max": 3600.0
+      },
+      "provenance": {
+        "assumed": true,
+        "reason": "the brief's ten-turn motor window, stated as this solution's own reading"
+      },
+      "note": "screw pilot spinning in the frame bore"
+    },
+    {
+      "id": "j-carriage",
+      "kind": "prismatic",
+      "parent": "frame:travel_face",
+      "child": "carriage:guide_foot",
+      "limits": {
+        "min": 0.0,
+        "max": 24.0
+      },
+      "provenance": {
+        "assumed": true,
+        "reason": "the brief's 20 mm stroke plus the stated overtravel margin"
+      },
+      "note": "carriage travel along the plate-top normal"
+    }
+  ],
+  "couplings": [
+    {
+      "id": "cp-leadscrew",
+      "parent": "j-motor",
+      "child": "j-carriage",
+      "ratio": 0.005555555555555556,
+      "offset": 0.0,
+      "provenance": {
+        "assumed": true,
+        "reason": "2 mm metric lead per revolution, restated as mm per degree"
+      },
+      "note": "carriage = lead/360 * motor; one turn is one 2 mm pitch"
+    }
+  ]
+}

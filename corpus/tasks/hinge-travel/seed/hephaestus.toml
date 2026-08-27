@@ -1,0 +1,4 @@
+# hinge-travel bench task: a lid on a travel-limited revolute hinge.
+[project]
+name = "hinge_travel"
+description = "Deck-and-lid hinge with declared travel limits and a swept wire-channel clearance"

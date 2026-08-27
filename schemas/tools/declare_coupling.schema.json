@@ -1,0 +1,507 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/declare_coupling.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Declare one coupling: child = ratio*parent + offset (KINEMATICS.md §5).",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "child": {
+        "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+        "type": "string"
+      },
+      "id": {
+        "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+        "type": "string"
+      },
+      "note": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "offset": {
+        "default": 0.0,
+        "type": "number"
+      },
+      "parent": {
+        "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+        "type": "string"
+      },
+      "provenance": {
+        "additionalProperties": false,
+        "properties": {
+          "assumed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "requirement": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "ratio": {
+        "type": "number"
+      }
+    },
+    "required": [
+      "id",
+      "parent",
+      "child",
+      "ratio",
+      "provenance"
+    ],
+    "type": "object"
+  },
+  "result": {
+    "additionalProperties": true,
+    "properties": {
+      "artifact_ref": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "change": {
+        "anyOf": [
+          {
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "entries": {
+        "items": {
+          "additionalProperties": true,
+          "properties": {
+            "child": {
+              "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+              "type": "string"
+            },
+            "id": {
+              "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+              "type": "string"
+            },
+            "note": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "offset": {
+              "default": 0.0,
+              "type": "number"
+            },
+            "parent": {
+              "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+              "type": "string"
+            },
+            "provenance": {
+              "additionalProperties": false,
+              "properties": {
+                "assumed": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "requirement": {
+                  "anyOf": [
+                    {
+                      "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                }
+              },
+              "required": [],
+              "type": "object"
+            },
+            "ratio": {
+              "type": "number"
+            },
+            "withdrawn": {
+              "type": "boolean"
+            },
+            "withdrawn_reason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "parent",
+            "child",
+            "ratio"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "generation": {
+        "type": "integer"
+      },
+      "motion": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "properties": {
+              "artifact_refs": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "blocking": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "counts": {
+                "additionalProperties": {
+                  "additionalProperties": {
+                    "type": "integer"
+                  },
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              "joint_generation": {
+                "type": "integer"
+              },
+              "joints": {
+                "items": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "child": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "anchor": {
+                          "type": "string"
+                        },
+                        "artifact_ref": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "part": {
+                          "type": "string"
+                        },
+                        "rule": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "selector": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "anchor",
+                        "part",
+                        "selector"
+                      ],
+                      "type": "object"
+                    },
+                    "detail": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "note": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "parent": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "anchor": {
+                          "type": "string"
+                        },
+                        "artifact_ref": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "part": {
+                          "type": "string"
+                        },
+                        "rule": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "selector": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "anchor",
+                        "part",
+                        "selector"
+                      ],
+                      "type": "object"
+                    },
+                    "provenance": {
+                      "type": "object"
+                    },
+                    "reason": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "state": {
+                      "enum": [
+                        "resolved",
+                        "unresolvable"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind",
+                    "parent",
+                    "child",
+                    "state"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "pose_generation": {
+                "type": "integer"
+              },
+              "poses": {
+                "items": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "detail": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "joints": {
+                      "additionalProperties": {
+                        "type": "number"
+                      },
+                      "type": "object"
+                    },
+                    "note": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "provenance": {
+                      "type": "object"
+                    },
+                    "reason": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "state": {
+                      "enum": [
+                        "resolved",
+                        "unresolvable"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "joints",
+                    "state"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "stale": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "joint_generation",
+              "pose_generation",
+              "joints",
+              "poses",
+              "counts",
+              "blocking"
+            ],
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "motion_ref": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "status": {
+        "const": "ok"
+      }
+    },
+    "required": [
+      "status",
+      "generation",
+      "artifact_ref",
+      "entries",
+      "motion"
+    ],
+    "type": "object"
+  },
+  "title": "declare_coupling",
+  "x-hephaestus-tool": {
+    "idempotent": true,
+    "maxUtf8Fields": {},
+    "name": "declare_coupling",
+    "profiles": [
+      "part",
+      "orchestrator"
+    ],
+    "sequential": true
+  }
+}

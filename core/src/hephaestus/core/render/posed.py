@@ -72,6 +72,7 @@ from hephaestus.core.motion import (
     sweep_axis_values,
 )
 from hephaestus.core.project_store.kinematics import (
+    CouplingSet,
     JointSet,
     MotionCheckEntry,
     MotionCheckSet,
@@ -293,11 +294,12 @@ def _current_shapes(
 def _resolution(
     layout: ProjectLayout, store: OpStore, publisher: Publisher, scratch: Path
 ) -> MotionResolution:
-    """One consistent read of the joint and pose sets, resolved over ``scratch``."""
+    """One consistent read of the joint, pose and coupling sets over ``scratch``."""
     joints = JointSet(layout, store)
     poses = PoseSet(layout, store, joints)
+    couplings = CouplingSet(layout, store, joints)
     resolver = AnchorResolver(layout, store, publisher, scratch)
-    return MotionResolution(joints.state(), poses.state(), resolver)
+    return MotionResolution(joints.state(), poses.state(), resolver, couplings.state())
 
 
 # --------------------------------------------------------------------------
@@ -470,8 +472,25 @@ def _placements(
                 reason="unresolvable_joint",
             )
     frames = tuple(resolution.frame(entry.id) for entry in resolution.joint_state.active)
+    frame_ids = {frame.id for frame in frames}
     try:
-        world = forward_kinematics(frames, values)
+        # §5 (Stage 9C): the explicit form assigns only FREE parameters — a
+        # sweep's worst sample is a free assignment — so coupled children are
+        # derived (and limit-checked, the coupling named) exactly as the
+        # sweep that produced the sample derived them; the provenance still
+        # binds the FREE assignment, because that is what was asked for.
+        full = resolution.derive_values(values)
+        # Only DERIVED values are filtered to resolved frames (a child of a
+        # withdrawn joint is never evaluated); every caller-supplied value
+        # passes through, so an unknown free id keeps geom's own refusal.
+        world = forward_kinematics(
+            frames,
+            {
+                joint_id: value
+                for joint_id, value in full.items()
+                if joint_id in frame_ids or joint_id in values
+            },
+        )
     except JointLimitError as exc:
         raise PosedSceneError(exc.message, reason="joint_limit_exceeded") from exc
     except JointDeclarationError as exc:
@@ -549,7 +568,8 @@ def _envelope_in(
         )
     resolution = _resolution(layout, store, publisher, scratch)
     frames = _swept_frames(entry, resolution)
-    moving = _moving_parts(entry, resolution, frames)
+    driven = _coupled_riders(entry, resolution, frames)
+    moving = _moving_parts(entry, resolution, frames, driven)
     refs, shapes = _current_shapes(publisher, store, moving, scratch)
 
     axes = [
@@ -557,11 +577,28 @@ def _envelope_in(
         for joint_id, rng in sorted(entry.sweep.items())
     ]
     frame_tuple = tuple(frames.values())
+    frame_ids = set(frames)
     envelope: Any = None
     for combo in product(*[values for _, values in axes]):
         sample = {joint_id: value for (joint_id, _), value in zip(axes, combo, strict=True)}
         try:
-            world = forward_kinematics(frame_tuple, cast("Any", sample))
+            # §5 (Stage 9C): coupled children derive from the free grid values
+            # — limit-checked with the coupling named — exactly as the sweep
+            # this envelope is labeled with derives them; only derived values
+            # are filtered to resolved frames, so a free mismatch keeps geom's
+            # own refusal.
+            full = resolution.derive_values(sample)
+            world = forward_kinematics(
+                frame_tuple,
+                cast(
+                    "Any",
+                    {
+                        joint_id: value
+                        for joint_id, value in full.items()
+                        if joint_id in frame_ids or joint_id in sample
+                    },
+                ),
+            )
         except JointLimitError as exc:
             raise PosedSceneError(exc.message, reason="joint_limit_exceeded") from exc
         except JointDeclarationError as exc:
@@ -648,17 +685,50 @@ def _swept_frames(entry: MotionCheckEntry, resolution: MotionResolution) -> dict
     return frames
 
 
-def _moving_parts(
+def _coupled_riders(
     entry: MotionCheckEntry, resolution: MotionResolution, frames: dict[str, Any]
+) -> frozenset[str]:
+    """Joint ids the sweep drives THROUGH couplings (§5, Stage 9C), closed
+    transitively — a lead screw's nut rides its motor's sweep. Each resolved
+    rider's frame is folded into ``frames`` so forward kinematics moves it; a
+    rider whose joint is withdrawn or unresolved contributes no frame (never
+    evaluated / already refused wherever it moves a measured part)."""
+    by_child = resolution.coupling_state.by_child
+    driven: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for child, coupling in by_child.items():
+            if child not in driven and (
+                coupling.parent in entry.sweep or coupling.parent in driven
+            ):
+                driven.add(child)
+                changed = True
+    declared = resolution.joint_state.by_id
+    for child in sorted(driven):
+        joint = declared.get(child)
+        if joint is None or joint.withdrawn:
+            continue
+        if resolution.joint_failure(child) is None:
+            frames.setdefault(child, resolution.frame(child))
+    return frozenset(driven)
+
+
+def _moving_parts(
+    entry: MotionCheckEntry,
+    resolution: MotionResolution,
+    frames: dict[str, Any],
+    driven: frozenset[str] = frozenset(),
 ) -> tuple[str, ...]:
     """The check's anchored parts that actually ride a swept joint, in order.
 
     Walking each anchored part's parent chain collects every chain frame into
     ``frames`` (an omitted chain joint still places the part — at zero, the
     §3 rule) and refuses a broken chain joint by name. Parts whose chain
-    never meets a swept joint are static under this sweep; a check with NO
-    moving part has no moving compound, which is a fact about the stored
-    entry, refused rather than an empty union.
+    never meets a swept joint — nor, Stage 9C, a joint the sweep drives
+    through a coupling (``driven``) — are static under this sweep; a check
+    with NO moving part has no moving compound, which is a fact about the
+    stored entry, refused rather than an empty union.
     """
     moving: list[str] = []
     for part in entry.parts:
@@ -679,7 +749,7 @@ def _moving_parts(
                     reason="unresolvable_joint",
                 )
             chain.append((chain_entry.id, resolution.frame(chain_entry.id)))
-            if chain_entry.id in entry.sweep:
+            if chain_entry.id in entry.sweep or chain_entry.id in driven:
                 rides_sweep = True
             current = chain_entry.anchors[0].part
         if rides_sweep:

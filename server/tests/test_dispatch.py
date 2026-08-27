@@ -364,6 +364,17 @@ _ARGS: dict[str, dict[str, object]] = {
     },
     "read_motion_checks": {},
     "check_motion": {},
+    # KINEMATICS.md Stage 9C (§5/§6): the coupling triplet, same rule again —
+    # availability is what this matrix asserts.
+    "declare_coupling": {
+        "id": "cp-drive",
+        "parent": "j-motor",
+        "child": "j-wrist",
+        "ratio": 0.2,
+        "provenance": {"assumed": True, "reason": "matrix fixture"},
+    },
+    "update_coupling": {"id": "cp-drive", "patch": {"note": "n"}, "reason": "matrix fixture"},
+    "read_couplings": {},
 }
 
 

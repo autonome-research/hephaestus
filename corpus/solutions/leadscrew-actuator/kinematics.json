@@ -1,0 +1,48 @@
+{
+  "joints": [
+    {
+      "id": "j-motor",
+      "kind": "revolute",
+      "parent": "frame:screw_bore",
+      "child": "screw:screw_pilot",
+      "limits": {
+        "min": 0.0,
+        "max": 3600.0
+      },
+      "provenance": {
+        "assumed": true,
+        "reason": "ten turns of motor travel end to end, per the task brief"
+      },
+      "note": "motor spins the screw pilot in the frame bore"
+    },
+    {
+      "id": "j-carriage",
+      "kind": "prismatic",
+      "parent": "frame:travel_face",
+      "child": "carriage:guide_foot",
+      "limits": {
+        "min": 0.0,
+        "max": 24.0
+      },
+      "provenance": {
+        "assumed": true,
+        "reason": "20 mm working stroke plus overtravel margin, per the task brief"
+      },
+      "note": "carriage rises along the plate-top normal"
+    }
+  ],
+  "couplings": [
+    {
+      "id": "cp-leadscrew",
+      "parent": "j-motor",
+      "child": "j-carriage",
+      "ratio": 0.005555555555555556,
+      "offset": 0.0,
+      "provenance": {
+        "assumed": true,
+        "reason": "metric lead of 2 mm carriage travel per screw revolution (2/360 mm per degree), per the task brief"
+      },
+      "note": "the lead-screw transmission: carriage = (2/360) * motor"
+    }
+  ]
+}

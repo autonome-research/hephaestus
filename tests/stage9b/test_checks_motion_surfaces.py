@@ -308,7 +308,16 @@ class TestFrozenSnapshotResolution:
         )
         assert report.project_snapshot_ref == snapshot_ref
         assert report.motion_generations == context.generations
-        assert report.motion_generations == {"joints": 1, "poses": 2, "motion_checks": 4}
+        # Repointed by Stage 9C (KINEMATICS.md §5): the coupling set is the
+        # fourth frozen generation — it governs the derived values the run's
+        # posed measurements and sweeps composed, so the report records it
+        # alongside the other three (this project declares none: generation 0).
+        assert report.motion_generations == {
+            "joints": 1,
+            "poses": 2,
+            "motion_checks": 4,
+            "couplings": 0,
+        }
         document = report.to_json()
         assert document["motion_generations"] == report.motion_generations
         assert CheckReport.from_json(document) == report

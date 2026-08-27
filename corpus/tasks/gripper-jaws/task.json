@@ -1,0 +1,85 @@
+{
+  "id": "gripper-jaws",
+  "prompt": "Model a one-axis parallel gripper as the two parts `body` and `jaw`. Every interface number is already in the project's `globals.py` - read them through `hc` instead of repeating them.\n\nThe body is one solid: a rectangular base 60 mm long (X), 30 mm wide (Y) and 10 mm tall, resting on the XY plane with a corner at the origin (x = 0..60, y = 0..30, z = 0..10), plus the fixed jaw - a 10 mm thick (X) block spanning the full 30 mm width and rising 20 mm above the base top, with its gripping face on the plane x = 50 facing the sliding jaw (the block spans x = 50..60, z = 10..30). The sliding jaw is its own part: the same 10 x 30 x 20 block resting flat on the base top, authored fully OPEN with its gripping face at x = 22, so the two gripping faces stand 28 mm apart as built. The jaw closes by sliding +X along the base.\n\nTag the interfaces: on the body, the fixed jaw's gripping face as `grip_face` and the flat back face at x = 60 as `travel_datum` (jaw travel is measured along its outward +X normal); on the jaw, its gripping face as `grip_face`. Motion and assembly checking address the parts through exactly those names.\n\nDeclare the mechanism as project state, honestly: a prismatic joint `j-jaw` riding the `travel_datum` direction with travel limits 0 to 25 mm; the named poses `p-open` (travel 0) and `p-closed` (full 25 mm travel, where the 28 mm open gap closes down to the 3 mm gripping gap for the flat stock this gripper handles); the gap requirements as declared constraints between the two gripping faces, bound to those poses; and a no-interference motion check `mc-jaw-travel` sweeping `j-jaw` over the full travel - the jaw must ride the base through every sampled configuration without ever running into the body. Check the motion, and build both parts when the geometry is right.",
+  "budget_tool_calls": 21,
+  "required_checks": [
+    "gripper_jaws"
+  ],
+  "export_requirements": [],
+  "render_requirements": [],
+  "joint_requirements": [
+    {
+      "entry": {
+        "id": "j-jaw",
+        "kind": "prismatic",
+        "parent": "body:travel_datum",
+        "child": "jaw:grip_face",
+        "limits": {"min": 0.0, "max": 25.0},
+        "note": "the jaw slides +X along the base's travel datum; 0 is fully open as built"
+      }
+    }
+  ],
+  "pose_requirements": [
+    {
+      "entry": {
+        "id": "p-open",
+        "joints": {"j-jaw": 0.0},
+        "note": "fully open: the as-built configuration, gripping faces 28 mm apart"
+      }
+    },
+    {
+      "entry": {
+        "id": "p-closed",
+        "joints": {"j-jaw": 25.0},
+        "note": "full travel: the gripping faces close down to the 3 mm grip envelope"
+      }
+    }
+  ],
+  "motion_check_requirements": [
+    {
+      "entry": {
+        "id": "mc-jaw-travel",
+        "kind": "sweep_no_interference",
+        "a": "jaw",
+        "b": "body",
+        "sweep": {"j-jaw": {"from": 0.0, "to": 25.0}},
+        "samples": 26,
+        "note": "the jaw rides the base through the whole stroke - touching, never overlapping"
+      },
+      "expect": "holds_at_samples"
+    }
+  ],
+  "constraint_requirements": [
+    {
+      "entry": {
+        "id": "c-open-gap",
+        "kind": "distance",
+        "a": "jaw:grip_face",
+        "b": "body:grip_face",
+        "value_mm": 28.0,
+        "tol_mm": 0.2,
+        "poses": ["p-open"],
+        "note": "fully open the gripping faces stand 28 mm apart - the workpiece drop-in window"
+      },
+      "expect": "satisfied"
+    },
+    {
+      "entry": {
+        "id": "c-closure-fit",
+        "kind": "distance",
+        "a": "jaw:grip_face",
+        "b": "body:grip_face",
+        "value_mm": 3.0,
+        "tol_mm": 0.2,
+        "poses": ["p-closed"],
+        "note": "at full travel the jaws close to the 3 mm gripping gap for the flat stock"
+      },
+      "expect": "satisfied"
+    }
+  ],
+  "protected_paths": [],
+  "notes": "Difficulty 3. Corpus v3 (2026-08-26, KINEMATICS.md Stage 9C §6): the first mechanism task - acceptance is a declared prismatic joint, two named poses, two pose-bound distance constraints (the posed closure fit) and a sweep_no_interference over the full travel, all installed by the grader and evaluated through the same engine motion path check_motion uses. The joint's anchors and the constraint anchors name tags the prompt states, so a run that never tags its interfaces fails as unresolvable, honestly; the sweep succeeds only as holds_at_samples (samples are evidence, never a continuous guarantee). CHECKS keep the single-part facts: both envelopes, as-built no-overlap of the sliding pair, sealed genus-0 topology. No volume window at all: every graded property is a fit at a configuration, a sampled motion fact, an envelope or a topology fact. Budget derivation (measured policy, VALIDATION.md §7): no archived observe-mode journals exist for this task yet, so only the hand-counted reference path binds - record_requirements 1, create_part 2, write_part 2, build_part 2, declare_joint 1, declare_pose 2, declare_constraint 2, declare_motion_check 1, check_motion 1, check_assembly 1, run_checks 1 = 16 calls; ceil(1.3 x 16) = 21. Recalibrate against the observed passing max after the first archived sweep, per the 2026-08-25 measured-budget policy.",
+  "dfm_requirements": [],
+  "drawing_requirements": [],
+  "metadata_requirements": []
+}

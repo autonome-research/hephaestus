@@ -15,7 +15,10 @@ the §6 never-green rule — any non-success verdict (``violated``,
 ``not_reached_at_samples``, ``unresolvable``) exits 1 so a build script can
 gate on motion state. The sweep numbers asserted here are REAL measurements
 over the ``_g9b`` mechanism's published BReps (pin/bore radial air 0.1 mm),
-not stubs. The coupling table is Stage 9C and deliberately absent.
+not stubs. (The coupling table was Stage 9C and deliberately absent when this
+suite was written; Stage 9C shipped it, and the payload assertion below was
+repointed with that change — the 9C table has its own suite in
+``tests/stage9c/test_couplings.py``.)
 """
 
 from __future__ import annotations
@@ -145,8 +148,11 @@ class TestReporting:
         assert payload["checks"] == []
         assert payload["results"] is None
         assert payload["motion"] is None
-        # The coupling table is Stage 9C: no fake column, no dead key.
-        assert "couplings" not in payload
+        # Repointed by Stage 9C (KINEMATICS.md §5/§6): the coupling table
+        # shipped — an empty set is generation 0 with no entries, said as
+        # such rather than omitted.
+        assert payload["coupling_generation"] == 0
+        assert payload["couplings"] == []
 
     def test_declared_but_never_evaluated_is_not_reported_as_measured(
         self,

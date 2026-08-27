@@ -1,0 +1,4 @@
+# gripper-jaws bench task: a fresh two-part mechanism project.
+[project]
+name = "gripper_jaws"
+description = "Parallel gripper: fixed-jaw body and a sliding jaw on one prismatic axis"

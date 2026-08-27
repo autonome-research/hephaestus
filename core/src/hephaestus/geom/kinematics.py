@@ -50,6 +50,26 @@ direction, a part with two parents, a cycle, a value for a 0-DOF joint) is a
 :class:`JointDeclarationError` naming its reason from
 :data:`JOINT_REFUSALS` — closed sets, nothing silently skipped.
 
+Couplings are arithmetic, not state
+-----------------------------------
+A :class:`Coupling` (``KINEMATICS.md`` §5) is the linear relationship
+``child = ratio * parent + offset`` between two scalar joint parameters — the
+transmission vocabulary without gear-tooth geometry. This module owns exactly
+the pure arithmetic: :func:`derive_coupled_values` takes the declared
+couplings and a FREE parameter assignment and returns the full assignment
+with every coupled child's value derived (a parent omitted from the
+assignment sits at its zero, so its children derive from ``0.0``; chains —
+a child driving a further child — compose by the same rule). What it refuses,
+by name, is structure that makes the arithmetic dishonest: an assignment
+naming a coupled child directly (``coupled_child_assigned`` — dependent
+parameters are never assigned, §5), a child driven by two couplings
+(``duplicate_coupling_child`` — one driver per joint), a repeated coupling id
+(``duplicate_coupling_id``), and a coupling cycle (``cyclic_coupling``, the
+cycle named). Whether a derived value sits inside the child's declared
+limits is the ENGINE's check against the stored entry (naming the coupling in
+its ``joint_limit_exceeded`` detail) — limits are declarations, and this
+module never reads declarations.
+
 Frame comparison lives here, the verdict does not
 -------------------------------------------------
 :func:`frame_axis_angle_deg` and :func:`frame_radial_offset_mm` measure how
@@ -77,6 +97,7 @@ __all__ = [
     "JOINT_FRAME_EPS_MM",
     "JOINT_KINDS",
     "JOINT_REFUSALS",
+    "Coupling",
     "JointDeclarationError",
     "JointFrame",
     "JointKind",
@@ -85,6 +106,7 @@ __all__ = [
     "JointValue",
     "RigidTransform",
     "compose_transforms",
+    "derive_coupled_values",
     "forward_kinematics",
     "frame_axis_angle_deg",
     "frame_radial_offset_mm",
@@ -112,7 +134,12 @@ JOINT_KINDS: Final[tuple[JointKind, ...]] = (
 #: ``(degrees, mm)`` pair (``cylindrical``). ``fixed`` takes none.
 JointValue = float | tuple[float, float]
 
-#: Named refusal reasons for a malformed forest or parameter assignment.
+#: Named refusal reasons for a malformed forest, coupling set, or parameter
+#: assignment. The last four are the coupling extensions (``KINEMATICS.md``
+#: §5, Stage 9C): ``cyclic_coupling`` and ``duplicate_coupling_child`` are the
+#: declaration-path refusals re-detected here for the same foreign-writer
+#: reason the forest refusals are, and ``coupled_child_assigned`` is the §5
+#: rule itself — a pose or sweep assigns only free parameters.
 JOINT_REFUSALS: Final[frozenset[str]] = frozenset(
     {
         "unknown_kind",
@@ -126,6 +153,10 @@ JOINT_REFUSALS: Final[frozenset[str]] = frozenset(
         "value_for_fixed_joint",
         "scalar_value_required",
         "pair_value_required",
+        "duplicate_coupling_id",
+        "duplicate_coupling_child",
+        "cyclic_coupling",
+        "coupled_child_assigned",
     }
 )
 
@@ -265,6 +296,128 @@ class JointFrame:
     direction: Vec3
     limits: JointLimits | None = None
     travel_limits: JointLimits | None = None
+
+
+@dataclass(frozen=True)
+class Coupling:
+    """One declared linear relationship between two scalar joint parameters.
+
+    ``KINEMATICS.md`` §5: ``child = ratio * parent + offset``, in the child
+    kind's own unit (``offset_deg`` for a revolute child, ``offset_mm`` for a
+    prismatic one — the unit is the joint's, never inferred). ``parent`` and
+    ``child`` are JOINT ids, not part names: a coupling relates parameters,
+    and the forest already relates the parts. Plain data, like
+    :class:`JointFrame` — where the entries came from (the coupling set) and
+    whether the derived value is inside the child's declared limits are the
+    engine's questions.
+    """
+
+    id: str
+    parent: str
+    child: str
+    ratio: float
+    offset: float = 0.0
+
+
+def _coupling_map(couplings: Sequence[Coupling]) -> dict[str, Coupling]:
+    """``{child joint id: its coupling}`` with the §5 shape refusals applied.
+
+    The declaration path (the coupling set) refuses these before anything is
+    stored, so hitting one here means a foreign or hand-built sequence — the
+    :func:`_parent_map` rationale restated for the coupling graph: a repeated
+    coupling id, a child with two drivers (one driver per joint), and a cycle
+    over joint ids (named in walk order; a self-coupling is the length-1
+    case) are each a named refusal, never a silently chosen composition.
+    """
+    seen_ids: set[str] = set()
+    by_child: dict[str, Coupling] = {}
+    for coupling in couplings:
+        if coupling.id in seen_ids:
+            raise JointDeclarationError(
+                "duplicate_coupling_id",
+                f"coupling id {coupling.id!r} appears twice",
+            )
+        seen_ids.add(coupling.id)
+        prior = by_child.get(coupling.child)
+        if prior is not None:
+            raise JointDeclarationError(
+                "duplicate_coupling_child",
+                f"joint {coupling.child!r} is the child of both {prior.id!r} and "
+                f"{coupling.id!r}; a coupled parameter has one driver "
+                "(KINEMATICS.md §5)",
+                joint_id=coupling.child,
+            )
+        by_child[coupling.child] = coupling
+    # Cycle detection: walk each child's driver chain; revisiting a joint on
+    # the current walk names the cycle (the _parent_map loop, over joint ids).
+    resolved: set[str] = set()
+    for start in sorted(by_child):
+        path: list[str] = []
+        names: list[str] = []
+        on_path: set[str] = set()
+        joint_id = start
+        while joint_id in by_child and joint_id not in resolved:
+            if joint_id in on_path:
+                loop_from = path.index(joint_id)
+                cycle = (*path[loop_from:], joint_id)
+                raise JointDeclarationError(
+                    "cyclic_coupling",
+                    "the coupling graph is cyclic; cycle: "
+                    + " -> ".join(cycle)
+                    + f" (via couplings {', '.join(names[loop_from:])})",
+                    parts=cycle,
+                )
+            path.append(joint_id)
+            on_path.add(joint_id)
+            names.append(by_child[joint_id].id)
+            joint_id = by_child[joint_id].parent
+        resolved.update(on_path)
+    return by_child
+
+
+def derive_coupled_values(
+    couplings: Sequence[Coupling], values: Mapping[str, float]
+) -> dict[str, float]:
+    """The full assignment: ``values`` plus every coupled child's derived value.
+
+    ``KINEMATICS.md`` §5, the pure arithmetic half: each child is
+    ``ratio * parent + offset``, with an unassigned parent at its zero
+    (``0.0`` — ``zero: "as_built"`` is the only Stage 9 reference
+    configuration) and chains composed by the same rule, driver-first. An
+    assignment that names a coupled child directly is refused
+    ``coupled_child_assigned`` — coupled parameters are dependent, a pose or
+    sweep assigns only free ones, and deriving over the assigned value (or
+    preferring either number) would silently evaluate a configuration nobody
+    declared. Structural refusals are :func:`_coupling_map`'s. Deterministic:
+    plain float arithmetic, children derived in sorted order.
+    """
+    by_child = _coupling_map(couplings)
+    assigned = sorted(set(values) & set(by_child))
+    if assigned:
+        drivers = ", ".join(f"{name} (coupling {by_child[name].id})" for name in assigned)
+        raise JointDeclarationError(
+            "coupled_child_assigned",
+            f"assignment names coupled joint(s) {drivers} — a coupled child is "
+            "ratio * parent + offset, derived, and a pose or sweep assigns only "
+            "FREE parameters (KINEMATICS.md §5)",
+            joint_id=assigned[0],
+        )
+    full: dict[str, float] = {name: float(value) for name, value in values.items()}
+
+    def value_of(joint_id: str) -> float:
+        known = full.get(joint_id)
+        if known is not None:
+            return known
+        coupling = by_child.get(joint_id)
+        if coupling is None:
+            return 0.0  # a free, unassigned parent sits at its zero (§3)
+        derived = coupling.ratio * value_of(coupling.parent) + coupling.offset
+        full[joint_id] = derived
+        return derived
+
+    for child in sorted(by_child):
+        value_of(child)
+    return full
 
 
 @dataclass(frozen=True)

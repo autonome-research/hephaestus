@@ -3,7 +3,7 @@
 verification.md Tier 3 / digest §8: *"Every task must be validated by a
 ``solutions/`` reference implementation passing its own checks in CI — a task no
 reference solution passes is a broken task, not a hard task."* These tests are
-that rule, executed. For each of the **sixteen** public tasks they seed a fresh
+that rule, executed. For each of the **nineteen** public tasks they seed a fresh
 project from ``corpus/tasks/<id>/seed/``, overlay ``corpus/solutions/<id>/``
 (scripts and/or a ``params.json`` applied through the real ``set_params`` path),
 and run the *same* grading path a benchmarked model run is graded by: build every
@@ -125,11 +125,29 @@ CORPUS_V2_ADDITIONS: tuple[tuple[str, int], ...] = (
     ("shaft-coupler", 16),
 )
 
-#: The corpus-v2 assembly pair alone (the constraint-grading coverage tests).
-CONSTRAINT_TASKS: frozenset[str] = frozenset({"hinge-mate", "shaft-coupler"})
+#: Every task graded on declared constraints through the engine path: the
+#: corpus-v2 assembly pair, plus the corpus-v3 mechanism tasks that carry
+#: constraint entries beside their kinematic acceptance (``gripper-jaws``'s
+#: pose-bound closure fit, ``leadscrew-actuator``'s screw register,
+#: ``hinge-travel``'s pose-bound open-limit stand-clear).
+CONSTRAINT_TASKS: frozenset[str] = frozenset(
+    {"hinge-mate", "shaft-coupler", "gripper-jaws", "leadscrew-actuator", "hinge-travel"}
+)
 
-#: The whole public split as it stands (corpus v2 = v1 + the v2 additions).
-CORPUS: tuple[tuple[str, int], ...] = CORPUS_V1 + CORPUS_V2_ADDITIONS
+#: Corpus v3 (2026-08-27, KINEMATICS.md §6 Stage 9C): the mechanism tasks,
+#: graded through the engine motion path (joints, poses and motion checks
+#: installed by the grader; the lead-screw's coupling deliberately the run's
+#: own to declare). Budgets are dated hand-count derivations per the
+#: 2026-08-25 measured-budget policy — no observe-mode journals exist for
+#: mechanism tasks yet, and each task.json's ``notes`` carries the derivation.
+CORPUS_V3_ADDITIONS: tuple[tuple[str, int], ...] = (
+    ("gripper-jaws", 21),
+    ("hinge-travel", 24),
+    ("leadscrew-actuator", 24),
+)
+
+#: The whole public split as it stands (v1 + the v2 and v3 additions).
+CORPUS: tuple[tuple[str, int], ...] = CORPUS_V1 + CORPUS_V2_ADDITIONS + CORPUS_V3_ADDITIONS
 
 #: Tasks whose acceptance re-runs a DFM rule pack. Predicates are registry
 #: content and execute only under a probed secure sandbox (architecture §3.6), so
@@ -158,6 +176,13 @@ VARIANT_TASKS: frozenset[str] = frozenset(
         "plate-from-drawing",
         "hinge-mate",
         "shaft-coupler",
+        # Corpus-v3 (2026-08-27, Stage 9C): the mechanism tasks follow the
+        # same rule — each ships its independent second implementation, and a
+        # mechanism acceptance graded through the engine motion path must pass
+        # on geometry the reference author never saw.
+        "gripper-jaws",
+        "hinge-travel",
+        "leadscrew-actuator",
     }
 )
 
@@ -226,20 +251,24 @@ def tasks() -> Mapping[str, BenchTask]:
     return {task.id: task for task in load_tasks()}
 
 
-def test_corpus_is_the_sixteen_public_tasks() -> None:
-    """Corpus v2: the twelve v1 tasks plus the four 2026-08-25 additions.
+def test_corpus_is_the_nineteen_public_tasks() -> None:
+    """Corpus v3: the twelve v1 tasks plus the v2 and v3 additions.
 
     Repointed from "twelve" by the corpus-v2 amendment (2026-08-25 operator
     decision, recorded in mission_plan.md's Stage 6 status): the corpus grew by
     the ingest pair (``flange-edit``, ``plate-from-drawing``) and the Stage 8C
-    assembly pair (``hinge-mate``, ``shaft-coupler``). The v1 pin it used to
-    carry is kept below as a subset assertion — the G6 evidence's corpus is
-    unchanged inside v2, and the four Stage 6 additions are still exactly
-    :data:`CORPUS_V1_TASKS`.
+    assembly pair (``hinge-mate``, ``shaft-coupler``). Repointed again from
+    "sixteen" by the Stage 9C corpus-v3 amendment (2026-08-27, KINEMATICS.md
+    §6): the mechanism tasks ``gripper-jaws``, ``hinge-travel`` and
+    ``leadscrew-actuator``. The
+    v1 pin it used to carry is kept below as a subset assertion — the G6
+    evidence's corpus is unchanged inside v2/v3, and the four Stage 6
+    additions are still exactly :data:`CORPUS_V1_TASKS`.
     """
     prose = {task_id for task_id, _ in CORPUS}
-    assert len(prose) == 16, (
-        "corpus v2 is sixteen public tasks (v1 + the ingest pair + the assembly pair)"
+    assert len(prose) == 19, (
+        "corpus v3 is nineteen public tasks (v1 + the ingest and assembly pairs "
+        "+ the Stage 9C mechanism trio)"
     )
     # The gated split is exactly the public tasks…
     assert set(task_ids(specs=("prose",))) == prose
@@ -350,7 +379,7 @@ def test_every_budget_meets_the_measured_calibration_floor(
     """
     observed = _archived_passing_max()
     assert observed, "no archived corpus journals found; the floor cannot be recomputed"
-    unmeasured = {task_id for task_id, _ in CORPUS_V2_ADDITIONS}
+    unmeasured = {task_id for task_id, _ in CORPUS_V2_ADDITIONS + CORPUS_V3_ADDITIONS}
     for task_id, _budget in CORPUS:
         budget = tasks[task_id].budget_tool_calls
         if task_id not in observed:
@@ -617,12 +646,15 @@ def test_the_assembly_pair_covers_the_constraint_half_of_the_grader(
 ) -> None:
     """Corpus v2 (2026-08-25): ASSEMBLY.md §3's bench clause, made corpus reality.
 
-    ``hinge-mate`` and ``shaft-coupler`` are the only tasks with declared
-    constraints, and between them they exercise six of the eight 8C kinds —
-    including ``fit``, the hole/shaft window the DFM fits vocabulary speaks.
-    Every anchor names a part the task declares (so the grader builds it), and
-    every entry expects ``satisfied``: these tasks assert mates that hold, not
-    the absence of evidence.
+    :data:`CONSTRAINT_TASKS` are the only tasks with declared constraints, and
+    between them they exercise six of the eight 8C kinds — including ``fit``,
+    the hole/shaft window the DFM fits vocabulary speaks. (Repointed
+    2026-08-27, Stage 9C corpus v3: the mechanism tasks joined the set — their
+    constraint entries ride the same grader half, ``gripper-jaws``'s bound to
+    the poses its motion acceptance declares.) Every anchor names a part the
+    task declares (so the grader builds it), and every entry expects
+    ``satisfied``: these tasks assert mates that hold, not the absence of
+    evidence.
     """
     constrained = {task.id for task in tasks.values() if task.spec == "prose" and task.constraints}
     assert constrained == CONSTRAINT_TASKS
@@ -1167,10 +1199,11 @@ def test_scoring_a_corpus_v1_sweep_gates_at_the_g6_bound() -> None:
 
     assert score.threshold == G6_AGGREGATE_THRESHOLD
     assert score.prose.threshold == G6_AGGREGATE_THRESHOLD
-    # 16 corpus-v2 tasks x 3 seeds, one knob-loft failure (2026-08-25 repoint:
-    # the sweep shape grew from 36 runs with the corpus, the bound did not).
-    assert (score.prose.n, score.prose.passes) == (48, 47)
-    assert score.meets_gate  # 47/48 clears 0.70 and repair-fillet is 3/3
+    # 19 corpus-v3 tasks x 3 seeds, one knob-loft failure (2026-08-25/2026-08-27
+    # repoints: the sweep shape grew from 36 runs with the corpus, the bound
+    # did not).
+    assert (score.prose.n, score.prose.passes) == (57, 56)
+    assert score.meets_gate  # 56/57 clears 0.70 and repair-fillet is 3/3
     assert score.seeded.threshold is None
     assert score.seeded.meets_threshold is None
     # Dropping the four v1 tasks leaves a sweep that no longer covers corpus

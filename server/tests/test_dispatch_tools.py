@@ -997,6 +997,16 @@ def _minimal_args(tool: str) -> dict[str, Any]:
         },
         "read_motion_checks": {},
         "check_motion": {},
+        # KINEMATICS.md Stage 9C (§5/§6) — the coupling triplet, same rule.
+        "declare_coupling": {
+            "id": "cp-drive",
+            "parent": "j-motor",
+            "child": "j-wrist",
+            "ratio": 0.2,
+            "provenance": {"assumed": True, "reason": "fixture"},
+        },
+        "update_coupling": {"id": "cp-drive", "patch": {"note": "n"}, "reason": "fixture"},
+        "read_couplings": {},
         "run_checks": {"name": "widget"},
         "record_requirements": {
             "entries": [

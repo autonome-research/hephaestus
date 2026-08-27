@@ -2563,6 +2563,123 @@ def _check_motion() -> ToolDecl:
     )
 
 
+# -- couplings (KINEMATICS.md §5, Stage 9C) --------------------------------
+
+#: A coupling entry, exactly the ``KINEMATICS.md`` §5 shape: the linear
+#: relationship ``child = ratio * parent + offset`` between two joint
+#: parameters — the transmission vocabulary (gear pairs, lead screws, belt
+#: reductions) without gear-tooth geometry. ``parent``/``child`` are JOINT
+#: ids, not anchors: a coupling relates parameters, and the joint forest
+#: already relates the parts. That both joints exist unwithdrawn with a
+#: scalar DOF, that the ratio is nonzero, that a child has ONE driver, and
+#: that no cycle closes (``cyclic_coupling``, the cycle named) is the
+#: coupling set's own table — refused with ``invalid_coupling`` /
+#: ``cyclic_coupling`` and nothing written, the ``_JOINT_LIMITS`` rule.
+_COUPLING_ENTRY: Final[JsonSchema] = _obj(
+    {
+        "id": _JOINT_ID,
+        "parent": _JOINT_ID,
+        "child": _JOINT_ID,
+        "ratio": _NUM,
+        "offset": {"type": "number", "default": 0.0},
+        "provenance": _CONSTRAINT_PROVENANCE,
+        "note": {"anyOf": [_STR, {"type": "null"}], "default": None},
+    },
+    ["id", "parent", "child", "ratio", "provenance"],
+)
+
+_COUPLING_ENTRY_OUT: Final[JsonSchema] = _ok(
+    {
+        **cast("dict[str, JsonSchema]", _COUPLING_ENTRY["properties"]),
+        "withdrawn": _BOOL,
+        "withdrawn_reason": {"anyOf": [_STR, {"type": "null"}]},
+    },
+    ["id", "parent", "child", "ratio"],
+)
+
+#: The result the three coupling tools share (the pose-set shape: the latest
+#: motion evaluation rides along as evidence already taken, because coupled
+#: values are derived wherever poses and sweeps evaluate — ``motion: null``
+#: meaning *never evaluated*, which is not a pass). Withdrawn entries are
+#: returned with their reasons: generational state is honest only if every
+#: generation stays readable (``KINEMATICS.md`` §6).
+_COUPLING_SET_RESULT: Final[JsonSchema] = _ok(
+    {
+        "status": {"const": "ok"},
+        "generation": _INT,
+        "artifact_ref": {"anyOf": [_STR, {"type": "null"}]},
+        "change": {"anyOf": [_dict(), {"type": "null"}]},
+        "entries": {"type": "array", "items": _COUPLING_ENTRY_OUT},
+        "motion": {"anyOf": [_MOTION_STATUS, {"type": "null"}]},
+        "motion_ref": {"anyOf": [_STR, {"type": "null"}]},
+    },
+    ["status", "generation", "artifact_ref", "entries", "motion"],
+)
+
+
+def _declare_coupling() -> ToolDecl:
+    return ToolDecl(
+        name="declare_coupling",
+        summary="Declare one coupling: child = ratio*parent + offset (KINEMATICS.md §5).",
+        params=_COUPLING_ENTRY,
+        result=_COUPLING_SET_RESULT,
+        profiles=("part", "orchestrator"),
+        sequential=True,
+        idempotent=True,
+    )
+
+
+def _update_coupling() -> ToolDecl:
+    return ToolDecl(
+        name="update_coupling",
+        summary="Revise or withdraw one coupling with a recorded reason; one generation.",
+        params=_obj(
+            {
+                "id": _JOINT_ID,
+                # Merged onto the stored entry and revalidated as a whole,
+                # including the one-driver and cycle checks — a re-childed
+                # coupling can close a cycle a declaration could not.
+                # `withdrawn: true` is the withdrawal path: a new generation
+                # that stops claiming the coupling, never an erasure; the
+                # child joint becomes a FREE parameter again from the next
+                # evaluation on.
+                "patch": _obj(
+                    {
+                        "parent": {"anyOf": [_JOINT_ID, {"type": "null"}]},
+                        "child": {"anyOf": [_JOINT_ID, {"type": "null"}]},
+                        "ratio": {"anyOf": [_NUM, {"type": "null"}]},
+                        "offset": {"anyOf": [_NUM, {"type": "null"}]},
+                        "provenance": {"anyOf": [_CONSTRAINT_PROVENANCE, {"type": "null"}]},
+                        "note": {"anyOf": [_STR, {"type": "null"}]},
+                        "withdrawn": {"anyOf": [_BOOL, {"type": "null"}]},
+                    },
+                    [],
+                ),
+                # Compulsory and recorded ON THE GENERATION, the 8C rule: a
+                # silently revised gear ratio is a silently revised claim.
+                "reason": _STR,
+            },
+            ["id", "patch", "reason"],
+        ),
+        result=_COUPLING_SET_RESULT,
+        profiles=("part", "orchestrator"),
+        sequential=True,
+        idempotent=True,
+    )
+
+
+def _read_couplings() -> ToolDecl:
+    return ToolDecl(
+        name="read_couplings",
+        summary="Read the coupling set — withdrawn entries included with reasons (no re-measure).",
+        params=_obj({}, []),
+        result=_COUPLING_SET_RESULT,
+        profiles=("part", "orchestrator"),
+        sequential=False,
+        idempotent=False,
+    )
+
+
 #: One artifact-bound topology address a finding points at (§ run_dfm). Never a
 #: mutable mask id: ``solid_id``/``topology_index`` enumerate the *artifact*.
 _TOPOLOGY_DESCRIPTOR: Final[JsonSchema] = _obj(
@@ -2888,6 +3005,9 @@ TOOLS: Final[tuple[ToolDecl, ...]] = (
     _update_motion_check(),
     _read_motion_checks(),
     _check_motion(),
+    _declare_coupling(),
+    _update_coupling(),
+    _read_couplings(),
     _load_skill(),
     _list_skills(),
     _list_references(),

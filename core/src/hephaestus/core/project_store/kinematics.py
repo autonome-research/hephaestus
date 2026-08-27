@@ -78,11 +78,42 @@ cannot smuggle in an unbounded grid. A swept joint withdrawn *later* is
 ``orphaned_sweep`` at evaluation (:mod:`hephaestus.core.motion`), the exact
 ``orphaned_pose`` rule restated: not erased, not re-refused, named when read.
 
-What lives elsewhere: *evaluating* joints, poses and motion checks — anchor
-frames, forward kinematics, ``MotionStatus``, sampled sweeps — is Stage 9's
-engine and geom work (``KINEMATICS.md`` §2/§4), and the staleness of a
-projected status is :mod:`hephaestus.core.project_store.projections`. This
-module only knows what was declared, by whom, and why.
+**The coupling set** (Stage 9C, ``KINEMATICS.md`` §5) is the fourth rider on
+the same pattern — §7 names "four uses of it" as the implementation choice
+this module makes. A coupling declares the linear relationship
+``child = ratio * parent + offset`` between two joint parameters (the
+transmission vocabulary: gear pairs, lead screws, belt reductions — without
+gear-tooth geometry), so like a joint it belongs to the project. An entry is
+exactly the §5 shape::
+
+    {"id": "cp-wrist-drive", "parent": "j-motor", "child": "j-wrist",
+     "ratio": 0.2, "offset": 0.0, "provenance": {"requirement": "r-8"}}
+
+``parent`` and ``child`` are JOINT ids, not anchors — a coupling relates
+parameters, and the joint forest already relates the parts. Both must be
+declared, unwithdrawn, and scalar-parameterized at declaration (a ``fixed``
+joint has no parameter to couple; a ``cylindrical`` pair has no scalar wire
+form — the sweep-binding rule restated); an unknown or withdrawn joint id is
+refused ``invalid_coupling``. A ``ratio`` of zero is refused too: a child
+pinned to a constant is a pose binding wearing a coupling's name, and poses
+have their own set. **A coupled child has one driver** — a second coupling
+naming an already-coupled child is refused naming the first — and **a
+coupling cycle is ``cyclic_coupling`` at declaration with the cycle named**
+(§5), a self-coupling being the length-1 case. Coupled parameters are
+DEPENDENT: the pose and motion-check sets refuse a declaration that assigns
+or sweeps a coupled child directly (``invalid_pose`` /
+``invalid_motion_check`` naming the coupling), because §5 says a pose or
+sweep assigns only free parameters. A coupling declared *after* such an
+entry follows the ``orphaned_pose`` philosophy: the stored entry is not
+re-refused — evaluation reports it, by name.
+
+What lives elsewhere: *evaluating* joints, poses, motion checks and couplings
+— anchor frames, forward kinematics (including the §5 derivation arithmetic,
+which is :func:`hephaestus.geom.derive_coupled_values`), ``MotionStatus``,
+sampled sweeps — is Stage 9's engine and geom work (``KINEMATICS.md``
+§2/§4/§5), and the staleness of a projected status is
+:mod:`hephaestus.core.project_store.projections`. This module only knows what
+was declared, by whom, and why.
 """
 
 from __future__ import annotations
@@ -116,6 +147,9 @@ from opstore import (
 )
 
 __all__ = [
+    "COUPLINGS_POINTER",
+    "COUPLING_ARTIFACT_KIND",
+    "COUPLING_REF_PREFIX",
     "JOINTS_POINTER",
     "JOINT_ARTIFACT_KIND",
     "JOINT_ID_PATTERN",
@@ -130,6 +164,11 @@ __all__ = [
     "POSE_REF_PREFIX",
     "SWEEP_SAMPLES_DEFAULT",
     "SWEEP_SAMPLES_MAX",
+    "CouplingChange",
+    "CouplingEntry",
+    "CouplingError",
+    "CouplingSet",
+    "CouplingState",
     "JointChange",
     "JointEntry",
     "JointError",
@@ -169,6 +208,12 @@ MOTION_CHECKS_POINTER: Final[str] = "motion-checks-state"
 #: Artifact kind of an immutable motion-check-set generation document.
 MOTION_CHECK_ARTIFACT_KIND: Final[str] = "motion-checks"
 MOTION_CHECK_REF_PREFIX: Final[str] = f"artifact:{MOTION_CHECK_ARTIFACT_KIND}:"
+
+#: CAS pointer naming the current coupling-set generation's state blob.
+COUPLINGS_POINTER: Final[str] = "couplings-state"
+#: Artifact kind of an immutable coupling-set generation document.
+COUPLING_ARTIFACT_KIND: Final[str] = "couplings"
+COUPLING_REF_PREFIX: Final[str] = f"artifact:{COUPLING_ARTIFACT_KIND}:"
 
 #: The Stage 9 kind set (``KINEMATICS.md`` §1); each later kind is a contract
 #: amendment, so the set is closed here rather than extensible.
@@ -242,7 +287,23 @@ _MOTION_CHECK_KIND_FIELDS: Final[Mapping[str, tuple[frozenset[str], frozenset[st
 JointRefusal = Literal["invalid_joint", "unknown_joint", "cyclic_joint_graph"]
 PoseRefusal = Literal["invalid_pose", "unknown_pose"]
 MotionCheckRefusal = Literal["invalid_motion_check", "unknown_motion_check"]
+CouplingRefusal = Literal["invalid_coupling", "unknown_coupling", "cyclic_coupling"]
 ChangeKind = Literal["declare", "update", "withdraw"]
+
+#: The §5 coupling entry's fields, closed like the other three sets'.
+_COUPLING_ENTRY_FIELDS: Final[frozenset[str]] = frozenset(
+    {
+        "id",
+        "parent",
+        "child",
+        "ratio",
+        "offset",
+        "provenance",
+        "note",
+        "withdrawn",
+        "withdrawn_reason",
+    }
+)
 
 
 class JointError(ValidationError):
@@ -292,6 +353,23 @@ class MotionCheckError(ValidationError):
     ) -> None:
         super().__init__(message, kind="contract")
         self.reason: MotionCheckRefusal = reason
+
+
+class CouplingError(ValidationError):
+    """A coupling write was refused; ``reason`` is the stable machine token.
+
+    ``invalid_coupling`` covers every malformed or dishonest entry — an
+    unknown/withdrawn/scalar-less parent or child joint, a zero ratio, absent
+    provenance, and a second driver for an already-coupled child (one driver
+    per joint, ``KINEMATICS.md`` §5); ``cyclic_coupling`` is a declaration
+    that would close a cycle over joint parameters, with the cycle named in
+    the message (§5); ``unknown_coupling`` is a patch or withdrawal naming an
+    id the set does not carry. Nothing is ever written on any of them.
+    """
+
+    def __init__(self, message: str, *, reason: CouplingRefusal = "invalid_coupling") -> None:
+        super().__init__(message, kind="contract")
+        self.reason: CouplingRefusal = reason
 
 
 # --------------------------------------------------------------------------
@@ -1024,7 +1102,160 @@ def _opt_point(check_id: str, value: JSONValue | None) -> tuple[float, float, fl
 
 
 # --------------------------------------------------------------------------
-# generations (the ledger shape, thrice — one per set)
+# coupling entries (Stage 9C, §5)
+
+
+@dataclass(frozen=True)
+class CouplingEntry:
+    """One declared coupling, exactly the ``KINEMATICS.md`` §5 entry shape.
+
+    ``child = ratio * parent + offset`` in the child joint kind's own unit;
+    ``parent`` and ``child`` are joint IDS — pattern-checked like every other
+    kinematic id, never anchors, because a coupling relates parameters and
+    the forest already relates parts. Validation here is structural plus the
+    statically-knowable refusals (a zero ratio); whether the named joints
+    exist unwithdrawn with a scalar DOF is checked at *declaration* against
+    the live joint set (the set's write path), never re-checked on load — a
+    stored coupling whose joint was withdrawn later is an evaluation fact,
+    not a corrupt generation (the pose set's rule).
+    """
+
+    id: str
+    parent: str
+    child: str
+    ratio: float
+    provenance: KinematicProvenance
+    offset: float = 0.0
+    note: str | None = None
+    withdrawn: bool = False
+    withdrawn_reason: str | None = None
+
+    def to_json(self) -> dict[str, JSONValue]:
+        out: dict[str, JSONValue] = {
+            "id": self.id,
+            "parent": self.parent,
+            "child": self.child,
+            "ratio": self.ratio,
+            "offset": self.offset,
+        }
+        out["provenance"] = cast("JSONValue", self.provenance.to_json())
+        if self.note is not None:
+            out["note"] = self.note
+        if self.withdrawn:
+            out["withdrawn"] = True
+            out["withdrawn_reason"] = self.withdrawn_reason
+        return out
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, JSONValue]) -> CouplingEntry:
+        raw_id = data.get("id")
+        if not isinstance(raw_id, str) or not _ID_RE.match(raw_id):
+            raise CouplingError(f"coupling id {raw_id!r} must match {JOINT_ID_PATTERN}")
+        unknown = sorted(set(data) - _COUPLING_ENTRY_FIELDS)
+        if unknown:
+            raise CouplingError(
+                f"coupling {raw_id}: unknown field(s) {', '.join(unknown)} "
+                f"(a coupling entry takes: {', '.join(sorted(_COUPLING_ENTRY_FIELDS))})"
+            )
+        joint_ids: dict[str, str] = {}
+        for role in ("parent", "child"):
+            value = data.get(role)
+            if not isinstance(value, str) or not _ID_RE.match(value):
+                raise CouplingError(
+                    f"coupling {raw_id}: {role} must be a joint id matching "
+                    f"{JOINT_ID_PATTERN} — a coupling relates joint PARAMETERS "
+                    "(KINEMATICS.md §5), not anchors"
+                )
+            joint_ids[role] = value
+        ratio = data.get("ratio")
+        if isinstance(ratio, bool) or not isinstance(ratio, int | float):
+            raise CouplingError(f"coupling {raw_id}: ratio must be a number")
+        if float(ratio) == 0.0:
+            raise CouplingError(
+                f"coupling {raw_id}: ratio must be nonzero — a child pinned to a "
+                "constant is a pose binding wearing a coupling's name, and poses "
+                "have their own set (KINEMATICS.md §3/§5)"
+            )
+        offset = data.get("offset", 0.0)
+        if isinstance(offset, bool) or not isinstance(offset, int | float):
+            raise CouplingError(f"coupling {raw_id}: offset must be a number")
+        note = data.get("note")
+        if note is not None and not isinstance(note, str):
+            raise CouplingError(f"coupling {raw_id}: note must be a string")
+        withdrawn = data.get("withdrawn", False)
+        if not isinstance(withdrawn, bool):
+            raise CouplingError(f"coupling {raw_id}: withdrawn must be a boolean")
+        withdrawn_reason = data.get("withdrawn_reason")
+        if withdrawn_reason is not None and not isinstance(withdrawn_reason, str):
+            raise CouplingError(f"coupling {raw_id}: withdrawn_reason must be a string")
+        if withdrawn and not (withdrawn_reason or "").strip():
+            raise CouplingError(f"coupling {raw_id}: a withdrawal must record a reason")
+        return cls(
+            id=raw_id,
+            parent=joint_ids["parent"],
+            child=joint_ids["child"],
+            ratio=float(ratio),
+            provenance=KinematicProvenance.from_json(
+                f"coupling {raw_id}", data.get("provenance"), refuse=CouplingError
+            ),
+            offset=float(offset),
+            note=note,
+            withdrawn=withdrawn,
+            withdrawn_reason=withdrawn_reason if withdrawn else None,
+        )
+
+
+def _validate_couplings(entries: tuple[CouplingEntry, ...]) -> None:
+    """Refuse any active edge set that is not one-driver-per-joint and acyclic (§5).
+
+    The forest rule's coupling twin, checked at every write: a child with two
+    drivers has no single derived value (``invalid_coupling`` naming the
+    coupling it already rides), and a cycle over joint parameters is
+    ``cyclic_coupling`` with the cycle named — a self-coupling being the
+    length-1 case. Withdrawn entries contribute no edges (never evaluated,
+    the 8C rule).
+    """
+    driver_of: dict[str, CouplingEntry] = {}
+    for entry in entries:
+        if entry.withdrawn:
+            continue
+        if entry.parent == entry.child:
+            raise CouplingError(
+                f"coupling {entry.id}: cyclic coupling — {entry.child} -> {entry.child} "
+                "(a parameter cannot drive itself)",
+                reason="cyclic_coupling",
+            )
+        prior = driver_of.get(entry.child)
+        if prior is not None:
+            raise CouplingError(
+                f"coupling {entry.id}: joint {entry.child!r} is already driven by "
+                f"coupling {prior.id!r} — a coupled parameter has one driver "
+                "(KINEMATICS.md §5)"
+            )
+        driver_of[entry.child] = entry
+    for start in driver_of:
+        path: list[str] = [start]
+        names: list[str] = []
+        seen = {start}
+        current = start
+        while current in driver_of:
+            entry = driver_of[current]
+            names.append(entry.id)
+            path.append(entry.parent)
+            if entry.parent in seen:
+                cycle = " -> ".join(path[path.index(entry.parent) :])
+                raise CouplingError(
+                    f"cyclic coupling: {cycle} (via couplings {', '.join(names)}) — "
+                    "a coupled child cannot transitively drive its own driver "
+                    "(KINEMATICS.md §5)",
+                    reason="cyclic_coupling",
+                )
+            seen.add(entry.parent)
+            current = entry.parent
+
+
+# --------------------------------------------------------------------------
+# generations (the ledger shape, four times — one per set)
 
 
 @dataclass(frozen=True)
@@ -1098,6 +1329,32 @@ class MotionCheckChange:
 
     @classmethod
     def from_json(cls, data: JSONValue | None) -> MotionCheckChange | None:
+        parsed = _change_fields(data)
+        if parsed is None:
+            return None
+        kind, entry_id, reason, patch = parsed
+        return cls(kind=kind, id=entry_id, reason=reason, patch=patch)
+
+
+@dataclass(frozen=True)
+class CouplingChange:
+    """What produced one coupling-set generation: the act, the entry, the reason."""
+
+    kind: ChangeKind
+    id: str
+    reason: str | None = None
+    patch: Mapping[str, JSONValue] | None = None
+
+    def to_json(self) -> dict[str, JSONValue]:
+        out: dict[str, JSONValue] = {"kind": self.kind, "id": self.id}
+        if self.reason is not None:
+            out["reason"] = self.reason
+        if self.patch is not None:
+            out["patch"] = cast("JSONValue", dict(self.patch))
+        return out
+
+    @classmethod
+    def from_json(cls, data: JSONValue | None) -> CouplingChange | None:
         parsed = _change_fields(data)
         if parsed is None:
             return None
@@ -1333,6 +1590,77 @@ class MotionCheckState:
         )
 
 
+@dataclass(frozen=True)
+class CouplingState:
+    """One immutable coupling-set generation."""
+
+    generation: int
+    entries: tuple[CouplingEntry, ...]
+    blob: str | None
+    parent: str | None = None
+    change: CouplingChange | None = None
+
+    @property
+    def artifact_ref(self) -> str | None:
+        """``artifact:couplings:sha256:…`` of this generation (None when empty)."""
+        if self.blob is None:
+            return None
+        return make_artifact_ref(COUPLING_ARTIFACT_KIND, self.blob)
+
+    @property
+    def by_id(self) -> dict[str, CouplingEntry]:
+        return {entry.id: entry for entry in self.entries}
+
+    @property
+    def active(self) -> tuple[CouplingEntry, ...]:
+        """Entries still claimed (withdrawn ones stay stored, never evaluated)."""
+        return tuple(entry for entry in self.entries if not entry.withdrawn)
+
+    @property
+    def by_child(self) -> dict[str, CouplingEntry]:
+        """``{child joint id: its one active driver}`` — the §5 dependency map."""
+        return {entry.child: entry for entry in self.active}
+
+    def document(self) -> JSONValue:
+        return {
+            "generation": self.generation,
+            "parent": self.parent,
+            "change": None if self.change is None else self.change.to_json(),
+            "entries": [entry.to_json() for entry in self.entries],
+        }
+
+    def to_json(self) -> dict[str, JSONValue]:
+        """The projection every coupling reader shares."""
+        return {
+            "generation": self.generation,
+            "artifact_ref": self.artifact_ref,
+            "change": None if self.change is None else cast("JSONValue", self.change.to_json()),
+            "entries": [entry.to_json() for entry in self.entries],
+        }
+
+    @classmethod
+    def from_document(cls, data: Mapping[str, JSONValue], blob: str) -> CouplingState:
+        generation = data.get("generation")
+        if not isinstance(generation, int) or isinstance(generation, bool):
+            raise CouplingError("coupling-set generation must be an integer")
+        raw_entries = data.get("entries")
+        if not isinstance(raw_entries, list):
+            raise CouplingError("coupling-set entries must be an array")
+        entries = tuple(
+            CouplingEntry.from_json(cast("Mapping[str, JSONValue]", item))
+            for item in cast("list[JSONValue]", raw_entries)
+            if isinstance(item, dict)
+        )
+        parent = data.get("parent")
+        return cls(
+            generation=generation,
+            entries=entries,
+            blob=blob,
+            parent=parent if isinstance(parent, str) else None,
+            change=CouplingChange.from_json(data.get("change")),
+        )
+
+
 _EMPTY_JOINTS: Final[JointState] = JointState(
     generation=0, entries=(), blob=None, parent=None, change=None
 )
@@ -1340,6 +1668,9 @@ _EMPTY_POSES: Final[PoseState] = PoseState(
     generation=0, entries=(), blob=None, parent=None, change=None
 )
 _EMPTY_CHECKS: Final[MotionCheckState] = MotionCheckState(
+    generation=0, entries=(), blob=None, parent=None, change=None
+)
+_EMPTY_COUPLINGS: Final[CouplingState] = CouplingState(
     generation=0, entries=(), blob=None, parent=None, change=None
 )
 
@@ -1750,9 +2081,16 @@ class PoseSet:
         )
 
     def _check_bindings(self, pose: PoseEntry) -> None:
-        """Refuse bindings to joints the joint set does not currently claim (§3)."""
+        """Refuse bindings to joints the joint set does not currently claim (§3),
+        and to joints an active coupling makes DEPENDENT (§5, Stage 9C): a
+        coupled child is ``ratio * parent + offset``, derived at evaluation,
+        and a pose assigns only free parameters — assigning the child directly
+        is refused naming the coupling. A coupling declared *after* the pose
+        follows the ``orphaned_pose`` philosophy instead: the stored pose is
+        not re-refused, and evaluation reports it by name."""
         joints = self._joints.state()
         known = joints.by_id
+        coupled = CouplingSet(self.layout, self._store, self._joints).state().by_child
         for joint_id in sorted(pose.joints):
             entry = known.get(joint_id)
             if entry is None:
@@ -1767,6 +2105,14 @@ class PoseSet:
                     f"({entry.withdrawn_reason}) — a pose declared against it would be "
                     "born orphaned; orphaned_pose is the evaluation state for poses "
                     "whose joints are withdrawn LATER (KINEMATICS.md §3)"
+                )
+            driver = coupled.get(joint_id)
+            if driver is not None:
+                raise PoseError(
+                    f"pose {pose.id}: joint {joint_id!r} is coupled — coupling "
+                    f"{driver.id!r} derives it as {driver.ratio:g} * {driver.parent} "
+                    f"+ {driver.offset:g} — and a pose assigns only FREE parameters "
+                    "(KINEMATICS.md §5); assign the parent, or withdraw the coupling"
                 )
 
     # -- the one generation-advancing path ----------------------------------
@@ -2026,17 +2372,22 @@ class MotionCheckSet:
     def _check_sweep_bindings(self, check: MotionCheckEntry) -> None:
         """Refuse sweeps over joints the joint set cannot supply a scalar DOF for (§4).
 
-        Three statically-knowable refusals, all ``invalid_motion_check``: an
+        Four statically-knowable refusals, all ``invalid_motion_check``: an
         undeclared joint, a withdrawn joint (a check declared against it would
         be born orphaned; ``orphaned_sweep`` is the evaluation state for
-        joints withdrawn LATER), and a joint whose kind has no scalar
+        joints withdrawn LATER), a joint whose kind has no scalar
         parameter to sweep — ``fixed`` has 0 DOF, and ``cylindrical`` takes a
         ``(degrees, mm)`` pair the 9A scalar sweep wire shape cannot bind
         (the pose set's ``invalid_pose`` evaluation rule, caught at
-        declaration here because a sweep names its joints structurally).
+        declaration here because a sweep names its joints structurally) —
+        and, Stage 9C, a joint an active coupling makes dependent (§5: a
+        sweep assigns only free parameters, so sweeping a coupled child is
+        refused naming the coupling; one declared LATER is reported at
+        evaluation instead, the orphaned-entry philosophy).
         """
         joints = self._joints.state()
         known = joints.by_id
+        coupled = CouplingSet(self.layout, self._store, self._joints).state().by_child
         for joint_id in sorted(check.sweep):
             entry = known.get(joint_id)
             if entry is None:
@@ -2044,6 +2395,14 @@ class MotionCheckSet:
                 raise MotionCheckError(
                     f"motion check {check.id}: joint {joint_id!r} is not declared "
                     f"(declared joints: {declared})"
+                )
+            driver = coupled.get(joint_id)
+            if driver is not None:
+                raise MotionCheckError(
+                    f"motion check {check.id}: joint {joint_id!r} is coupled — coupling "
+                    f"{driver.id!r} derives it as {driver.ratio:g} * {driver.parent} "
+                    f"+ {driver.offset:g} — and a sweep assigns only FREE parameters "
+                    "(KINEMATICS.md §5); sweep the parent, or withdraw the coupling"
                 )
             if entry.withdrawn:
                 raise MotionCheckError(
@@ -2158,6 +2517,307 @@ class MotionCheckSet:
         return self.state()
 
 
+class CouplingSet:
+    """Declare / update / withdraw couplings as immutable generations.
+
+    The fourth rider on the ledger pattern (``KINEMATICS.md`` §5/§7),
+    model-writable on the same recorded 8C quartet rationale as the joint set.
+    Carries a :class:`JointSet` because a coupling's parent and child are
+    claims about declared joints: an unknown, withdrawn, or scalar-less joint
+    id is refused at declaration (``invalid_coupling``), read under the same
+    project-config lock the write holds so a concurrent withdrawal cannot
+    race the check. A joint withdrawn *after* declaration leaves the coupling
+    stored and editable (the ``orphaned_pose`` philosophy) — nothing here
+    re-refuses it; the engine reports what such a coupling can no longer
+    drive.
+    """
+
+    def __init__(self, layout: ProjectLayout, store: OpStore, joints: JointSet) -> None:
+        self.layout = layout
+        self._store = store
+        self._joints = joints
+
+    # -- reads --------------------------------------------------------------
+
+    def state(self) -> CouplingState:
+        """The current generation (empty generation 0 when never written)."""
+        blob = self._store.blobs.read_pointer(COUPLINGS_POINTER)
+        if blob is None:
+            return _EMPTY_COUPLINGS
+        return self._state_from_blob(blob)
+
+    def generation(self, artifact_ref: str) -> CouplingState:
+        """Any historical generation by its immutable artifact ref."""
+        blob = blob_hash_of_ref(artifact_ref)
+        if not self._store.blobs.has(blob):
+            raise CouplingError(f"coupling generation {artifact_ref} is not stored")
+        return self._state_from_blob(blob)
+
+    def history(self) -> tuple[CouplingState, ...]:
+        """Every stored generation, oldest first (the ledger replay)."""
+        chain: list[CouplingState] = []
+        current = self.state()
+        while current.blob is not None:
+            chain.append(current)
+            parent = current.parent
+            if parent is None or not self._store.blobs.has(parent):
+                break
+            current = self._state_from_blob(parent)
+        return tuple(reversed(chain))
+
+    def get(self, coupling_id: str) -> CouplingEntry:
+        """One entry, or ``addressing_error`` naming the ids that do exist."""
+        entries = self.state().by_id
+        entry = entries.get(coupling_id)
+        if entry is None:
+            raise AddressingError(
+                f"no coupling {coupling_id!r} is declared",
+                selector=coupling_id,
+                candidates=tuple(sorted(entries)),
+            )
+        return entry
+
+    def _state_from_blob(self, blob: str) -> CouplingState:
+        raw = json.loads(self._store.blobs.get(blob).decode("utf-8"))
+        if not isinstance(raw, dict):  # pragma: no cover - our own canonical JSON
+            raise CouplingError("coupling-set state document is malformed")
+        return CouplingState.from_document(cast("Mapping[str, JSONValue]", raw), blob)
+
+    # -- writes -------------------------------------------------------------
+
+    def declare(self, entry: Mapping[str, JSONValue], *, op_id: str | None = None) -> CouplingState:
+        """Declare one new coupling; advances one generation.
+
+        A repeated id is refused rather than silently replaced (revising is
+        :meth:`update`, which records why); both named joints must be
+        declared, unwithdrawn, and scalar-parameterized *now* — a coupling
+        that could never derive is a claim about nothing — and the candidate
+        edge set is checked for the one-driver rule and cycles before
+        anything is written (§5).
+        """
+        parsed = CouplingEntry.from_json(entry)
+
+        def apply(current: CouplingState) -> tuple[CouplingEntry, ...]:
+            if parsed.id in current.by_id:
+                raise CouplingError(
+                    f"coupling {parsed.id} is already declared — revise it with "
+                    "update_coupling(id, patch, reason) so the change records a reason"
+                )
+            self._check_joint_refs(parsed)
+            entries = (*current.entries, parsed)
+            _validate_couplings(entries)
+            return entries
+
+        return self._mutate(
+            CouplingChange(kind="declare", id=parsed.id, patch=parsed.to_json()),
+            apply,
+            op_id=op_id,
+        )
+
+    def update(
+        self,
+        coupling_id: str,
+        patch: Mapping[str, JSONValue],
+        reason: str,
+        *,
+        op_id: str | None = None,
+    ) -> CouplingState:
+        """Revise one entry's declared fields; advances one generation.
+
+        ``reason`` is compulsory and recorded on the generation. The patch is
+        merged onto the stored entry and the whole result revalidated —
+        including the one-driver and cycle checks, since a re-childed
+        coupling can close a cycle a declaration could not. A patch that
+        names a NEW ``parent`` or ``child`` is a fresh claim validated
+        against the live joint set; one that leaves both alone is not — a
+        coupling whose joint was withdrawn since must stay editable, the
+        pose set's rule.
+        """
+        if not reason.strip():
+            raise CouplingError(f"coupling {coupling_id}: update requires a reason")
+        cleaned = {name: value for name, value in patch.items() if value is not None}
+        if not cleaned:
+            raise CouplingError(f"coupling {coupling_id}: update patches nothing")
+        if "id" in cleaned:
+            raise CouplingError(
+                f"coupling {coupling_id}: id is not patchable — declare a new coupling "
+                "and withdraw this one"
+            )
+
+        def apply(current: CouplingState) -> tuple[CouplingEntry, ...]:
+            existing = _require_coupling(current, coupling_id)
+            merged = dict(existing.to_json())
+            merged.update(cleaned)
+            updated = CouplingEntry.from_json(merged)
+            if "parent" in cleaned or "child" in cleaned:
+                self._check_joint_refs(updated)
+            entries = tuple(updated if e.id == coupling_id else e for e in current.entries)
+            _validate_couplings(entries)
+            return entries
+
+        return self._mutate(
+            CouplingChange(
+                kind="update",
+                id=coupling_id,
+                reason=reason,
+                patch=cast("Mapping[str, JSONValue]", dict(sorted(cleaned.items()))),
+            ),
+            apply,
+            op_id=op_id,
+        )
+
+    def withdraw(self, coupling_id: str, reason: str, *, op_id: str | None = None) -> CouplingState:
+        """Stop claiming one coupling; advances one generation, erases nothing.
+
+        The child joint becomes a FREE parameter again from the next
+        evaluation on — poses and sweeps may bind it — while every earlier
+        generation keeps saying what was claimed, and why it stopped.
+        """
+        if not reason.strip():
+            raise CouplingError(f"coupling {coupling_id}: withdrawal requires a reason")
+
+        def apply(current: CouplingState) -> tuple[CouplingEntry, ...]:
+            existing = _require_coupling(current, coupling_id)
+            if existing.withdrawn:
+                raise CouplingError(f"coupling {coupling_id} is already withdrawn")
+            updated = replace(existing, withdrawn=True, withdrawn_reason=reason)
+            return tuple(updated if e.id == coupling_id else e for e in current.entries)
+
+        return self._mutate(
+            CouplingChange(kind="withdraw", id=coupling_id, reason=reason), apply, op_id=op_id
+        )
+
+    def _check_joint_refs(self, coupling: CouplingEntry) -> None:
+        """Refuse couplings over joints that cannot supply a scalar parameter (§5).
+
+        The sweep-binding rule restated under this set's own token: an
+        undeclared joint, a withdrawn joint (a coupling declared against it
+        could never derive), and a joint whose kind has no scalar parameter
+        (``fixed`` has 0 DOF; ``cylindrical`` takes a pair the §5 scalar
+        arithmetic cannot bind) are each ``invalid_coupling`` naming the
+        offending role.
+        """
+        joints = self._joints.state()
+        known = joints.by_id
+        for role in ("parent", "child"):
+            joint_id = getattr(coupling, role)
+            entry = known.get(joint_id)
+            if entry is None:
+                declared = ", ".join(sorted(known)) or "(none)"
+                raise CouplingError(
+                    f"coupling {coupling.id}: {role} joint {joint_id!r} is not declared "
+                    f"(declared joints: {declared})"
+                )
+            if entry.withdrawn:
+                raise CouplingError(
+                    f"coupling {coupling.id}: {role} joint {joint_id!r} is withdrawn "
+                    f"({entry.withdrawn_reason}) — a coupling declared against it could "
+                    "never derive a value (KINEMATICS.md §5)"
+                )
+            if entry.kind == "fixed":
+                raise CouplingError(
+                    f"coupling {coupling.id}: {role} joint {joint_id!r} is 'fixed' (0 DOF) "
+                    "and has no parameter to couple"
+                )
+            if entry.kind == "cylindrical":
+                raise CouplingError(
+                    f"coupling {coupling.id}: {role} joint {joint_id!r} is 'cylindrical' — "
+                    "its (degrees, mm) pair has no scalar coupling form "
+                    "(KINEMATICS.md §5); couple a revolute or prismatic joint"
+                )
+
+    # -- the one generation-advancing path ----------------------------------
+
+    def _mutate(
+        self,
+        change: CouplingChange,
+        apply: Callable[[CouplingState], tuple[CouplingEntry, ...]],
+        *,
+        op_id: str | None,
+    ) -> CouplingState:
+        """Publish one new immutable generation under the project-config lock.
+
+        The joint-reference check inside ``apply`` reads the joint set under
+        this same lock, so a coupling can never be admitted concurrently with
+        the withdrawal of a joint it names. WAL/idempotency semantics are the
+        joint set's, verbatim.
+        """
+        if op_id is None:
+            return self._publish(change, apply)
+        payload: JSONValue = {"kind": "coupling_write", "change": change.to_json()}
+        payload_hash = sha256_canonical_json(payload)
+        outcome = self._store.opkeys.begin(op_id, payload_hash)
+        if isinstance(outcome, PendingRecovery):
+            self._store.wal.recover(outcome.op_key)
+            outcome = self._store.opkeys.begin(op_id, payload_hash)
+        if isinstance(outcome, Replay):
+            return self._replayed(outcome.response)
+        if not isinstance(outcome, Fresh):
+            raise CouplingError(f"coupling write {op_id!r} cannot proceed: prior state {outcome!r}")
+        locks = LockManager(self._store)
+        try:
+            with locks.holding(PROJECT_CONFIG_LOCK):
+                current = self.state()
+                candidate, new_blob = self._candidate(current, change, apply)
+                self._store.wal.publish(
+                    outcome,
+                    COUPLINGS_POINTER,
+                    current.blob,
+                    new_blob,
+                    intended_outcome=canonical_json(
+                        {"generation": candidate.generation, "state": new_blob}
+                    ),
+                )
+                return candidate
+        except CouplingError:
+            # Nothing was written: release the fresh opkey skeleton so a
+            # corrected retry with the same invocation id is not a mismatch.
+            self._store.wal.recover(outcome.op_key)
+            raise
+
+    def _publish(
+        self,
+        change: CouplingChange,
+        apply: Callable[[CouplingState], tuple[CouplingEntry, ...]],
+    ) -> CouplingState:
+        locks = LockManager(self._store)
+        with locks.holding(PROJECT_CONFIG_LOCK):
+            current = self.state()
+            candidate, new_blob = self._candidate(current, change, apply)
+            self._store.blobs.cas_swap(COUPLINGS_POINTER, current.blob, new_blob)
+            return candidate
+
+    def _candidate(
+        self,
+        current: CouplingState,
+        change: CouplingChange,
+        apply: Callable[[CouplingState], tuple[CouplingEntry, ...]],
+    ) -> tuple[CouplingState, str]:
+        """Compute, store and pin the next generation's document (no pointer move)."""
+        entries = apply(current)
+        candidate = CouplingState(
+            generation=current.generation + 1,
+            entries=entries,
+            blob=None,
+            parent=current.blob,
+            change=change,
+        )
+        new_blob = self._store.blobs.put(canonical_json(candidate.document()).encode("utf-8"))
+        # Pinned, not merely pointer-protected — see the joint set's twin.
+        self._store.gc.pin(new_blob)
+        if current.blob is not None:
+            self._store.gc.link(new_blob, current.blob)
+        return replace(candidate, blob=new_blob), new_blob
+
+    def _replayed(self, response: str | None) -> CouplingState:
+        """The generation a committed same-id call produced (immutable, so exact)."""
+        recorded = _recorded_state(response)
+        if recorded is not None and self._store.blobs.has(recorded):
+            return self._state_from_blob(recorded)
+        # Tombstoned replay: only the terminal state survives, so report live.
+        return self.state()
+
+
 def _recorded_state(response: str | None) -> str | None:
     """The state blob a WAL-recorded ``intended_outcome`` names (used on replay)."""
     if response is None:  # tombstone replay: only the terminal state survives
@@ -2196,5 +2856,15 @@ def _require_check(current: MotionCheckState, check_id: str) -> MotionCheckEntry
         raise MotionCheckError(
             f"no motion check {check_id!r} is declared (known: {sorted(current.by_id)})",
             reason="unknown_motion_check",
+        )
+    return existing
+
+
+def _require_coupling(current: CouplingState, coupling_id: str) -> CouplingEntry:
+    existing = current.by_id.get(coupling_id)
+    if existing is None:
+        raise CouplingError(
+            f"no coupling {coupling_id!r} is declared (known: {sorted(current.by_id)})",
+            reason="unknown_coupling",
         )
     return existing

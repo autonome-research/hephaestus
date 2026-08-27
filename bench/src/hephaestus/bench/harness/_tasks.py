@@ -47,7 +47,10 @@ __all__ = [
     "DfmRequirement",
     "DrawingRequirement",
     "ExportRequirement",
+    "JointRequirement",
     "MetadataRequirement",
+    "MotionCheckRequirement",
+    "PoseRequirement",
     "RenderRequirement",
     "base_task_id",
     "corpus_solutions_dir",
@@ -342,6 +345,162 @@ class ConstraintRequirement:
         return {"entry": dict(self.entry), "expect": self.expect}
 
 
+#: What the acceptance spec's provenance says on every kinematic entry it owns
+#: (the :meth:`ConstraintRequirement.declaration` rule: the entry is part of
+#: the task, so it is an assumption *of the task*, honestly recorded as one).
+_TASK_PROVENANCE: Mapping[str, Any] = {
+    "assumed": True,
+    "reason": "declared by the bench task's acceptance spec",
+}
+
+#: ``KINEMATICS.md`` §4's closed sweep-verdict vocabulary, restated here so a
+#: task cannot expect a state the engine can never report (and so ``expect``
+#: typos fail at load, not as an eternally red grade).
+SWEEP_VERDICTS: tuple[str, ...] = (
+    "holds_at_samples",
+    "satisfied",
+    "not_reached_at_samples",
+    "violated",
+    "unresolvable",
+)
+
+
+@dataclass(frozen=True)
+class JointRequirement:
+    """One joint the task's acceptance declares over the graded geometry.
+
+    ``KINEMATICS.md`` §6 (bench): mechanism tasks are graded through the same
+    engine path ``check_motion`` uses, and — exactly as with
+    :class:`ConstraintRequirement` — the entries are the TASK's own, installed
+    over whatever the run declared, so a run cannot pass by declaring a
+    shorter travel (or none). The joint's anchors name the run's parts and
+    tags, so what is graded is still the run's geometry: a run that never
+    tags its interfaces fails as unresolvable, honestly.
+    """
+
+    #: The ``KINEMATICS.md`` §1 entry, minus provenance (supplied below).
+    entry: Mapping[str, Any]
+
+    @property
+    def id(self) -> str:
+        return str(self.entry["id"])
+
+    def declaration(self) -> dict[str, Any]:
+        """The entry as declared into the graded project (task provenance)."""
+        declared = dict(self.entry)
+        declared.setdefault("provenance", dict(_TASK_PROVENANCE))
+        return declared
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> JointRequirement:
+        raw = data.get("entry")
+        if not isinstance(raw, dict):
+            raise ValueError("a joint requirement needs an 'entry' object (KINEMATICS.md §1)")
+        entry = cast("Mapping[str, Any]", raw)
+        for field in ("id", "kind", "parent", "child"):
+            if not entry.get(field):
+                raise ValueError(f"joint requirement entry is missing {field!r}")
+        return cls(entry=dict(entry))
+
+    def to_json(self) -> dict[str, Any]:
+        return {"entry": dict(self.entry)}
+
+
+@dataclass(frozen=True)
+class PoseRequirement:
+    """One named pose the task's acceptance declares (``KINEMATICS.md`` §3).
+
+    The pose must come back ``resolved`` from the engine evaluation: a pose a
+    run's geometry cannot take (a derived or bound value outside the joint's
+    travel) is that mechanism failing its travel requirement, under the
+    engine's own named reason. Pose-bound constraints then reference these
+    ids, so the closure-fit vocabulary ("engages within 0.1 mm at p-closed")
+    grades through :class:`ConstraintRequirement` unchanged.
+    """
+
+    #: The ``KINEMATICS.md`` §3 entry, minus provenance (supplied below).
+    entry: Mapping[str, Any]
+
+    @property
+    def id(self) -> str:
+        return str(self.entry["id"])
+
+    def declaration(self) -> dict[str, Any]:
+        """The entry as declared into the graded project (task provenance)."""
+        declared = dict(self.entry)
+        declared.setdefault("provenance", dict(_TASK_PROVENANCE))
+        return declared
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> PoseRequirement:
+        raw = data.get("entry")
+        if not isinstance(raw, dict):
+            raise ValueError("a pose requirement needs an 'entry' object (KINEMATICS.md §3)")
+        entry = cast("Mapping[str, Any]", raw)
+        if not entry.get("id"):
+            raise ValueError("pose requirement entry is missing 'id'")
+        if not isinstance(entry.get("joints"), dict):
+            # An empty binding is legal §3 ("everything as built") but a task
+            # pose exists to pin a configuration; requiring the field spelled
+            # out keeps the acceptance readable and typo-proof.
+            raise ValueError("pose requirement entry needs a 'joints' object (KINEMATICS.md §3)")
+        return cls(entry=dict(entry))
+
+    def to_json(self) -> dict[str, Any]:
+        return {"entry": dict(self.entry)}
+
+
+@dataclass(frozen=True)
+class MotionCheckRequirement:
+    """One motion check the task's acceptance declares and grades on.
+
+    ``expect`` names the verdict the graded geometry must produce, from §4's
+    closed set. It defaults per kind to the SUCCESS spelling — the universal
+    kinds succeed as ``holds_at_samples`` (never "holds": samples are
+    evidence, not a continuous guarantee), ``reach`` as ``satisfied`` (one
+    achieving sample is proof) — and is validated against the whole set, so a
+    task may also legitimately require a violation (a fixture that must
+    interfere) without the grader conflating that with success.
+    """
+
+    #: The ``KINEMATICS.md`` §4 entry, minus provenance (supplied below).
+    entry: Mapping[str, Any]
+    expect: str = "holds_at_samples"
+
+    @property
+    def id(self) -> str:
+        return str(self.entry["id"])
+
+    def declaration(self) -> dict[str, Any]:
+        """The entry as declared into the graded project (task provenance)."""
+        declared = dict(self.entry)
+        declared.setdefault("provenance", dict(_TASK_PROVENANCE))
+        return declared
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> MotionCheckRequirement:
+        raw = data.get("entry")
+        if not isinstance(raw, dict):
+            raise ValueError(
+                "a motion-check requirement needs an 'entry' object (KINEMATICS.md §4)"
+            )
+        entry = cast("Mapping[str, Any]", raw)
+        for field in ("id", "kind", "sweep"):
+            if not entry.get(field):
+                raise ValueError(f"motion-check requirement entry is missing {field!r}")
+        default = "satisfied" if str(entry["kind"]) == "reach" else "holds_at_samples"
+        expect = str(data.get("expect", default))
+        if expect not in SWEEP_VERDICTS:
+            raise ValueError(
+                f"motion-check requirement expect must be one of {list(SWEEP_VERDICTS)}, "
+                f"got {expect!r} (KINEMATICS.md §4: the verdict vocabulary is closed)"
+            )
+        return cls(entry=dict(entry), expect=expect)
+
+    def to_json(self) -> dict[str, Any]:
+        return {"entry": dict(self.entry), "expect": self.expect}
+
+
 @dataclass(frozen=True)
 class MetadataRequirement:
     """§5.2 manufacturing metadata the graded part must really carry.
@@ -475,6 +634,13 @@ class BenchTask:
     metadata: tuple[MetadataRequirement, ...] = ()
     #: ``ASSEMBLY.md`` §3: declared mates the grader evaluates through the engine.
     constraints: tuple[ConstraintRequirement, ...] = ()
+    #: ``KINEMATICS.md`` §6 (Stage 9C, corpus v3): the declared mechanism the
+    #: grader installs and evaluates through the same engine path
+    #: ``check_motion`` uses — joints, named poses (which the task's
+    #: pose-bound constraints reference), and sampled motion checks.
+    joints: tuple[JointRequirement, ...] = ()
+    poses: tuple[PoseRequirement, ...] = ()
+    motion_checks: tuple[MotionCheckRequirement, ...] = ()
     #: Seeded, task-owned files (inspection gauges, broken fixtures) restored
     #: from ``seed/`` before grading, so a run cannot pass by editing them.
     protected_paths: tuple[str, ...] = ()
@@ -508,6 +674,19 @@ class BenchTask:
         for constraint in self.constraints:
             for side in ("a", "b"):
                 anchor = str(constraint.entry.get(side, ""))
+                if anchor:
+                    names.add(anchor.split(":", 1)[0])
+        # Kinematic acceptance names parts through joint anchors and motion
+        # check anchors, exactly as constraints do: the graded mechanism's
+        # parts are deliverables the grader must build.
+        for joint in self.joints:
+            for side in ("parent", "child"):
+                anchor = str(joint.entry.get(side, ""))
+                if anchor:
+                    names.add(anchor.split(":", 1)[0])
+        for check in self.motion_checks:
+            for field_name in ("a", "b", "anchor"):
+                anchor = str(check.entry.get(field_name, "") or "")
                 if anchor:
                     names.add(anchor.split(":", 1)[0])
         # Parts the task's OWN check sources address ("<part>/<selector>"
@@ -601,6 +780,9 @@ class BenchTask:
         drawings_raw = data.get("drawing_requirements", [])
         metadata_raw = data.get("metadata_requirements", [])
         constraints_raw = data.get("constraint_requirements", [])
+        joints_raw = data.get("joint_requirements", [])
+        poses_raw = data.get("pose_requirements", [])
+        motion_checks_raw = data.get("motion_check_requirements", [])
         task = cls(
             id=task_id,
             directory=directory,
@@ -631,14 +813,24 @@ class BenchTask:
                 ConstraintRequirement.from_json(cast("Mapping[str, Any]", item))
                 for item in cast("Sequence[Any]", constraints_raw)
             ),
+            joints=tuple(
+                JointRequirement.from_json(cast("Mapping[str, Any]", item))
+                for item in cast("Sequence[Any]", joints_raw)
+            ),
+            poses=tuple(
+                PoseRequirement.from_json(cast("Mapping[str, Any]", item))
+                for item in cast("Sequence[Any]", poses_raw)
+            ),
+            motion_checks=tuple(
+                MotionCheckRequirement.from_json(cast("Mapping[str, Any]", item))
+                for item in cast("Sequence[Any]", motion_checks_raw)
+            ),
             protected_paths=tuple(
                 str(item) for item in cast("Sequence[Any]", data.get("protected_paths", []))
             ),
             notes=str(data.get("notes", "")),
             spec=spec,
-            deliverable=(
-                None if data.get("deliverable") is None else str(data["deliverable"])
-            ),
+            deliverable=(None if data.get("deliverable") is None else str(data["deliverable"])),
         )
         task.check_sources()  # fail fast on a task whose check source is missing
         return task
@@ -660,6 +852,9 @@ class BenchTask:
             "drawing_requirements": [d.to_json() for d in self.drawings],
             "metadata_requirements": [m.to_json() for m in self.metadata],
             "constraint_requirements": [c.to_json() for c in self.constraints],
+            "joint_requirements": [j.to_json() for j in self.joints],
+            "pose_requirements": [p.to_json() for p in self.poses],
+            "motion_check_requirements": [m.to_json() for m in self.motion_checks],
             "protected_paths": list(self.protected_paths),
         }
 

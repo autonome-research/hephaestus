@@ -54,8 +54,12 @@ from hephaestus.core.executor.sandbox.bwrap import find_bwrap
 #: ``plate-from-drawing`` (INGEST.md §2) and the assembly pair ``hinge-mate``
 #: and ``shaft-coupler`` (ASSEMBLY.md §3). The G6 evidence is unchanged — v2
 #: is a superset, and ``aggregate_threshold`` still reads 0.70 off the v1
-#: coverage below.
-CORPUS_SIZE = 16
+#: coverage below. Repointed 2026-08-27 (Stage 9C, KINEMATICS.md §6 corpus
+#: v3): the mechanism additions ``gripper-jaws``, ``hinge-travel`` and
+#: ``leadscrew-actuator`` bring the public corpus to nineteen — the count
+#: moved, the clause did not, and ``aggregate_threshold`` still keys 0.70 on
+#: the v1 coverage.
+CORPUS_SIZE = 19
 
 #: The Stage 6 additions the clause names by role.
 DFM_REPAIR_TASK = "dfm-repair"
@@ -79,13 +83,14 @@ def _prose(tasks: Mapping[str, BenchTask]) -> list[BenchTask]:
 def test_the_public_corpus_loads_with_a_reference_solution_each(
     tasks: Mapping[str, BenchTask],
 ) -> None:
-    """Repointed 2026-08-25 (corpus-v2 amendment): sixteen tasks, not twelve.
+    """Repointed 2026-08-25 (corpus v2) and 2026-08-27 (Stage 9C corpus v3).
 
     The clause this test pins — every public task loads and has a reference
-    solution — is unchanged; only the count moved, with the four tasks the
-    corpus-v2 operator decision added (the ingest pair and the assembly pair).
-    The v1 dozen the G6 measurement stands on are all still present (the
-    meta-suite asserts the subset).
+    solution — is unchanged; only the count moved: sixteen with the corpus-v2
+    additions (the ingest pair and the assembly pair), nineteen with the
+    corpus-v3 mechanism tasks (KINEMATICS.md §6). The v1 dozen the G6
+    measurement stands on are all still present (the meta-suite asserts the
+    subset).
     """
     prose = _prose(tasks)
     assert len(prose) == CORPUS_SIZE

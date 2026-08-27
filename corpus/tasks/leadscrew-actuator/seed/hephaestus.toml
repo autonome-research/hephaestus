@@ -1,0 +1,4 @@
+# leadscrew-actuator bench task: a fresh three-part mechanism project.
+[project]
+name = "leadscrew_actuator"
+description = "Lead-screw linear actuator: motor screw coupled to a guided carriage"

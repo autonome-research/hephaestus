@@ -79,6 +79,20 @@ stream to the parent as they land, and a ceiling kill raises
 :class:`MotionTimeout` CARRYING the samples already evaluated — partial
 evidence, never a hang and never a silent pass.
 
+**Couplings** (Stage 9C, ``KINEMATICS.md`` §5) compose wherever parameter
+assignments are resolved: geom's :func:`~hephaestus.geom.derive_coupled_values`
+supplies the pure ``child = ratio * parent + offset`` arithmetic, and
+:meth:`MotionResolution.derive_values` applies it — before limit checks —
+whenever a pose is evaluated, a chain is placed, or a sweep grid runs, so a
+coupled child moves with its driver everywhere a free joint would. An
+assignment naming a coupled child directly is refused by name (the
+declaration paths already refuse it; a coupling declared LATER is reported at
+evaluation, the orphaned-entry philosophy), and a derived value outside the
+child's declared limits is ``joint_limit_exceeded`` naming the coupling in
+its detail — an evaluation never silently clamps, and §2's decide-nothing-new
+rule holds: the coupling set said what the value must be, the joint set said
+what it may be, and this module only reports which claim broke.
+
 **The CHECKS read surfaces** (Stage 9B, ``KINEMATICS.md`` §4 last bullet) ride
 :class:`SnapshotMotionContext`: the owner of a project-scope check run
 constructs it from the run's frozen snapshot ref and threads its
@@ -120,6 +134,9 @@ from hephaestus.core.assembly import (
 from hephaestus.core.errors import AddressingError, ValidationError
 from hephaestus.core.project_store.constraints import Anchor
 from hephaestus.core.project_store.kinematics import (
+    CouplingEntry,
+    CouplingSet,
+    CouplingState,
     JointEntry,
     JointSet,
     JointState,
@@ -726,15 +743,33 @@ class MotionResolution:
     """
 
     def __init__(
-        self, joint_state: JointState, pose_state: PoseState, resolver: AnchorResolver
+        self,
+        joint_state: JointState,
+        pose_state: PoseState,
+        resolver: AnchorResolver,
+        coupling_state: CouplingState | None = None,
     ) -> None:
         self.joint_state = joint_state
         self.pose_state = pose_state
+        #: The coupling set governing this evaluation (``KINEMATICS.md`` §5,
+        #: Stage 9C). ``None`` means the empty set — a caller that predates
+        #: couplings, or a project that declared none — under which every
+        #: parameter is free and the derivation below is the identity.
+        self.coupling_state = (
+            coupling_state
+            if coupling_state is not None
+            else CouplingState(generation=0, entries=(), blob=None)
+        )
         self._frames: dict[str, JointFrame] = {}
         self._joint_failures: dict[str, tuple[JointUnresolvableReason, str]] = {}
         self._parent_of: dict[str, JointEntry] = {}
         self.joint_outcomes = self._resolve_joints(resolver)
         self._pose_failures: dict[str, tuple[PoseUnresolvableReason, str]] = {}
+        #: ``{pose id: full derived assignment}`` for every pose whose §5
+        #: derivation succeeded — what :meth:`transforms` hands forward
+        #: kinematics, so a chain never re-derives (or diverges from) what the
+        #: pose outcome was decided on.
+        self._pose_values: dict[str, dict[str, float]] = {}
         self.pose_outcomes = self._resolve_poses()
 
     # -- joints -------------------------------------------------------------
@@ -960,9 +995,25 @@ class MotionResolution:
         return tuple(outcomes)
 
     def _pose_failure(self, pose: PoseEntry) -> tuple[PoseUnresolvableReason, str] | None:
-        """The first (lexically by joint id) reason this pose cannot evaluate."""
+        """The first (lexically by joint id) reason this pose cannot evaluate.
+
+        Stage 9C: the §5 derivation runs FIRST, because it is a fact about
+        the assignment itself — a pose naming a coupled child is
+        ``invalid_pose`` with the coupling named (dependent parameters are
+        never assigned), and a derived child value outside its declared
+        limits is ``joint_limit_exceeded`` naming the coupling in its detail
+        (derived before limit checks, never silently clamped). On success the
+        full derived assignment is cached for :meth:`transforms`, so chains
+        compose exactly the values this outcome was decided on.
+        """
         from hephaestus.geom import JointDeclarationError, JointLimitError, joint_transform
 
+        try:
+            full = self.derive_values(pose.joints)
+        except JointLimitError as exc:
+            return "joint_limit_exceeded", exc.message
+        except JointDeclarationError as exc:
+            return "invalid_pose", exc.message
         declared = self.joint_state.by_id
         for joint_id in sorted(pose.joints):
             entry = declared.get(joint_id)
@@ -989,7 +1040,77 @@ class MotionResolution:
                 return "joint_limit_exceeded", exc.message
             except JointDeclarationError as exc:
                 return "invalid_pose", exc.message
+        self._pose_values[pose.id] = full
         return None
+
+    # -- couplings (§5, Stage 9C) --------------------------------------------
+
+    def coupled_driver(self, joint_id: str) -> CouplingEntry | None:
+        """The active coupling driving ``joint_id``, or ``None`` if it is free."""
+        return self.coupling_state.by_child.get(joint_id)
+
+    def derive_values(self, values: Mapping[str, float]) -> dict[str, float]:
+        """The full assignment: ``values`` plus every coupled child, limit-checked.
+
+        The engine half of ``KINEMATICS.md`` §5: geom's
+        :func:`~hephaestus.geom.derive_coupled_values` supplies the pure
+        arithmetic (and the named structural refusals — assigning a coupled
+        child is ``coupled_child_assigned``), then each derived value is
+        checked against the child joint's DECLARED limits, because limits are
+        declarations and geom never reads declarations. A breach raises
+        geom's own :class:`~hephaestus.geom.JointLimitError` spelling
+        (``joint_limit_exceeded``) with the coupling id in the message —
+        derived before limit checks, never silently clamped. Children whose
+        joint is withdrawn or undeclared are derived (chains stay pure
+        arithmetic) but not checked: a withdrawn joint is never evaluated,
+        so it has no limit to breach (the 8C rule).
+        """
+        from hephaestus.geom import (
+            Coupling,
+            JointDeclarationError,
+            JointLimitError,
+            JointLimits,
+            derive_coupled_values,
+        )
+
+        active = self.coupling_state.active
+        couplings = tuple(
+            Coupling(id=c.id, parent=c.parent, child=c.child, ratio=c.ratio, offset=c.offset)
+            for c in active
+        )
+        full = derive_coupled_values(couplings, values)
+        declared = self.joint_state.by_id
+        for entry in sorted(active, key=lambda c: c.id):
+            child = declared.get(entry.child)
+            if child is None or child.withdrawn:
+                continue  # never evaluated, per the 8C rule
+            if child.kind not in ("revolute", "prismatic"):
+                raise JointDeclarationError(
+                    "scalar_value_required",
+                    f"coupling {entry.id!r} drives joint {entry.child!r} "
+                    f"({child.kind}), which takes no scalar parameter "
+                    "(KINEMATICS.md §5)",
+                    joint_id=entry.child,
+                )
+            limit = child.limits
+            derived = full[entry.child]
+            if limit is not None and not (limit.min <= derived <= limit.max):
+                rotational = child.kind == "revolute"
+                axis: Literal["rotation", "translation"] = (
+                    "rotation" if rotational else "translation"
+                )
+                unit = "deg" if rotational else "mm"
+                raise JointLimitError(
+                    f"joint {entry.child!r}: derived {axis} value {derived:g} {unit} — "
+                    f"coupling {entry.id!r}: {entry.ratio:g} * {entry.parent} + "
+                    f"{entry.offset:g} — is outside [{limit.min:g}, {limit.max:g}] — "
+                    "refused, not clamped (KINEMATICS.md §5)",
+                    joint_id=entry.child,
+                    value=derived,
+                    limit=JointLimits(min=limit.min, max=limit.max),
+                    axis=axis,
+                )
+        return full
 
     # -- the sweep evaluator's read surface (§4) -----------------------------
 
@@ -1064,7 +1185,11 @@ class MotionResolution:
                 chain[entry.id] = entry
                 current = entry.anchors[0].part
         frames = tuple(self._frames[joint_id] for joint_id in chain)
-        values = {joint_id: pose.joints[joint_id] for joint_id in chain if joint_id in pose.joints}
+        # The §5-derived assignment this pose's outcome was decided on: free
+        # values from the pose, coupled children derived — a chain joint that
+        # is a coupled child moves with its driver, not with zero.
+        full = self._pose_values[pose_id]
+        values = {joint_id: full[joint_id] for joint_id in chain if joint_id in full}
         try:
             world = forward_kinematics(frames, values)
         except JointLimitError as exc:
@@ -1106,7 +1231,8 @@ def motion_resolution(
     """
     joints = JointSet(layout, store)
     poses = PoseSet(layout, store, joints)
-    return MotionResolution(joints.state(), poses.state(), resolver)
+    couplings = CouplingSet(layout, store, joints)
+    return MotionResolution(joints.state(), poses.state(), resolver, couplings.state())
 
 
 # --------------------------------------------------------------------------
@@ -1121,6 +1247,7 @@ class MotionEvaluator:
         self._store = store
         self.joints = JointSet(layout, store)
         self.poses = PoseSet(layout, store, self.joints)
+        self.couplings = CouplingSet(layout, store, self.joints)
         self._publisher = Publisher(layout, store)
 
     # -- reads --------------------------------------------------------------
@@ -1185,7 +1312,7 @@ class MotionEvaluator:
         self, joint_state: JointState, pose_state: PoseState, scratch: Path
     ) -> tuple[MotionResolution, dict[str, str]]:
         resolver = AnchorResolver(self.layout, self._store, self._publisher, scratch)
-        resolution = MotionResolution(joint_state, pose_state, resolver)
+        resolution = MotionResolution(joint_state, pose_state, resolver, self.couplings.state())
         return resolution, resolver.artifact_refs()
 
     # -- projection ---------------------------------------------------------
@@ -1573,6 +1700,7 @@ def _sweep_child(conn: Any, spec: Mapping[str, Any]) -> None:  # pragma: no cove
         JointDeclarationError,
         JointLimitError,
         clearance,
+        derive_coupled_values,
         distance,
         forward_kinematics,
         interference,
@@ -1583,6 +1711,9 @@ def _sweep_child(conn: Any, spec: Mapping[str, Any]) -> None:  # pragma: no cove
     frames: Sequence[Any] = spec["frames"]
     axes: Sequence[tuple[str, Sequence[float]]] = spec["axes"]
     parts: Mapping[str, str] = spec["parts"]
+    couplings: Sequence[Any] = spec["couplings"]
+    coupling_limits: Mapping[str, tuple[Any, str]] = spec["coupling_limits"]
+    frame_ids = {frame.id for frame in frames}
     shapes: dict[str, Any] = {
         role: load_brep_shape(Path(path).read_bytes())
         for role, path in cast("Mapping[str, str]", spec["shapes"]).items()
@@ -1595,8 +1726,51 @@ def _sweep_child(conn: Any, spec: Mapping[str, Any]) -> None:  # pragma: no cove
         target = Vertex(x, y, z)
     for combo in product(*[values for _, values in axes]):
         assignment = {joint_id: value for (joint_id, _), value in zip(axes, combo, strict=True)}
+        # §5 (Stage 9C): coupled children are DERIVED from the free grid
+        # values before limit checks — a derived value outside the child's
+        # declared limits is refused naming the coupling, never clamped, and
+        # the samples already streamed stay with the caller as partial
+        # evidence. Derived values then ride forward kinematics wherever the
+        # child's frame resolved; a coupled child of a withdrawn joint has no
+        # frame and no limits (never evaluated), so its number moves nothing.
         try:
-            world = forward_kinematics(cast("Any", frames), cast("Any", assignment))
+            full = derive_coupled_values(couplings, assignment)
+        except JointDeclarationError as exc:
+            conn.send(("refusal", ("invalid_motion_check", exc.message)))
+            conn.close()
+            return
+        for coupling in couplings:
+            bound = coupling_limits.get(coupling.child)
+            if bound is None:
+                continue
+            limit, unit = bound
+            derived = full[coupling.child]
+            if not limit.contains(derived):
+                conn.send(
+                    (
+                        "refusal",
+                        (
+                            "joint_limit_exceeded",
+                            f"joint {coupling.child!r}: derived value {derived:g} {unit} — "
+                            f"coupling {coupling.id!r}: {coupling.ratio:g} * "
+                            f"{coupling.parent} + {coupling.offset:g} — is outside "
+                            f"[{limit.min:g}, {limit.max:g}] — refused, not clamped "
+                            "(KINEMATICS.md §5)",
+                        ),
+                    )
+                )
+                conn.close()
+                return
+        # Only DERIVED values are filtered to the forest's frames (a child of
+        # a withdrawn joint is never evaluated); the free grid values pass
+        # through unconditionally, so a mismatch keeps geom's own refusal.
+        fk_values = {
+            joint_id: value
+            for joint_id, value in full.items()
+            if joint_id in frame_ids or joint_id in assignment
+        }
+        try:
+            world = forward_kinematics(cast("Any", frames), cast("Any", fk_values))
         except JointLimitError as exc:
             conn.send(("refusal", ("joint_limit_exceeded", exc.message)))
             conn.close()
@@ -1713,6 +1887,7 @@ class SweepEvaluator:
         self.joints = JointSet(layout, store)
         self.poses = PoseSet(layout, store, self.joints)
         self.checks = MotionCheckSet(layout, store, self.joints)
+        self.couplings = CouplingSet(layout, store, self.joints)
         self._publisher = Publisher(layout, store)
 
     # -- reads (the projected results, never a re-measure) -------------------
@@ -1811,7 +1986,9 @@ class SweepEvaluator:
         self, entries: Sequence[MotionCheckEntry], scratch: Path, timeout_s: float
     ) -> tuple[tuple[SweepResult, ...], dict[str, str]]:
         resolver = AnchorResolver(self.layout, self._store, self._publisher, scratch)
-        resolution = MotionResolution(self.joints.state(), self.poses.state(), resolver)
+        resolution = MotionResolution(
+            self.joints.state(), self.poses.state(), resolver, self.couplings.state()
+        )
         results = tuple(
             _evaluate_check(entry, resolution, resolver, scratch=scratch, timeout_s=timeout_s)
             for entry in entries
@@ -1921,6 +2098,20 @@ def _evaluate_check(
                 f"motion check {entry.id} sweeps joint {joint_id!r}, which is "
                 f"unresolvable ({failure[0]}): {failure[1]}",
             )
+        driver = resolution.coupled_driver(joint_id)
+        if driver is not None:
+            # §5 (Stage 9C): declaration refuses a sweep over a coupled child;
+            # reaching one here means the coupling was declared AFTER the
+            # check (the orphaned-entry philosophy: reported, never erased).
+            return _sweep_unresolvable(
+                entry,
+                anchors,
+                "invalid_motion_check",
+                f"motion check {entry.id} sweeps joint {joint_id!r}, which coupling "
+                f"{driver.id!r} now derives as {driver.ratio:g} * {driver.parent} + "
+                f"{driver.offset:g} — a sweep assigns only FREE parameters "
+                "(KINEMATICS.md §5)",
+            )
         frames[joint_id] = resolution.frame(joint_id)
     # 2. Anchors, through the shared resolver (each part loaded once per run).
     shapes: dict[str, Any] = {}
@@ -1962,6 +2153,13 @@ def _evaluate_check(
                 )
             frames.setdefault(chain_entry.id, resolution.frame(chain_entry.id))
             current = chain_entry.anchors[0].part
+    # 3b. Couplings (§5, Stage 9C): every active coupling rides the grid — a
+    #     coupled child moves with its driver, so its frame joins the forest
+    #     wherever it resolved (an unresolved child that also MOVES a measured
+    #     part was already refused by the chain walk above), and the child
+    #     process derives its value and checks the child's declared limits at
+    #     every sample, naming the coupling on a breach.
+    couplings, coupling_limits = _sweep_couplings(resolution, frames)
     # 4. The bounded grid (COMPARE.md §5 pattern): shapes cross as lossless
     #    BRep files, frames as plain records, and the child streams facts.
     check_dir = scratch / f"sweep-{entry.id}"
@@ -1982,6 +2180,8 @@ def _evaluate_check(
         "frames": tuple(frames.values()),
         "axes": axes,
         "target_point_mm": entry.target_point_mm,
+        "couplings": couplings,
+        "coupling_limits": coupling_limits,
     }
     samples, refusal = _bounded_sweep(
         spec, check_id=entry.id, grid_total=entry.grid_total, timeout_s=timeout_s
@@ -2020,6 +2220,48 @@ def _sweep_reason(reason: str) -> SweepUnresolvableReason:
 
 def _sweep_unit(kind: str) -> str:
     return "mm3" if kind == "sweep_no_interference" else "mm"
+
+
+def _sweep_couplings(
+    resolution: MotionResolution, frames: dict[str, Any]
+) -> tuple[tuple[Any, ...], dict[str, tuple[Any, str]]]:
+    """``(geom couplings, {child: (declared limits, unit)})`` for one grid (§5).
+
+    Every ACTIVE coupling crosses into the child process as geom's own plain
+    record, with the child joint's declared limit window alongside so each
+    sample's derived value is checked where it is computed — naming the
+    coupling on a breach, never clamping. As a side effect each resolved
+    coupled child's frame is folded into ``frames``: the child moves with its
+    driver, so forward kinematics must compose its transform (a child whose
+    joint is withdrawn or undeclared is never evaluated — no frame, no limit
+    — and an unresolved child that moves a MEASURED part was already refused
+    by the caller's chain walk).
+    """
+    from hephaestus.geom import Coupling, JointLimits
+
+    declared = resolution.joint_state.by_id
+    couplings: list[Any] = []
+    limits: dict[str, tuple[Any, str]] = {}
+    for entry in sorted(resolution.coupling_state.active, key=lambda c: c.id):
+        couplings.append(
+            Coupling(
+                id=entry.id,
+                parent=entry.parent,
+                child=entry.child,
+                ratio=entry.ratio,
+                offset=entry.offset,
+            )
+        )
+        child = declared.get(entry.child)
+        if child is None or child.withdrawn:
+            continue
+        pair = child.limits
+        if pair is not None:
+            unit = "deg" if child.kind == "revolute" else "mm"
+            limits[entry.child] = (JointLimits(min=pair.min, max=pair.max), unit)
+        if resolution.joint_failure(entry.child) is None:
+            frames.setdefault(entry.child, resolution.frame(entry.child))
+    return tuple(couplings), limits
 
 
 def _sweep_unresolvable(
@@ -2311,8 +2553,10 @@ class SnapshotMotionContext:
         joints = JointSet(layout, store)
         poses = PoseSet(layout, store, joints)
         checks = MotionCheckSet(layout, store, joints)
+        couplings = CouplingSet(layout, store, joints)
         joint_state = joints.state()
         pose_state = poses.state()
+        coupling_state = couplings.state()
         self._check_state = checks.state()
         pinned = _snapshot_parts(store, snapshot_ref)
         self._resolver = _SnapshotAnchorResolver(
@@ -2334,14 +2578,18 @@ class SnapshotMotionContext:
                 # and never re-read live.
                 with contextlib.suppress(UnresolvableAnchorError):
                     self._resolver.locate(part, "part")
-        self._resolution = MotionResolution(joint_state, pose_state, self._resolver)
+        self._resolution = MotionResolution(joint_state, pose_state, self._resolver, coupling_state)
         self._results: dict[str, SweepResult] = {}
         #: The frozen motion generations of this run, in the shape
-        #: ``CheckReport.motion_generations`` records.
+        #: ``CheckReport.motion_generations`` records. ``couplings`` joined
+        #: with Stage 9C (``KINEMATICS.md`` §5): the coupling set governs the
+        #: derived values every posed measurement and sweep in this run
+        #: composed, so replaying the evidence needs its generation too.
         self.generations: dict[str, int] = {
             "joints": joint_state.generation,
             "poses": pose_state.generation,
             "motion_checks": self._check_state.generation,
+            "couplings": coupling_state.generation,
         }
 
     # -- the posed-context factory (m.at_pose) -------------------------------

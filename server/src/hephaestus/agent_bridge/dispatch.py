@@ -167,6 +167,10 @@ CAD_TOOLS: frozenset[str] = frozenset(
         "update_motion_check",
         "read_motion_checks",
         "check_motion",
+        # KINEMATICS.md §5/§6 (Stage 9C) — the coupling triplet, same decision.
+        "declare_coupling",
+        "update_coupling",
+        "read_couplings",
         "read_artifact",
         # INGEST.md §2 — read-only, freely retryable. There is deliberately no
         # `add_reference`: registration is operator-side, so the model's only
@@ -531,6 +535,9 @@ class ToolDispatcher:
             "update_motion_check": self._update_motion_check,
             "read_motion_checks": self._read_motion_checks,
             "check_motion": self._check_motion,
+            "declare_coupling": self._declare_coupling,
+            "update_coupling": self._update_coupling,
+            "read_couplings": self._read_couplings,
             "read_artifact": self._read_artifact,
             "list_references": self._list_references,
             "read_reference": self._read_reference,
@@ -947,6 +954,32 @@ class ToolDispatcher:
         self, _p: Principal, cad: CadOps, _arguments: dict[str, Any], _inv: Invocation
     ) -> dict[str, Any]:
         return cad.read_motion_checks()
+
+    def _declare_coupling(
+        self, _p: Principal, cad: CadOps, arguments: dict[str, Any], inv: Invocation
+    ) -> dict[str, Any]:
+        # The whole entry is the argument object: KINEMATICS.md §5 writes a
+        # coupling as one JSON shape, so the wire shape and the stored shape
+        # are one shape (the declare_joint rule).
+        return cad.declare_coupling(cast("Mapping[str, Any]", arguments), op_id=inv.op_id)
+
+    def _update_coupling(
+        self, _p: Principal, cad: CadOps, arguments: dict[str, Any], inv: Invocation
+    ) -> dict[str, Any]:
+        raw = arguments.get("patch")
+        if not isinstance(raw, dict):
+            raise DispatchError("invalid_params", "update_coupling requires a patch object")
+        reason = arguments.get("reason")
+        if not isinstance(reason, str):
+            raise DispatchError("invalid_params", "update_coupling requires a reason")
+        return cad.update_coupling(
+            str(arguments["id"]), cast("Mapping[str, Any]", raw), reason, op_id=inv.op_id
+        )
+
+    def _read_couplings(
+        self, _p: Principal, cad: CadOps, _arguments: dict[str, Any], _inv: Invocation
+    ) -> dict[str, Any]:
+        return cad.read_couplings()
 
     def _check_motion(
         self, _p: Principal, cad: CadOps, arguments: dict[str, Any], _inv: Invocation

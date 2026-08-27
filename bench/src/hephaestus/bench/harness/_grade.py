@@ -31,6 +31,7 @@ from typing import Any, cast
 from hephaestus.agent_bridge.cad_ops import EXPORT_FORMATS, CadOpError, CadOps
 from hephaestus.core.errors import SandboxDeniedError
 from hephaestus.core.executor.sandbox.probe import secure_backend
+from hephaestus.core.motion import MotionTimeout
 from hephaestus.core.project_store.layout import ProjectLayout, load_project
 from hephaestus.geom.nesting import blank_from_metadata
 
@@ -65,6 +66,11 @@ class GradeReport:
     metadata: tuple[Mapping[str, Any], ...] = ()
     #: ``ASSEMBLY.md`` §3: one record per declared constraint, with its residual.
     constraints: tuple[Mapping[str, Any], ...] = ()
+    #: ``KINEMATICS.md`` §6 (Stage 9C): one record per declared joint / pose /
+    #: motion check, each carrying the engine outcome it was judged on.
+    joints: tuple[Mapping[str, Any], ...] = ()
+    poses: tuple[Mapping[str, Any], ...] = ()
+    motion_checks: tuple[Mapping[str, Any], ...] = ()
     tool_calls: int | None = None
     budget_tool_calls: int | None = None
     within_budget: bool = True
@@ -102,6 +108,9 @@ class GradeReport:
             "drawings": [dict(d) for d in self.drawings],
             "metadata": [dict(m) for m in self.metadata],
             "constraints": [dict(c) for c in self.constraints],
+            "joints": [dict(j) for j in self.joints],
+            "poses": [dict(p) for p in self.poses],
+            "motion_checks": [dict(m) for m in self.motion_checks],
             "tool_calls": self.tool_calls,
             "budget_tool_calls": self.budget_tool_calls,
             "within_budget": self.within_budget,
@@ -599,6 +608,192 @@ def _validate_declared_blank(
     return []
 
 
+def _install_kinematic_entry(
+    declare: Any, update: Any, declared: Mapping[str, Any], entry: Mapping[str, Any]
+) -> None:
+    """Declare one task-owned kinematic entry, replacing a same-id run entry.
+
+    The ``_validate_constraints`` dance verbatim: a run that declared the
+    task's id gets the task's version of it (``withdrawn: False`` included, so
+    a withdraw-then-pass paperwork escape stays closed), and a fresh id is a
+    plain declaration. The op ids mirror every other grader write.
+    """
+    entry_id = str(entry["id"])
+    if entry_id in declared:
+        patch = {key: value for key, value in entry.items() if key != "id"}
+        patch["withdrawn"] = False
+        update(
+            entry_id,
+            patch,
+            "replaced by the bench task's acceptance spec",
+            op_id=f"bench-motion-{uuid.uuid4().hex}",
+        )
+    else:
+        declare(entry, op_id=f"bench-motion-{uuid.uuid4().hex}")
+
+
+def _withdraw_conflicting_mechanism(cad: CadOps, task: BenchTask) -> None:
+    """Clear run-declared state the task's mechanism cannot coexist with.
+
+    The joint graph is a forest (one parent joint per part) and a coupled
+    child is not a free parameter — both are *write-time* rules, so a run's
+    own declarations could otherwise make the task's acceptance entries
+    undeclarable: a run joint riding the same child part under a different
+    id, or a run coupling driving a joint id the task's poses and sweeps
+    assign. The task owns the acceptance mechanism exactly as it owns its
+    constraints and CHECKS, so the conflicting run entries are withdrawn —
+    a recorded generation with a recorded reason, never an erasure — before
+    the task's are installed.
+    """
+    task_ids = {joint.id for joint in task.joints}
+    child_parts = {
+        str(joint.entry["child"]).split(":", 1)[0]
+        for joint in task.joints
+        if joint.entry.get("child")
+    }
+    joints = cad.joint_set()
+    for entry in joints.state().active:
+        if entry.id in task_ids:
+            continue
+        if entry.anchors[1].part in child_parts:
+            joints.withdraw(
+                entry.id,
+                "superseded by the bench task's acceptance joint over the same part",
+                op_id=f"bench-motion-{uuid.uuid4().hex}",
+            )
+    bound: set[str] = set()
+    for pose in task.poses:
+        bound |= set(cast("Mapping[str, Any]", pose.entry.get("joints", {})))
+    for check in task.motion_checks:
+        bound |= set(cast("Mapping[str, Any]", check.entry.get("sweep", {})))
+    if not bound:
+        return
+    couplings = cad.coupling_set()
+    for coupling in couplings.state().active:
+        if coupling.child in bound:
+            couplings.withdraw(
+                coupling.id,
+                "superseded by the bench task's acceptance spec, which assigns "
+                f"joint {coupling.child} as a free parameter",
+                op_id=f"bench-motion-{uuid.uuid4().hex}",
+            )
+
+
+def _validate_motion(
+    cad: CadOps, task: BenchTask
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+    """Install the task's declared mechanism and evaluate it through the engine.
+
+    ``KINEMATICS.md`` §6 (bench): joints, named poses and motion checks in
+    ``task.json`` are graded *through the same engine path* ``check_motion``
+    uses — :class:`~hephaestus.core.motion.MotionEvaluator` for the status'
+    per-joint/per-pose outcomes and
+    :class:`~hephaestus.core.motion.SweepEvaluator` for the sampled checks —
+    never from anything the run reported about its own mechanism. The entries
+    are the task's own, installed over whatever the run declared, exactly as
+    ``_validate_constraints`` installs the task's mates (and BEFORE it runs,
+    because a pose-bound constraint evaluates at the pose ids installed
+    here).
+
+    Every judged state gets its own reason token (``VALIDATION.md`` §1: a
+    check fails under the name of what actually failed): an unresolvable
+    joint or pose names the engine's reason, a falsified sweep carries the
+    worst sample's measured value, an off-expect verdict names both
+    spellings, and a §4 wall-clock ceiling is ``motion_timeout`` with the
+    evaluated-sample count — partial evidence, never a silent pass. An entry
+    the project refuses to accept is ``motion_undeclarable``, charged to the
+    run: the Tier 1 meta-test proves every task's entries declare cleanly on
+    a fresh project, so a live refusal reflects run-declared state the
+    withdrawal pass above could not clear, which the run owns.
+    """
+    if not (task.joints or task.poses or task.motion_checks):
+        return [], [], [], []
+    reasons: list[str] = []
+    joint_records: list[dict[str, Any]] = []
+    pose_records: list[dict[str, Any]] = []
+    check_records: list[dict[str, Any]] = []
+    _withdraw_conflicting_mechanism(cad, task)
+
+    installed_joints: list[str] = []
+    installed_poses: list[str] = []
+    installed_checks: list[str] = []
+    installs = (
+        (task.joints, cad.joint_set(), "joint", joint_records, installed_joints),
+        (task.poses, cad.pose_set(), "pose", pose_records, installed_poses),
+        (
+            task.motion_checks,
+            cad.motion_check_set(),
+            "motion_check",
+            check_records,
+            installed_checks,
+        ),
+    )
+    for requirements, entry_set, noun, records, installed in installs:
+        declared = entry_set.state().by_id
+        for requirement in requirements:
+            record: dict[str, Any] = {"requirement": requirement.to_json()}
+            try:
+                _install_kinematic_entry(
+                    entry_set.declare, entry_set.update, declared, requirement.declaration()
+                )
+            except Exception as exc:
+                record["error"] = f"{type(exc).__name__}: {exc}"
+                reasons.append(f"motion_undeclarable:{noun}:{requirement.id}")
+                records.append(record)
+                continue
+            installed.append(requirement.id)
+            records.append(record)
+
+    status = cad.motion_evaluator().evaluate(record=False)
+    joint_outcomes = {outcome.id: outcome for outcome in status.joints}
+    pose_outcomes = {outcome.id: outcome for outcome in status.poses}
+    for record in joint_records:
+        requirement_id = str(cast("Mapping[str, Any]", record["requirement"])["entry"]["id"])
+        outcome = joint_outcomes.get(requirement_id)
+        if requirement_id not in installed_joints or outcome is None:
+            continue  # already charged as motion_undeclarable above
+        record["outcome"] = outcome.to_json()
+        if outcome.state != "resolved":
+            reasons.append(f"motion_joint_unresolvable:{requirement_id}:{outcome.reason}")
+    for record in pose_records:
+        requirement_id = str(cast("Mapping[str, Any]", record["requirement"])["entry"]["id"])
+        outcome = pose_outcomes.get(requirement_id)
+        if requirement_id not in installed_poses or outcome is None:
+            continue
+        record["outcome"] = outcome.to_json()
+        if outcome.state != "resolved":
+            reasons.append(f"motion_pose_unresolvable:{requirement_id}:{outcome.reason}")
+
+    if installed_checks:
+        try:
+            results = cad.sweep_evaluator().evaluate(installed_checks)
+        except MotionTimeout as exc:
+            reasons.append(
+                f"motion_timeout:{exc.check_id}:{exc.samples_evaluated}/{exc.grid_total}_samples"
+            )
+            return joint_records, pose_records, check_records, reasons
+        by_id = {result.id: result for result in results}
+        expected = {requirement.id: requirement.expect for requirement in task.motion_checks}
+        for record in check_records:
+            requirement_id = str(cast("Mapping[str, Any]", record["requirement"])["entry"]["id"])
+            result = by_id.get(requirement_id)
+            if requirement_id not in installed_checks or result is None:
+                continue
+            record["result"] = result.to_json()
+            want = expected[requirement_id]
+            if result.verdict == want:
+                continue
+            if result.verdict == "unresolvable":
+                # Never conflated with a violation: nothing was measured at all.
+                reasons.append(f"motion_check_unresolvable:{requirement_id}:{result.reason}")
+            elif result.verdict == "violated":
+                measured = None if result.worst is None else result.worst.measured
+                reasons.append(f"motion_check_violated:{requirement_id}:{measured}")
+            else:
+                reasons.append(f"motion_check_state:{requirement_id}:{result.verdict}!={want}")
+    return joint_records, pose_records, check_records, reasons
+
+
 def _validate_constraints(cad: CadOps, task: BenchTask) -> tuple[list[dict[str, Any]], list[str]]:
     """Declare the task's constraints and evaluate them through the engine path.
 
@@ -748,6 +943,9 @@ def grade(
     drawings: list[dict[str, Any]] = []
     metadata: list[dict[str, Any]] = []
     constraints: list[dict[str, Any]] = []
+    joints: list[dict[str, Any]] = []
+    poses: list[dict[str, Any]] = []
+    motion_checks: list[dict[str, Any]] = []
     graded = False
     with open_cad(project_root) as cad:
         layout = cad.layout
@@ -796,6 +994,10 @@ def grade(
             metadata_records, metadata_reasons = _validate_metadata(cad, task, builds)
             metadata = metadata_records
             reasons.extend(metadata_reasons)
+            # Motion BEFORE constraints on purpose: a pose-bound constraint
+            # (KINEMATICS.md §3) evaluates at pose ids the motion pass installs.
+            joints, poses, motion_checks, motion_reasons = _validate_motion(cad, task)
+            reasons.extend(motion_reasons)
             constraint_records, constraint_reasons = _validate_constraints(cad, task)
             constraints = constraint_records
             reasons.extend(constraint_reasons)
@@ -822,6 +1024,9 @@ def grade(
         drawings=tuple(drawings),
         metadata=tuple(metadata),
         constraints=tuple(constraints),
+        joints=tuple(joints),
+        poses=tuple(poses),
+        motion_checks=tuple(motion_checks),
         tool_calls=tool_calls,
         budget_tool_calls=task.budget_tool_calls,
         within_budget=within_budget,

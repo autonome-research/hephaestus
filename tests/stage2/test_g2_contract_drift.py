@@ -348,8 +348,10 @@ def test_committed_schema_files_match_the_declared_surface() -> None:
     # constraint quartet (Stage 8C); +7 for the KINEMATICS.md Stage 9A
     # kinematics tools (the joint and pose quartets plus check_motion, §6);
     # +3 for the KINEMATICS.md Stage 9B motion-check triplet
-    # (declare_motion_check / update_motion_check / read_motion_checks, §4/§6).
-    assert len(TOOL_NAMES) == 50
+    # (declare_motion_check / update_motion_check / read_motion_checks, §4/§6);
+    # +3 for the KINEMATICS.md Stage 9C coupling triplet
+    # (declare_coupling / update_coupling / read_couplings, §5/§6).
+    assert len(TOOL_NAMES) == 53
 
 
 def test_sequential_declarations_cover_the_normative_list() -> None:
@@ -423,10 +425,10 @@ def test_orchestrator_only_families_are_declared_orchestrator_only() -> None:
         "read_constraints",
         "check_assembly",
     }
-    # KINEMATICS.md Stage 9A/9B (§6) applies the 8C quartet decision
-    # unchanged: the joint, pose and motion-check sets are canonical-pipeline
-    # surfaces ("part + orchestrator profiles"), for exactly the constraint
-    # family's reasons.
+    # KINEMATICS.md Stage 9A/9B/9C (§6) applies the 8C quartet decision
+    # unchanged: the joint, pose, motion-check and coupling sets are
+    # canonical-pipeline surfaces ("part + orchestrator profiles"), for
+    # exactly the constraint family's reasons.
     kinematics_family = {
         "declare_joint",
         "update_joint",
@@ -438,6 +440,9 @@ def test_orchestrator_only_families_are_declared_orchestrator_only() -> None:
         "update_motion_check",
         "read_motion_checks",
         "check_motion",
+        "declare_coupling",
+        "update_coupling",
+        "read_couplings",
     }
     for name in TOOL_NAMES:
         profiles = set(tools_decl.get_tool(name).profiles)

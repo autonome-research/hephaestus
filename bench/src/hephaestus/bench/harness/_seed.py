@@ -145,9 +145,22 @@ def apply_solution(
     """Overlay ``corpus/solutions/<task>`` onto a seeded project.
 
     The overlay is an ordinary partial project tree (``globals.py``,
-    ``parts/*.py``, ``checks/*.py``) plus an optional ``params.json`` of the form
-    ``{"project": {...}, "part": {"<name>": {...}}}`` applied through the real
-    ``set_params`` path (that is the whole solution for ``param-retune``).
+    ``parts/*.py``, ``checks/*.py``) plus two optional declaration files applied
+    through the same real ``CadOps`` paths a run's tool calls take:
+
+    ``params.json``
+        ``{"project": {...}, "part": {"<name>": {...}}}`` through ``set_params``
+        (that is the whole solution for ``param-retune``).
+    ``kinematics.json``
+        ``{"joints": [...], "couplings": [...], "poses": [...],
+        "motion_checks": [...]}`` through the ``KINEMATICS.md`` §6 declare
+        tools (Stage 9C, corpus v3). Joints and couplings are generational
+        ledger state, not files, so a mechanism task's reference solution can
+        only declare them the way a run would — and a coupling is deliberately
+        declarable HERE and not by the task's acceptance: the acceptance
+        sweeps only free parameters, so whether the run's own transmission
+        claim really moves the driven part is exactly what its motion checks
+        measure (a solution that declares no coupling fails the reach).
     """
     # Reference solutions are per *task*, not per spec variant: both splits of a
     # task are the same design and share one reference implementation.
@@ -161,7 +174,7 @@ def apply_solution(
         if item.is_dir():
             (project_root / rel).mkdir(parents=True, exist_ok=True)
             continue
-        if rel.name == "params.json":
+        if rel.name in ("params.json", "kinematics.json"):
             continue
         (project_root / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(item, project_root / rel)
@@ -172,7 +185,64 @@ def apply_solution(
         if not isinstance(raw, dict):
             raise ValueError(f"{params_path}: params must be a JSON object")
         applied["params"] = _apply_params(project_root, cast("dict[str, Any]", raw))
+    kinematics_path = source / "kinematics.json"
+    if kinematics_path.is_file():
+        raw_kinematics = json.loads(kinematics_path.read_text(encoding="utf-8"))
+        if not isinstance(raw_kinematics, dict):
+            raise ValueError(f"{kinematics_path}: kinematics must be a JSON object")
+        applied["kinematics"] = _apply_kinematics(
+            project_root, cast("dict[str, Any]", raw_kinematics)
+        )
     return applied
+
+
+#: ``kinematics.json`` sections in declaration order: joints before the
+#: couplings that reference them, both before any pose or motion check that
+#: would be validated against the coupled-child rule (``KINEMATICS.md`` §5).
+_KINEMATIC_SECTIONS: tuple[str, ...] = ("joints", "couplings", "poses", "motion_checks")
+
+
+def _apply_kinematics(project_root: Path, spec: Mapping[str, Any]) -> dict[str, Any]:
+    """Apply a ``kinematics.json`` overlay through the real declare tools.
+
+    ``KINEMATICS.md`` §6 (Stage 9C, corpus v3): a mechanism task's reference
+    solution declares joints, couplings, poses and motion checks exactly as a
+    run would — through ``CadOps.declare_joint`` / ``declare_coupling`` /
+    ``declare_pose`` / ``declare_motion_check``, with the set's own validation
+    (compelled provenance, the forest rule, the one-driver and cycle rules)
+    refusing a malformed solution loudly at apply time rather than as a
+    mysterious grade. The section set is closed: an unknown key is an error,
+    never silently skipped.
+    """
+    unknown = sorted(set(spec) - set(_KINEMATIC_SECTIONS))
+    if unknown:
+        raise ValueError(
+            f"kinematics.json: unknown section(s) {unknown} "
+            f"(it takes: {', '.join(_KINEMATIC_SECTIONS)})"
+        )
+    outcome: dict[str, Any] = {}
+    with open_cad(project_root) as cad:
+        declare: Mapping[str, Any] = {
+            "joints": cad.declare_joint,
+            "couplings": cad.declare_coupling,
+            "poses": cad.declare_pose,
+            "motion_checks": cad.declare_motion_check,
+        }
+        for section in _KINEMATIC_SECTIONS:
+            entries = spec.get(section)
+            if entries is None:
+                continue
+            if not isinstance(entries, list):
+                raise ValueError(f"kinematics.json: {section} must be a list of entries")
+            declared: list[str] = []
+            for entry in cast("list[Any]", entries):
+                if not isinstance(entry, dict):
+                    raise ValueError(f"kinematics.json: {section} entries must be objects")
+                entry_map = cast("Mapping[str, Any]", entry)
+                declare[section](entry_map, op_id=f"bench-kinematics-{uuid.uuid4().hex}")
+                declared.append(str(entry_map.get("id")))
+            outcome[section] = declared
+    return outcome
 
 
 def _apply_params(project_root: Path, spec: Mapping[str, Any]) -> dict[str, Any]:

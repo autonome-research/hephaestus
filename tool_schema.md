@@ -802,7 +802,7 @@ the *last* evaluation, with `stale` naming parts rebuilt since it was taken, and
 review a `violated` or `unresolvable` constraint is a blocking finding **by rule**
 (`VALIDATION.md` §5).
 
-## Kinematics (declared joints, poses and motion checks — `KINEMATICS.md` §1/§3/§4, Stage 9A/9B)
+## Kinematics (declared joints, poses, motion checks and couplings — `KINEMATICS.md` §1/§3/§4/§5, Stage 9A/9B/9C)
 
 ### declare_joint / update_joint / read_joints
 ```
@@ -993,6 +993,65 @@ was taken (a part only a sweep measures counts too). Reading never measures;
 `check_motion` is the only thing that does. Swept-envelope publication and the
 posed-scene render are engine/reviewer surfaces, not tool results
 (`KINEMATICS.md` §6).
+
+### declare_coupling / update_coupling / read_couplings
+```
+declare_coupling(id: str, parent: str, child: str,
+                 ratio: number, offset: number = 0.0,
+                 provenance: {requirement: str|null, assumed: bool|null,
+                              reason: str|null},
+                 note: str|null = null)
+    -> {status: "ok", generation, artifact_ref, change, entries,
+        motion, motion_ref}
+update_coupling(id: str, patch: {...entry fields, withdrawn: bool|null},
+                reason: str)
+    -> {status: "ok", generation, artifact_ref, change, entries,
+        motion, motion_ref}
+read_couplings()
+    -> {status: "ok", generation, artifact_ref, change, entries,
+        motion, motion_ref}
+```
+A **coupling** (`KINEMATICS.md` §5, Stage 9C) declares the linear
+relationship `child = ratio * parent + offset` between two joint parameters —
+the transmission vocabulary (gear pairs, lead screws, belt reductions)
+without gear-tooth geometry. `parent` and `child` are JOINT ids, not anchors:
+a coupling relates parameters, and the joint forest already relates the
+parts. The coupling set is the fourth rider on the same ledger pattern as the
+joint, pose and motion-check sets, with the same lifecycle contract
+(`invalid_coupling` / `unknown_coupling`, withdrawal as a kept generation,
+compelled provenance, nothing erased).
+
+Both joints must be declared, unwithdrawn, and scalar-parameterized at
+declaration (`fixed` has no parameter to couple; `cylindrical`'s pair has no
+scalar coupling form) — refused `invalid_coupling` otherwise, as is a zero
+`ratio` (a child pinned to a constant is a pose binding wearing a coupling's
+name). **A coupled child has one driver**: a second coupling naming an
+already-coupled child is refused naming the first. **A coupling cycle is
+refused `cyclic_coupling` at declaration with the cycle named**, a
+self-coupling being the length-1 case; an update is revalidated as a whole,
+so a re-childed coupling cannot close a cycle a declaration could not.
+
+Coupled parameters are DEPENDENT: `declare_pose` and `declare_motion_check`
+refuse an entry that assigns or sweeps a coupled child directly, naming the
+coupling (§5: a pose or sweep assigns only free parameters). At evaluation,
+coupled values are **derived before limit checks** wherever parameter
+assignments are resolved — posed constraints, `check_motion`'s status and
+sweep grids, `m.at_pose`, the posed-scene render — composing through the
+same forest evaluation (chains compose driver-first; a parent omitted from a
+pose sits at zero, so its children derive from `0.0`); a derived value
+outside the child's declared limits is `joint_limit_exceeded` naming the
+coupling id in its detail — an evaluation never silently clamps. A coupling
+declared *after* a pose or sweep that binds its child is not re-refused (the
+`orphaned_pose` philosophy): the stored entry stays readable and editable,
+and its evaluation reports the dependency by name.
+
+`read_couplings` returns every entry — **withdrawn ones included with their
+recorded reasons** (generational state is honest only if every generation
+stays readable) — plus the latest projected `MotionStatus` as evidence
+already taken (`motion: null` meaning never evaluated, which is not a pass).
+Reading never measures; withdrawing a coupling frees its child from the next
+evaluation on. The operator-side coupling table is `heph motion` (`--json`
+carries `coupling_generation` + `couplings`), per `KINEMATICS.md` §6.
 
 ## Knowledge and registries
 

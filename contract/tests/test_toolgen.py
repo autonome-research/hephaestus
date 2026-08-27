@@ -95,18 +95,19 @@ def test_no_drift_between_declaration_and_tool_schema_md() -> None:
     assert decl.isdisjoint(excluded)
 
 
-def test_full_tool_surface_is_47_tools() -> None:
+def test_full_tool_surface_is_53_tools() -> None:
     # 27 Stage-2 tools, the Stage 2V requirement-ledger family, the Stage 6
     # manufacturing tools (run_dfm, generate_drawing, generate_doc), the
     # Stage 8A read-only reference pair (INGEST.md §2), the Stage 8B
     # comparison tool (COMPARE.md §2), the Stage 8C constraint quartet
     # (ASSEMBLY.md §3), the KINEMATICS.md Stage 9A kinematics tools (the
-    # joint and pose quartets plus check_motion, §6), and the KINEMATICS.md
+    # joint and pose quartets plus check_motion, §6), the KINEMATICS.md
     # Stage 9B motion-check triplet (declare_motion_check /
-    # update_motion_check / read_motion_checks, §4/§6) — declared additions,
-    # not drift.
-    assert len(tools_decl.tool_names()) == 50
-    assert len(set(tools_decl.tool_names())) == 50
+    # update_motion_check / read_motion_checks, §4/§6), and the KINEMATICS.md
+    # Stage 9C coupling triplet (declare_coupling / update_coupling /
+    # read_couplings, §5/§6) — declared additions, not drift.
+    assert len(tools_decl.tool_names()) == 53
+    assert len(set(tools_decl.tool_names())) == 53
     assert {"record_requirements", "read_requirements", "update_requirement"} <= set(
         tools_decl.tool_names()
     )
@@ -131,6 +132,12 @@ def test_full_tool_surface_is_47_tools() -> None:
         "update_pose",
         "read_poses",
         "check_motion",
+    } <= set(tools_decl.tool_names())
+    # KINEMATICS.md Stage 9C (§5/§6): the coupling set rides the same decision.
+    assert {
+        "declare_coupling",
+        "update_coupling",
+        "read_couplings",
     } <= set(tools_decl.tool_names())
 
 

@@ -1,18 +1,20 @@
-"""The ``KINEMATICS.md`` §6 kinematics tools (Stage 9A/9B), as thin ops over the engine.
+"""The ``KINEMATICS.md`` §6 kinematics tools (Stage 9A/9B/9C), as thin ops over the engine.
 
 ``declare_joint`` / ``update_joint`` / ``read_joints``, ``declare_pose`` /
 ``update_pose`` / ``read_poses``, ``declare_motion_check`` /
-``update_motion_check`` / ``read_motion_checks``, and ``check_motion``.
+``update_motion_check`` / ``read_motion_checks``, ``check_motion``, and the
+Stage 9C ``declare_coupling`` / ``update_coupling`` / ``read_couplings``.
 Everything these do lives one layer down and is deliberately not
 reimplemented here (the ``_assembly`` precedent, applied verbatim):
 
 * :class:`~hephaestus.core.project_store.kinematics.JointSet`,
-  :class:`~hephaestus.core.project_store.kinematics.PoseSet` and
-  :class:`~hephaestus.core.project_store.kinematics.MotionCheckSet` own the
+  :class:`~hephaestus.core.project_store.kinematics.PoseSet`,
+  :class:`~hephaestus.core.project_store.kinematics.MotionCheckSet` and
+  :class:`~hephaestus.core.project_store.kinematics.CouplingSet` own the
   generational state — validation, the compelled provenance, the forest check,
-  the §4 grid-total cap, the CAS swap under the project-config lock, and the
-  idempotent WAL write keyed on the invocation id (``KINEMATICS.md``
-  §1/§3/§4, the ledger's pattern);
+  the §4 grid-total cap, the §5 one-driver and cycle rules, the CAS swap
+  under the project-config lock, and the idempotent WAL write keyed on the
+  invocation id (``KINEMATICS.md`` §1/§3/§4/§5, the ledger's pattern);
 * :class:`~hephaestus.core.motion.MotionEvaluator` owns anchor and frame
   resolution against the parts' current build artifacts and the
   ``resolved | unresolvable`` naming of both ``MotionStatus`` sections (§2);
@@ -60,6 +62,9 @@ from hephaestus.core.motion import (
     check_motion_with_results,
 )
 from hephaestus.core.project_store.kinematics import (
+    CouplingError,
+    CouplingSet,
+    CouplingState,
     JointError,
     JointSet,
     JointState,
@@ -78,15 +83,17 @@ from ._base import CadOpError, CadOpsState
 __all__ = ["MotionOps"]
 
 
-def _refusal(exc: JointError | PoseError | MotionCheckError) -> CadOpError:
+def _refusal(exc: JointError | PoseError | MotionCheckError | CouplingError) -> CadOpError:
     """The engine's stable refusal token, carried through unchanged.
 
     ``JointError.reason`` / ``PoseError.reason`` / ``MotionCheckError.reason``
-    are already the machine tokens the tool contract documents
-    (``invalid_joint`` / ``unknown_joint`` / ``cyclic_joint_graph``,
-    ``invalid_pose`` / ``unknown_pose``, ``invalid_motion_check`` /
-    ``unknown_motion_check``), so the tool layer forwards them rather than
-    re-deciding what a refusal means.
+    / ``CouplingError.reason`` are already the machine tokens the tool
+    contract documents (``invalid_joint`` / ``unknown_joint`` /
+    ``cyclic_joint_graph``, ``invalid_pose`` / ``unknown_pose``,
+    ``invalid_motion_check`` / ``unknown_motion_check``,
+    ``invalid_coupling`` / ``unknown_coupling`` / ``cyclic_coupling``), so
+    the tool layer forwards them rather than re-deciding what a refusal
+    means.
     """
     return CadOpError(exc.reason, exc.message)
 
@@ -113,7 +120,7 @@ def _clean(data: Mapping[str, Any]) -> dict[str, JSONValue]:
 
 
 class MotionOps(CadOpsState):
-    """The ten ``KINEMATICS.md`` §6 kinematics tools (Stage 9A/9B)."""
+    """The thirteen ``KINEMATICS.md`` §6 kinematics tools (Stage 9A/9B/9C)."""
 
     # -- seams -------------------------------------------------------------
 
@@ -136,6 +143,10 @@ class MotionOps(CadOpsState):
     def motion_check_set(self) -> MotionCheckSet:
         """The project's motion-check set (§4), bindings checked against the joints."""
         return MotionCheckSet(self.layout, self._store, self.joint_set())
+
+    def coupling_set(self) -> CouplingSet:
+        """The project's coupling set (§5), joint refs checked against the joints."""
+        return CouplingSet(self.layout, self._store, self.joint_set())
 
     def sweep_evaluator(self) -> SweepEvaluator:
         """The §4 sweep evaluator — what ``check_motion`` and the §5 reviewer run."""
@@ -282,6 +293,52 @@ class MotionOps(CadOpsState):
             raise _refusal(exc) from exc
         return self._motion_check_result(state)
 
+    # -- coupling writes (KINEMATICS.md §5, Stage 9C) ------------------------
+
+    def declare_coupling(self, entry: Mapping[str, Any], *, op_id: str) -> dict[str, JSONValue]:
+        """Declare one coupling; advances one generation.
+
+        A repeated id is refused rather than replaced (revising is
+        ``update_coupling``, which records why); the set refuses an unknown,
+        withdrawn or scalar-less joint on either side, a zero ratio, a second
+        driver for an already-coupled child, and a cycle (``cyclic_coupling``
+        with the cycle named) — nothing written on any refusal.
+        """
+        try:
+            state = self.coupling_set().declare(_clean(entry), op_id=op_id)
+        except CouplingError as exc:
+            raise _refusal(exc) from exc
+        return self._coupling_result(state)
+
+    def update_coupling(
+        self, coupling_id: str, patch: Mapping[str, Any], reason: str, *, op_id: str
+    ) -> dict[str, JSONValue]:
+        """Revise **or withdraw** one coupling; advances one generation.
+
+        ``patch = {"withdrawn": true}`` is the withdrawal path: one act with
+        one recorded reason. The child joint becomes a FREE parameter again
+        from the next evaluation on, while every earlier generation keeps
+        saying what was claimed — nothing erased, the 8C rule.
+        """
+        cleaned = _clean(patch)
+        withdrawn = cleaned.pop("withdrawn", None)
+        couplings = self.coupling_set()
+        try:
+            if withdrawn is True:
+                if cleaned:
+                    raise CadOpError(
+                        "invalid_coupling",
+                        f"coupling {coupling_id}: a withdrawal records only its reason — "
+                        f"patch also carries {sorted(cleaned)}; withdraw it, then declare "
+                        "the replacement, so the two acts stay separately readable",
+                    )
+                state = couplings.withdraw(coupling_id, reason, op_id=op_id)
+            else:
+                state = couplings.update(coupling_id, cleaned, reason, op_id=op_id)
+        except CouplingError as exc:
+            raise _refusal(exc) from exc
+        return self._coupling_result(state)
+
     # -- reads -------------------------------------------------------------
 
     def read_joints(self) -> dict[str, JSONValue]:
@@ -295,6 +352,15 @@ class MotionOps(CadOpsState):
     def read_motion_checks(self) -> dict[str, JSONValue]:
         """The current check generation plus the latest sweep results (nothing measured)."""
         return self._motion_check_result(self.motion_check_set().state())
+
+    def read_couplings(self) -> dict[str, JSONValue]:
+        """The current coupling generation plus the latest evaluation (nothing measured).
+
+        Withdrawn entries come back with their recorded reasons
+        (``KINEMATICS.md`` §6: generational state is honest only if every
+        generation stays readable).
+        """
+        return self._coupling_result(self.coupling_set().state())
 
     def check_motion(self, ids: Sequence[str] | None = None) -> dict[str, JSONValue]:
         """Evaluate now (``KINEMATICS.md`` §2/§4): ``MotionStatus`` + sweep results.
@@ -353,6 +419,27 @@ class MotionOps(CadOpsState):
 
     def _pose_result(self, state: PoseState) -> dict[str, JSONValue]:
         """The result all three pose-set tools share."""
+        evaluator = self.motion_evaluator()
+        status = evaluator.projected()
+        return {
+            "status": "ok",
+            "generation": state.generation,
+            "artifact_ref": state.artifact_ref,
+            "change": None if state.change is None else cast("JSONValue", state.change.to_json()),
+            "entries": [cast("JSONValue", entry.to_json()) for entry in state.entries],
+            "motion": None if status is None else cast("JSONValue", status.to_json()),
+            "motion_ref": evaluator.projected_ref(),
+        }
+
+    def _coupling_result(self, state: CouplingState) -> dict[str, JSONValue]:
+        """The result all three coupling tools share (the pose-set shape).
+
+        The latest motion evaluation rides along as *evidence already taken*:
+        coupled values are derived wherever poses and sweeps evaluate, so the
+        projected status is the coupling set's own downstream evidence —
+        read, never computed, and ``motion: null`` means never evaluated,
+        which is not a pass.
+        """
         evaluator = self.motion_evaluator()
         status = evaluator.projected()
         return {

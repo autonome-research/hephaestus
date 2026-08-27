@@ -1,0 +1,116 @@
+{
+  "id": "leadscrew-actuator",
+  "prompt": "Model a lead-screw linear actuator as the three parts `frame`, `screw` and `carriage`. Every interface number is already in the project's `globals.py` - read them through `hc` instead of repeating them.\n\nThe frame is a 60 mm square plate, 8 mm thick, centred on the origin (z = -4 to +4), with a 10 mm diameter screw bore straight through it on the Z axis. The screw is a plain 9.8 mm diameter pilot cylinder, 30 mm long, standing in that bore with its lower end flush with the plate underside - 0.1 mm radial air all round. The carriage is a 12 mm square block, 6 mm tall, riding beside the screw with its centre on the X axis at x = 18, floating 0.5 mm above the plate top.\n\nTag the kinematic interfaces: the frame's bore wall as `screw_bore` and its top face as `travel_face`; the screw's cylindrical surface as `screw_pilot`; the carriage's underside as `guide_foot` and its top face as `nose`. Motion checking addresses the parts through exactly those names.\n\nThen declare the mechanism: a revolute joint `j-motor` (parent `frame:screw_bore`, child `screw:screw_pilot`, travel 0 to 3600 degrees - ten turns), a prismatic joint `j-carriage` (parent `frame:travel_face`, child `carriage:guide_foot`, travel 0 to 24 mm), and the coupling `cp-leadscrew` driving the carriage from the motor at the metric lead of 2 mm per revolution (ratio 2/360 mm per degree, offset 0). The carriage is then a dependent parameter - poses and sweeps assign only the motor. Evaluate the declared mechanism with check_motion once it is in place.\n\nBuild all three parts and export each as STEP when the geometry is right.",
+  "budget_tool_calls": 24,
+  "required_checks": [
+    "leadscrew_actuator"
+  ],
+  "export_requirements": [
+    {
+      "part": "frame",
+      "format": "step",
+      "layout": "as_built",
+      "min_bytes": 1024
+    },
+    {
+      "part": "screw",
+      "format": "step",
+      "layout": "as_built",
+      "min_bytes": 1024
+    },
+    {
+      "part": "carriage",
+      "format": "step",
+      "layout": "as_built",
+      "min_bytes": 1024
+    }
+  ],
+  "render_requirements": [],
+  "constraint_requirements": [
+    {
+      "entry": {
+        "id": "c-screw-register",
+        "kind": "concentric",
+        "a": "frame:screw_bore",
+        "b": "screw:screw_pilot",
+        "tol_mm": 0.05,
+        "note": "the screw pilot runs on the bore axis: one nut line, no wobble"
+      },
+      "expect": "satisfied"
+    }
+  ],
+  "joint_requirements": [
+    {
+      "entry": {
+        "id": "j-motor",
+        "kind": "revolute",
+        "parent": "frame:screw_bore",
+        "child": "screw:screw_pilot",
+        "limits": {
+          "min": 0.0,
+          "max": 3600.0
+        },
+        "note": "ten turns of motor travel end to end (KINEMATICS.md §1)"
+      }
+    },
+    {
+      "entry": {
+        "id": "j-carriage",
+        "kind": "prismatic",
+        "parent": "frame:travel_face",
+        "child": "carriage:guide_foot",
+        "limits": {
+          "min": 0.0,
+          "max": 24.0
+        },
+        "note": "carriage travel window: the 20 mm working stroke plus overtravel margin to the hard stop"
+      }
+    }
+  ],
+  "motion_check_requirements": [
+    {
+      "entry": {
+        "id": "mc-stroke-reach",
+        "kind": "reach",
+        "anchor": "carriage:nose",
+        "target_point_mm": [
+          18.0,
+          0.0,
+          30.5
+        ],
+        "tol_mm": 0.25,
+        "sweep": {
+          "j-motor": {
+            "from": 0.0,
+            "to": 3600.0
+          }
+        },
+        "samples": 41,
+        "note": "sweeping only the FREE motor parameter, the coupling must carry the nose to the top-of-stroke handoff point (zero nose at z 10.5 + 20 mm stroke): a run that never declares cp-leadscrew leaves the carriage parked at zero and misses by the whole stroke"
+      },
+      "expect": "satisfied"
+    },
+    {
+      "entry": {
+        "id": "mc-stroke-clear",
+        "kind": "sweep_no_interference",
+        "a": "carriage",
+        "b": "frame",
+        "sweep": {
+          "j-motor": {
+            "from": 0.0,
+            "to": 3600.0
+          }
+        },
+        "samples": 41,
+        "note": "the carriage never runs into the frame anywhere over the stroke"
+      },
+      "expect": "holds_at_samples"
+    }
+  ],
+  "protected_paths": [],
+  "notes": "Difficulty 3. Corpus v3 (2026-08-27, KINEMATICS.md §6 Stage 9C): the lead-screw mechanism task - the acceptance centrepiece is a declared coupling (child = ratio * parent + offset, §5) graded through the engine motion path. The task owns the joints (travel limits included) and the two motion checks, installed over whatever the run declared, exactly as constraint acceptance already works; the COUPLING is deliberately the run's own to declare - the prompt names cp-leadscrew and the 2 mm metric lead - because the reach check sweeps only the free motor parameter: without the run's coupling the carriage never moves and mc-stroke-reach fails as not_reached_at_samples by the whole stroke, so the acceptance measurably exercises the transmission rather than trusting the declaration. mc-stroke-clear sweeps the same stroke for non-interference; c-screw-register keeps the 8C fit vocabulary on the screw/bore register. CHECKS keep the single-part facts (envelopes, the 0.1 mm pilot air, the 0.5 mm float gap, sealed topology with the frame's through-bore genus 1). Sampling: 41 samples over 0..3600 deg is a 0.5 mm carriage step - the reach target is hit exactly at the endpoint sample and the grid total is far under the §4 cap. Budget derivation (measured policy, VALIDATION.md §7): no archived observe-mode journals exist for this task yet, so only the hand-counted reference path binds - record_requirements 1, create_part 3, write_part 3, build_part 3, declare_joint 2, declare_coupling 1, check_motion 1, run_checks 1, export_part 3 = 18 calls; ceil(1.3 x 18) = 24. Recalibrate against the observed passing max after the first archived sweep, per the 2026-08-25 measured-budget policy.",
+  "dfm_requirements": [],
+  "drawing_requirements": [],
+  "metadata_requirements": []
+}
