@@ -43,6 +43,9 @@ from hephaestus.core.checks.facade import (
     ImportResolver,
     KernelOps,
     Measurement,
+    PosedContextFactory,
+    PosedPlacement,
+    SweepResolver,
     project_measurement,
 )
 from hephaestus.core.errors import (
@@ -239,14 +242,18 @@ def run_checks(
     """Evaluate every check against a fresh facade; never raises (§6).
 
     A predicate exception (including addressing errors) fails that check's
-    report entry with the error recorded as its measured value. One exception
-    is discriminated further (``COMPARE.md`` §5): an ``m.diff`` whose bounded
-    subprocess hit the wall-clock ceiling makes the check **unverifiable** —
-    the predicate was never answered, so the entry records the named
-    ``compare_timeout`` refusal (with whatever partial facts arrived) under
+    report entry with the error recorded as its measured value. Two exceptions
+    are discriminated further, the same rule twice: a measurement whose
+    bounded subprocess hit the wall-clock ceiling makes the check
+    **unverifiable** — the predicate was never answered, so the entry records
+    the named refusal (with whatever partial facts arrived) under
     ``measured.unverifiable`` instead of an ``error``. Not a pass, and not a
     crash: the report says the measurement was cut short, not that it failed.
+    The two classes are ``compare_timeout`` (``COMPARE.md`` §5, an ``m.diff``)
+    and ``motion_timeout`` (``KINEMATICS.md`` §4, an ``m.sweep`` whose grid
+    was ceiling-killed — the partial per-sample facts ride the refusal).
     """
+    from hephaestus.core.motion import MotionTimeout
     from hephaestus.core.project_compare import CompareTimeout
 
     results: dict[str, CheckResult] = {}
@@ -256,7 +263,7 @@ def run_checks(
         try:
             passed = bool(predicate(measurement))
             measured = measurement.measured_json()
-        except CompareTimeout as exc:
+        except (CompareTimeout, MotionTimeout) as exc:
             passed = False
             measured = {"unverifiable": cast("JSONValue", exc.to_json())}
         except HephaestusError as exc:
@@ -380,6 +387,9 @@ def run_bundle(
     densities: Mapping[str, float] | None = None,
     project_snapshot_ref: str | None = None,
     imports: ImportResolver | None = None,
+    at_pose: PosedContextFactory | None = None,
+    sweep: SweepResolver | None = None,
+    motion_generations: Mapping[str, int] | None = None,
 ) -> CheckReport:
     """Execute a frozen bundle's cross-part checks and build the CheckReport.
 
@@ -402,6 +412,17 @@ def run_bundle(
     2026-08-25: the corpus-v2 editing task ``flange-edit`` grades through
     project-scoped checks, which previously had no resolver at all, so the
     predicate ``COMPARE.md`` §2 promises could never run at grade time.
+
+    ``at_pose`` / ``sweep`` / ``motion_generations`` are the ``KINEMATICS.md``
+    §4 motion read surfaces, threaded on exactly the ``imports`` rule: the
+    caller that owns the run builds them over the SAME frozen snapshot
+    ``sources`` came from (§2, last bullet — never CURRENT mid-run), and when
+    they are absent a predicate calling ``m.at_pose``/``m.sweep`` keeps its
+    discriminated facade refusal. When a predicate actually resolves motion
+    state through them, the report records ``motion_generations`` (the frozen
+    joint/pose/motion-check generations) alongside ``project_snapshot_ref``,
+    so motion evidence is replayable like every other kind; a run whose
+    predicates never touch motion records none, because none governed it.
     """
     if ops is None:
         from hephaestus.core.project_compare import bounded_kernel_ops
@@ -419,16 +440,45 @@ def run_bundle(
         for name, predicate in module_checks.items():
             checks[f"{stem}:{name}"] = predicate
 
-    def _factory() -> Measurement:
-        return project_measurement(sources, ops=ops, densities=densities, imports=imports)
+    # Wrapped rather than passed through so the report can say whether motion
+    # state actually governed this run: the flag flips on invocation — a named
+    # refusal or a ceiling kill still read the frozen motion state, so they
+    # count — never on mere availability of the resolvers.
+    motion_used = False
 
+    def _at_pose(pose_id: str) -> PosedPlacement:
+        nonlocal motion_used
+        assert at_pose is not None  # guarded at facade construction below
+        motion_used = True
+        return at_pose(pose_id)
+
+    def _sweep(check_id: str) -> Mapping[str, JSONValue]:
+        nonlocal motion_used
+        assert sweep is not None  # guarded at facade construction below
+        motion_used = True
+        return sweep(check_id)
+
+    def _factory() -> Measurement:
+        return project_measurement(
+            sources,
+            ops=ops,
+            densities=densities,
+            imports=imports,
+            at_pose=None if at_pose is None else _at_pose,
+            sweep=None if sweep is None else _sweep,
+        )
+
+    results = run_checks(checks, _factory)
     return CheckReport(
         part=part,
         check_set_generation=bundle.state.generation,
         check_bundle_ref=bundle.state.bundle_ref,
         file_hashes=dict(bundle.state.files),
         project_snapshot_ref=project_snapshot_ref,
-        checks=run_checks(checks, _factory),
+        motion_generations=(
+            dict(motion_generations) if motion_used and motion_generations is not None else None
+        ),
+        checks=results,
     )
 
 
@@ -787,6 +837,9 @@ class CheckSet:
         densities: Mapping[str, float] | None = None,
         project_snapshot_ref: str | None = None,
         imports: ImportResolver | None = None,
+        at_pose: PosedContextFactory | None = None,
+        sweep: SweepResolver | None = None,
+        motion_generations: Mapping[str, int] | None = None,
     ) -> CheckReport:
         """Capture under the lock, release, then execute (architecture §3.4)."""
         bundle = self.capture()
@@ -798,4 +851,7 @@ class CheckSet:
             densities=densities,
             project_snapshot_ref=project_snapshot_ref,
             imports=imports,
+            at_pose=at_pose,
+            sweep=sweep,
+            motion_generations=motion_generations,
         )

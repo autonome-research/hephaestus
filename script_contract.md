@@ -233,6 +233,37 @@ attests to. Cross-part checks compare with `part:` targets, or the part's own
 script carries the `m.diff` threshold. The threshold is the predicate's —
 `m.diff` reports, it never decides.
 
+`m.at_pose(pose_id)` and `m.sweep(check_id)` (`KINEMATICS.md` §4; amendment
+dated 2026-08-26) are the two motion read surfaces of the **project-scope**
+facade only. `m.at_pose` returns a posed measurement context whose
+`interference`/`clearance`/`distance` measure the posed configuration — each
+addressed shape placed by the pose's forward-kinematics transform; `m.sweep`
+returns the named motion check's result record, flattened so a predicate reads
+what it asserts on (`verdict` — a spelling from the §4 closed set —
+`samples_evaluated`, `grid_total`, `worst_values`, `worst_measured`, `min_mm`,
+`tol_mm`, `miss_mm`, `reason`, `detail`, and `raw`, the whole record, which is
+what the check report records as the measured value):
+
+```python
+CHECKS = {
+    "latch_engages": lambda m: m.at_pose("p-closed").clearance(
+        "latch/part", "housing/part") <= 0.1,
+    "travel_clear": lambda m: m.sweep("mc-elbow-clear").verdict == "holds_at_samples",
+}
+```
+
+Both resolve through the engine path against the run's **frozen** snapshot and
+motion generations (`KINEMATICS.md` §2) — never CURRENT mid-run — and a run
+that resolved motion state records those generations in its report next to
+`project_snapshot_ref`. Part scripts still declare no joints, and the
+enforcement is the `m.diff` import-target rule in the other direction: the
+part-scope facade carries no motion resolvers, so a part-scope predicate
+calling either surface raises a named refusal (`kind="contract"`, citing this
+scope rule) at evaluation, recorded as that check's failure — no load-time
+inspection of predicate bodies anywhere. An in-predicate motion timeout makes
+that check **unverifiable** in the report, its partial per-sample facts
+attached, exactly as a `COMPARE.md` §5 diff timeout does.
+
 This is the load-bearing difference from the reference product: Smith's
 `Measure Overlap` verifies once, in-loop, and the evidence evaporates;
 Hephaestus checks are artifacts with history.

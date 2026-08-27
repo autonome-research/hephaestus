@@ -1,15 +1,16 @@
-"""``KINEMATICS.md`` §6 (Stage 9A): the joint and pose quartets plus ``check_motion``.
+"""``KINEMATICS.md`` §6 (Stage 9A/9B): the joint, pose and motion-check tools.
 
 Everything here is asserted through the *real* dispatcher, over real geometry,
 on the ``test_assembly_tools`` precedent — what is tested is the surface a
 model actually meets:
 
-* the seven tools on both declared profiles (part + orchestrator, the 8C
+* the ten tools on both declared profiles (part + orchestrator, the 8C
   quartet decision applied unchanged), including every refusal the contract
   names (``invalid_joint`` / ``unknown_joint`` / ``cyclic_joint_graph``,
-  ``invalid_pose`` / ``unknown_pose``) — and the ``quick_edit``/``reviewer``
-  profiles being denied, which is what keeps a reviewer from writing the
-  motion state it will be handed;
+  ``invalid_pose`` / ``unknown_pose``, ``invalid_motion_check`` /
+  ``unknown_motion_check``) — and the ``quick_edit``/``reviewer`` profiles
+  being denied, which is what keeps a reviewer from writing the motion state
+  it will be handed;
 * withdrawal as a new generation that erases nothing, and a pose that binds a
   withdrawn joint becoming ``orphaned_pose`` at evaluation rather than being
   erased or re-refused;
@@ -52,7 +53,34 @@ SEPTET: tuple[str, ...] = (
     "check_motion",
 )
 
+#: The Stage 9B motion-check triplet (KINEMATICS.md §4/§6).
+TRIPLET: tuple[str, ...] = (
+    "declare_motion_check",
+    "update_motion_check",
+    "read_motion_checks",
+)
+
+KINEMATICS_TOOLS: tuple[str, ...] = SEPTET + TRIPLET
+
 REVIEWER = Principal(session_id="rv", profile="reviewer", part=None)
+
+# The _g9b mechanism's hinge pair, restated here rather than imported (the
+# recorded rule: this suite's evidence must not shift when another suite's
+# fixture does): a Ø8 bore through a plate, a Ø7.8 pin riding it — the
+# arm/base minimum clearance over small swings is the radial air, 0.1 mm.
+BASE_SRC = """plate = Box(40.0, 40.0, 6.0)
+body = plate - Cylinder(radius=4.0, height=20.0)
+tag(body.faces().filter_by(GeomType.CYLINDER)[0], "hinge_bore")
+part.geometry = body
+"""
+
+ARM_SRC = """arm_body = Cylinder(radius=3.9, height=18.0)
+tag(arm_body.faces().filter_by(GeomType.CYLINDER)[0], "hinge_pin")
+part.geometry = arm_body
+"""
+
+#: Pin/bore radial air: the sweep's real measured worst clearance.
+RADIAL_AIR_MM = 0.1
 
 
 @pytest.fixture
@@ -120,9 +148,15 @@ def test_declared_joint_vocabulary_matches_engine() -> None:
     declaration), so the equality that keeps the tool schema honest is asserted
     rather than enforced by construction — the 8C constraint-vocabulary rule.
     """
-    from hephaestus.core.motion import MOTION_OUTCOME_STATES
+    from hephaestus.core.motion import MOTION_OUTCOME_STATES, SWEEP_VERDICTS
     from hephaestus.core.project_store.constraints import ANCHOR_PATTERN
-    from hephaestus.core.project_store.kinematics import JOINT_ID_PATTERN, JOINT_KINDS
+    from hephaestus.core.project_store.kinematics import (
+        JOINT_ID_PATTERN,
+        JOINT_KINDS,
+        MOTION_CHECK_KINDS,
+        SWEEP_SAMPLES_DEFAULT,
+        SWEEP_SAMPLES_MAX,
+    )
 
     assert tools_decl.JOINT_KINDS == JOINT_KINDS
     assert tools_decl.JOINT_ID_PATTERN == JOINT_ID_PATTERN
@@ -130,15 +164,20 @@ def test_declared_joint_vocabulary_matches_engine() -> None:
     # KINEMATICS.md §1: joint anchors are the 8C anchor grammar, exactly — the
     # schema reuses the constraint anchor pattern, and both equal the store's.
     assert tools_decl.CONSTRAINT_ANCHOR_PATTERN == ANCHOR_PATTERN
+    # KINEMATICS.md §4 (Stage 9B): the motion-check vocabulary, same rule.
+    assert tools_decl.MOTION_CHECK_KINDS == MOTION_CHECK_KINDS
+    assert tools_decl.SWEEP_VERDICTS == SWEEP_VERDICTS
+    assert tools_decl.SWEEP_SAMPLES_DEFAULT == SWEEP_SAMPLES_DEFAULT
+    assert tools_decl.SWEEP_SAMPLES_MAX == SWEEP_SAMPLES_MAX
 
 
-def test_the_septet_is_declared_on_the_canonical_pipeline_only() -> None:
-    # KINEMATICS.md Stage 9A (§6): the 8C quartet decision applied unchanged.
-    for name in SEPTET:
+def test_the_kinematics_tools_are_declared_on_the_canonical_pipeline_only() -> None:
+    # KINEMATICS.md Stage 9A/9B (§6): the 8C quartet decision applied unchanged.
+    for name in KINEMATICS_TOOLS:
         assert tools_decl.get_tool(name).profiles == ("part", "orchestrator"), name
 
 
-@pytest.mark.parametrize("tool", SEPTET)
+@pytest.mark.parametrize("tool", KINEMATICS_TOOLS)
 def test_a_reviewer_may_not_touch_the_motion_state_it_is_handed(
     project: Project, tool: str
 ) -> None:
@@ -147,7 +186,7 @@ def test_a_reviewer_may_not_touch_the_motion_state_it_is_handed(
     assert excinfo.value.reason == "scope_denied"
 
 
-@pytest.mark.parametrize("tool", SEPTET)
+@pytest.mark.parametrize("tool", KINEMATICS_TOOLS)
 def test_a_quick_edit_session_declares_no_kinematics(project: Project, tool: str) -> None:
     with pytest.raises(DispatchError) as excinfo:
         project.call(tool, {}, principal=QUICK_WIDGET)
@@ -383,3 +422,227 @@ def test_a_rebuild_of_a_forest_part_marks_the_projection_stale(project: Project)
     project.build("widget")
     read = project.call("read_joints", {})
     assert cast("dict[str, Any]", read["motion"])["stale"] == ["widget"]
+
+
+# ==========================================================================
+# Stage 9B: the motion-check triplet + the enriched check_motion result
+# (KINEMATICS.md §4/§6)
+
+
+def hinge(project: Project) -> None:
+    """A real, sweepable mechanism: pin-in-bore hinge, both parts built."""
+    (project.root / "parts" / "base.py").write_text(BASE_SRC, encoding="utf-8")
+    (project.root / "parts" / "arm.py").write_text(ARM_SRC, encoding="utf-8")
+    project.build("base", "arm")
+    project.call(
+        "declare_joint",
+        joint(
+            "j-hinge",
+            kind="revolute",
+            parent="base:hinge_bore",
+            child="arm:hinge_pin",
+            limits={"min": -90.0, "max": 90.0},
+        ),
+    )
+
+
+def motion_check(check_id: str = "mc-air", **fields: Any) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "id": check_id,
+        "kind": "sweep_clearance",
+        "a": "arm",
+        "b": "base",
+        "min_mm": 0.05,
+        "sweep": {"j-hinge": {"from": -10.0, "to": 10.0}},
+        "samples": 3,
+        "provenance": {"assumed": True, "reason": "fixture clearance claim"},
+    }
+    entry.update(fields)
+    return entry
+
+
+def test_motion_check_lifecycle_is_three_generations(project: Project) -> None:
+    hinge(project)
+    declared = project.call("declare_motion_check", motion_check())
+    assert declared["generation"] == 1
+    assert declared["artifact_ref"].startswith("artifact:motion-checks:sha256:")
+    assert declared["change"] == {
+        "kind": "declare",
+        "id": "mc-air",
+        "patch": declared["entries"][0],
+    }
+    # Never evaluated is null — which is not "the sweep holds".
+    assert declared["results"] is None and declared["results_ref"] is None
+
+    revised = project.call(
+        "update_motion_check",
+        {"id": "mc-air", "patch": {"min_mm": 0.08}, "reason": "tightened the claim"},
+    )
+    assert revised["generation"] == 2
+    assert revised["entries"][0]["min_mm"] == 0.08
+    assert revised["change"]["reason"] == "tightened the claim"
+
+    withdrawn = project.call(
+        "update_motion_check",
+        {"id": "mc-air", "patch": {"withdrawn": True}, "reason": "the claim was retired"},
+    )
+    assert withdrawn["generation"] == 3
+    # Withdrawn, not erased: the entry and its reason stay in the projection.
+    assert withdrawn["entries"][0]["withdrawn"] is True
+    assert withdrawn["entries"][0]["withdrawn_reason"] == "the claim was retired"
+
+    # …and every earlier generation is still readable through the engine.
+    history = project.cad.motion_check_set().history()
+    assert [state.generation for state in history] == [1, 2, 3]
+
+
+def test_provenance_is_compelled_on_motion_checks(project: Project) -> None:
+    hinge(project)
+    entry = motion_check()
+    del entry["provenance"]
+    with pytest.raises(DispatchError) as excinfo:
+        project.call("declare_motion_check", entry)
+    assert excinfo.value.reason == "invalid_motion_check"
+    assert "provenance" in excinfo.value.message
+    assert project.call("read_motion_checks", {})["generation"] == 0
+
+
+def test_a_sweep_over_an_undeclared_joint_is_refused(project: Project) -> None:
+    with pytest.raises(DispatchError) as excinfo:
+        project.call("declare_motion_check", motion_check(sweep={"j-ghost": {"from": 0, "to": 1}}))
+    assert excinfo.value.reason == "invalid_motion_check"
+    assert "j-ghost" in excinfo.value.message
+    assert project.call("read_motion_checks", {})["generation"] == 0
+
+
+def test_a_sweep_over_a_fixed_joint_is_refused(project: Project) -> None:
+    """A 0-DOF joint has nothing to sweep — born-unevaluatable, refused now."""
+    project.call("declare_joint", joint())  # the fixture's fixed widget/bracket mount
+    with pytest.raises(DispatchError) as excinfo:
+        project.call("declare_motion_check", motion_check(sweep={"j-mount": {"from": 0, "to": 1}}))
+    assert excinfo.value.reason == "invalid_motion_check"
+    assert "j-mount" in excinfo.value.message
+
+
+def test_the_grid_total_cap_is_refused_naming_the_computed_total(project: Project) -> None:
+    """KINEMATICS.md §4: 65 per axis is fine over one joint; 65² = 4225 is not."""
+    hinge(project)
+    project.call(
+        "declare_joint",
+        joint(
+            "j-slide",
+            kind="prismatic",
+            parent="widget",
+            child="bracket",
+            limits={"min": 0.0, "max": 20.0},
+        ),
+    )
+    with pytest.raises(DispatchError) as excinfo:
+        project.call(
+            "declare_motion_check",
+            motion_check(
+                sweep={"j-hinge": {"from": -10.0, "to": 10.0}, "j-slide": {"from": 0, "to": 5}},
+                samples=65,
+            ),
+        )
+    assert excinfo.value.reason == "invalid_motion_check"
+    assert "4225" in excinfo.value.message
+    assert project.call("read_motion_checks", {})["generation"] == 0
+
+
+def test_patching_an_unknown_motion_check_is_unknown_motion_check(project: Project) -> None:
+    with pytest.raises(DispatchError) as excinfo:
+        project.call(
+            "update_motion_check", {"id": "mc-nope", "patch": {"note": "n"}, "reason": "r"}
+        )
+    assert excinfo.value.reason == "unknown_motion_check"
+
+
+def test_a_motion_check_withdrawal_carrying_field_edits_is_refused(project: Project) -> None:
+    """Two acts, two generations: "stop claiming it" is not "the bound changed"."""
+    hinge(project)
+    project.call("declare_motion_check", motion_check())
+    with pytest.raises(DispatchError) as excinfo:
+        project.call(
+            "update_motion_check",
+            {"id": "mc-air", "patch": {"withdrawn": True, "min_mm": 9.0}, "reason": "both"},
+        )
+    assert excinfo.value.reason == "invalid_motion_check"
+    assert project.call("read_motion_checks", {})["generation"] == 1
+
+
+def test_check_motion_returns_real_sweep_results_and_projects_them(project: Project) -> None:
+    """The enriched result (§6): MotionStatus + per-check §4 records, measured.
+
+    The clearance is a real measurement over reloaded BReps placed by forward
+    kinematics: the pin/bore radial air, 0.1 mm at every swing sample.
+    """
+    hinge(project)
+    project.call("declare_motion_check", motion_check())  # min_mm 0.05 < 0.1
+    result = project.call("check_motion", {})
+    assert result["partial"] is False
+    assert joint_row(result, "j-hinge")["state"] == "resolved"
+    [record] = cast("list[Any]", result["results"])
+    assert record["id"] == "mc-air"
+    assert record["verdict"] == "holds_at_samples"
+    assert record["samples_evaluated"] == 3 and record["grid_total"] == 3
+    assert record["worst"]["measured"] == pytest.approx(RADIAL_AIR_MM, abs=1e-6)
+    assert record["min_mm"] == 0.05 and record["unit"] == "mm"
+    assert result["results_ref"].startswith("artifact:motion-results:sha256:")
+
+    # Reading never measures — it returns THIS run's projected results.
+    read = project.call("read_motion_checks", {})
+    assert read["results"] == result["results"]
+    assert read["results_ref"] == result["results_ref"]
+
+
+def test_a_falsifying_sample_is_violated_by_name(project: Project) -> None:
+    hinge(project)
+    project.call("declare_motion_check", motion_check("mc-tight", min_mm=0.5))  # > 0.1 air
+    result = project.call("check_motion", {})
+    [record] = cast("list[Any]", result["results"])
+    assert record["verdict"] == "violated"
+    assert record["worst"]["measured"] == pytest.approx(RADIAL_AIR_MM, abs=1e-6)
+
+
+def test_a_named_subset_is_evaluated_but_never_projected(project: Project) -> None:
+    """The check_assembly rule: a projection covering some checks would report
+    a set the project does not have."""
+    hinge(project)
+    project.call("declare_motion_check", motion_check())
+    project.call("declare_motion_check", motion_check("mc-tight", min_mm=0.5))
+    result = project.call("check_motion", {"ids": ["mc-air"]})
+    assert result["partial"] is True
+    assert result["artifact_ref"] is None and result["results_ref"] is None
+    assert [record["id"] for record in cast("list[Any]", result["results"])] == ["mc-air"]
+    # …and the projection still says "never evaluated".
+    assert project.call("read_motion_checks", {})["results"] is None
+
+
+def test_an_unknown_check_id_is_refused_naming_the_declared_ones(project: Project) -> None:
+    hinge(project)
+    project.call("declare_motion_check", motion_check())
+    with pytest.raises(DispatchError) as excinfo:
+        project.call("check_motion", {"ids": ["mc-ghost"]})
+    assert excinfo.value.reason == "unknown_motion_check"
+    assert "mc-air" in excinfo.value.message
+
+
+def test_a_withdrawn_check_is_never_evaluated_but_its_last_result_stays(
+    project: Project,
+) -> None:
+    hinge(project)
+    project.call("declare_motion_check", motion_check())
+    first = project.call("check_motion", {})
+    assert [r["id"] for r in cast("list[Any]", first["results"])] == ["mc-air"]
+    project.call(
+        "update_motion_check",
+        {"id": "mc-air", "patch": {"withdrawn": True}, "reason": "retired"},
+    )
+    # The last recorded result stays readable exactly as measured…
+    read = project.call("read_motion_checks", {})
+    assert read["entries"][0]["withdrawn"] is True
+    assert [r["id"] for r in cast("list[Any]", read["results"])] == ["mc-air"]
+    # …and a re-measure evaluates nothing (withdrawn: never evaluated).
+    second = project.call("check_motion", {})
+    assert second["results"] == []

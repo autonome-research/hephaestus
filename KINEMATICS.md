@@ -24,9 +24,9 @@ result form in `tool_schema.md`; and `script_contract.md` §6 (the
 project-scope measurement facade gains the two read surfaces of §4 below —
 part scripts still declare no joints; see §1). Each amendment lands with the
 sub-stage whose machinery ships it: the `VALIDATION.md` §5 and
-`script_contract.md` §6 amendments land with Stage 9B, where the reviewer
-motion surface and the `CHECKS` read surfaces ship — amending them at 9A
-would be doc drift.
+`script_contract.md` §6 amendments landed with Stage 9B on 2026-08-26,
+alongside the reviewer motion surface and the `CHECKS` read surfaces they
+document — amending either at 9A would have been doc drift.
 
 Design premise: Stage 8C made *static* fits declared, machine-checked state.
 A mechanism's defining requirements — travel, non-collision through travel,

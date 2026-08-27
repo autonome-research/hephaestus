@@ -9,7 +9,11 @@ are first-comment lines, never source).
 ``run_checks`` has two scopes. Part scope re-executes the part's own ``CHECKS``
 through the worker and publishes the run as a *preview*, so evidence is durable
 but nothing becomes current. Project scope freezes the authorized bundle, runs it
-over one coherent project snapshot, and fails closed on an invalid generation.
+over one coherent project snapshot, and fails closed on an invalid generation;
+its facade also carries the two ``KINEMATICS.md`` §4 motion read surfaces
+(``m.at_pose`` / ``m.sweep``) through a :class:`SnapshotMotionContext` bound to
+that same frozen snapshot, so a check never measures a different geometry or
+motion state than the rest of its own run.
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ from hephaestus.core.checks.template import (
     check_template,
 )
 from hephaestus.core.errors import AddressingError, InvalidCheckGenerationError, ValidationError
+from hephaestus.core.motion import SnapshotMotionContext
 from hephaestus.core.project_store.projections import SnapshotRejectedError
 from hephaestus.core.project_store.store import (
     artifact_ref as make_artifact_ref,
@@ -247,6 +252,14 @@ class CheckOps(CadOpsState):
             else:
                 resolved_ref = project_snapshot_ref
             sources, _refs = self._snapshot_sources(resolved_ref, Path(scratch))
+            # KINEMATICS.md §2 (last bullet) / §4: the m.at_pose / m.sweep
+            # read surfaces resolve against the SAME frozen snapshot the
+            # run's sources came from — the context freezes the motion
+            # generations and pins anchor resolution to the manifest's
+            # artifact refs at construction, never CURRENT mid-run.
+            motion = SnapshotMotionContext(
+                self._layout, self._store, snapshot_ref=resolved_ref, scratch=Path(scratch)
+            )
             try:
                 report = run_bundle(
                     bundle,
@@ -254,6 +267,9 @@ class CheckOps(CadOpsState):
                     part=self._layout.manifest.name,
                     project_snapshot_ref=resolved_ref,
                     imports=self._import_target_shape,
+                    at_pose=motion.at_pose,
+                    sweep=motion.sweep,
+                    motion_generations=motion.generations,
                 )
             except InvalidCheckGenerationError as exc:  # pragma: no cover - captured above
                 raise CadOpError("invalid_check_generation", exc.message) from exc

@@ -1,10 +1,26 @@
 {
   "$id": "https://hephaestus.dev/schemas/tools/check_motion.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Evaluate joints and poses against current builds; MotionStatus (checks are 9B).",
+  "description": "Evaluate joints, poses and motion checks now; MotionStatus + sweep results.",
   "parameters": {
     "additionalProperties": false,
-    "properties": {},
+    "properties": {
+      "ids": {
+        "anyOf": [
+          {
+            "items": {
+              "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      }
+    },
     "required": [],
     "type": "object"
   },
@@ -273,13 +289,238 @@
         ],
         "type": "object"
       },
+      "partial": {
+        "type": "boolean"
+      },
+      "results": {
+        "items": {
+          "additionalProperties": true,
+          "properties": {
+            "anchors": {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "properties": {
+                  "anchor": {
+                    "type": "string"
+                  },
+                  "artifact_ref": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "part": {
+                    "type": "string"
+                  },
+                  "rule": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "selector": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "anchor",
+                  "part",
+                  "selector"
+                ],
+                "type": "object"
+              },
+              "type": "object"
+            },
+            "detail": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "grid_total": {
+              "type": "integer"
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "min_mm": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "miss_mm": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "note": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "provenance": {
+              "type": "object"
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "samples_evaluated": {
+              "type": "integer"
+            },
+            "samples_per_axis": {
+              "type": "integer"
+            },
+            "sweep": {
+              "additionalProperties": {
+                "additionalProperties": false,
+                "properties": {
+                  "from": {
+                    "type": "number"
+                  },
+                  "to": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "from",
+                  "to"
+                ],
+                "type": "object"
+              },
+              "type": "object"
+            },
+            "target_point_mm": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "number"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "tol_mm": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "unit": {
+              "type": "string"
+            },
+            "verdict": {
+              "enum": [
+                "holds_at_samples",
+                "satisfied",
+                "not_reached_at_samples",
+                "violated",
+                "unresolvable"
+              ],
+              "type": "string"
+            },
+            "worst": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "properties": {
+                    "measured": {
+                      "type": "number"
+                    },
+                    "values": {
+                      "additionalProperties": {
+                        "type": "number"
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "values",
+                    "measured"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "verdict",
+            "samples_evaluated",
+            "grid_total",
+            "sweep",
+            "unit"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "results_ref": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "status": {
         "const": "ok"
       }
     },
     "required": [
       "status",
-      "motion"
+      "motion",
+      "results",
+      "partial"
     ],
     "type": "object"
   },

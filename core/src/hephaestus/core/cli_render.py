@@ -10,6 +10,16 @@ and every existing verb (build/check/lint) is untouched.
   [--focus F] [--last-good | --artifact-ref REF] [--out DIR] [--json]``
   renders the part's current build (or an explicit/last-good artifact) and
   writes one PNG per image plus a metadata JSON sidecar under ``--out``.
+- ``heph render --pose <id> [--views ...] [--out DIR] [--json]`` renders the
+  POSED SCENE (``KINEMATICS.md`` §6, Stage 9B): every joint-forest part's
+  current build placed by forward kinematics at the declared pose, published
+  as a preview whose provenance binds all source refs, the generations, and
+  the assignment (:mod:`hephaestus.core.render.posed`). ``--pose`` and a part
+  argument are mutually exclusive — a part render shows one artifact, a posed
+  scene is a relative configuration of several — as are the single-part-only
+  flags (``--channel``/``--mask-mode``/``--section-plane``/``--explode``/
+  ``--focus``/``--last-good``/``--artifact-ref``), refused by name rather
+  than silently ignored.
 - ``heph goldens --update [--dir tests/render/goldens]`` regenerates the golden
   corpus; it refuses to run on a dirty git tree (verification.md meta-test).
 
@@ -36,12 +46,19 @@ def _slug(view: str) -> str:
 
 
 def _cmd_render(args: argparse.Namespace) -> int:
+    from hephaestus.core.errors import ValidationError
     from hephaestus.core.render.inspect import RenderProject, inspect_part
 
-    part = cast("str", args.part)
+    part = cast("str | None", args.part)
+    pose = cast("str | None", args.pose)
     views = cast("list[str]", args.views) or ["iso", "+X"]
     out_dir = Path(cast("str", args.out))
     json_out = bool(args.json)
+
+    if pose is not None:
+        return _cmd_render_pose(args, pose, views, out_dir, json_out)
+    if part is None:
+        raise ValidationError("render: a part name or --pose <id> is required", kind="contract")
 
     root = find_project_root(Path.cwd())
     layout = load_project(root)
@@ -95,6 +112,77 @@ def _cmd_render(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_render_pose(
+    args: argparse.Namespace, pose: str, views: list[str], out_dir: Path, json_out: bool
+) -> int:
+    """``heph render --pose <id>``: the posed-scene preview (KINEMATICS.md §6)."""
+    from hephaestus.core.errors import ValidationError
+    from hephaestus.core.render.posed import render_posed_scene
+
+    if args.part is not None:
+        raise ValidationError(
+            f"--pose {pose!r} renders the whole posed scene; a part argument "
+            f"({cast('str', args.part)!r}) is the single-part render — pass one or the other",
+            kind="contract",
+        )
+    # The single-part flags have no posed-scene meaning yet; refused by name
+    # rather than silently ignored (the §6 surface is rgb views only).
+    part_only = (
+        ("--channel", cast("str", args.channel) != "rgb"),
+        ("--mask-mode", cast("str", args.mask_mode) != "solid"),
+        ("--section-plane", args.section_plane is not None),
+        ("--explode", float(cast("float", args.explode)) != 0.0),
+        ("--focus", args.focus is not None),
+        ("--last-good", bool(args.last_good)),
+        ("--artifact-ref", args.artifact_ref is not None),
+    )
+    offending = [flag for flag, given in part_only if given]
+    if offending:
+        raise ValidationError(
+            f"--pose renders the rgb posed scene; {', '.join(offending)} "
+            "applies only to a single-part render",
+            kind="contract",
+        )
+
+    root = find_project_root(Path.cwd())
+    layout = load_project(root)
+    store = open_store(layout)
+    result = render_posed_scene(layout, store, pose_id=pose, views=views)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    image_records: list[dict[str, object]] = []
+    for image in result.images:
+        filename = f"pose-{pose}_{_slug(image.view)}_rgb.png"
+        path = out_dir / filename
+        path.write_bytes(image.png)
+        image_records.append(
+            {
+                "view": image.view,
+                "channel": "rgb",
+                "file": str(path),
+                "render_artifact_ref": image.render_ref,
+            }
+        )
+
+    metadata: dict[str, object] = dict(result.to_json())
+    metadata["images"] = image_records
+    metadata_path = out_dir / f"pose-{pose}_render.json"
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    if json_out:
+        print(json.dumps(metadata))
+    else:
+        print(f"pose {pose}: rendered {len(result.images)} image(s) -> {out_dir}")
+        for record in image_records:
+            print(f"  {record['view']} [{record['channel']}] {record['file']}")
+        print(f"  scene_ref: {result.scene_ref}")
+        for part_name in sorted(result.source_artifact_refs):
+            print(f"  source {part_name}: {result.source_artifact_refs[part_name]}")
+    return 0
+
+
 def _cmd_goldens(args: argparse.Namespace) -> int:
     from hephaestus.core.render.goldens import DEFAULT_GOLDEN_DIR, DirtyTreeError, update_goldens
 
@@ -116,8 +204,18 @@ def add_subparsers(
     sub: argparse._SubParsersAction[argparse.ArgumentParser],  # pyright: ignore[reportPrivateUsage]
 ) -> None:
     """Register the ``render`` and ``goldens`` verbs on an existing subparser set."""
-    render = sub.add_parser("render", help="render a part's current build to PNG(s)")
-    render.add_argument("part", help="part name to render")
+    render = sub.add_parser(
+        "render", help="render a part's current build, or a posed scene, to PNG(s)"
+    )
+    render.add_argument(
+        "part", nargs="?", default=None, help="part name to render (omit with --pose)"
+    )
+    render.add_argument(
+        "--pose",
+        default=None,
+        metavar="POSE_ID",
+        help="render the posed scene at a declared pose (mutually exclusive with a part)",
+    )
     render.add_argument(
         "--views",
         nargs="+",

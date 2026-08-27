@@ -283,6 +283,18 @@ turn with no pending tool call) triggers a reviewer child session that receives:
 - the full **assembly status** of the project's declared cross-part constraints
   (`ASSEMBLY.md` §3), each with its measured residual or its named
   `unresolvable` reason,
+- the full **motion status** of the project's declared kinematics (added
+  2026-08-26 with Stage 9B, per `KINEMATICS.md` §6): every joint and pose
+  `resolved` or with its named `unresolvable` reason, and **every motion-check
+  result** — verdict from the closed `KINEMATICS.md` §4 set, with each worst
+  sample's parameter values and measured value as numeric facts (a check whose
+  sampled grid hit the §4 wall-clock ceiling rides along as its named
+  `motion_timeout` refusal carrying the partial per-sample facts, never
+  dressed as a result),
+- **posed-scene renders** at each resolved declared pose and at each sweep's
+  worst sample (the explicit-assignment render form of `KINEMATICS.md` §6),
+  each listed by artifact ref with the binding document that pins its source
+  refs, generations and assignment,
 - **explicitly NOT** the agent's own `CHECKS` — so it cannot inherit the
   misreading.
 
@@ -301,6 +313,21 @@ The two states stay apart, because they call for different fixes: `violated`
 says the delivered geometry does not meet a declared mate, `unresolvable` says
 the mate was never checked — and an unchecked constraint is not a passing one.
 Only the operator may waive either, and a waiver is recorded as a waiver.
+
+A motion check in any non-success state at termination review — `violated`,
+`not_reached_at_samples`, or `unresolvable` — is likewise a **blocking finding
+by rule** (added 2026-08-26 with Stage 9B, per `KINEMATICS.md` §6: the
+never-green invariant extended to motion, the same mechanism as the constraint
+rule above), and so is an `unresolvable` joint or pose in the motion status —
+a declared mechanism that was never evaluated is not a working one. All are
+stamped from the status and results the engine produced; no verdict is
+solicited for a joint, pose or motion-check id and none is accepted. The
+states stay apart, because they call for different fixes: `violated` says a
+sample falsified the claim, `not_reached_at_samples` says no sample proved it
+(evidence, not proof of unreachability — and not a pass), `unresolvable` says
+it was never measured. A check whose grid timed out blocks on the same
+unchecked-claim terms, its partial per-sample facts on the record. Only the
+operator may waive any of these, and a waiver is recorded as a waiver.
 
 The reviewer is a Pi child with the measurement/render tool subset, no
 mutation tools, no delegation, and its own budget; it cannot edit the project.

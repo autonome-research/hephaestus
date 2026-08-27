@@ -802,7 +802,7 @@ the *last* evaluation, with `stale` naming parts rebuilt since it was taken, and
 review a `violated` or `unresolvable` constraint is a blocking finding **by rule**
 (`VALIDATION.md` §5).
 
-## Kinematics (declared joints and poses — `KINEMATICS.md` §1/§3, Stage 9A)
+## Kinematics (declared joints, poses and motion checks — `KINEMATICS.md` §1/§3/§4, Stage 9A/9B)
 
 ### declare_joint / update_joint / read_joints
 ```
@@ -889,13 +889,70 @@ retroactively. A constraint entry may bind poses (`poses: [...]` on
 worst pose's residual in the singular slot and a `pose_residuals` table —
 see `ASSEMBLY.md` §1/§2 as amended by `KINEMATICS.md` §3.
 
+### declare_motion_check / update_motion_check / read_motion_checks
+```
+declare_motion_check(id: str,
+                     kind: "sweep_clearance"|"sweep_no_interference"|"reach",
+                     a: str|null = null, b: str|null = null,
+                     anchor: str|null = null,
+                     sweep: {<joint_id>: {from: number, to: number}},
+                     samples: int = 64,
+                     min_mm: number|null = null,
+                     target_point_mm: [number, number, number]|null = null,
+                     tol_mm: number|null = null,
+                     provenance: {requirement: str|null, assumed: bool|null,
+                                  reason: str|null},
+                     note: str|null = null)
+    -> {status: "ok", generation, artifact_ref, change, entries,
+        results, results_ref}
+update_motion_check(id: str, patch: {...entry fields, withdrawn: bool|null},
+                    reason: str)
+    -> {status: "ok", generation, artifact_ref, change, entries,
+        results, results_ref}
+read_motion_checks()
+    -> {status: "ok", generation, artifact_ref, change, entries,
+        results, results_ref}
+```
+A **motion check** (`KINEMATICS.md` §4) evaluates one measurement over a
+sampled range of one or more joint parameters. The motion-check set is its own
+generational state on the same ledger pattern as the joint and pose sets, with
+the same lifecycle contract (`invalid_motion_check` / `unknown_motion_check`,
+withdrawal as a kept generation, compelled provenance, nothing erased).
+
+Which anchor and threshold fields a kind takes is the set's own table
+(`invalid_motion_check` with nothing written otherwise): the universal kinds
+`sweep_clearance(a, b, min_mm)` and `sweep_no_interference(a, b)` name two
+anchors under the 8C grammar (a slash is refused, the two-grammars rule); the
+existence kind `reach(anchor, target_point_mm, tol_mm)` names one anchor, a
+world-mm target point and a tolerance. `sweep` maps **declared, unwithdrawn,
+scalar-sweepable** joint ids to `{from, to}` ranges (`from < to`, the joint
+kind's own unit) — sweeping an unknown, withdrawn, `fixed` (0 DOF) or
+`cylindrical` (pair-valued) joint is refused at declaration; a joint withdrawn
+*later* orphans the check at evaluation instead (`orphaned_sweep`, the
+`orphaned_pose` rule restated). `samples` is the PER-AXIS request (endpoints
+inclusive, default 64); **the cap is on the computed grid total**: a
+declaration (or update — a patch is revalidated as a whole) whose product
+`samples^n_joints` exceeds 4096 is refused naming the computed total.
+
+`results` carries the LAST full `check_motion` run's per-check §4 result
+records (`results: null` means checks were never evaluated — which is not a
+pass), with `results_ref` its immutable `artifact:motion-results:` ref.
+Reading never measures; `check_motion` is the only thing that does. A
+withdrawn check is never evaluated again, but its last recorded result stays
+readable exactly as measured.
+
 ### check_motion
 ```
-check_motion()
+check_motion(ids: [str]|null = null)
     -> {status: "ok",
         motion: {joint_generation, pose_generation, joints, poses,
                  artifact_refs, stale, counts, blocking},
-        artifact_ref}
+        artifact_ref,
+        results: [{id, kind, verdict, samples_evaluated, grid_total,
+                   samples_per_axis, sweep, unit, anchors, worst,
+                   min_mm, tol_mm, target_point_mm, miss_mm,
+                   reason, detail, provenance, note}],
+        results_ref, partial}
 ```
 Evaluates the declared joint and pose sets **now**, against the parts' current
 successful build artifacts, and returns the `MotionStatus` with its **two
@@ -910,16 +967,32 @@ unresolvable — named, never skipped, never conflated with a violated
 constraint. `blocking` lists the ids the never-green rule fires on: an
 unresolvable joint or pose is not a passing one.
 
-The status is recorded and projected: `read_joints`/`read_poses` return the
-*last* evaluation (`motion: null` meaning never evaluated — which is not a
-pass), with `stale` naming forest parts rebuilt since it was taken. Reading
-never measures; `check_motion` is the only thing that does.
+**Stage 9B completes the result with the per-check sweep results**, exactly as
+the 9A contract said it would: `results` carries one §4 record per evaluated
+motion check, its `verdict` from the one closed set `holds_at_samples |
+satisfied | not_reached_at_samples | violated | unresolvable` (the universal
+kinds succeed as `holds_at_samples` — all-good samples only evidence — and
+fail as `violated`; `reach` inverts: success is `satisfied`, failure is
+`not_reached_at_samples` carrying the closest sample and `miss_mm`). Every
+record restates the declared quantities and carries `samples_evaluated` plus
+the worst (for `reach`: closest) sample's parameter values and measured value.
+`ids` narrows which motion CHECKS run — the joint and pose sections are always
+evaluated in full; an unknown id is refused `unknown_motion_check` naming the
+declared ones. A named subset is evaluated but deliberately not projected, and
+says so with `partial: true` (the `check_assembly` rule; `artifact_ref` and
+`results_ref` are then `null`). A check grid hitting the §4 wall-clock ceiling
+(`MOTION_TIMEOUT_S = 300`, env `HEPHAESTUS_MOTION_TIMEOUT_S`) is the named
+`motion_timeout` refusal, its partial per-sample facts riding the error data —
+partial evidence, never a hang and never a silent pass.
 
-**Motion checks are Stage 9B.** Sweeps (`sweep_clearance`,
-`sweep_no_interference`, `reach`) and their per-check results are deferred with
-the rest of the §4 surface — `check_motion` returns the `MotionStatus` alone,
-with no per-check results and no `ids` selector, rather than reserving dead
-fields (the same rule as the Deferred section below).
+The status and results are recorded and projected on a full run:
+`read_joints`/`read_poses` return the *last* `MotionStatus` (`motion: null`
+meaning never evaluated — which is not a pass) and `read_motion_checks` the
+*last* sweep results, with `stale` naming parts rebuilt since the evaluation
+was taken (a part only a sweep measures counts too). Reading never measures;
+`check_motion` is the only thing that does. Swept-envelope publication and the
+posed-scene render are engine/reviewer surfaces, not tool results
+(`KINEMATICS.md` §6).
 
 ## Knowledge and registries
 

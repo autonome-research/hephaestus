@@ -202,22 +202,27 @@ def _steps() -> list[Step]:
         ),
         ("read_constraints", lambda seen: {}),
         ("check_assembly", lambda seen: {}),
-        # -- declared joints and poses (KINEMATICS.md §1/§3, Stage 9A) -------
+        # -- declared joints, poses and motion checks (KINEMATICS.md §1/§3/§4,
+        # Stage 9A/9B) --------------------------------------------------------
         # Declaration is structural, exactly like a constraint's: whether the
         # named parts have builds is an EVALUATION question with its own named
         # unresolvable states. This one-part project has no second part to
-        # anchor, so the joint honestly resolves to `missing_part` below — a
+        # anchor, so the joint honestly resolves to `missing_part` below (the
+        # PARENT anchor names the absent part — resolution is parent-first) — a
         # real named refusal through the real engine, not a stub — while the
-        # empty-binding pose ("everything as built", §3) really resolves.
+        # empty-binding pose ("everything as built", §3) really resolves. The
+        # joint is prismatic (Stage 9B: a motion check may only sweep a
+        # scalar-DOF joint, so a `fixed` mount could not carry the sweep step).
         (
             "declare_joint",
             lambda seen: {
                 "id": "j-mount",
-                "kind": "fixed",
-                "parent": "widget",
-                "child": "carriage",
+                "kind": "prismatic",
+                "parent": "carriage",
+                "child": "widget",
+                "limits": {"min": 0.0, "max": 20.0},
                 "provenance": {"requirement": "R1"},
-                "note": "the carriage rides the widget",
+                "note": "the widget rides the carriage",
             },
         ),
         (
@@ -247,6 +252,31 @@ def _steps() -> list[Step]:
             },
         ),
         ("read_poses", lambda seen: {}),
+        # A sweep over the declared prismatic joint (KINEMATICS.md §4). The
+        # swept joint's parent part does not exist, so the check honestly
+        # evaluates `unresolvable` below — through the real engine.
+        (
+            "declare_motion_check",
+            lambda seen: {
+                "id": "mc-travel",
+                "kind": "sweep_clearance",
+                "a": "widget",
+                "b": "carriage",
+                "min_mm": 1.0,
+                "sweep": {"j-mount": {"from": 0.0, "to": 20.0}},
+                "samples": 3,
+                "provenance": {"requirement": "R1"},
+            },
+        ),
+        (
+            "update_motion_check",
+            lambda seen: {
+                "id": "mc-travel",
+                "patch": {"note": "kept as a travel-clearance claim"},
+                "reason": "clarified what the check is for",
+            },
+        ),
+        ("read_motion_checks", lambda seen: {}),
         ("check_motion", lambda seen: {}),
         ("run_checks", lambda seen: {"scope": "part", "name": "widget"}),
         (
@@ -504,6 +534,13 @@ def test_every_generated_tool_flows_through_the_real_bridge(surface: G2Harness) 
     assert pose_declared["generation"] == 1 and pose_declared["change"]["kind"] == "declare"
     poses_read = cast("dict[str, Any]", seen["read_poses"])
     assert [entry["id"] for entry in poses_read["entries"]] == ["p-zero"]
+    check_declared = cast("dict[str, Any]", seen["declare_motion_check"])
+    assert check_declared["generation"] == 1 and check_declared["change"]["kind"] == "declare"
+    check_revised = cast("dict[str, Any]", seen["update_motion_check"])
+    assert check_revised["generation"] == 2 and check_revised["change"]["reason"]
+    checks_read = cast("dict[str, Any]", seen["read_motion_checks"])
+    assert [entry["id"] for entry in checks_read["entries"]] == ["mc-travel"]
+    assert checks_read["results"] is None, "reading never measures"
     motion_checked = cast("dict[str, Any]", seen["check_motion"])
     motion = cast("dict[str, Any]", motion_checked["motion"])
     # The joint names a part this project does not have: a real named refusal
@@ -514,6 +551,12 @@ def test_every_generated_tool_flows_through_the_real_bridge(surface: G2Harness) 
     assert pose_row["state"] == "resolved"
     assert motion["blocking"] == ["j-mount"]
     assert motion_checked["artifact_ref"].startswith("artifact:motion-status:")
+    # Stage 9B: the per-check §4 results ride the same result — the sweep over
+    # the unresolvable joint is `unresolvable` by name, never skipped.
+    assert motion_checked["partial"] is False
+    [sweep_row] = cast("list[Any]", motion_checked["results"])
+    assert sweep_row["id"] == "mc-travel" and sweep_row["verdict"] == "unresolvable"
+    assert motion_checked["results_ref"].startswith("artifact:motion-results:")
     assert seen["run_checks"]["checks"]["wide_enough"]["pass"] is True
     assert seen["read_artifact"]["total_bytes"] > 0
 

@@ -61,6 +61,27 @@ differently: one is "the geometry does not meet a declared mate", the other is
 "the mate was never checked", and an unchecked constraint is not a passing one
 (``ASSEMBLY.md`` §2/§3).
 
+**§9B's declared kinematics.** The fourth kind of open item arrives the same way
+the third does (``KINEMATICS.md`` §6, the ``VALIDATION.md`` §5 amendment of
+2026-08-26). :func:`motion_status` re-evaluates the project's joint and pose
+sets against the parts' current build artifacts at review time,
+:func:`motion_check_results` runs every declared motion check's sampled grid,
+and the whole of both — the ``MotionStatus``, every check's result record with
+its worst sample's parameter values and measured value as numeric facts, and
+posed-scene renders at each resolved pose and at each sweep's worst sample
+(:func:`posed_scene_renders`, the explicit-assignment render form) — goes into
+the context. :func:`motion_review_findings` then lifts every non-success state
+into the report as a blocking ``fail`` with ``harness=True``: an
+``unresolvable`` joint or pose, a check verdict of ``violated``,
+``not_reached_at_samples`` or ``unresolvable``, and a motion timeout alike. No
+verdict is solicited for a joint, pose or motion-check id and none is accepted.
+The states stay apart in the evidence because they call for different fixes:
+``violated`` says a sample falsified the claim, ``not_reached_at_samples`` says
+no sample proved it (evidence, not proof of unreachability — and still not a
+pass), ``unresolvable`` says it was never measured — and an unchecked motion
+claim is not a passing one. Only the operator may waive any of them, and a
+waiver is recorded as a waiver — the never-green invariant extended to motion.
+
 **§6 continuation ladder.** :class:`ContinuationLadder` turns each report into
 the next move. Findings go back to the agent as an *ordinary tool result it must
 resolve* (:data:`REVIEW_TOOL`, ``status="changes_required"``), not as advice.
@@ -99,6 +120,13 @@ from typing import Any, Final, Literal, Protocol, cast, runtime_checkable
 
 from hephaestus.contract.tools_decl import REVIEWER_TOOLS
 from hephaestus.core.assembly import AssemblyStatus, ConstraintOutcome
+from hephaestus.core.motion import (
+    JointOutcome,
+    MotionStatus,
+    MotionTimeout,
+    PoseOutcome,
+    SweepResult,
+)
 from opstore.types import JSONValue
 
 from .cad_ops import (
@@ -108,6 +136,7 @@ from .cad_ops import (
     DimensionFindingOps,
     DimensionFindingState,
     LedgerState,
+    MotionOps,
     RequirementEntry,
 )
 
@@ -127,6 +156,7 @@ __all__ = [
     "ContinuationLadder",
     "LadderOutcome",
     "PartEvidence",
+    "PosedRenderRef",
     "PromptContinuation",
     "RenderRef",
     "ReviewContext",
@@ -151,8 +181,12 @@ __all__ = [
     "image_reference_names",
     "internal_feature_reasons",
     "is_stop_state",
+    "motion_check_results",
+    "motion_review_findings",
+    "motion_status",
     "normalize_findings",
     "open_dimension_findings",
+    "posed_scene_renders",
     "run_review_ladder",
     "strip_agent_checks",
 ]
@@ -177,6 +211,13 @@ REVIEW_SECTION_PLANE: Final[str] = "+Z@c"
 #: The tool name the continuation payload is delivered under. The agent sees an
 #: ordinary tool result it has to resolve, not a suggestion.
 REVIEW_TOOL: Final[str] = "termination_review"
+
+#: The two SUCCESS verdicts of the closed ``KINEMATICS.md`` §4 sweep vocabulary.
+#: Everything else — ``violated``, ``not_reached_at_samples``, ``unresolvable``
+#: — blocks termination alike (§4: "for the termination reviewer every
+#: non-success state is blocking alike"). Spelled as the complement on purpose:
+#: a verdict this set does not name is never quietly a pass.
+SWEEP_SUCCESS_VERDICTS: Final[frozenset[str]] = frozenset({"holds_at_samples", "satisfied"})
 
 Verdict = Literal["pass", "fail", "unverifiable"]
 Channel = Literal["vision", "numeric"]
@@ -293,6 +334,40 @@ class RenderRef:
 
 
 @dataclass(frozen=True)
+class PosedRenderRef:
+    """One posed-scene render the harness produced for the review, by rule.
+
+    The ``KINEMATICS.md`` §6 reviewer surface: a render at a declared pose
+    carries its ``pose_id``; a render at a sweep's worst sample carries the
+    ``check_id`` it evidences and the explicit assignment (a worst sample is
+    not a named pose). ``scene_ref`` names the posed-scene binding document
+    whose provenance binds every source artifact ref plus the joint/pose
+    generations, so the image can be replayed against exactly the geometry it
+    shows.
+    """
+
+    view: str
+    artifact_ref: str
+    scene_ref: str
+    assignment: Mapping[str, float]
+    pose_id: str | None = None
+    check_id: str | None = None
+
+    def to_json(self) -> dict[str, JSONValue]:
+        out: dict[str, JSONValue] = {
+            "view": self.view,
+            "artifact_ref": self.artifact_ref,
+            "scene_ref": self.scene_ref,
+            "assignment": {name: self.assignment[name] for name in sorted(self.assignment)},
+        }
+        if self.pose_id is not None:
+            out["pose_id"] = self.pose_id
+        if self.check_id is not None:
+            out["check_id"] = self.check_id
+        return out
+
+
+@dataclass(frozen=True)
 class PartEvidence:
     """Everything the reviewer gets about one part (never its ``CHECKS``)."""
 
@@ -371,6 +446,24 @@ class ReviewContext:
     assembly: AssemblyStatus | None = None
     #: The immutable ref of the projected status document, when one was recorded.
     assembly_ref: str | None = None
+    #: ``KINEMATICS.md`` §2/§6: the FULL motion status — every declared joint and
+    #: pose ``resolved`` or with its named unresolvable reason. ``None`` means the
+    #: project declares no joint, never "the mechanism is fine".
+    motion: MotionStatus | None = None
+    #: The immutable ref of the projected motion status, when one was recorded.
+    motion_ref: str | None = None
+    #: ``KINEMATICS.md`` §4/§6: every declared motion check's result record —
+    #: verdict from the closed set, the worst sample's parameter values and its
+    #: measured value as numeric facts.
+    motion_checks: tuple[SweepResult, ...] = ()
+    #: Motion checks whose grid hit the wall-clock ceiling at review time: the
+    #: named ``motion_timeout`` refusal JSON, partial per-sample facts attached.
+    #: A killed sweep decided nothing, so these are never dressed as results —
+    #: and they block, because an unchecked motion claim is not a passing one.
+    motion_timeouts: tuple[Mapping[str, JSONValue], ...] = ()
+    #: ``KINEMATICS.md`` §6: posed-scene renders at each resolved declared pose
+    #: and at each sweep's worst sample (the explicit-assignment form).
+    posed_renders: tuple[PosedRenderRef, ...] = ()
 
     def __post_init__(self) -> None:
         self.assert_excludes_agent_checks()
@@ -403,6 +496,11 @@ class ReviewContext:
             "references": [reference.to_json() for reference in self.references],
             "assembly": None if self.assembly is None else self.assembly.to_json(),
             "assembly_ref": self.assembly_ref,
+            "motion": None if self.motion is None else self.motion.to_json(),
+            "motion_ref": self.motion_ref,
+            "motion_checks": [result.to_json() for result in self.motion_checks],
+            "motion_timeouts": [dict(timeout) for timeout in self.motion_timeouts],
+            "posed_renders": [render.to_json() for render in self.posed_renders],
         }
 
     def prompt(self) -> str:
@@ -423,8 +521,17 @@ class ReviewContext:
             "measured for each: those are already judged by rule (a violated or "
             "unresolvable one blocks termination whatever anyone says about "
             "it), so treat them as evidence about the requirements you judge, "
-            "not as findings to return. You have no other tools "
-            "and cannot change the project.\n\n"
+            "not as findings to return. Declared kinematics, if any, are under "
+            "'motion' (every joint and pose, resolved or with its named "
+            "unresolvable reason) and 'motion_checks' (each sweep or reach "
+            "check's verdict with its worst sample's parameter values and "
+            "measured value); posed-scene renders of the mechanism at each "
+            "declared pose and at each sweep's worst sample are listed under "
+            "'posed_renders' by artifact ref. Those too are already judged by "
+            "rule (any non-success motion state blocks termination whatever "
+            "anyone says about it): treat them as evidence about the "
+            "requirements you judge, not as findings to return. You have no "
+            "other tools and cannot change the project.\n\n"
             f"{json.dumps(self.to_json(), indent=2, sort_keys=True)}\n\n"
             "Return ONE JSON object and nothing else:\n"
             '{"findings": [{"id": "<requirement id>", "verdict": '
@@ -499,6 +606,9 @@ def build_review_context(
     parts: Sequence[str] | None = None,
     ledger: LedgerState | None = None,
     assembly: AssemblyStatus | None = None,
+    motion: MotionStatus | None = None,
+    motion_checks: Sequence[SweepResult] | None = None,
+    motion_timeouts: Sequence[Mapping[str, JSONValue]] = (),
 ) -> ReviewContext:
     """Assemble the §5 context from what the run actually published.
 
@@ -512,6 +622,14 @@ def build_review_context(
     from anything the agent reported about it. ``assembly`` may be passed in when
     the caller has already measured — the §5 service does, so one evaluation
     serves both the context and the blocking rule.
+
+    The ``KINEMATICS.md`` §6 motion surface rides on exactly those terms
+    (``VALIDATION.md`` §5, amended 2026-08-26): the motion status and every
+    motion-check result are measured by rule (:func:`motion_status` /
+    :func:`motion_check_results` — or passed in by the §5 service, one
+    evaluation for context and rule alike), and the posed-scene renders at each
+    resolved pose and each sweep's worst sample are produced here, by rule,
+    like the per-part renders (:func:`posed_scene_renders`).
     """
     state = ledger if ledger is not None else cad.ledger_state()
     names = tuple(parts) if parts is not None else tuple(cad.layout.part_names())
@@ -519,6 +637,11 @@ def build_review_context(
     for name in names:
         evidence.append(_part_evidence(cad, name))
     status = assembly if assembly is not None else assembly_status(cad)
+    kinematics = motion if motion is not None else motion_status(cad)
+    if motion_checks is None:
+        checks, timeouts = motion_check_results(cad)
+    else:
+        checks, timeouts = tuple(motion_checks), tuple(motion_timeouts)
     return ReviewContext(
         request=request,
         requirements=tuple(entry.to_json() for entry in state.entries),
@@ -528,6 +651,11 @@ def build_review_context(
         references=cited_references(cad, state.entries),
         assembly=status,
         assembly_ref=_assembly_ref(cad) if status is not None else None,
+        motion=kinematics,
+        motion_ref=_motion_ref(cad) if kinematics is not None else None,
+        motion_checks=checks,
+        motion_timeouts=timeouts,
+        posed_renders=posed_scene_renders(cad, kinematics, checks),
     )
 
 
@@ -561,6 +689,124 @@ def _assembly_ref(cad: object) -> str | None:
     if not isinstance(cad, AssemblyOps):  # pragma: no cover - guarded by the caller
         return None
     return cad.assembly_evaluator().projected_ref()
+
+
+def motion_status(cad: object) -> MotionStatus | None:
+    """Evaluate the project's declared joints and poses now (``KINEMATICS.md`` §2).
+
+    Measured at review time from the parts' current build artifacts, for exactly
+    the reason :func:`assembly_status` is: whatever the run said it fixed, this
+    is what the delivered geometry does, and a stale pass is the one outcome §5
+    must never produce.
+
+    ``None`` means the project declares no active joint at all — there is no
+    mechanism claim to verify (a pose or motion check cannot be declared without
+    one). It never means "the mechanism is fine": a joint or pose that could not
+    be evaluated comes back ``unresolvable``, which blocks.
+
+    The argument is loose because the review layer is routinely driven by test
+    doubles: a seam that cannot carry joints degrades to "none declared", never
+    to an attribute error at termination.
+    """
+    if not isinstance(cad, MotionOps):
+        return None
+    evaluator = cad.motion_evaluator()
+    if not evaluator.joints.state().active:
+        return None
+    return evaluator.evaluate()
+
+
+def _motion_ref(cad: object) -> str | None:
+    """The projected motion status document's immutable ref, when recorded."""
+    if not isinstance(cad, MotionOps):  # pragma: no cover - guarded by the caller
+        return None
+    return cad.motion_evaluator().projected_ref()
+
+
+def motion_check_results(
+    cad: object,
+) -> tuple[tuple[SweepResult, ...], tuple[Mapping[str, JSONValue], ...]]:
+    """Evaluate every declared motion check now (``KINEMATICS.md`` §4).
+
+    Each active check runs its own bounded grid, one at a time, so a single
+    check hitting the §4 wall-clock ceiling costs exactly that check: the
+    :class:`~hephaestus.core.motion.MotionTimeout` refusal is captured as its
+    JSON (check id, ceiling, partial per-sample facts) in the second tuple
+    rather than aborting the review, and every other check still gets its
+    result. A timeout is never dressed as a result record — a killed sweep
+    decided nothing — but it blocks all the same
+    (:func:`motion_review_findings`): an unchecked motion claim is not a
+    passing one. Withdrawn entries are never evaluated, per the 8C rule.
+    """
+    if not isinstance(cad, MotionOps):
+        return ((), ())
+    evaluator = cad.sweep_evaluator()
+    if not evaluator.checks.state().active:
+        return ((), ())
+    results: list[SweepResult] = []
+    timeouts: list[Mapping[str, JSONValue]] = []
+    for entry in evaluator.checks.state().active:
+        try:
+            results.extend(evaluator.evaluate([entry.id]))
+        except MotionTimeout as exc:
+            timeouts.append(exc.to_json())
+    return tuple(results), tuple(timeouts)
+
+
+def posed_scene_renders(
+    cad: object,
+    motion: MotionStatus | None,
+    checks: Sequence[SweepResult],
+) -> tuple[PosedRenderRef, ...]:
+    """Posed-scene renders for the review, by rule (``KINEMATICS.md`` §6).
+
+    One render per :data:`REVIEW_VIEWS` view at every RESOLVED declared pose
+    (an unresolvable pose has no honest placement — its named reason already
+    rides the motion status, and rendering a guessed frame is what §7 forbids)
+    and at every motion-check result carrying a worst sample, via the
+    explicit-assignment form (a sweep's worst sample is not a named pose). A
+    render failure costs the render, never the review — the per-part render
+    rule — because the blocking findings are stamped from the measured status,
+    not from the pictures.
+    """
+    if not isinstance(cad, MotionOps) or motion is None:
+        return ()
+    renders: list[PosedRenderRef] = []
+    for pose in motion.poses:
+        if pose.state != "resolved":
+            continue
+        try:
+            scene = cad.render_posed_scene(pose_id=pose.id, views=REVIEW_VIEWS)
+        except Exception:
+            continue
+        renders.extend(
+            PosedRenderRef(
+                view=image.view,
+                artifact_ref=image.render_ref,
+                scene_ref=scene.scene_ref,
+                assignment=scene.assignment,
+                pose_id=pose.id,
+            )
+            for image in scene.images
+        )
+    for result in checks:
+        if result.worst is None or not result.worst.values:
+            continue
+        try:
+            scene = cad.render_posed_scene(assignment=dict(result.worst.values), views=REVIEW_VIEWS)
+        except Exception:
+            continue
+        renders.extend(
+            PosedRenderRef(
+                view=image.view,
+                artifact_ref=image.render_ref,
+                scene_ref=scene.scene_ref,
+                assignment=scene.assignment,
+                check_id=result.id,
+            )
+            for image in scene.images
+        )
+    return tuple(renders)
 
 
 def cited_references(
@@ -765,6 +1011,11 @@ class ReviewReport:
     #: came from without measuring anything a second time. ``None`` when the
     #: project declares no constraint.
     assembly: AssemblyStatus | None = None
+    #: ``KINEMATICS.md`` §6: the motion status and motion-check results this
+    #: cycle was judged against, on exactly the assembly's terms. ``None`` / ``()``
+    #: when the project declares no joint / no motion check.
+    motion: MotionStatus | None = None
+    motion_checks: tuple[SweepResult, ...] = ()
 
     @property
     def by_id(self) -> dict[str, ReviewFinding]:
@@ -806,6 +1057,8 @@ class ReviewReport:
             "green": self.green,
             "error": self.error,
             "assembly": None if self.assembly is None else self.assembly.to_json(),
+            "motion": None if self.motion is None else self.motion.to_json(),
+            "motion_checks": [result.to_json() for result in self.motion_checks],
         }
 
 
@@ -931,6 +1184,179 @@ def _constraint_observation(outcome: ConstraintOutcome) -> str | None:
     return f"measured {measured} {outcome.unit or ''}".strip()
 
 
+def motion_review_findings(
+    motion: MotionStatus | None,
+    checks: Sequence[SweepResult] = (),
+    timeouts: Sequence[Mapping[str, JSONValue]] = (),
+) -> tuple[ReviewFinding, ...]:
+    """The §5 never-green rule extended to motion (``KINEMATICS.md`` §6).
+
+    Stamped from the status and results the engine produced, exactly as
+    :func:`assembly_review_findings` stamps from the assembly status: no verdict
+    is solicited for a joint, pose or motion-check id and none is accepted (one
+    supplied is filed as unknown), because the mechanism was measured against
+    geometry nobody in this conversation gets to reinterpret. Blocking, by rule:
+
+    * every ``unresolvable`` joint or pose of the motion status — a declared
+      mechanism that was never evaluated is not a working one (the
+      :meth:`~hephaestus.core.motion.MotionStatus.blocking` set, which 9A
+      recorded as this reviewer's act);
+    * every motion check whose verdict is not in
+      :data:`SWEEP_SUCCESS_VERDICTS` — ``violated`` (a sample falsified the
+      claim), ``not_reached_at_samples`` (no sample proved it; evidence, not
+      proof of unreachability, and still not a pass), and ``unresolvable``
+      (never measured) block alike, per §4's closed vocabulary;
+    * every motion check that hit the §4 wall-clock ceiling — a killed sweep
+      decided nothing, and an unchecked motion claim is not a passing one.
+
+    Only the operator may waive any of these, and doing so is recorded as a
+    waiver rather than as a pass — the never-green invariant extended to
+    motion.
+    """
+    findings: list[ReviewFinding] = []
+    if motion is not None:
+        for joint in motion.joints:
+            if joint.state != "unresolvable":
+                continue
+            findings.append(
+                ReviewFinding(
+                    id=joint.id,
+                    verdict="fail",
+                    evidence=_joint_evidence(joint),
+                    channel="numeric",
+                    harness=True,
+                )
+            )
+        for pose in motion.poses:
+            if pose.state != "unresolvable":
+                continue
+            findings.append(
+                ReviewFinding(
+                    id=pose.id,
+                    verdict="fail",
+                    evidence=_pose_evidence(pose),
+                    channel="numeric",
+                    harness=True,
+                )
+            )
+    for result in checks:
+        if result.verdict in SWEEP_SUCCESS_VERDICTS:
+            continue
+        findings.append(
+            ReviewFinding(
+                id=result.id,
+                verdict="fail",
+                evidence=_sweep_evidence(result),
+                channel="numeric",
+                expected=_sweep_expectation(result),
+                observed=_sweep_observation(result),
+                harness=True,
+            )
+        )
+    for timeout in timeouts:
+        check_id = timeout.get("id")
+        evaluated = timeout.get("samples_evaluated")
+        total = timeout.get("grid_total")
+        ceiling = timeout.get("timeout_s")
+        findings.append(
+            ReviewFinding(
+                id=str(check_id) if isinstance(check_id, str) else "*motion_timeout*",
+                verdict="fail",
+                evidence=(
+                    f"motion check {check_id} hit the {ceiling}s sweep ceiling with "
+                    f"{evaluated} of {total} samples evaluated (KINEMATICS.md §4): a killed "
+                    "sweep decided nothing, and an unchecked motion claim is not a passing "
+                    "one, so it blocks until it can be measured."
+                ),
+                channel="numeric",
+                harness=True,
+            )
+        )
+    return tuple(findings)
+
+
+def _joint_evidence(joint: JointOutcome) -> str:
+    """One line saying which joint could not be resolved, and why that blocks."""
+    return (
+        f"joint {joint.id} ({joint.kind} {joint.parent.anchor} <-> {joint.child.anchor}) "
+        f"could NOT be resolved: {joint.reason} — {joint.detail or 'no detail'}. A declared "
+        "joint that was never evaluated is not a working one (KINEMATICS.md §2/§6), so it "
+        "blocks until it can be measured."
+    )
+
+
+def _pose_evidence(pose: PoseOutcome) -> str:
+    """One line saying which pose could not be evaluated, and why that blocks."""
+    binding = ", ".join(f"{name}={pose.joints[name]}" for name in sorted(pose.joints))
+    return (
+        f"pose {pose.id} ({binding or 'zero'}) could NOT be evaluated: {pose.reason} — "
+        f"{pose.detail or 'no detail'}. A declared configuration that was never evaluated "
+        "is not a reachable one (KINEMATICS.md §2/§3), so it blocks until it can be."
+    )
+
+
+def _sweep_evidence(result: SweepResult) -> str:
+    """One line per non-success verdict: what the samples measured, or why none could."""
+    ranges = ", ".join(
+        f"{joint_id} in [{result.sweep[joint_id][0]}, {result.sweep[joint_id][1]}]"
+        for joint_id in sorted(result.sweep)
+    )
+    subject = f"motion check {result.id} ({result.kind}" + (f" over {ranges})" if ranges else ")")
+    if result.verdict == "unresolvable":
+        return (
+            f"{subject} could NOT be evaluated: {result.reason} — "
+            f"{result.detail or 'no detail'}. An unchecked motion claim is not a passing "
+            "one (KINEMATICS.md §4), so it blocks until it can be measured."
+        )
+    if result.verdict == "not_reached_at_samples":
+        closest = "no sample recorded" if result.worst is None else _sample_text(result)
+        return (
+            f"{subject} is not_reached_at_samples over {result.samples_evaluated} samples: "
+            f"closest {closest}, missing tol_mm={result.tol_mm} by {result.miss_mm} mm. "
+            "Samples not reaching are evidence, not proof of unreachability — and they are "
+            "not a pass (KINEMATICS.md §4)."
+        )
+    worst = "no sample recorded" if result.worst is None else _sample_text(result)
+    return (
+        f"{subject} is violated over {result.samples_evaluated} samples: worst {worst} "
+        f"against {_sweep_expectation(result) or 'its declared numbers'} "
+        "(declared in the project's motion-check set, KINEMATICS.md §4)."
+    )
+
+
+def _sample_text(result: SweepResult) -> str:
+    """The worst/closest sample restated: its parameter values and measured value."""
+    assert result.worst is not None
+    values = ", ".join(
+        f"{name}={result.worst.values[name]}" for name in sorted(result.worst.values)
+    )
+    return f"sample ({values}) measured {result.worst.measured} {result.unit}"
+
+
+def _sweep_expectation(result: SweepResult) -> str | None:
+    """The declared numbers, restated — the result's own claim fields."""
+    parts: list[str] = []
+    if result.min_mm is not None:
+        parts.append(f"min_mm={result.min_mm}")
+    if result.tol_mm is not None:
+        parts.append(f"tol_mm={result.tol_mm}")
+    if result.target_point_mm is not None:
+        parts.append(f"target_point_mm={list(result.target_point_mm)}")
+    if result.kind == "sweep_no_interference":
+        parts.append("no sample intersects")
+    return ", ".join(parts) or None
+
+
+def _sweep_observation(result: SweepResult) -> str | None:
+    """What the worst sample measured, with its unit (never inferred)."""
+    if result.worst is None:
+        return None
+    values = ", ".join(
+        f"{name}={result.worst.values[name]}" for name in sorted(result.worst.values)
+    )
+    return f"measured {result.worst.measured} {result.unit} at ({values})"
+
+
 def normalize_findings(
     entries: Sequence[RequirementEntry],
     raw: Sequence[Mapping[str, Any]],
@@ -940,6 +1366,9 @@ def normalize_findings(
     dimensions: Sequence[DimensionFinding] = (),
     image_references: Sequence[str] = (),
     assembly: AssemblyStatus | None = None,
+    motion: MotionStatus | None = None,
+    motion_checks: Sequence[SweepResult] = (),
+    motion_timeouts: Sequence[Mapping[str, JSONValue]] = (),
 ) -> ReviewReport:
     """Turn whatever the reviewer said into one verdict per ledger entry, by rule.
 
@@ -960,7 +1389,13 @@ def normalize_findings(
     * every ``violated`` or ``unresolvable`` constraint of ``assembly``
       (``ASSEMBLY.md`` §3) is appended as a blocking ``fail`` by rule
       (:func:`assembly_review_findings`), on the same terms as a §4 dimension
-      finding: measured by the engine, never solicited from the reviewer.
+      finding: measured by the engine, never solicited from the reviewer;
+    * every non-success motion state — an ``unresolvable`` joint or pose of
+      ``motion``, a check of ``motion_checks`` whose verdict is ``violated``,
+      ``not_reached_at_samples`` or ``unresolvable``, and every timeout of
+      ``motion_timeouts`` — is appended as a blocking ``fail`` by rule
+      (:func:`motion_review_findings`, ``KINEMATICS.md`` §6), on the same terms
+      again.
     """
     supplied: dict[str, Mapping[str, Any]] = {}
     unknown: list[str] = []
@@ -986,11 +1421,16 @@ def normalize_findings(
     return ReviewReport(
         cycle=cycle,
         findings=(
-            findings + dimension_review_findings(dimensions) + assembly_review_findings(assembly)
+            findings
+            + dimension_review_findings(dimensions)
+            + assembly_review_findings(assembly)
+            + motion_review_findings(motion, motion_checks, motion_timeouts)
         ),
         unknown_ids=tuple(sorted(set(unknown))),
         error=error,
         assembly=assembly,
+        motion=motion,
+        motion_checks=tuple(motion_checks),
     )
 
 
@@ -1245,9 +1685,20 @@ class TerminationReviewService:
         request: str,
         parts: Sequence[str] | None = None,
         assembly: AssemblyStatus | None = None,
+        motion: MotionStatus | None = None,
+        motion_checks: Sequence[SweepResult] | None = None,
+        motion_timeouts: Sequence[Mapping[str, JSONValue]] = (),
     ) -> ReviewContext:
         """The §5 context for the current published state of the project."""
-        return build_review_context(self._cad, request=request, parts=parts, assembly=assembly)
+        return build_review_context(
+            self._cad,
+            request=request,
+            parts=parts,
+            assembly=assembly,
+            motion=motion,
+            motion_checks=motion_checks,
+            motion_timeouts=motion_timeouts,
+        )
 
     def review(
         self,
@@ -1277,10 +1728,21 @@ class TerminationReviewService:
         # reads and the rule that blocks on it, so what the reviewer was shown and
         # what the report acts on cannot be two different measurements.
         assembly = assembly_status(self._cad)
+        # KINEMATICS.md §6, on the same terms: the motion status, every motion
+        # check's bounded grid, and any sweep-ceiling timeout, measured ONCE.
+        motion = motion_status(self._cad)
+        motion_checks, motion_timeouts = motion_check_results(self._cad)
         assembled = (
             context
             if context is not None
-            else self.context(request=request, parts=parts, assembly=assembly)
+            else self.context(
+                request=request,
+                parts=parts,
+                assembly=assembly,
+                motion=motion,
+                motion_checks=motion_checks,
+                motion_timeouts=motion_timeouts,
+            )
         )
         review_request = ReviewRequest(
             run_id=run_id,
@@ -1302,6 +1764,9 @@ class TerminationReviewService:
                 dimensions=open_dimensions,
                 image_references=images,
                 assembly=assembly,
+                motion=motion,
+                motion_checks=motion_checks,
+                motion_timeouts=motion_timeouts,
             )
         elapsed = time.monotonic() - started
         # Re-enforce the reviewer's budget Python-side, whatever the child claims.
@@ -1314,6 +1779,9 @@ class TerminationReviewService:
                 dimensions=open_dimensions,
                 image_references=images,
                 assembly=assembly,
+                motion=motion,
+                motion_checks=motion_checks,
+                motion_timeouts=motion_timeouts,
             )
         if response.turns > self._max_turns:
             return normalize_findings(
@@ -1324,6 +1792,9 @@ class TerminationReviewService:
                 dimensions=open_dimensions,
                 image_references=images,
                 assembly=assembly,
+                motion=motion,
+                motion_checks=motion_checks,
+                motion_timeouts=motion_timeouts,
             )
         if response.output_tokens > self._max_output_tokens:
             return normalize_findings(
@@ -1337,6 +1808,9 @@ class TerminationReviewService:
                 dimensions=open_dimensions,
                 image_references=images,
                 assembly=assembly,
+                motion=motion,
+                motion_checks=motion_checks,
+                motion_timeouts=motion_timeouts,
             )
         return normalize_findings(
             state.entries,
@@ -1345,6 +1819,9 @@ class TerminationReviewService:
             dimensions=open_dimensions,
             image_references=images,
             assembly=assembly,
+            motion=motion,
+            motion_checks=motion_checks,
+            motion_timeouts=motion_timeouts,
         )
 
 
@@ -1408,13 +1885,15 @@ class TerminalReport:
         dimensions: Sequence[DimensionFinding] = (),
         constraints: Sequence[ConstraintOutcome] = (),
     ) -> TerminalReport:
-        """Derive the terminal status from the last report, the ledger, §4 and §8C.
+        """Derive the terminal status from the last report, the ledger, §4, §8C and §9B.
 
-        Green requires all five: a completed review, a non-empty ledger with a
+        Green requires all six: a completed review, a non-empty ledger with a
         verified pass for every entry, no ``assumed`` entry lacking a recorded
-        resolution, no open §4 dimension finding, and no ``violated`` or
-        ``unresolvable`` constraint (``ASSEMBLY.md`` §3). Anything else is
-        ``unresolved_requirements``.
+        resolution, no open §4 dimension finding, no ``violated`` or
+        ``unresolvable`` constraint (``ASSEMBLY.md`` §3), and no motion state
+        out of success — no ``unresolvable`` joint or pose and no motion check
+        ``violated``, ``not_reached_at_samples`` or ``unresolvable``
+        (``KINEMATICS.md`` §6). Anything else is ``unresolved_requirements``.
 
         ``constraints`` only supplies the *text* of an open constraint item — what
         keeps it out of green is the blocking finding already in ``report``, so a
@@ -1428,6 +1907,17 @@ class TerminalReport:
         if not outcomes and report is not None and report.assembly is not None:
             outcomes = report.assembly.constraints
         by_constraint = {outcome.id: outcome for outcome in outcomes}
+        # KINEMATICS.md §6: the same rule for the motion state the report was
+        # judged against — the open items name their joints, poses and checks.
+        by_motion: dict[str, JointOutcome | PoseOutcome] = {}
+        by_sweep: dict[str, SweepResult] = {}
+        if report is not None:
+            if report.motion is not None:
+                for joint in report.motion.joints:
+                    by_motion[joint.id] = joint
+                for pose in report.motion.poses:
+                    by_motion[pose.id] = pose
+            by_sweep = {result.id: result for result in report.motion_checks}
         counts = dict(repeats or {})
         unresolved: list[UnresolvedItem] = []
         if report is None:
@@ -1458,14 +1948,16 @@ class TerminalReport:
                 entry = by_entry.get(finding.id)
                 dimension = by_dimension.get(finding.id)
                 constraint = by_constraint.get(finding.id)
+                motion_outcome = by_motion.get(finding.id)
+                sweep = by_sweep.get(finding.id)
                 unresolved.append(
                     UnresolvedItem(
                         id=finding.id,
                         verdict=finding.verdict,
                         evidence=finding.evidence,
                         channel=finding.channel,
-                        text=_open_text(entry, dimension, constraint),
-                        source=_open_source(entry, dimension, constraint),
+                        text=_open_text(entry, dimension, constraint, motion_outcome, sweep),
+                        source=_open_source(entry, dimension, constraint, motion_outcome, sweep),
                         asked=_open_asked(entry, dimension),
                         repeats=counts.get(finding.signature, 1),
                     )
@@ -1492,6 +1984,8 @@ def _open_text(
     entry: RequirementEntry | None,
     dimension: DimensionFinding | None,
     constraint: ConstraintOutcome | None = None,
+    motion_outcome: JointOutcome | PoseOutcome | None = None,
+    sweep: SweepResult | None = None,
 ) -> str:
     if entry is not None:
         return entry.text
@@ -1502,6 +1996,14 @@ def _open_text(
             f"declared constraint {constraint.kind} between {constraint.a.anchor} and "
             f"{constraint.b.anchor} is {constraint.state}"
         )
+    if sweep is not None:
+        return f"declared motion check {sweep.id} ({sweep.kind}) is {sweep.verdict}"
+    if isinstance(motion_outcome, JointOutcome):
+        return (
+            f"declared joint {motion_outcome.id} ({motion_outcome.kind}) is {motion_outcome.state}"
+        )
+    if isinstance(motion_outcome, PoseOutcome):
+        return f"declared pose {motion_outcome.id} is {motion_outcome.state}"
     return ""
 
 
@@ -1509,14 +2011,19 @@ def _open_source(
     entry: RequirementEntry | None,
     dimension: DimensionFinding | None,
     constraint: ConstraintOutcome | None = None,
+    motion_outcome: JointOutcome | PoseOutcome | None = None,
+    sweep: SweepResult | None = None,
 ) -> str:
     if entry is not None:
         return entry.source
-    # Neither is a ledger provenance class: one was measured against the request,
-    # the other against another part. A reader can tell all three apart.
+    # None of these is a ledger provenance class: one was measured against the
+    # request, one against another part, one against a family of configurations.
+    # A reader can tell all four apart.
     if dimension is not None:
         return "critique"
-    return "constraint" if constraint is not None else ""
+    if constraint is not None:
+        return "constraint"
+    return "motion" if motion_outcome is not None or sweep is not None else ""
 
 
 def _open_asked(entry: RequirementEntry | None, dimension: DimensionFinding | None) -> bool:

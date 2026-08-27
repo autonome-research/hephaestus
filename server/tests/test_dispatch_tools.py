@@ -981,6 +981,21 @@ def _minimal_args(tool: str) -> dict[str, Any]:
         },
         "update_pose": {"id": "p-zero", "patch": {"note": "n"}, "reason": "fixture"},
         "read_poses": {},
+        "declare_motion_check": {
+            "id": "mc-air",
+            "kind": "sweep_clearance",
+            "a": "widget",
+            "b": "bracket",
+            "min_mm": 0.2,
+            "sweep": {"j-mount": {"from": 0.0, "to": 1.0}},
+            "provenance": {"assumed": True, "reason": "fixture"},
+        },
+        "update_motion_check": {
+            "id": "mc-air",
+            "patch": {"note": "n"},
+            "reason": "fixture",
+        },
+        "read_motion_checks": {},
         "check_motion": {},
         "run_checks": {"name": "widget"},
         "record_requirements": {

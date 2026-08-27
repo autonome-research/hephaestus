@@ -153,15 +153,19 @@ CAD_TOOLS: frozenset[str] = frozenset(
         "update_constraint",
         "read_constraints",
         "check_assembly",
-        # KINEMATICS.md §6 (Stage 9A) — the joint and pose quartets plus
-        # check_motion, on the 8C quartet decision unchanged: model-writable
-        # because declaring is cheap, reversible and measured, never erasing.
+        # KINEMATICS.md §6 (Stage 9A/9B) — the joint, pose and motion-check
+        # quartets plus check_motion, on the 8C quartet decision unchanged:
+        # model-writable because declaring is cheap, reversible and measured,
+        # never erasing.
         "declare_joint",
         "update_joint",
         "read_joints",
         "declare_pose",
         "update_pose",
         "read_poses",
+        "declare_motion_check",
+        "update_motion_check",
+        "read_motion_checks",
         "check_motion",
         "read_artifact",
         # INGEST.md §2 — read-only, freely retryable. There is deliberately no
@@ -523,6 +527,9 @@ class ToolDispatcher:
             "declare_pose": self._declare_pose,
             "update_pose": self._update_pose,
             "read_poses": self._read_poses,
+            "declare_motion_check": self._declare_motion_check,
+            "update_motion_check": self._update_motion_check,
+            "read_motion_checks": self._read_motion_checks,
             "check_motion": self._check_motion,
             "read_artifact": self._read_artifact,
             "list_references": self._list_references,
@@ -915,13 +922,45 @@ class ToolDispatcher:
     ) -> dict[str, Any]:
         return cad.read_poses()
 
-    def _check_motion(
+    def _declare_motion_check(
+        self, _p: Principal, cad: CadOps, arguments: dict[str, Any], inv: Invocation
+    ) -> dict[str, Any]:
+        # The whole entry is the argument object: KINEMATICS.md §4 writes a
+        # motion check as one JSON shape, so the wire shape and the stored
+        # shape are one shape (the declare_joint rule).
+        return cad.declare_motion_check(cast("Mapping[str, Any]", arguments), op_id=inv.op_id)
+
+    def _update_motion_check(
+        self, _p: Principal, cad: CadOps, arguments: dict[str, Any], inv: Invocation
+    ) -> dict[str, Any]:
+        raw = arguments.get("patch")
+        if not isinstance(raw, dict):
+            raise DispatchError("invalid_params", "update_motion_check requires a patch object")
+        reason = arguments.get("reason")
+        if not isinstance(reason, str):
+            raise DispatchError("invalid_params", "update_motion_check requires a reason")
+        return cad.update_motion_check(
+            str(arguments["id"]), cast("Mapping[str, Any]", raw), reason, op_id=inv.op_id
+        )
+
+    def _read_motion_checks(
         self, _p: Principal, cad: CadOps, _arguments: dict[str, Any], _inv: Invocation
     ) -> dict[str, Any]:
-        # No ids parameter in 9A: the only selectable subjects would be motion
-        # CHECKS, which are Stage 9B — the full status is always evaluated and
-        # projected, so a read (and the reviewer) sees exactly what was measured.
-        return cad.check_motion()
+        return cad.read_motion_checks()
+
+    def _check_motion(
+        self, _p: Principal, cad: CadOps, arguments: dict[str, Any], _inv: Invocation
+    ) -> dict[str, Any]:
+        # KINEMATICS.md §6 `check_motion(ids?)`, completed by Stage 9B: `ids`
+        # narrows which motion CHECKS run (the check_assembly shape); the
+        # joint and pose sections are always evaluated in full.
+        raw = arguments.get("ids")
+        ids: list[str] | None = None
+        if isinstance(raw, list):
+            ids = [str(item) for item in cast("list[Any]", raw)]
+        elif raw is not None:
+            raise DispatchError("invalid_params", "check_motion ids must be an array")
+        return cad.check_motion(ids)
 
     # -- artifacts ---------------------------------------------------------
 

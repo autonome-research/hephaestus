@@ -59,6 +59,36 @@ precedent, stated as such in §2): :meth:`MotionEvaluator.evaluate` with
 when a joint-forest part is rebuilt into different geometry, and the GC edge
 keeps a stale status readable — stale never reads as "never evaluated".
 
+**Sweeps** (Stage 9B, ``KINEMATICS.md`` §4) are sampled motion checks: the
+declared grid (``samples`` per axis, endpoints inclusive, product capped at
+declaration) is evaluated sample by sample — forward kinematics places the
+anchors' parts, the existing geom primitives measure them (``clearance`` /
+``interference`` / ``distance`` to the target point), and the verdict comes
+from the one closed set :data:`SWEEP_VERDICTS`, stated once. Universal kinds
+say ``holds_at_samples`` — never "holds" — because all-good samples only
+evidence; ``reach`` says ``satisfied`` because one achieving sample IS proof,
+and its failure is ``not_reached_at_samples`` carrying the closest sample and
+the miss distance, because samples not reaching prove nothing. Every result
+records ``samples_evaluated`` (the grid total), the worst sample's parameter
+values, and its measured value. Execution is bounded on the ``COMPARE.md`` §5
+pattern, both legs (:func:`bounded_solid_diff`'s spawn-kill loop and the
+bench ``_score`` per-sample streaming, copied rather than reinvented): the
+grid runs in a killable spawned subprocess under
+:data:`MOTION_TIMEOUT_S` (env :data:`MOTION_TIMEOUT_ENV`), per-sample facts
+stream to the parent as they land, and a ceiling kill raises
+:class:`MotionTimeout` CARRYING the samples already evaluated — partial
+evidence, never a hang and never a silent pass.
+
+**The CHECKS read surfaces** (Stage 9B, ``KINEMATICS.md`` §4 last bullet) ride
+:class:`SnapshotMotionContext`: the owner of a project-scope check run
+constructs it from the run's frozen snapshot ref and threads its
+:meth:`~SnapshotMotionContext.at_pose` / :meth:`~SnapshotMotionContext.sweep`
+into ``run_bundle`` alongside the ``imports`` callback, so ``m.at_pose`` and
+``m.sweep`` resolve against the SAME frozen snapshot and motion generations
+as the rest of the run (§2, last bullet — never CURRENT mid-run, enforced by
+a pinned resolver that refuses a republished part by name), and the report
+records those generations so motion evidence replays like every other kind.
+
 **No solver, no verdict.** Nothing here moves authored geometry (a transform
 exists only inside an evaluation, ``KINEMATICS.md`` §0) and nothing here
 decides what an unresolvable joint *means* at termination review — that is the
@@ -68,35 +98,47 @@ decides what an unresolvable joint *means* at termination review — that is the
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
+import multiprocessing
+import os
 import tempfile
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, Literal, cast
+from typing import TYPE_CHECKING, Any, Final, Literal, cast, final
 
 from hephaestus.core.assembly import (
     AnchorRef,
     AnchorResolver,
+    PartGeometry,
     UnresolvableAnchorError,
     UnresolvableReason,
 )
-from hephaestus.core.errors import ValidationError
+from hephaestus.core.errors import AddressingError, ValidationError
 from hephaestus.core.project_store.constraints import Anchor
 from hephaestus.core.project_store.kinematics import (
     JointEntry,
     JointSet,
     JointState,
     LimitPair,
+    MotionCheckEntry,
+    MotionCheckSet,
+    MotionCheckState,
     PoseEntry,
     PoseSet,
     PoseState,
 )
 from hephaestus.core.project_store.layout import ProjectLayout
-from hephaestus.core.project_store.projections import MotionProjection
+from hephaestus.core.project_store.projections import (
+    PROJECT_SNAPSHOT_REF_PREFIX,
+    MotionProjection,
+)
 from hephaestus.core.project_store.publication import Publisher
 from hephaestus.core.project_store.store import artifact_ref as make_artifact_ref
+from hephaestus.core.project_store.store import blob_hash_of_ref
 from opstore.types import JSONValue
 
 from opstore import OpStore, canonical_json
@@ -111,20 +153,41 @@ __all__ = [
     "JOINT_UNRESOLVABLE_REASONS",
     "MOTION_ARTIFACT_KIND",
     "MOTION_OUTCOME_STATES",
+    "MOTION_RESULTS_ARTIFACT_KIND",
+    "MOTION_TIMEOUT_ENV",
+    "MOTION_TIMEOUT_S",
     "POSE_UNRESOLVABLE_REASONS",
+    "SWEEP_UNRESOLVABLE_REASONS",
+    "SWEEP_VERDICTS",
     "BoundPoseError",
     "JointOutcome",
     "MotionEvaluator",
     "MotionOutcomeState",
     "MotionResolution",
     "MotionStatus",
+    "MotionTimeout",
     "PoseOutcome",
+    "SnapshotMotionContext",
+    "SweepEvaluator",
+    "SweepResult",
+    "SweepSample",
+    "SweepVerdict",
     "check_motion",
+    "check_motion_with_results",
+    "evaluate_motion_checks",
     "motion_resolution",
+    "motion_timeout_s",
+    "sweep_axis_values",
 ]
 
 #: Artifact kind of a stored (projected) motion-status document.
 MOTION_ARTIFACT_KIND: Final[str] = "motion-status"
+
+#: Artifact kind of a stored (projected) sweep-results document — the last
+#: FULL motion-check evaluation's per-check results (``KINEMATICS.md`` §4),
+#: riding the same motion projection as the status (§7: one piece of
+#: non-ledger persistence, not two).
+MOTION_RESULTS_ARTIFACT_KIND: Final[str] = "motion-results"
 
 MotionOutcomeState = Literal["resolved", "unresolvable"]
 
@@ -928,6 +991,20 @@ class MotionResolution:
                 return "invalid_pose", exc.message
         return None
 
+    # -- the sweep evaluator's read surface (§4) -----------------------------
+
+    def joint_failure(self, joint_id: str) -> tuple[JointUnresolvableReason, str] | None:
+        """Why ``joint_id`` is unresolvable at this evaluation, or ``None``."""
+        return self._joint_failures.get(joint_id)
+
+    def frame(self, joint_id: str) -> JointFrame:
+        """The resolved :class:`~hephaestus.geom.JointFrame` of one resolved joint."""
+        return self._frames[joint_id]
+
+    def parent_joint(self, part: str) -> JointEntry | None:
+        """The joint ``part`` rides (its one forest edge), or ``None`` if static."""
+        return self._parent_of.get(part)
+
     # -- placements for pose-bound constraints (§3) --------------------------
 
     def transforms(self, pose_id: str, parts: Sequence[str]) -> dict[str, RigidTransform]:
@@ -1141,3 +1218,1206 @@ def check_motion(
     operator CLI (``heph motion``) call — ``KINEMATICS.md`` §2/§6.
     """
     return MotionEvaluator(layout, store).evaluate(record=record, scratch=scratch)
+
+
+# --------------------------------------------------------------------------
+# sweeps: sampled motion checks (KINEMATICS.md §4)
+
+SweepVerdict = Literal[
+    "holds_at_samples",
+    "satisfied",
+    "not_reached_at_samples",
+    "violated",
+    "unresolvable",
+]
+
+#: THE result vocabulary, one closed set, stated once (``KINEMATICS.md`` §4).
+#: The asymmetry is the honesty: universal kinds (``sweep_clearance``,
+#: ``sweep_no_interference``) emit ``holds_at_samples`` on success — never
+#: "holds", because one bad sample existentially falsifies them but all-good
+#: samples only *evidence* — and ``violated`` on a falsifying sample. The
+#: existence kind (``reach``) inverts: one achieving sample IS proof, so
+#: success is ``satisfied``; failure is ``not_reached_at_samples`` (closest
+#: sample and miss distance attached), never ``violated`` — a finite sample
+#: not reaching is evidence, not proof of unreachability, and the name must
+#: not claim more. ``unresolvable`` follows §2. For the termination reviewer
+#: every non-success state is blocking alike.
+SWEEP_VERDICTS: Final[tuple[SweepVerdict, ...]] = (
+    "holds_at_samples",
+    "satisfied",
+    "not_reached_at_samples",
+    "violated",
+    "unresolvable",
+)
+
+SweepUnresolvableReason = Literal[
+    "missing_part",
+    "no_current_build",
+    "missing_artifact",
+    "dangling_selector",
+    "ambiguous_selector",
+    "unaddressable_anchor",
+    "orphaned_sweep",
+    "unresolvable_joint",
+    "joint_limit_exceeded",
+    "invalid_motion_check",
+]
+
+#: Why a motion check could not be evaluated. The first six are the 8C
+#: anchor-resolution reasons verbatim (same failure, same fix, same name);
+#: ``shape_refused`` is deliberately absent — clearance, interference and
+#: point distance measure any resolvable geometry, so no frame class can
+#: refuse them. The check-level extensions:
+#:
+#: * ``orphaned_sweep`` — the check sweeps a joint the set has since withdrawn
+#:   (or, foreign-writer case, never carried); the detail names the joint id.
+#:   The ``orphaned_pose`` rule restated: withdrawal is not a failure and the
+#:   joint is never evaluated, so the fact lives with the check that still
+#:   names it.
+#: * ``unresolvable_joint`` — a swept joint, or a joint on an anchored part's
+#:   parent chain, is itself unresolvable; the detail names it and its reason.
+#: * ``joint_limit_exceeded`` — a grid sample falls outside a joint's declared
+#:   limits (a range declared before the limits were tightened, or an omitted
+#:   chain joint whose limits exclude zero). Geom's own spelling; an
+#:   evaluation never clamps, so the samples already measured are kept and the
+#:   rest are refused by name.
+#: * ``invalid_motion_check`` — the stored entry cannot be evaluated as
+#:   declared (the foreign-writer twin of the declaration refusals, e.g. a
+#:   scalar sweep over a ``cylindrical`` joint's pair). Reported, never
+#:   guessed at.
+SWEEP_UNRESOLVABLE_REASONS: Final[tuple[SweepUnresolvableReason, ...]] = (
+    "missing_part",
+    "no_current_build",
+    "missing_artifact",
+    "dangling_selector",
+    "ambiguous_selector",
+    "unaddressable_anchor",
+    "orphaned_sweep",
+    "unresolvable_joint",
+    "joint_limit_exceeded",
+    "invalid_motion_check",
+)
+
+#: Wall-clock ceiling for ONE motion check's sweep, process-killed with no
+#: retry (``KINEMATICS.md`` §4, the ``COMPARE.md`` §5 pattern applied to the
+#: other unbounded kernel surface: a sweep is up to ``SWEEP_SAMPLES_MAX``
+#: boolean/extrema measurements, any one of which can grind on a pathological
+#: B-rep the way the 19-hour ``compare_solids`` sample did). Env-overridable
+#: via :data:`MOTION_TIMEOUT_ENV`.
+MOTION_TIMEOUT_S: Final[float] = 300.0
+
+#: Environment override for :data:`MOTION_TIMEOUT_S` (seconds, float).
+MOTION_TIMEOUT_ENV: Final[str] = "HEPHAESTUS_MOTION_TIMEOUT_S"
+
+
+def motion_timeout_s() -> float:
+    """The effective sweep ceiling: :data:`MOTION_TIMEOUT_ENV` else the default.
+
+    Resolved per call (the :func:`~hephaestus.core.project_compare.
+    compare_timeout_s` rule) so the env override applies to long-lived
+    engines too, and nonsense falls back rather than crashing a check run.
+    """
+    raw = os.environ.get(MOTION_TIMEOUT_ENV)
+    if raw is None:
+        return MOTION_TIMEOUT_S
+    try:
+        return float(raw)
+    except ValueError:
+        return MOTION_TIMEOUT_S
+
+
+@dataclass(frozen=True)
+class SweepSample:
+    """One evaluated grid sample: the parameter assignment and what it measured.
+
+    The per-sample fact the child streams as it lands (§4 bounded execution)
+    and the shape of every result's worst-sample record. ``measured`` is in
+    the check kind's unit: mm for ``sweep_clearance`` and ``reach``, mm³ for
+    ``sweep_no_interference``.
+    """
+
+    values: Mapping[str, float]
+    measured: float
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "values": {name: self.values[name] for name in sorted(self.values)},
+            "measured": self.measured,
+        }
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, JSONValue]) -> SweepSample:
+        raw_values = data.get("values")
+        values: dict[str, float] = {}
+        if isinstance(raw_values, dict):
+            for name, value in cast("Mapping[str, JSONValue]", raw_values).items():
+                if not isinstance(value, bool) and isinstance(value, int | float):
+                    values[name] = float(value)
+        measured = data.get("measured")
+        if isinstance(measured, bool) or not isinstance(measured, int | float):
+            raise ValidationError("sweep sample must record a measured number", kind="contract")
+        return cls(values=values, measured=float(measured))
+
+
+class MotionTimeout(ValidationError):
+    """The sweep subprocess hit the wall-clock ceiling or died (§4).
+
+    Not an empty-handed refusal: ``partial`` CARRIES every per-sample fact the
+    child streamed before the kill, and ``samples_evaluated`` /
+    ``grid_total`` say exactly how far the grid got — partial evidence, never
+    a hang and never a silent pass. Deliberately NOT a :data:`SWEEP_VERDICTS`
+    member: a killed sweep decided nothing, and giving the kill a verdict
+    spelling would let a timeout be read as an outcome.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        check_id: str,
+        timeout_s: float,
+        grid_total: int,
+        partial: tuple[SweepSample, ...],
+    ) -> None:
+        super().__init__(message, kind="contract")
+        self.reason: str = "motion_timeout"
+        self.check_id = check_id
+        self.timeout_s = timeout_s
+        self.grid_total = grid_total
+        self.partial: tuple[SweepSample, ...] = partial
+
+    @property
+    def samples_evaluated(self) -> int:
+        return len(self.partial)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        """The refusal shape every surface carries (tool error data, CLI --json)."""
+        return {
+            "status": "motion_timeout",
+            "reason": "motion_timeout",
+            "id": self.check_id,
+            "message": self.message,
+            "timeout_s": self.timeout_s,
+            "samples_evaluated": self.samples_evaluated,
+            "grid_total": self.grid_total,
+            "partial": [sample.to_json() for sample in self.partial],
+        }
+
+
+@dataclass(frozen=True)
+class SweepResult:
+    """One motion check's result: the §4 record, verdict from the closed set.
+
+    Every result — success, failure, and unresolvable-with-partial-evidence
+    alike — records ``samples_evaluated`` (the grid total on a completed run)
+    and, whenever at least one sample was measured, the worst sample's
+    parameter values and measured value in ``worst``. For ``reach`` the
+    ``worst`` slot carries the CLOSEST sample (the §4 record: achieving
+    parameters when ``satisfied`` — one sample is proof — and the closest
+    sample when ``not_reached_at_samples``, with ``miss_mm`` carrying how far
+    past ``tol_mm`` it stopped). The declared quantities are restated
+    (``sweep``, ``samples_per_axis``, ``min_mm``/``tol_mm``/
+    ``target_point_mm``) so the number can never be read without the claim it
+    was measured against — the :class:`~hephaestus.geom.ConstraintResidual`
+    rule.
+    """
+
+    id: str
+    kind: str
+    verdict: SweepVerdict
+    samples_evaluated: int
+    grid_total: int
+    samples_per_axis: int
+    #: ``{joint_id: (from, to)}`` — the declared ranges, restated.
+    sweep: Mapping[str, tuple[float, float]]
+    #: ``mm`` (clearance / reach distance) or ``mm3`` (interference volume).
+    unit: str
+    #: ``{"a": …, "b": …}`` or ``{"anchor": …}`` — resolution evidence per anchor.
+    anchors: Mapping[str, AnchorRef] = field(default_factory=dict[str, AnchorRef])
+    worst: SweepSample | None = None
+    min_mm: float | None = None
+    tol_mm: float | None = None
+    target_point_mm: tuple[float, float, float] | None = None
+    miss_mm: float | None = None
+    reason: SweepUnresolvableReason | None = None
+    detail: str | None = None
+    provenance: Mapping[str, JSONValue] = field(default_factory=dict[str, "JSONValue"])
+    note: str | None = None
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "id": self.id,
+            "kind": self.kind,
+            "verdict": self.verdict,
+            "samples_evaluated": self.samples_evaluated,
+            "grid_total": self.grid_total,
+            "samples_per_axis": self.samples_per_axis,
+            "sweep": {
+                joint_id: {"from": self.sweep[joint_id][0], "to": self.sweep[joint_id][1]}
+                for joint_id in sorted(self.sweep)
+            },
+            "unit": self.unit,
+            "anchors": {
+                name: cast("JSONValue", self.anchors[name].to_json())
+                for name in sorted(self.anchors)
+            },
+            "worst": None if self.worst is None else cast("JSONValue", self.worst.to_json()),
+            "min_mm": self.min_mm,
+            "tol_mm": self.tol_mm,
+            "target_point_mm": (
+                None if self.target_point_mm is None else list(self.target_point_mm)
+            ),
+            "miss_mm": self.miss_mm,
+            "reason": self.reason,
+            "detail": self.detail,
+            "provenance": cast("JSONValue", dict(self.provenance)),
+            "note": self.note,
+        }
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, JSONValue]) -> SweepResult:
+        verdict = data.get("verdict")
+        if verdict not in SWEEP_VERDICTS:
+            raise ValidationError(f"invalid sweep verdict {verdict!r}", kind="contract")
+        reason = data.get("reason")
+        raw_sweep = data.get("sweep")
+        sweep: dict[str, tuple[float, float]] = {}
+        if isinstance(raw_sweep, dict):
+            for joint_id, value in cast("Mapping[str, JSONValue]", raw_sweep).items():
+                if isinstance(value, dict):
+                    rng = cast("Mapping[str, JSONValue]", value)
+                    start, stop = rng.get("from"), rng.get("to")
+                    if isinstance(start, int | float) and isinstance(stop, int | float):
+                        sweep[joint_id] = (float(start), float(stop))
+        raw_anchors = data.get("anchors")
+        anchors: dict[str, AnchorRef] = {}
+        if isinstance(raw_anchors, dict):
+            for name, value in cast("Mapping[str, JSONValue]", raw_anchors).items():
+                anchors[name] = _anchor_ref_from_json(value)
+        raw_worst = data.get("worst")
+        worst = (
+            SweepSample.from_json(cast("Mapping[str, JSONValue]", raw_worst))
+            if isinstance(raw_worst, dict)
+            else None
+        )
+        provenance = data.get("provenance")
+        return cls(
+            id=str(data.get("id", "")),
+            kind=str(data.get("kind", "")),
+            verdict=verdict,
+            samples_evaluated=_as_int(data.get("samples_evaluated")),
+            grid_total=_as_int(data.get("grid_total")),
+            samples_per_axis=_as_int(data.get("samples_per_axis")),
+            sweep=sweep,
+            unit=str(data.get("unit", "")),
+            anchors=anchors,
+            worst=worst,
+            min_mm=_as_opt_float(data.get("min_mm")),
+            tol_mm=_as_opt_float(data.get("tol_mm")),
+            target_point_mm=_as_opt_point(data.get("target_point_mm")),
+            miss_mm=_as_opt_float(data.get("miss_mm")),
+            reason=reason if reason in SWEEP_UNRESOLVABLE_REASONS else None,
+            detail=_opt_str(data.get("detail")),
+            provenance=(
+                cast("Mapping[str, JSONValue]", provenance) if isinstance(provenance, dict) else {}
+            ),
+            note=_opt_str(data.get("note")),
+        )
+
+
+def _as_int(value: JSONValue | None) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    return value
+
+
+def _as_opt_float(value: JSONValue | None) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value)
+
+
+def _as_opt_point(value: JSONValue | None) -> tuple[float, float, float] | None:
+    if not isinstance(value, list):
+        return None
+    items = cast("list[JSONValue]", value)
+    if len(items) != 3:
+        return None
+    out: list[float] = []
+    for item in items:
+        if isinstance(item, bool) or not isinstance(item, int | float):
+            return None
+        out.append(float(item))
+    return (out[0], out[1], out[2])
+
+
+# -- the bounded child (COMPARE.md §5 pattern, both legs) --------------------
+
+
+def _sweep_child(conn: Any, spec: Mapping[str, Any]) -> None:  # pragma: no cover
+    """One sweep's grid, measured where a kill cannot take the session down.
+
+    Runs in a spawned subprocess. Message protocol, in order: zero or more
+    ``("sample", (values, measured))`` — one per grid sample, streamed AS IT
+    LANDS (the bench ``_score`` per-sample rule: a ceiling kill after the
+    n-th send still leaves the caller holding n facts) — then exactly one of
+    ``("done", None)`` or ``("refusal", (reason, detail))``. The child only
+    measures; verdicts are the parent's, so a kill can never cost a decision,
+    only samples.
+    """
+    from itertools import product
+
+    from hephaestus.core.executor.artifact_geometry import load_brep_shape
+    from hephaestus.geom import (
+        IDENTITY_TRANSFORM,
+        JointDeclarationError,
+        JointLimitError,
+        clearance,
+        distance,
+        forward_kinematics,
+        interference,
+        transformed_shape,
+    )
+
+    kind: str = spec["kind"]
+    frames: Sequence[Any] = spec["frames"]
+    axes: Sequence[tuple[str, Sequence[float]]] = spec["axes"]
+    parts: Mapping[str, str] = spec["parts"]
+    shapes: dict[str, Any] = {
+        role: load_brep_shape(Path(path).read_bytes())
+        for role, path in cast("Mapping[str, str]", spec["shapes"]).items()
+    }
+    target: Any = None
+    if kind == "reach":
+        from build123d import Vertex
+
+        x, y, z = spec["target_point_mm"]
+        target = Vertex(x, y, z)
+    for combo in product(*[values for _, values in axes]):
+        assignment = {joint_id: value for (joint_id, _), value in zip(axes, combo, strict=True)}
+        try:
+            world = forward_kinematics(cast("Any", frames), cast("Any", assignment))
+        except JointLimitError as exc:
+            conn.send(("refusal", ("joint_limit_exceeded", exc.message)))
+            conn.close()
+            return
+        except JointDeclarationError as exc:
+            conn.send(("refusal", ("invalid_motion_check", exc.message)))
+            conn.close()
+            return
+        placed = {
+            role: transformed_shape(shape, world.get(parts[role], IDENTITY_TRANSFORM))
+            for role, shape in shapes.items()
+        }
+        if kind == "sweep_clearance":
+            measured = clearance(placed["a"], placed["b"])
+        elif kind == "sweep_no_interference":
+            measured = interference(placed["a"], placed["b"])
+        else:  # reach: distance-to-point through the existing distance primitive
+            measured = distance(placed["anchor"], target)
+        conn.send(("sample", (assignment, float(measured))))
+    conn.send(("done", None))
+    conn.close()
+
+
+def _bounded_sweep(
+    spec: dict[str, Any], *, check_id: str, grid_total: int, timeout_s: float
+) -> tuple[tuple[SweepSample, ...], tuple[str, str] | None]:
+    """Run one sweep's grid under the wall-clock ceiling (§4).
+
+    Returns ``(samples, refusal)``: every per-sample fact that streamed in,
+    and ``None`` on a completed grid or the child's named ``(reason,
+    detail)`` refusal. A ceiling kill or a child death raises
+    :class:`MotionTimeout` CARRYING the samples already evaluated — the
+    :func:`~hephaestus.core.project_compare.bounded_solid_diff` loop with the
+    bench's per-sample streaming in place of the cheap-facts-first split.
+    """
+    ctx = multiprocessing.get_context("spawn")
+    parent, child = ctx.Pipe(duplex=False)
+    proc = ctx.Process(target=_sweep_child, args=(child, spec))
+    proc.start()
+    child.close()
+
+    samples: list[SweepSample] = []
+    outcome: tuple[str, Any] | None = None
+    died = False
+    cut_short = f"did not finish within {timeout_s:g}s and was killed"
+    deadline = time.monotonic() + timeout_s
+
+    def _receive() -> bool:
+        """Consume one message; True when it was terminal (done/refusal)."""
+        nonlocal outcome
+        kind, payload = parent.recv()
+        if kind == "sample":
+            values, measured = payload
+            samples.append(
+                SweepSample(values=dict(cast("Mapping[str, float]", values)), measured=measured)
+            )
+            return False
+        outcome = (str(kind), payload)
+        return True
+
+    try:
+        while outcome is None and time.monotonic() < deadline:
+            try:
+                if parent.poll(0.05):
+                    _receive()
+                elif not proc.is_alive():
+                    # Death, not a deadline — drain what it sent first, so a
+                    # result that raced the exit is never misread as a crash.
+                    while parent.poll(0.2) and not _receive():
+                        pass
+                    died = outcome is None
+                    break
+            except EOFError:
+                # The pipe closed before a terminal message: the child is
+                # crashing. Let it finish dying so the refusal carries its
+                # real exit code; a hang instead meets the kill in `finally`.
+                proc.join(5.0)
+                died = True
+                break
+    finally:
+        if proc.is_alive():
+            proc.kill()
+        proc.join()
+        parent.close()
+    if died:
+        cut_short = f"subprocess died (exit code {proc.exitcode})"
+
+    if outcome is not None:
+        kind, payload = outcome
+        if kind == "done":
+            return tuple(samples), None
+        reason, detail = cast("tuple[str, str]", payload)
+        return tuple(samples), (reason, detail)
+    raise MotionTimeout(
+        f"motion check {check_id}: sweep {cut_short} (KINEMATICS.md §4, ceiling "
+        f"{timeout_s:g}s via {MOTION_TIMEOUT_ENV}); {len(samples)} of {grid_total} "
+        "samples evaluated",
+        check_id=check_id,
+        timeout_s=timeout_s,
+        grid_total=grid_total,
+        partial=tuple(samples),
+    )
+
+
+# -- the sweep evaluator -----------------------------------------------------
+
+
+class SweepEvaluator:
+    """Evaluates declared motion checks against current builds (§4)."""
+
+    def __init__(self, layout: ProjectLayout, store: OpStore) -> None:
+        self.layout = layout
+        self._store = store
+        self.joints = JointSet(layout, store)
+        self.poses = PoseSet(layout, store, self.joints)
+        self.checks = MotionCheckSet(layout, store, self.joints)
+        self._publisher = Publisher(layout, store)
+
+    # -- reads (the projected results, never a re-measure) -------------------
+
+    def projected_results(self) -> tuple[SweepResult, ...] | None:
+        """The last FULL evaluation's per-check results, or ``None``.
+
+        ``None`` means *checks never evaluated* — which is not the same as "no
+        checks declared", and readers must say so rather than print an empty
+        table (the :meth:`MotionEvaluator.projected` rule). Staleness is read
+        off the shared motion projection: the projected :class:`MotionStatus`
+        carries the ``stale`` part names, and the results were measured against
+        the same recorded refs.
+        """
+        projection = self._publisher.projections.state().motion
+        if projection is None or projection.results_blob is None:
+            return None
+        blob = projection.results_blob
+        if not self._store.blobs.has(blob):  # pragma: no cover - GC-linked to the state blob
+            return None
+        raw = json.loads(self._store.blobs.get(blob).decode("utf-8"))
+        if not isinstance(raw, dict):  # pragma: no cover - our own canonical JSON
+            return None
+        doc = cast("Mapping[str, JSONValue]", raw)
+        items = doc.get("results")
+        if not isinstance(items, list):  # pragma: no cover - our own canonical JSON
+            return None
+        return tuple(
+            SweepResult.from_json(cast("Mapping[str, JSONValue]", item))
+            for item in cast("list[JSONValue]", items)
+            if isinstance(item, dict)
+        )
+
+    def projected_results_ref(self) -> str | None:
+        """``artifact:motion-results:sha256:…`` of the projected results, if any."""
+        projection = self._publisher.projections.state().motion
+        if projection is None or projection.results_blob is None:
+            return None
+        return make_artifact_ref(MOTION_RESULTS_ARTIFACT_KIND, projection.results_blob)
+
+    def projected_check_generation(self) -> int:
+        """The motion-check generation the projected results were measured against."""
+        projection = self._publisher.projections.state().motion
+        if projection is None:
+            return 0
+        return projection.check_generation
+
+    # -- evaluation ----------------------------------------------------------
+
+    def evaluate(
+        self,
+        ids: Sequence[str] | None = None,
+        *,
+        record: bool = False,
+        scratch: Path | None = None,
+        timeout_s: float | None = None,
+    ) -> tuple[SweepResult, ...]:
+        """Every active motion check's result, in declaration order.
+
+        ``ids`` narrows the run; an unknown id is ``addressing_error`` listing
+        the declared ones, never a silently empty result. Withdrawn entries
+        are never evaluated. Anchors and joint frames are resolved ONCE per
+        run over one :class:`MotionResolution` (each part's artifact loaded at
+        most once, the §2 rule); each check's grid then runs in its own
+        killable subprocess under ``timeout_s`` (default
+        :func:`motion_timeout_s`), and a ceiling kill raises
+        :class:`MotionTimeout` naming the check and carrying its partial
+        per-sample facts.
+
+        With ``record`` (and only on a FULL run — a named subset is evaluated
+        but deliberately never projected, the ``check_assembly`` rule: a
+        projection covering some checks would report a set the project does
+        not have) the results document is stored and recorded on the motion
+        projection, so a later read — and the reviewer — sees this
+        evaluation. Recording requires an already-projected
+        :class:`MotionStatus` (``check_motion`` evaluates it first), because
+        the results ride that projection's staleness.
+        """
+        state = self.checks.state()
+        entries = _select_checks(state, ids)
+        if timeout_s is None:
+            timeout_s = motion_timeout_s()
+        if scratch is not None:
+            results, refs = self._evaluate_in(entries, scratch, timeout_s)
+        else:
+            self.layout.store_root.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(
+                prefix="heph-sweep-", dir=self.layout.store_root
+            ) as tmp:
+                results, refs = self._evaluate_in(entries, Path(tmp), timeout_s)
+        if record and ids is None:
+            self._record(results, refs, state.generation)
+        return results
+
+    def _evaluate_in(
+        self, entries: Sequence[MotionCheckEntry], scratch: Path, timeout_s: float
+    ) -> tuple[tuple[SweepResult, ...], dict[str, str]]:
+        resolver = AnchorResolver(self.layout, self._store, self._publisher, scratch)
+        resolution = MotionResolution(self.joints.state(), self.poses.state(), resolver)
+        results = tuple(
+            _evaluate_check(entry, resolution, resolver, scratch=scratch, timeout_s=timeout_s)
+            for entry in entries
+        )
+        return results, resolver.artifact_refs()
+
+    def _record(
+        self, results: tuple[SweepResult, ...], refs: Mapping[str, str], generation: int
+    ) -> None:
+        """Store the results document and record it on the motion projection.
+
+        The check anchors' parts merge into the projection's ``parts`` map so a
+        rebuild of a part only a sweep measures restales the projection — the
+        results were measured against that geometry too. The projection's own
+        ``stale`` list is preserved: recording results does not launder a
+        staleness the status already declared.
+        """
+        projections = self._publisher.projections
+        projection = projections.state().motion
+        if projection is None:  # pragma: no cover - check_motion projects the status first
+            raise ValidationError(
+                "motion-check results cannot be recorded before a MotionStatus is projected "
+                "(KINEMATICS.md §2: the results ride the motion projection's staleness)",
+                kind="contract",
+            )
+        doc: dict[str, JSONValue] = {
+            "check_generation": generation,
+            "results": [result.to_json() for result in results],
+        }
+        blob = self._store.blobs.put(canonical_json(doc).encode("utf-8"))
+        projections.record_motion(
+            dataclasses.replace(
+                projection,
+                results_blob=blob,
+                check_generation=generation,
+                parts={**projection.parts, **refs},
+            )
+        )
+
+
+def _select_checks(
+    state: MotionCheckState, ids: Sequence[str] | None
+) -> tuple[MotionCheckEntry, ...]:
+    """The active entries to evaluate, in declaration order (the 8C rule)."""
+    active = state.active
+    if ids is None:
+        return active
+    by_id = state.by_id
+    unknown = [name for name in ids if name not in by_id]
+    if unknown:
+        raise AddressingError(
+            f"no motion check(s) {', '.join(unknown)} declared",
+            selector=unknown[0],
+            candidates=tuple(sorted(by_id)),
+        )
+    wanted = set(ids)
+    return tuple(entry for entry in active if entry.id in wanted)
+
+
+def _evaluate_check(
+    entry: MotionCheckEntry,
+    resolution: MotionResolution,
+    resolver: AnchorResolver,
+    *,
+    scratch: Path,
+    timeout_s: float,
+) -> SweepResult:
+    """One check: pre-resolve, run the bounded grid, decide from the samples.
+
+    Failure precedence mirrors the joint resolver's parent-first rule: the
+    swept joints are the check's subject, so an orphaned or unresolvable
+    swept joint is reported before an anchor that also happens to be broken.
+    """
+    from hephaestus.core.executor.artifact_geometry import write_brep_shape
+
+    anchors: dict[str, AnchorRef] = {
+        name: AnchorRef(anchor=anchor.text, part=anchor.part, selector=anchor.selector)
+        for name, anchor in entry.anchor_fields
+    }
+    # 1. Swept joints: declared, unwithdrawn, resolved (§4: ranges are claims
+    #    about declared joints; withdrawal-later is the orphaned_pose rule).
+    declared = resolution.joint_state.by_id
+    frames: dict[str, Any] = {}
+    for joint_id in sorted(entry.sweep):
+        joint = declared.get(joint_id)
+        if joint is None:
+            return _sweep_unresolvable(
+                entry,
+                anchors,
+                "orphaned_sweep",
+                f"motion check {entry.id} sweeps joint {joint_id!r}, which is not declared",
+            )
+        if joint.withdrawn:
+            return _sweep_unresolvable(
+                entry,
+                anchors,
+                "orphaned_sweep",
+                f"motion check {entry.id} sweeps withdrawn joint {joint_id!r} "
+                f"({joint.withdrawn_reason})",
+            )
+        failure = resolution.joint_failure(joint_id)
+        if failure is not None:
+            return _sweep_unresolvable(
+                entry,
+                anchors,
+                "unresolvable_joint",
+                f"motion check {entry.id} sweeps joint {joint_id!r}, which is "
+                f"unresolvable ({failure[0]}): {failure[1]}",
+            )
+        frames[joint_id] = resolution.frame(joint_id)
+    # 2. Anchors, through the shared resolver (each part loaded once per run).
+    shapes: dict[str, Any] = {}
+    for name, anchor in entry.anchor_fields:
+        try:
+            geometry, resolved = resolver.locate(anchor.part, anchor.selector)
+        except UnresolvableAnchorError as exc:
+            return _sweep_unresolvable(
+                entry, anchors, _sweep_reason(exc.reason), f"anchor {name}: {exc.detail}"
+            )
+        anchors[name] = dataclasses.replace(
+            anchors[name], rule=resolved.kind, artifact_ref=geometry.artifact_ref
+        )
+        try:
+            shapes[name] = geometry.shape_for(resolved)
+        except UnresolvableAnchorError as exc:
+            return _sweep_unresolvable(
+                entry, anchors, _sweep_reason(exc.reason), f"anchor {name}: {exc.detail}"
+            )
+    # 3. Chain joints of the anchored parts: a broken joint that MOVES a
+    #    measured part poisons the measurement even when it is not swept.
+    parts = {name: anchor.part for name, anchor in entry.anchor_fields}
+    for part in dict.fromkeys(parts.values()):
+        current = part
+        visited: set[str] = set()
+        while True:
+            chain_entry = resolution.parent_joint(current)
+            if chain_entry is None or current in visited:
+                break
+            visited.add(current)
+            failure = resolution.joint_failure(chain_entry.id)
+            if failure is not None:
+                return _sweep_unresolvable(
+                    entry,
+                    anchors,
+                    "unresolvable_joint",
+                    f"part {part!r} rides joint {chain_entry.id!r}, which is "
+                    f"unresolvable ({failure[0]}): {failure[1]}",
+                )
+            frames.setdefault(chain_entry.id, resolution.frame(chain_entry.id))
+            current = chain_entry.anchors[0].part
+    # 4. The bounded grid (COMPARE.md §5 pattern): shapes cross as lossless
+    #    BRep files, frames as plain records, and the child streams facts.
+    check_dir = scratch / f"sweep-{entry.id}"
+    check_dir.mkdir(parents=True, exist_ok=True)
+    shape_paths: dict[str, str] = {}
+    for name, shape in shapes.items():
+        path = check_dir / f"{name}.brep"
+        write_brep_shape(shape, path)
+        shape_paths[name] = str(path)
+    axes = [
+        (joint_id, sweep_axis_values(rng.start, rng.stop, entry.samples))
+        for joint_id, rng in sorted(entry.sweep.items())
+    ]
+    spec: dict[str, Any] = {
+        "kind": entry.kind,
+        "shapes": shape_paths,
+        "parts": parts,
+        "frames": tuple(frames.values()),
+        "axes": axes,
+        "target_point_mm": entry.target_point_mm,
+    }
+    samples, refusal = _bounded_sweep(
+        spec, check_id=entry.id, grid_total=entry.grid_total, timeout_s=timeout_s
+    )
+    if refusal is not None:
+        reason, detail = refusal
+        return _sweep_unresolvable(
+            entry,
+            anchors,
+            _sweep_reason(reason),
+            detail,
+            samples=samples,
+        )
+    return _decide(entry, anchors, samples)
+
+
+def sweep_axis_values(start: float, stop: float, samples: int) -> list[float]:
+    """``samples`` values from ``start`` to ``stop``, both endpoints EXACT (§4).
+
+    Public because the swept-envelope publisher (``KINEMATICS.md`` §6,
+    :mod:`hephaestus.core.render.posed`) must place the moving compound at
+    EXACTLY the samples a sweep evaluates — two grid formulas would let an
+    envelope be labeled with a sample count its geometry never visited.
+    """
+    step = (stop - start) / (samples - 1)
+    return [start + step * i for i in range(samples - 1)] + [stop]
+
+
+def _sweep_reason(reason: str) -> SweepUnresolvableReason:
+    """An anchor/child reason under the sweep vocabulary (defensive twin of
+    :func:`_joint_reason`: the constraint-only spellings cannot reach here)."""
+    if reason in SWEEP_UNRESOLVABLE_REASONS:
+        return reason
+    return "invalid_motion_check"  # pragma: no cover - defensive
+
+
+def _sweep_unit(kind: str) -> str:
+    return "mm3" if kind == "sweep_no_interference" else "mm"
+
+
+def _sweep_unresolvable(
+    entry: MotionCheckEntry,
+    anchors: Mapping[str, AnchorRef],
+    reason: SweepUnresolvableReason,
+    detail: str,
+    *,
+    samples: tuple[SweepSample, ...] = (),
+) -> SweepResult:
+    """An ``unresolvable`` result that keeps whatever evidence exists.
+
+    ``samples`` are the per-sample facts that streamed in before the named
+    refusal (a range that walks out of a joint's limits mid-grid): they are
+    counted and their worst is kept — partial evidence is never discarded —
+    but the verdict stays ``unresolvable``, never a pass over a partial grid.
+    """
+    worst, _miss = _worst_of(entry, samples)
+    return SweepResult(
+        id=entry.id,
+        kind=entry.kind,
+        verdict="unresolvable",
+        samples_evaluated=len(samples),
+        grid_total=entry.grid_total,
+        samples_per_axis=entry.samples,
+        sweep={joint_id: (rng.start, rng.stop) for joint_id, rng in entry.sweep.items()},
+        unit=_sweep_unit(entry.kind),
+        anchors=dict(anchors),
+        worst=worst,
+        min_mm=entry.min_mm,
+        tol_mm=entry.tol_mm,
+        target_point_mm=entry.target_point_mm,
+        reason=reason,
+        detail=detail,
+        provenance=entry.provenance.to_json(),
+        note=entry.note,
+    )
+
+
+def _worst_of(
+    entry: MotionCheckEntry, samples: tuple[SweepSample, ...]
+) -> tuple[SweepSample | None, float | None]:
+    """``(worst sample, reach miss)`` per kind; first extremum wins a tie.
+
+    "Worst" is the kind's own direction: minimum clearance, maximum
+    interference volume, minimum distance to the target (for ``reach`` the
+    closest sample — the achieving one when it reaches, the miss evidence
+    when it does not, with the miss as ``closest - tol_mm``).
+    """
+    if not samples:
+        return None, None
+    if entry.kind == "sweep_no_interference":
+        worst = max(samples, key=lambda sample: sample.measured)
+        return worst, None
+    worst = min(samples, key=lambda sample: sample.measured)
+    if entry.kind == "reach":
+        assert entry.tol_mm is not None  # required at declaration
+        return worst, worst.measured - entry.tol_mm
+    return worst, None
+
+
+def _decide(
+    entry: MotionCheckEntry,
+    anchors: Mapping[str, AnchorRef],
+    samples: tuple[SweepSample, ...],
+) -> SweepResult:
+    """The verdict, from the completed grid's facts — the §4 vocabulary exactly.
+
+    Universal kinds: one falsifying sample is ``violated`` (existential
+    falsification IS proof); a clean grid is ``holds_at_samples`` (evidence,
+    and the name says so). ``reach``: one achieving sample is ``satisfied``
+    (existential satisfaction IS proof, the achieving parameters in
+    ``worst``); a grid that never reaches is ``not_reached_at_samples`` with
+    the closest sample and its miss distance — never ``violated``.
+    """
+    from hephaestus.geom import INTERFERENCE_TOL_MM3
+
+    worst, miss = _worst_of(entry, samples)
+    assert worst is not None  # the grid total is >= 2 by declaration
+    verdict: SweepVerdict
+    miss_mm: float | None = None
+    if entry.kind == "sweep_clearance":
+        assert entry.min_mm is not None  # required at declaration
+        verdict = "violated" if worst.measured < entry.min_mm else "holds_at_samples"
+    elif entry.kind == "sweep_no_interference":
+        verdict = "violated" if worst.measured > INTERFERENCE_TOL_MM3 else "holds_at_samples"
+    else:  # reach
+        assert entry.tol_mm is not None  # required at declaration
+        if worst.measured <= entry.tol_mm:
+            verdict = "satisfied"
+        else:
+            verdict = "not_reached_at_samples"
+            miss_mm = miss
+    return SweepResult(
+        id=entry.id,
+        kind=entry.kind,
+        verdict=verdict,
+        samples_evaluated=len(samples),
+        grid_total=entry.grid_total,
+        samples_per_axis=entry.samples,
+        sweep={joint_id: (rng.start, rng.stop) for joint_id, rng in entry.sweep.items()},
+        unit=_sweep_unit(entry.kind),
+        anchors=dict(anchors),
+        worst=worst,
+        min_mm=entry.min_mm,
+        tol_mm=entry.tol_mm,
+        target_point_mm=entry.target_point_mm,
+        miss_mm=miss_mm,
+        provenance=entry.provenance.to_json(),
+        note=entry.note,
+    )
+
+
+def evaluate_motion_checks(
+    layout: ProjectLayout,
+    store: OpStore,
+    *,
+    ids: Sequence[str] | None = None,
+    scratch: Path | None = None,
+    timeout_s: float | None = None,
+) -> tuple[SweepResult, ...]:
+    """Evaluate declared motion checks now, against CURRENT artifacts (§4).
+
+    The engine-level entry point for the sweep half of ``check_motion`` and
+    ``heph motion check`` — the sweep twin of :func:`check_motion`. Raises
+    :class:`MotionTimeout` (named, partial per-sample facts attached) when a
+    check's grid hits the wall-clock ceiling.
+    """
+    return SweepEvaluator(layout, store).evaluate(ids, scratch=scratch, timeout_s=timeout_s)
+
+
+def check_motion_with_results(
+    layout: ProjectLayout,
+    store: OpStore,
+    *,
+    ids: Sequence[str] | None = None,
+    record: bool = True,
+    scratch: Path | None = None,
+    timeout_s: float | None = None,
+) -> tuple[MotionStatus, tuple[SweepResult, ...], bool]:
+    """The whole ``check_motion`` measurement: status AND per-check results (§6).
+
+    The one engine entry point the 9B ``check_motion`` tool and ``heph motion
+    check`` share. Evaluates the :class:`MotionStatus` first (recording and
+    projecting it on a full run, so the results have a projection to ride),
+    then every selected motion check. Returns ``(status, results, partial)``
+    where ``partial`` says a named subset was evaluated — a subset is never
+    projected (the ``check_assembly`` rule: a projection covering some checks
+    would report a set the project does not have). An unknown id is
+    ``addressing_error`` naming the declared checks; a ceiling kill raises
+    :class:`MotionTimeout` with its partial per-sample facts.
+    """
+    partial = ids is not None
+    evaluator = MotionEvaluator(layout, store)
+    sweeps = SweepEvaluator(layout, store)
+    if scratch is not None:
+        status = evaluator.evaluate(record=not partial, scratch=scratch)
+        results = sweeps.evaluate(ids, record=not partial, scratch=scratch, timeout_s=timeout_s)
+        return status, results, partial
+    layout.store_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="heph-motion-", dir=layout.store_root) as tmp:
+        status = evaluator.evaluate(record=not partial, scratch=Path(tmp))
+        results = sweeps.evaluate(ids, record=not partial, scratch=Path(tmp), timeout_s=timeout_s)
+    return status, results, partial
+
+
+# --------------------------------------------------------------------------
+# the CHECKS read surfaces over one frozen snapshot (KINEMATICS.md §4)
+
+
+class _SnapshotAnchorResolver(AnchorResolver):
+    """The 8C anchoring path pinned to one frozen project snapshot (§2).
+
+    ``check_motion`` and ``heph motion`` resolve against CURRENT; inside a
+    project-scope check run the rule inverts — every read must come from the
+    SAME frozen snapshot the run's sources came from, never CURRENT mid-run.
+    This resolver enforces that by name rather than by hope: a part outside
+    the snapshot's manifest is refused ``missing_part`` (the snapshot IS the
+    project this run may see), and a part whose current artifact has moved
+    past the pinned ref is refused ``missing_artifact`` (the frozen build's
+    addressable geometry — its §7 index, its tag placements — lives with the
+    superseded publication and cannot be reconstructed, so measuring the NEW
+    geometry would be exactly the CURRENT-mid-run read §2 forbids).
+    :class:`SnapshotMotionContext` loads every pinned part at construction —
+    while the snapshot is provably live — so a later republication cannot be
+    observed through the cache.
+    """
+
+    def __init__(
+        self,
+        layout: ProjectLayout,
+        store: OpStore,
+        publisher: Publisher,
+        scratch: Path,
+        *,
+        pinned: Mapping[str, str],
+        snapshot_ref: str,
+    ) -> None:
+        super().__init__(layout, store, publisher, scratch)
+        self._pinned = dict(pinned)
+        self._snapshot_ref = snapshot_ref
+
+    def _load_part(self, part: str) -> PartGeometry:
+        pinned_ref = self._pinned.get(part)
+        if pinned_ref is None:
+            names = ", ".join(sorted(self._pinned)) or "none"
+            raise UnresolvableAnchorError(
+                "missing_part",
+                f"no part {part!r} in this run's frozen project snapshot "
+                f"{self._snapshot_ref} (snapshot parts: {names})",
+            )
+        geometry = super()._load_part(part)
+        if geometry.artifact_ref != pinned_ref:
+            raise UnresolvableAnchorError(
+                "missing_artifact",
+                f"part {part!r} was republished after this run's snapshot froze: current "
+                f"artifact {geometry.artifact_ref} is not the pinned {pinned_ref}, and the "
+                "frozen build's addressable geometry is no longer current — a check run "
+                "never measures CURRENT mid-run (KINEMATICS.md §2)",
+            )
+        return geometry
+
+
+@final
+class _FrozenPosePlacement:
+    """One pose's rigid placement over a frozen :class:`MotionResolution`.
+
+    The engine-side implementation of the facade's ``PosedPlacement``
+    protocol: ``place`` asks the frozen resolution for the part's world
+    transform at this pose (exactly the joints on its parent chain, the §3
+    rule) and returns a placed COPY through geom's rigid placement — the
+    resolved shape is never mutated, so one loaded artifact serves many
+    poses. A chain fault surfaces as the named :class:`BoundPoseError`, which
+    the checks engine records as that predicate's failure.
+    """
+
+    def __init__(self, pose_id: str, resolution: MotionResolution) -> None:
+        self._pose_id = pose_id
+        self._resolution = resolution
+
+    @property
+    def pose_id(self) -> str:
+        return self._pose_id
+
+    def place(self, part: str, shape: object) -> object:
+        from hephaestus.geom import transformed_shape
+
+        transform = self._resolution.transforms(self._pose_id, (part,))[part]
+        return transformed_shape(cast("Any", shape), transform)
+
+
+@final
+class SnapshotMotionContext:
+    """The two §4 ``CHECKS`` read surfaces, bound to one frozen snapshot.
+
+    ``KINEMATICS.md`` §2 (last bullet) / §4 (last bullet): inside a
+    project-scope check run, ``m.at_pose`` and ``m.sweep`` must resolve
+    against the SAME frozen snapshot the run's sources came from. This class
+    is what the run's owner (the ``run_checks`` project scope, the bench
+    grader) constructs from the snapshot ref and threads into
+    :func:`~hephaestus.core.checks.engine.run_bundle` alongside the
+    ``imports`` callback — :meth:`at_pose` is the posed-context factory,
+    :meth:`sweep` the sweep-result resolver, :attr:`generations` the frozen
+    motion generations the report records.
+
+    Construction IS the freeze: the joint, pose, and motion-check states are
+    read once, every snapshot part is loaded through the pinned resolver
+    while the snapshot is provably live, and the joint forest is resolved
+    eagerly (:class:`MotionResolution`'s own one-consistent-read rule) — so a
+    part republished mid-run can change nothing a predicate later reads.
+    Sweep grids alone run lazily, one bounded subprocess per first-asked
+    check id (a run that never asks never pays), over the already-frozen
+    resolver cache; results are memoized per id because one run has one
+    motion state, so re-asking must restate the same facts.
+    """
+
+    def __init__(
+        self,
+        layout: ProjectLayout,
+        store: OpStore,
+        *,
+        snapshot_ref: str,
+        scratch: Path,
+        timeout_s: float | None = None,
+    ) -> None:
+        self.snapshot_ref = snapshot_ref
+        self._scratch = scratch
+        self._timeout_s = timeout_s
+        joints = JointSet(layout, store)
+        poses = PoseSet(layout, store, joints)
+        checks = MotionCheckSet(layout, store, joints)
+        joint_state = joints.state()
+        pose_state = poses.state()
+        self._check_state = checks.state()
+        pinned = _snapshot_parts(store, snapshot_ref)
+        self._resolver = _SnapshotAnchorResolver(
+            layout,
+            store,
+            Publisher(layout, store),
+            scratch,
+            pinned=pinned,
+            snapshot_ref=snapshot_ref,
+        )
+        if joint_state.active or self._check_state.active:
+            # Freeze while the snapshot is provably live. Skipped when no
+            # active joint or motion check exists: nothing can ever ask the
+            # resolver for geometry then, and a motion-free project must not
+            # pay a second full artifact load per check run.
+            for part in sorted(pinned):
+                # A failed load is cached with its reason; the check that
+                # touches that part gets the named refusal — never skipped,
+                # and never re-read live.
+                with contextlib.suppress(UnresolvableAnchorError):
+                    self._resolver.locate(part, "part")
+        self._resolution = MotionResolution(joint_state, pose_state, self._resolver)
+        self._results: dict[str, SweepResult] = {}
+        #: The frozen motion generations of this run, in the shape
+        #: ``CheckReport.motion_generations`` records.
+        self.generations: dict[str, int] = {
+            "joints": joint_state.generation,
+            "poses": pose_state.generation,
+            "motion_checks": self._check_state.generation,
+        }
+
+    # -- the posed-context factory (m.at_pose) -------------------------------
+
+    def at_pose(self, pose_id: str) -> _FrozenPosePlacement:
+        """A ``PosedPlacement`` at one declared pose, or a named refusal.
+
+        The pose is validated NOW (unknown, withdrawn, orphaned, limit- or
+        joint-broken poses raise :class:`BoundPoseError` with their §2/§3
+        reason at the ``m.at_pose`` call, where the predicate can be told
+        which claim failed); per-part transforms are computed as the returned
+        placement is asked, all from the frozen resolution.
+        """
+        self._resolution.transforms(pose_id, ())
+        return _FrozenPosePlacement(pose_id, self._resolution)
+
+    # -- the sweep-result resolver (m.sweep) ---------------------------------
+
+    def sweep(self, check_id: str) -> Mapping[str, JSONValue]:
+        """One declared motion check's §4 result record over the frozen state.
+
+        An unknown id is ``addressing_error`` listing the declared ones
+        (never a silently empty record); a withdrawn entry is refused by name
+        — withdrawal is not a failure, but reading a withdrawn check as a
+        result would be. The grid runs bounded exactly as
+        :class:`SweepEvaluator` runs it, and a ceiling kill raises
+        :class:`MotionTimeout`, which the checks engine records as that
+        check's **unverifiable** outcome, partial per-sample facts attached.
+        """
+        result = self._results.get(check_id)
+        if result is None:
+            entry = self._check_state.by_id.get(check_id)
+            if entry is None:
+                raise AddressingError(
+                    f"no motion check {check_id!r} declared",
+                    selector=check_id,
+                    candidates=tuple(sorted(self._check_state.by_id)),
+                )
+            if entry.withdrawn:
+                raise ValidationError(
+                    f"motion check {check_id!r} is withdrawn ({entry.withdrawn_reason}); "
+                    "a withdrawn check is never evaluated (KINEMATICS.md §4)",
+                    kind="contract",
+                )
+            timeout = self._timeout_s if self._timeout_s is not None else motion_timeout_s()
+            result = _evaluate_check(
+                entry,
+                self._resolution,
+                self._resolver,
+                scratch=self._scratch,
+                timeout_s=timeout,
+            )
+            self._results[check_id] = result
+        return result.to_json()
+
+
+def _snapshot_parts(store: OpStore, snapshot_ref: str) -> dict[str, str]:
+    """``{part: artifact_ref}`` pinned by one stored snapshot manifest."""
+    if not snapshot_ref.startswith(PROJECT_SNAPSHOT_REF_PREFIX):
+        raise ValidationError(f"{snapshot_ref!r} is not a project-snapshot ref", kind="contract")
+    blob = blob_hash_of_ref(snapshot_ref)
+    if not store.blobs.has(blob):
+        raise ValidationError(
+            f"project snapshot {snapshot_ref} is not durably stored", kind="contract"
+        )
+    raw = cast("JSONValue", json.loads(store.blobs.get(blob).decode("utf-8")))
+    parts_raw = cast("Mapping[str, JSONValue]", raw).get("parts") if isinstance(raw, dict) else None
+    if not isinstance(parts_raw, dict):
+        raise ValidationError(
+            f"project snapshot {snapshot_ref} is malformed: no parts table", kind="contract"
+        )
+    pinned: dict[str, str] = {}
+    for name, entry in cast("Mapping[str, JSONValue]", parts_raw).items():
+        if not isinstance(entry, dict):
+            continue
+        ref = cast("Mapping[str, JSONValue]", entry).get("artifact_ref")
+        if isinstance(ref, str):
+            pinned[name] = ref
+    return pinned

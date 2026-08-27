@@ -31,7 +31,10 @@
   ``hephaestus.core.cli_assembly``.
 - ``heph joints [--json]`` shows the declared joint and pose sets with their
   latest projected motion outcomes (``KINEMATICS.md`` §6, the Stage 9A
-  subset — ``heph motion`` is Stage 9B); see ``hephaestus.core.cli_joints``.
+  subset); see ``hephaestus.core.cli_joints``.
+- ``heph motion [--json]`` / ``heph motion check [IDS]`` show and re-evaluate
+  the declared motion checks with their §4 sweep results (``KINEMATICS.md``
+  §6, Stage 9B); see ``hephaestus.core.cli_motion``.
 
 Exit codes: 0 success, 1 failure (build failed / raced, failing checks,
 sandbox unavailable), 2 usage (bad arguments, no project, unknown part).
@@ -625,13 +628,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Stage 9A kinematics verb (heph joints): the operator's view of the
     # declared joint and pose sets with their latest projected motion outcomes
-    # (KINEMATICS.md §6). Read-only — re-evaluation is the check_motion tool,
-    # and 'heph motion' arrives with the sweep results in Stage 9B. The module
-    # binds the geometry kernel through the motion evaluator, so it is
-    # imported only when the verb runs, like the assembly verbs.
+    # (KINEMATICS.md §6). Read-only — re-evaluation is the check_motion tool
+    # and 'heph motion check'. The module binds the geometry kernel through
+    # the motion evaluator, so it is imported only when the verb runs, like
+    # the assembly verbs.
     from hephaestus.core import cli_joints
 
     cli_joints.add_subparsers(sub)
+
+    # Stage 9B kinematics verbs (heph motion / heph motion check): the
+    # operator's view of the declared motion checks with their latest §4
+    # sweep results, and the operator-side evaluate verb (KINEMATICS.md §6).
+    # Same lazy-kernel rule as the joints verb.
+    from hephaestus.core import cli_motion
+
+    cli_motion.add_subparsers(sub)
 
     # Stage 2 agent verb (heph agent) ships with the server package; the engine
     # CLI stays Node-free and fully functional when it is not installed.

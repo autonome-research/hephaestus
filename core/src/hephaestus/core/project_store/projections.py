@@ -231,6 +231,16 @@ class MotionProjection:
     and, via the GC edge :meth:`Projections._swap` records, never as "never
     evaluated" either. Two generations rather than one because a
     ``MotionStatus`` is measured against both sets at once (§2).
+
+    Stage 9B rides the SAME projection rather than growing a second one
+    (``KINEMATICS.md`` §7 names the motion projection field as the one piece
+    of non-ledger persistence Stage 9 adds): :attr:`results_blob` points at
+    the last full motion-check evaluation's sweep-results document (§4) and
+    :attr:`check_generation` records which motion-check generation it was
+    measured against, both ``None``/``0`` before checks were ever evaluated —
+    which is *never evaluated*, not a pass. The check anchors' parts join
+    :attr:`parts`, so rebuilding a part only a sweep measures restales the
+    results exactly like rebuilding a forest part restales the status.
     """
 
     status_blob: str
@@ -239,6 +249,8 @@ class MotionProjection:
     audit_revision: int
     parts: Mapping[str, str] = field(default_factory=dict[str, str])
     stale: tuple[str, ...] = ()
+    results_blob: str | None = None
+    check_generation: int = 0
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -248,6 +260,8 @@ class MotionProjection:
             "audit_revision": self.audit_revision,
             "parts": {name: self.parts[name] for name in sorted(self.parts)},
             "stale": list(self.stale),
+            "results_blob": self.results_blob,
+            "check_generation": self.check_generation,
         }
 
     @classmethod
@@ -280,6 +294,16 @@ class MotionProjection:
             stale = tuple(
                 item for item in cast("list[JSONValue]", stale_raw) if isinstance(item, str)
             )
+        results_blob = data.get("results_blob")
+        if results_blob is not None and not isinstance(results_blob, str):
+            raise ValidationError(
+                "motion projection results_blob must be a string", kind="contract"
+            )
+        check_generation = data.get("check_generation", 0)
+        if not isinstance(check_generation, int) or isinstance(check_generation, bool):
+            raise ValidationError(
+                "motion projection check_generation must be an integer", kind="contract"
+            )
         return cls(
             status_blob=status_blob,
             joint_generation=joint_generation,
@@ -287,6 +311,8 @@ class MotionProjection:
             audit_revision=revision,
             parts=parts,
             stale=stale,
+            results_blob=results_blob,
+            check_generation=check_generation,
         )
 
 
@@ -455,6 +481,11 @@ class Projections:
         # claim about the project.
         if new_state.motion is not None:
             self._store.gc.link(blob, new_state.motion.status_blob)
+            # KINEMATICS.md §4 (Stage 9B): the sweep-results document is
+            # evidence exactly like the status document, and a collected one
+            # would read as "checks never evaluated" — the same false claim.
+            if new_state.motion.results_blob is not None:
+                self._store.gc.link(blob, new_state.motion.results_blob)
         self._store.blobs.cas_swap(STATE_POINTER, expected_pointer, blob)
         return blob
 

@@ -17,6 +17,16 @@ selector: it names a whole comparison *target* — another part, or a file under
 ``imports/``. Import targets are resolved by an injected callable rather than by
 this module, because who may read ``imports/`` and under what confinement is a
 project question, not a measurement one.
+
+``m.at_pose`` / ``m.sweep`` (``KINEMATICS.md`` §4, the ``script_contract.md``
+§6 amendment) are the two project-scope motion read surfaces, on exactly the
+``m.diff`` discriminated-facade mechanism: a posed-context factory and a
+sweep-result resolver are injected by the caller that owns the run — they
+resolve against the run's FROZEN snapshot and motion generations
+(``KINEMATICS.md`` §2, last bullet), which is a project question this module
+cannot answer — and a facade carrying neither (every part-scope facade, per
+the scope rule: part scripts declare no joints) refuses each call by name AT
+EVALUATION, never by inspecting predicate bodies.
 """
 
 from __future__ import annotations
@@ -42,6 +52,11 @@ __all__ = [
     "MappedGeometry",
     "Measurement",
     "MeasurementEntry",
+    "PosedContextFactory",
+    "PosedMeasurement",
+    "PosedPlacement",
+    "SweepFacts",
+    "SweepResolver",
     "default_kernel_ops",
     "part_measurement",
     "project_measurement",
@@ -59,6 +74,12 @@ IMPORT_TARGET_PREFIX = "import:"
 
 #: Resolves an ``imports/``-relative path to a shape the bound ops understand.
 ImportResolver = Callable[[str], object]
+
+#: Resolves a declared motion-check id to its §4 result record (a
+#: ``SweepResult.to_json`` mapping), evaluated against the run's frozen
+#: snapshot. Injected like :data:`ImportResolver`; a named refusal it raises
+#: (unknown id, withdrawn entry, motion timeout) is the predicate's outcome.
+SweepResolver = Callable[[str], Mapping[str, JSONValue]]
 
 #: Density used for ``m.mass`` when neither the call nor the part supplies one.
 DEFAULT_DENSITY = 1.0
@@ -88,6 +109,30 @@ class MappedGeometry:
 
     def shape(self, resolution: Resolution) -> object:
         return self.resolver(resolution)
+
+
+@runtime_checkable
+class PosedPlacement(Protocol):
+    """Rigid placement of every part at one resolved pose (``KINEMATICS.md`` §4).
+
+    ``place`` maps a part's resolved shape to a *placed copy* at the pose's
+    forward-kinematics transform (a static part comes back at identity). The
+    production implementation lives with the engine's motion machinery — the
+    facade never decides where geometry sits, it only measures what the
+    placement hands back.
+    """
+
+    @property
+    def pose_id(self) -> str: ...
+
+    def place(self, part: str, shape: object) -> object: ...
+
+
+#: Resolves a declared pose id to a :class:`PosedPlacement` over the run's
+#: frozen snapshot and motion state (``KINEMATICS.md`` §2, last bullet). A
+#: named refusal it raises (unknown pose, orphaned pose, unresolvable joint)
+#: is the predicate's outcome, exactly like an import-target refusal.
+PosedContextFactory = Callable[[str], PosedPlacement]
 
 
 class KernelOps(Protocol):
@@ -286,6 +331,85 @@ class DiffFacts:
         )
 
 
+# --------------------------------------------------------------------------
+# sweep facts (KINEMATICS.md §4: the CHECKS view of one motion-check result)
+
+
+@dataclass(frozen=True)
+class SweepFacts:
+    """One motion-check result as a CHECKS predicate reads it (§4 ``m.sweep``).
+
+    Flattened on the :class:`DiffFacts` rule: a predicate asserts
+    ``m.sweep("mc-elbow-clear").verdict == "holds_at_samples"`` or reads the
+    worst sample's number without walking the record. ``verdict`` is a
+    spelling from the §4 closed set — facts, never re-decided here — and
+    :attr:`raw` is the whole ``SweepResult`` record, which is what the check
+    report records as the measured value.
+    """
+
+    id: str
+    kind: str
+    verdict: str
+    samples_evaluated: int
+    grid_total: int
+    samples_per_axis: int
+    unit: str
+    worst_values: Mapping[str, float]
+    worst_measured: float | None
+    min_mm: float | None
+    tol_mm: float | None
+    miss_mm: float | None
+    target_point_mm: Triple | None
+    reason: str | None
+    detail: str | None
+    raw: Mapping[str, JSONValue]
+
+    @classmethod
+    def from_json(cls, raw: Mapping[str, JSONValue]) -> SweepFacts:
+        """Flatten a ``SweepResult.to_json`` mapping."""
+        worst = _section(raw, "worst")
+        worst_values: dict[str, float] = {}
+        for name, value in _section(worst, "values").items():
+            if isinstance(value, int | float) and not isinstance(value, bool):
+                worst_values[name] = float(value)
+        target_raw = raw.get("target_point_mm")
+        target: Triple | None = None
+        if isinstance(target_raw, list) and len(cast("list[JSONValue]", target_raw)) == 3:
+            items = cast("list[JSONValue]", target_raw)
+            if all(isinstance(item, int | float) and not isinstance(item, bool) for item in items):
+                target = Triple(*(float(cast("float", item)) for item in items))
+        return cls(
+            id=str(raw.get("id", "")),
+            kind=str(raw.get("kind", "")),
+            verdict=str(raw.get("verdict", "")),
+            samples_evaluated=_count(raw, "samples_evaluated"),
+            grid_total=_count(raw, "grid_total"),
+            samples_per_axis=_count(raw, "samples_per_axis"),
+            unit=str(raw.get("unit", "")),
+            worst_values=worst_values,
+            worst_measured=_opt_number(worst, "measured"),
+            min_mm=_opt_number(raw, "min_mm"),
+            tol_mm=_opt_number(raw, "tol_mm"),
+            miss_mm=_opt_number(raw, "miss_mm"),
+            target_point_mm=target,
+            reason=_opt_str_field(raw, "reason"),
+            detail=_opt_str_field(raw, "detail"),
+            raw=dict(raw),
+        )
+
+
+def _opt_number(raw: Mapping[str, JSONValue], key: str) -> float | None:
+    value = raw.get(key)
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return float(value)
+    return None
+
+
+def _opt_str_field(raw: Mapping[str, JSONValue], key: str) -> str | None:
+    value = raw.get(key)
+    return value if isinstance(value, str) else None
+
+
 @dataclass(frozen=True)
 class MeasurementEntry:
     """One recorded facade call: operation, selector arguments, computed value."""
@@ -313,12 +437,16 @@ class Measurement:
         ops: KernelOps | None = None,
         densities: Mapping[str, float] | None = None,
         imports: ImportResolver | None = None,
+        at_pose: PosedContextFactory | None = None,
+        sweep: SweepResolver | None = None,
     ) -> None:
         self._sources: dict[str, GeometrySource] = dict(sources)
         self._current = current_part
         self._ops: KernelOps = ops if ops is not None else default_kernel_ops()
         self._densities: dict[str, float] = dict(densities or {})
         self._imports = imports
+        self._at_pose = at_pose
+        self._sweep = sweep
         self._trace: list[MeasurementEntry] = []
 
     @property
@@ -406,6 +534,50 @@ class Measurement:
         self._record("genus", (selector,), value)
         return value
 
+    def _motion_scope_refusal(self, call: str) -> ValidationError:
+        """The §4 scope refusal, at evaluation — the ``m.diff`` import precedent.
+
+        ``KINEMATICS.md`` §4: enforcement sits where the existing scope rules
+        live — this facade simply was not handed the motion resolvers, so the
+        call cannot be answered here, and saying so by name is the whole
+        mechanism. No load-time pass over predicate bodies exists anywhere.
+        """
+        return ValidationError(
+            f"{call} cannot be resolved here: this measurement is not bound to a "
+            "project run's frozen motion state — at_pose and sweep are project-scope "
+            "read surfaces, and part-scope CHECKS may not call them "
+            "(script_contract.md §6, KINEMATICS.md §4)",
+            kind="contract",
+        )
+
+    def at_pose(self, pose_id: str) -> PosedMeasurement:
+        """Posed measurement context at one declared pose (``KINEMATICS.md`` §4).
+
+        Project scope only: the returned context's ``interference`` /
+        ``clearance`` / ``distance`` measure the posed configuration — each
+        addressed shape placed by the pose's forward-kinematics transform over
+        the run's frozen snapshot. A facade without the injected posed-context
+        factory (every part-scope facade) refuses by name at evaluation.
+        """
+        if self._at_pose is None:
+            raise self._motion_scope_refusal(f"m.at_pose({pose_id!r})")
+        return PosedMeasurement(self, self._at_pose(pose_id))
+
+    def sweep(self, check_id: str) -> SweepFacts:
+        """One declared motion check's result record (``KINEMATICS.md`` §4).
+
+        Project scope only, same rule as :meth:`at_pose`. The facts, never a
+        verdict of this facade's own: the record's ``verdict`` comes from the
+        §4 closed set as the engine decided it, and the whole record is what
+        the check report records as the measured value.
+        """
+        if self._sweep is None:
+            raise self._motion_scope_refusal(f"m.sweep({check_id!r})")
+        raw = self._sweep(check_id)
+        facts = SweepFacts.from_json(raw)
+        self._record("sweep", (check_id,), cast("JSONValue", dict(raw)))
+        return facts
+
     def _resolve_target(self, target: str) -> object:
         """The shape a ``m.diff`` target names (``COMPARE.md`` §2)."""
         if target.startswith(PART_TARGET_PREFIX):
@@ -457,6 +629,54 @@ class Measurement:
         return facts
 
 
+@final
+class PosedMeasurement:
+    """``m.at_pose(pose_id)``: the posed configuration, measured (§4).
+
+    Deliberately three calls — ``interference`` / ``clearance`` / ``distance``
+    are exactly what ``KINEMATICS.md`` §4 grants the posed context, and a
+    closed surface cannot silently grow a posed ``mass`` nobody specified.
+    Selectors resolve through the parent facade (same addressing, same frozen
+    sources); each resolved shape is then placed by the pose's transform
+    before the kernel measures, and every call lands in the PARENT facade's
+    trace (op ``at_pose.<call>``, the pose id in its args) so the report
+    shows which configuration each number was taken at.
+    """
+
+    def __init__(self, measurement: Measurement, placement: PosedPlacement) -> None:
+        self._m = measurement
+        self._placement = placement
+
+    @property
+    def pose_id(self) -> str:
+        return self._placement.pose_id
+
+    def _posed(self, selector: str) -> object:
+        part, shape = self._m._resolve(selector)  # pyright: ignore[reportPrivateUsage]
+        return self._placement.place(part, shape)
+
+    def _measure(
+        self, op: str, a: str, b: str, compute: Callable[[object, object], float]
+    ) -> float:
+        value = float(compute(self._posed(a), self._posed(b)))
+        self._m._record(  # pyright: ignore[reportPrivateUsage]
+            f"at_pose.{op}", (self.pose_id, a, b), value
+        )
+        return value
+
+    def interference(self, a: str, b: str) -> float:
+        """Overlap volume (mm^3) between two geometries at this pose."""
+        return self._measure("interference", a, b, self._m._ops.interference)  # pyright: ignore[reportPrivateUsage]
+
+    def clearance(self, a: str, b: str) -> float:
+        """Minimum separation (mm) between two geometries at this pose."""
+        return self._measure("clearance", a, b, self._m._ops.clearance)  # pyright: ignore[reportPrivateUsage]
+
+    def distance(self, a: str, b: str) -> float:
+        """Distance (mm) between two addressed geometries at this pose."""
+        return self._measure("distance", a, b, self._m._ops.distance)  # pyright: ignore[reportPrivateUsage]
+
+
 def part_measurement(
     part: str,
     source: GeometrySource,
@@ -483,12 +703,22 @@ def project_measurement(
     ops: KernelOps | None = None,
     densities: Mapping[str, float] | None = None,
     imports: ImportResolver | None = None,
+    at_pose: PosedContextFactory | None = None,
+    sweep: SweepResolver | None = None,
 ) -> Measurement:
-    """Project-scoped facade: cross-part ``"<part>/<selector>"`` addressing enabled."""
+    """Project-scoped facade: cross-part ``"<part>/<selector>"`` addressing enabled.
+
+    ``at_pose`` / ``sweep`` are the §4 motion read surfaces, injected by the
+    caller that owns the run's frozen snapshot (``KINEMATICS.md`` §2, last
+    bullet). Only this constructor accepts them: :func:`part_measurement`
+    deliberately has no such parameters, which IS the scope enforcement.
+    """
     return Measurement(
         sources=sources,
         current_part=current_part,
         ops=ops,
         densities=densities,
         imports=imports,
+        at_pose=at_pose,
+        sweep=sweep,
     )

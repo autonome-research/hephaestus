@@ -9328,6 +9328,1807 @@
                 }
               ]
             },
+            "change": {
+              "anyOf": [
+                {
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "entries": {
+              "items": {
+                "additionalProperties": true,
+                "properties": {
+                  "a": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "anchor": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "b": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "id": {
+                    "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "sweep_clearance",
+                      "sweep_no_interference",
+                      "reach"
+                    ],
+                    "type": "string"
+                  },
+                  "min_mm": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "note": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "provenance": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "assumed": {
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "reason": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "requirement": {
+                        "anyOf": [
+                          {
+                            "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      }
+                    },
+                    "required": [],
+                    "type": "object"
+                  },
+                  "samples": {
+                    "default": 64,
+                    "type": "integer"
+                  },
+                  "sweep": {
+                    "additionalProperties": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "from": {
+                          "type": "number"
+                        },
+                        "to": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "from",
+                        "to"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "object"
+                  },
+                  "target_point_mm": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "type": "number"
+                        },
+                        "maxItems": 3,
+                        "minItems": 3,
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "tol_mm": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "withdrawn": {
+                    "type": "boolean"
+                  },
+                  "withdrawn_reason": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "kind",
+                  "sweep"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "generation": {
+              "type": "integer"
+            },
+            "results": {
+              "anyOf": [
+                {
+                  "items": {
+                    "additionalProperties": true,
+                    "properties": {
+                      "anchors": {
+                        "additionalProperties": {
+                          "additionalProperties": true,
+                          "properties": {
+                            "anchor": {
+                              "type": "string"
+                            },
+                            "artifact_ref": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "part": {
+                              "type": "string"
+                            },
+                            "rule": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "selector": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "anchor",
+                            "part",
+                            "selector"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "object"
+                      },
+                      "detail": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "grid_total": {
+                        "type": "integer"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string"
+                      },
+                      "min_mm": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "miss_mm": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "note": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "provenance": {
+                        "type": "object"
+                      },
+                      "reason": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "samples_evaluated": {
+                        "type": "integer"
+                      },
+                      "samples_per_axis": {
+                        "type": "integer"
+                      },
+                      "sweep": {
+                        "additionalProperties": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "from": {
+                              "type": "number"
+                            },
+                            "to": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "from",
+                            "to"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "object"
+                      },
+                      "target_point_mm": {
+                        "anyOf": [
+                          {
+                            "items": {
+                              "type": "number"
+                            },
+                            "type": "array"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "tol_mm": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "unit": {
+                        "type": "string"
+                      },
+                      "verdict": {
+                        "enum": [
+                          "holds_at_samples",
+                          "satisfied",
+                          "not_reached_at_samples",
+                          "violated",
+                          "unresolvable"
+                        ],
+                        "type": "string"
+                      },
+                      "worst": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": true,
+                            "properties": {
+                              "measured": {
+                                "type": "number"
+                              },
+                              "values": {
+                                "additionalProperties": {
+                                  "type": "number"
+                                },
+                                "type": "object"
+                              }
+                            },
+                            "required": [
+                              "values",
+                              "measured"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "kind",
+                      "verdict",
+                      "samples_evaluated",
+                      "grid_total",
+                      "sweep",
+                      "unit"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "results_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "const": "ok"
+            }
+          },
+          "required": [
+            "status",
+            "generation",
+            "artifact_ref",
+            "entries",
+            "results"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": true,
+          "maxUtf8Fields": {},
+          "name": "declare_motion_check",
+          "profiles": [
+            "part",
+            "orchestrator"
+          ],
+          "sequential": true
+        }
+      },
+      "description": "Declare one sampled motion check (KINEMATICS.md §4); advances one generation.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "a": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "anchor": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "b": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "id": {
+            "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "sweep_clearance",
+              "sweep_no_interference",
+              "reach"
+            ],
+            "type": "string"
+          },
+          "min_mm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "provenance": {
+            "additionalProperties": false,
+            "properties": {
+              "assumed": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "requirement": {
+                "anyOf": [
+                  {
+                    "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "samples": {
+            "default": 64,
+            "type": "integer"
+          },
+          "sweep": {
+            "additionalProperties": {
+              "additionalProperties": false,
+              "properties": {
+                "from": {
+                  "type": "number"
+                },
+                "to": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "from",
+                "to"
+              ],
+              "type": "object"
+            },
+            "type": "object"
+          },
+          "target_point_mm": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "maxItems": 3,
+                "minItems": 3,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tol_mm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "sweep",
+          "provenance"
+        ],
+        "type": "object"
+      },
+      "name": "declare_motion_check"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "change": {
+              "anyOf": [
+                {
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "entries": {
+              "items": {
+                "additionalProperties": true,
+                "properties": {
+                  "a": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "anchor": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "b": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "id": {
+                    "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "sweep_clearance",
+                      "sweep_no_interference",
+                      "reach"
+                    ],
+                    "type": "string"
+                  },
+                  "min_mm": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "note": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "provenance": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "assumed": {
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "reason": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "requirement": {
+                        "anyOf": [
+                          {
+                            "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      }
+                    },
+                    "required": [],
+                    "type": "object"
+                  },
+                  "samples": {
+                    "default": 64,
+                    "type": "integer"
+                  },
+                  "sweep": {
+                    "additionalProperties": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "from": {
+                          "type": "number"
+                        },
+                        "to": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "from",
+                        "to"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "object"
+                  },
+                  "target_point_mm": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "type": "number"
+                        },
+                        "maxItems": 3,
+                        "minItems": 3,
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "tol_mm": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "withdrawn": {
+                    "type": "boolean"
+                  },
+                  "withdrawn_reason": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "kind",
+                  "sweep"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "generation": {
+              "type": "integer"
+            },
+            "results": {
+              "anyOf": [
+                {
+                  "items": {
+                    "additionalProperties": true,
+                    "properties": {
+                      "anchors": {
+                        "additionalProperties": {
+                          "additionalProperties": true,
+                          "properties": {
+                            "anchor": {
+                              "type": "string"
+                            },
+                            "artifact_ref": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "part": {
+                              "type": "string"
+                            },
+                            "rule": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "selector": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "anchor",
+                            "part",
+                            "selector"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "object"
+                      },
+                      "detail": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "grid_total": {
+                        "type": "integer"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string"
+                      },
+                      "min_mm": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "miss_mm": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "note": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "provenance": {
+                        "type": "object"
+                      },
+                      "reason": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "samples_evaluated": {
+                        "type": "integer"
+                      },
+                      "samples_per_axis": {
+                        "type": "integer"
+                      },
+                      "sweep": {
+                        "additionalProperties": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "from": {
+                              "type": "number"
+                            },
+                            "to": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "from",
+                            "to"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "object"
+                      },
+                      "target_point_mm": {
+                        "anyOf": [
+                          {
+                            "items": {
+                              "type": "number"
+                            },
+                            "type": "array"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "tol_mm": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "unit": {
+                        "type": "string"
+                      },
+                      "verdict": {
+                        "enum": [
+                          "holds_at_samples",
+                          "satisfied",
+                          "not_reached_at_samples",
+                          "violated",
+                          "unresolvable"
+                        ],
+                        "type": "string"
+                      },
+                      "worst": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": true,
+                            "properties": {
+                              "measured": {
+                                "type": "number"
+                              },
+                              "values": {
+                                "additionalProperties": {
+                                  "type": "number"
+                                },
+                                "type": "object"
+                              }
+                            },
+                            "required": [
+                              "values",
+                              "measured"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "kind",
+                      "verdict",
+                      "samples_evaluated",
+                      "grid_total",
+                      "sweep",
+                      "unit"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "results_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "const": "ok"
+            }
+          },
+          "required": [
+            "status",
+            "generation",
+            "artifact_ref",
+            "entries",
+            "results"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": true,
+          "maxUtf8Fields": {},
+          "name": "update_motion_check",
+          "profiles": [
+            "part",
+            "orchestrator"
+          ],
+          "sequential": true
+        }
+      },
+      "description": "Revise or withdraw one motion check with a recorded reason; one generation.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+            "type": "string"
+          },
+          "patch": {
+            "additionalProperties": false,
+            "properties": {
+              "a": {
+                "anyOf": [
+                  {
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "anchor": {
+                "anyOf": [
+                  {
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "b": {
+                "anyOf": [
+                  {
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "sweep_clearance",
+                      "sweep_no_interference",
+                      "reach"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "min_mm": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "note": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "provenance": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "assumed": {
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "reason": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "requirement": {
+                        "anyOf": [
+                          {
+                            "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      }
+                    },
+                    "required": [],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "samples": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "sweep": {
+                "anyOf": [
+                  {
+                    "additionalProperties": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "from": {
+                          "type": "number"
+                        },
+                        "to": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "from",
+                        "to"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "target_point_mm": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "number"
+                    },
+                    "maxItems": 3,
+                    "minItems": 3,
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tol_mm": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "withdrawn": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "patch",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "name": "update_motion_check"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "change": {
+              "anyOf": [
+                {
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "entries": {
+              "items": {
+                "additionalProperties": true,
+                "properties": {
+                  "a": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "anchor": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "b": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "id": {
+                    "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "sweep_clearance",
+                      "sweep_no_interference",
+                      "reach"
+                    ],
+                    "type": "string"
+                  },
+                  "min_mm": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "note": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "provenance": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "assumed": {
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "reason": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "requirement": {
+                        "anyOf": [
+                          {
+                            "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      }
+                    },
+                    "required": [],
+                    "type": "object"
+                  },
+                  "samples": {
+                    "default": 64,
+                    "type": "integer"
+                  },
+                  "sweep": {
+                    "additionalProperties": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "from": {
+                          "type": "number"
+                        },
+                        "to": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "from",
+                        "to"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "object"
+                  },
+                  "target_point_mm": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "type": "number"
+                        },
+                        "maxItems": 3,
+                        "minItems": 3,
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "tol_mm": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "withdrawn": {
+                    "type": "boolean"
+                  },
+                  "withdrawn_reason": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "kind",
+                  "sweep"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "generation": {
+              "type": "integer"
+            },
+            "results": {
+              "anyOf": [
+                {
+                  "items": {
+                    "additionalProperties": true,
+                    "properties": {
+                      "anchors": {
+                        "additionalProperties": {
+                          "additionalProperties": true,
+                          "properties": {
+                            "anchor": {
+                              "type": "string"
+                            },
+                            "artifact_ref": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "part": {
+                              "type": "string"
+                            },
+                            "rule": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "selector": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "anchor",
+                            "part",
+                            "selector"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "object"
+                      },
+                      "detail": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "grid_total": {
+                        "type": "integer"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string"
+                      },
+                      "min_mm": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "miss_mm": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "note": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "provenance": {
+                        "type": "object"
+                      },
+                      "reason": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "samples_evaluated": {
+                        "type": "integer"
+                      },
+                      "samples_per_axis": {
+                        "type": "integer"
+                      },
+                      "sweep": {
+                        "additionalProperties": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "from": {
+                              "type": "number"
+                            },
+                            "to": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "from",
+                            "to"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "object"
+                      },
+                      "target_point_mm": {
+                        "anyOf": [
+                          {
+                            "items": {
+                              "type": "number"
+                            },
+                            "type": "array"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "tol_mm": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "unit": {
+                        "type": "string"
+                      },
+                      "verdict": {
+                        "enum": [
+                          "holds_at_samples",
+                          "satisfied",
+                          "not_reached_at_samples",
+                          "violated",
+                          "unresolvable"
+                        ],
+                        "type": "string"
+                      },
+                      "worst": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": true,
+                            "properties": {
+                              "measured": {
+                                "type": "number"
+                              },
+                              "values": {
+                                "additionalProperties": {
+                                  "type": "number"
+                                },
+                                "type": "object"
+                              }
+                            },
+                            "required": [
+                              "values",
+                              "measured"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "kind",
+                      "verdict",
+                      "samples_evaluated",
+                      "grid_total",
+                      "sweep",
+                      "unit"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "results_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "const": "ok"
+            }
+          },
+          "required": [
+            "status",
+            "generation",
+            "artifact_ref",
+            "entries",
+            "results"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": false,
+          "maxUtf8Fields": {},
+          "name": "read_motion_checks",
+          "profiles": [
+            "part",
+            "orchestrator"
+          ],
+          "sequential": false
+        }
+      },
+      "description": "Read the motion-check set and the latest sweep results (no re-measure).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "name": "read_motion_checks"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "motion": {
               "additionalProperties": true,
               "properties": {
@@ -9580,13 +11381,238 @@
               ],
               "type": "object"
             },
+            "partial": {
+              "type": "boolean"
+            },
+            "results": {
+              "items": {
+                "additionalProperties": true,
+                "properties": {
+                  "anchors": {
+                    "additionalProperties": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "anchor": {
+                          "type": "string"
+                        },
+                        "artifact_ref": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "part": {
+                          "type": "string"
+                        },
+                        "rule": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "selector": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "anchor",
+                        "part",
+                        "selector"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "object"
+                  },
+                  "detail": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "grid_total": {
+                    "type": "integer"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "min_mm": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "miss_mm": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "note": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "provenance": {
+                    "type": "object"
+                  },
+                  "reason": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "samples_evaluated": {
+                    "type": "integer"
+                  },
+                  "samples_per_axis": {
+                    "type": "integer"
+                  },
+                  "sweep": {
+                    "additionalProperties": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "from": {
+                          "type": "number"
+                        },
+                        "to": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "from",
+                        "to"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "object"
+                  },
+                  "target_point_mm": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "type": "number"
+                        },
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "tol_mm": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "unit": {
+                    "type": "string"
+                  },
+                  "verdict": {
+                    "enum": [
+                      "holds_at_samples",
+                      "satisfied",
+                      "not_reached_at_samples",
+                      "violated",
+                      "unresolvable"
+                    ],
+                    "type": "string"
+                  },
+                  "worst": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": true,
+                        "properties": {
+                          "measured": {
+                            "type": "number"
+                          },
+                          "values": {
+                            "additionalProperties": {
+                              "type": "number"
+                            },
+                            "type": "object"
+                          }
+                        },
+                        "required": [
+                          "values",
+                          "measured"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "kind",
+                  "verdict",
+                  "samples_evaluated",
+                  "grid_total",
+                  "sweep",
+                  "unit"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "results_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "status": {
               "const": "ok"
             }
           },
           "required": [
             "status",
-            "motion"
+            "motion",
+            "results",
+            "partial"
           ],
           "type": "object"
         },
@@ -9601,10 +11627,26 @@
           "sequential": false
         }
       },
-      "description": "Evaluate joints and poses against current builds; MotionStatus (checks are 9B).",
+      "description": "Evaluate joints, poses and motion checks now; MotionStatus + sweep results.",
       "inputSchema": {
         "additionalProperties": false,
-        "properties": {},
+        "properties": {
+          "ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "required": [],
         "type": "object"
       },

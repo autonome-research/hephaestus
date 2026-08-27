@@ -507,6 +507,12 @@ class CheckReport:
     check_bundle_ref: str
     file_hashes: Mapping[str, str] = field(default_factory=dict[str, str])
     project_snapshot_ref: str | None = None
+    #: The frozen motion-state generations a run that resolved motion state
+    #: measured against (``KINEMATICS.md`` §4: joint/pose/motion-check set
+    #: generations, recorded alongside ``project_snapshot_ref`` so motion
+    #: evidence is replayable like every other kind). ``None`` when no check
+    #: in the run touched ``m.at_pose``/``m.sweep``.
+    motion_generations: Mapping[str, int] | None = None
     checks: Mapping[str, CheckResult] = field(default_factory=dict[str, "CheckResult"])
 
     def to_json(self) -> dict[str, JSONValue]:
@@ -516,6 +522,9 @@ class CheckReport:
             "check_bundle_ref": self.check_bundle_ref,
             "file_hashes": dict(self.file_hashes),
             "project_snapshot_ref": self.project_snapshot_ref,
+            "motion_generations": (
+                None if self.motion_generations is None else dict(self.motion_generations)
+            ),
             "checks": {name: check.to_json() for name, check in self.checks.items()},
         }
 
@@ -527,12 +536,29 @@ class CheckReport:
             if not isinstance(value, dict):
                 raise ValidationError(f"check {name!r}: expected object", kind="contract")
             checks[name] = CheckResult.from_json(cast("dict[str, JSONValue]", value))
+        motion_raw = data.get("motion_generations")
+        motion: dict[str, int] | None = None
+        if motion_raw is not None:
+            if not isinstance(motion_raw, dict):
+                raise ValidationError(
+                    "motion_generations must be an object of generations or null",
+                    kind="contract",
+                )
+            motion = {}
+            for name, value in cast("Mapping[str, JSONValue]", motion_raw).items():
+                if isinstance(value, bool) or not isinstance(value, int):
+                    raise ValidationError(
+                        f"motion_generations[{name!r}] must be an integer generation",
+                        kind="contract",
+                    )
+                motion[name] = value
         return cls(
             part=_req(data, "part", str),
             check_set_generation=_req(data, "check_set_generation", int),
             check_bundle_ref=_req(data, "check_bundle_ref", str),
             file_hashes=_str_map(data, "file_hashes"),
             project_snapshot_ref=_opt_str(data, "project_snapshot_ref"),
+            motion_generations=motion,
             checks=checks,
         )
 

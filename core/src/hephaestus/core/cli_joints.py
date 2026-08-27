@@ -14,8 +14,9 @@ deliberately read-only:
   computes nothing, so it is instant and safe to run anywhere.
 
 There is no ``check`` sub-verb here: re-evaluation is the ``check_motion``
-model tool in 9A, and the operator-side evaluate verb is ``heph motion check``
-(Stage 9B, with the sweep results this verb deliberately does not claim).
+model tool and the operator-side ``heph motion check`` (Stage 9B, in
+``hephaestus.core.cli_motion`` — with the sweep results this verb
+deliberately does not claim).
 
 Kept out of :mod:`hephaestus.core.cli` for the same reason the assembly verbs
 are: the motion evaluator binds the geometry kernel, and every other verb must
@@ -82,8 +83,8 @@ def _cmd_joints(args: argparse.Namespace) -> int:
         else:
             print(
                 f"{len(joint_state.active)} joint(s) and {len(pose_state.active)} pose(s) "
-                "declared, never evaluated — run the check_motion tool "
-                "('heph motion check' is Stage 9B)"
+                "declared, never evaluated — run 'heph motion check' or the "
+                "check_motion tool"
             )
         return 0
     if json_out:

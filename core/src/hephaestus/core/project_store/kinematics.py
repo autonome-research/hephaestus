@@ -52,11 +52,37 @@ and the withdrawal is not a failure, so declaration must not be re-refused
 retroactively and this module never re-validates stored generations against
 the live joint set.
 
-What lives elsewhere: *evaluating* joints and poses — anchor frames, forward
-kinematics, ``MotionStatus`` — is Stage 9's engine and geom work
-(``KINEMATICS.md`` §2), and the staleness of a projected status is
-:mod:`hephaestus.core.project_store.projections`. This module only knows what
-was declared, by whom, and why.
+**The motion-check set** (Stage 9B, ``KINEMATICS.md`` §4) is the third rider
+on the same pattern: a motion check states a requirement about a *family* of
+configurations — clearance across a travel, no interference through a swing,
+a point reached somewhere in a range — so like a joint it belongs to the
+project, not to any part script. An entry is exactly the §4 shape::
+
+    {"id": "mc-elbow-clear", "kind": "sweep_clearance",
+     "a": "arm_fore", "b": "arm_upper:wire_channel",
+     "sweep": {"j-elbow": {"from": -5.0, "to": 150.0}},
+     "min_mm": 2.0, "samples": 64,
+     "provenance": {"requirement": "r-5"}}
+
+Kinds are the closed §4 set (``sweep_clearance`` / ``sweep_no_interference``
+/ ``reach``); anchors are the 8C grammar exactly as joint anchors are; sweep
+ranges name declared, unwithdrawn joints with one declarable DOF (a ``fixed``
+joint has no parameter to sweep, and a ``cylindrical`` joint's ``(degrees,
+mm)`` pair has no scalar wire form in 9A — either would be a check born
+unevaluatable, refused at declaration like a pose born orphaned). ``samples``
+is the PER-AXIS request (default :data:`SWEEP_SAMPLES_DEFAULT`, endpoints
+inclusive) and **the cap is on the computed grid total**: a declaration whose
+product ``samples ** n_joints`` exceeds :data:`SWEEP_SAMPLES_MAX` is refused
+at declaration with the refusal naming the computed total — per-axis honesty
+cannot smuggle in an unbounded grid. A swept joint withdrawn *later* is
+``orphaned_sweep`` at evaluation (:mod:`hephaestus.core.motion`), the exact
+``orphaned_pose`` rule restated: not erased, not re-refused, named when read.
+
+What lives elsewhere: *evaluating* joints, poses and motion checks — anchor
+frames, forward kinematics, ``MotionStatus``, sampled sweeps — is Stage 9's
+engine and geom work (``KINEMATICS.md`` §2/§4), and the staleness of a
+projected status is :mod:`hephaestus.core.project_store.projections`. This
+module only knows what was declared, by whom, and why.
 """
 
 from __future__ import annotations
@@ -95,9 +121,15 @@ __all__ = [
     "JOINT_ID_PATTERN",
     "JOINT_KINDS",
     "JOINT_REF_PREFIX",
+    "MOTION_CHECKS_POINTER",
+    "MOTION_CHECK_ARTIFACT_KIND",
+    "MOTION_CHECK_KINDS",
+    "MOTION_CHECK_REF_PREFIX",
     "POSES_POINTER",
     "POSE_ARTIFACT_KIND",
     "POSE_REF_PREFIX",
+    "SWEEP_SAMPLES_DEFAULT",
+    "SWEEP_SAMPLES_MAX",
     "JointChange",
     "JointEntry",
     "JointError",
@@ -105,11 +137,18 @@ __all__ = [
     "JointState",
     "KinematicProvenance",
     "LimitPair",
+    "MotionCheckChange",
+    "MotionCheckEntry",
+    "MotionCheckError",
+    "MotionCheckSet",
+    "MotionCheckState",
     "PoseChange",
     "PoseEntry",
     "PoseError",
     "PoseSet",
     "PoseState",
+    "SweepRange",
+    "parse_check_anchor",
     "parse_joint_anchor",
 ]
 
@@ -125,9 +164,34 @@ POSES_POINTER: Final[str] = "poses-state"
 POSE_ARTIFACT_KIND: Final[str] = "poses"
 POSE_REF_PREFIX: Final[str] = f"artifact:{POSE_ARTIFACT_KIND}:"
 
+#: CAS pointer naming the current motion-check-set generation's state blob.
+MOTION_CHECKS_POINTER: Final[str] = "motion-checks-state"
+#: Artifact kind of an immutable motion-check-set generation document.
+MOTION_CHECK_ARTIFACT_KIND: Final[str] = "motion-checks"
+MOTION_CHECK_REF_PREFIX: Final[str] = f"artifact:{MOTION_CHECK_ARTIFACT_KIND}:"
+
 #: The Stage 9 kind set (``KINEMATICS.md`` §1); each later kind is a contract
 #: amendment, so the set is closed here rather than extensible.
 JOINT_KINDS: Final[tuple[str, ...]] = ("fixed", "revolute", "prismatic", "cylindrical")
+
+#: The Stage 9 motion-check kind set (``KINEMATICS.md`` §4), closed for the
+#: same reason. Swept-volume envelopes are §6 *facts*, not check kinds.
+MOTION_CHECK_KINDS: Final[tuple[str, ...]] = (
+    "sweep_clearance",
+    "sweep_no_interference",
+    "reach",
+)
+
+#: Default PER-AXIS sample count of a sweep (``KINEMATICS.md`` §4), inclusive
+#: of both endpoints — which is why the smallest honest request is 2: a
+#: one-sample "sweep" is a pose wearing a sweep's name.
+SWEEP_SAMPLES_DEFAULT: Final[int] = 64
+
+#: Cap on the COMPUTED GRID TOTAL ``samples ** n_joints`` (``KINEMATICS.md``
+#: §4). The cap is deliberately not per-axis: a two-joint sweep at 65 per axis
+#: is 4225 measurements, and a declaration is refused on that computed total,
+#: the refusal naming it, so cost is visible where it is incurred.
+SWEEP_SAMPLES_MAX: Final[int] = 4096
 
 #: Joint and pose ids are stable handles a requirement, a tool call and a
 #: reviewer finding all name, so they are pattern-checked like constraint ids.
@@ -159,9 +223,25 @@ _JOINT_ENTRY_FIELDS: Final[frozenset[str]] = frozenset(
 _POSE_ENTRY_FIELDS: Final[frozenset[str]] = frozenset(
     {"id", "joints", "provenance", "note", "withdrawn", "withdrawn_reason"}
 )
+#: Fields every motion-check kind shares; the per-kind extras are in
+#: :data:`_MOTION_CHECK_KIND_FIELDS` so a ``reach`` entry smuggling ``min_mm``
+#: (or a sweep entry smuggling a target) is refused by name, never ignored.
+_MOTION_CHECK_BASE_FIELDS: Final[frozenset[str]] = frozenset(
+    {"id", "kind", "sweep", "samples", "provenance", "note", "withdrawn", "withdrawn_reason"}
+)
+#: ``kind -> (allowed extra fields, required extra fields)`` per §4.
+_MOTION_CHECK_KIND_FIELDS: Final[Mapping[str, tuple[frozenset[str], frozenset[str]]]] = {
+    "sweep_clearance": (frozenset({"a", "b", "min_mm"}), frozenset({"a", "b", "min_mm"})),
+    "sweep_no_interference": (frozenset({"a", "b"}), frozenset({"a", "b"})),
+    "reach": (
+        frozenset({"anchor", "target_point_mm", "tol_mm"}),
+        frozenset({"anchor", "target_point_mm", "tol_mm"}),
+    ),
+}
 
 JointRefusal = Literal["invalid_joint", "unknown_joint", "cyclic_joint_graph"]
 PoseRefusal = Literal["invalid_pose", "unknown_pose"]
+MotionCheckRefusal = Literal["invalid_motion_check", "unknown_motion_check"]
 ChangeKind = Literal["declare", "update", "withdraw"]
 
 
@@ -196,8 +276,47 @@ class PoseError(ValidationError):
         self.reason: PoseRefusal = reason
 
 
+class MotionCheckError(ValidationError):
+    """A motion-check write was refused; ``reason`` is the stable machine token.
+
+    ``invalid_motion_check`` covers every malformed or dishonest entry —
+    unknown kind, slash-bearing anchor, a sweep over an undeclared/withdrawn/
+    zero-scalar-DOF joint, absent provenance, and the §4 grid-total cap (the
+    refusal message names the computed ``samples ** n_joints`` total);
+    ``unknown_motion_check`` is a patch or withdrawal naming an id the set
+    does not carry. Nothing is ever written on any of them.
+    """
+
+    def __init__(
+        self, message: str, *, reason: MotionCheckRefusal = "invalid_motion_check"
+    ) -> None:
+        super().__init__(message, kind="contract")
+        self.reason: MotionCheckRefusal = reason
+
+
 # --------------------------------------------------------------------------
-# anchors: the 8C grammar, refusing under this set's own token
+# anchors: the 8C grammar, refusing under each set's own token
+
+
+def _parse_anchor(
+    label: str, text: JSONValue, *, field: str, refuse: Callable[[str], ValidationError]
+) -> Anchor:
+    """The one anchor parse both kinematic sets share (see the public twins)."""
+    if not isinstance(text, str):
+        raise refuse(f"{label}: anchor {field} must be a string (part[:selector])")
+    if "/" in text:
+        raise refuse(
+            f"{label}: anchor {field}={text!r} contains a slash — kinematic anchors "
+            f"use the 8C 'part{ANCHOR_SEPARATOR}selector' grammar, not the cross-part "
+            "'part/selector' selector form (KINEMATICS.md §1)"
+        )
+    if not _ANCHOR_RE.match(text):
+        raise refuse(
+            f"{label}: anchor {field}={text!r} must be 'part' or "
+            f"'part{ANCHOR_SEPARATOR}selector' (matching {ANCHOR_PATTERN})"
+        )
+    part, separator, selector = text.partition(ANCHOR_SEPARATOR)
+    return Anchor(text=text, part=part, selector=selector if separator else WHOLE_PART_SELECTOR)
 
 
 def parse_joint_anchor(joint_id: str, text: JSONValue, *, field: str) -> Anchor:
@@ -211,21 +330,13 @@ def parse_joint_anchor(joint_id: str, text: JSONValue, *, field: str) -> Anchor:
     which part it means — accepting it would invite two grammars for one
     string (the same rationale the 8C module records for its separator).
     """
-    if not isinstance(text, str):
-        raise JointError(f"joint {joint_id}: anchor {field} must be a string (part[:selector])")
-    if "/" in text:
-        raise JointError(
-            f"joint {joint_id}: anchor {field}={text!r} contains a slash — joint anchors "
-            f"use the 8C 'part{ANCHOR_SEPARATOR}selector' grammar, not the cross-part "
-            "'part/selector' selector form (KINEMATICS.md §1)"
-        )
-    if not _ANCHOR_RE.match(text):
-        raise JointError(
-            f"joint {joint_id}: anchor {field}={text!r} must be 'part' or "
-            f"'part{ANCHOR_SEPARATOR}selector' (matching {ANCHOR_PATTERN})"
-        )
-    part, separator, selector = text.partition(ANCHOR_SEPARATOR)
-    return Anchor(text=text, part=part, selector=selector if separator else WHOLE_PART_SELECTOR)
+    return _parse_anchor(f"joint {joint_id}", text, field=field, refuse=JointError)
+
+
+def parse_check_anchor(check_id: str, text: JSONValue, *, field: str) -> Anchor:
+    """:func:`parse_joint_anchor`'s motion-check twin (§4: same grammar, same
+    slash refusal, this set's own ``invalid_motion_check`` token)."""
+    return _parse_anchor(f"motion check {check_id}", text, field=field, refuse=MotionCheckError)
 
 
 # --------------------------------------------------------------------------
@@ -659,7 +770,261 @@ class PoseEntry:
 
 
 # --------------------------------------------------------------------------
-# generations (the ledger shape, twice — one per set)
+# motion-check entries (Stage 9B, §4)
+
+
+@dataclass(frozen=True)
+class SweepRange:
+    """One joint's declared sweep interval, the §4 ``{"from": …, "to": …}`` pair.
+
+    ``start < stop`` in the joint kind's own unit (degrees / mm) — a
+    zero-width "sweep" is a pose wearing a sweep's name and is refused, the
+    :class:`LimitPair` rule restated. Whether the interval sits inside the
+    joint's declared limits is deliberately an *evaluation* question: limits
+    can be revised after declaration, and the evaluator refuses an
+    out-of-limits sample by geom's own ``joint_limit_exceeded`` name rather
+    than this module re-checking a moving target.
+    """
+
+    start: float
+    stop: float
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {"from": self.start, "to": self.stop}
+
+    @classmethod
+    def from_json(cls, check_id: str, joint_id: str, data: JSONValue) -> SweepRange:
+        if not isinstance(data, dict):
+            raise MotionCheckError(
+                f"motion check {check_id}: sweep[{joint_id!r}] must be a "
+                '{"from": …, "to": …} range'
+            )
+        raw = cast("Mapping[str, JSONValue]", data)
+        unknown = sorted(set(raw) - {"from", "to"})
+        if unknown:
+            raise MotionCheckError(
+                f"motion check {check_id}: sweep[{joint_id!r}] does not take "
+                f"{', '.join(unknown)} (it takes: from, to)"
+            )
+        values: dict[str, float] = {}
+        for name in ("from", "to"):
+            value = raw.get(name)
+            if isinstance(value, bool) or not isinstance(value, int | float):
+                raise MotionCheckError(
+                    f"motion check {check_id}: sweep[{joint_id!r}].{name} must be a number"
+                )
+            values[name] = float(value)
+        if values["from"] >= values["to"]:
+            raise MotionCheckError(
+                f"motion check {check_id}: sweep[{joint_id!r}] must satisfy from < to "
+                f"(got {values['from']} .. {values['to']}) — a zero-width sweep is a "
+                "pose, and poses have their own set (KINEMATICS.md §3/§4)"
+            )
+        return cls(start=values["from"], stop=values["to"])
+
+
+@dataclass(frozen=True)
+class MotionCheckEntry:
+    """One declared motion check, exactly the ``KINEMATICS.md`` §4 entry shape.
+
+    ``sweep`` maps joint ids to :class:`SweepRange`; ``samples`` is the
+    PER-AXIS request (endpoints inclusive), and :attr:`grid_total` is the
+    number a multi-joint check actually evaluates — the quantity the §4 cap
+    binds and every result restates as ``samples_evaluated``. The anchor
+    fields are per kind: ``a``/``b`` (plus ``min_mm`` for ``sweep_clearance``)
+    on the universal kinds, ``anchor``/``target_point_mm``/``tol_mm`` on
+    ``reach``. Validation here is structural plus the statically-knowable
+    refusals; whether the anchors resolve and the swept joints still exist is
+    the evaluator's question, with its own named unresolvable states.
+    """
+
+    id: str
+    kind: str
+    sweep: Mapping[str, SweepRange]
+    provenance: KinematicProvenance
+    samples: int = SWEEP_SAMPLES_DEFAULT
+    a: str | None = None
+    b: str | None = None
+    min_mm: float | None = None
+    anchor: str | None = None
+    target_point_mm: tuple[float, float, float] | None = None
+    tol_mm: float | None = None
+    note: str | None = None
+    withdrawn: bool = False
+    withdrawn_reason: str | None = None
+
+    @property
+    def grid_total(self) -> int:
+        """The computed grid product ``samples ** n_joints`` (§4: the capped total)."""
+        return self.samples ** len(self.sweep)
+
+    @property
+    def anchor_fields(self) -> tuple[tuple[str, Anchor], ...]:
+        """``(field_name, parsed anchor)`` per anchor this kind declares."""
+        names = ("anchor",) if self.kind == "reach" else ("a", "b")
+        out: list[tuple[str, Anchor]] = []
+        for name in names:
+            text = getattr(self, name)
+            out.append((name, parse_check_anchor(self.id, text, field=name)))
+        return tuple(out)
+
+    @property
+    def parts(self) -> tuple[str, ...]:
+        """The part names this check measures, deduplicated in field order."""
+        names = [anchor.part for _, anchor in self.anchor_fields]
+        return tuple(dict.fromkeys(names))
+
+    def to_json(self) -> dict[str, JSONValue]:
+        out: dict[str, JSONValue] = {"id": self.id, "kind": self.kind}
+        for name in ("a", "b", "anchor"):
+            value = getattr(self, name)
+            if value is not None:
+                out[name] = cast("JSONValue", value)
+        out["sweep"] = {
+            joint_id: cast("JSONValue", self.sweep[joint_id].to_json())
+            for joint_id in sorted(self.sweep)
+        }
+        if self.min_mm is not None:
+            out["min_mm"] = self.min_mm
+        if self.target_point_mm is not None:
+            out["target_point_mm"] = list(self.target_point_mm)
+        if self.tol_mm is not None:
+            out["tol_mm"] = self.tol_mm
+        out["samples"] = self.samples
+        out["provenance"] = cast("JSONValue", self.provenance.to_json())
+        if self.note is not None:
+            out["note"] = self.note
+        if self.withdrawn:
+            out["withdrawn"] = True
+            out["withdrawn_reason"] = self.withdrawn_reason
+        return out
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, JSONValue]) -> MotionCheckEntry:
+        """Build a validated entry from tool arguments or a stored generation."""
+        raw_id = data.get("id")
+        if not isinstance(raw_id, str) or not _ID_RE.match(raw_id):
+            raise MotionCheckError(f"motion check id {raw_id!r} must match {JOINT_ID_PATTERN}")
+        kind = data.get("kind")
+        if not isinstance(kind, str) or kind not in MOTION_CHECK_KINDS:
+            raise MotionCheckError(
+                f"motion check {raw_id}: kind must be one of "
+                f"{', '.join(MOTION_CHECK_KINDS)}, got {kind!r}"
+            )
+        allowed_extra, required_extra = _MOTION_CHECK_KIND_FIELDS[kind]
+        allowed = _MOTION_CHECK_BASE_FIELDS | allowed_extra
+        unknown = sorted(set(data) - allowed)
+        if unknown:
+            raise MotionCheckError(
+                f"motion check {raw_id}: field(s) {', '.join(unknown)} do not belong to "
+                f"kind {kind!r} (it takes: {', '.join(sorted(allowed))})"
+            )
+        missing = sorted(name for name in required_extra if data.get(name) is None)
+        if missing:
+            raise MotionCheckError(
+                f"motion check {raw_id}: kind {kind!r} requires {', '.join(missing)} "
+                "(KINEMATICS.md §4)"
+            )
+        for field_name in allowed_extra & {"a", "b", "anchor"}:
+            parse_check_anchor(raw_id, data.get(field_name), field=field_name)
+        raw_sweep = data.get("sweep")
+        if not isinstance(raw_sweep, dict) or not raw_sweep:
+            raise MotionCheckError(
+                f"motion check {raw_id}: sweep must be a non-empty object of "
+                '{joint_id: {"from": …, "to": …}} (KINEMATICS.md §4)'
+            )
+        sweep: dict[str, SweepRange] = {}
+        for joint_id, value in cast("Mapping[str, JSONValue]", raw_sweep).items():
+            if not _ID_RE.match(joint_id):
+                raise MotionCheckError(
+                    f"motion check {raw_id}: sweep joint id {joint_id!r} must match "
+                    f"{JOINT_ID_PATTERN}"
+                )
+            sweep[joint_id] = SweepRange.from_json(raw_id, joint_id, value)
+        raw_samples = data.get("samples", SWEEP_SAMPLES_DEFAULT)
+        if isinstance(raw_samples, bool) or not isinstance(raw_samples, int):
+            raise MotionCheckError(
+                f"motion check {raw_id}: samples must be an integer (the per-axis count)"
+            )
+        if raw_samples < 2:
+            raise MotionCheckError(
+                f"motion check {raw_id}: samples must be at least 2 — endpoints are "
+                "inclusive (KINEMATICS.md §4), so 1 sample is a pose, not a sweep"
+            )
+        # THE CAP IS ON THE COMPUTED GRID TOTAL (§4): refuse on the product,
+        # naming it — a per-axis count under the cap proves nothing.
+        total = raw_samples ** len(sweep)
+        if total > SWEEP_SAMPLES_MAX:
+            raise MotionCheckError(
+                f"motion check {raw_id}: sweep grid is {raw_samples}^{len(sweep)} = "
+                f"{total} samples, exceeding SWEEP_SAMPLES_MAX ({SWEEP_SAMPLES_MAX}) — "
+                "the cap is on the computed grid total (KINEMATICS.md §4)"
+            )
+        min_mm = _opt_number(raw_id, data.get("min_mm"), field="min_mm")
+        if min_mm is not None and min_mm < 0.0:
+            raise MotionCheckError(f"motion check {raw_id}: min_mm must be >= 0")
+        tol_mm = _opt_number(raw_id, data.get("tol_mm"), field="tol_mm")
+        if tol_mm is not None and tol_mm <= 0.0:
+            raise MotionCheckError(f"motion check {raw_id}: tol_mm must be > 0")
+        target = _opt_point(raw_id, data.get("target_point_mm"))
+        note = data.get("note")
+        if note is not None and not isinstance(note, str):
+            raise MotionCheckError(f"motion check {raw_id}: note must be a string")
+        withdrawn = data.get("withdrawn", False)
+        if not isinstance(withdrawn, bool):
+            raise MotionCheckError(f"motion check {raw_id}: withdrawn must be a boolean")
+        withdrawn_reason = data.get("withdrawn_reason")
+        if withdrawn_reason is not None and not isinstance(withdrawn_reason, str):
+            raise MotionCheckError(f"motion check {raw_id}: withdrawn_reason must be a string")
+        if withdrawn and not (withdrawn_reason or "").strip():
+            raise MotionCheckError(f"motion check {raw_id}: a withdrawal must record a reason")
+        return cls(
+            id=raw_id,
+            kind=kind,
+            sweep=sweep,
+            provenance=KinematicProvenance.from_json(
+                f"motion check {raw_id}", data.get("provenance"), refuse=MotionCheckError
+            ),
+            samples=raw_samples,
+            a=cast("str | None", data.get("a")),
+            b=cast("str | None", data.get("b")),
+            min_mm=min_mm,
+            anchor=cast("str | None", data.get("anchor")),
+            target_point_mm=target,
+            tol_mm=tol_mm,
+            note=note,
+            withdrawn=withdrawn,
+            withdrawn_reason=withdrawn_reason if withdrawn else None,
+        )
+
+
+def _opt_number(check_id: str, value: JSONValue | None, *, field: str) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise MotionCheckError(f"motion check {check_id}: {field} must be a number")
+    return float(value)
+
+
+def _opt_point(check_id: str, value: JSONValue | None) -> tuple[float, float, float] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list) or len(cast("list[JSONValue]", value)) != 3:
+        raise MotionCheckError(
+            f"motion check {check_id}: target_point_mm must be [x, y, z] in world mm"
+        )
+    out: list[float] = []
+    for axis, item in zip("xyz", cast("list[JSONValue]", value), strict=True):
+        if isinstance(item, bool) or not isinstance(item, int | float):
+            raise MotionCheckError(
+                f"motion check {check_id}: target_point_mm.{axis} must be a number"
+            )
+        out.append(float(item))
+    return (out[0], out[1], out[2])
+
+
+# --------------------------------------------------------------------------
+# generations (the ledger shape, thrice — one per set)
 
 
 @dataclass(frozen=True)
@@ -707,6 +1072,32 @@ class PoseChange:
 
     @classmethod
     def from_json(cls, data: JSONValue | None) -> PoseChange | None:
+        parsed = _change_fields(data)
+        if parsed is None:
+            return None
+        kind, entry_id, reason, patch = parsed
+        return cls(kind=kind, id=entry_id, reason=reason, patch=patch)
+
+
+@dataclass(frozen=True)
+class MotionCheckChange:
+    """What produced one motion-check-set generation: the act, the entry, the reason."""
+
+    kind: ChangeKind
+    id: str
+    reason: str | None = None
+    patch: Mapping[str, JSONValue] | None = None
+
+    def to_json(self) -> dict[str, JSONValue]:
+        out: dict[str, JSONValue] = {"kind": self.kind, "id": self.id}
+        if self.reason is not None:
+            out["reason"] = self.reason
+        if self.patch is not None:
+            out["patch"] = cast("JSONValue", dict(self.patch))
+        return out
+
+    @classmethod
+    def from_json(cls, data: JSONValue | None) -> MotionCheckChange | None:
         parsed = _change_fields(data)
         if parsed is None:
             return None
@@ -876,10 +1267,79 @@ class PoseState:
         )
 
 
+@dataclass(frozen=True)
+class MotionCheckState:
+    """One immutable motion-check-set generation."""
+
+    generation: int
+    entries: tuple[MotionCheckEntry, ...]
+    blob: str | None
+    parent: str | None = None
+    change: MotionCheckChange | None = None
+
+    @property
+    def artifact_ref(self) -> str | None:
+        """``artifact:motion-checks:sha256:…`` of this generation (None when empty)."""
+        if self.blob is None:
+            return None
+        return make_artifact_ref(MOTION_CHECK_ARTIFACT_KIND, self.blob)
+
+    @property
+    def by_id(self) -> dict[str, MotionCheckEntry]:
+        return {entry.id: entry for entry in self.entries}
+
+    @property
+    def active(self) -> tuple[MotionCheckEntry, ...]:
+        """Entries still claimed (withdrawn ones stay stored, never evaluated)."""
+        return tuple(entry for entry in self.entries if not entry.withdrawn)
+
+    def document(self) -> JSONValue:
+        return {
+            "generation": self.generation,
+            "parent": self.parent,
+            "change": None if self.change is None else self.change.to_json(),
+            "entries": [entry.to_json() for entry in self.entries],
+        }
+
+    def to_json(self) -> dict[str, JSONValue]:
+        """The projection every motion-check reader shares."""
+        return {
+            "generation": self.generation,
+            "artifact_ref": self.artifact_ref,
+            "change": None if self.change is None else cast("JSONValue", self.change.to_json()),
+            "entries": [entry.to_json() for entry in self.entries],
+        }
+
+    @classmethod
+    def from_document(cls, data: Mapping[str, JSONValue], blob: str) -> MotionCheckState:
+        generation = data.get("generation")
+        if not isinstance(generation, int) or isinstance(generation, bool):
+            raise MotionCheckError("motion-check-set generation must be an integer")
+        raw_entries = data.get("entries")
+        if not isinstance(raw_entries, list):
+            raise MotionCheckError("motion-check-set entries must be an array")
+        entries = tuple(
+            MotionCheckEntry.from_json(cast("Mapping[str, JSONValue]", item))
+            for item in cast("list[JSONValue]", raw_entries)
+            if isinstance(item, dict)
+        )
+        parent = data.get("parent")
+        return cls(
+            generation=generation,
+            entries=entries,
+            blob=blob,
+            parent=parent if isinstance(parent, str) else None,
+            change=MotionCheckChange.from_json(data.get("change")),
+        )
+
+
 _EMPTY_JOINTS: Final[JointState] = JointState(
     generation=0, entries=(), blob=None, parent=None, change=None
 )
 _EMPTY_POSES: Final[PoseState] = PoseState(
+    generation=0, entries=(), blob=None, parent=None, change=None
+)
+_EMPTY_CHECKS: Final[MotionCheckState] = MotionCheckState(
     generation=0, entries=(), blob=None, parent=None, change=None
 )
 
@@ -1400,6 +1860,304 @@ class PoseSet:
         return self.state()
 
 
+class MotionCheckSet:
+    """Declare / update / withdraw motion checks as immutable generations.
+
+    The third rider on the ledger pattern (``KINEMATICS.md`` §4/§7),
+    model-writable on the same recorded 8C quartet rationale as the joint set.
+    Carries a :class:`JointSet` because a sweep's ranges are claims about
+    declared joints: an unknown, withdrawn, or scalar-unsweepable joint id is
+    refused at declaration (``invalid_motion_check``), read under the same
+    project-config lock the write holds so a concurrent withdrawal cannot race
+    the check. A joint withdrawn *after* declaration orphans the check at
+    evaluation instead (``orphaned_sweep``, the ``orphaned_pose`` rule
+    restated) — nothing here re-refuses it.
+    """
+
+    def __init__(self, layout: ProjectLayout, store: OpStore, joints: JointSet) -> None:
+        self.layout = layout
+        self._store = store
+        self._joints = joints
+
+    # -- reads --------------------------------------------------------------
+
+    def state(self) -> MotionCheckState:
+        """The current generation (empty generation 0 when never written)."""
+        blob = self._store.blobs.read_pointer(MOTION_CHECKS_POINTER)
+        if blob is None:
+            return _EMPTY_CHECKS
+        return self._state_from_blob(blob)
+
+    def generation(self, artifact_ref: str) -> MotionCheckState:
+        """Any historical generation by its immutable artifact ref."""
+        blob = blob_hash_of_ref(artifact_ref)
+        if not self._store.blobs.has(blob):
+            raise MotionCheckError(f"motion-check generation {artifact_ref} is not stored")
+        return self._state_from_blob(blob)
+
+    def history(self) -> tuple[MotionCheckState, ...]:
+        """Every stored generation, oldest first (the ledger replay)."""
+        chain: list[MotionCheckState] = []
+        current = self.state()
+        while current.blob is not None:
+            chain.append(current)
+            parent = current.parent
+            if parent is None or not self._store.blobs.has(parent):
+                break
+            current = self._state_from_blob(parent)
+        return tuple(reversed(chain))
+
+    def get(self, check_id: str) -> MotionCheckEntry:
+        """One entry, or ``addressing_error`` naming the ids that do exist."""
+        entries = self.state().by_id
+        entry = entries.get(check_id)
+        if entry is None:
+            raise AddressingError(
+                f"no motion check {check_id!r} is declared",
+                selector=check_id,
+                candidates=tuple(sorted(entries)),
+            )
+        return entry
+
+    def _state_from_blob(self, blob: str) -> MotionCheckState:
+        raw = json.loads(self._store.blobs.get(blob).decode("utf-8"))
+        if not isinstance(raw, dict):  # pragma: no cover - our own canonical JSON
+            raise MotionCheckError("motion-check-set state document is malformed")
+        return MotionCheckState.from_document(cast("Mapping[str, JSONValue]", raw), blob)
+
+    # -- writes -------------------------------------------------------------
+
+    def declare(
+        self, entry: Mapping[str, JSONValue], *, op_id: str | None = None
+    ) -> MotionCheckState:
+        """Declare one new motion check; advances one generation.
+
+        A repeated id is refused rather than silently replaced (revising is
+        :meth:`update`, which records why), and every swept joint must be
+        declared, unwithdrawn, and scalar-sweepable *now* — a check that would
+        be born unevaluatable is a claim about nothing.
+        """
+        parsed = MotionCheckEntry.from_json(entry)
+
+        def apply(current: MotionCheckState) -> tuple[MotionCheckEntry, ...]:
+            if parsed.id in current.by_id:
+                raise MotionCheckError(
+                    f"motion check {parsed.id} is already declared — revise it with "
+                    "update_motion_check(id, patch, reason) so the change records a reason"
+                )
+            self._check_sweep_bindings(parsed)
+            return (*current.entries, parsed)
+
+        return self._mutate(
+            MotionCheckChange(kind="declare", id=parsed.id, patch=parsed.to_json()),
+            apply,
+            op_id=op_id,
+        )
+
+    def update(
+        self,
+        check_id: str,
+        patch: Mapping[str, JSONValue],
+        reason: str,
+        *,
+        op_id: str | None = None,
+    ) -> MotionCheckState:
+        """Revise one entry's declared fields; advances one generation.
+
+        ``reason`` is compulsory and recorded on the generation. A patch that
+        supplies a NEW ``sweep`` is a fresh claim and is validated against the
+        live joint set; a patch that leaves it alone is not — an orphaned
+        check (its joint withdrawn since) must stay editable, because
+        orphanhood is an evaluation state, not corruption. A kind change drops
+        the old kind's own fields from the merged entry first, so a stale
+        ``min_mm`` (or target) cannot be smuggled past the per-kind field
+        check — the joint set's kind/limits rule, restated.
+        """
+        if not reason.strip():
+            raise MotionCheckError(f"motion check {check_id}: update requires a reason")
+        cleaned = {name: value for name, value in patch.items() if value is not None}
+        if not cleaned:
+            raise MotionCheckError(f"motion check {check_id}: update patches nothing")
+        if "id" in cleaned:
+            raise MotionCheckError(
+                f"motion check {check_id}: id is not patchable — declare a new check "
+                "and withdraw this one"
+            )
+
+        def apply(current: MotionCheckState) -> tuple[MotionCheckEntry, ...]:
+            existing = _require_check(current, check_id)
+            merged = dict(existing.to_json())
+            if "kind" in cleaned and cleaned["kind"] != existing.kind:
+                for name in ("a", "b", "min_mm", "anchor", "target_point_mm", "tol_mm"):
+                    merged.pop(name, None)
+            merged.update(cleaned)
+            updated = MotionCheckEntry.from_json(merged)
+            if "sweep" in cleaned:
+                self._check_sweep_bindings(updated)
+            return tuple(updated if e.id == check_id else e for e in current.entries)
+
+        return self._mutate(
+            MotionCheckChange(
+                kind="update",
+                id=check_id,
+                reason=reason,
+                patch=cast("Mapping[str, JSONValue]", dict(sorted(cleaned.items()))),
+            ),
+            apply,
+            op_id=op_id,
+        )
+
+    def withdraw(self, check_id: str, reason: str, *, op_id: str | None = None) -> MotionCheckState:
+        """Stop claiming one motion check; advances one generation, erases nothing."""
+        if not reason.strip():
+            raise MotionCheckError(f"motion check {check_id}: withdrawal requires a reason")
+
+        def apply(current: MotionCheckState) -> tuple[MotionCheckEntry, ...]:
+            existing = _require_check(current, check_id)
+            if existing.withdrawn:
+                raise MotionCheckError(f"motion check {check_id} is already withdrawn")
+            updated = replace(existing, withdrawn=True, withdrawn_reason=reason)
+            return tuple(updated if e.id == check_id else e for e in current.entries)
+
+        return self._mutate(
+            MotionCheckChange(kind="withdraw", id=check_id, reason=reason), apply, op_id=op_id
+        )
+
+    def _check_sweep_bindings(self, check: MotionCheckEntry) -> None:
+        """Refuse sweeps over joints the joint set cannot supply a scalar DOF for (§4).
+
+        Three statically-knowable refusals, all ``invalid_motion_check``: an
+        undeclared joint, a withdrawn joint (a check declared against it would
+        be born orphaned; ``orphaned_sweep`` is the evaluation state for
+        joints withdrawn LATER), and a joint whose kind has no scalar
+        parameter to sweep — ``fixed`` has 0 DOF, and ``cylindrical`` takes a
+        ``(degrees, mm)`` pair the 9A scalar sweep wire shape cannot bind
+        (the pose set's ``invalid_pose`` evaluation rule, caught at
+        declaration here because a sweep names its joints structurally).
+        """
+        joints = self._joints.state()
+        known = joints.by_id
+        for joint_id in sorted(check.sweep):
+            entry = known.get(joint_id)
+            if entry is None:
+                declared = ", ".join(sorted(known)) or "(none)"
+                raise MotionCheckError(
+                    f"motion check {check.id}: joint {joint_id!r} is not declared "
+                    f"(declared joints: {declared})"
+                )
+            if entry.withdrawn:
+                raise MotionCheckError(
+                    f"motion check {check.id}: joint {joint_id!r} is withdrawn "
+                    f"({entry.withdrawn_reason}) — a check declared against it would be "
+                    "born orphaned; orphaned_sweep is the evaluation state for joints "
+                    "withdrawn LATER (KINEMATICS.md §4)"
+                )
+            if entry.kind == "fixed":
+                raise MotionCheckError(
+                    f"motion check {check.id}: joint {joint_id!r} is 'fixed' (0 DOF) "
+                    "and has no parameter to sweep"
+                )
+            if entry.kind == "cylindrical":
+                raise MotionCheckError(
+                    f"motion check {check.id}: joint {joint_id!r} is 'cylindrical' — "
+                    "its (degrees, mm) pair has no scalar sweep form in the 9A wire "
+                    "shape (KINEMATICS.md §4); sweep a revolute or prismatic joint"
+                )
+
+    # -- the one generation-advancing path ----------------------------------
+
+    def _mutate(
+        self,
+        change: MotionCheckChange,
+        apply: Callable[[MotionCheckState], tuple[MotionCheckEntry, ...]],
+        *,
+        op_id: str | None,
+    ) -> MotionCheckState:
+        """Publish one new immutable generation under the project-config lock.
+
+        The binding check inside ``apply`` reads the joint set under this same
+        lock, so a check can never be admitted concurrently with the
+        withdrawal of a joint it sweeps. WAL/idempotency semantics are the
+        joint set's, verbatim.
+        """
+        if op_id is None:
+            return self._publish(change, apply)
+        payload: JSONValue = {"kind": "motion_check_write", "change": change.to_json()}
+        payload_hash = sha256_canonical_json(payload)
+        outcome = self._store.opkeys.begin(op_id, payload_hash)
+        if isinstance(outcome, PendingRecovery):
+            self._store.wal.recover(outcome.op_key)
+            outcome = self._store.opkeys.begin(op_id, payload_hash)
+        if isinstance(outcome, Replay):
+            return self._replayed(outcome.response)
+        if not isinstance(outcome, Fresh):
+            raise MotionCheckError(
+                f"motion-check write {op_id!r} cannot proceed: prior state {outcome!r}"
+            )
+        locks = LockManager(self._store)
+        try:
+            with locks.holding(PROJECT_CONFIG_LOCK):
+                current = self.state()
+                candidate, new_blob = self._candidate(current, change, apply)
+                self._store.wal.publish(
+                    outcome,
+                    MOTION_CHECKS_POINTER,
+                    current.blob,
+                    new_blob,
+                    intended_outcome=canonical_json(
+                        {"generation": candidate.generation, "state": new_blob}
+                    ),
+                )
+                return candidate
+        except MotionCheckError:
+            # Nothing was written: release the fresh opkey skeleton so a
+            # corrected retry with the same invocation id is not a mismatch.
+            self._store.wal.recover(outcome.op_key)
+            raise
+
+    def _publish(
+        self,
+        change: MotionCheckChange,
+        apply: Callable[[MotionCheckState], tuple[MotionCheckEntry, ...]],
+    ) -> MotionCheckState:
+        locks = LockManager(self._store)
+        with locks.holding(PROJECT_CONFIG_LOCK):
+            current = self.state()
+            candidate, new_blob = self._candidate(current, change, apply)
+            self._store.blobs.cas_swap(MOTION_CHECKS_POINTER, current.blob, new_blob)
+            return candidate
+
+    def _candidate(
+        self,
+        current: MotionCheckState,
+        change: MotionCheckChange,
+        apply: Callable[[MotionCheckState], tuple[MotionCheckEntry, ...]],
+    ) -> tuple[MotionCheckState, str]:
+        """Compute, store and pin the next generation's document (no pointer move)."""
+        entries = apply(current)
+        candidate = MotionCheckState(
+            generation=current.generation + 1,
+            entries=entries,
+            blob=None,
+            parent=current.blob,
+            change=change,
+        )
+        new_blob = self._store.blobs.put(canonical_json(candidate.document()).encode("utf-8"))
+        # Pinned, not merely pointer-protected — see the joint set's twin.
+        self._store.gc.pin(new_blob)
+        if current.blob is not None:
+            self._store.gc.link(new_blob, current.blob)
+        return replace(candidate, blob=new_blob), new_blob
+
+    def _replayed(self, response: str | None) -> MotionCheckState:
+        """The generation a committed same-id call produced (immutable, so exact)."""
+        recorded = _recorded_state(response)
+        if recorded is not None and self._store.blobs.has(recorded):
+            return self._state_from_blob(recorded)
+        # Tombstoned replay: only the terminal state survives, so report live.
+        return self.state()
+
+
 def _recorded_state(response: str | None) -> str | None:
     """The state blob a WAL-recorded ``intended_outcome`` names (used on replay)."""
     if response is None:  # tombstone replay: only the terminal state survives
@@ -1428,5 +2186,15 @@ def _require_pose(current: PoseState, pose_id: str) -> PoseEntry:
         raise PoseError(
             f"no pose {pose_id!r} is declared (known: {sorted(current.by_id)})",
             reason="unknown_pose",
+        )
+    return existing
+
+
+def _require_check(current: MotionCheckState, check_id: str) -> MotionCheckEntry:
+    existing = current.by_id.get(check_id)
+    if existing is None:
+        raise MotionCheckError(
+            f"no motion check {check_id!r} is declared (known: {sorted(current.by_id)})",
+            reason="unknown_motion_check",
         )
     return existing

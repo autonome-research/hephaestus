@@ -100,11 +100,13 @@ def test_full_tool_surface_is_47_tools() -> None:
     # manufacturing tools (run_dfm, generate_drawing, generate_doc), the
     # Stage 8A read-only reference pair (INGEST.md §2), the Stage 8B
     # comparison tool (COMPARE.md §2), the Stage 8C constraint quartet
-    # (ASSEMBLY.md §3), and the KINEMATICS.md Stage 9A kinematics tools
-    # (the joint and pose quartets plus check_motion, §6) — declared
-    # additions, not drift.
-    assert len(tools_decl.tool_names()) == 47
-    assert len(set(tools_decl.tool_names())) == 47
+    # (ASSEMBLY.md §3), the KINEMATICS.md Stage 9A kinematics tools (the
+    # joint and pose quartets plus check_motion, §6), and the KINEMATICS.md
+    # Stage 9B motion-check triplet (declare_motion_check /
+    # update_motion_check / read_motion_checks, §4/§6) — declared additions,
+    # not drift.
+    assert len(tools_decl.tool_names()) == 50
+    assert len(set(tools_decl.tool_names())) == 50
     assert {"record_requirements", "read_requirements", "update_requirement"} <= set(
         tools_decl.tool_names()
     )

@@ -2029,13 +2029,14 @@ def _check_assembly() -> ToolDecl:
 
 
 # --------------------------------------------------------------------------
-# KINEMATICS.md §6 — the Stage 9A kinematics tools
+# KINEMATICS.md §6 — the Stage 9A/9B kinematics tools
 #
 # The vocabulary below is RESTATED here, not invented, on exactly the 8C
 # constraint-quartet rule above: the authority is
 # ``hephaestus.core.project_store.kinematics`` (``JOINT_KINDS`` /
-# ``JOINT_ID_PATTERN`` / the shared 8C anchor grammar) and
-# ``hephaestus.core.motion`` (``MOTION_OUTCOME_STATES``). This module may not
+# ``JOINT_ID_PATTERN`` / ``MOTION_CHECK_KINDS`` / the sample-cap constants /
+# the shared 8C anchor grammar) and ``hephaestus.core.motion``
+# (``MOTION_OUTCOME_STATES`` / ``SWEEP_VERDICTS``). This module may not
 # import either, so the equality is asserted by a drift test instead
 # (``server/tests/test_motion_tools.py::test_declared_joint_vocabulary_matches_engine``).
 
@@ -2324,23 +2325,237 @@ def _read_poses() -> ToolDecl:
     )
 
 
+# -- motion checks (KINEMATICS.md §4, Stage 9B) ----------------------------
+
+#: The Stage 9 motion-check kinds (§4); closed, like ``JOINT_KINDS`` — a
+#: swept-volume envelope is a fact ``check_motion`` publishes, not a kind.
+MOTION_CHECK_KINDS: Final[tuple[str, ...]] = (
+    "sweep_clearance",
+    "sweep_no_interference",
+    "reach",
+)
+
+#: THE §4 result vocabulary, one closed set, restated verbatim. The asymmetry
+#: is the honesty: universal kinds succeed as ``holds_at_samples`` (all-good
+#: samples only evidence) and fail as ``violated`` (one bad sample IS proof);
+#: the existence kind (``reach``) inverts — success is ``satisfied`` (one
+#: achieving sample IS proof), failure is ``not_reached_at_samples`` (samples
+#: not reaching is evidence, never proof of unreachability).
+SWEEP_VERDICTS: Final[tuple[str, ...]] = (
+    "holds_at_samples",
+    "satisfied",
+    "not_reached_at_samples",
+    "violated",
+    "unresolvable",
+)
+
+#: The per-axis sample default and the grid-total cap (§4: the cap binds the
+#: computed product ``samples ** n_joints``, refused at declaration naming it).
+SWEEP_SAMPLES_DEFAULT: Final[int] = 64
+SWEEP_SAMPLES_MAX: Final[int] = 4096
+
+#: One joint's declared sweep interval (``from < to``, in the kind's own unit).
+_SWEEP_RANGE: Final[JsonSchema] = _obj({"from": _NUM, "to": _NUM}, ["from", "to"])
+
+#: A motion-check entry, exactly the ``KINEMATICS.md`` §4 shape. Which anchor
+#: and threshold fields a kind requires (``a``/``b`` for the universal kinds
+#: plus ``min_mm`` for ``sweep_clearance``; ``anchor``/``target_point_mm``/
+#: ``tol_mm`` for ``reach``) is enforced structurally by the motion-check set,
+#: which refuses a wrong shape with ``invalid_motion_check`` and writes
+#: nothing — one authority (the store's own tables), the ``_JOINT_LIMITS``
+#: rule. Ditto the grid-total sample cap: the set computes and refuses on the
+#: product, naming it, which a per-field JSON bound cannot express.
+_MOTION_CHECK_ENTRY: Final[JsonSchema] = _obj(
+    {
+        "id": _JOINT_ID,
+        "kind": _enum(list(MOTION_CHECK_KINDS)),
+        "a": {"anyOf": [_CONSTRAINT_ANCHOR, {"type": "null"}], "default": None},
+        "b": {"anyOf": [_CONSTRAINT_ANCHOR, {"type": "null"}], "default": None},
+        "anchor": {"anyOf": [_CONSTRAINT_ANCHOR, {"type": "null"}], "default": None},
+        "sweep": _dict(_SWEEP_RANGE),
+        "samples": {"type": "integer", "default": SWEEP_SAMPLES_DEFAULT},
+        "min_mm": {"anyOf": [_NUM, {"type": "null"}], "default": None},
+        "target_point_mm": {
+            "anyOf": [
+                {"type": "array", "items": _NUM, "minItems": 3, "maxItems": 3},
+                {"type": "null"},
+            ],
+            "default": None,
+        },
+        "tol_mm": {"anyOf": [_NUM, {"type": "null"}], "default": None},
+        "provenance": _CONSTRAINT_PROVENANCE,
+        "note": {"anyOf": [_STR, {"type": "null"}], "default": None},
+    },
+    ["id", "kind", "sweep", "provenance"],
+)
+
+_MOTION_CHECK_ENTRY_OUT: Final[JsonSchema] = _ok(
+    {
+        **cast("dict[str, JsonSchema]", _MOTION_CHECK_ENTRY["properties"]),
+        "withdrawn": _BOOL,
+        "withdrawn_reason": {"anyOf": [_STR, {"type": "null"}]},
+    },
+    ["id", "kind", "sweep"],
+)
+
+#: One evaluated grid sample: the parameter assignment and what it measured
+#: (mm for ``sweep_clearance``/``reach``, mm³ for ``sweep_no_interference``).
+_SWEEP_SAMPLE: Final[JsonSchema] = _ok(
+    {"values": _dict(_NUM), "measured": _NUM},
+    ["values", "measured"],
+)
+
+#: One motion check's §4 result record. Every result restates the declared
+#: quantities (``sweep``, ``samples_per_axis``, the thresholds) so the number
+#: can never be read without the claim it was measured against, and carries
+#: ``samples_evaluated`` plus the worst (for ``reach``: closest) sample's
+#: parameter values and measured value whenever at least one sample landed.
+_SWEEP_RESULT: Final[JsonSchema] = _ok(
+    {
+        "id": _STR,
+        "kind": _STR,
+        "verdict": _enum(list(SWEEP_VERDICTS)),
+        "samples_evaluated": _INT,
+        "grid_total": _INT,
+        "samples_per_axis": _INT,
+        "sweep": _dict(_SWEEP_RANGE),
+        "unit": _STR,
+        "anchors": _dict(_CONSTRAINT_ANCHOR_REF),
+        "worst": {"anyOf": [_SWEEP_SAMPLE, {"type": "null"}]},
+        "min_mm": {"anyOf": [_NUM, {"type": "null"}]},
+        "tol_mm": {"anyOf": [_NUM, {"type": "null"}]},
+        "target_point_mm": {"anyOf": [{"type": "array", "items": _NUM}, {"type": "null"}]},
+        "miss_mm": {"anyOf": [_NUM, {"type": "null"}]},
+        "reason": {"anyOf": [_STR, {"type": "null"}]},
+        "detail": {"anyOf": [_STR, {"type": "null"}]},
+        "provenance": _dict(),
+        "note": {"anyOf": [_STR, {"type": "null"}]},
+    },
+    ["id", "kind", "verdict", "samples_evaluated", "grid_total", "sweep", "unit"],
+)
+
+#: The result the three motion-check tools share (the joint-set shape, with
+#: the LAST full evaluation's results in place of the ``MotionStatus``):
+#: ``results: null`` means *checks never evaluated*, which is not a pass.
+#: Re-measuring is ``check_motion``, never a side effect of a read.
+_MOTION_CHECK_SET_RESULT: Final[JsonSchema] = _ok(
+    {
+        "status": {"const": "ok"},
+        "generation": _INT,
+        "artifact_ref": {"anyOf": [_STR, {"type": "null"}]},
+        "change": {"anyOf": [_dict(), {"type": "null"}]},
+        "entries": {"type": "array", "items": _MOTION_CHECK_ENTRY_OUT},
+        "results": {"anyOf": [{"type": "array", "items": _SWEEP_RESULT}, {"type": "null"}]},
+        "results_ref": {"anyOf": [_STR, {"type": "null"}]},
+    },
+    ["status", "generation", "artifact_ref", "entries", "results"],
+)
+
+
+def _declare_motion_check() -> ToolDecl:
+    return ToolDecl(
+        name="declare_motion_check",
+        summary="Declare one sampled motion check (KINEMATICS.md §4); advances one generation.",
+        params=_MOTION_CHECK_ENTRY,
+        result=_MOTION_CHECK_SET_RESULT,
+        profiles=("part", "orchestrator"),
+        sequential=True,
+        idempotent=True,
+    )
+
+
+def _update_motion_check() -> ToolDecl:
+    return ToolDecl(
+        name="update_motion_check",
+        summary="Revise or withdraw one motion check with a recorded reason; one generation.",
+        params=_obj(
+            {
+                "id": _JOINT_ID,
+                # Merged onto the stored entry and revalidated as a whole,
+                # including the grid-total cap — an update cannot smuggle a
+                # grid past what a declaration would refuse. `withdrawn: true`
+                # is the withdrawal path: a new generation that stops claiming
+                # the check, never an erasure; a withdrawn check is never
+                # evaluated again, and its last recorded result stays readable
+                # exactly as measured.
+                "patch": _obj(
+                    {
+                        "kind": {"anyOf": [_enum(list(MOTION_CHECK_KINDS)), {"type": "null"}]},
+                        "a": {"anyOf": [_CONSTRAINT_ANCHOR, {"type": "null"}]},
+                        "b": {"anyOf": [_CONSTRAINT_ANCHOR, {"type": "null"}]},
+                        "anchor": {"anyOf": [_CONSTRAINT_ANCHOR, {"type": "null"}]},
+                        "sweep": {"anyOf": [_dict(_SWEEP_RANGE), {"type": "null"}]},
+                        "samples": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+                        "min_mm": {"anyOf": [_NUM, {"type": "null"}]},
+                        "target_point_mm": {
+                            "anyOf": [
+                                {"type": "array", "items": _NUM, "minItems": 3, "maxItems": 3},
+                                {"type": "null"},
+                            ]
+                        },
+                        "tol_mm": {"anyOf": [_NUM, {"type": "null"}]},
+                        "provenance": {"anyOf": [_CONSTRAINT_PROVENANCE, {"type": "null"}]},
+                        "note": {"anyOf": [_STR, {"type": "null"}]},
+                        "withdrawn": {"anyOf": [_BOOL, {"type": "null"}]},
+                    },
+                    [],
+                ),
+                # Compulsory and recorded ON THE GENERATION, the 8C rule: a
+                # silently revised threshold is a silently revised claim.
+                "reason": _STR,
+            },
+            ["id", "patch", "reason"],
+        ),
+        result=_MOTION_CHECK_SET_RESULT,
+        profiles=("part", "orchestrator"),
+        sequential=True,
+        idempotent=True,
+    )
+
+
+def _read_motion_checks() -> ToolDecl:
+    return ToolDecl(
+        name="read_motion_checks",
+        summary="Read the motion-check set and the latest sweep results (no re-measure).",
+        params=_obj({}, []),
+        result=_MOTION_CHECK_SET_RESULT,
+        profiles=("part", "orchestrator"),
+        sequential=False,
+        idempotent=False,
+    )
+
+
 def _check_motion() -> ToolDecl:
-    # 9A subset of the KINEMATICS.md §6 surface: motion CHECKS (sweeps, reach)
-    # are Stage 9B, so there are no per-check results here yet and no `ids`
-    # parameter to select them — the deferred-surface rule the doc's
-    # "Deferred" section uses, stated in the summary rather than reserved as a
-    # dead argument.
+    # KINEMATICS.md §6 `check_motion(ids?)`, completed by Stage 9B exactly as
+    # the 9A declaration said it would be: the result gains the per-check
+    # sweep results, and `ids` narrows which motion CHECKS run (the joint and
+    # pose sections are always evaluated in full — a MotionStatus covering
+    # some joints would report a forest the project does not have). A named
+    # subset is evaluated but deliberately not projected, and says so with
+    # `partial: true` (the check_assembly rule); a full run records both the
+    # status and the results so a later read — and the reviewer — sees them.
     return ToolDecl(
         name="check_motion",
-        summary="Evaluate joints and poses against current builds; MotionStatus (checks are 9B).",
-        params=_obj({}, []),
+        summary="Evaluate joints, poses and motion checks now; MotionStatus + sweep results.",
+        params=_obj(
+            {
+                "ids": {
+                    "anyOf": [{"type": "array", "items": _JOINT_ID}, {"type": "null"}],
+                    "default": None,
+                },
+            },
+            [],
+        ),
         result=_ok(
             {
                 "status": {"const": "ok"},
                 "motion": _MOTION_STATUS,
                 "artifact_ref": {"anyOf": [_STR, {"type": "null"}]},
+                "results": {"type": "array", "items": _SWEEP_RESULT},
+                "results_ref": {"anyOf": [_STR, {"type": "null"}]},
+                "partial": _BOOL,
             },
-            ["status", "motion"],
+            ["status", "motion", "results", "partial"],
         ),
         profiles=("part", "orchestrator"),
         sequential=False,
@@ -2669,6 +2884,9 @@ TOOLS: Final[tuple[ToolDecl, ...]] = (
     _declare_pose(),
     _update_pose(),
     _read_poses(),
+    _declare_motion_check(),
+    _update_motion_check(),
+    _read_motion_checks(),
     _check_motion(),
     _load_skill(),
     _list_skills(),

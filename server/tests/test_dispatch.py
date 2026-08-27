@@ -346,6 +346,23 @@ _ARGS: dict[str, dict[str, object]] = {
     },
     "update_pose": {"id": "p-zero", "patch": {"note": "n"}, "reason": "matrix fixture"},
     "read_poses": {},
+    # KINEMATICS.md Stage 9B (§4/§6): the motion-check triplet, same rule as
+    # the joint quartet — availability is what this matrix asserts.
+    "declare_motion_check": {
+        "id": "mc-air",
+        "kind": "sweep_clearance",
+        "a": "widget",
+        "b": "bracket",
+        "min_mm": 0.2,
+        "sweep": {"j-mount": {"from": 0.0, "to": 1.0}},
+        "provenance": {"assumed": True, "reason": "matrix fixture"},
+    },
+    "update_motion_check": {
+        "id": "mc-air",
+        "patch": {"note": "n"},
+        "reason": "matrix fixture",
+    },
+    "read_motion_checks": {},
     "check_motion": {},
 }
 
