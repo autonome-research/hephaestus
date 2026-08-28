@@ -44,7 +44,11 @@ permissions:
 env:
   UV_PYTHON: "3.13"
   NODE_VERSION: "22.19.0"
-  PNPM_VERSION: "10"
+  # Exact, not floating: the pinned-image job bakes its own pnpm, and a floating
+  # "10" let the stock runners drift to 10.34.5 while the image stayed at
+  # 10.18.3 — versions that disagree about ERR_PNPM_IGNORED_BUILDS being fatal
+  # (run 33190937658). One version everywhere.
+  PNPM_VERSION: "10.34.5"
 
 jobs:
   # ---------------------------------------------------------------- static --
@@ -331,6 +335,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      # The image bakes a pnpm; activate the repo-pinned one so every CI job
+      # runs the identical version (see the PNPM_VERSION note above).
+      - run: corepack prepare "pnpm@${PNPM_VERSION}" --activate
       - run: uv sync --dev
       - run: pnpm --dir agent install --frozen-lockfile
       - run: pnpm --dir agent build
