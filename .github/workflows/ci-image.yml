@@ -1,0 +1,36 @@
+# Builds and pushes the pinned CI container image (docker/ci/Dockerfile) to
+# GHCR. The golden gates consume the image BY DIGEST from ci.yml, so merely
+# rebuilding here changes nothing downstream: a digest bump in ci.yml is a
+# deliberate renderer re-baseline (verification.md golden-regeneration rule)
+# and lands together with regenerated goldens.
+#
+# Triggers: changes to the image definition, or manual dispatch.
+name: ci-image
+
+on:
+  push:
+    branches: [main]
+    paths: [docker/ci/**]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-push:
+    name: build + push pinned CI image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: login to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: build
+        run: docker build -t ghcr.io/${{ github.repository_owner }}/hephaestus-ci:latest docker/ci
+      - name: push (digest is the artifact)
+        run: |
+          docker push ghcr.io/${{ github.repository_owner }}/hephaestus-ci:latest
+          echo "### pinned CI image digest" >> "$GITHUB_STEP_SUMMARY"
+          docker inspect --format='{{index .RepoDigests 0}}' \
+            ghcr.io/${{ github.repository_owner }}/hephaestus-ci:latest | tee -a "$GITHUB_STEP_SUMMARY"
