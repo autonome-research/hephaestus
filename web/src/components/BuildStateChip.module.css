@@ -1,0 +1,59 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 1px var(--space-2);
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  font-size: var(--size-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-1);
+  background: var(--ground-2);
+}
+
+.glyph {
+  font-size: var(--size-xs);
+  line-height: 1;
+}
+
+.chip[data-build-state="current"] {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 40%, var(--line-2));
+}
+
+.chip[data-build-state="preview"] {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line-2));
+}
+
+.chip[data-build-state="stale"] {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 40%, var(--line-2));
+}
+
+.chip[data-build-state="failed"] {
+  color: var(--fail);
+  border-color: color-mix(in srgb, var(--fail) 40%, var(--line-2));
+}
+
+.chip[data-build-state="not_built"] {
+  color: var(--unknown);
+}
+
+/* A fact the panel needs to expose for assertion but not to display twice.
+   Not `display:none`: a hidden node is still in the accessibility tree's way,
+   so it is clipped instead and marked `aria-hidden` by its container. */
+.hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

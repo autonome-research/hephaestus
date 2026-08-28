@@ -1,0 +1,20 @@
+{
+  "edges": [
+    {
+      "child_session_id": "sess-workspace-quickedit",
+      "kind": "quick_edit",
+      "origin": {
+        "crop_artifact_ref": null,
+        "part": "tread",
+        "provenance": {
+          "state": "tagged",
+          "tag": "tread_top"
+        },
+        "selection_id": 2,
+        "source_artifact_ref": "artifact:build:sha256:f908224c3e73b64032d7a6b954162d6e5a4ac546b9285b1d8ed50b6319d14384"
+      },
+      "parent_session_id": "sess-workspace-orchestrator"
+    }
+  ],
+  "note": "Session edges for the workspace fixture (INTERFACE.md \u00a72.8). Replayed into state.db by hephaestus.testing.workspace_fixture.record_transcript_edges, through the same SessionEdgeStore the two production writers use."
+}

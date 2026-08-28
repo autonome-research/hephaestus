@@ -1,0 +1,161 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * The STREAM column's chrome: header, session tabs, page counter.
+ * The transcript's own rows live in `Transcript.module.css`.
+ */
+
+/*
+ * The column's own scrolling belongs to the shell's `aside` (`Shell.module.css`
+ * already sets `overflow: auto` on it), so this panel stacks and does not fight
+ * it for a scroll container.
+ */
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  flex: none;
+  padding: var(--space-1) var(--space-3);
+  border-bottom: 1px solid var(--line-1);
+}
+
+/* §7.4's five states. Colour is never the only carrier: the word is the label. */
+.state {
+  flex: none;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-1);
+  padding: 0 var(--space-2);
+  font-size: var(--size-xs);
+  color: var(--ink-2);
+}
+
+.state[data-stream-state="live"] {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.state[data-stream-state="resyncing"],
+.state[data-stream-state="reconnecting"] {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.state[data-stream-state="detached"] {
+  border-color: var(--line-strong);
+  color: var(--ink-3);
+}
+
+.resyncCount {
+  flex: none;
+  font-size: var(--size-xs);
+  color: var(--warn);
+  font-family: var(--font-mono);
+}
+
+.tabs {
+  flex: none;
+  padding: var(--space-2) var(--space-2) var(--space-2) 0;
+  border-bottom: 1px solid var(--line-1);
+}
+
+.tabsHeading {
+  margin: 0 0 var(--space-1) var(--space-3);
+  font-size: var(--size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+
+.tabList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tabItem + .tabItem {
+  margin-top: 1px;
+}
+
+.tab {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  text-align: left;
+  border-radius: var(--radius-1);
+}
+
+.tab:hover {
+  background: var(--ground-2);
+}
+
+.tab[aria-selected="true"] {
+  background: var(--ground-3);
+}
+
+.tabLabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--size-sm);
+}
+
+.tabMeta {
+  flex: none;
+  font-size: var(--size-xs);
+  color: var(--ink-3);
+}
+
+.tabThread {
+  flex: none;
+  font-size: var(--size-xs);
+  color: var(--ink-3);
+}
+
+.tab[data-thread-state="unlinked"] .tabThread {
+  color: var(--unknown);
+  font-style: italic;
+}
+
+.historyBar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  flex: none;
+  padding: var(--space-1) var(--space-3);
+  border-bottom: 1px solid var(--line-1);
+  font-size: var(--size-xs);
+  color: var(--ink-3);
+}
+
+.scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.absent {
+  margin: 0;
+  padding: var(--space-3);
+  color: var(--ink-3);
+  font-size: var(--size-sm);
+  font-style: italic;
+}
+
+.note {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--size-xs);
+  line-height: var(--line-body);
+}

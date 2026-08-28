@@ -13,6 +13,19 @@ dependencies = [
     # INGEST.md §2: PDF reference text extraction. Server-side only — the core
     # engine stores and reads the extracted text without any parser.
     "pypdf>=5.1",
+    # INTERFACE.md §2: `server/http` (the Stage 4 web workspace API) and its
+    # loopback server. Both already arrive transitively as what `fastmcp` serves
+    # streamable HTTP on; they are declared here because this package now imports
+    # them directly, and an undeclared transitive import is a dependency that
+    # disappears the day fastmcp changes its own. No FastAPI: §2 names no
+    # framework, and a second web framework in one process buys nothing.
+    "starlette>=0.47,<2",
+    "uvicorn>=0.34,<1",
+    # INTERFACE.md §2.7's `GET /events` is a WebSocket, which uvicorn serves only
+    # with a ws implementation present, and `heph agent` client mode needs a
+    # WebSocket *client*. Already in the graph via fastmcp; declared because we
+    # import and depend on it directly.
+    "websockets>=13,<17",
 ]
 
 [build-system]

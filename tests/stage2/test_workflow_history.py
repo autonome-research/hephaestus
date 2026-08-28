@@ -241,6 +241,60 @@ def jsonl_filenames(source: str) -> list[str]:
     return [value for value in string_constants(source) if value.endswith(".jsonl")]
 
 
+#: Callables that turn a string literal into a filesystem path or open one.
+PATH_BUILDERS = frozenset(
+    {
+        "Path",
+        "PurePath",
+        "open",
+        "join",
+        "joinpath",
+        "glob",
+        "rglob",
+        "iterdir",
+        "read_text",
+        "read_bytes",
+        "write_text",
+        "write_bytes",
+    }
+)
+
+
+def session_path_literals(source: str) -> list[str]:
+    """String literals this module builds a *filesystem path* from that name a session store.
+
+    Two structural forms, which together are how a Python module could reach the
+    sidecar's app-owned session directory at all: a ``pathlib`` division join
+    (``agent_dir / "sessions"``) and a literal handed to a path builder
+    (``Path("sessions/x")``, ``os.path.join(root, "sessions")``, ``open(...)``).
+    Prose, JSON keys, and URL routes are structurally excluded because none of
+    them is an operand of a path construction.
+    """
+    offenders: list[str] = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            for operand in (node.left, node.right):
+                if (
+                    isinstance(operand, ast.Constant)
+                    and isinstance(operand.value, str)
+                    and "session" in operand.value
+                ):
+                    offenders.append(operand.value)
+        if isinstance(node, ast.Call):
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+            if name not in PATH_BUILDERS:
+                continue
+            for arg in node.args:
+                if (
+                    isinstance(arg, ast.Constant)
+                    and isinstance(arg.value, str)
+                    and "session" in arg.value
+                ):
+                    offenders.append(arg.value)
+    return offenders
+
+
 def test_workflow_history_no_python_module_parses_pi_jsonl() -> None:
     """No Python package names a ``.jsonl`` transcript except the bench archives."""
     bridge = REPO_ROOT / "server" / "src" / "hephaestus" / "agent_bridge"
@@ -289,6 +343,22 @@ def test_workflow_history_python_reaches_transcripts_only_through_the_bridge() -
     assert callers[bridge / "protocol.py"] == []
 
     # Nothing in the bridge reaches into the sidecar's app-owned agent directory.
+    #
+    # AMENDMENT (Stage 4 — INTERFACE.md §2.1, §2.3, §2.7). This clause used to be
+    # spelled ``"sessions/" not in value`` over *every* string constant. Stage 4
+    # makes ``sessions`` the first segment of the owning server's route table and
+    # a key in its JSON and WebSocket frames, so ``heph agent`` in client mode
+    # (``client_mode.py``) now legitimately carries ``"/sessions/"``,
+    # ``body.get("sessions", [])`` and ``{"subscribe": {"sessions": [...]}}``.
+    # Addressing a *route* on the process that owns the leases is the exact
+    # opposite of reaching past it into its files, so the substring form had
+    # become a false positive on the topology §2.1 requires.
+    #
+    # The replacement tests what the clause means — filesystem addressing — and
+    # is net *stronger*: it catches ``agent_dir / "sessions"`` and
+    # ``os.path.join(root, "sessions")``, neither of which contains the substring
+    # ``sessions/`` and both of which the old form missed entirely. The blunt ban
+    # on naming a ``.jsonl`` transcript is unchanged and still applies above.
     for path, source in python_modules(bridge):
-        for value in string_constants(source):
-            assert "sessions/" not in value, f"{path} addresses a Pi session directory"
+        offenders = session_path_literals(source)
+        assert offenders == [], f"{path} builds a Pi session directory path: {offenders}"

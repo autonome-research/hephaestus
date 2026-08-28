@@ -1,0 +1,296 @@
+{
+  "auto_run": false,
+  "last": {
+    "errored_rules": [],
+    "findings": [
+      {
+        "bound_unit": "mm",
+        "measured": {
+          "diameter_mm": 0.5,
+          "kerf_mm": 0.2,
+          "minimum_feature_mm": 0.8
+        },
+        "message": "bore of 0.500 mm diameter is below the 0.800 mm minimum cut feature for a 0.20 mm kerf",
+        "process": "laser_cut",
+        "rule_id": "laser_cut.min_feature_vs_kerf",
+        "severity": "error",
+        "source_artifact_ref": "artifact:build:sha256:ed923a179f3b6f88179725a1c8bac47e79a2cf2cdd234bacbc2cbe5bc746bb98",
+        "suggested_bound": 0.8,
+        "tags": [
+          "vent_bore"
+        ],
+        "title": "Cut features must be wider than the kerf can produce",
+        "topology": [
+          {
+            "kind": "face",
+            "solid_id": 0,
+            "tag": "vent_bore",
+            "topology_index": 11
+          }
+        ]
+      },
+      {
+        "bound_unit": "mm",
+        "measured": {
+          "kerf_mm": 0.2,
+          "minimum_radius_mm": 0.5,
+          "radius_mm": 0.3,
+          "sweep_deg": 90.00000000000041
+        },
+        "message": "internal corner radius 0.300 mm is tighter than the 0.500 mm the beam can cut; it will come out at least 0.500 mm",
+        "process": "laser_cut",
+        "rule_id": "laser_cut.min_internal_radius",
+        "severity": "error",
+        "source_artifact_ref": "artifact:build:sha256:ed923a179f3b6f88179725a1c8bac47e79a2cf2cdd234bacbc2cbe5bc746bb98",
+        "suggested_bound": 0.5,
+        "tags": [],
+        "title": "Internal corners must not be tighter than the beam radius",
+        "topology": [
+          {
+            "kind": "face",
+            "solid_id": 0,
+            "tag": null,
+            "topology_index": 2
+          }
+        ]
+      },
+      {
+        "bound_unit": "mm",
+        "measured": {
+          "kerf_mm": 0.2,
+          "minimum_radius_mm": 0.5,
+          "radius_mm": 0.3,
+          "sweep_deg": 90.0000000000002
+        },
+        "message": "internal corner radius 0.300 mm is tighter than the 0.500 mm the beam can cut; it will come out at least 0.500 mm",
+        "process": "laser_cut",
+        "rule_id": "laser_cut.min_internal_radius",
+        "severity": "error",
+        "source_artifact_ref": "artifact:build:sha256:ed923a179f3b6f88179725a1c8bac47e79a2cf2cdd234bacbc2cbe5bc746bb98",
+        "suggested_bound": 0.5,
+        "tags": [],
+        "title": "Internal corners must not be tighter than the beam radius",
+        "topology": [
+          {
+            "kind": "face",
+            "solid_id": 0,
+            "tag": null,
+            "topology_index": 6
+          }
+        ]
+      },
+      {
+        "bound_unit": "mm",
+        "measured": {
+          "material": "Baltic birch plywood (BB/BB)",
+          "nearest_stock_mm": 6.0,
+          "stock_thicknesses_mm": [
+            3.0,
+            6.0,
+            12.0,
+            18.0
+          ],
+          "thickness_mm": 5.5
+        },
+        "message": "modelled sheet thickness 5.500 mm is not a stock size for Baltic birch plywood (BB/BB) (available: 3, 6, 12, 18 mm, tolerance 0.2 mm); the nearest is 6 mm",
+        "process": "laser_cut",
+        "rule_id": "laser_cut.sheet_thickness_match",
+        "severity": "error",
+        "source_artifact_ref": "artifact:build:sha256:ed923a179f3b6f88179725a1c8bac47e79a2cf2cdd234bacbc2cbe5bc746bb98",
+        "suggested_bound": 6.0,
+        "tags": [],
+        "title": "Modelled sheet thickness must match a stock thickness the material carries",
+        "topology": [
+          {
+            "kind": "solid",
+            "solid_id": 0,
+            "tag": null,
+            "topology_index": 0
+          }
+        ]
+      }
+    ],
+    "material": {
+      "density": 680.0,
+      "forms": [
+        "sheet"
+      ],
+      "id": "plywood-baltic-birch",
+      "name": "Baltic birch plywood (BB/BB)",
+      "notes": "Void-free multi-ply birch; the standard sheet stock for laser-cut and CNC-routed joinery. Nominal thickness runs under size and varies batch to batch by roughly +/-0.3 mm, so drive every slot and finger width from one project-global sheet-thickness parameter and MEASURE the actual sheet before cutting a whole design. Laser kerf is about 0.15-0.25 mm per side at 6 mm; a 3 mm router bit removes its full width, so kerf compensation direction is opposite between the two processes. Edges char under laser cutting and want light sanding. Glue face-grain to face-grain with PVA for laminations; end-grain screwing splits.",
+      "registry": "hephaestus-materials",
+      "registry_digest": "sha256:050d07e33eb1e396bc44ed97ec1aafad2cfa06bc8d33ffa8e20e02181638b911",
+      "thicknesses": [
+        3.0,
+        6.0,
+        12.0,
+        18.0
+      ]
+    },
+    "pack": {
+      "name": "Laser cutting (sheet)",
+      "registry": "hephaestus-dfm",
+      "registry_digest": "sha256:891ca6c88c661a8f03ff15cd53dac78acd40f377e8c274697b16755473f4bf01",
+      "version": "0.1.0"
+    },
+    "part": "panel",
+    "process": "laser_cut",
+    "resolved_from": "current",
+    "rules": [
+      {
+        "error": null,
+        "findings": [
+          {
+            "bound_unit": "mm",
+            "measured": {
+              "diameter_mm": 0.5,
+              "kerf_mm": 0.2,
+              "minimum_feature_mm": 0.8
+            },
+            "message": "bore of 0.500 mm diameter is below the 0.800 mm minimum cut feature for a 0.20 mm kerf",
+            "process": "laser_cut",
+            "rule_id": "laser_cut.min_feature_vs_kerf",
+            "severity": "error",
+            "source_artifact_ref": "artifact:build:sha256:ed923a179f3b6f88179725a1c8bac47e79a2cf2cdd234bacbc2cbe5bc746bb98",
+            "suggested_bound": 0.8,
+            "tags": [
+              "vent_bore"
+            ],
+            "title": "Cut features must be wider than the kerf can produce",
+            "topology": [
+              {
+                "kind": "face",
+                "solid_id": 0,
+                "tag": "vent_bore",
+                "topology_index": 11
+              }
+            ]
+          }
+        ],
+        "params": {
+          "kerf_mm": 0.2,
+          "min_feature_kerf_multiple": 3.0,
+          "min_feature_mm": 0.8
+        },
+        "rule_id": "laser_cut.min_feature_vs_kerf",
+        "severity": "error",
+        "status": "violations",
+        "title": "Cut features must be wider than the kerf can produce"
+      },
+      {
+        "error": null,
+        "findings": [
+          {
+            "bound_unit": "mm",
+            "measured": {
+              "kerf_mm": 0.2,
+              "minimum_radius_mm": 0.5,
+              "radius_mm": 0.3,
+              "sweep_deg": 90.00000000000041
+            },
+            "message": "internal corner radius 0.300 mm is tighter than the 0.500 mm the beam can cut; it will come out at least 0.500 mm",
+            "process": "laser_cut",
+            "rule_id": "laser_cut.min_internal_radius",
+            "severity": "error",
+            "source_artifact_ref": "artifact:build:sha256:ed923a179f3b6f88179725a1c8bac47e79a2cf2cdd234bacbc2cbe5bc746bb98",
+            "suggested_bound": 0.5,
+            "tags": [],
+            "title": "Internal corners must not be tighter than the beam radius",
+            "topology": [
+              {
+                "kind": "face",
+                "solid_id": 0,
+                "tag": null,
+                "topology_index": 2
+              }
+            ]
+          },
+          {
+            "bound_unit": "mm",
+            "measured": {
+              "kerf_mm": 0.2,
+              "minimum_radius_mm": 0.5,
+              "radius_mm": 0.3,
+              "sweep_deg": 90.0000000000002
+            },
+            "message": "internal corner radius 0.300 mm is tighter than the 0.500 mm the beam can cut; it will come out at least 0.500 mm",
+            "process": "laser_cut",
+            "rule_id": "laser_cut.min_internal_radius",
+            "severity": "error",
+            "source_artifact_ref": "artifact:build:sha256:ed923a179f3b6f88179725a1c8bac47e79a2cf2cdd234bacbc2cbe5bc746bb98",
+            "suggested_bound": 0.5,
+            "tags": [],
+            "title": "Internal corners must not be tighter than the beam radius",
+            "topology": [
+              {
+                "kind": "face",
+                "solid_id": 0,
+                "tag": null,
+                "topology_index": 6
+              }
+            ]
+          }
+        ],
+        "params": {
+          "kerf_mm": 0.2,
+          "min_internal_radius_mm": 0.5
+        },
+        "rule_id": "laser_cut.min_internal_radius",
+        "severity": "error",
+        "status": "violations",
+        "title": "Internal corners must not be tighter than the beam radius"
+      },
+      {
+        "error": null,
+        "findings": [
+          {
+            "bound_unit": "mm",
+            "measured": {
+              "material": "Baltic birch plywood (BB/BB)",
+              "nearest_stock_mm": 6.0,
+              "stock_thicknesses_mm": [
+                3.0,
+                6.0,
+                12.0,
+                18.0
+              ],
+              "thickness_mm": 5.5
+            },
+            "message": "modelled sheet thickness 5.500 mm is not a stock size for Baltic birch plywood (BB/BB) (available: 3, 6, 12, 18 mm, tolerance 0.2 mm); the nearest is 6 mm",
+            "process": "laser_cut",
+            "rule_id": "laser_cut.sheet_thickness_match",
+            "severity": "error",
+            "source_artifact_ref": "artifact:build:sha256:ed923a179f3b6f88179725a1c8bac47e79a2cf2cdd234bacbc2cbe5bc746bb98",
+            "suggested_bound": 6.0,
+            "tags": [],
+            "title": "Modelled sheet thickness must match a stock thickness the material carries",
+            "topology": [
+              {
+                "kind": "solid",
+                "solid_id": 0,
+                "tag": null,
+                "topology_index": 0
+              }
+            ]
+          }
+        ],
+        "params": {
+          "thickness_tolerance_mm": 0.2
+        },
+        "rule_id": "laser_cut.sheet_thickness_match",
+        "severity": "error",
+        "status": "violations",
+        "title": "Modelled sheet thickness must match a stock thickness the material carries"
+      }
+    ],
+    "severity_counts": {
+      "error": 4
+    },
+    "source_artifact_ref": "artifact:build:sha256:ed923a179f3b6f88179725a1c8bac47e79a2cf2cdd234bacbc2cbe5bc746bb98",
+    "status": "ok",
+    "truncated": false
+  },
+  "part": "panel",
+  "resolved_from": "current",
+  "status": "ok"
+}

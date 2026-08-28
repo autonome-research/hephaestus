@@ -1,0 +1,16 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+.fact {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-0);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--size-sm);
+  color: var(--ink-1);
+  word-break: break-all;
+}

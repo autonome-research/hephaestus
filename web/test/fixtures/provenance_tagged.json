@@ -1,0 +1,17 @@
+{
+  "bundle_ref": "artifact:selection-bundle:sha256:76289638f84bb8675359a40a80b7f848c92f606b63e5a1bd646d5eba72a10c76",
+  "crop_artifact_ref": null,
+  "kind": "face",
+  "label": "vent_panel",
+  "line": 18,
+  "provenance": {
+    "state": "tagged"
+  },
+  "selection_id": 13,
+  "selection_table_ref": "artifact:selection-table:sha256:ef6064c71e28df93a231f29f4ba3c1bdb6966fd1b039a51d9b45c5fef25c4cd2",
+  "solid_index": 0,
+  "source_artifact_ref": "artifact:build:sha256:ed923a179f3b6f88179725a1c8bac47e79a2cf2cdd234bacbc2cbe5bc746bb98",
+  "status": "ok",
+  "tag": "vent_bore",
+  "topology_index": 11
+}

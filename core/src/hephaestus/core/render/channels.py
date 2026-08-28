@@ -83,6 +83,10 @@ __all__ = [
     "RenderScene",
     "RenderSolid",
     "SectionPlane",
+    # Underscored and exported on purpose — see the definition (INTERFACE.md
+    # §5.1: "exported from ``channels.py`` for this purpose rather than
+    # reimplemented"). The name is the explode transform's one definition.
+    "_explode_offset",
     "encode_png",
     "explode_silhouette",
     "parse_section_plane",
@@ -551,7 +555,26 @@ def _to_rgba(image: NDArray[np.uint8]) -> NDArray[np.uint8]:
 
 
 def _explode_offset(scene: RenderScene, solid: RenderSolid, t: float) -> NDArray[np.float64]:
-    """Outward displacement of ``solid`` at explode parameter ``t`` (never inward)."""
+    """Outward displacement of ``solid`` at explode parameter ``t`` (never inward).
+
+    **The one definition of the explode transform** (``INTERFACE.md`` §5.1/§5.2).
+    It is a *homothety* about the assembly centroid: each solid moves a distance
+    proportional to ``|c_i - C|``, which is why the GLB ships the full
+    displacement vector rather than a unit axis plus the global
+    :data:`EXPLODE_SCALE` — a unit axis moves every solid the *same* distance and
+    does not guarantee G4.6's strict increase over **all** centroid pairs.
+
+    Named with a leading underscore because it is module-internal to the
+    renderer, and listed in ``__all__`` anyway because §5.1 requires
+    :func:`hephaestus.core.render.gltf.export_gltf` to emit
+    ``extras.explode_offset`` from *this* function rather than reimplement it:
+    the viewport and ``heph render --explode`` would otherwise drift, and the
+    drift would first surface as a golden mismatch in an unrelated stage.
+
+    ``t <= 0`` short-circuits to ``+0.0`` in every component, so the zero
+    displacement has one representation rather than the signed zeros
+    ``(c_i - C) * 0.0`` would produce.
+    """
     if t <= 0.0:
         return np.zeros(3, dtype=np.float64)
     return (solid.centroid() - scene.centroid()) * (t * EXPLODE_SCALE)

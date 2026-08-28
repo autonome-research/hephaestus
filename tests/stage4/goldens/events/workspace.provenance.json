@@ -1,0 +1,23 @@
+{
+  "archive": "events/workspace.jsonl",
+  "churn_policy": "A re-baseline is its own PR carrying the normalization or fixture change that caused it (INTERFACE.md \u00a72.8, verification.md Tier 2).",
+  "fixture": "corpus/public_fixtures/workspace",
+  "identity_namespace": "historical (session_id, ordinal) \u2014 INTERFACE.md \u00a72.8",
+  "normalizers": [
+    "agent/src/session/history.ts::normalizeEntries",
+    "agent/src/session/history.ts::pageHistory",
+    "agent/src/session/live.ts::wireEvent"
+  ],
+  "recorded_by": "scripts/record_workspace_transcript.py",
+  "sessions": {
+    "sess-workspace-orchestrator": {
+      "events": 281,
+      "pages": 2
+    },
+    "sess-workspace-quickedit": {
+      "events": 3,
+      "pages": 1
+    }
+  },
+  "sidecar_package": "@hephaestus/agent@0.1.0"
+}

@@ -1,7 +1,7 @@
 # ci.yml — every-PR gate per verification.md §CI contract.
 #
-# Scope note (v1, stock ubuntu runners). Exactly ONE suite is excluded, and it
-# is excluded for a documented reason rather than to make CI pass:
+# Scope note (v1, stock ubuntu runners). Everything excluded is excluded for ONE
+# documented reason — renderer pinning — rather than to make CI pass:
 #
 #   * tests/render (Gate G1 render goldens) — the committed PNGs are pinned to
 #     an exact Mesa/llvmpipe build (the sidecars assert the renderer version
@@ -10,6 +10,14 @@
 #     generated on, so the suite would fail on rasterizer drift rather than on
 #     a real regression. It runs locally today and moves here when the pinned
 #     CI container image lands (Stage S disposition).
+#   * tests/stage4/test_g4_section_golden.py and `pnpm --dir web test:e2e`
+#     (Gate G4.7) — the SAME pinning, and INTERFACE.md §14 says so explicitly:
+#     the browser gate runs "inside the same pinned CI container image as
+#     tests/render", because §5.3 makes the gated section render a *server*
+#     render bound to that image's rasterizer. They move when tests/render
+#     moves. Both fail BY NAME on an unmatched renderer rather than skipping, so
+#     the deferral can never quietly become a pass. The rest of tests/stage4 is
+#     not renderer-pinned and runs below on every PR.
 #
 # Everything else runs in full — including the bubblewrap sandbox suites and
 # the escape probes, which the previous revision of this file excluded via
@@ -157,10 +165,12 @@ jobs:
       - run: uv sync --dev
       - run: pnpm --dir agent install --frozen-lockfile
       - run: pnpm --dir agent build
-      # tests/render is deliberately absent — see the scope note at the top.
+      # tests/render and tests/stage4's renderer-pinned module are deliberately
+      # absent — see the scope note at the top.
       - run: >
           uv run pytest
-          tests/stage1 tests/stage2 tests/stage2v tests/stage3 tests/stage6 -q
+          tests/stage1 tests/stage2 tests/stage2v tests/stage3 tests/stage4 tests/stage6
+          --ignore=tests/stage4/test_g4_section_golden.py -q
 
   # ------------------------------------------------------- stage gates 8A-8D --
   # Gates G8A (ingest), G8B (solid comparison), G8C (assemblies/constraints),
@@ -284,6 +294,39 @@ jobs:
       - run: pnpm --dir agent typecheck
       - run: pnpm --dir agent lint
       - run: pnpm --dir agent test
+
+  # The web workspace client (INTERFACE.md §3). Its own package and its own
+  # lockfile, driven exactly like `agent/` — there is deliberately no
+  # repository-root pnpm workspace, because one would hoist `agent/`'s lockfile
+  # and every `pnpm --dir agent install --frozen-lockfile` in these workflows.
+  #
+  # `pnpm --dir web test:e2e` is NOT here — for the renderer-pinning reason in
+  # the scope note at the top of this file, and for no other reason. The suite
+  # itself is landed and green locally (14/14 against a real `heph serve
+  # --web`), but G4.7's section golden is a *server* render pinned to the exact
+  # Mesa/llvmpipe build of the pinned CI image (INTERFACE.md §14: the browser
+  # gate runs "inside the same pinned CI container image as tests/render").
+  # It moves here, with tests/render, when that image lands; both fail BY NAME
+  # on an unmatched renderer rather than skipping. (An earlier revision of this
+  # comment said the suite had not landed — that reason is obsolete; corrected
+  # 2026-08-28 when the independent G4 verifier flagged it as stale.)
+  web-node:
+    name: web (node)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: pnpm --dir web install --frozen-lockfile
+      - run: pnpm --dir web typecheck
+      - run: pnpm --dir web lint
+      - run: pnpm --dir web test
+      - run: pnpm --dir web build
 
   # ------------------------------------------------------------- stage 7H --
   # The fast half of the Stage 7H suite: sidecar resolution/integrity policy,

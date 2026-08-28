@@ -1,0 +1,42 @@
+{
+  "name": "@hephaestus/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Hephaestus web workspace: an observation and provenance instrument that happens to have an editor (INTERFACE.md \u00a73)",
+  "engines": {
+    "node": ">=22.19"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@tanstack/react-query": "5.102.8",
+    "monaco-editor": "0.56.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "three": "0.185.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "@playwright/test": "1.62.1",
+    "@types/node": "22.20.1",
+    "@types/react": "18.3.31",
+    "@types/react-dom": "18.3.7",
+    "@types/three": "0.185.4",
+    "@vitejs/plugin-react": "6.1.0",
+    "eslint": "9.39.5",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "jsdom": "30.0.1",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.68.0",
+    "vite": "8.2.2",
+    "vitest": "4.1.11"
+  }
+}

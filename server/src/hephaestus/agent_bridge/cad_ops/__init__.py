@@ -51,6 +51,10 @@ mixin per domain so each domain reads independently:
                  material, what a clarification question must look like, and what
                  an answer does to the ledger — all by rule.
 ``_artifacts``   ``read_artifact`` byte-cursor paging.
+``_geometry``    ``INTERFACE.md`` §5.1's geometry wire: resolve-or-mint the
+                 selection bundle for a build ref and publish the GLB bound to
+                 it, and re-verify an already-published GLB's bundle link before
+                 it is served. Never an unlinked GLB.
 ``_references``  ``INGEST.md`` §2 ``list_references``/``read_reference``: the
                  model's READ-ONLY view of the operator-supplied ``references/``
                  registry (registration itself is not on this surface at all).
@@ -158,6 +162,7 @@ from ._gate import (
     record_dimension_answer,
     requirement_ids,
 )
+from ._geometry import GeometryOps, PublishedGltf
 from ._measure import MeasureOps
 from ._motion import MotionOps
 from ._params import SYNC_PART, ParamOps, ParamProbe
@@ -220,12 +225,14 @@ __all__ = [
     "DocOps",
     "DrawingOps",
     "ExportOutput",
+    "GeometryOps",
     "LedgerState",
     "MotionOps",
     "ParamConflict",
     "ParamProbe",
     "ParamState",
     "ParamStore",
+    "PublishedGltf",
     "ReferenceOps",
     "RequestNumber",
     "RequirementCite",
@@ -285,6 +292,7 @@ class CadOps(
     ReferenceOps,
     DimensionFindingOps,
     DfmOps,
+    GeometryOps,
 ):
     """Core-backed operations for one project's layout, opstore and backend."""
 

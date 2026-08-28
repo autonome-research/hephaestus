@@ -50,7 +50,7 @@ from typing import Any, Final, cast
 from fastmcp import Context, FastMCP
 from fastmcp.server.dependencies import get_context
 from fastmcp.tools.base import Tool, ToolResult
-from hephaestus.agent_bridge.admission import bridge_store_config
+from hephaestus.agent_bridge.admission import open_project_store
 from hephaestus.agent_bridge.cad_ops import (
     CadOps,
     invalid_question_result,
@@ -61,6 +61,10 @@ from hephaestus.agent_bridge.cad_ops import (
 )
 from hephaestus.agent_bridge.dispatch import DispatchError, Invocation, Principal, ToolDispatcher
 from hephaestus.agent_bridge.limits import LIMITS
+from hephaestus.agent_bridge.project_projections import (
+    list_parts_projection,
+    open_project_projection,
+)
 from hephaestus.agent_bridge.protocol import ProtocolError
 from hephaestus.contract import toolgen
 from hephaestus.contract.tools_decl import TOOLS_BY_NAME
@@ -68,7 +72,6 @@ from hephaestus.core.errors import HephaestusError
 from hephaestus.core.executor.sandbox.base import ExecBackend
 from hephaestus.core.executor.sandbox.probe import refuse_unsafe, secure_backend
 from hephaestus.core.project_store.layout import ProjectLayout, load_project
-from hephaestus.core.project_store.retention import DefaultProtectedRoots
 from hephaestus.core.project_store.store import ProjectStore
 from opstore.types import JSONValue
 from pydantic import ConfigDict
@@ -101,7 +104,6 @@ __all__ = [
 #: Server-local verbs added on top of the canonical ``tool_schema.md`` surface.
 EXTRA_TOOL_NAMES: Final[tuple[str, ...]] = ("open_project", "list_parts", "answer_question")
 
-_STATE_DB_NAME: Final[str] = "state.db"
 _TEXT_MAX_BYTES: Final[int] = int(LIMITS["text_result"]["max_bytes"])
 _TEXT_MAX_LINES: Final[int] = int(LIMITS["text_result"]["max_lines"])
 _MAX_IMAGE_BYTES: Final[int] = int(LIMITS["image"]["max_image_bytes"])
@@ -595,29 +597,17 @@ class _ServerTool(Tool):
         project = await asyncio.to_thread(
             self.runtime.open_project, session_id, str(arguments["path"])
         )
-        return {
-            "status": "ok",
-            "root": str(project.root),
-            "name": project.layout.manifest.name,
-            "units": project.layout.manifest.units,
-            "parts": list(project.project_store.list_parts()),
-            "serve_mode": self.runtime.serve_mode,
-        }
+        # INTERFACE.md §2.3: `GET /project` is "the open_project projection, same
+        # serializer as mcp/app.py" — so there is one serializer and both
+        # transports call it. `capabilities` is omitted here: the MCP client is
+        # the agent, and it has no panels to hide.
+        return open_project_projection(
+            project.layout, project.project_store, serve_mode=self.runtime.serve_mode
+        )
 
     def _list_parts(self, session_id: str) -> dict[str, Any]:
         project = self.runtime.require_project(session_id)
-        parts: list[dict[str, Any]] = []
-        for name in project.project_store.list_parts():
-            snapshot = project.project_store.read_part(name)
-            parts.append(
-                {
-                    "name": name,
-                    "path": str(snapshot.path.relative_to(project.root)),
-                    "content_hash": snapshot.content_hash,
-                    "snapshot_ref": snapshot.snapshot_ref,
-                }
-            )
-        return {"status": "ok", "parts": parts}
+        return list_parts_projection(project.root, project.project_store)
 
 
 # --------------------------------------------------------------------------
@@ -626,16 +616,13 @@ class _ServerTool(Tool):
 
 
 def _open_project_store(layout: ProjectLayout) -> OpStore:
-    """Create-or-open the project's opstore (same configuration as the bridge)."""
-    layout.store_root.mkdir(parents=True, exist_ok=True)
-    layout.journal_dir.mkdir(parents=True, exist_ok=True)
-    roots = DefaultProtectedRoots(layout)
-    if (layout.store_root / _STATE_DB_NAME).exists():
-        store = OpStore.open(layout.store_root, protected_roots=roots)
-    else:
-        store = OpStore.create(layout.store_root, bridge_store_config(), protected_roots=roots)
-    roots.bind(store)
-    return store
+    """Create-or-open the project's opstore (same configuration as the bridge).
+
+    Delegates to :func:`hephaestus.agent_bridge.admission.open_project_store`,
+    which ``server/http`` also calls: one store configuration for every serving
+    surface (mission rule 6).
+    """
+    return open_project_store(layout)
 
 
 def _target_identity(arguments: dict[str, Any]) -> str | None:

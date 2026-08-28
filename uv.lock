@@ -929,6 +929,9 @@ dependencies = [
     { name = "mcp" },
     { name = "opstore" },
     { name = "pypdf" },
+    { name = "starlette" },
+    { name = "uvicorn" },
+    { name = "websockets" },
 ]
 
 [package.metadata]
@@ -939,6 +942,9 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.28" },
     { name = "opstore", editable = "opstore" },
     { name = "pypdf", specifier = ">=5.1" },
+    { name = "starlette", specifier = ">=0.47,<2" },
+    { name = "uvicorn", specifier = ">=0.34,<1" },
+    { name = "websockets", specifier = ">=13,<17" },
 ]
 
 [[package]]
@@ -953,6 +959,7 @@ dev = [
     { name = "hephaestus-contract" },
     { name = "hephaestus-core" },
     { name = "hephaestus-server" },
+    { name = "httpx" },
     { name = "hypothesis" },
     { name = "jsonschema" },
     { name = "opstore" },
@@ -973,6 +980,7 @@ dev = [
     { name = "hephaestus-contract", editable = "contract" },
     { name = "hephaestus-core", editable = "core" },
     { name = "hephaestus-server", editable = "server" },
+    { name = "httpx", specifier = ">=0.28" },
     { name = "hypothesis", specifier = ">=6.115" },
     { name = "jsonschema", specifier = ">=4.23" },
     { name = "opstore", editable = "opstore" },

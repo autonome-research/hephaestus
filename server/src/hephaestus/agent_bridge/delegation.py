@@ -43,6 +43,7 @@ from opstore.errors import BusyError, NotFoundError
 from opstore.types import Clock, JSONValue, OwnerId, SystemClock, TerminalState
 
 from .limits import LIMITS, LimitError, enforce_max_utf8_bytes
+from .session_edges import SessionEdgeStore
 
 __all__ = [
     "DEADLINE_DEFAULT_S",
@@ -226,8 +227,16 @@ class DelegationService:
         *,
         gate: DelegationGate | None = None,
         clock: Clock | None = None,
+        edges: SessionEdgeStore | None = None,
     ) -> None:
         self._admission = admission
+        # INTERFACE.md §2.8: the parent/child *session* edge is recorded at the
+        # PREPARED transition — the moment this WAL first admits the relationship
+        # exists — and nowhere else. Optional because the delegation state machine
+        # is unit-tested standalone and threading is not its subject; when it is
+        # absent, no edge is written and the reopened tree reads `unlinked`
+        # rather than being guessed at.
+        self._edges = edges
         # Same connection the admission controller uses, so the delegation-row
         # projection commits atomically with the child terminal insertion.
         self._db = db
@@ -272,12 +281,22 @@ class DelegationService:
         deadline_seconds: int = DEADLINE_DEFAULT_S,
         invocation: object,
         child_owner: OwnerId | None = None,
+        parent_session_id: str | None = None,
+        child_session_id: str | None = None,
     ) -> DelegationOutcome:
         """Admit (or reject) a delegation; idempotent on the trusted invocation.
 
         Returns a :class:`DelegationRow` (``running`` for ``prompt`` / ``queued``
         for ``follow_up``) or a :class:`Rejected` outcome carrying one
         :class:`RejectionReason` and no child ref.
+
+        ``parent_session_id`` / ``child_session_id`` are the two ids
+        ``INTERFACE.md`` §2.8's edge is *about*. They are passed in rather than
+        derived here because this state machine is keyed by **runs**, not
+        sessions: the caller (``ToolDispatcher._delegate``) is the layer that
+        holds both the trusted invocation's session and the conventional part
+        session id. With either absent no edge is written — a rejected
+        delegation creates no child, so it must create no edge either.
         """
         # 1. Validate the prompt (exact UTF-8; unpaired surrogate first).
         try:
@@ -335,7 +354,48 @@ class DelegationService:
                     now,
                 ),
             )
+        self._record_edge(
+            delegation_ref=delegation_ref,
+            parent_run_id=parent_run_id,
+            child_run_id=child_run_id,
+            parent_session_id=parent_session_id,
+            child_session_id=child_session_id,
+        )
         return self._reserve(delegation_ref, child_owner)
+
+    def _record_edge(
+        self,
+        *,
+        delegation_ref: str,
+        parent_run_id: str,
+        child_run_id: str,
+        parent_session_id: str | None,
+        child_session_id: str | None,
+    ) -> None:
+        """Write §2.8's ``delegation`` session edge for a PREPARED delegation.
+
+        Deliberately **not** inside the PREPARED transaction above. That
+        transaction is the delegation WAL's own durability contract — the thing
+        that guarantees at most one child and exactly one terminal — and
+        threading is a projection for a UI panel. A failed edge write must not
+        roll back an admitted delegation, so it is a separate write; the cost is
+        that a crash between the two leaves the child unlinked, which is exactly
+        the state §2.8 already names and renders (``unlinked``).
+        """
+        if self._edges is None or parent_session_id is None or child_session_id is None:
+            return
+        if parent_session_id == child_session_id:
+            return
+        self._edges.record(
+            child_session_id=child_session_id,
+            parent_session_id=parent_session_id,
+            kind="delegation",
+            origin={
+                "delegation_ref": delegation_ref,
+                "parent_run_id": parent_run_id,
+                "child_run_id": child_run_id,
+            },
+        )
 
     def _advance_if_prepared(
         self, row: DelegationRow, child_owner: OwnerId | None

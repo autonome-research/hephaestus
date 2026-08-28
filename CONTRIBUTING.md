@@ -19,18 +19,31 @@ contribution unmergeable no matter how good it is.
 $ git clone https://github.com/autonome-research/hephaestus && cd hephaestus
 $ uv sync --dev                              # Python workspace
 $ pnpm --dir agent install --frozen-lockfile # the TypeScript agent
+$ pnpm --dir web install --frozen-lockfile   # the web workspace client
 ```
 
-Python is driven with `uv run …`; the Node agent with `pnpm --dir agent …`.
+Python is driven with `uv run …`; the two Node packages with
+`pnpm --dir agent …` and `pnpm --dir web …`. They are separate packages with
+separate lockfiles, not members of one root workspace (`repo_conventions.md`,
+"Stage 4 `web/` accepted versions").
 Running the engine tests needs bubblewrap on Linux x86_64 — see
 [docs/install.md](docs/install.md) for what each capability requires and what
 fails closed without it.
+
+Gate G4's browser suite has two extra prerequisites, both once per machine:
+
+```console
+$ pnpm --dir web exec playwright install chromium
+$ pnpm --dir web build     # `heph serve --web` serves web/dist at /
+$ pnpm --dir web test:e2e  # the Gate G4 command; see web/e2e/README.md
+```
 
 ```console
 $ uv run ruff check . && uv run ruff format --check .
 $ uv run pyright opstore core server
 $ uv run pytest -m "not slow"                # add -m slow for the wheel lanes
 $ pnpm --dir agent typecheck && pnpm --dir agent test
+$ pnpm --dir web typecheck && pnpm --dir web lint && pnpm --dir web test
 $ uv run python scripts/docs_check.py        # links, paths, and §refs
 $ uv run python scripts/license_headers.py --check
 ```

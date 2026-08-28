@@ -100,27 +100,44 @@ function resolveContext(toolCallId: string): ProxyContext {
 // `py.ask_user` is a *suspension*: the model's turn blocks until a human answers,
 // so it is bracketed with the public `question` / `answer` events (never dropped,
 // never coalesced) before the raw request crosses the bridge.
+//
+// INTERFACE.md §2.7 ("`ask_user` with two clients attached"): the question
+// broadcasts to EVERY attached client and the answer is idempotent on the
+// **question id**, first answer wins. That id did not exist — the `question`
+// event carried only `{question, options}`, so a client that saw one had nothing
+// to answer *with*. It is minted here, at the one place that brackets the
+// suspension, and travels three ways at once: in the `question` event's payload
+// (so any client can answer), in the `py.ask_user` params (so Python can match
+// an answer to the pending question), and in the `answer` event's payload (so
+// every other attached client can disable its widget). No event kind is minted
+// and no field is added to `HephaestusEvent`; this is payload content only.
+let questionOrdinal = 0;
 const proxy = new ToolProxy(async (method, params) => {
   if (method !== "py.ask_user") return peer.request(method, params);
   const active = activeContext;
   const runId = active?.runId ?? String(params.run_id ?? "");
+  const questionId = `q-${runId}-${questionOrdinal++}`;
   if (active !== undefined) {
     emitEvent({
       runId,
       seq: active.nextSeq(),
       kind: "question",
-      payload: { question: params.question ?? null, options: params.options ?? [] },
+      payload: {
+        question_id: questionId,
+        question: params.question ?? null,
+        options: params.options ?? [],
+      },
     });
   }
   // No client-side timeout: the question stays open until the operator answers
   // (Python owns the interaction deadline).
-  const answer = await peer.request(method, params, 0);
+  const answer = await peer.request(method, { ...params, question_id: questionId }, 0);
   if (active !== undefined) {
     emitEvent({
       runId,
       seq: active.nextSeq(),
       kind: "answer",
-      payload: { answer },
+      payload: { question_id: questionId, answer },
     });
   }
   return answer;

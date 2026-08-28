@@ -1,0 +1,43 @@
+{
+  "badges": {
+    "panel_checks:panel_clears_the_absent_lid": "error",
+    "panel_checks:panel_is_narrow_enough": "fail",
+    "panel_checks:panel_is_sealed": "pass"
+  },
+  "part": "panel",
+  "report": {
+    "check_bundle_ref": "artifact:check-bundle:sha256:689ad0c64013cf76db6b2f6472ed2440e693d11824f78e95380f6a0c14f790fc",
+    "check_set_generation": 0,
+    "checks": {
+      "panel_checks:panel_clears_the_absent_lid": {
+        "measured": {
+          "error": {
+            "code": "addressing_error",
+            "message": "unknown part 'lid' in selector 'lid/part'; known parts: bracket, panel",
+            "type": "AddressingError"
+          }
+        },
+        "pass": false
+      },
+      "panel_checks:panel_is_narrow_enough": {
+        "measured": [
+          73.0,
+          40.0,
+          5.5
+        ],
+        "pass": false
+      },
+      "panel_checks:panel_is_sealed": {
+        "measured": true,
+        "pass": true
+      }
+    },
+    "file_hashes": {
+      "panel_checks.py": "sha256:77c74344265ef9eb082053945b6a6d3f442509071fa7bf349f9979e054585296"
+    },
+    "motion_generations": null,
+    "part": "inspector_fixture",
+    "project_snapshot_ref": null
+  },
+  "status": "ok"
+}

@@ -1,0 +1,75 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+.panel {
+  padding: var(--space-3);
+  border-top: 1px solid var(--line-1);
+}
+
+.heading {
+  margin: 0 0 var(--space-2);
+  font-size: var(--size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+
+.subheading {
+  margin: var(--space-3) 0 var(--space-1);
+  font-size: var(--size-xs);
+  color: var(--ink-3);
+}
+
+.clean {
+  margin: 0;
+  color: var(--ok);
+  font-size: var(--size-sm);
+}
+
+.count {
+  margin: 0;
+  color: var(--warn);
+  font-size: var(--size-sm);
+}
+
+.absent {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--size-sm);
+  font-style: italic;
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: 1px 0;
+  font-size: var(--size-xs);
+  color: var(--ink-2);
+}
+
+/* No colour-only encoding: the marker's glyph is constant and the `title` and
+   `aria-label` name the side of the index in words. Colour only reinforces. */
+.marker {
+  flex: none;
+  font-size: 8px;
+  line-height: 1;
+  color: var(--warn);
+}
+
+.marker[data-dirty="index"] {
+  color: var(--accent);
+}
+
+.marker[data-dirty="untracked"] {
+  color: var(--unknown);
+}

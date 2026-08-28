@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import threading
 import uuid
+from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,7 +45,7 @@ from opstore import OpStore
 from .admission import BridgeAdmission, bridge_store_config
 from .cad_ops import CadOps, question_refusal, record_answers
 from .dispatch import DispatchError, Principal, ToolDispatcher
-from .events import EventPump, PerClientQueue
+from .events import EventPump, HephaestusEvent, ObserverClient, PerClientQueue
 from .protocol import ErrorCode, ProtocolError
 from .sidecar import SidecarResolution, node_executable, resolve_sidecar
 from .supervisor import ProcessLossEvent, Supervisor, SupervisorConfig
@@ -62,6 +63,13 @@ __all__ = [
 ]
 
 _STATE_DB_NAME = "state.db"
+
+#: How many run→session bindings a long-lived serving process keeps (§2.7).
+#: Chosen to match the pump's own 1024-slot per-client bound: a client that
+#: cannot be more than 1024 events behind cannot need a binding older than that
+#: many runs, and an evicted binding degrades to a *named* absence rather than a
+#: wrong session id.
+_RUN_SESSION_BINDINGS_MAX = 1024
 
 #: ``(question_params) -> selection`` — resolves a ``py.ask_user`` request.
 AskUserAnswerer = Callable[[dict[str, Any]], Any]
@@ -201,12 +209,29 @@ class BridgeRuntime:
         agent_dir: Path | None = None,
         answerer: AskUserAnswerer | None = None,
         auth_source: Path | None = None,
+        store: OpStore | None = None,
+        project_store: ProjectStore | None = None,
+        cad: CadOps | None = None,
+        dispatcher: ToolDispatcher | None = None,
     ) -> None:
         self._layout = load_project(project_root)
-        self._store = _open_project_store(self._layout)
-        self._project = ProjectStore(self._layout, self._store)
-        self._cad = CadOps(self._layout, self._store)
-        self._dispatcher = ToolDispatcher(self._project, cad=self._cad)
+        # ONE store, ONE ``ProjectStore``, ONE dispatcher per process. The four
+        # optional injections exist for exactly one caller — ``heph serve --web``,
+        # which has already opened this project (``http/runtime.py``) — and they
+        # are what keeps that process from holding *two* ``LockManager`` owners
+        # over one project's ``.heph/locks/``. §2.1's "one process owns the
+        # leases" is not a slogan: two owners in one process is two writers, the
+        # very thing it exists to prevent. An injected store is not ours to
+        # close (see :meth:`close`).
+        self._owns_store = store is None
+        self._store = _open_project_store(self._layout) if store is None else store
+        self._project = (
+            ProjectStore(self._layout, self._store) if project_store is None else project_store
+        )
+        self._cad = CadOps(self._layout, self._store) if cad is None else cad
+        self._dispatcher = (
+            ToolDispatcher(self._project, cad=self._cad) if dispatcher is None else dispatcher
+        )
         self._admission = BridgeAdmission(self._store.admission)
         # Bounded per-client fan-out + the durable terminal channel (digest §6):
         # the pump coalesces progress, never drops audit/tool/question/terminal
@@ -222,6 +247,16 @@ class BridgeRuntime:
 
         self._principals: dict[str, Principal] = {}
         self._runs: dict[str, _Run] = {}
+        # INTERFACE.md §2.7: the live wire frame carries exactly one envelope
+        # field beyond the Python-side shape — ``session_id`` — so a
+        # multi-session panel can route without inspecting payloads. The pump's
+        # events are keyed by run, so the run→session binding has to live
+        # somewhere that OUTLIVES the run: ``_runs`` is popped when ``prompt``
+        # returns, and a terminal or a late event arriving after that would be
+        # unroutable. Bounded because a long-lived serving process runs
+        # unboundedly many runs; the oldest binding is evicted, and an event for
+        # an evicted run is served with a null session id rather than a guess.
+        self._run_sessions: OrderedDict[str, str] = OrderedDict()
         self._answerers: dict[str, AskUserAnswerer] = {}
         self._lock = threading.RLock()
         # Serializes cancel() against close(): cancels arrive on daemon
@@ -324,7 +359,11 @@ class BridgeRuntime:
             self._sup.close()
             with self._teardown_lock:
                 self._closed = True
-                self._store.close()
+                # An injected store belongs to the caller that opened it; closing
+                # it here would tear the workspace's own project out from under
+                # the HTTP routes that share it.
+                if self._owns_store:
+                    self._store.close()
 
     def __enter__(self) -> BridgeRuntime:
         self.start()
@@ -356,6 +395,32 @@ class BridgeRuntime:
     @property
     def admission(self) -> BridgeAdmission:
         return self._admission
+
+    @property
+    def store(self) -> OpStore:
+        """The project's opstore — the same handle when one was injected."""
+        return self._store
+
+    def rebind_project(
+        self,
+        *,
+        layout: ProjectLayout,
+        project_store: ProjectStore,
+        cad: CadOps,
+        dispatcher: ToolDispatcher,
+    ) -> None:
+        """Re-point this runtime at a re-read manifest (``INTERFACE.md`` §6.4).
+
+        ``POST /project/config/dfm`` rewrites ``[dfm] auto_run`` in the human's
+        manifest and the workspace rebinds; a sidecar still holding the *old*
+        ``CadOps`` would keep building with the old flag, so the agent and the
+        panel would disagree about a project setting. Called only by the process
+        that injected these objects in the first place.
+        """
+        self._layout = layout
+        self._project = project_store
+        self._cad = cad
+        self._dispatcher = dispatcher
 
     @property
     def cad(self) -> CadOps:
@@ -405,11 +470,61 @@ class BridgeRuntime:
         return f"run-{uuid.uuid4().hex[:12]}"
 
     def client_queue(self, client_id: str) -> PerClientQueue:
-        """Register a client and get its bounded, coalescing event queue."""
+        """Register a **durable** client and get its bounded, coalescing queue."""
         return self._pump.add_client(client_id)
+
+    def add_observer(
+        self, client_id: str, *, notify: Callable[[], None] | None = None
+    ) -> ObserverClient:
+        """Register a §2.7 **non-durable observer** (a browser tab, or the
+        ``heph agent`` client attached to a running server).
+
+        The distinction is the whole of §2.7's second trap: an observer's
+        overflow drops the observer, never the run.
+        """
+        return self._pump.add_observer(client_id, notify=notify)
 
     def drop_client(self, client_id: str) -> None:
         self._pump.remove_client(client_id)
+
+    def add_event_tap(self, tap: Callable[[HephaestusEvent], None]) -> None:
+        """Register a process-owned synchronous hook on the event fan-out.
+
+        The serving process's bounded live buffer (§2.7) rides this, not a client
+        queue: see :meth:`EventPump.add_tap`.
+        """
+        self._pump.add_tap(tap)
+
+    # -- what a client needs to route an event -----------------------------
+
+    def session_for_run(self, run_id: str) -> str | None:
+        """The session a run belongs to, or ``None`` once the binding is evicted.
+
+        The one authority for §2.7's ``session_id`` envelope field. ``None`` is a
+        named absence, not a default: a client routing on it must show the event
+        unrouted rather than attribute it to whichever session it happens to be
+        rendering.
+        """
+        with self._lock:
+            return self._run_sessions.get(run_id)
+
+    def sessions(self) -> list[dict[str, Any]]:
+        """The sessions **this runtime owns**, for ``GET /sessions`` (§2.3).
+
+        Bounded by honesty: these are the sessions this process created or
+        resumed, which is the same thing as the sessions whose ``.heph/locks/``
+        leases it holds (§2.1 — one process owns the leases). A persisted Pi
+        JSONL on disk that nobody has opened is *not* listed, because finding one
+        would mean parsing Pi's session format outside the sidecar, which
+        ``STAGE2_DIGEST`` §2 forbids: nothing outside the sidecar ever parses Pi
+        JSONL. The workspace's "attach" affordance therefore lists live sessions,
+        exactly as §7.1 describes it.
+        """
+        with self._lock:
+            principals = list(self._principals.values())
+        return [
+            {"session_id": p.session_id, "profile": p.profile, "part": p.part} for p in principals
+        ]
 
     def prompt(
         self,
@@ -436,6 +551,7 @@ class BridgeRuntime:
         run = _Run(run_id=run_id, session_id=session_id, on_event=on_event)
         with self._lock:
             self._runs[run_id] = run
+            self._bind_run_session(run_id, session_id)
             if answerer is not None:
                 self._answerers[run_id] = answerer
         self._admission.admit_run(run_id)
@@ -452,6 +568,13 @@ class BridgeRuntime:
                 self._answerers.pop(run_id, None)
                 self._runs.pop(run_id, None)
         return PromptResult(run_id=run_id, status=status, events=run.events, terminal=run.terminal)
+
+    def _bind_run_session(self, run_id: str, session_id: str) -> None:
+        """Remember which session a run belongs to (caller holds ``_lock``)."""
+        self._run_sessions[run_id] = session_id
+        self._run_sessions.move_to_end(run_id)
+        while len(self._run_sessions) > _RUN_SESSION_BINDINGS_MAX:
+            self._run_sessions.popitem(last=False)
 
     def cancel(self, run_id: str) -> None:
         """Request cancellation of a run (aborts only its stream + tool children).

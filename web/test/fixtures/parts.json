@@ -1,0 +1,17 @@
+{
+  "parts": [
+    {
+      "content_hash": "sha256:2ffea1633650719e9186bd962bfdedb582d794f002974c451a56bea242b48ae2",
+      "name": "bracket",
+      "path": "parts/bracket.py",
+      "snapshot_ref": "artifact:part-snapshot:sha256:2ffea1633650719e9186bd962bfdedb582d794f002974c451a56bea242b48ae2"
+    },
+    {
+      "content_hash": "sha256:98707f8acf4073183658fad58892e1076e825af31fb45c4b9424ed2f960db4eb",
+      "name": "panel",
+      "path": "parts/panel.py",
+      "snapshot_ref": "artifact:part-snapshot:sha256:98707f8acf4073183658fad58892e1076e825af31fb45c4b9424ed2f960db4eb"
+    }
+  ],
+  "status": "ok"
+}

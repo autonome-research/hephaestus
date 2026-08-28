@@ -31,3 +31,7 @@ corpus/reference/
 
 # Spike scratch outputs
 spikes/**/out/
+
+# Playwright artifacts (`pnpm --dir web test:e2e`)
+web/playwright-report/
+web/test-results/

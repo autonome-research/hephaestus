@@ -1,0 +1,306 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * One stylesheet for the inspector's five panels (INTERFACE.md §4.2).
+ *
+ * The drawer is one region with five faces, and a reader comparing a check badge
+ * to a DFM severity should not have to hold two visual grammars in mind. So the
+ * chrome — the panel frame, the heading, the definition rows, the named-absence
+ * paragraph, the status pill — is declared once here and imported by all five,
+ * rather than copied into five modules that drift.
+ *
+ * `--glyph-*` (tokens.css) pairs a glyph with every status colour: §3's
+ * accessibility floor forbids colour-only status encoding, and a badge that is
+ * only red is a badge nobody can read in monochrome.
+ */
+
+.panel {
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--size-sm);
+  color: var(--ink-1);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.heading {
+  margin: 0;
+  font-size: var(--size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+
+.headingRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+/* A named absence. Italic, full sentences, never an empty frame (§4.4, §6.3). */
+.absent {
+  margin: 0;
+  max-width: 68ch;
+  color: var(--ink-2);
+  font-style: italic;
+  line-height: var(--line-body);
+}
+
+.note {
+  margin: 0;
+  max-width: 68ch;
+  color: var(--ink-3);
+  font-size: var(--size-xs);
+  line-height: var(--line-body);
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-1);
+}
+
+.row:hover {
+  background: var(--ground-2);
+}
+
+.rowName {
+  flex: 0 0 auto;
+  min-width: 13ch;
+  color: var(--ink-2);
+  font-size: var(--size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.rowValue {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--size-xs);
+}
+
+.dim {
+  color: var(--ink-3);
+}
+
+/* ---- definition grid: label / value pairs -------------------------------- */
+
+.pairs {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+}
+
+/* A keyed wrapper that must not become a grid item: the pair below it is. */
+.pairRow {
+  display: contents;
+}
+
+.pairs dt {
+  color: var(--ink-3);
+  font-size: var(--size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.pairs dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ---- status pill --------------------------------------------------------- */
+
+.badge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  flex: none;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  font-size: var(--size-xs);
+  line-height: 1.6;
+  color: var(--ink-1);
+  white-space: nowrap;
+}
+
+.badge::before {
+  font-size: var(--size-xs);
+}
+
+.badge[data-badge="pass"] {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.badge[data-badge="pass"]::before {
+  content: var(--glyph-ok);
+}
+
+.badge[data-badge="fail"],
+.badge[data-severity="error"] {
+  color: var(--fail);
+  border-color: var(--fail);
+}
+
+.badge[data-badge="fail"]::before {
+  content: var(--glyph-fail);
+}
+
+.badge[data-badge="error"] {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.badge[data-badge="error"]::before,
+.badge[data-severity="warning"]::before {
+  content: var(--glyph-error);
+}
+
+.badge[data-badge="not_run"] {
+  color: var(--unknown);
+  border-color: var(--unknown);
+  border-style: dashed;
+}
+
+.badge[data-badge="not_run"]::before {
+  content: var(--glyph-not-run);
+}
+
+.badge[data-severity="warning"] {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.badge[data-severity="info"] {
+  color: var(--ink-2);
+}
+
+/* ---- buttons ------------------------------------------------------------- */
+
+.toggle {
+  flex: none;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-1);
+  color: var(--ink-2);
+  font-size: var(--size-xs);
+  line-height: 1.7;
+}
+
+.toggle:hover {
+  color: var(--ink-0);
+  border-color: var(--line-strong);
+}
+
+.toggle[aria-pressed="true"] {
+  color: var(--ink-3);
+  border-style: dashed;
+}
+
+.descriptor {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-1);
+  font-family: var(--font-mono);
+  font-size: var(--size-xs);
+  line-height: 1.7;
+  color: var(--ink-1);
+}
+
+.descriptor:hover {
+  border-color: var(--accent-dim);
+  color: var(--ink-0);
+}
+
+/* ---- hidden geometry ----------------------------------------------------- */
+
+.row[data-visible="false"] .rowValue {
+  color: var(--ink-3);
+  text-decoration: line-through;
+}
+
+/* ---- findings ------------------------------------------------------------ */
+
+.finding {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-2);
+  background: var(--ground-1);
+}
+
+.findingHead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.findingTitle {
+  font-weight: 600;
+  color: var(--ink-0);
+}
+
+.findingRule {
+  font-family: var(--font-mono);
+  font-size: var(--size-xs);
+  color: var(--ink-3);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  align-items: baseline;
+}
+
+.chip {
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-1);
+  font-size: var(--size-xs);
+  color: var(--ink-2);
+}
+
+.state {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-1);
+  font-size: var(--size-xs);
+  color: var(--ink-1);
+}
+
+.why {
+  margin: 0;
+  max-width: 68ch;
+  font-style: italic;
+  color: var(--ink-2);
+  line-height: var(--line-body);
+}

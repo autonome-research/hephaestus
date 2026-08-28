@@ -7,13 +7,18 @@ export path instead.
 
 For text, the page never splits a code point: the end is walked back to the
 preceding boundary, and when that would return nothing the page instead extends
-over exactly one code point so a cursor always makes progress.
+over exactly one code point so a cursor always makes progress. That boundary
+contract itself lives in :func:`hephaestus.core.artifacts.page_text`, which
+``server/http``'s ``GET /artifacts/{ref}/text`` also calls under its own,
+different principal check (``INTERFACE.md`` §2.6, §19 item 5): one contract, two
+authorizations, no second implementation.
 """
 
 from __future__ import annotations
 
 from typing import Any, Final
 
+from hephaestus.core.artifacts import page_text
 from hephaestus.core.project_store.store import blob_hash_of_ref
 
 from ._base import CadOpError, CadOpsState
@@ -87,30 +92,11 @@ class ArtifactOps(CadOpsState):
                     "truncated": False,
                 }
             mime = "text/plain"
-        if offset_bytes > total or (
-            offset_bytes not in (0, total) and (data[offset_bytes] & 0xC0) == 0x80
-        ):
-            return {
-                "error": "invalid_utf8_offset",
-                "offset_bytes": offset_bytes,
-                "total_bytes": total,
-            }
-        end = min(offset_bytes + max_bytes, total)
-        # Shorten the page end to the preceding code-point boundary...
-        while end > offset_bytes and end < total and (data[end] & 0xC0) == 0x80:
-            end -= 1
-        if end == offset_bytes and offset_bytes < total:
-            # ...but always guarantee cursor progress: extend over one code point.
-            end = offset_bytes + 1
-            while end < total and (data[end] & 0xC0) == 0x80:
-                end += 1
-        payload: dict[str, Any] = {
-            "content": data[offset_bytes:end].decode("utf-8"),
-            "mime_type": mime,
-            "offset_bytes": offset_bytes,
-            "total_bytes": total,
-            "truncated": end < total,
-        }
-        if end < total:
-            payload["next_offset_bytes"] = end
+        # The principal check for this surface is the tool's own: ``ref`` is a
+        # capability scoped to the authorized Pi session that reached dispatch.
+        page = page_text(data, offset_bytes, max_bytes)
+        if "error" in page:
+            return page
+        payload: dict[str, Any] = {"content": page["content"], "mime_type": mime}
+        payload.update({k: v for k, v in page.items() if k != "content"})
         return payload

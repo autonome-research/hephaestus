@@ -570,6 +570,7 @@ jobs:
             "stage gates 8A-8D"           # G8A, G8B, G8C, G8D
             "stage gates 9A-9C"           # G9A, G9B, G9C Tier 1
             "agent (node)"                # GS pins / sidecar toolchain
+            "web (node)"                  # Stage 4 web/ pins + bundle build
             "stage7h packaging invariants"
             "server (shard 0/3)"
             "server (shard 1/3)"

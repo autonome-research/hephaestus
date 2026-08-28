@@ -1,0 +1,42 @@
+{
+  "artifact_ref": "artifact:build:sha256:ed923a179f3b6f88179725a1c8bac47e79a2cf2cdd234bacbc2cbe5bc746bb98",
+  "checks": {},
+  "current": true,
+  "effective_params": {
+    "thickness": 5.5,
+    "width": 60.0
+  },
+  "geometries": [
+    {
+      "label": "vent_panel",
+      "solids": 1
+    },
+    {
+      "label": "spacer",
+      "solids": 1
+    },
+    {
+      "label": "spacer#2",
+      "solids": 1
+    }
+  ],
+  "geometry_count": 3,
+  "metrics": {
+    "area_mm2": 6410.907565255273,
+    "bbox_mm": [
+      73.0,
+      40.0,
+      5.5
+    ],
+    "edges": 57,
+    "faces": 25,
+    "genus": 1,
+    "sealed": true,
+    "solids": 3,
+    "volume_mm3": 12891.132533343563
+  },
+  "project_snapshot_ref": null,
+  "source_map_ref": "artifact:source-map:sha256:f5e4783b9e24f839fc4516847229b96b433cab20a8015406f57ab06164d6de32",
+  "status": "ok",
+  "warnings": []
+}

@@ -197,15 +197,18 @@ def test_full_pipeline(project: tuple[RenderProject, Path]) -> None:
     #    bundle: mesh==solid count and raycast IDs resolve through the bundle
     #    table (the ONE shared selection-id namespace). Rebuilds the catalog
     #    from the SAME published provenance the selection bundle used.
-    resolved = inspect_mod._resolve_source(  # pyright: ignore[reportPrivateUsage]
+    # Repointed from the module-private `_resolve_source` / `_tag_placements` /
+    # `_solid_labels` to their public names: INTERFACE.md §19 item 12 makes
+    # `gltf_publish` a second caller of exactly this resolution, and mission
+    # rule 6 forbids a second implementation, so the three helpers are public
+    # API now. Same functions, same arguments, same assertions.
+    resolved = inspect_mod.resolve_render_source(
         render_project, "primary", last_good=False, artifact_ref=None
     )
     brep_shape = cast("Any", load_brep_shape(resolved.brep))
     tess = tessellate(brep_shape)
-    placements = inspect_mod._tag_placements(resolved.source_map)  # pyright: ignore[reportPrivateUsage]
-    labels = inspect_mod._solid_labels(  # pyright: ignore[reportPrivateUsage]
-        resolved.result, len(tess.solids)
-    )
+    placements = inspect_mod.tag_placements_from_source_map(resolved.source_map)
+    labels = inspect_mod.build_solid_labels(resolved.result, len(tess.solids))
     catalog = build_selection_catalog(tess, placements=placements, labels=labels)
     solid_count = metrics(brep_shape).solids
     glb = export_gltf(

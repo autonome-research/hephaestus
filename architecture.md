@@ -149,12 +149,29 @@ produce:
   and tests share one namespace.
 - **section** — rgb with a section plane applied.
 - **explode(t)** — per-solid translation along assembly axes, t ∈ [0, 1].
+  Amended 2026-08-27, landing with Stage 4: the transform is a **homothety
+  about the assembly centroid**, not a translation along a shared axis — each
+  solid moves `(solid_centroid − assembly_centroid) · t · EXPLODE_SCALE`, so a
+  solid further from the centre moves further. `core/render/channels.py`'s
+  `_explode_offset` is its one definition, and `core/render/gltf.py` emits that
+  displacement at `t = 1` as each mesh's `extras.explode_offset` so the web
+  client applies `offset · t` and computes nothing (`INTERFACE.md` §5.1/§5.2).
 
 Implementation: export tessellation from OCP, render via a headless rasterizer
 (VTK offscreen or trimesh/pyrender). Renders MUST be deterministic across CI
 runs on the same platform tier (SSIM ≥ 0.995 against goldens). DECISION(ours):
 we render server-side for the agent loop and ship GLTF to web clients, which
 render live locally.
+
+Amended 2026-08-27, landing with Stage 4: "ship GLTF to web clients" now has a
+producer. `GET /artifacts/{ref}/gltf` **resolves, or publishes on demand, the
+selection bundle for that exact build ref** — re-tessellating from the stored
+BREP — and publishes the GLB under the existing `gltf` artifact kind, which is
+what makes the route's `ETag: <ref>` / `immutable` caching honest. It **never
+returns an unlinked GLB**: an unlinked one carries numerically valid IDs that no
+bundle backs, so the viewport would be pickable but unresolvable. The engine half
+is `core/render/gltf_publish.py`; the web layer reaches it through the same
+`CadOps` seam every other engine call rides (`INTERFACE.md` §5.1, §12.3).
 
 ### 3.4 Checks engine
 
@@ -532,9 +549,37 @@ git stores authored design state, and `.heph/` stores generated CAD artifacts.
   normalizes it to public Hephaestus events, and freezes a first-page high-water
   mark into opaque cursors. HTTP serves that normalized snapshot; Python/web
   never parse Pi JSONL directly.
-- **HTTP + WebSocket API** for the web client: project CRUD mapped to git,
-  build/render artifact serving (GLTF, PNGs), agent event stream, selection
-  and answer events. Same bind/token defaults.
+- **HTTP + WebSocket API** for the web client (`server/http`): project and part
+  reads, build/render artifact serving (GLTF, PNGs), the git projection, the
+  agent event stream, selection and answer events. Same bind/token defaults.
+  Amended 2026-08-27, landing with Stage 4: this surface is a **named, closed
+  route table** rather than a prose promise — `INTERFACE.md` §2.3 enumerates
+  every route, §2.4 closes the error mapping, and §2.5 pins REST idempotency;
+  a route not in that table is not served, and `server/tests/test_http_boundary.py`
+  asserts the served surface *is* the table in both directions. Two consequences
+  the prose above left open are now decided there: mutations carry an
+  `Idempotency-Key` on an **enumerated** seven routes (never a rule derived from
+  tool declarations), and `/artifacts/{ref}/bytes` is closed **by enumeration**
+  so an `export`-kind ref is refused rather than served. It remains a **web
+  client API, not part of the headless surface** (2026-07-26 ordering
+  amendment): nothing in the headless surface may depend on it, which is also
+  asserted mechanically.
+
+  Amended 2026-08-27, the **live stream and history half** (`INTERFACE.md` §2.7,
+  §2.8). `GET /events` upgrades to a WebSocket and emits the normalized public
+  vocabulary only, in the Python-side shape verbatim plus exactly one envelope
+  field, `session_id`. A browser tab registers as a **non-durable observer**: it
+  gets the same 1024-slot bound and the same `progress` coalescing as any pump
+  client, but it **never participates in backpressure-cancel**. On overflow the
+  socket closes `4409 resync_required` and the client is dropped; **the run is
+  not cancelled**, because a stalled UI must not kill an agent's work. History is
+  pre-attach backfill only and never closes a live gap: live events are
+  identified by `(run_id, seq)` and historical ones by `(session_id, ordinal)`,
+  two disjoint namespaces that are never merged. Parent/child session threading
+  is recorded **outside** the event vocabulary, in `state.db`'s new
+  `tp_session_edges` table, written by `SessionService.spawn_quick_edit` and by
+  the delegation WAL's `PREPARED` transition; a session with no row reopens
+  `unlinked` rather than being guessed at.
 - **Agent bridge**: the Python server starts and supervises the packaged Node
   sidecar and speaks strict LF-delimited, versioned JSON-RPC over stdio. The
   bridge supports prompts, images, tool requests/results, streaming events,

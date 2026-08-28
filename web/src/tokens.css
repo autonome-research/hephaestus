@@ -1,0 +1,92 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * The design-token file (INTERFACE.md §3: "CSS Modules + a design-token file";
+ * Tailwind rejected — "a dependency whose only output is the input with CSS on
+ * it earns nothing", and a utility framework complicates the `data-*`
+ * testability contract).
+ *
+ * The visual language is deliberately its own (§3, clean-room hygiene: "the
+ * visual language may differ and here deliberately does"). It is an instrument
+ * palette: a near-black graphite ground so a rendered viewport is the brightest
+ * thing on screen, one cool accent for interactive affordances, and four status
+ * hues that are never the only carrier of meaning.
+ *
+ * ACCESSIBILITY FLOOR (§3, stated as a floor rather than a gap): keyboard
+ * reachability for every control that is not the viewport canvas; visible focus
+ * rings; `aria-live="polite"` on run-terminal transitions; and **no colour-only
+ * status encoding** — every badge carries a glyph and a label. The `--glyph-*`
+ * tokens exist so that rule has somewhere to live.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* ---- ground ------------------------------------------------------- */
+  --ground-0: #0d0f12;
+  --ground-1: #14171c;
+  --ground-2: #1b1f26;
+  --ground-3: #232833;
+  --ground-raised: #2b313d;
+
+  /* ---- ink ---------------------------------------------------------- */
+  --ink-0: #eef1f6;
+  --ink-1: #b9c1cf;
+  --ink-2: #868f9f;
+  --ink-3: #5d6675;
+
+  /* ---- line --------------------------------------------------------- */
+  --line-1: #262c36;
+  --line-2: #333b47;
+  --line-strong: #475263;
+
+  /* ---- accent ------------------------------------------------------- */
+  --accent: #4ea3f0;
+  --accent-dim: #2b6da6;
+  --accent-ink: #06121d;
+  --focus-ring: #7cc4ff;
+
+  /* ---- status (never the only carrier; see --glyph-*) ---------------- */
+  --ok: #58c58a;
+  --warn: #e2b23c;
+  --fail: #ef6b6b;
+  --unknown: #8e8ea6;
+
+  /* Glyphs pair with every status colour so the encoding survives a
+     monochrome display and a colour-vision difference alike. */
+  --glyph-ok: "\2713"; /* check */
+  --glyph-fail: "\2715"; /* cross */
+  --glyph-error: "\26A0"; /* warning sign */
+  --glyph-not-run: "\2013"; /* en dash: an absence, not a zero */
+  --glyph-dirty: "\25CF"; /* filled dot */
+
+  /* ---- type --------------------------------------------------------- */
+  --font-ui:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    ui-monospace, "SFMono-Regular", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --size-xs: 11px;
+  --size-sm: 12px;
+  --size-md: 13px;
+  --size-lg: 15px;
+  --size-xl: 18px;
+  --line-tight: 1.25;
+  --line-body: 1.5;
+
+  /* ---- metrics: §4.1's shell, as numbers ---------------------------- */
+  --rail-width: 280px;
+  --stream-width: 420px;
+  --header-height: 44px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --radius-1: 3px;
+  --radius-2: 6px;
+
+  /* §4.1: below 1280px the Stream collapses; below 1024px the Rail overlays. */
+  --breakpoint-stream: 1280px;
+  --breakpoint-rail: 1024px;
+}

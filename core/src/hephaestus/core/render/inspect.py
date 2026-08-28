@@ -91,9 +91,16 @@ __all__ = [
     "InspectResult",
     "MaskMode",
     "RenderProject",
+    "RenderSource",
     "SelectionBundleView",
+    "build_solid_labels",
+    "current_part_for_ref",
     "inspect_part",
     "prepare_render_bundle",
+    "resolve_build_artifact",
+    "resolve_render_source",
+    "scene_tessellation",
+    "tag_placements_from_source_map",
 ]
 
 Channel = Literal["rgb", "mask", "section"]
@@ -259,7 +266,18 @@ def _validate(
 
 
 @dataclass(frozen=True)
-class _Resolved:
+class RenderSource:
+    """The geometry one render/export reads, plus the provenance joined to it.
+
+    ``result`` and ``source_map`` are the *joins*, not the geometry: a reloaded
+    BRep artifact carries neither solid labels nor tag placements, so they are
+    recovered from the published build result and its source-map artifact and are
+    ``None`` whenever the ref is not some part's current build. Public because
+    :mod:`hephaestus.core.render.gltf_publish` resolves the same three things for
+    the same ref (``INTERFACE.md`` §5.1) and mission rule 6 forbids a second
+    resolver.
+    """
+
     source_artifact_ref: str
     brep: bytes
     result: BuildResult | None
@@ -283,13 +301,51 @@ def _load_source_map(store: OpStore, ref: str | None) -> Mapping[str, JSONValue]
     return cast("Mapping[str, JSONValue]", loaded) if isinstance(loaded, dict) else None
 
 
-def _resolve_source(
+def current_part_for_ref(project: RenderProject, artifact_ref: str) -> str | None:
+    """The part whose **current** build is ``artifact_ref``, or ``None``.
+
+    ``GET /artifacts/{ref}/gltf`` (§2.3) is addressed by ref, not by part, so the
+    producer has to find the part before it can join the build result's labels
+    and the source map's tags. A ref that is nobody's current build simply has no
+    part to join, and the caller renders without labels rather than guessing one
+    — the same degradation :func:`resolve_render_source` already applies to a
+    non-current ``artifact_ref``.
+    """
+    publisher = project.publisher()
+    for name in project.layout.part_names():
+        current = publisher.current_result(name)
+        if current is not None and current.artifact_ref == artifact_ref:
+            return name
+    return None
+
+
+def resolve_build_artifact(project: RenderProject, artifact_ref: str) -> RenderSource:
+    """Resolve an explicit immutable build ref, joining its part's provenance.
+
+    The by-ref entry point :func:`resolve_render_source` cannot be: that one is
+    keyed by part name, because ``inspect_part`` always has one. Here the ref is
+    the whole request, so the part is *derived* (:func:`current_part_for_ref`)
+    and the same resolver runs; when no part claims the ref, the non-current
+    branch's answer is returned directly — geometry, no result, no source map.
+    """
+    part = current_part_for_ref(project, artifact_ref)
+    if part is not None:
+        return resolve_render_source(project, part, last_good=False, artifact_ref=artifact_ref)
+    return RenderSource(
+        source_artifact_ref=artifact_ref,
+        brep=_load_blob(project.store, artifact_ref, what="artifact_ref"),
+        result=None,
+        source_map=None,
+    )
+
+
+def resolve_render_source(
     project: RenderProject,
     name: str,
     *,
     last_good: bool,
     artifact_ref: str | None,
-) -> _Resolved:
+) -> RenderSource:
     """Resolve the geometry to render (current / artifact_ref / last-good)."""
     store = project.store
     publisher = project.publisher()
@@ -297,13 +353,15 @@ def _resolve_source(
         data = _load_blob(store, artifact_ref, what="artifact_ref")
         current = publisher.current_result(name)
         if current is not None and current.artifact_ref == artifact_ref:
-            return _Resolved(
+            return RenderSource(
                 source_artifact_ref=artifact_ref,
                 brep=data,
                 result=current,
                 source_map=_load_source_map(store, current.source_map_ref),
             )
-        return _Resolved(source_artifact_ref=artifact_ref, brep=data, result=None, source_map=None)
+        return RenderSource(
+            source_artifact_ref=artifact_ref, brep=data, result=None, source_map=None
+        )
     if last_good:
         pointer = store.blobs.read_pointer(last_failure_pointer(name))
         if pointer is None:
@@ -321,7 +379,7 @@ def _resolve_source(
                 kind="contract",
             )
         data = _load_blob(store, checkpoint_ref, what="last_good_artifact_ref")
-        return _Resolved(
+        return RenderSource(
             source_artifact_ref=checkpoint_ref, brep=data, result=None, source_map=None
         )
     current = publisher.current_result(name)
@@ -331,7 +389,7 @@ def _resolve_source(
             selector=name,
             candidates=project.layout.part_names(),
         )
-    return _Resolved(
+    return RenderSource(
         source_artifact_ref=current.artifact_ref,
         brep=_load_blob(store, current.artifact_ref, what="artifact_ref"),
         result=current,
@@ -343,7 +401,7 @@ def _resolve_source(
 # selection namespace inputs (labels + tag placements from published provenance)
 
 
-def _solid_labels(result: BuildResult | None, solid_count: int) -> dict[int, str]:
+def build_solid_labels(result: BuildResult | None, solid_count: int) -> dict[int, str]:
     """Map each solid index to its geometry-tree label (tree order == solid order)."""
     labels: dict[int, str] = {}
     if result is None:
@@ -357,7 +415,9 @@ def _solid_labels(result: BuildResult | None, solid_count: int) -> dict[int, str
     return labels
 
 
-def _tag_placements(source_map: Mapping[str, JSONValue] | None) -> dict[str, TagPlacement]:
+def tag_placements_from_source_map(
+    source_map: Mapping[str, JSONValue] | None,
+) -> dict[str, TagPlacement]:
     """Reconstruct ``{tag: TagPlacement}`` from a published source-map artifact."""
     out: dict[str, TagPlacement] = {}
     if source_map is None:
@@ -486,7 +546,7 @@ def inspect_part(
     resolved_views, channel_lit, mask_mode_lit = _validate(
         views, channel, mask_mode, section_plane, explode, last_good, artifact_ref
     )
-    resolved = _resolve_source(project, name, last_good=last_good, artifact_ref=artifact_ref)
+    resolved = resolve_render_source(project, name, last_good=last_good, artifact_ref=artifact_ref)
     shape = load_brep_shape(resolved.brep)
 
     if channel_lit == "mask" and mask_mode_lit == "selection":
@@ -507,14 +567,14 @@ def inspect_part(
     )
 
 
-def _scene_tessellation(scene: RenderScene) -> Tessellation:
+def scene_tessellation(scene: RenderScene) -> Tessellation:
     """Reuse the scene's per-solid tessellation (avoids a second OCP meshing)."""
     return Tessellation(solids=tuple(solid.tessellation for solid in scene.solids))
 
 
 def _render_channel(
     project: RenderProject,
-    resolved: _Resolved,
+    resolved: RenderSource,
     shape: Any,
     channel: Channel,
     section_plane: str | None,
@@ -585,7 +645,7 @@ def _render_channel(
 
 def _render_channel_focused(
     project: RenderProject,
-    resolved: _Resolved,
+    resolved: RenderSource,
     scene: RenderScene,
     channel: Channel,
     focus: str,
@@ -598,9 +658,9 @@ def _render_channel_focused(
     ``focus`` changes only the camera; the ID namespace / legend are unchanged
     (the solid-ID mask legend is the scene's, keyed by ``solid_index``).
     """
-    tess = _scene_tessellation(scene)
-    labels = _solid_labels(resolved.result, len(tess.solids))
-    placements = _tag_placements(resolved.source_map)
+    tess = scene_tessellation(scene)
+    labels = build_solid_labels(resolved.result, len(tess.solids))
+    placements = tag_placements_from_source_map(resolved.source_map)
     focus_solids = _focus_solids(focus, labels, placements)
     frame_lo, frame_hi = _tess_bounds(tess, focus_solids)
     render_store = RenderStore(project.store)
@@ -645,7 +705,7 @@ def _render_channel_focused(
 
 def _render_selection(
     project: RenderProject,
-    resolved: _Resolved,
+    resolved: RenderSource,
     shape: Any,
     views: tuple[str, ...],
     focus: str | None,
@@ -658,9 +718,9 @@ def _render_selection(
     namespace so the bundle's IDs match a GLTF export's embedded raycast IDs.
     """
     scene = scene_from_shape(shape)
-    tess = _scene_tessellation(scene)
-    placements = _tag_placements(resolved.source_map)
-    labels = _solid_labels(resolved.result, len(tess.solids))
+    tess = scene_tessellation(scene)
+    placements = tag_placements_from_source_map(resolved.source_map)
+    labels = build_solid_labels(resolved.result, len(tess.solids))
     catalog: SelectionCatalog = build_selection_catalog(tess, placements=placements, labels=labels)
 
     focus_solids = _focus_solids(focus, labels, placements) if focus is not None else None

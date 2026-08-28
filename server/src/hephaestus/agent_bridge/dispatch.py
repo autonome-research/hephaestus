@@ -1229,6 +1229,11 @@ class ToolDispatcher:
             delivery=delivery,
             deadline_seconds=deadline,
             invocation=inv.op_id,
+            # INTERFACE.md §2.8: the two ids the durable session edge is about.
+            # This is the layer that holds both — the WAL is keyed by runs, and
+            # the conventional part session id is minted here.
+            parent_session_id=inv.session_id,
+            child_session_id=_part_session_id(part),
         )
         if isinstance(outcome, Rejected):
             return {

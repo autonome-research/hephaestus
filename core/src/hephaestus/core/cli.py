@@ -51,14 +51,12 @@ import json
 import re
 import shutil
 import sys
-import tempfile
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
 
-from hephaestus.core.checks.engine import CheckSet
-from hephaestus.core.checks.facade import GeometrySource
+from hephaestus.core.checks.report import project_check_report, report_json
 from hephaestus.core.errors import (
     AddressingError,
     HephaestusError,
@@ -85,7 +83,6 @@ from hephaestus.core.project_store.layout import (
 )
 from hephaestus.core.project_store.projections import SnapshotRejectedError
 from hephaestus.core.project_store.publication import PublicationKind, Publisher
-from hephaestus.core.project_store.store import blob_hash_of_ref
 from hephaestus.core.types import BuildResult
 from hephaestus.core.version import version as _version
 from opstore.types import JSONValue
@@ -377,46 +374,21 @@ def _cmd_check(args: argparse.Namespace) -> int:
     root = _project_root_from_cwd()
     layout = load_project(root)
     store = open_store(layout)
-    publisher = Publisher(layout, store)
 
-    from hephaestus.core.executor.artifact_geometry import artifact_source
-
-    layout.store_root.mkdir(parents=True, exist_ok=True)
-    sources: dict[str, GeometrySource] = {}
-    with tempfile.TemporaryDirectory(prefix="heph-check-", dir=layout.store_root) as scratch:
-        # Lock-free reads of each part's last current artifact (§3.5).
-        for part in layout.part_names():
-            current = publisher.current_result(part)
-            if current is None or current.artifact_ref is None:
-                continue
-            data = store.blobs.get(blob_hash_of_ref(current.artifact_ref))
-            sources[part] = artifact_source(data, scratch_dir=Path(scratch))
-
-        snapshot_ref: str | None = None
-        if args.project:
-            try:
-                snapshot = publisher.projections.assemble_snapshot(layout.part_names())
-            except SnapshotRejectedError as exc:
-                print(
-                    f"heph: error ({exc.code}): project snapshot is incoherent",
-                    file=sys.stderr,
-                )
-                for issue in exc.issues:
-                    names = f" ({', '.join(issue.names)})" if issue.names else ""
-                    print(
-                        f"  {issue.part}: {issue.kind}: {issue.detail}{names}",
-                        file=sys.stderr,
-                    )
-                return 1
-            snapshot_ref = snapshot.ref
-
-        check_set = CheckSet(layout.checks_dir, store)
-        report = check_set.run(
-            sources, part=layout.manifest.name, project_snapshot_ref=snapshot_ref
-        )
+    # INTERFACE.md §6.3 / §19 item 5: the run and the serialization live in
+    # `hephaestus.core.checks.report`, which `server/http`'s GET /checks calls
+    # under its own principal check. One serializer, two callers.
+    try:
+        report = project_check_report(layout, store, project=bool(args.project))
+    except SnapshotRejectedError as exc:
+        print(f"heph: error ({exc.code}): project snapshot is incoherent", file=sys.stderr)
+        for issue in exc.issues:
+            names = f" ({', '.join(issue.names)})" if issue.names else ""
+            print(f"  {issue.part}: {issue.kind}: {issue.detail}{names}", file=sys.stderr)
+        return 1
 
     if json_out:
-        print(json.dumps(report.to_json()))
+        print(json.dumps(report_json(report)))
     else:
         if not report.checks:
             print("no cross-part checks")
@@ -664,12 +636,25 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Stage 3 MCP verb (heph serve --mcp) ships with the server package as well;
     # the handler imports FastMCP lazily, so registering costs nothing here.
+    #
+    # The `serve` verb is assembled from two halves on purpose (INTERFACE.md §2.1
+    # and the 2026-07-26 ordering amendment): `hephaestus.mcp.cli_serve` owns
+    # `--mcp` and creates the parser, and `hephaestus.http.cli_web` extends it
+    # with `--web`. `server/http` is a web client API and NOT part of the
+    # headless surface, so the MCP module may not import it — the assembly
+    # happens here, where neither surface is.
     try:
         from hephaestus.mcp import cli_serve
     except ImportError:
         pass
     else:
-        cli_serve.add_subparsers(sub)
+        serve_parser = cli_serve.add_subparsers(sub)
+        try:
+            from hephaestus.http import cli_web
+        except ImportError:
+            pass
+        else:
+            cli_web.extend_serve(serve_parser)
     return parser
 
 

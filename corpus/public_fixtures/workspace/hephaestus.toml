@@ -1,0 +1,15 @@
+# Starter project manifest for the public workspace fixture (clean-room).
+#
+# INTERFACE.md §14 / §19 item 16: the dedicated fixture the Gate G4 browser
+# suite opens. See README.md beside this file for the requirement-by-requirement
+# ledger of what it carries and what it deliberately does not.
+[project]
+name = "workspace"
+description = "Flat-pack stair tread kit, nested for laser cutting (public clean-room fixture)"
+units = "mm"
+
+# The DFM auto-run setting is a PROJECT setting, not a per-message flag
+# (INTERFACE.md §6.4). It ships off so the workspace's Run-DFM action and the
+# `[dfm] auto_run` read-back are both observable from a known starting state.
+[dfm]
+auto_run = false

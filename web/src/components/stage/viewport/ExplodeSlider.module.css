@@ -1,0 +1,45 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+.control {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-2);
+  background: color-mix(in srgb, var(--ground-1) 92%, transparent);
+  font-size: var(--size-xs);
+}
+
+.label {
+  color: var(--ink-2);
+}
+
+.slider {
+  width: 140px;
+}
+
+.value {
+  min-width: 3ch;
+  color: var(--ink-1);
+  font-family: var(--font-mono);
+}
+
+.reset {
+  padding: 2px var(--space-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-1);
+  color: var(--ink-2);
+}
+
+.reset:disabled {
+  opacity: 0.4;
+}
+
+.reset:not(:disabled):hover {
+  color: var(--ink-0);
+  background: var(--ground-3);
+}

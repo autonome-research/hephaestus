@@ -1,0 +1,76 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+.pin {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 2px var(--space-2);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-2);
+  background: var(--ground-2);
+}
+
+/* §4.1: "When the pin is not the current build the header is visibly marked."
+   A dashed accent edge, plus the word in `.mode`, plus `data-pin-mode` — three
+   carriers, none of them colour alone. */
+.pin[data-pin-mode="pinned"] {
+  border-style: dashed;
+  border-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 8%, var(--ground-2));
+}
+
+.label {
+  font-size: var(--size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.ref {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.absent {
+  color: var(--ink-3);
+  font-style: italic;
+}
+
+.mode {
+  font-size: var(--size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-2);
+}
+
+.pin[data-pin-mode="pinned"] .mode {
+  color: var(--warn);
+}
+
+.follow,
+.hold {
+  padding: 1px var(--space-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-1);
+  font-size: var(--size-xs);
+  color: var(--ink-1);
+  white-space: nowrap;
+}
+
+.follow:hover,
+.hold:hover:not(:disabled) {
+  color: var(--ink-0);
+  border-color: var(--accent-dim);
+}
+
+.hold:disabled {
+  color: var(--ink-3);
+  cursor: default;
+}

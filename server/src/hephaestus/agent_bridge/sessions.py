@@ -29,6 +29,8 @@ from opstore.errors import LeaseHeldError
 from opstore.leases import Lease, LeaseManager
 from opstore.types import Clock, OwnerId, SystemClock
 
+from .session_edges import SessionEdgeStore
+
 __all__ = [
     "QuickEditContext",
     "QuickEditRequest",
@@ -182,9 +184,22 @@ class SelectionResolver(Protocol):
 class SessionService:
     """Leased single-writer session registry over one opstore ``LeaseManager``."""
 
-    def __init__(self, leases: LeaseManager, *, clock: Clock | None = None) -> None:
+    def __init__(
+        self,
+        leases: LeaseManager,
+        *,
+        clock: Clock | None = None,
+        edges: SessionEdgeStore | None = None,
+    ) -> None:
         self._leases = leases
         self._clock = clock or SystemClock()
+        # INTERFACE.md §2.8: ``QuickEditContext.parent_session_id`` exists in
+        # memory and is persisted nowhere, so a reopened project could not
+        # reconstruct the tree §7.1 renders. The durable edge is written here —
+        # one of the two sites that already create the relationship. Optional so
+        # the spawn/seeding logic stays unit-testable without a store; with no
+        # store the child reopens ``unlinked`` rather than guessed at.
+        self._edges = edges
 
     def acquire(
         self,
@@ -248,4 +263,20 @@ class SessionService:
             crop_artifact_ref=resolved.crop_artifact_ref,
             parent_session_id=parent_session_id,
         )
+        # Written AFTER the lease, because an edge to a session that was never
+        # created would be a tree node no history page can back; and before the
+        # return, so a caller that receives a context receives a threaded one.
+        if self._edges is not None:
+            self._edges.record(
+                child_session_id=child_session_id,
+                parent_session_id=parent_session_id,
+                kind="quick_edit",
+                origin={
+                    "part": resolved.part,
+                    "source_artifact_ref": resolved.source,
+                    "selection_id": request.selection_id,
+                    "provenance": resolved.provenance,
+                    "crop_artifact_ref": resolved.crop_artifact_ref,
+                },
+            )
         return session, context

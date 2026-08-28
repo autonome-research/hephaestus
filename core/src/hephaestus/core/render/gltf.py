@@ -5,11 +5,26 @@ selection namespace of :mod:`hephaestus.core.render.selection` is carried on the
 geometry so a client raycast resolves the same IDs as the mask passes:
 
 - one **mesh per solid** (``len(meshes) == solid count`` — a Gate G1 assertion),
-  the mesh ``extras`` carrying the solid's selection ID/descriptor;
+  the mesh ``extras`` carrying the solid's selection ID/descriptor **and its
+  ``explode_offset``** (``INTERFACE.md`` §5.1);
 - one **primitive per face** inside its solid's mesh, the primitive ``extras``
   carrying that ``(solid, face)`` selection ID;
 - the immutable **linked selection bundle ref** (plus source build + table refs)
   in ``asset.extras``.
+
+``extras.explode_offset`` is the float3 displacement at ``t = 1`` —
+:func:`hephaestus.core.render.channels._explode_offset` with ``t=1.0``, called
+rather than reimplemented (``INTERFACE.md`` §5.1 makes that literal). The client
+translates a solid's node by ``explode_offset · t`` and computes nothing else: it
+does not take centroids, does not normalize, and does not reconstruct a
+magnitude, because §1's closed list makes every one of those a server number. A
+server-side pytest asserts the byte-equivalence of ``offset · t`` and
+``_explode_offset(scene, solid, t)`` for every solid and several ``t`` — without
+it the viewport and ``heph render --explode`` drift silently.
+
+**No glTF extension is introduced.** Everything needed rides in ``extras``; an
+extension would drag a new artifact into the ``tool_schema.md`` ↔ JSON-Schema ↔
+TypeBox ↔ MCP drift suite for no capability.
 
 A raycast hit (mesh index, optional primitive index) is resolved **only through
 that linked bundle**: :func:`resolve_gltf_pick` reads the hit's embedded ID, then
@@ -37,15 +52,17 @@ from typing import Any, cast
 import numpy as np
 from hephaestus.core.errors import ValidationError
 from hephaestus.core.render.bundle import StaleSelection, StaleSelectionError, resolve_selection
+from hephaestus.core.render.channels import RenderScene, _explode_offset, scene_from_shape
 from hephaestus.core.render.palette import SelectionEntry, id_to_rgb
 from hephaestus.core.render.selection import SelectionCatalog
-from hephaestus.core.render.tessellate import Tessellation, tessellate
+from hephaestus.core.render.tessellate import Tessellation
 from opstore.types import JSONValue
 
 from opstore import OpStore
 
 __all__ = [
     "BUNDLE_REF_KEY",
+    "EXPLODE_OFFSET_KEY",
     "SOURCE_REF_KEY",
     "TABLE_REF_KEY",
     "GltfValidation",
@@ -58,6 +75,12 @@ __all__ = [
 BUNDLE_REF_KEY = "selection_bundle_ref"
 SOURCE_REF_KEY = "source_artifact_ref"
 TABLE_REF_KEY = "selection_table_ref"
+
+#: Per-**mesh** ``extras`` key carrying the solid's explode displacement at
+#: ``t = 1`` (``INTERFACE.md`` §5.1). A float3, in the model's own units and
+#: coordinate frame — the same frame the baked vertices are in — so the client's
+#: node translation is ``explode_offset · t`` and nothing more.
+EXPLODE_OFFSET_KEY = "explode_offset"
 
 # glTF componentType / accessor-type constants and their byte/element sizes.
 _COMPONENT_FLOAT = 5126
@@ -79,6 +102,10 @@ class GltfValidation:
     buffer_length: int
     bundle_ref: str | None
     source_artifact_ref: str | None
+    #: Per-mesh ``extras.explode_offset``, in mesh order (§5.1). Every mesh has
+    #: one or :func:`validate_gltf` refuses the GLB, so this is always as long as
+    #: ``mesh_count``.
+    explode_offsets: tuple[tuple[float, float, float], ...] = ()
 
 
 def export_gltf(
@@ -90,13 +117,22 @@ def export_gltf(
     selection_table_ref: str,
     tess: Tessellation | None = None,
     labels: Mapping[int, str] | None = None,
+    scene: RenderScene | None = None,
 ) -> bytes:
     """Export ``shape`` as a GLB with selection IDs bound to ``bundle_ref``.
 
     Vertices are baked in world coordinates (identity node transforms), coloured
     per solid by the solid's palette colour. ``catalog`` supplies the global IDs
     embedded in mesh/primitive ``extras``; they match the bundle's selection
-    table exactly. Deterministic: same tessellation + catalog => same bytes.
+    table exactly. Each mesh also carries :data:`EXPLODE_OFFSET_KEY`, the float3
+    ``_explode_offset(scene, solid, t=1.0)`` (§5.1). Deterministic: same
+    tessellation + catalog => same bytes.
+
+    ``scene`` is the :class:`~hephaestus.core.render.channels.RenderScene` the
+    explode displacements are taken from; pass one to avoid a second meshing of
+    ``shape`` (a caller that already built a scene has already paid for it). Omit
+    it and one is built here. ``tess`` still wins for the geometry itself, so an
+    existing caller's tessellation is never re-derived.
     """
     from pygltflib import (
         GLTF2,
@@ -113,8 +149,17 @@ def export_gltf(
         Scene,
     )
 
-    meshed = tess if tess is not None else tessellate(shape)
+    render_scene = scene if scene is not None else scene_from_shape(shape)
+    meshed = (
+        tess
+        if tess is not None
+        else Tessellation(solids=tuple(s.tessellation for s in render_scene.solids))
+    )
     label_of = dict(labels) if labels is not None else {}
+    # One lookup per solid index: the scene's solid order *is* ``shape.solids()``
+    # order, the same order the catalog and the tag layer index by, but a dict
+    # keyed by ``solid_index`` says so instead of relying on position.
+    scene_solids = {s.solid_index: s for s in render_scene.solids}
 
     blob = bytearray()
     accessors: list[Any] = []
@@ -201,10 +246,22 @@ def export_gltf(
                     },
                 )
             )
+        scene_solid = scene_solids.get(s)
+        if scene_solid is None:  # pragma: no cover - a tess/scene mismatch
+            raise ValidationError(
+                f"solid {s} is in the tessellation but not in the render scene", kind="contract"
+            )
+        offset = _explode_offset(render_scene, scene_solid, 1.0)
         mesh_extras: dict[str, JSONValue] = {
             "selection_id": solid_id,
             "kind": "solid",
             "solid_index": s,
+            # §5.1: the displacement vector at t = 1, NOT a unit axis plus a
+            # scalar. §5.2 states why: the transform is a homothety about the
+            # assembly centroid, and a unit axis with the only `explode_scale`
+            # that exists (the global 1.0) moves every solid the same distance —
+            # a different transform that can fail G4.6 outright.
+            EXPLODE_OFFSET_KEY: [float(offset[0]), float(offset[1]), float(offset[2])],
         }
         if label is not None:
             mesh_extras["label"] = label
@@ -306,6 +363,8 @@ def validate_gltf(data: bytes, *, expected_solid_count: int | None = None) -> Gl
             f"mesh count {mesh_count} != solid count {expected_solid_count}", kind="contract"
         )
 
+    offsets = tuple(_mesh_explode_offset(mesh.extras, i) for i, mesh in enumerate(meshes))
+
     extras = cast("Mapping[str, JSONValue]", gltf.asset.extras or {})
     bundle_ref = extras.get(BUNDLE_REF_KEY)
     source_ref = extras.get(SOURCE_REF_KEY)
@@ -316,7 +375,35 @@ def validate_gltf(data: bytes, *, expected_solid_count: int | None = None) -> Gl
         buffer_length=buffer_length,
         bundle_ref=bundle_ref if isinstance(bundle_ref, str) else None,
         source_artifact_ref=source_ref if isinstance(source_ref, str) else None,
+        explode_offsets=offsets,
     )
+
+
+def _mesh_explode_offset(extras: object, mesh_index: int) -> tuple[float, float, float]:
+    """One mesh's ``extras.explode_offset``, or ``validation_error`` (§5.1).
+
+    Structural, not optional: a GLB whose meshes carry no displacement leaves the
+    client with nothing to translate by and no legal way to derive one (§1's
+    closed list forbids it computing centroids), so the absence is a malformed
+    GLB rather than a feature the viewport degrades around.
+    """
+    if not isinstance(extras, Mapping):
+        raise ValidationError(f"mesh {mesh_index} carries no extras", kind="contract")
+    raw = cast("Mapping[str, JSONValue]", extras).get(EXPLODE_OFFSET_KEY)
+    if not isinstance(raw, list) or len(cast("list[JSONValue]", raw)) != 3:
+        raise ValidationError(
+            f"mesh {mesh_index} has no float3 {EXPLODE_OFFSET_KEY}", kind="contract"
+        )
+    values = cast("list[JSONValue]", raw)
+    out: list[float] = []
+    for component in values:
+        if isinstance(component, bool) or not isinstance(component, (int, float)):
+            raise ValidationError(
+                f"mesh {mesh_index} {EXPLODE_OFFSET_KEY} component is not a number",
+                kind="contract",
+            )
+        out.append(float(component))
+    return (out[0], out[1], out[2])
 
 
 def _embedded_id(extras: object, ref: str) -> int:

@@ -1,0 +1,148 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * INTERFACE.md §4.1's shell, as a grid.
+ *
+ *   HEADER   project · branch · HEAD | ARTIFACT PIN | build state | token
+ *   RAIL 280px | STAGE 1fr | STREAM 420px
+ *
+ * The three column widths are tokens, not literals, because §4.1 states them as
+ * facts about the layout rather than as taste. The INSPECTOR is a bottom drawer
+ * *of the Stage* and not a third column: "its content is about the thing in the
+ * Stage, and losing that spatial relation costs more than the vertical pixels".
+ */
+
+/* Flex column rather than a fixed row template: the refusal banner (§2.4) is
+   present only when a read was refused, and a two-row grid would give the body
+   the banner's row on the ordinary path. */
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.shell > header {
+  flex: none;
+  height: var(--header-height);
+}
+
+.body {
+  display: grid;
+  grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--stream-width);
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.rail {
+  min-height: 0;
+  overflow: auto;
+  border-right: 1px solid var(--line-1);
+  background: var(--ground-1);
+}
+
+.stage {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 0;
+  min-width: 0;
+  background: var(--ground-0);
+}
+
+.stream {
+  min-height: 0;
+  overflow: auto;
+  border-left: 1px solid var(--line-1);
+  background: var(--ground-1);
+}
+
+/* §4.1: "below 1280px the Stream collapses to a docked strip with an unread
+   count". The strip is still a peer surface, not a hidden one. */
+.body[data-stream="collapsed"] {
+  grid-template-columns: var(--rail-width) minmax(0, 1fr) 44px;
+}
+
+@media (max-width: 1279px) {
+  .body {
+    grid-template-columns: var(--rail-width) minmax(0, 1fr) 44px;
+  }
+}
+
+/* §4.1: "below 1024px the Rail collapses to an overlay." */
+@media (max-width: 1023px) {
+  .body {
+    grid-template-columns: minmax(0, 1fr) 44px;
+  }
+
+  .rail {
+    position: absolute;
+    top: var(--header-height);
+    bottom: 0;
+    left: 0;
+    width: var(--rail-width);
+    z-index: 20;
+    box-shadow: 0 0 24px rgb(0 0 0 / 60%);
+  }
+
+  .body[data-rail="hidden"] .rail {
+    display: none;
+  }
+}
+
+.streamStrip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+}
+
+.stripToggle {
+  writing-mode: vertical-rl;
+  color: var(--ink-2);
+  font-size: var(--size-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: var(--space-2) var(--space-1);
+}
+
+.stripToggle:hover {
+  color: var(--ink-0);
+}
+
+.absent {
+  margin: 0;
+  padding: var(--space-4);
+  color: var(--ink-3);
+  font-size: var(--size-sm);
+  font-style: italic;
+}
+
+.streamHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line-1);
+}
+
+.streamTitle {
+  font-size: var(--size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+
+.streamToggle {
+  color: var(--ink-2);
+  font-size: var(--size-lg);
+  line-height: 1;
+  padding: 0 var(--space-1);
+}
+
+.streamToggle:hover {
+  color: var(--ink-0);
+}

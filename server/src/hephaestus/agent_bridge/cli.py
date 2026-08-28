@@ -49,15 +49,23 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import FrameType
-from typing import Any, TextIO, cast
+from typing import Any, Protocol, TextIO, cast
 
 from hephaestus.core.project_store.layout import find_project_root
 
 from .app import AskUserAnswerer, AuthLinkError, BridgeRuntime, PromptResult
+from .client_mode import ClientModeError, ServerAgentClient, attach_client
 from .sidecar import SidecarError
 from .supervisor import SupervisorError
 
-__all__ = ["AgentConsole", "ProviderConfig", "add_subparsers", "load_provider_config", "main"]
+__all__ = [
+    "AgentConsole",
+    "AgentDriver",
+    "ProviderConfig",
+    "add_subparsers",
+    "load_provider_config",
+    "main",
+]
 
 #: Default location of the provider config inside a project.
 PROVIDER_CONFIG_RELPATH = Path(".heph") / "providers.json"
@@ -70,6 +78,31 @@ _PROFILES = ("orchestrator", "part", "quick_edit")
 
 class ConfigError(Exception):
     """A user-facing configuration problem (missing/invalid provider config)."""
+
+
+class AgentDriver(Protocol):
+    """What the REPL needs from whichever runtime is driving the session.
+
+    Two implementations, one loop: :class:`~hephaestus.agent_bridge.app.
+    BridgeRuntime` in-process, and :class:`~hephaestus.agent_bridge.client_mode.
+    ServerAgentClient` against the process that owns the leases (§2.1). The
+    Protocol is what keeps the second from becoming a second renderer.
+    """
+
+    def new_run_id(self) -> str: ...
+
+    def prompt(
+        self,
+        session_id: str,
+        text: str,
+        *,
+        run_id: str | None = ...,
+        answerer: AskUserAnswerer | None = ...,
+        on_event: Callable[[dict[str, Any]], None] | None = ...,
+        timeout: float | None = ...,
+    ) -> PromptResult: ...
+
+    def cancel(self, run_id: str) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -289,6 +322,19 @@ def _cmd_agent(args: argparse.Namespace) -> int:
         print(f"heph: not a Hephaestus project ({exc})", file=sys.stderr)
         return 2
 
+    # INTERFACE.md §2.1: **no new flag**. If a live server already owns this
+    # project's leases, this verb runs in CLIENT MODE against it rather than
+    # opening a second in-process bridge — a second bridge would be two writers
+    # on one Pi JSONL, which architecture.md §4.2 forbids outright. Discovery is
+    # `.heph/serve.json`; a recorded-but-unreachable server refuses `session_busy`.
+    try:
+        client = attach_client(project_root)
+    except ClientModeError as exc:
+        print(f"heph: {exc.code}: {exc.message}", file=sys.stderr)
+        return 1
+    if client is not None:
+        return _cmd_agent_client(args, project_root, client)
+
     config_path = _resolve_config_path(project_root, cast("str | None", args.providers))
     try:
         config = load_provider_config(config_path)
@@ -353,8 +399,57 @@ def _cmd_agent(args: argparse.Namespace) -> int:
     return exit_code
 
 
-def _repl(runtime: BridgeRuntime, session_id: str, console: AgentConsole) -> int:
-    """Prompt loop with per-run Ctrl-C cancellation."""
+def _cmd_agent_client(
+    args: argparse.Namespace, project_root: Path, client: ServerAgentClient
+) -> int:
+    """The §2.1 client-mode half of ``heph agent``.
+
+    Deliberately the *same* REPL. A session started here is the one the browser
+    attaches to because there is only ever one runtime — the server's — so there
+    is no event forwarding to get wrong, and no second rendering path to keep in
+    step with the first.
+
+    No provider config is read: the owning server configured the sidecar when it
+    started, and re-reading providers here would suggest this process could
+    change them, which it cannot.
+    """
+    console = AgentConsole(image_dir=project_root / IMAGE_DIR_RELPATH)
+    answerer = interactive_answerer()
+    exit_code = 0
+    try:
+        session_id = client.create_session(
+            str(args.profile),
+            part=cast("str | None", args.part),
+            session_id=cast("str | None", args.session),
+            resume=bool(args.resume),
+        )
+        print(
+            f"heph agent · project {project_root} · session {session_id} "
+            f"({args.profile}) · client of pid {client.record.pid} at {client.record.http}"
+        )
+        print("type a prompt, or Ctrl-D to leave; Ctrl-C cancels the running turn.")
+        exit_code = _repl(client, session_id, console, answerer=answerer)
+    except ClientModeError as exc:
+        print(f"heph: {exc.code}: {exc.message}", file=sys.stderr)
+        exit_code = 1
+    finally:
+        client.close()
+    return exit_code
+
+
+def _repl(
+    runtime: AgentDriver,
+    session_id: str,
+    console: AgentConsole,
+    *,
+    answerer: AskUserAnswerer | None = None,
+) -> int:
+    """Prompt loop with per-run Ctrl-C cancellation.
+
+    Written against :class:`AgentDriver` rather than against ``BridgeRuntime`` so
+    the in-process runtime and the §2.1 client-mode driver share ONE loop: two
+    REPLs would be two renderings of one event vocabulary, and they would drift.
+    """
     while True:
         try:
             line = input("\n> ")
@@ -370,18 +465,20 @@ def _repl(runtime: BridgeRuntime, session_id: str, console: AgentConsole) -> int
         if prompt_text in {"/quit", "/exit"}:
             return 0
         run_id = runtime.new_run_id()
-        result = _run_turn(runtime, session_id, prompt_text, run_id, console)
+        result = _run_turn(runtime, session_id, prompt_text, run_id, console, answerer=answerer)
         if result is None:
             return 1
         console.finish(result)
 
 
 def _run_turn(
-    runtime: BridgeRuntime,
+    runtime: AgentDriver,
     session_id: str,
     prompt_text: str,
     run_id: str,
     console: AgentConsole,
+    *,
+    answerer: AskUserAnswerer | None = None,
 ) -> PromptResult | None:
     """Run one prompt with a SIGINT handler bound to *this* run's cancellation."""
     cancelled = threading.Event()
@@ -397,9 +494,20 @@ def _run_turn(
     previous = signal.getsignal(signal.SIGINT)
     signal.signal(signal.SIGINT, on_sigint)
     try:
-        return runtime.prompt(session_id, prompt_text, run_id=run_id, on_event=console.on_event)
+        return runtime.prompt(
+            session_id,
+            prompt_text,
+            run_id=run_id,
+            on_event=console.on_event,
+            answerer=answerer,
+        )
     except SupervisorError as exc:
         print(f"\nheph: run failed: {exc}", file=sys.stderr)
+        return None
+    except ClientModeError as exc:
+        # Client mode: the owning server refused or went away mid-turn. Named,
+        # never degraded into "the model stopped".
+        print(f"\nheph: {exc.code}: {exc.message}", file=sys.stderr)
         return None
     finally:
         signal.signal(signal.SIGINT, previous)

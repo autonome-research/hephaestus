@@ -1,0 +1,15 @@
+{
+  "capabilities": {
+    "git": false,
+    "secure_executor": true
+  },
+  "name": "inspector_fixture",
+  "parts": [
+    "bracket",
+    "panel"
+  ],
+  "root": "/tmp/heph-web-fixture-snpy_5ye/inspector_fixture",
+  "serve_mode": true,
+  "status": "ok",
+  "units": "mm"
+}

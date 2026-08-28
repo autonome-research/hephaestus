@@ -1,0 +1,24 @@
+{
+  "note": "The requirement ledger this project's builds are judged against (VALIDATION.md §2: geometry may not precede requirements, so build_part is refused while the ledger is empty). Replayed through cad_ops.record_requirements — the production writer — by hephaestus.testing.workspace_fixture.materialize_workspace_fixture. Every entry is source='specified' with the quote it came from, so none of them gates a build (§3 gates only 'assumed' entries) and the fixture's builds are never blocked on a clarification the browser gate cannot answer.",
+  "request": "A flat-pack stair tread kit, laser cut from one sheet of Baltic birch plywood: a tread with anti-slip grooves and two cleats that carry it on the stringers.",
+  "entries": [
+    {
+      "id": "R1",
+      "text": "The kit is cut from a single sheet of Baltic birch plywood.",
+      "source": "specified",
+      "quote": "laser cut from one sheet of Baltic birch plywood"
+    },
+    {
+      "id": "R2",
+      "text": "The tread carries anti-slip grooves across its walking surface.",
+      "source": "specified",
+      "quote": "a tread with anti-slip grooves"
+    },
+    {
+      "id": "R3",
+      "text": "Two cleats support the tread on the stringers.",
+      "source": "specified",
+      "quote": "two cleats that carry it on the stringers"
+    }
+  ]
+}

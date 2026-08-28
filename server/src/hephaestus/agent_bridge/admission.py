@@ -23,7 +23,7 @@ budget is honoured, then hand its ``admission`` to :class:`BridgeAdmission`.
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from opstore.admission import (
     AdmissionControl,
@@ -36,13 +36,49 @@ from opstore.types import JSONValue, OwnerId, StoreConfig, TerminalState
 
 from .limits import LIMITS
 
+if TYPE_CHECKING:
+    from hephaestus.core.project_store.layout import ProjectLayout
+
+    from opstore import OpStore
+
 __all__ = [
     "BRIDGE_RUN_SLOTS",
+    "STATE_DB_NAME",
     "BridgeAdmission",
     "bridge_store_config",
+    "open_project_store",
 ]
 
 BRIDGE_RUN_SLOTS: Final[int] = int(LIMITS["admission"]["run_slots"])
+
+#: The project store's sqlite file; its presence is what distinguishes
+#: create-from-scratch from open-existing.
+STATE_DB_NAME: Final[str] = "state.db"
+
+
+def open_project_store(layout: ProjectLayout) -> OpStore:
+    """Create-or-open one project's opstore under the 16-slot bridge config.
+
+    Every serving surface opens a project the same way — the MCP app
+    (:mod:`hephaestus.mcp.app`) and the web workspace
+    (:mod:`hephaestus.http`) — so "how a project's store comes into being"
+    lives here once. A second copy would be a second store configuration, and
+    the first divergence would be a silently different ``run_slots`` budget on
+    one transport (mission rule 6).
+    """
+    from hephaestus.core.project_store.retention import DefaultProtectedRoots
+
+    from opstore import OpStore as _OpStore
+
+    layout.store_root.mkdir(parents=True, exist_ok=True)
+    layout.journal_dir.mkdir(parents=True, exist_ok=True)
+    roots = DefaultProtectedRoots(layout)
+    if (layout.store_root / STATE_DB_NAME).exists():
+        store = _OpStore.open(layout.store_root, protected_roots=roots)
+    else:
+        store = _OpStore.create(layout.store_root, bridge_store_config(), protected_roots=roots)
+    roots.bind(store)
+    return store
 
 
 def bridge_store_config(**overrides: object) -> StoreConfig:

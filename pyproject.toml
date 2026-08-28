@@ -34,6 +34,9 @@ dev = [
     "pyright>=1.1.390",
     "scikit-image>=0.26",
     "pypdf>=5.1",
+    # INTERFACE.md §14: `starlette.testclient` drives `server/tests/test_http_*`
+    # in-process (no socket, no port), and it needs httpx.
+    "httpx>=0.28",
 ]
 
 [tool.uv.sources.hephaestus-cad]

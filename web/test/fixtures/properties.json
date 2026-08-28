@@ -1,0 +1,25 @@
+{
+  "build_artifact_ref": "artifact:build:sha256:ed923a179f3b6f88179725a1c8bac47e79a2cf2cdd234bacbc2cbe5bc746bb98",
+  "fields": [
+    "description",
+    "material_spec",
+    "process",
+    "stock_form",
+    "blank_size",
+    "general_tolerance",
+    "finish",
+    "assembly_method",
+    "joint"
+  ],
+  "properties": {
+    "blank_size": "60 x 40 mm",
+    "description": "a laser-cut vent panel",
+    "finish": "sanded, unfinished",
+    "general_tolerance": "+/- 0.2 mm",
+    "material_spec": "6 mm Baltic birch plywood",
+    "process": "laser_cut",
+    "stock_form": "sheet"
+  },
+  "source": "build_record",
+  "status": "ok"
+}

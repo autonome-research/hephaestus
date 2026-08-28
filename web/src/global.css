@@ -1,0 +1,68 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * The only global stylesheet. Everything else is a CSS Module (INTERFACE.md §3),
+ * so a class name in a component file cannot collide with one in another.
+ */
+
+@import "./tokens.css";
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--ground-0);
+  color: var(--ink-0);
+  font-family: var(--font-ui);
+  font-size: var(--size-md);
+  line-height: var(--line-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* §3's accessibility floor: a visible focus ring on every keyboard-reachable
+   control. `:focus-visible` and not `:focus`, so a mouse click does not paint
+   one, but a Tab always does. */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+  border-radius: var(--radius-1);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+a {
+  color: var(--accent);
+}
+
+code,
+kbd,
+pre {
+  font-family: var(--font-mono);
+  font-size: var(--size-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

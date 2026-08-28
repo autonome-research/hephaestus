@@ -81,6 +81,35 @@ CAS gate), while a Pi-bridge retry of a committed edit reports
 `{applied: false, conflict: {current_hash: <the hash that edit wrote>}}`
 (the live-hash read precedes the WAL claim, making ambiguous completion
 detectable). Both mutate exactly once and both surface the live hash.
+
+Amended 2026-08-27 (landing with Stage 4; `INTERFACE.md` §2.3 and §2.5): **REST
+is a third named transport** with its own pinned reconciliation shape and an
+explicit per-route key policy.
+
+- *Shape.* A recognized REST `Idempotency-Key` on a committed mutation replays
+  the stored response body **byte-for-byte**, with envelope field
+  `"replayed": true` (normative) and response header `Idempotency-Replayed:
+  true` (advisory). It does **not** degrade to the bridge's conflict shape: that
+  shape exists because the retrying principal is a *model* that must be told a
+  live hash it does not hold, whereas a REST replay is the same operator client
+  re-sending its own committed call, and answering that with a conflict would
+  make a lost-response recovery indistinguishable from a genuine race. The two
+  families that return a discriminated result rather than a bare success
+  (`edit_part`/`write_part` → `conflict`; project-check → `already_exists` /
+  `conflict(kind="stale_hash")`) are unaffected: their discriminated result *is*
+  the stored response and replays as such. This is the parity suite's third lane.
+- *Policy.* Which REST routes require the header is **enumerated per route**,
+  not derived from `ToolDecl.idempotent`: that derivation decides nothing for a
+  route with no declaration, and a rule that silently exempts the routes a
+  reader most expects it to cover is worse than no rule. `INTERFACE.md` §2.3
+  carries the two tables — seven routes require a key (including two *non-tool*
+  config/output mutations, recorded under the same key space), and five
+  session-control routes do not and **ignore** a supplied one.
+- *Derivation.* The REST key is **payload-independent**, exactly as MCP's is:
+  the raw id is `(principal/route identity, Idempotency-Key header value)`
+  carried as `Invocation.entry_id`, and the canonical body goes only into the
+  separate payload hash. Folding the body into the key would make key reuse with
+  another payload structurally undetectable.
 Tolerances are in mm. Source/artifact mutations and stateful delegation tools use this
 contract: `create_part`, `edit_part`, `write_part`, `edit_globals`,
 `create_project_check`, `edit_project_check`, `set_params`, `build_part`,

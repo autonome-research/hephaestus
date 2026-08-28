@@ -40,6 +40,28 @@ function toolResult(id: string, callId: string, name: string, withImage: boolean
   } as unknown as SessionEntry;
 }
 
+/** A `toolResult` entry with an explicit envelope text and optional `isError`. */
+function toolResultWith(
+  id: string,
+  text: string,
+  isError?: boolean,
+): SessionEntry {
+  const message: Record<string, unknown> = {
+    role: "toolResult",
+    toolCallId: "call_0",
+    toolName: "build_part",
+    content: [{ type: "text", text }],
+  };
+  if (isError !== undefined) message.isError = isError;
+  return {
+    type: "message",
+    id,
+    parentId: null,
+    timestamp: "2026-07-24T00:00:00.000Z",
+    message,
+  } as unknown as SessionEntry;
+}
+
 function userMsg(id: string): SessionEntry {
   return {
     type: "message",
@@ -66,6 +88,63 @@ describe("normalization", () => {
     // seq is dense and ordered.
     expect(events.map((e) => e.seq)).toEqual([0, 1, 2, 3]);
     expect(events.every((e) => e.runId === "run-1")).toBe(true);
+  });
+
+  // INTERFACE.md §7.2 / §19 item 13. Before this, `normalizeEntries` emitted
+  // `{toolName, text}` with no `isError`, so a REOPENED transcript rendered
+  // every failed tool call as `ok` — a silently-dropped state. The fix lands in
+  // the engine before the G4.11 event archive is baselined, so the archive
+  // records the corrected shape and is not re-baselined a stage later.
+  describe("tool_result carries isError (§7.2)", () => {
+    function isErrorOf(entry: SessionEntry): unknown {
+      const events = normalizeEntries([entry], "sess-1");
+      const result = events.find((e) => e.kind === "tool_result");
+      return (result?.payload as { isError?: unknown } | undefined)?.isError;
+    }
+
+    it("reads Pi's own toolResult.isError when the entry carries it", () => {
+      expect(isErrorOf(toolResultWith("r1", '{"status":"ok"}', false))).toBe(false);
+      expect(isErrorOf(toolResultWith("r2", "boom", true))).toBe(true);
+    });
+
+    it("a failed call is never reported as ok — Pi's flag wins over the envelope", () => {
+      // The envelope says ok and Pi says the call failed: Pi is the authority.
+      expect(isErrorOf(toolResultWith("r3", '{"status":"ok"}', true))).toBe(true);
+    });
+
+    it("falls back to the serialized envelope status on a legacy entry", () => {
+      expect(isErrorOf(toolResultWith("r4", '{"status":"error","reason":"invalid_part"}'))).toBe(true);
+      expect(isErrorOf(toolResultWith("r5", '{"status":"ok","artifact_ref":"a"}'))).toBe(false);
+      // A discriminated *successful* result is not an error, per tool_schema.md.
+      expect(isErrorOf(toolResultWith("r6", '{"status":"capability_error","code":"x"}'))).toBe(false);
+      expect(isErrorOf(toolResultWith("r7", '{"status":"conflict"}'))).toBe(false);
+    });
+
+    it("is null — never false — when neither source records the outcome", () => {
+      // §7.2's named fallback: the closed set gains a VISIBLE `unknown`. The one
+      // thing this must never be is `false`, which reads as a successful call.
+      expect(isErrorOf(toolResultWith("r8", "not json at all"))).toBeNull();
+      expect(isErrorOf(toolResultWith("r9", '{"no_status":true}'))).toBeNull();
+      expect(isErrorOf(toolResultWith("r10", "[1,2,3]"))).toBeNull();
+    });
+  });
+
+  // INTERFACE.md §2.8: the historical identity is (session_id, ordinal). The
+  // parameter is named `runId` and is fed the SESSION id by main.ts's
+  // history.page handler; the ordinal restarts at 0 per session. Nothing here
+  // reconstructs a live (run_id, seq) pair, and the two are never merged.
+  it("mints the session-scoped identity, restarting the ordinal at 0", () => {
+    const events = normalizeEntries(
+      [assistantText("a1", "one"), assistantText("a2", "two")],
+      "sess-42",
+    );
+    expect(events.every((e) => e.runId === "sess-42")).toBe(true);
+    expect(events.map((e) => e.seq)).toEqual([0, 1]);
+    // A second session's page restarts at 0 with its own id — the ordinals of
+    // two sessions collide, which is exactly why the namespace is the pair.
+    const other = normalizeEntries([assistantText("b1", "x")], "sess-43");
+    expect(other[0]?.seq).toBe(0);
+    expect(other[0]?.runId).toBe("sess-43");
   });
 
   it("is deterministic across repeated calls (restart-stable)", () => {

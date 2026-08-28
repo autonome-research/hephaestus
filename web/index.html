@@ -1,0 +1,23 @@
+<!doctype html>
+<!--
+Copyright 2026 The Hephaestus Authors
+SPDX-License-Identifier: Apache-2.0
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      The bearer token rides in the URL fragment (INTERFACE.md §2.2). A fragment
+      is never sent to a server, but it IS sent in a `Referer` by some
+      navigations; `no-referrer` closes that last path. There is nothing else on
+      this origin to refer to anyway - architecture.md §7 is loopback only.
+    -->
+    <meta name="referrer" content="no-referrer" />
+    <title>Hephaestus workspace</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

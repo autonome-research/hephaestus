@@ -82,6 +82,14 @@ class GoldenSpec:
     explode: float = 0.0
     globals_relative: bool = True  # fixture has a top-level globals.py
     extra_parts: tuple[str, ...] = field(default_factory=tuple)
+    #: Render size. Defaults to the small, cheap-to-diff golden size; a golden
+    #: whose consumer is a *client* that cannot choose its own size must be
+    #: baselined at the size that client will receive, or the comparison is
+    #: between two resamplings rather than between two renders. ``INTERFACE.md``
+    #: §5.3 makes the browser a viewer of server pixels, and the section plate it
+    #: fetches comes back at ``render/offscreen.py``'s defaults.
+    width: int = GOLDEN_WIDTH
+    height: int = GOLDEN_HEIGHT
 
 
 #: The public clean-room golden set: assembly ``primary`` at iso/+X in every
@@ -202,8 +210,8 @@ def render_golden(project: RenderProject, spec: GoldenSpec) -> InspectResult:
         mask_mode=spec.mask_mode,
         section_plane=spec.section_plane,
         explode=spec.explode,
-        width=GOLDEN_WIDTH,
-        height=GOLDEN_HEIGHT,
+        width=spec.width,
+        height=spec.height,
     )
 
 
@@ -219,8 +227,8 @@ def _sidecar(
         "mask_mode": spec.mask_mode,
         "section_plane": spec.section_plane,
         "explode": spec.explode,
-        "width": GOLDEN_WIDTH,
-        "height": GOLDEN_HEIGHT,
+        "width": spec.width,
+        "height": spec.height,
         "linear_deflection_mm": LINEAR_DEFLECTION,
         "angular_deflection_rad": ANGULAR_DEFLECTION,
         "gl_renderer": renderer,

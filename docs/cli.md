@@ -285,8 +285,29 @@ $ heph agent --project . --profile orchestrator
 | `--part PART` | The bound part, for a `part` or `quick_edit` session. |
 | `--providers FILE` | Provider config JSON. |
 
+**Client mode, when a server already owns the project.** One process owns a
+project's session leases. If `heph serve --web` is already running here, this
+verb does **not** open a second agent runtime: it reads `.heph/serve.json`,
+reads the `0600` token that record names, and drives the running server's
+sessions over loopback. The REPL is identical, and the session you start in the
+terminal is the same session the browser attaches to — there is only ever one
+runtime, so nothing is forwarded between two.
+
+There is deliberately **no flag** for this. `serve.json` is discovery enough, and
+a `--server URL` flag would invite pointing the CLI at a server that does not own
+this project's locks. If a server is recorded but unreachable, the verb refuses
+with `session_busy` rather than opening a bridge beside it — two agent runtimes
+on one project would be two writers on one transcript. If no server is running,
+nothing changes: the verb spawns its own sidecar exactly as it always has.
+
+Two flags are unavailable in client mode and say so rather than being ignored:
+`--session` and `--resume`. The owning server creates sessions; silently
+dropping them would let you believe you had reopened a transcript you had not.
+
 Provider configuration is explicit and app-owned. It is read from `--providers`,
-else `$HEPHAESTUS_AGENT_PROVIDERS`, else `<project>/.heph/providers.json`:
+else `$HEPHAESTUS_AGENT_PROVIDERS`, else `<project>/.heph/providers.json`
+(client mode reads none of it — the server configured its sidecar when it
+started):
 
 ```json
 {
@@ -318,8 +339,8 @@ at an idle prompt exits. Images returned by tools are written under
 
 ### `heph serve --mcp`
 
-Serve the project's tool surface over MCP. `--mcp` is required. See
-[mcp.md](mcp.md) for client configuration.
+Serve the project's tool surface over MCP. See [mcp.md](mcp.md) for client
+configuration.
 
 ```console
 $ heph serve --mcp                          # stdio: what a local MCP client launches
@@ -330,6 +351,47 @@ Serve mode is the executor policy boundary: builds run on a probed secure
 backend and there is deliberately **no** `--unsafe-local-executor` flag on this
 verb. Under `--mcp` on stdio, stdout is the transport — diagnostics go to
 stderr, always.
+
+### `heph serve --web`
+
+Serve the **web workspace API** (`INTERFACE.md` §2) on loopback. Orthogonal to
+`--mcp`: neither flag requires the other, and both force the same serve-mode
+executor policy, so the web never has an unsandboxed path either.
+
+```console
+$ heph serve --web                                  # 127.0.0.1:8760
+$ heph serve --web --web-address 127.0.0.1:9000
+```
+
+The command prints `http://127.0.0.1:PORT/#t=<token>` and, on a TTY, opens it.
+The token rides in the URL **fragment**, never a query string, so it never
+reaches an access log or a `Referer`; the browser moves it to `sessionStorage`
+and sends `Authorization: Bearer …` on every request. There is no login, no
+cookie, and no user model — the token is minted per serve into
+`.heph/serve.token` (`0600`).
+
+The serving process **owns the project's session leases** and records itself in
+`.heph/serve.json` (`0600`). A second `heph serve --web` on the same project
+refuses rather than racing, and `heph agent` reads that file to decide whether a
+server already owns the project (see [client mode](#heph-agent) above).
+
+If the project has a provider config, the server also starts **the one agent
+runtime** and serves the session routes — `GET /events` (a WebSocket carrying the
+normalized event stream), `GET /sessions`, `…/history`, `…/thread`, and the
+session-control POSTs. Without one it still serves every read, mutation,
+artifact and git route, and the session routes refuse by name with
+`agent_unavailable`: a workspace with no model configured is a usable workspace,
+not a failed serve.
+
+The server also serves the **built web client** at `/`, with the API under
+`/api/`, so the browser loads the app from the origin that answers its requests.
+In a wheel that bundle is packaged; in a source checkout it is `web/dist`, which
+`pnpm --dir web build` writes. With no bundle built the command says so on
+stderr and serves the API alone — a workspace API without its client is still a
+usable API, and Vite's dev server can proxy `/api` to it.
+
+Loopback only, and deliberately: no TLS, no real authn, no multi-tenancy. This
+is a local instrument, not a deployment.
 
 ---
 

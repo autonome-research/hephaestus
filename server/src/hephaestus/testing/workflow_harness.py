@@ -23,6 +23,7 @@ from hephaestus.agent_bridge.cad_ops import CadOps
 from hephaestus.agent_bridge.delegation import DelegationService
 from hephaestus.agent_bridge.dispatch import Principal, ToolDispatcher
 from hephaestus.agent_bridge.jobstore import JobStore
+from hephaestus.agent_bridge.session_edges import SessionEdgeStore
 from hephaestus.agent_bridge.supervisor import pid_alive
 from hephaestus.agent_bridge.workflows import (
     CadWorkflowRequest,
@@ -114,7 +115,12 @@ class Wiring:
         self.cad = CadOps(self.layout, self.store)
         self.jobs = JobStore(self.store.db)
         self.admission = BridgeAdmission(self.store.admission)
-        self.delegation = DelegationService(self.store.admission, self.store.db)
+        # INTERFACE.md §2.8: the delegation WAL's PREPARED transition is one of
+        # the two writers of the durable session edge, so the harness wires the
+        # store — a delegation exercised here threads the same way it will in a
+        # served project.
+        self.edges = SessionEdgeStore(self.store.db)
+        self.delegation = DelegationService(self.store.admission, self.store.db, edges=self.edges)
         self.prompts = PromptRegistry()
         self.dispatcher = ToolDispatcher(
             ProjectStore(self.layout, self.store),

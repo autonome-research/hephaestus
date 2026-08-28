@@ -1,0 +1,63 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * §5.3: "a fitted image layer in the Stage — with the plate's
+ * `source_artifact_ref` shown in the header". The plate covers the live canvas
+ * because it *replaces* it as the thing being looked at, and its header says
+ * where the pixels came from.
+ */
+
+.plate {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--ground-0);
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line-1);
+  background: var(--ground-1);
+  font-size: var(--size-xs);
+}
+
+.label {
+  color: var(--ok);
+}
+
+.from {
+  color: var(--ink-3);
+}
+
+.ref {
+  color: var(--ink-1);
+}
+
+.image {
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.absent {
+  margin: auto;
+  padding: var(--space-5);
+  max-width: 50ch;
+  text-align: center;
+  color: var(--ink-3);
+  font-style: italic;
+}
+
+.reason {
+  display: block;
+  margin-top: var(--space-2);
+  font-family: var(--font-mono);
+  font-style: normal;
+  color: var(--warn);
+}

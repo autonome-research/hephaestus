@@ -1,0 +1,423 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Transcript rows: chips, thoughts, images, widgets, bands, and the three rows
+ * that carry INTERFACE.md §8's honesty — the seam, the named absences, and the
+ * labelled resync break.
+ *
+ * §3's accessibility floor applies here in one specific way: no status is
+ * carried by colour alone. Every chip status, every absence and the resync break
+ * carry their word, and the colour is a second channel over the top of it.
+ */
+
+.transcript {
+  margin: 0;
+  padding: var(--space-2) var(--space-3) var(--space-5);
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.row {
+  min-width: 0;
+}
+
+/* ---- text and reasoning -------------------------------------------- */
+
+.text {
+  margin: 0;
+  font-size: var(--size-md);
+  line-height: var(--line-body);
+  color: var(--ink-0);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.thought {
+  border-left: 2px solid var(--line-2);
+  padding-left: var(--space-2);
+}
+
+.thoughtSummary {
+  display: flex;
+  gap: var(--space-2);
+  cursor: pointer;
+  font-size: var(--size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+
+.thoughtCount {
+  color: var(--ink-3);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.thoughtBody {
+  margin-top: var(--space-1);
+  font-size: var(--size-sm);
+  line-height: var(--line-body);
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---- §7.2's chip ---------------------------------------------------- */
+
+.chip {
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-2);
+  background: var(--ground-1);
+  padding: var(--space-2);
+}
+
+.chipHeader {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.chipName {
+  flex: 1 1 auto;
+  font-family: var(--font-mono);
+  font-size: var(--size-sm);
+  color: var(--ink-0);
+}
+
+.chipStatus {
+  flex: none;
+  font-size: var(--size-xs);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-1);
+  padding: 0 var(--space-1);
+  color: var(--ink-2);
+}
+
+.chipStatus[data-chip-status="ok"] {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.chipStatus[data-chip-status="error"] {
+  border-color: var(--fail);
+  color: var(--fail);
+}
+
+.chipStatus[data-chip-status="unknown"] {
+  border-color: var(--unknown);
+  color: var(--unknown);
+}
+
+.chipStatus[data-chip-status="running"] {
+  border-color: var(--accent-dim);
+  color: var(--accent);
+}
+
+.args {
+  margin-top: var(--space-1);
+  display: flex;
+  gap: var(--space-2);
+  font-size: var(--size-xs);
+  min-width: 0;
+}
+
+.argsLabel {
+  flex: none;
+  color: var(--ink-3);
+}
+
+.argsBody {
+  font-family: var(--font-mono);
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.fields {
+  margin: var(--space-2) 0 0;
+  display: grid;
+  gap: 1px;
+}
+
+.field {
+  display: grid;
+  grid-template-columns: minmax(0, 10rem) minmax(0, 1fr);
+  gap: var(--space-2);
+  padding: 1px 0;
+  font-size: var(--size-xs);
+}
+
+.field[data-field-reference="true"] .fieldName {
+  color: var(--accent);
+}
+
+.fieldName {
+  margin: 0;
+  font-family: var(--font-mono);
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+
+.fieldValue {
+  margin: 0;
+  font-family: var(--font-mono);
+  color: var(--ink-1);
+  overflow-wrap: anywhere;
+  max-height: 8rem;
+  overflow-y: auto;
+}
+
+.degraded {
+  margin-top: var(--space-2);
+  border-top: 1px dashed var(--line-2);
+  padding-top: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.rawResult {
+  font-size: var(--size-xs);
+  color: var(--ink-3);
+}
+
+.raw {
+  margin: var(--space-1) 0 0;
+  max-height: 12rem;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--size-xs);
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chipImages {
+  margin-top: var(--space-2);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* ---- §7.3's image, in its three states ------------------------------ */
+
+.image {
+  margin: 0;
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-1);
+  padding: var(--space-1);
+  max-width: 100%;
+}
+
+.imageBody {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-1);
+}
+
+.imagePlaceholder {
+  padding: var(--space-2);
+  background: var(--ground-2);
+  border-radius: var(--radius-1);
+  font-size: var(--size-xs);
+  color: var(--ink-2);
+  line-height: var(--line-body);
+}
+
+.imageCaption {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+  font-size: var(--size-xs);
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+}
+
+/* ---- §7.3's ask_user widget ----------------------------------------- */
+
+.ask {
+  border: 1px solid var(--accent-dim);
+  border-radius: var(--radius-2);
+  background: var(--ground-1);
+  padding: var(--space-2);
+}
+
+.askHeader {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.askTitle {
+  flex: 1 1 auto;
+  font-size: var(--size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+
+.askQuestion {
+  margin: var(--space-1) 0 var(--space-2);
+  font-size: var(--size-md);
+  line-height: var(--line-body);
+  color: var(--ink-0);
+}
+
+.askOptions {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.askOption {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: baseline;
+}
+
+.askButton {
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-1);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--size-sm);
+  color: var(--ink-1);
+  background: var(--ground-2);
+}
+
+.askButton:disabled {
+  color: var(--ink-3);
+  cursor: not-allowed;
+}
+
+.askConsequence {
+  font-size: var(--size-xs);
+  color: var(--ink-2);
+  line-height: var(--line-body);
+}
+
+.askConsequence[data-ask-consequence="absent"] {
+  color: var(--ink-3);
+  font-style: italic;
+}
+
+.askAnswer {
+  margin-top: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* ---- bands, seams, absences, breaks --------------------------------- */
+
+.audit {
+  margin: 0;
+  display: flex;
+  gap: var(--space-2);
+  font-size: var(--size-xs);
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+}
+
+.auditLabel {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.terminal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-2);
+  padding: var(--space-2);
+  background: var(--ground-2);
+  font-size: var(--size-xs);
+  color: var(--ink-1);
+}
+
+.terminalTitle {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+
+.terminal[data-terminal-state="failed"] {
+  border-color: var(--fail);
+}
+
+.terminal[data-terminal-state="cancelled"],
+.terminal[data-terminal-state="interrupted"],
+.terminal[data-terminal-state="timed_out"] {
+  border-color: var(--warn);
+}
+
+.terminalId {
+  font-family: var(--font-mono);
+  color: var(--ink-3);
+}
+
+.absence {
+  margin: 0;
+  border-left: 2px solid var(--line-2);
+  padding-left: var(--space-2);
+  font-size: var(--size-xs);
+  font-style: italic;
+  color: var(--ink-3);
+  line-height: var(--line-body);
+}
+
+/* §8: the boundary between history and live is a seam, not a silent join. */
+.seam {
+  margin: var(--space-2) 0;
+  border-top: 1px dashed var(--line-strong);
+  padding-top: var(--space-1);
+  font-size: var(--size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+
+/* §7.4: `resyncing` is visible. A labelled gap beats a silent one. */
+.resync {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  border: 1px dashed var(--warn);
+  border-radius: var(--radius-2);
+  padding: var(--space-2);
+  font-size: var(--size-xs);
+  color: var(--ink-1);
+  line-height: var(--line-body);
+}
+
+.resync[data-resync="gap"] {
+  border-style: solid;
+  border-color: var(--fail);
+}
+
+.resyncTitle {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--warn);
+}
+
+.resyncAfter {
+  font-family: var(--font-mono);
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+
+.note {
+  margin: 0;
+  font-size: var(--size-xs);
+  color: var(--ink-3);
+  line-height: var(--line-body);
+}

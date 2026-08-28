@@ -23,6 +23,9 @@ agent/      TypeScript on Node ≥22.19. Embedded Pi SDK sessions, generated CAD
 server/     Python. FastMCP + FastAPI + websockets; supervises the packaged
             Node agent sidecar over private JSON-RPC/stdio.
 web/        TypeScript, React 18, Vite, three.js, Monaco. pnpm workspace.
+            (Stage 4: driven as `pnpm --dir web …` with its own lockfile, like
+            `agent/`; see "Stage 4 `web/` accepted versions" below for why there
+            is no repository-root `pnpm-workspace.yaml`.)
 registries/ skills/ parts/ materials/ dfm/ — content, versioned in-repo for
             now; splits out post-v0.1 once the registry format stabilizes.
 corpus/     public_fixtures/ contains clean-room CAD contract/e2e projects;
@@ -105,6 +108,63 @@ docs/       generated/site-only mkdocs content and assets; links to root docs.
   fastmcp 3.4.4 + mcp 1.28.1 (protocol 2025-11-25);
   `@earendil-works/pi-coding-agent@0.80.10`;
   `@autonome-research/thread-phase@6.0.0`; bubblewrap 0.11.2.
+- **Stage 4 additions** (the web workspace API; see `INTERFACE.md` §2): Starlette
+  1.3.1 and uvicorn 0.51.0 are now *declared* dependencies of
+  `hephaestus-server` rather than transitive ones, because `server/http` imports
+  them directly and an undeclared transitive import is a dependency that
+  disappears the day `fastmcp` changes its own. They are the stack `fastmcp`
+  already serves streamable HTTP on, so `server/` gains no second web framework —
+  in particular, **not FastAPI**: `INTERFACE.md` §2 names no framework and a
+  second one buys nothing. `httpx` 0.28.1 is a dev dependency only, for
+  `starlette.testclient`. Python ranges stay ranges (`>=x,<y`) here as everywhere
+  else in `pyproject.toml`; the no-caret exact-pin rule above is the
+  `package.json` rule and is unchanged. `websockets` 16.1.1 joins them as a
+  *declared* dependency for the same reason: `GET /events` (`INTERFACE.md` §2.7)
+  needs uvicorn to serve a WebSocket, and `heph agent` client mode needs a
+  client for one, so relying on it arriving transitively through `fastmcp` would
+  be relying on someone else's dependency graph for a feature of ours.
+- **Stage 4 `web/` accepted versions** (the workspace client; see `INTERFACE.md`
+  §3 and §19 item 15). Exact pins, no caret or tilde, in `web/package.json` and
+  `web/pnpm-lock.yaml`, under the same no-semver-drift rule as `agent/`:
+  `react` 18.3.1 and `react-dom` 18.3.1 (React **18**, as the stack line above
+  says — React 19 is available and is deliberately not taken, because the stack
+  is stated in this file and a stack change is an amendment, not an upgrade);
+  `vite` 8.2.2 with `@vitejs/plugin-react` 6.1.0 (plugin 6 peers on Vite 8, so
+  the pair moves together); `typescript` 5.9.3; `three` 0.185.1 with
+  `@types/three` 0.185.4; `monaco-editor` 0.56.0; `@tanstack/react-query`
+  5.102.8; `@playwright/test` 1.62.1; `eslint` 9.39.5 with `@eslint/js` 9.39.5,
+  `typescript-eslint` 8.68.0 and `eslint-plugin-react-hooks` 7.1.1; `vitest`
+  4.1.11 with `jsdom` 30.0.1; `@types/react` 18.3.31, `@types/react-dom` 18.3.7,
+  `@types/node` 22.20.1.
+  **The CSS-module tooling is Vite's own** — `*.module.css` is a first-class
+  Vite input and needs no package, which is the whole reason §3 chose CSS
+  Modules plus a token file over a utility framework. There is deliberately no
+  component library, no icon package, and no state library: §3 names each
+  rejection and its reason.
+  **Bundle delivery** (§3, and the packaged-sidecar precedent): `pnpm --dir web
+  build` emits `web/dist/`, and the built assets ship **inside the wheel**,
+  served by `heph serve --web` from `importlib.resources`. Vite's dev server is
+  a development convenience proxying `/api` — the `/events` WebSocket
+  included — to a running `heph serve --web`; it is never a deployment.
+  The serving process composes the bundle **around** the API application
+  (`http/serve.py::with_bundle`), never inside it: `build_app`'s route surface
+  *is* §2.3's closed table and a boundary test asserts that in both directions,
+  so a static mount added to the app would have had to weaken the check that the
+  API serves nothing else. One origin for the operator, one closed table for the
+  API. With no `web/dist/` the server says so on stderr and serves the API alone.
+  **Gate G4's browser suite** (`pnpm --dir web test:e2e`) therefore needs
+  `pnpm --dir web build` first, plus `pnpm --dir web exec playwright install
+  chromium` once per machine; it runs against a real `heph serve --web` on
+  `corpus/public_fixtures/workspace/` and is described in `web/e2e/README.md`.
+  It is **renderer-pinned** through its G4.7 golden and is deferred in CI beside
+  `tests/render` for that one reason (see `.github/workflows/ci.yml`'s scope
+  note); it fails by name on an unmatched renderer rather than skipping.
+  `@autonome/hephaestus-web` stays reserved and unpublished.
+  `web/` is its own pnpm package driven as `pnpm --dir web …`, mirroring
+  `agent/`, and **not** a member of a repository-root pnpm workspace: a root
+  `pnpm-workspace.yaml` would hoist `agent/`'s lockfile, and
+  `pnpm --dir agent install --frozen-lockfile` is load-bearing in CI and in
+  `server/hatch_build.py`. Two packages, two lockfiles, one command shape.
 - **Stage 7H additions** (packaging; see `PACKAGING.md`): `@sinclair/typebox`
   is a *runtime* dependency of the sidecar, exact-pinned at `0.34.52` — it was
   declared under `devDependencies` with a caret through Stage 7G, so a
