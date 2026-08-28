@@ -341,9 +341,16 @@ jobs:
       - run: uv sync --dev
       - run: pnpm --dir agent install --frozen-lockfile
       - run: pnpm --dir agent build
+      # The G4 e2e harness starts a real `heph serve --web`, which refuses
+      # without BOTH a staged sidecar (its session routes answer
+      # agent_unavailable otherwise) and a built web bundle (it serves the API
+      # only otherwise). Same sequence release.yml lane (b) uses.
+      - run: pnpm --dir agent run bundle
+      - run: uv run python scripts/stage_sidecar.py
+      - run: pnpm --dir web install --frozen-lockfile
+      - run: pnpm --dir web build
       - run: uv run pytest tests/render -q
       - run: uv run pytest tests/stage4/test_g4_section_golden.py -q
-      - run: pnpm --dir web install --frozen-lockfile
       - run: pnpm --dir web test:e2e
 
   web-node:
