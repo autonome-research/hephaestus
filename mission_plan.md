@@ -488,6 +488,31 @@ through the normalized snapshot API, preserves quick-edit parent/child
 threading, and matches the previously archived event IDs. Screenshot artifacts
 archived.
 
+**G4 status (2026-08-28): CLOSED.** Every clause is green in CI on
+`2529d13` (run 33197851560), the first run in which the gate's own command
+executed on a machine other than the maintainer's. `pnpm --dir web test:e2e`
+passes 14/14 inside the pinned CI container image
+(`docker/ci/Dockerfile`, consumed by digest in ci.yml's `render goldens
+(pinned image)` job), against a real `heph serve --web` on the public
+clean-room fixture `corpus/public_fixtures/workspace/`, with the scripted
+model outside the served process. Landing that image also ended the Stage S
+deferral of `tests/render`: G1's golden corpus (25 tests) and the G4.7
+section golden now run in CI beside it, re-baselined inside the image
+(`llvmpipe (LLVM 20.1.2, 256 bits)`, Mesa 25.2.8) by the sanctioned
+`heph goldens --update` path. An independent verifier read every covering
+assertion rather than trusting names and reported 19/20 clauses green with
+one uncovered — mission rule 1's CI mapping for the browser gate — which
+this run closes. `INTERFACE.md` is the design spec the deliverables were
+built from; its §16 carries the deliverable-to-clause map.
+
+**Not claimed by G4, recorded 2026-08-28.** A product review of the running
+workspace found four gaps that are surface the gate never named: no prompt
+composer, no export path, no provider sign-in, and no design system. The
+first and last are Stage 4 surface and are owed under this gate's
+deliverable text; the other two require a new gated stage. See
+`docs/workspace-plan.md` and `INTERFACE.md` §0.2, §7A, §22, §23. A green G4
+is not a claim that the workspace is finished.
+
 ## Stage 5 — Interactive editing and provenance UX
 
 Deliverables: script editing in Monaco with rebuild-on-save and dirty
