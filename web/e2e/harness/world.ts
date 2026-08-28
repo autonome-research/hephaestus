@@ -47,16 +47,32 @@ export function world(): World {
   return cached;
 }
 
-/** One authorized read of the workspace API — the same route the app reads. */
-export async function api<T>(path: string, init?: RequestInit): Promise<T> {
+/**
+ * One request, with connection reuse refused.
+ *
+ * `Connection: close` is not a courtesy: Node pools keep-alive sockets, and a
+ * server that closes an idle one between our pooling it and our reusing it
+ * surfaces as `TypeError: fetch failed / SocketError: other side closed` in
+ * whichever test happens to reuse next. It cost G4.4 a run (33194568507) —
+ * the test that also spawns a subprocess, so it idles longest. A fresh socket
+ * per request removes the race rather than retrying through it, which would
+ * have hidden a real dropped connection just as effectively.
+ */
+async function request(path: string, init?: RequestInit): Promise<Response> {
   const { base_url, token } = world();
-  const response = await fetch(`${base_url}/api/v1${path}`, {
+  return await fetch(`${base_url}/api/v1${path}`, {
     ...init,
     headers: {
       ...(init?.headers ?? {}),
       Authorization: `Bearer ${token}`,
+      Connection: "close",
     },
   });
+}
+
+/** One authorized read of the workspace API — the same route the app reads. */
+export async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await request(path, init);
   if (!response.ok) {
     throw new Error(`GET ${path} -> ${String(response.status)} ${await response.text()}`);
   }
@@ -65,10 +81,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
 /** The exact stored bytes of an artifact (§2.6) — no transformation anywhere. */
 export async function apiBytes(path: string): Promise<Buffer> {
-  const { base_url, token } = world();
-  const response = await fetch(`${base_url}/api/v1${path}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const response = await request(path);
   if (!response.ok) {
     throw new Error(`GET ${path} -> ${String(response.status)} ${await response.text()}`);
   }
