@@ -36,6 +36,10 @@ concurrency:
 
 permissions:
   contents: read
+  # packages: read is for the `render goldens (pinned image)` job's pull of
+  # the private GHCR image — GHCR masks an unauthorized pull as "manifest
+  # unknown" (first-execution truth, run 33130222105).
+  packages: read
 
 env:
   UV_PYTHON: "3.13"
