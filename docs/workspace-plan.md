@@ -110,7 +110,7 @@ name.
 
 ### Item 3 — The design system layer · §3.4–§3.14, §4.7 · about a week
 
-**Machinery:** `web/src/system/` — twelve primitives, a two-layer token file,
+**Machinery:** a new `system/` directory under `web/src/` — twelve primitives, a two-layer token file,
 seven type roles, an 18-id icon sprite, `useBreakpoint`, `format.ts`. **No
 dependency is added.** Every dependency rejection in the original §3 survives
 review; what failed was ownership, and ownership is what a dependency cannot
@@ -138,7 +138,7 @@ checks, not clauses.
 
 **Acceptance evidence:** four static checks (`no-palette-token`, `no-raw-type`,
 `system-owns-status`, `token-contrast`); a `Badge` **component test** covering
-all six statuses including `not_run`; `web/e2e/design-system.spec.ts` over what
+all six statuses including `not_run`; a new `design-system` spec under `web/e2e/` over what
 the fixture actually reaches. **The migration's acceptance criterion is that the
 existing e2e needs no selector changes** — all 28 `data-*` selectors are
 preserved by the primitives that now own them.
