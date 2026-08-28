@@ -3,21 +3,14 @@
 # Scope note (v1, stock ubuntu runners). Everything excluded is excluded for ONE
 # documented reason — renderer pinning — rather than to make CI pass:
 #
-#   * tests/render (Gate G1 render goldens) — the committed PNGs are pinned to
-#     an exact Mesa/llvmpipe build (the sidecars assert the renderer version
-#     string and png_sha256, and the gate compares at SSIM >= 0.995). A stock
-#     ubuntu-latest image ships a different Mesa than the one the goldens were
-#     generated on, so the suite would fail on rasterizer drift rather than on
-#     a real regression. It runs locally today and moves here when the pinned
-#     CI container image lands (Stage S disposition).
-#   * tests/stage4/test_g4_section_golden.py and `pnpm --dir web test:e2e`
-#     (Gate G4.7) — the SAME pinning, and INTERFACE.md §14 says so explicitly:
-#     the browser gate runs "inside the same pinned CI container image as
-#     tests/render", because §5.3 makes the gated section render a *server*
-#     render bound to that image's rasterizer. They move when tests/render
-#     moves. Both fail BY NAME on an unmatched renderer rather than skipping, so
-#     the deferral can never quietly become a pass. The rest of tests/stage4 is
-#     not renderer-pinned and runs below on every PR.
+#   * tests/render, tests/stage4/test_g4_section_golden.py and
+#     `pnpm --dir web test:e2e` are excluded from the STOCK-runner jobs only:
+#     they are renderer-pinned (the golden sidecars assert the exact
+#     Mesa/llvmpipe renderer string) and run in the `render goldens (pinned
+#     image)` job below, inside the pinned CI container image the Stage S
+#     disposition called for — landed 2026-08-28 (docker/ci/Dockerfile,
+#     ci-image.yml). The rest of tests/stage4 is not renderer-pinned and runs
+#     on stock runners on every PR.
 #
 # Everything else runs in full — including the bubblewrap sandbox suites and
 # the escape probes, which the previous revision of this file excluded via
@@ -300,16 +293,48 @@ jobs:
   # repository-root pnpm workspace, because one would hoist `agent/`'s lockfile
   # and every `pnpm --dir agent install --frozen-lockfile` in these workflows.
   #
-  # `pnpm --dir web test:e2e` is NOT here — for the renderer-pinning reason in
-  # the scope note at the top of this file, and for no other reason. The suite
-  # itself is landed and green locally (14/14 against a real `heph serve
-  # --web`), but G4.7's section golden is a *server* render pinned to the exact
-  # Mesa/llvmpipe build of the pinned CI image (INTERFACE.md §14: the browser
-  # gate runs "inside the same pinned CI container image as tests/render").
-  # It moves here, with tests/render, when that image lands; both fail BY NAME
-  # on an unmatched renderer rather than skipping. (An earlier revision of this
-  # comment said the suite had not landed — that reason is obsolete; corrected
-  # 2026-08-28 when the independent G4 verifier flagged it as stale.)
+  # `pnpm --dir web test:e2e` is NOT here: it is the Gate G4 command and runs
+  # in the `render goldens (pinned image)` job above, inside the pinned image
+  # (INTERFACE.md §14). This job covers the non-renderer half of web/: unit
+  # tests, typecheck, lint, build.
+  # ------------------------------------------------ renderer-pinned goldens --
+  # The pinned CI container image (docker/ci/Dockerfile, built by ci-image.yml,
+  # consumed BY DIGEST — a digest bump here is a renderer re-baseline and lands
+  # with regenerated goldens). This job is where the renderer-pinned gates
+  # actually run: tests/render (G1 goldens), the G4.7 section golden, and the
+  # Gate G4 command `pnpm --dir web test:e2e`. Container options collected from
+  # first execution (commit f3a4d42): bwrap needs an unmasked /proc
+  # (systempaths=unconfined) plus unconfined seccomp/apparmor for user
+  # namespaces; pnpm needs CI=true and a store outside the checkout; git needs
+  # safe.directory inside the container.
+  render-goldens:
+    name: render goldens (pinned image)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container:
+      image: ghcr.io/autonome-research/hephaestus-ci@sha256:94dd58592d531dc6f93a18bb6d0757d553ecea6db29b963c1af38a440d06ce00
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: >-
+        --security-opt seccomp=unconfined
+        --security-opt apparmor=unconfined
+        --security-opt systempaths=unconfined
+        --cap-add SYS_ADMIN
+    env:
+      CI: "true"
+      npm_config_store_dir: /tmp/pnpm-store
+    steps:
+      - uses: actions/checkout@v4
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: uv sync --dev
+      - run: pnpm --dir agent install --frozen-lockfile
+      - run: pnpm --dir agent build
+      - run: uv run pytest tests/render -q
+      - run: uv run pytest tests/stage4/test_g4_section_golden.py -q
+      - run: pnpm --dir web install --frozen-lockfile
+      - run: pnpm --dir web test:e2e
+
   web-node:
     name: web (node)
     runs-on: ubuntu-latest

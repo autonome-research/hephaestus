@@ -184,6 +184,13 @@ docs/       generated/site-only mkdocs content and assets; links to root docs.
      `EGL_DEVICE_ID` (`LIBGL_ALWAYS_SOFTWARE` alone is insufficient); the CI
      image must ship Mesa with the surfaceless EGL platform (osmesa not
      required); matplotlib-Agg 3D is the proven byte-identical fallback.
+     **Pinned CI image (landed 2026-08-28):** `docker/ci/Dockerfile`, built by
+     `ci-image.yml`, consumed by digest in ci.yml's `render goldens (pinned
+     image)` job —
+     `ghcr.io/autonome-research/hephaestus-ci@sha256:94dd58592d531dc6f93a18bb6d0757d553ecea6db29b963c1af38a440d06ce00`,
+     renderer `llvmpipe (LLVM 20.1.2, 256 bits)` (Mesa 25.2.8, Ubuntu 24.04
+     base by digest). All render goldens and the G4.7 section golden are
+     baselined against it; a digest bump is a renderer re-baseline PR.
   3. MCP elicitation works over stdio and streamable HTTP; `ask_user` needs no
      fallback (decline/cancel assertions land in Stage 3).
   4. Production imports thread-phase ONLY via its `/session` and `/patterns`
