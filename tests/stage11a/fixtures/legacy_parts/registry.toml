@@ -1,0 +1,23 @@
+[registry]
+name = "stage11a-legacy-parts"
+kind = "parts"
+version = "1.0.0"
+license = "Apache-2.0"
+description = """
+FROZEN. Store parts with no `component` block, kept so G11A clause 1's
+"behaves exactly as today" evidence does not rest on the six shipped parts
+that named new work item 19 gives component blocks to — a gate reusing those
+for both roles would be asserting something it had just made false.
+
+Nothing in Stage 11 edits this tree. If a later stage needs a different legacy
+shape, it adds a part; it does not edit one, because the recorded fragment
+goldens beside this tree pin these bytes.
+"""
+
+[[parts]]
+id = "legacy_spacer"
+dir = "legacy_spacer"
+
+[[parts]]
+id = "legacy_washer"
+dir = "legacy_washer"

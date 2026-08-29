@@ -20,16 +20,17 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Final, cast
 
 from hephaestus.core.errors import ValidationError
 from opstore.types import JSONValue
 
+from ._component import TRADEMARK_DENY_LIST
 from ._dfm import DfmIndex
 from ._digest import merkle_digest, tree_leaves
-from ._errors import RegistryIntegrityError
-from ._layout import Registry, load_registry
+from ._errors import RegistryIntegrityError, RegistryRefusal
+from ._layout import MANIFEST_FILENAME, Registry, load_registry
 from ._materials import MaterialsIndex
 from ._parts import PartsIndex
 from ._skills import SkillsIndex
@@ -47,19 +48,83 @@ __all__ = [
 PUBLICATION_VERSION: Final[int] = 1
 
 
+#: Filenames a ``parts`` tree may contain (``PARTS_STORE.md`` §7.2). Blunt on
+#: purpose: a store tree has no legitimate reason to contain a binary, and the
+#: Merkle digest hashes every file it finds — so a smuggled vendor payload would
+#: otherwise be pinned and redistributed with the pack.
+_PARTS_TREE_FILES: Final[frozenset[str]] = frozenset(
+    {MANIFEST_FILENAME, "part.json", "generator.py"}
+)
+_PARTS_TREE_SUFFIXES: Final[frozenset[str]] = frozenset({".md"})
+
+
+def _scan_parts_payload(registry: Registry) -> None:
+    """Refuse any file in a ``parts`` tree that is not source, record or prose.
+
+    The operator's 2026-08-29 D3 decision is REFERENCE, DO NOT VENDOR: vendor
+    CAD, vendor PDFs and vendor artwork are referenced by URL and content hash,
+    never copied here. A rule stated only in prose is a rule an author can
+    forget, so the payload half is mechanical.
+    """
+    offending: list[str] = []
+    for path, _digest in tree_leaves(registry.root):
+        name = PurePosixPath(path).name
+        if name in _PARTS_TREE_FILES or PurePosixPath(path).suffix in _PARTS_TREE_SUFFIXES:
+            continue
+        offending.append(path)
+    if offending:
+        allowed = ", ".join(sorted(_PARTS_TREE_FILES)) + ", *.md"
+        raise RegistryRefusal(
+            "vendored_third_party_payload",
+            f"{registry.root}: a parts tree may contain only {allowed}; refusing to publish "
+            f"{', '.join(offending)} — third-party datasheets and vendor CAD are referenced "
+            "by URL and content hash, never vendored (PARTS_STORE.md §7.2)",
+            detail={"files": list(offending)},
+        )
+
+
+def _scan_component_trademarks(index: PartsIndex) -> None:
+    """Refuse a component id carrying a vendor mark (``PARTS_STORE.md`` §7.2).
+
+    Imperfect by construction — a deny-list cannot know every mark — which is
+    why it is one control and not the control: the human review of
+    ``docs/registry-contributions.md:27-31`` remains the real one. It is still
+    worth having, because it catches the ``<vendor>_<sku>`` id shape that a
+    contributor reaches for first.
+    """
+    for part_id in index.component_ids():
+        tokens = set(part_id.split("_"))
+        hits = sorted(mark for mark in TRADEMARK_DENY_LIST if mark in tokens or mark in part_id)
+        if hits:
+            raise RegistryRefusal(
+                "trademark_in_component_id",
+                f"component id {part_id!r} carries the vendor mark(s) {', '.join(hits)}; ids "
+                "are generic or standard-derived (bearing_608, stepper_nema17_frame), never "
+                "<vendor>_<sku> — a vendor name and part number are factual reference and "
+                "live in the datasheet block only (PARTS_STORE.md §7.2)",
+                detail={"id": part_id, "marks": list(hits)},
+            )
+
+
 def validate_content(registry: Registry) -> dict[str, int]:
     """Build every content index for ``registry``'s kind; return entry counts.
 
     This is what makes ``publish`` an end-to-end act rather than a hash: a
     registry whose manifest lists a file that is missing, a store part without a
     generator, or a DFM rule reading an undeclared parameter raises here and is
-    never published.
+    never published. For a ``parts`` tree it additionally runs the two
+    ``PARTS_STORE.md`` §7.2 scanners, which are publish-time and not load-time
+    because they are policy about *redistribution*, not about whether the tree
+    can be read.
     """
     kind = registry.kind
     if kind == "skills":
         return {"skills": len(SkillsIndex(registry).names())}
     if kind == "parts":
-        return {"parts": len(PartsIndex(registry).ids())}
+        _scan_parts_payload(registry)
+        index = PartsIndex(registry)
+        _scan_component_trademarks(index)
+        return {"parts": len(index.ids()), "components": len(index.component_ids())}
     if kind == "materials":
         return {"materials": len(MaterialsIndex(registry).ids())}
     index = DfmIndex(registry)

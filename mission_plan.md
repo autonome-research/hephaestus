@@ -796,6 +796,191 @@ stricter than the ceiling and is **not** relaxed by this approval.
   discovered file's secret, which appears nowhere in the opstore, the archived
   event goldens, the sidecar `stderr_tail`, or the bench evidence bundle.
 
+## Stage 11 — The component store (amendment 2026-08-29, operator-directed)
+
+Frontier-capability work under the engine-first decision recorded for Stage 8 —
+the optimal CAD harness outranks the soonest release. Recorded on the operator's
+2026-08-29 approval of the recommended build order in
+`docs/frontier-staging-proposal.md`, which puts the component store first of the
+five frontier capabilities and opens it as its own gated stage under rule 5.
+Normative spec: `PARTS_STORE.md` (the existing `parts` registry kind gains a
+validated component record, tagged mounting interfaces the consuming script can
+anchor 8C constraints and Stage 9 joints to, and a datasheet provenance
+discipline — no new registry kind, no new tool, no geom service, no solver, no
+inertia, no vendor payload). Stage 11 lands in three gated sub-stages, strictly
+ordered.
+
+- **11A — the component record** (`PARTS_STORE.md` §1, §4–§6, §8): a validated,
+  closed-vocabulary component record replacing the opaque `params` blob;
+  well-formedness refusals for class, interface, mass, performance-curve and
+  datasheet data; the `license` field made required at parse;
+  `duplicate_registry_kind` replacing the silent second-registry drop; the
+  publish-time `vendored_third_party_payload` and `trademark_in_component_id`
+  scanners; `heph registry components`; and the `geom_type` worker-protocol field
+  §2.3 needs.
+
+  **Gate G11A** (Tier 1): `uv run pytest tests/stage11a -q` exits 0 per
+  `PARTS_STORE.md` "Gates" — 24 clauses. Legacy fragment-**body** invariance and
+  digest honesty are separate clauses: a legacy part's fragment is byte-identical
+  to its golden *after the `# registry: … @ <digest>` line is elided*, and the
+  elided digest must equal the recomputed Merkle root. Whole-fragment byte
+  identity is not asserted and cannot be — the header carries the tree's root,
+  which this stage's own `part.json` edits move, and the earlier "byte-for-byte
+  including their fragments" claim was false and is withdrawn. Also: every named
+  record refusal, each naming what it refused; `param_schema_drift` refused at
+  index **and** at publish; contract drift with the 53-tool count **unchanged**
+  and the record-only result fields dispatched by both profiles; seam invariance
+  (the geom import-boundary tests enumerate exactly the nine existing pure
+  services — this stage adds none); worker-protocol drift with `geom_type` on
+  every `tag_fingerprints` entry and out-of-set values refused at parse; tamper
+  refusal and `publication_drift` naming exactly the modified file; the runtime
+  sandbox refusal re-asserted against a component generator's **body** region;
+  `heph registry components [--json]` byte-identical across two processes; and
+  determinism of every refusal reason and detail.
+
+- **11B — mounting interfaces as tagged geometry** (`PARTS_STORE.md` §2): a
+  fourth generator marker region under an exact AST contract, selectors rooted at
+  the published shape and evaluated **after** placement, instance-scoped
+  `__`-infix tag names whose re-tagging is a refusal rather than last-wins, and
+  declared-class verification at the caller's `pos`.
+
+  **Gate G11B** (Tier 1): `uv run pytest tests/stage11b -q` exits 0 per
+  `PARTS_STORE.md` "Gates" — 21 clauses, including `interface_region_violation`
+  enumerated against the AST contract rather than against the word "nested",
+  with the canonical region parsing clean as its negative control; the
+  `interface_body_local_reference` refusal, without which the post-placement
+  rewrite leaves a body local in the unplaced frame and the selector resolves to
+  a real face that is the wrong one; record ⇄ region interface-name set equality
+  in both directions; placement resolution at a non-trivial translation **and**
+  rotation, with a deliberately body-local-rooted fragment failing to resolve so
+  the clause has teeth; `interface_not_placed` firing in the **consumer's** build
+  where a hand-authored tag still only warns; file IO in the interface region
+  refused at index time and therefore before any such tree can be published or
+  pinned; the five-row class decision table verified positively and negatively;
+  `interface_placement_drift` with its documented necessary-not-sufficient limit
+  named; `duplicate_tag` on a doubly-pasted fragment; the 8C join end to end at a
+  non-zero `pos` through `satisfied` → `violated` → `unresolvable`; the Stage 9
+  joint join; the `interfaces` half of contract drift; and byte-identical
+  fragments across two processes below the elided digest header. `tests/stage8c`
+  and `tests/stage9a` stay green — both consume the resolver this sub-stage
+  feeds.
+
+- **11C — provenance, federation, and the corpus** (`PARTS_STORE.md` §7–§8): the
+  datasheet pointer block, the operator-declared ledger join (`cite.component` /
+  `cite.claim`), the `uncited_component_datum` lint rule, merged multi-registry
+  federation, and the `LEGAL-REVIEW.md` schema checker.
+
+  **Gate G11C** (Tier 1 + Tier 3): `uv run pytest tests/stage11c -q` exits 0 per
+  `PARTS_STORE.md` "Gates" — 15 clauses, including `datasheet_digest_mismatch`
+  firing positively on an operator-declared join **and staying silent absent
+  one** (the negative clause the earlier digest-inferred formulation could not
+  have had, because a join keyed on digest equality that fails on digest
+  inequality is logically empty); the component-claim citation round-tripping,
+  with `incomplete_component_cite` and an unknown id writing nothing; a core-only
+  install refusing a PDF reference with the named `capability_not_available`
+  rather than degrading; merged federation resolving a unique id bare and a
+  colliding id as `ambiguous_component_id` — a refusal, never a precedence rule;
+  both federated registries' digests visible in their own search results; and the
+  `LEGAL-REVIEW.md` schema checker asserted against fixtures for all five scope
+  fields. Tier 3: the component corpus family is **its own split**, baselined on
+  its own first measurement with the reference model at ≥3 seeds, neither
+  compared against nor averaged into the v1/v2/v3 baselines, and named — not
+  skipped. **Amended 2026-08-29** after a verifier scored the clause uncovered:
+  the split is machinery, not a promise. `hephaestus.bench.scoring` carries a
+  closed family vocabulary (`CORPUS_FAMILIES`), carves family runs out of *both*
+  spec splits so the 0.70 bar cannot be diluted by the plumbing, gives the family
+  its own thresholdless `component-prose` / `component-seeded` splits, and
+  refuses a first baseline below three seeds per task by the name
+  `insufficient_component_seeds`. The live reference-model numbers remain a
+  detached run — this repository fabricates none — but the properties the clause
+  protects are now enforced in code and asserted in `tests/stage11c`.
+
+  **Status of that Tier 3 row, stated so no matrix can round it up (2026-08-29,
+  second verifier pass).** Clause 12 has two halves and they have two kinds of
+  evidence. Its **machinery** is Tier 1 and closed: pytest assertions, run by
+  the `stage gates 11A-11C` CI job. Its **number** is Tier 3 and outstanding: no
+  `component_baseline.json` exists, taking it is a detached `heph bench run` at
+  ≥3 seeds with the epoch's reference model (rule 3) followed by
+  `heph bench score`, and it is archived bench evidence rather than a CI clause
+  — the same standing G9C's mechanism-split baseline has. The honest report of
+  this row is *machinery closed, measurement outstanding*, never green; and
+  `heph bench score` itself prints `component family: NOT MEASURED` on every
+  archive that ran no family task, so the absence is stated by the tool that
+  reads the evidence and not only by this paragraph.
+
+**Gates are commands here too (added 2026-08-29).** All three Stage 11 suites
+run in `.github/workflows/ci.yml`'s `stage gates 11A-11C` job, and that check
+name is required by `release.yml`'s prior-gate list. They were the only stage
+suites in the repository with no workflow lane when a verifier looked, which
+made them three Tier-1 gates that passed on a developer's machine — rule 1 says
+that is not a gate yet, and the lane closes it.
+
+**Licensing: reference, do not vendor (operator decision, 2026-08-29).** The
+store's value is mostly not geometry, so the licensing posture is a product
+decision and the operator made it, in these words:
+
+> "D3 licensing: REFERENCE, DO NOT VENDOR. Third-party datasheets and vendor CAD
+> are referenced by URL and content hash with their terms declared; they are not
+> copied into this repository. If a pack cannot be built without vendoring
+> something, that pack does not ship in this stage — say so loudly rather than
+> vendoring."
+
+This is `docs/frontier-staging-proposal.md` D3 option (b): clean-room geometry
+plus pointer-only datasheets. Option (c) — third-party federated packs under
+their own licenses — remains available later and only behind **both** the 11C
+federation gate and the fifth `LEGAL-REVIEW.md` scope field below. Option (d),
+vendor CAD payloads vendored into a registry tree, is refused permanently by this
+amendment, so that a later drafter must reverse a dated operator decision rather
+than a paragraph. The mechanical half is gate clauses, not good intentions:
+`vendored_third_party_payload` refuses any file in a `parts` tree that is not
+`registry.toml`, `part.json`, `generator.py` or `*.md`, and
+`trademark_in_component_id` refuses a vendor trademark as an id — with the honest
+limit stated, that a deny-list check is imperfect and the human review requiring
+a reviewer other than the author remains the real control.
+
+**The fifth `LEGAL-REVIEW.md` scope field.** The four scope fields G7 names do
+not cover third-party component data. Stage 11 adds a fifth required field —
+*third-party component data provenance and terms: which standards were used, that
+no vendor payload is vendored, and that every `datasheet` pointer's terms permit
+reference-by-citation* — and, because publication of a component pack is blocked
+until it is signed off while development is not, it carries the same
+blocks-publication-not-development force G7 already gives the review. Two things
+are said plainly rather than assumed. First, **this amendment does not edit G7's
+gate text**; whoever next amends G7 folds the fifth field into that checklist
+sentence, and until then the requirement lives here and in `PARTS_STORE.md` §7.
+Second, G7's "CI checks the file's schema" describes a checker that does not
+exist today — `scripts/docs_check.py` carries `LEGAL-REVIEW.md` only as a
+forward reference and nothing validates its fields — so Stage 11 **builds** that
+checker, for all five fields, and gates it at G11C rather than citing it as
+though it were already there.
+
+**Two tightenings under rule 1, landing with this stage.** The registry `license`
+field becomes required at parse (today `parse_manifest` reads it optionally, so
+an absent license silently becomes `""` and publishing copies it unchecked, while
+`registries/PUBLISHING.md` already claims publishing checks it), and `part.json`
+params become cross-checked against the generator's declared `PARAMS`. Neither is
+a waiver; both make an existing claim true.
+
+**Findings discipline (D5), satisfied before this block landed.** The adversarial
+pass against `PARTS_STORE.md` returned eight confirmed findings — five blocking,
+three major — and all eight were closed by **tightening**, never by deleting a
+clause for being hard to satisfy; one clause was re-sited rather than dropped when
+its original siting proved unreachable. The closures were then audited clause by
+clause against the code they cite rather than taken on the fix author's word, and
+six residuals found inside the closures were closed with them. `PARTS_STORE.md`
+is promoted from DRAFT to normative by this amendment.
+
+**Numbering, settled here.** D4 option (a) was resolved on 2026-08-28 —
+document number equals recommended execution order — and this block applies it:
+`PARTS_STORE.md` is document 13 and **Stage 11**. Mesh and scan ingest
+(`MESH_INGEST.md`) is Stage 12, pose solving and placement proposal Stage 13,
+computer-aided manufacturing Stage 14, structural analysis Stage 15. The
+ready-to-paste blocks in `docs/frontier-staging-proposal.md` §3 predate that
+resolution and still label mesh ingest "Stage 11"; that document is the approved
+plan, not a normative contract, and **this amendment is what settles the
+collision**: Stage 11 is the component store, and no other stage takes the
+number. No other stage's gate text is edited by this block.
+
 ## Mission-wide rules
 
 1. **Gates are commands.** Every criterion above maps to a CI job; the

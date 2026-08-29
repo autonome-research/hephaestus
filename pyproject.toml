@@ -66,12 +66,17 @@ target-version = "py311"
 # same category: verbatim model-authored part scripts, not project source, as is
 # server/tests/fixtures/ (the recorded bracket-101 seed-2 failure the Stage 2V
 # critique tests assert over — reformatting it would edit the evidence).
+# tests/stage11a/fixtures/ is the same category twice over: a frozen legacy
+# `parts` registry whose generators are part scripts against the injected
+# namespace, plus the recorded pre-item-19 `part.json` bytes — and it is
+# *frozen*, so a formatter touching it would move a Merkle root the gate pins.
 extend-exclude = [
     "bench",
     "spikes",
     "corpus",
     "registries",
     "tests/stage3/fixtures",
+    "tests/stage11a/fixtures",
     "server/tests/fixtures",
     "*.md",
 ]

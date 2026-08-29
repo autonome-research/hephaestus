@@ -4,10 +4,22 @@ kind = "parts"
 version = "0.1.0"
 license = "Apache-2.0"
 description = """
-Minimal metric-hardware parts store: socket-head cap screws and heat-set
-inserts as thread-free DIN/nominal envelopes. Every generator is an ordinary
-part script and executes only under the secure sandbox.
+Metric-hardware parts store: socket-head cap screws and heat-set inserts as
+thread-free DIN/nominal envelopes, plus the mechanism components a bearing
+seat, a motor mount or a gear train is built against — all of them
+standard-derived envelopes with tagged mounting interfaces. Every generator is
+an ordinary part script and executes only under the secure sandbox. Nothing
+here transcribes a vendor drawing or redistributes a vendor payload
+(PARTS_STORE.md §7).
 """
+
+[[parts]]
+id = "bearing_608"
+dir = "bearing_608"
+
+[[parts]]
+id = "gear_module1_z20"
+dir = "gear_module1_z20"
 
 [[parts]]
 id = "heatset_insert_m3"
@@ -32,3 +44,7 @@ dir = "screw_socket_head_m4"
 [[parts]]
 id = "screw_socket_head_m5"
 dir = "screw_socket_head_m5"
+
+[[parts]]
+id = "stepper_nema17_frame"
+dir = "stepper_nema17_frame"

@@ -117,7 +117,8 @@ def wide_skill(tmp_path: Path) -> Path:
     skills = root / "skills"
     skills.mkdir(parents=True)
     (skills / MANIFEST_FILENAME).write_text(
-        '[registry]\nname = "wide"\nkind = "skills"\nversion = "0.0.1"\n\n'
+        '[registry]\nname = "wide"\nkind = "skills"\nversion = "0.0.1"\n'
+        'license = "Apache-2.0"\n\n'
         '[[skills]]\nname = "wide"\nfile = "wide.md"\nsummary = "one enormous line"\n',
         encoding="utf-8",
     )

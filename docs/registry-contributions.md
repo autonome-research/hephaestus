@@ -153,6 +153,43 @@ executable registry content under the same sandbox as DFM predicates and part
 scripts. Prefer a generator parameterised over a standard (an M3 socket-head
 screw across its length range) over one that emits a single frozen size.
 
+## Adding a component
+
+A part whose `part.json` carries a `component` block is a **component**: a
+record with declared mounting interfaces, provenance and licensing, validated at
+index time so every violation is a named refusal rather than prose nobody reads.
+`PARTS_STORE.md` is normative and `registries/PUBLISHING.md` is the authoring
+guide; what belongs here is the part a *contributor* has to decide before
+writing anything.
+
+**Decide the licensing question first, because it can stop the pack.** The
+2026-08-29 operator decision is *reference, do not vendor*: you may ship your own
+generator source and the nominal dimensions of a published standard, you may
+reference a datasheet by URL and content hash with its terms declared, and you
+may not copy a vendor payload — CAD, PDF, drawing image, artwork — or transcribe
+a vendor table wholesale, or use a vendor trademark as an id. **If a pack cannot
+be authored without vendoring something, that pack does not ship. Say so loudly
+rather than vendoring.** A `datasheet` pointer's `sha256` is the digest of the
+exact document the numbers came from; if you did not obtain that document, you
+do not have a pointer, and inventing a hash is fabricating provenance.
+
+**Declare interfaces you actually emit.** The record's interface names and the
+generator's `interface` region must be the same set — a declared interface
+nothing emits is exactly the `mating_features` failure this store exists to
+stop. Order every selector by a measure (area, radius, distance between two
+pieces of the same placed shape), never by a world axis: the consumer places
+your component, and `sort_by(Axis.Z)[-1]` silently picks a different face once
+they do. Where the geometry is symmetric enough that no measure separates two
+candidates, either model the feature that really breaks the symmetry — a motor's
+lead exit does — or do not declare the interface.
+
+**Say where every number came from.** The same rule as materials, applied to
+components: `mass.source` is `datasheet`, `standard` or `computed`, each with
+its own required evidence, and a `claims` entry must cite a page and a quote in
+the record's own datasheet block. Nothing in Hephaestus evaluates a performance
+curve, so a claim is reference material — it becomes a commitment only when
+someone records it as a ledger entry citing the registered document.
+
 ## Adding a skill
 
 One markdown page per skill, with a `summary` in the index that is honest about
@@ -205,4 +242,16 @@ mismatch is told which files moved rather than merely that the hash did.
 - [ ] Skills and materials read as reference material, not as instructions.
 - [ ] Content is licensed for redistribution.
 - [ ] Nothing names a bench corpus task or reproduces its target geometry.
-- [ ] A maintainer other than you has reviewed it.
+- [ ] **Components only:** no vendor payload of any kind is in the tree (the
+      publish-time scanner refuses anything but `registry.toml`, `part.json`,
+      `generator.py` and `*.md`, but it is not the control — you are).
+- [ ] **Components only:** no id names a vendor product, and every number is
+      standard-derived or required by a declared interface or claim.
+- [ ] **Components only:** every `datasheet` pointer names a document you really
+      obtained, its `sha256` is that document's digest, and its terms permit
+      reference-by-citation.
+- [ ] **Components only:** every declared interface is emitted, ordered by a
+      measure, and its declared class is the topology that actually builds.
+- [ ] A maintainer other than you has reviewed it. For a component pack,
+      publication is additionally blocked until `LEGAL-REVIEW.md`'s third-party
+      component data scope field is signed off — development is not.

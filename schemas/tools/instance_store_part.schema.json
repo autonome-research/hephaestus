@@ -8,6 +8,18 @@
       "id": {
         "type": "string"
       },
+      "instance": {
+        "anyOf": [
+          {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
       "params": {
         "type": "object"
       },
@@ -34,6 +46,21 @@
       {
         "additionalProperties": true,
         "properties": {
+          "claims": {
+            "type": "string"
+          },
+          "datasheet": {
+            "type": "object"
+          },
+          "interfaces": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "mass": {
+            "type": "object"
+          },
           "script_fragment": {
             "type": "string"
           }

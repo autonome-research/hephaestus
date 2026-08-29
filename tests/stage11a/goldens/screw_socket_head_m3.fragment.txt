@@ -1,0 +1,35 @@
+# M3 socket-head cap screw (DIN 912 envelope) — parts-store instance at (4, -1.5, 2) mm, rotated (0, 0, 30)deg.
+# registry: <elided: the tree's Merkle root>
+# Reference geometry from a pinned registry: review it, then compose
+#   _screw_socket_head_m3_16308f into part.geometry (e.g. Compound(children=[..., _screw_socket_head_m3_16308f])).
+
+_screw_socket_head_m3_16308f_length = 12.0
+_screw_socket_head_m3_16308f_head_d = 5.5
+_screw_socket_head_m3_16308f_head_h = 3.0
+_screw_socket_head_m3_16308f_shank_d = 3.0
+_screw_socket_head_m3_16308f_socket_af = 2.5
+_screw_socket_head_m3_16308f_socket_depth = 2.0
+# A hexagon's across-flats distance AF gives circumradius AF / sqrt(3).
+_screw_socket_head_m3_16308f_socket_r = _screw_socket_head_m3_16308f_socket_af / math.sqrt(3.0)
+_screw_socket_head_m3_16308f_head = Cylinder(_screw_socket_head_m3_16308f_head_d / 2, _screw_socket_head_m3_16308f_head_h, align=(Align.CENTER, Align.CENTER, Align.MIN))
+_screw_socket_head_m3_16308f_shank = Cylinder(_screw_socket_head_m3_16308f_shank_d / 2, _screw_socket_head_m3_16308f_length, align=(Align.CENTER, Align.CENTER, Align.MAX))
+_screw_socket_head_m3_16308f_socket = extrude(
+    Plane.XY.offset(_screw_socket_head_m3_16308f_head_h) * RegularPolygon(_screw_socket_head_m3_16308f_socket_r, 6), amount=-_screw_socket_head_m3_16308f_socket_depth
+)
+_screw_socket_head_m3_16308f_screw = (_screw_socket_head_m3_16308f_head + _screw_socket_head_m3_16308f_shank) - _screw_socket_head_m3_16308f_socket
+_screw_socket_head_m3_16308f_screw.color = Color(0.62, 0.64, 0.67)
+_screw_socket_head_m3_16308f_screw.label = "screw_socket_head_m3"
+_screw_socket_head_m3_16308f = Pos(4.0, -1.5, 2.0) * Rot(0.0, 0.0, 30.0) * _screw_socket_head_m3_16308f_screw
+_screw_socket_head_m3_16308f.label = "screw_socket_head_m3"
+# PARTS_STORE.md §2.1: every selector is rooted at the published shape and is
+# ordered by a MEASURE, never by a world axis — a measure survives the Pos/Rot
+# the consumer applies, and `sort_by(Axis.Z)` does not.
+#
+# The head outer and the shank are the only two cylinders, and the head is the
+# larger radius at every declared length. The head top (a disc with the hex
+# socket cut out of it) is the largest planar face and the bearing face is the
+# next largest, at every size and every length in the declared range; the hex
+# flats, the socket floor and the shank end are all smaller.
+tag(_screw_socket_head_m3_16308f.faces().filter_by(GeomType.PLANE).sort_by(SortBy.AREA)[-2], "screw_socket_head_m3_16308f__head_bearing_face")
+tag(_screw_socket_head_m3_16308f.faces().filter_by(GeomType.CYLINDER).sort_by(SortBy.RADIUS)[-1], "screw_socket_head_m3_16308f__head_outer")
+tag(_screw_socket_head_m3_16308f.faces().filter_by(GeomType.CYLINDER).sort_by(SortBy.RADIUS)[0], "screw_socket_head_m3_16308f__shank")

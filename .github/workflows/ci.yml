@@ -234,6 +234,40 @@ jobs:
           uv run pytest
           tests/stage9a tests/stage9b tests/stage9c -q
 
+  # ---------------------------------------------------- stage gates 11A-11C --
+  # Gates G11A (the component record), G11B (mounting interfaces as tagged
+  # geometry), G11C Tier 1 (provenance, federation, the component corpus) —
+  # PARTS_STORE.md §Gates. Mission rule 1: gates are commands, so all three
+  # Tier-1 suites run on every PR here rather than on a developer's machine.
+  #
+  # Prerequisites, and why each one: bubblewrap plus unrestricted unprivileged
+  # user namespaces for G11A's runtime-sandbox refusal against a component
+  # generator's body region, and the Mesa software stack for the corpus tasks
+  # G11C clause 11 grades through the engine path. No Node: the contract-drift
+  # clauses compare the committed agent/src/tools/schema.gen.ts against the
+  # generator's output in-process, and nothing in these suites spawns the
+  # bridge — a prerequisite this lane does not need is noise, not safety.
+  #
+  # G11C clause 12's Tier 3 component-family baseline is archived bench
+  # evidence, not a CI clause, exactly as the G9C mechanism-split baseline
+  # above is (PARTS_STORE.md Gate G11C clause 12, "the measurement").
+  stages11:
+    name: stage gates 11A-11C
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: sandbox + renderer prerequisites
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q bubblewrap libegl1 libgl1 libgl1-mesa-dri libglx-mesa0
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: uv sync --dev
+      - run: >
+          uv run pytest
+          tests/stage11a tests/stage11b tests/stage11c -q
+
   # ------------------------------------------------------- server + bridge --
   server:
     name: server (shard ${{ matrix.shard }}/3)

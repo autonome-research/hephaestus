@@ -1,0 +1,41 @@
+{
+  "id": "bearing-shaft",
+  "prompt": "Build a shaft carried on two ball bearings, as the two parts `shaft` and `bearings`.\n\nThe shaft runs along Z from z = 0 to z = 60. It is a plain turned shaft: a 7.98 mm diameter journal over its whole length, with a 12 mm diameter collar between z = 13 and z = 47 that the bearings seat against. The journal diameter and the shaft's interface numbers are already in the project's `globals.py` - read them through `hc` instead of repeating them. Tag the lower journal `journal_a` and the upper one `journal_b`.\n\nThe `bearings` part holds the hardware: two 608 deep-groove ball bearings from the parts store (`bearing_608`), one seated at z = 6 and one at z = 47. The store's envelope is an 8 mm bore, 22 mm outside diameter and 7 mm width, with its origin on the back face on the bore axis, so an instance placed at those Z heights lands against the collar. Instance them as `brg_a` and `brg_b` so their emitted interface tags do not collide, and paste the fragments the store returns - the bore tags come with them.\n\nThe fit matters: each bearing bore must run free on its journal, not press onto it. Declare the two fits so the harness can measure them - `brg_a__bore` against `journal_a`, `brg_b__bore` against `journal_b`, radial clearance between 0.004 and 0.03 mm.\n\nBuild both parts when the geometry is right.",
+  "budget_tool_calls": 19,
+  "required_checks": [
+    "bearing_shaft"
+  ],
+  "export_requirements": [],
+  "render_requirements": [],
+  "constraint_requirements": [
+    {
+      "entry": {
+        "id": "c-fit-a",
+        "kind": "fit",
+        "a": "bearings:brg_a__bore",
+        "b": "shaft:journal_a",
+        "min_mm": 0.004,
+        "max_mm": 0.03,
+        "note": "the lower bearing must run free on its journal, not press onto it"
+      },
+      "expect": "satisfied"
+    },
+    {
+      "entry": {
+        "id": "c-fit-b",
+        "kind": "fit",
+        "a": "bearings:brg_b__bore",
+        "b": "shaft:journal_b",
+        "min_mm": 0.004,
+        "max_mm": 0.03,
+        "note": "and so must the upper one, on the same journal diameter"
+      },
+      "expect": "satisfied"
+    }
+  ],
+  "protected_paths": [],
+  "notes": "Difficulty 3. Corpus v4 (2026-08-29, PARTS_STORE.md Stage 11 / G11C clause 11): the first public task graded on a store COMPONENT's own emitted interface tags. The bearings are `bearing_608` instances pasted as `instance_store_part` rendered them, both at a non-zero pos, and the two task-owned `fit` constraints anchor on the tags the store's interface region emits (`brg_a__bore`, `brg_b__bore`) rather than on anything the run had to retype - which is exactly what the retired `mating_features` field could not do. A run that models the journals at nominal 8 mm passes every CHECKS window and FAILS both fits at 0.0 mm clearance, so the graded property really is the fit. CHECKS keep the single-part facts: shaft envelope, stepped volume, genus 0, the store envelope's exact material volume over two bearings, their span, and no interference. Budget derivation (measured policy, VALIDATION.md §7): no archived observe-mode journals exist for this task yet, so only the hand-count reference path binds - record_requirements 1, search_parts_store 1, instance_store_part 2, create_part 2, write_part 2, build_part 2, declare_constraint 2, check_assembly 1, run_checks 1 = 14 calls; ceil(1.3 x 14) = 19. Recalibrate against the observed passing max after the first archived sweep, per the 2026-08-25 measured-budget policy.",
+  "dfm_requirements": [],
+  "drawing_requirements": [],
+  "metadata_requirements": []
+}

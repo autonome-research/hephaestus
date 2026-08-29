@@ -39,3 +39,28 @@ _insert = (_body + _knurl) - _bore
 _insert.color = Color(0.72, 0.58, 0.3)
 _insert.label = "heatset_insert_m5"
 part.geometry = _insert
+
+# --- hephaestus-store: interface ---
+# PARTS_STORE.md §2.1: every selector is rooted at the published shape and is
+# ordered by a MEASURE — area, radius, distance between shapes — never by a
+# world axis. A measure is invariant under the placement the consumer applies;
+# `sort_by(Axis.Z)[-1]` is not, and would silently pick a different face once
+# the insert is instanced under a rotation.
+#
+# The bore and the knurl are the unique smallest- and largest-radius cylinders,
+# so radius alone names them. The top and bottom annuli are CONGRUENT — equal
+# area, equal geometry — so area alone cannot tell them apart. The knurl band
+# sits near the top by construction, so the nearer of the two large annuli to
+# the knurl face is the top face, and that distance is measured between two
+# pieces of the same placed shape.
+tag(
+    _insert.faces()
+    .filter_by(GeomType.PLANE)
+    .sort_by(SortBy.AREA)[-2:]
+    .sort_by_distance(
+        _insert.faces().filter_by(GeomType.CYLINDER).sort_by(SortBy.RADIUS)[-1]
+    )[0],
+    "top_face",
+)
+tag(_insert.faces().filter_by(GeomType.CYLINDER).sort_by(SortBy.RADIUS)[0], "bore")
+tag(_insert.faces().filter_by(GeomType.CYLINDER).sort_by(SortBy.RADIUS)[-1], "knurl")

@@ -482,16 +482,56 @@ Score an archived run directory into `bench/results/<model>/<date>.json`.
 ```console
 $ heph bench score bench/results/gpt-5.6-sol/2026-07-29
 model gpt-5.6-sol date 2026-07-29: 54/72 passed
-split      n   passes  pass_rate  wilson_lower_90  threshold
-prose      36     25      0.694            0.5894       0.70
-seeded     36     29      0.806            0.7085       -
+split            n   passes  pass_rate  wilson_lower_90  threshold  min_seeds
+prose           36     25      0.694            0.5894       0.70       3
+seeded          36     29      0.806            0.7085       -          3
 interpretation_gap (seeded - prose): 0.111
 gate: prose split only (the historical baseline)
 …
 ```
 
 Exit code 1 when the gate is not met — the transcript above is a real run that
-did not meet it.
+did not meet it. (Its numbers are that run's; the column layout is the current
+renderer's, which grew a `min_seeds` column and family rows with
+`PARTS_STORE.md` G11C clause 12. **The two `min_seeds` values are the only
+reconstructed cells** — they were derived from the recorded 36-run/12-task shape
+rather than re-measured, because that archive has since grown and re-scoring the
+directory today reports a larger, differently shaped run. Everything else is as
+printed.)
+
+**Corpus families.** A corpus *family* — currently just `component`, the Stage 11
+component-bearing mechanism tasks — is its own split per spec
+(`component-prose`, `component-seeded`), printed in the same table, carrying no
+threshold, and **carved out of the gated prose number** so a growing corpus
+cannot dilute the 0.70 bar it was baselined over. `score` also writes
+`component_baseline.json` beside the result artifact: the family's *first*
+measurement, never re-baselined, and never comparable to the v1/v2 baselines. A
+first measurement below three distinct seeds per task is refused by name
+(`insufficient_component_seeds`) and printed on stderr with nothing written,
+because a thin first measurement would become the family's permanent reference
+number.
+
+An archive that ran **no** family task says so rather than saying nothing:
+
+```console
+component family: NOT MEASURED — no bearing-shaft, motor-plate runs in this
+archive and no bench/results/<model>/component_baseline.json. PARTS_STORE.md
+G11C clause 12's reference-model baseline is outstanding.
+```
+
+The line names both tasks and the file that would hold the answer, and it stops
+once that file exists (the archive then reads "not measured in this archive;
+baseline already recorded in …"). It is there because the family's *machinery*
+is gated in CI while the family's *number* is a detached run: without the line,
+a reader of a green gate matrix would reasonably infer a baseline that does not
+exist.
+
+The two split-scoring keys behave differently in the artifact on purpose:
+`min_seeds_per_task` is written into `bench/results/<model>/<date>.json` for
+family splits **only** — that is where its one reader, the ≥3-seed floor, looks
+— so re-scoring an archive measured before Stage 11 reproduces its stored file
+byte for byte. The table above prints the column for every split regardless; a
+printed table is not archived evidence.
 
 ### `heph bench leaderboard`
 

@@ -112,13 +112,22 @@ def test_the_corpus_count_pin_is_nineteen_with_the_mechanism_trio() -> None:
     has drifted: nineteen public tasks, the mechanism trio among them, each
     trio member shipped in BOTH spec variants (prose + seeded, the
     VALIDATION.md §1 rule corpus expansion must not breach).
+
+    Count repointed 2026-08-29 by PARTS_STORE.md Stage 11 (G11C clause 13),
+    which adds the component-bearing pair; the mechanism assertions below are
+    untouched.
     """
     prose = {task.id for task in load_tasks(specs=("prose",))}
-    assert len(prose) == 19, "corpus v3 is nineteen public tasks (KINEMATICS.md Stage 9C)"
+    # Repointed 2026-08-29 (PARTS_STORE.md Stage 11, G11C clause 13): corpus v4
+    # adds the component-bearing pair `bearing-shaft` and `motor-plate`. What
+    # THIS clause pins is unchanged — the mechanism trio is still present, in
+    # both spec variants — so only the total moved, and it is asserted as the
+    # total rather than as "nineteen".
+    assert len(prose) == 21, "corpus v4 is twenty-one public tasks (PARTS_STORE.md Stage 11)"
     assert prose >= MECHANISM_TRIO
     seeded = {task.id for task in load_tasks(specs=("seeded",))}
     assert {f"{task_id}@seeded" for task_id in MECHANISM_TRIO} <= seeded
-    assert len(seeded) == 19
+    assert len(seeded) == 21
 
 
 def _assert_hinge_acceptance(task: BenchTask, report: GradeReport) -> None:

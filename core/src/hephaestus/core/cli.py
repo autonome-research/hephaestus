@@ -77,7 +77,14 @@ from hephaestus.core.executor.sandbox.base import (
 )
 from hephaestus.core.executor.sandbox.probe import cached_probe, secure_backend
 from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
-from hephaestus.core.lint import lint_part_script, lint_requirements, requirement_entries
+from hephaestus.core.lint import (
+    ComponentClaimFacts,
+    ComponentDatum,
+    lint_component_citations,
+    lint_part_script,
+    lint_requirements,
+    requirement_entries,
+)
 from hephaestus.core.project_store.layout import (
     GLOBALS_FILENAME,
     PARTS_DIRNAME,
@@ -430,6 +437,57 @@ def _reference_text(root: Path | None) -> tuple[dict[str, tuple[str, ...]], tupl
     return (documents, images)
 
 
+def _reference_digests(root: Path | None) -> dict[str, str]:
+    """``{reference name: sha256:…}`` — the left-hand side of §7.4's join."""
+    if root is None:
+        return {}
+    from hephaestus.core.project_store.references import ReferenceRegistry
+
+    layout = load_project(root)
+    store = open_store(layout)
+    try:
+        registry = ReferenceRegistry(layout, store)
+        return {entry.name: entry.sha256 for entry in registry.list_references()}
+    finally:
+        store.close()
+
+
+def _component_facts(
+    root: Path | None,
+) -> tuple[tuple[ComponentDatum, ...], dict[str, ComponentClaimFacts]]:
+    """The §6.3 / §7.4 join's right-hand side, read once from the pinned registries.
+
+    ``lint.py`` imports no registry — it is AST and JSON analysis — so the
+    resolution happens here and the facts are injected. A project with no
+    registries, or one whose trees carry no component records, yields empty maps
+    and both rules stay silent, which is the same "no data, no finding" posture
+    the reference-text resolution above takes.
+    """
+    if root is None:
+        return ((), {})
+    from hephaestus.core.registry import RegistrySet
+
+    registries = RegistrySet.open(root)
+    data: list[ComponentDatum] = []
+    facts: dict[str, ComponentClaimFacts] = {}
+    for part_id in registries.parts.component_ids():
+        component = registries.parts.get(part_id).component
+        if component is None:  # pragma: no cover - component_ids filters these out
+            continue
+        datasheet = component.datasheet
+        facts[part_id] = ComponentClaimFacts(
+            claim_ids=frozenset(claim.id for claim in component.claims),
+            datasheet_sha256=None if datasheet is None else datasheet.sha256,
+        )
+        for claim in component.claims:
+            for sample in claim.samples:
+                data.extend(
+                    ComponentDatum(value=float(axis), component=part_id, claim=claim.id)
+                    for axis in sample
+                )
+    return (tuple(data), facts)
+
+
 def _cmd_lint(args: argparse.Namespace) -> int:
     json_out = bool(args.json)
     path = Path(cast("str", args.path))
@@ -457,12 +515,23 @@ def _cmd_lint(args: argparse.Namespace) -> int:
             raise _UsageError(f"no such requirements file: {ledger_path}")
         entries = requirement_entries(json.loads(ledger_path.read_text(encoding="utf-8")))
         ledger_ids = [str(entry.get("id", "")) for entry in entries]
+    component_data, component_facts = _component_facts(root)
     findings = lint_part_script(
         source,
         globals_source=globals_source,
         filename=str(path),
         ledger_ids=ledger_ids,
+        component_data=component_data,
     )
+    if raw_requirements is not None:
+        # PARTS_STORE.md §7.4. Unlike `lint_requirements`, this needs no request
+        # text: the join is between the ledger, the reference registry and the
+        # component record, and none of those is the prompt.
+        findings = findings + lint_component_citations(
+            entries,
+            reference_digests=_reference_digests(root),
+            components=component_facts,
+        )
     raw_request = cast("str | None", args.request)
     if raw_request is not None:
         request_path = Path(raw_request)

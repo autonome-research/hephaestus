@@ -56,11 +56,13 @@ from hephaestus.bench.harness import (
 )
 from hephaestus.bench.scoring import (
     CORPUS_V1_TASKS,
+    FAMILY_COMPONENT,
     G2_AGGREGATE_THRESHOLD,
     G6_AGGREGATE_THRESHOLD,
     PERFECT_TASKS,
     aggregate_threshold,
     score_records,
+    task_family,
     wilson_lower_bound,
 )
 from hephaestus.core.executor.sandbox.bwrap import find_bwrap
@@ -131,7 +133,18 @@ CORPUS_V2_ADDITIONS: tuple[tuple[str, int], ...] = (
 #: pose-bound closure fit, ``leadscrew-actuator``'s screw register,
 #: ``hinge-travel``'s pose-bound open-limit stand-clear).
 CONSTRAINT_TASKS: frozenset[str] = frozenset(
-    {"hinge-mate", "shaft-coupler", "gripper-jaws", "leadscrew-actuator", "hinge-travel"}
+    {
+        "hinge-mate",
+        "shaft-coupler",
+        "gripper-jaws",
+        "leadscrew-actuator",
+        "hinge-travel",
+        # Corpus-v4 (2026-08-29, PARTS_STORE.md Stage 11): both constraint
+        # anchors on the component side are tags the parts store's own
+        # interface region emitted, not names the run retyped.
+        "bearing-shaft",
+        "motor-plate",
+    }
 )
 
 #: Corpus v3 (2026-08-27, KINEMATICS.md §6 Stage 9C): the mechanism tasks,
@@ -150,8 +163,22 @@ CORPUS_V3_ADDITIONS: tuple[tuple[str, int], ...] = (
     ("leadscrew-actuator", 41),
 )
 
-#: The whole public split as it stands (v1 + the v2 and v3 additions).
-CORPUS: tuple[tuple[str, int], ...] = CORPUS_V1 + CORPUS_V2_ADDITIONS + CORPUS_V3_ADDITIONS
+#: Corpus v4 (2026-08-29, PARTS_STORE.md Stage 11 / G11C clause 11): the
+#: component-bearing tasks, graded on the interface tags a store COMPONENT's own
+#: generator emits at a non-zero pos — a `fit` on a bearing bore, a `coincident`
+#: on a motor mount face and a `concentric` on its bolt circle. Budgets are dated
+#: hand-count derivations per the 2026-08-25 measured-budget policy; no
+#: observe-mode journals exist for them yet, and each task.json's ``notes``
+#: carries the derivation.
+CORPUS_V4_ADDITIONS: tuple[tuple[str, int], ...] = (
+    ("bearing-shaft", 19),
+    ("motor-plate", 17),
+)
+
+#: The whole public split as it stands (v1 + the v2, v3 and v4 additions).
+CORPUS: tuple[tuple[str, int], ...] = (
+    CORPUS_V1 + CORPUS_V2_ADDITIONS + CORPUS_V3_ADDITIONS + CORPUS_V4_ADDITIONS
+)
 
 #: Tasks whose acceptance re-runs a DFM rule pack. Predicates are registry
 #: content and execute only under a probed secure sandbox (architecture §3.6), so
@@ -187,6 +214,12 @@ VARIANT_TASKS: frozenset[str] = frozenset(
         "gripper-jaws",
         "hinge-travel",
         "leadscrew-actuator",
+        # Corpus-v4 (2026-08-29, Stage 11): same rule again. The store fragment
+        # each of these pastes is `instance_store_part`'s output rather than an
+        # author's geometry, so the variant's independence lives in the part the
+        # run authors — and each variant says so at the top of its own file.
+        "bearing-shaft",
+        "motor-plate",
     }
 )
 
@@ -264,15 +297,17 @@ def test_corpus_is_the_nineteen_public_tasks() -> None:
     assembly pair (``hinge-mate``, ``shaft-coupler``). Repointed again from
     "sixteen" by the Stage 9C corpus-v3 amendment (2026-08-27, KINEMATICS.md
     §6): the mechanism tasks ``gripper-jaws``, ``hinge-travel`` and
-    ``leadscrew-actuator``. The
+    ``leadscrew-actuator``; and from nineteen by the Stage 11 corpus-v4
+    amendment (2026-08-29, PARTS_STORE.md G11C clause 13): the
+    component-bearing tasks ``bearing-shaft`` and ``motor-plate``. The
     v1 pin it used to carry is kept below as a subset assertion — the G6
     evidence's corpus is unchanged inside v2/v3, and the four Stage 6
     additions are still exactly :data:`CORPUS_V1_TASKS`.
     """
     prose = {task_id for task_id, _ in CORPUS}
-    assert len(prose) == 19, (
-        "corpus v3 is nineteen public tasks (v1 + the ingest and assembly pairs "
-        "+ the Stage 9C mechanism trio)"
+    assert len(prose) == 21, (
+        "corpus v4 is twenty-one public tasks (v1 + the ingest and assembly pairs "
+        "+ the Stage 9C mechanism trio + the Stage 11 component pair)"
     )
     # The gated split is exactly the public tasks…
     assert set(task_ids(specs=("prose",))) == prose
@@ -383,7 +418,9 @@ def test_every_budget_meets_the_measured_calibration_floor(
     """
     observed = _archived_passing_max()
     assert observed, "no archived corpus journals found; the floor cannot be recomputed"
-    unmeasured = {task_id for task_id, _ in CORPUS_V2_ADDITIONS + CORPUS_V3_ADDITIONS}
+    unmeasured = {
+        task_id for task_id, _ in CORPUS_V2_ADDITIONS + CORPUS_V3_ADDITIONS + CORPUS_V4_ADDITIONS
+    }
     for task_id, _budget in CORPUS:
         budget = tasks[task_id].budget_tool_calls
         if task_id not in observed:
@@ -1203,13 +1240,25 @@ def test_scoring_a_corpus_v1_sweep_gates_at_the_g6_bound() -> None:
 
     assert score.threshold == G6_AGGREGATE_THRESHOLD
     assert score.prose.threshold == G6_AGGREGATE_THRESHOLD
-    # 19 corpus-v3 tasks x 3 seeds, one knob-loft failure (2026-08-25/2026-08-27
-    # repoints: the sweep shape grew from 36 runs with the corpus, the bound
-    # did not).
+    # 19 gated corpus-v4 tasks x 3 seeds, one knob-loft failure (2026-08-25 /
+    # 2026-08-27 / 2026-08-29 repoints: the sweep shape grew from 36 runs with
+    # the corpus, the bound did not). The second 2026-08-29 repoint is
+    # PARTS_STORE.md G11C clause 12's amendment: the two component-family tasks
+    # are carved out of the gated split so they cannot be averaged into the v1
+    # baseline, which is why 21 tasks produce a 19-task gate statistic.
+    gated = [task_id for task_id, _budget in CORPUS if task_family(task_id) is None]
+    assert len(gated) == 19
     assert (score.prose.n, score.prose.passes) == (57, 56)
     assert score.meets_gate  # 56/57 clears 0.70 and repair-fillet is 3/3
     assert score.seeded.threshold is None
     assert score.seeded.meets_threshold is None
+    # Carved out, not discarded: both halves of the family are measured, in
+    # their own thresholdless splits, and every run is still accounted for.
+    for spec in ("prose", "seeded"):
+        family = score.family_split(FAMILY_COMPONENT, spec)
+        assert (family.n, family.passes) == (6, 6)
+        assert family.threshold is None and family.meets_threshold is None
+    assert score.n_total == len(CORPUS) * 3 * 2
     # Dropping the four v1 tasks leaves a sweep that no longer covers corpus
     # v1, so it is read at the v0 bound — the threshold is a fact about the v1
     # coverage, and the v2 additions neither raise nor relax it.

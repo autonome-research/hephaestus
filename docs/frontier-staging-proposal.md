@@ -5,8 +5,32 @@ SPDX-License-Identifier: Apache-2.0
 
 # Frontier staging proposal — the operator's decision document
 
-**Date: 2026-08-28. Status: PROPOSAL. Nothing here is normative and nothing here
-amends anything.** Five normative specifications have been drafted and revised
+> **2026-08-29 — the component store crossed the amendment boundary.** The
+> operator approved the recommended build order of §2.2 and opened the component
+> store first. `PARTS_STORE.md` is now **normative** and `mission_plan.md` carries
+> a dated **Stage 11 — The component store** block citing it, with gate summaries
+> for G11A/G11B/G11C. D3 was decided as option (b), *reference, do not vendor*,
+> and D5's discipline was honoured: all eight of that spec's confirmed findings
+> were closed by tightening and independently audited before the block landed.
+> Three consequences for readers of this document. **(a)** §3.1's block is
+> superseded by the landed text — it is retained as the drafting record, and its
+> `10S` names, its "23 / 21 / 14" clause counts and its 2026-08-28 date are all
+> stale; the landed stage is **Stage 11 / G11A–G11C** with **24 / 21 / 15**
+> clauses. **(b)** §3.2's block still labels mesh and scan ingest "Stage 11"
+> because it predates the D4 resolution recorded at §4's D4; that collision is
+> settled by the landed amendment, which reserves Stage 11 for the component
+> store — **mesh and scan ingest is Stage 12**, and its block must be renumbered
+> (heading, gate names, suite paths) by whoever opens it. **(c)** §3.6's second
+> edit — the fifth `LEGAL-REVIEW.md` scope field — landed in the Stage 11 block's
+> own text rather than as an edit to G7's gate text, because an amendment for one
+> stage does not rewrite another stage's gate; the requirement and the checker it
+> needs are gated at G11C. The four remaining stages are untouched and every
+> decision in §4 other than D3 still stands as recommendation, not ruling.
+
+**Date: 2026-08-28. Status: PROPOSAL for four of the five specs; superseded for
+`PARTS_STORE.md`, which was promoted on 2026-08-29 — see the note above. Nothing
+here is normative and nothing here amends anything.** Five normative
+specifications have been drafted and revised
 against the codebase — `PHYSICS.md`, `SOLVER.md`, `MESH_INGEST.md`,
 `PARTS_STORE.md`, `CAM.md`. Each is written in the normative voice so review has
 something falsifiable to attack; each says in its own header that it is a DRAFT
@@ -338,6 +362,16 @@ add the ordering sentence of §3.7 instead.
 
 ### 3.1 Stage 10S — the component store
 
+> **LANDED 2026-08-29 as Stage 11, and not in this form.** `mission_plan.md`
+> carries the authoritative block; this one is the drafting record. It differs in
+> four ways a reader must not copy from: the stage and gate names (10S /
+> G10S-A…C → **Stage 11 / G11A–G11C**), the suite paths (tests/stage10sa… →
+> tests/stage11a…, which do not exist yet — the stage has landed as a plan
+> commitment, not as code), the clause counts (23 / 21 / 14 → **24 / 21 / 15**, the
+> three extra clauses being `heph registry components`, the `LEGAL-REVIEW.md`
+> schema checker, and the negative `datasheet_digest_mismatch` clause), and the
+> date. Read `mission_plan.md` for the text that binds.
+
 ```markdown
 ## Stage 10S — The component store (amendment 2026-08-28, maintainer-directed)
 
@@ -381,6 +415,14 @@ ordered.
 ```
 
 ### 3.2 Stage 11 — mesh and scan ingest
+
+> **The number in this heading is stale, and the collision is resolved against
+> it.** Stage 11 was taken by the component store on 2026-08-29. Mesh and scan
+> ingest is **Stage 12** under the D4 resolution recorded at §4; this block
+> predates that resolution and was left unrenumbered because renumbering a
+> capability's stage belongs to the amendment that opens it. Whoever opens it
+> renumbers the heading, the three gate names and the three suite paths in one
+> pass, and fixes the "tenth geom service" ordinal D4 flags.
 
 ```markdown
 ## Stage 11 — Mesh and scan ingest (amendment 2026-08-28, maintainer-directed)

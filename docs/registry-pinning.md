@@ -53,6 +53,29 @@ materials: unpinned (materials)
 nothing is being checked against anything. The four registries bundled with the
 installation start this way.
 
+### `heph registry components`
+
+The component records the pinned `parts` registry carries — the store parts whose
+`part.json` holds a validated `component` block. Legacy store parts (no block)
+are not listed at all; this verb answers "what components do I have", and a part
+with no record is not one.
+
+```console
+$ heph registry components
+heatset_insert_m3: insert (heatset_metric M3)
+  registry:   hephaestus-parts @ sha256:8390e93ef496583e64b5c555689b9a49623b3261e67f1ffca534f172e9b2d450
+  interfaces: top_face, bore, knurl
+  datasheet:  no
+```
+
+`--json` emits the same records as one array, id-sorted with a stable key order,
+so two runs over an unchanged tree are byte-identical.
+
+```console
+$ heph registry components --json
+[{"id": "heatset_insert_m3", "name": "M3 heat-set insert (brass envelope)", "class": "insert", …}]
+```
+
 ### `heph registry pin [NAME…]`
 
 Record the current digest.

@@ -28,6 +28,16 @@ satisfied by asking the model to be careful. A citation of an *image* reference
 has no text to decide against, so it is reported ``unverifiable_citation`` and
 handed to the ``VALIDATION.md`` §5 reviewer's vision channel rather than being
 silently accepted.
+
+Two more come from ``PARTS_STORE.md`` and close the store⇄project provenance
+seam. ``uncited_component_datum`` reports a ``CHECKS`` literal equal to a store
+component's declared claim value with no ledger citation — the "retype the
+number out of the tool result" path (§6.3), which is what the retired
+``mating_features`` field depended on. ``datasheet_digest_mismatch`` reports a
+ledger entry that transcribes a component claim from a registered reference
+whose bytes are *not* the bytes the component's ``datasheet`` pointer names
+(§7.4). Both are decided from data the caller injects, so this module still
+imports no registry and executes nothing.
 """
 
 from __future__ import annotations
@@ -170,12 +180,19 @@ def lint_part_script(
     globals_source: str | None = None,
     filename: str = PART_FILENAME,
     ledger_ids: Iterable[str] | None = None,
+    component_data: Sequence[ComponentDatum] = (),
 ) -> tuple[LintFinding, ...]:
     """Convenience wrapper: lint a part script against its project globals.py."""
     hc_names: tuple[str, ...] = ()
     if globals_source is not None and globals_source.strip():
         hc_names = hc_names_from_globals(globals_source)
-    return lint_script(source, hc_names=hc_names, filename=filename, ledger_ids=ledger_ids)
+    return lint_script(
+        source,
+        hc_names=hc_names,
+        filename=filename,
+        ledger_ids=ledger_ids,
+        component_data=component_data,
+    )
 
 
 def lint_script(
@@ -184,6 +201,7 @@ def lint_script(
     hc_names: Iterable[str] = (),
     filename: str = PART_FILENAME,
     ledger_ids: Iterable[str] | None = None,
+    component_data: Sequence[ComponentDatum] = (),
 ) -> tuple[LintFinding, ...]:
     """Run every §9 lint (plus the §4 shadowing error) over one part script.
 
@@ -193,6 +211,13 @@ def lint_script(
     ``VALIDATION.md`` §3 failure the clarification gate refuses, not a style
     finding here. Passing a sequence — including an empty one — turns it on,
     and an empty ledger cites nothing, so every threshold is reported.
+
+    ``component_data`` are the declared claim values of the components the
+    project's registries carry (``PARTS_STORE.md`` §6.3). A ``CHECKS`` literal
+    equal to one of them with no ledger citation is ``uncited_component_datum``
+    — the "retype the number out of the tool result" path, which is exactly what
+    ``mating_features`` used to depend on. Empty by default, which leaves the
+    rule off, the same way an absent ledger leaves ``unsourced_constant`` off.
 
     Returns findings sorted by (line, col, code, name). An unparseable
     script yields a single ``syntax`` error finding — lint never raises for
@@ -220,6 +245,10 @@ def lint_script(
     findings.extend(_unreachable_geometry_findings(facts))
     if ledger_ids is not None:
         findings.extend(_unsourced_constant_findings(module, source, ledger_ids))
+    if component_data:
+        findings.extend(
+            _uncited_component_datum_findings(module, source, ledger_ids or (), component_data)
+        )
     findings.sort(key=lambda f: (f.line, f.col, f.code, f.name or ""))
     return tuple(findings)
 
@@ -647,6 +676,201 @@ def _unsourced_constant_findings(
                     )
                 )
     return findings
+
+
+# ---------------------------------------------------------------------------
+# PARTS_STORE.md §6.3 / §7.4 — component claims and the declared datasheet join
+
+
+@dataclass(frozen=True)
+class ComponentDatum:
+    """One declared claim value of one store component (``PARTS_STORE.md`` §6.1).
+
+    A claim sample is a pair, and both coordinates are vendor-asserted numbers:
+    an operating point retyped into a ``CHECKS`` threshold is as unsourced as the
+    torque read off against it.
+    """
+
+    value: float
+    component: str
+    claim: str
+
+
+@dataclass(frozen=True)
+class ComponentClaimFacts:
+    """What ``datasheet_digest_mismatch`` needs to know about one component.
+
+    Injected rather than read, so this module stays AST/JSON analysis with no
+    registry import: the caller resolves the pinned registries once and hands
+    over the join's right-hand side. ``datasheet_sha256`` is ``None`` only for a
+    component with no ``datasheet`` block, which §6.1's first closure rule makes
+    unreachable for any component that declares a claim — the field is optional
+    here because this function must stay total over whatever it is given, not
+    because the state is expected.
+    """
+
+    claim_ids: frozenset[str]
+    datasheet_sha256: str | None
+
+
+#: Claim values carrying no information for the §6.3 match: every ``CHECKS`` map
+#: contains zeros, so a claim sample at the origin would report every one of them
+#: and the rule would be noise rather than evidence. A NAMED limit, not a silent
+#: one: a threshold that really is a retyped zero is not caught here.
+_UNINFORMATIVE_CLAIM_VALUES: frozenset[float] = frozenset({0.0})
+
+
+def _uncited_component_datum_findings(
+    module: ast.Module,
+    source: str,
+    ledger_ids: Iterable[str],
+    component_data: Sequence[ComponentDatum],
+) -> list[LintFinding]:
+    """``PARTS_STORE.md`` §6.3: a retyped vendor number in ``CHECKS``, uncited.
+
+    ``instance_store_part`` hands a component's ``claims`` to the model as
+    reference material, and §6 is explicit that nothing in Hephaestus can
+    evaluate one. The failure mode that leaves is not evaluation, it is
+    *transcription*: the model reads 0.44 out of the tool result and writes it
+    into a ``CHECKS`` predicate, where it now looks exactly like a number the
+    harness derived. This rule catches that, and the citation is the escape: a
+    ledger entry recording the datum (which §7.4 makes a citation of the
+    datasheet reference) is named beside the literal, and the finding stops.
+
+    It is deliberately *narrower* than ``unsourced_constant``, which already
+    reports any uncited threshold. This one names the component and claim the
+    number came from, which is what turns "cite something" into "cite this".
+    Both fire on the same literal when both apply; they say different things.
+    """
+    comments = _comments_by_line(source)
+    citation = _citation_re(ledger_ids)
+    by_value: dict[float, ComponentDatum] = {}
+    for datum in component_data:
+        if datum.value in _UNINFORMATIVE_CLAIM_VALUES:
+            continue
+        # First declaration wins, so the report is stable when two components
+        # happen to assert the same number.
+        by_value.setdefault(float(datum.value), datum)
+    findings: list[LintFinding] = []
+    for checks in _checks_dicts(module):
+        for key, value in zip(checks.keys, checks.values, strict=True):
+            name: str | None = None
+            if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                name = key.value
+            key_cited = name is not None and bool(citation.search(name))
+            for literal in _numeric_literals(value):
+                datum = by_value.get(float(cast("int | float", literal.value)))
+                if datum is None:
+                    continue
+                comment = comments.get(literal.lineno, "")
+                if key_cited or citation.search(comment):
+                    continue
+                findings.append(
+                    LintFinding(
+                        code="uncited_component_datum",
+                        severity="warning",
+                        line=literal.lineno,
+                        col=literal.col_offset,
+                        message=(
+                            f"CHECKS threshold {literal.value!r} is the declared value of "
+                            f"claim {datum.claim!r} of store component {datum.component!r} "
+                            "and cites no requirement-ledger entry — a vendor assertion "
+                            "retyped into a predicate reads as something the harness "
+                            "derived. Record it as a ledger entry citing the datasheet "
+                            "reference, then name that entry here (PARTS_STORE.md §6.3)"
+                        ),
+                        name=name,
+                    )
+                )
+    return findings
+
+
+def lint_component_citations(
+    entries: Sequence[Mapping[str, Any]],
+    *,
+    reference_digests: Mapping[str, str],
+    components: Mapping[str, ComponentClaimFacts],
+) -> tuple[LintFinding, ...]:
+    """``PARTS_STORE.md`` §7.4: the one cross-system provenance join, both ways.
+
+    For each ledger entry whose ``cite`` names component claim ``C`` in component
+    ``K`` **and** reference ``R``, ``datasheet_digest_mismatch`` fires **iff**
+    ``ReferenceEntry(R).sha256 != K.datasheet.sha256`` — same document, different
+    bytes, which is the revision drift that silently poisons transcribed numbers.
+
+    The negative half is the load-bearing one. An earlier draft of §7.4 proposed
+    to *infer* the join by selecting the candidate reference by ``sha256``
+    equality and then reporting a mismatch if the digests differed: a set defined
+    by equality contains no unequal member, so the rule could never fire, and no
+    pytest could be written to it. Read the other way it fired on every project
+    carrying any unrelated drawing. So the join is **operator-declared** — the
+    ledger cite names it — and this rule is silent whenever no entry does: an
+    unrelated registered reference whose digest differs from some component's
+    produces no finding, ever, and nothing is inferred from the mere co-presence
+    of a reference and a component (G11C clause 7).
+
+    ``reference_digests`` maps a registered reference name to its ``sha256:…``
+    payload digest; ``components`` maps a component id to its claim ids and its
+    datasheet digest. A cite naming a reference this project does not carry is
+    already ``unsourced_requirement`` from :func:`lint_requirements`, so it is
+    skipped here rather than reported twice.
+    """
+    findings: list[LintFinding] = []
+    for index, entry in enumerate(entries):
+        raw_cite = entry.get("cite")
+        if not isinstance(raw_cite, Mapping):
+            continue
+        cite = cast("Mapping[str, Any]", raw_cite)
+        component_id = cite.get("component")
+        claim_id = cite.get("claim")
+        if not isinstance(component_id, str) or not isinstance(claim_id, str):
+            # Neither field, or half of one — the ledger op refuses the half case
+            # with `incomplete_component_cite` before it can be stored, and a
+            # citation carrying neither declares no join to check.
+            continue
+        entry_id = str(entry.get("id", f"#{index}"))
+        reference = str(cite.get("reference", ""))
+        digest = reference_digests.get(reference)
+        if digest is None:
+            continue
+        facts = components.get(component_id)
+        if facts is None or claim_id not in facts.claim_ids or facts.datasheet_sha256 is None:
+            findings.append(
+                LintFinding(
+                    code="unsourced_requirement",
+                    severity="error",
+                    line=0,
+                    col=0,
+                    message=(
+                        f"requirement {entry_id} cites claim {claim_id!r} of store component "
+                        f"{component_id!r}, which the pinned registries do not carry with "
+                        "that claim and a datasheet — the citation resolves to nothing "
+                        "(PARTS_STORE.md §7.4)"
+                    ),
+                    name=entry_id,
+                )
+            )
+            continue
+        if digest == facts.datasheet_sha256:
+            continue
+        findings.append(
+            LintFinding(
+                code="datasheet_digest_mismatch",
+                severity="error",
+                line=0,
+                col=0,
+                message=(
+                    f"requirement {entry_id} transcribes claim {claim_id!r} of component "
+                    f"{component_id!r} from reference {reference!r}, but the registered "
+                    f"reference is {digest} while the component's datasheet pointer names "
+                    f"{facts.datasheet_sha256} — same document, different bytes. One of them "
+                    "is a different revision, and the numbers taken from it may not be the "
+                    "numbers this component declares (PARTS_STORE.md §7.4)"
+                ),
+                name=entry_id,
+            )
+        )
+    return tuple(findings)
 
 
 def _normalize(text: str) -> str:

@@ -1,0 +1,58 @@
+{
+  "id": "gear_module1_z20",
+  "name": "Module 1, 20-tooth spur gear (ISO 53 pitch-cylinder blank)",
+  "summary": "Module 1 spur gear with 20 teeth as its pitch-cylinder blank: 20 mm pitch diameter, 6 mm face width, 5 mm bore. Origin on the back face, on the bore axis.",
+  "preview": "m1 z20 spur gear blank, 20 mm pitch dia x 6 mm face, 5 mm bore",
+  "keywords": [
+    "gear",
+    "spur",
+    "module",
+    "m1",
+    "z20",
+    "20",
+    "teeth",
+    "pitch",
+    "iso",
+    "53",
+    "transmission",
+    "drive",
+    "metric",
+    "aluminium",
+    "hardware"
+  ],
+  "params": {},
+  "component": {
+    "class": "gear",
+    "series": {
+      "family": "module1",
+      "size": "z20",
+      "standard": "ISO 53"
+    },
+    "license": "Apache-2.0",
+    "data_license": "facts-only",
+    "frame": "back face on the bore axis; the blank spans 0..+6 in Z",
+    "simplifications": [
+      "toothed rim represented by its pitch cylinder, no tooth flanks",
+      "no hub, no keyway, no grub-screw boss",
+      "no face or tip chamfers"
+    ],
+    "interfaces": [
+      {
+        "name": "bore",
+        "class": "cylindrical_face",
+        "role": "bore"
+      },
+      {
+        "name": "pitch_cylinder",
+        "class": "cylindrical_face",
+        "role": "pitch"
+      }
+    ],
+    "mass": {
+      "value_g": 4.7713,
+      "source": "computed",
+      "material": "al-6061",
+      "tolerance_pct": 2.0
+    }
+  }
+}

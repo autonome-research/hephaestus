@@ -199,14 +199,24 @@ def test_skill_snippet_builds_and_its_checks_pass(snippet: Snippet) -> None:
 
 
 def test_parts_store_indexes_the_shipped_generators() -> None:
+    """Repointed 2026-08-29 (PARTS_STORE.md Named new work item 31, G11C half).
+
+    The list grew by the three mechanism components the component store ships —
+    a bearing, a gear blank and a motor frame — beside the six fastener
+    envelopes it started from. What this test pins is unchanged: the whole
+    manifest indexes, sorted, and search finds the right row.
+    """
     index = PartsIndex(load_registry(REGISTRIES / "parts"))
     assert index.ids() == (
+        "bearing_608",
+        "gear_module1_z20",
         "heatset_insert_m3",
         "heatset_insert_m4",
         "heatset_insert_m5",
         "screw_socket_head_m3",
         "screw_socket_head_m4",
         "screw_socket_head_m5",
+        "stepper_nema17_frame",
     )
     hits = index.search("m5 socket head screw", 5)
     assert hits and hits[0]["id"] == "screw_socket_head_m5"
@@ -215,15 +225,41 @@ def test_parts_store_indexes_the_shipped_generators() -> None:
 
 
 def test_every_generator_satisfies_the_fragment_contract() -> None:
+    """Repointed 2026-08-29 by ``PARTS_STORE.md`` §4's decision, cited here.
+
+    This used to assert that *every* generator declares at least one parameter,
+    which was true of the six fastener envelopes and is not a contract. §4
+    settles the discrete-axis question the other way — "**Decision: no enum
+    parameter kind. Series are separate part ids.**" — so a component whose
+    every dimension is fixed by its designation (a 608 bearing, a module-1
+    20-tooth gear) has no continuous parameter to declare, by the spec's own
+    choice rather than by omission. A ``computed`` mass additionally *requires*
+    that: §5 checks the declared value against the built envelope, so a
+    parameter that moved the volume would make the record uncheckable.
+
+    The contract itself is unweakened and now asserted unconditionally: the
+    generator's ``PARAMS`` and the record's ``params`` are the same set, in both
+    directions, so search results and instancing cannot disagree about what is
+    tunable. What is dropped is only the claim that the set is non-empty, and
+    the family that legitimately has parameters is still checked for them.
+    """
     index = PartsIndex(load_registry(REGISTRIES / "parts"))
+    parameterised: list[str] = []
     for part_id in index.ids():
         part = index.get(part_id)
         generator = parse_generator(part.read_script(), source=str(part.script_path))
-        assert generator.param_names, part_id
         assert generator.root_name.startswith("_"), part_id
         # Declared params and the metadata schema agree, so search results and
         # instancing cannot disagree about what is tunable.
         assert set(generator.param_names) == set(part.params), part_id
+        if generator.param_names:
+            parameterised.append(part_id)
+    # Every fastener envelope is parameterised over its standard's length or
+    # clearance range, which is what §4 asks a generator to do where a
+    # continuous axis exists.
+    assert {pid for pid in parameterised if pid.startswith(("screw_", "heatset_"))} == {
+        pid for pid in index.ids() if pid.startswith(("screw_", "heatset_"))
+    }
 
 
 def test_fragment_placement_is_deterministic_and_collision_free() -> None:

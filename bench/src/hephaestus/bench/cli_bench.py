@@ -149,11 +149,22 @@ def _cmd_score(args: argparse.Namespace) -> int:
     baseline = scoring.record_seeded_baseline(
         score, directory.parent / scoring.SEEDED_BASELINE_FILENAME
     )
+    # PARTS_STORE.md G11C clause 12: the component family is baselined the same
+    # way, on its own first measurement and at >= 3 seeds. A too-thin first
+    # measurement is refused BY NAME and nothing is written — printed here rather
+    # than swallowed, because a family whose baseline was skipped must not look
+    # like a family that was never run.
+    component_path = directory.parent / scoring.COMPONENT_BASELINE_FILENAME
+    try:
+        component = scoring.record_component_baseline(score, component_path)
+    except ValueError as exc:
+        print(f"heph bench score: component baseline not written: {exc}", file=sys.stderr)
+        component = None
     if bool(args.json):
         print(json.dumps(score.to_json(), indent=2, sort_keys=True))
     else:
         print(f"model {score.model} date {score.date}: {score.passes_total}/{score.n_total} passed")
-        _print_splits(score, baseline)
+        _print_splits(score, baseline, component, component_path)
         for task_id, row in sorted(score.per_task.items()):
             calls = "-" if row.mean_tool_calls is None else f"{row.mean_tool_calls:.1f}"
             print(f"  {task_id:<24} {row.passes}/{row.n}  mean_tool_calls={calls}")
@@ -195,17 +206,37 @@ def _rate(value: float | None) -> str:
     return "-" if value is None else f"{value:.3f}"
 
 
-def _print_splits(score: scoring.BenchScore, baseline: dict[str, Any] | None) -> None:
-    """The §1 split table: the two splits, side by side, never averaged."""
-    from hephaestus.bench.metrics import SPEC_PROSE, SPEC_SEEDED
+def _print_splits(
+    score: scoring.BenchScore,
+    baseline: dict[str, Any] | None,
+    component: dict[str, Any] | None = None,
+    component_path: Path | None = None,
+) -> None:
+    """The §1 split table: every split, side by side, never averaged.
 
-    print("split      n   passes  pass_rate  wilson_lower_90  threshold")
-    for spec in (SPEC_PROSE, SPEC_SEEDED):
+    Family splits (``PARTS_STORE.md`` G11C clause 12) print in the same table as
+    the two spec splits and under the same rule — a threshold of ``-`` is not a
+    formatting choice, it is the fact that nothing gates them.
+
+    An archive that measured **no** family task says so in a named line rather
+    than printing nothing (clause 12, "the measurement"). Silence is what let a
+    2026-08-29 verifier observe that a reader of a green gate matrix would
+    reasonably conclude the component family had been baselined when no
+    ``component_baseline.json`` exists anywhere. Absence of measurement is a
+    fact about the evidence, so the tool that reads the evidence states it.
+    """
+    from hephaestus.bench.metrics import SPEC_PROSE, SPEC_SEEDED
+    from hephaestus.bench.scoring import COMPONENT_FAMILY_TASKS, FAMILY_COMPONENT
+
+    ordered = [SPEC_PROSE, SPEC_SEEDED, *sorted(set(score.splits) - {SPEC_PROSE, SPEC_SEEDED})]
+    print("split            n   passes  pass_rate  wilson_lower_90  threshold  min_seeds")
+    for spec in ordered:
         row = score.splits[spec]
         threshold = "-" if row.threshold is None else f"{row.threshold:.2f}"
         print(
-            f"{spec:<9} {row.n:>3}   {row.passes:>4}      {row.pass_rate:.3f}"
-            f"            {row.wilson_lower_90:.4f}       {threshold}"
+            f"{spec:<15} {row.n:>3}   {row.passes:>4}      {row.pass_rate:.3f}"
+            f"            {row.wilson_lower_90:.4f}       {threshold:<9}  "
+            f"{row.min_seeds_per_task}"
         )
     print(f"interpretation_gap (seeded - prose): {_rate(score.interpretation_gap)}")
     print(f"gate: {SPEC_PROSE} split only (the historical baseline)")
@@ -215,6 +246,38 @@ def _print_splits(score: scoring.BenchScore, baseline: dict[str, Any] | None) ->
             f"{baseline.get('passes')}/{baseline.get('n')} "
             f"wilson_lower_90={baseline.get('wilson_lower_90')}"
         )
+    if component is not None:
+        rows = cast("dict[str, Any]", component.get("splits", {}))
+        for name, row in sorted(rows.items()):
+            entry = cast("dict[str, Any]", row)
+            print(
+                f"{name} baseline (first measurement, not a gate): "
+                f"{entry.get('passes')}/{entry.get('n')} "
+                f"wilson_lower_90={entry.get('wilson_lower_90')}"
+            )
+    else:
+        family = FAMILY_COMPONENT
+        measured = sum(score.family_split(family, spec).n for spec in (SPEC_PROSE, SPEC_SEEDED))
+        recorded = component_path is not None and component_path.is_file()
+        if measured:
+            # The refusal itself went to stderr with its name and its numbers;
+            # this is the stdout table refusing to look complete without it.
+            print(
+                f"{family} family: {measured} runs measured, NOT BASELINED — "
+                f"see the refusal above; nothing was written to {component_path}."
+            )
+        elif recorded:
+            print(
+                f"{family} family: not measured in this archive; "
+                f"baseline already recorded in {component_path}."
+            )
+        else:
+            tasks = ", ".join(COMPONENT_FAMILY_TASKS)
+            print(
+                f"{family} family: NOT MEASURED — no {tasks} runs in this archive "
+                f"and no {component_path}. PARTS_STORE.md G11C clause 12's "
+                f"reference-model baseline is outstanding."
+            )
 
 
 def _print_metrics(metrics: ValidationMetrics) -> None:

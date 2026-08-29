@@ -40,10 +40,13 @@ from hephaestus.bench.harness import (
     task_ids,
 )
 from hephaestus.bench.scoring import (
+    COMPONENT_FAMILY_TASKS,
+    FAMILY_COMPONENT,
     G2_AGGREGATE_THRESHOLD,
     G6_AGGREGATE_THRESHOLD,
     aggregate_threshold,
     score_records,
+    task_family,
 )
 from hephaestus.core.executor.sandbox.bwrap import find_bwrap
 
@@ -58,8 +61,13 @@ from hephaestus.core.executor.sandbox.bwrap import find_bwrap
 #: v3): the mechanism additions ``gripper-jaws``, ``hinge-travel`` and
 #: ``leadscrew-actuator`` bring the public corpus to nineteen — the count
 #: moved, the clause did not, and ``aggregate_threshold`` still keys 0.70 on
-#: the v1 coverage.
-CORPUS_SIZE = 19
+#: the v1 coverage. Repointed again 2026-08-29 (Stage 11, PARTS_STORE.md G11C
+#: clause 13, "corpus-count pins repointed with this stage cited"): the
+#: component-bearing pair ``bearing-shaft`` and ``motor-plate`` brings it to
+#: twenty-one. Same clause, same 0.70 bar on the same v1 coverage — G11C
+#: clause 12 keeps the component family in its OWN split for exactly that
+#: reason.
+CORPUS_SIZE = 21
 
 #: The Stage 6 additions the clause names by role.
 DFM_REPAIR_TASK = "dfm-repair"
@@ -88,9 +96,10 @@ def test_the_public_corpus_loads_with_a_reference_solution_each(
     The clause this test pins — every public task loads and has a reference
     solution — is unchanged; only the count moved: sixteen with the corpus-v2
     additions (the ingest pair and the assembly pair), nineteen with the
-    corpus-v3 mechanism tasks (KINEMATICS.md §6). The v1 dozen the G6
-    measurement stands on are all still present (the meta-suite asserts the
-    subset).
+    corpus-v3 mechanism tasks (KINEMATICS.md §6), twenty-one with the
+    corpus-v4 component pair (2026-08-29, PARTS_STORE.md G11C clause 13). The
+    v1 dozen the G6 measurement stands on are all still present (the
+    meta-suite asserts the subset).
     """
     prose = _prose(tasks)
     assert len(prose) == CORPUS_SIZE
@@ -190,8 +199,26 @@ def test_covering_corpus_v1_reads_the_prose_threshold_as_070() -> None:
 def test_a_corpus_v1_archive_is_gated_against_070_on_the_prose_split_alone(
     tasks: Mapping[str, BenchTask],
 ) -> None:
-    """The G6 statistic is the prose split's; seeded runs cannot move it."""
+    """The G6 statistic is the prose split's; seeded runs cannot move it.
+
+    **Repointed 2026-08-29**, citing ``PARTS_STORE.md`` Gate G11C clause 12's
+    amendment (and item 34), which is where a corpus *family* was introduced.
+    Stage 11 added ``bearing-shaft`` and ``motor-plate`` to the public corpus,
+    and the clause forbids averaging them into the v1/v2 baselines — so their
+    runs are carved out of the gated prose split into ``component-prose``. The
+    gate's shape is therefore every public task **outside a declared family** x
+    3 seeds; the number this asserts moved because the corpus grew under a rule
+    that says it must not move the bar, which is the amendment working.
+
+    The pin is strengthened rather than relaxed in the same edit: the carved-out
+    runs are followed to where they went, so "not in the gate" can never quietly
+    become "not measured at all".
+    """
     prose = sorted(task_ids(specs=("prose",)))
+    gated = sorted(task for task in prose if task_family(task) is None)
+    assert set(prose) - set(gated) == set(COMPONENT_FAMILY_TASKS), (
+        "the only tasks outside the gated split are the declared component family"
+    )
     records: list[dict[str, Any]] = []
     for task_id in prose:
         for seed in (1, 2, 3):
@@ -210,10 +237,19 @@ def test_a_corpus_v1_archive_is_gated_against_070_on_the_prose_split_alone(
     score = score_records(records)
 
     assert score.threshold == pytest.approx(0.70)
-    assert score.n == len(prose) * 3, "every public task x 3 seeds is the gate's own shape"
+    assert score.n == len(gated) * 3, (
+        "every public task outside a declared family x 3 seeds is the gate's own shape "
+        "(PARTS_STORE.md G11C clause 12, amended 2026-08-29)"
+    )
     assert score.prose.threshold == pytest.approx(0.70)
     assert score.splits["seeded"].threshold is None, "the seeded split gates nothing"
     assert score.meets_gate is (score.wilson_lower_90 >= 0.70)
+    # Carved out, not dropped: the family's runs are all present, in their own
+    # thresholdless split, and the archive total still accounts for every one.
+    family = score.family_split(FAMILY_COMPONENT, "prose")
+    assert family.n == len(COMPONENT_FAMILY_TASKS) * 3
+    assert family.threshold is None and family.meets_threshold is None
+    assert score.n_total == len(prose) * 3
 
 
 def test_the_gate_bound_is_not_satisfied_by_a_mediocre_corpus_v1_archive() -> None:

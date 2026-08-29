@@ -1100,8 +1100,10 @@ only `read_artifact(artifact_ref, next_offset_bytes)`. Observed equivalent:
 
 ### search_parts_store
 ```
-search_parts_store(query: str, max_results: int = 5) -> [{id, name, params, preview}]
-instance_store_part(id: str, params: dict, pos: dict|null) -> {script_fragment}
+search_parts_store(query: str, max_results: int = 5) -> [{id, name, params, preview,
+    component_class?, series?, interfaces?, mass_g?, has_datasheet?}]
+instance_store_part(id: str, params: dict, pos: dict|null, instance: str|null)
+    -> {script_fragment, interfaces?, mass?, datasheet?, claims?}
     | {status: "capability_error", code: "capability_not_available", message}
 ```
 Searches parametric generators (standard hardware) and returns a script
@@ -1112,6 +1114,44 @@ additional capabilities, and resolve from hash-pinned registries. When no
 sandbox is available the generator is never run unconfined: the call returns the
 discriminated refusal `{status: "capability_error", code:
 "capability_not_available", message}` instead of a fragment.
+
+A store part whose `part.json` carries a `component` block is a **component**
+(`PARTS_STORE.md` §1): the search row gains its class, series, declared
+interfaces, mass and datasheet presence, and the instance result gains the
+declared `mass` / `datasheet` blocks verbatim plus `interfaces` — the tag names
+the fragment actually emits, which is what an 8C constraint or a Stage 9 joint
+anchors on. `search_parts_store` returns interface names **as declared and
+unprefixed**, because the instance prefix is not known until instantiation;
+`instance_store_part` returns them in their emitted `<instance>__<name>` form.
+`instance` is optional and scopes those names: absent, they are scoped by a
+deterministic hash of `(id, params, pos)`, which makes two identical calls the
+same instance by construction. A legacy store part carries none of these
+fields.
+
+The trailing fields of both results are present **only for a component record**
+— a store part whose `part.json` carries a validated `component` block
+(`PARTS_STORE.md` §1, §3) — and absent for a legacy store part, so a caller
+branches on presence. `series` is `{family, size, standard}`; `mass` and
+`datasheet` are the declared blocks *verbatim*. Neither is a measurement: a
+declared mass is data the record states (§5) and a `datasheet` pointer is an
+audit trail naming which document to obtain, never a verified citation (§7.4).
+Nothing fetches the pointer's URL.
+
+`claims` is a **string, not an array**, and the type is the honest part
+(`PARTS_STORE.md` §6): nothing in Hephaestus can evaluate a torque-speed curve,
+so a component's declared datasheet data arrives wrapped in the same provenance
+delimiters registry text uses, with the footer restating that the enclosed bytes
+are reference material and not instructions. A number read out of it becomes a
+commitment only by being recorded as a ledger entry citing the datasheet
+reference; `heph lint` then reports a `CHECKS` threshold that matches a claim
+value with no such citation as `uncited_component_datum` (§6.3).
+
+A store part id is addressed **bare when it is unique** across the project's
+pinned `parts` registries and as `<registry>/<id>` when two of them carry it
+(`PARTS_STORE.md` §8). A bare id two registries both carry is refused as
+`ambiguous_component_id` naming both candidates — never resolved by pin order.
+`search_parts_store` returns the addressable form in each row's `id`, so the
+value a search returns is always one `instance_store_part` accepts.
 
 ### search_materials
 ```

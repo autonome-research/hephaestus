@@ -1,0 +1,72 @@
+{
+  "id": "stepper_nema17_frame",
+  "name": "NEMA 17 stepper motor (frame envelope)",
+  "summary": "NEMA 17 mounting-frame envelope: 42.3 mm square body, 31 mm square bolt pattern of M3 holes, 22 mm pilot boss 2 mm proud, 5 mm shaft 24 mm long, plus the lead exit. Origin on the mount face, on the shaft axis; the body hangs into -Z.",
+  "preview": "NEMA 17 frame envelope, 42.3 mm square, 31 mm bolt pattern, 5 mm shaft, stack 20-60 mm (default 39)",
+  "keywords": [
+    "nema17",
+    "nema",
+    "17",
+    "stepper",
+    "motor",
+    "frame",
+    "mount",
+    "bolt",
+    "pattern",
+    "pilot",
+    "boss",
+    "shaft",
+    "42mm",
+    "metric",
+    "hardware"
+  ],
+  "params": {
+    "body_length": {
+      "type": "float",
+      "default": 39.0,
+      "min": 20.0,
+      "max": 60.0,
+      "unit": "mm",
+      "doc": "stack length behind the mount face, mm"
+    }
+  },
+  "component": {
+    "class": "motor",
+    "series": {
+      "family": "nema",
+      "size": "17",
+      "standard": "NEMA ICS 16"
+    },
+    "license": "Apache-2.0",
+    "data_license": "facts-only",
+    "frame": "mount face on the shaft axis; body into -Z, pilot boss and shaft into +Z",
+    "simplifications": [
+      "frame envelope only: no laminations, windings, end bells or fasteners",
+      "mounting holes are blind envelopes, not threads",
+      "no corner radii on the stack, and no flat on the shaft",
+      "the lead exit is a plain cylindrical stub; it is modelled because a four-hole square pattern is four-fold symmetric and it is the only feature that can name one hole"
+    ],
+    "interfaces": [
+      {
+        "name": "mount_face",
+        "class": "planar_face",
+        "role": "mount_face"
+      },
+      {
+        "name": "pilot_boss",
+        "class": "cylindrical_face",
+        "role": "pilot"
+      },
+      {
+        "name": "shaft",
+        "class": "cylindrical_face",
+        "role": "shaft"
+      },
+      {
+        "name": "bolt_1",
+        "class": "cylindrical_face",
+        "role": "mount_hole"
+      }
+    ]
+  }
+}

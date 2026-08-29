@@ -42,6 +42,19 @@ communicates its output by assigning to `part.*`.
 - Nothing else. `open`, `__import__`, filesystem and network access are
   absent; attempting them is a build error.
 
+**A note, and a note precisely so no reader mistakes it for a change.** The
+namespace gains no name and loses none. One *derived* constant is exported from
+`namespace.py`: `SELECTOR_NAMES`, the injected key set minus the two dunder keys
+and minus the harness handles (`p`, `part`, `tag`, `hc`, `check`, `CHECKS`,
+`import_step`, `approx`). `PARTS_STORE.md` §2.1's parse-time rule for a store
+generator's `interface` region has to cite a *static* set, and `build_namespace`
+assembles the real one at execution time from `build123d.__all__`. It is pinned
+by that equation, so there is one definition of the namespace and not two, and a
+build123d upgrade cannot silently widen or narrow what an interface selector may
+name. Excluding the handles restates the existing contract rather than adding
+policy: `hc` / `check` / `CHECKS` are already forbidden in a store generator and
+`p` is the bind region's alone.
+
 ## 3. Parameters
 
 ```python
@@ -186,6 +199,28 @@ delta/threshold, and recommends inspection or a stronger persistent CHECK; it
 MUST NOT claim topology identity changed. Warnings surface in the build result,
 Results panel, and agent context. Skills teach selectors that survive edits
 (filter by normal + position window rather than bare sort-order indexing).
+
+**One reserved name form: `<instance>__<name>`** (`PARTS_STORE.md` §2.2). A tag
+name containing the infix `__` is a *store-instance interface tag*, emitted by a
+pasted component fragment rather than hand-written, and two rules apply to it
+and to nothing else:
+
+- **Re-tagging one is a refusal, not the ordinary last-wins overwrite.** The
+  second `tag()` call raises `duplicate_tag` naming both tagging statements.
+  Last-wins is reasonable and deterministic for a hand-authored script; for two
+  pasted fragments it is a silent correctness failure, because a constraint
+  anchored on the surviving tag is measured against whichever fragment was
+  pasted lower in the file.
+- **One that does not resolve into the final `part.geometry` compound is a
+  build ERROR, not a `tag_unresolved` warning.** For a hand-authored tag the
+  warning is right: the author is iterating. For a store fragment it means the
+  pasted instance's anchors are dead, and a green build would hand the author
+  anchors that fail only later, at constraint time, as
+  `unaddressable_anchor`.
+
+A tag name without the infix keeps last-wins and keeps the warning,
+byte-for-byte as before. A declared component interface name may not contain
+`__`, so the form has exactly one producer.
 
 ## 6. Persistent checks — EXTENSION
 
@@ -355,6 +390,17 @@ Smith error (line/col, type, source frame, built-through statement, last-good
 metrics, inspect hint) — that error shape is demonstrably sufficient for an
 agent to self-repair; G0B validates its structural failure contract and G1
 acceptance-tests rendering.
+
+**The worker result also carries `tag_fingerprints`**, one descriptor per tagged
+topology, and each descriptor carries `geom_type` from the closed set `PLANE |
+CYLINDER | CIRCLE | LINE | OTHER` alongside `kind`, `point`, `scalar` and (for
+faces) `normal`. It is read off the OCP adaptor **in the worker**, where the
+shape lives: the scratch tree holding the BRep is deleted before any caller sees
+it, so a surface or curve type computed anywhere else would have nothing to
+read, and `kind` alone is a three-way face/edge/solid label that cannot tell a
+plane from a cylinder. `OTHER` for a solid is by definition, not by failure — a
+solid has no single adaptor. A descriptor recorded before this field existed
+reads back as `OTHER`; an out-of-set *value* is refused.
 
 ## 9. Style conventions (lint, not law)
 

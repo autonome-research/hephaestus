@@ -53,12 +53,31 @@ class TagPlacement:
         }
 
 
+#: ``PARTS_STORE.md`` §2.2: the infix an emitted store-interface tag carries.
+#: A hand-authored tag never contains it — a declared interface name may not,
+#: and the emitted form ``<instance>__<name>`` is the only producer — so scoping
+#: the duplicate rule to it leaves every existing script's semantics untouched.
+INTERFACE_TAG_INFIX = "__"
+
+
 class TagRegistry:
     """Collects ``tag()`` calls during script execution.
 
     The worker calls :meth:`set_statement` before executing each top-level
     statement so every recorded tag carries its creating statement. Re-tagging
-    an existing name overwrites (last tagging statement wins, deterministic).
+    an existing name overwrites (last tagging statement wins, deterministic) —
+    **except** for a name carrying :data:`INTERFACE_TAG_INFIX`, which is a
+    refusal (``PARTS_STORE.md`` §2.2).
+
+    Why the exception. For a hand-authored script last-wins is reasonable and
+    deterministic. For *pasted fragments* it is a silent correctness failure:
+    two motors in one script both emitting ``tag(..., "shaft")`` would leave one
+    ``shaft`` tag, and an 8C constraint anchored on it would be measured against
+    whichever fragment was pasted lower in the file — a satisfied constraint
+    about the wrong solid, which nothing today would report. Instance-scoping
+    the emitted name makes the collision impossible between *different*
+    instances; refusing the re-tag is what turns pasting the *same* instance
+    twice into a build failure the operator sees.
     """
 
     def __init__(self) -> None:
@@ -78,6 +97,17 @@ class TagRegistry:
             raise ValidationError(
                 f"tag({name!r}): topology must be a build123d shape "
                 f"(got {type(topology).__name__})",
+                kind="contract",
+            )
+        existing = self._tags.get(name)
+        if existing is not None and INTERFACE_TAG_INFIX in name:
+            raise ValidationError(
+                f"duplicate_tag: the store-interface tag {name!r} is emitted twice "
+                f"(statement {existing.statement_index} at line {existing.line}, and "
+                f"statement {self._statement_index} at line {self._line}). Two pastes of "
+                "one component instance are the same instance by construction; pass a "
+                "distinct 'instance' to instance_store_part so each fragment carries its "
+                "own tag names",
                 kind="contract",
             )
         self._tags[name] = TaggedTopology(

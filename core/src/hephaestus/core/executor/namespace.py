@@ -17,8 +17,9 @@ from __future__ import annotations
 import builtins as _builtins
 import math as _math
 from collections.abc import Callable, Mapping
+from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from hephaestus.core.errors import SandboxDeniedError, ValidationError
 from hephaestus.core.params import Param, extract_params, merge_overrides
@@ -538,3 +539,70 @@ def build_namespace(
 def injected_names(namespace: Mapping[str, object]) -> frozenset[str]:
     """The injected key set — used to identify script-bound names afterwards."""
     return frozenset(namespace)
+
+
+# --------------------------------------------------------------------------
+# PARTS_STORE.md §2.1: the interface-region selector whitelist
+
+
+#: Not script vocabulary at all — the two keys :func:`build_namespace` sets for
+#: Python's own benefit.
+_DUNDERS: Final[frozenset[str]] = frozenset({"__builtins__", "__name__"})
+
+#: The harness handles, which a store generator's ``interface`` region has no
+#: business reading (``PARTS_STORE.md`` §2.1). ``p`` is the bind region's alone —
+#: a parameter read inside a selector is a coordinate in the *unplaced* frame,
+#: the same hazard as a body local; ``part`` would root the chain somewhere
+#: other than the generator's root name; ``tag`` is the statement's own callee;
+#: ``hc`` / ``check`` / ``CHECKS`` are already in ``_generator.py``'s
+#: ``_FORBIDDEN_NAMES`` and stay forbidden everywhere; ``import_step`` would put
+#: an ingest inside a selector; ``approx`` is a check helper. None of this is new
+#: policy — it is the existing contract, written down where a parser can cite it.
+_HANDLES: Final[frozenset[str]] = frozenset(
+    {"p", "part", "tag", "hc", "check", "CHECKS", "import_step", "approx"}
+)
+
+if TYPE_CHECKING:
+    #: Every name an interface selector may load, besides the generator's own
+    #: root name (``PARTS_STORE.md`` §2.1). Exactly
+    #: ``injected_names(build_namespace(...)) - _DUNDERS - _HANDLES``: the pure
+    #: geometry vocabulary, which is what a selector is for.
+    SELECTOR_NAMES: frozenset[str]
+
+
+@cache
+def _selector_names() -> frozenset[str]:
+    """Assemble :data:`SELECTOR_NAMES` once, on first use.
+
+    A parse-time rule cannot cite a runtime dict, so ``PARTS_STORE.md`` §2.1
+    requires a *declared constant*; deriving it from :func:`build_namespace`
+    rather than transcribing 200 names is what keeps one definition of the
+    namespace instead of two that could disagree (mission rule 6).
+
+    Computed lazily and cached because the derivation imports ``build123d``
+    (~2.3 s), and ``_parts.py`` — which reaches this through
+    ``parse_generator`` — indexes registries on the CLI and server startup
+    paths. A registry with no ``interface`` region pays nothing at all.
+    """
+    namespace = build_namespace(
+        param_state=ParamState(scope="part", overrides={}),
+        hc=HcNamespace({}),
+        part=PartOutput(),
+        tag_registry=_selector_tag_registry(),
+        check_registry=CheckRegistry(),
+        imports=ImportRegistry({}),
+    )
+    return injected_names(namespace) - _DUNDERS - _HANDLES
+
+
+def _selector_tag_registry() -> TagRegistry:
+    from hephaestus.core.executor.tags import TagRegistry as _TagRegistry
+
+    return _TagRegistry()
+
+
+def __getattr__(name: str) -> frozenset[str]:
+    """PEP 562 lazy export of :data:`SELECTOR_NAMES` (see :func:`_selector_names`)."""
+    if name == "SELECTOR_NAMES":
+        return _selector_names()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -1,0 +1,51 @@
+{
+  "id": "heatset_insert_m4",
+  "name": "M4 heat-set insert (brass envelope)",
+  "summary": "Thread-free M4 heat-set insert envelope: 8.2 mm long, 5.6 mm body dia with a 6.3 mm knurl band, 4 mm bore. Origin on the boss top face, body along -Z.",
+  "preview": "M4 heat-set insert envelope, 8.2 mm long, body 5.6 mm, knurl 6.3 mm, pilot hole 5.6 mm",
+  "keywords": [
+    "m4",
+    "heat",
+    "set",
+    "heatset",
+    "insert",
+    "thermal",
+    "brass",
+    "threaded",
+    "boss",
+    "fdm",
+    "print",
+    "nut",
+    "metric",
+    "hardware"
+  ],
+  "params": {
+    "clearance": {
+      "type": "float",
+      "default": 0.0,
+      "min": 0.0,
+      "max": 0.3,
+      "unit": "mm",
+      "doc": "radial envelope inflation for pocket subtraction, mm"
+    }
+  },
+  "envelope": {
+    "length_mm": 8.2,
+    "body_diameter_mm": 5.6,
+    "knurl_diameter_mm": 6.3,
+    "knurl_band_height_mm": 2.0,
+    "bore_diameter_mm": 4.0
+  },
+  "mating_features": {
+    "pilot_hole_diameter_mm": 5.6,
+    "pilot_hole_min_depth_mm": 9.2,
+    "min_boss_wall_mm": 2.0
+  },
+  "origin": "boss top face; body runs 0..-length in Z",
+  "simplifications": [
+    "knurl modelled as one cylindrical band, not a diamond pattern",
+    "internal thread modelled as a plain bore",
+    "no melt-flow relief volume (a process allowance, not geometry)"
+  ],
+  "license": "Apache-2.0"
+}

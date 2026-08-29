@@ -34,7 +34,8 @@ pre-amendment results" — the marker is what stops the table from implying the
 comparison its own layout invites.
 
 Only ``<date>.json`` files are rows. Sibling artifacts in the same directory —
-``seeded_baseline.json``, ``cadgenbench-local-floor-<date>.json`` — are
+``seeded_baseline.json``, ``component_baseline.json``,
+``cadgenbench-local-floor-<date>.json`` — are
 different measurements with different meanings, and a leaderboard that swept up
 every JSON beside a result would silently publish them as corpus runs.
 """

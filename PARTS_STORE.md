@@ -9,13 +9,26 @@ SPDX-License-Identifier: Apache-2.0
 00 … `INTERFACE.md` 12 is the sequence (verified by reading the first heading of
 every root `.md`). **13 is the next free number** and this document takes it.
 
-**Stage designation.** This spec provisionally claims **Stage 11** ("S" for
-store). `KINEMATICS.md:50` already reserves "Stage 10" informally as the *FEA /
-motor-sizing candidate*, so a bare "Stage 10" would collide. The letter is the
-amendment's to settle; every gate name below is mechanically renameable and
-nothing else in this spec depends on the digit.
+**Stage designation.** This spec is **Stage 11**, with sub-gates **G11A**,
+**G11B**, **G11C** and suites `tests/stage11a`, `tests/stage11b`,
+`tests/stage11c`. `KINEMATICS.md:50` already reserves "Stage 10" informally as
+the *FEA / motor-sizing candidate*, so a bare "Stage 10" would collide; the
+earlier provisional "Stage 10S / G10S-A…C" naming is retired and no `10S` name
+survives in this document. **The one collision this document named is now
+settled, and not by this document:** `docs/frontier-staging-proposal.md` §3.2
+still labels mesh and scan ingest "Stage 11" in a paste-ready block that predates
+the 2026-08-28 D4 resolution. Renumbering another capability's stage was never
+this spec's to do, so it was left for the amendment — and the `mission_plan.md`
+Stage 11 block (amendment 2026-08-29) settles it: Stage 11 is the component
+store, mesh and scan ingest is Stage 12, and no other stage takes the number.
+Nothing else in this spec depends on the digit.
 
-**Status: DRAFT.** Not normative. Revised after a hostile adversarial review
+**Status: NORMATIVE** as of 2026-08-29, on the `mission_plan.md` Stage 11
+amendment of that date, which cites this document as the stage's normative spec
+and carries the G11A/G11B/G11C gate summaries. Before that date it was a draft,
+and the paragraphs below that describe the review it went through are kept as
+written because they are the record of *why* it is safe to be normative, not
+decoration. Revised after a hostile adversarial review
 against the codebase, of the kind `KINEMATICS.md:10-12` records; eight confirmed
 findings are folded in, and each was closed by **tightening** — no gate clause
 was deleted for being hard to satisfy, and one (the runtime sandbox refusal) was
@@ -42,13 +55,51 @@ the review changed, in one line each:
   through the ledger.
 - Two clauses bound to machinery a later sub-stage delivers; both moved.
 
-The document remains a proposal pending a `mission_plan.md` amendment adding
-Stage 11 as a new gated stage. It is written in the normative voice so that
-review has something falsifiable to attack, but until that amendment lands,
-**nothing here is a commitment and no clause below is evidence**. Mission rule 5
-(`mission_plan.md:815-817`) is explicit that deferred and new capability enters
-"only by amending this plan with a new gated stage"; this file is the text such
-an amendment would cite, not a substitute for it.
+**Second pass: the closures were audited clause by clause, not taken on
+report.** Mission rule 5's discipline — a blocking finding closes *before* the
+amendment lands — is worth nothing if "folded in" is self-certified, so every
+one of the eight was re-read against the current text and against the code it
+cites. All eight are closed. Six **residuals** were found in the closures
+themselves and are closed here; each is a narrower form of the finding it
+descends from, and each was closed by tightening:
+
+- §2.1's AST contract admitted `bound_names` in a selector argument. The
+  post-placement rewrite retargets the *root*; a body local has no placed
+  counterpart to retarget to, so a selector mixing the two measured the placed
+  shape in the unplaced frame — finding 1, at one remove. Body locals are now
+  refused (`interface_body_local_reference`), and the rewrite covers **every**
+  occurrence of the root token, not only the chain root.
+- "Chain root" was used undefined in a rule that claims to be parser-decidable.
+  It is now defined as an explicit descent.
+- "The injected-namespace whitelist" cited a module docstring; the real set is
+  assembled at runtime from `build123d.__all__`. A parse-time rule cannot cite a
+  runtime dict, so `SELECTOR_NAMES` is named work and is pinned to the namespace.
+- `interface_class_mismatch` had no decision table, leaving three cells to
+  guess — `solid` worst, which has no adaptor. The table is written out, with
+  `("solid", "OTHER")` an admitting row and torus/cone/spline faces, wires and
+  vertices refusals.
+- §7.4's join was exact but not *total*: a `cite` could name a claim of a
+  component with no `datasheet` block, leaving the iff without a right-hand side.
+  §6.1 now requires the block whenever `claims` is non-empty, and requires
+  `claims[].id` unique.
+- §7.5 said the fifth `LEGAL-REVIEW.md` scope field would be "checked by the same
+  CI schema check that checks the other four". There is no such check
+  (`scripts/docs_check.py:101`). The checker is now named work and gated.
+
+One ordering question the first pass left implicit is also decided in writing:
+every Named new work item is assigned to a sub-stage in the Gates preamble, and
+item 11 (record ⇄ region interface-name equality) is **G11B**, because assigning
+it to G11A would have made every G11A clause that indexes a component record
+depend on G11B's parser — finding 5's bug, in a place finding 5 did not look.
+
+**That amendment has landed.** Mission rule 5 is explicit that new capability
+enters "only by amending this plan with a new gated stage"; the `mission_plan.md`
+Stage 11 block, dated 2026-08-29 and operator-directed, is that amendment, and it
+cites this file as the stage's normative spec. The sentence this paragraph
+replaced said that until such an amendment landed "nothing here is a commitment
+and no clause below is evidence". That condition is discharged: every clause of
+the three gates below is now a command in the rule 1 sense, and ambiguity in one
+is a defect to be closed by tightening, never by waiving.
 
 ## Amendment manifest
 
@@ -58,10 +109,11 @@ be listed are called out as deliberately untouched.
 
 | Document | Change |
 |---|---|
-| `mission_plan.md` | A new gated stage (Stage 11) with the three sub-gates below, per rule 5. Two tightenings under rule 1 (`:801-804`) land with it: the registry `license` field becomes required, and `part.json` params become cross-checked against the generator. Neither is a waiver; both close a gap the current text already implies. |
-| `mission_plan.md:643` | The `LEGAL-REVIEW.md` schema clause gains a **fifth required scope field**: *third-party component data provenance and terms*. See §7. This is a gate tightening, not an assumption that the existing four fields cover datasheets — they do not. |
+| `mission_plan.md` | **LANDED 2026-08-29.** A new gated stage (Stage 11) with the three sub-gates below, per rule 5, citing this document as its normative spec and carrying the G11A/G11B/G11C gate summaries. Two tightenings under rule 1 (`:801-804`) land with it: the registry `license` field becomes required, and `part.json` params become cross-checked against the generator. Neither is a waiver; both close a gap the current text already implies. The block also quotes the operator's D3 licensing decision (§7) and settles the Stage-11 numbering collision. |
+| `mission_plan.md:643-646` | The `LEGAL-REVIEW.md` schema clause **needs** a fifth required scope field — *third-party component data provenance and terms* (§7.5) — and **the 2026-08-29 amendment did not make that edit**: it is G7's gate text, and an amendment opening Stage 11 does not rewrite another stage's gate. The requirement therefore lives in the Stage 11 block and in §7.5, and this row stays open as the outstanding one-line edit for whoever next amends G7. The row also records that the "CI checks the file's schema" sentence at `:646` describes a checker that does not exist (`scripts/docs_check.py:101` carries the file as a forward reference and nothing validates its fields); this stage **builds** that checker for all five fields and gates it at G11C clause 15, rather than citing it as if it were already there. |
 | `tool_schema.md:1101-1114` | The result shapes of `search_parts_store` and `instance_store_part` gain fields (§3, §5, §6). **No new tool.** Both tools keep their names, arguments and refusal shapes; `instance_store_part` gains one optional argument (`instance`). |
 | `script_contract.md` §5.3 | The tag namespace gains one reserved form: a tag name containing the infix `__` is a *store-instance interface tag*, emitted by a pasted fragment, and re-tagging one is a refusal rather than the ordinary last-wins overwrite (`core/src/hephaestus/core/executor/tags.py:58-59`, `:84`). Hand-authored tags without `__` keep last-wins semantics byte-for-byte. A `__`-infix tag that does not resolve into the final compound is additionally a build **error**, where a plain tag stays a `tag_unresolved` warning (`core/src/hephaestus/core/executor/worker.py:562-573`). |
+| `script_contract.md` §2 (injected namespace) | **A note only, and it is a note precisely so no reader mistakes it for a change.** The namespace gains no name and loses none. One *derived* constant is exported from `namespace.py` — `SELECTOR_NAMES`, the injected key set minus the two dunder keys and minus the harness handles (`p`, `part`, `tag`, `hc`, `check`, `CHECKS`, `import_step`, `approx`) — because §2.1's parse-time interface-region rule has to cite a static set and `build_namespace` assembles the real one at execution time from `build123d.__all__` (`namespace.py:496-538`). Pinned by that equation, so there is one definition of the namespace and not two (rule 6). Excluding the handles restates the existing contract rather than adding policy: `hc` / `check` / `CHECKS` are already `_FORBIDDEN_NAMES` (`_generator.py:42`) and `p` is the bind region's alone. |
 | `script_contract.md` §8 (worker result protocol) | Each entry of `tag_fingerprints` gains one field, `geom_type`, from a closed set (`PLANE`, `CYLINDER`, `CIRCLE`, `LINE`, `OTHER`), computed **in the worker** where the shape lives. This is a protocol change, not a sandbox-contract change, and it is the only way §2.3's verdict can be computed at all — see §2.3. Artifacts it moves: `TagDescriptor` (`core/src/hephaestus/core/executor/fingerprint.py:64-75`), `descriptors_to_json` / the `runner.py:375` parse, the published `tag_fingerprints` in `project_store/publication.py:472`, and the pinning test `core/tests/test_worker_protocol.py`. |
 | `ASSEMBLY.md` §1 | A note only: an anchor selector may name a store-instance interface tag. **The anchor grammar does not change** — `ANCHOR_PATTERN` is `^[A-Za-z_][A-Za-z0-9_]*(:[^\s:]+)?$` (`core/src/hephaestus/core/project_store/constraints.py:103`) and already admits these names. No new naming scheme, per that section's own rule. |
 | `KINEMATICS.md` §1 | The same note for joint anchors, which ride the same resolver by construction (`core/src/hephaestus/core/assembly.py:43-46`: the `AnchorResolver`/`PartGeometry` pair exists precisely so there is "one implementation of §7 against a published artifact, not two that could disagree"). |
@@ -357,12 +409,20 @@ Two rules close it:
    so a non-root selector could only ever name something unaddressable.
 2. **The region is emitted after the placement statement, with the root
    rewritten to the instance name.** `render_fragment` appends the interface
-   region *below* the two tail lines, and rewrites the chain-root token
-   `{prefix}{root}` to `{prefix}`. Because `{prefix}` is exactly
+   region *below* the two tail lines, and rewrites **every** occurrence of the
+   renamed root token `{prefix}{root}` to `{prefix}` — not only the one at the
+   chain root. "Occurrence" means a whole token: the same
+   `(?<![A-Za-z0-9_])…(?![A-Za-z0-9_])` boundary the existing rename pass
+   already uses (`_generator.py:310-318`), so `{prefix}{root}` is never rewritten
+   inside `{prefix}{root}_face`. Because `{prefix}` is exactly
    `placement * {prefix}{root}`, the selector then runs on the placed copy and
-   `IsSame` matches by construction. When `pos` is empty, `_placement` returns
-   `""` (`:262-263`) and `{prefix}` is an alias of the root — the same shape
-   object — so the origin case is unaffected.
+   `IsSame` matches by construction. Rewriting only the chain root would leave a
+   second mention of the root pointing at the unplaced body local, which is this
+   finding at one remove; the "No body locals" rule above and this "every
+   occurrence" rule are the two halves that close it, and neither is sufficient
+   alone. When `pos` is empty, `_placement` returns `""` (`:262-263`) and
+   `{prefix}` is an alias of the root — the same shape object — so the origin
+   case is unaffected.
 
 **The consequence this spec does not hide.** Selectors are evaluated
 *post-placement*, in the consumer's frame. A pos-dependent selector such as
@@ -392,18 +452,80 @@ value is an `ast.Call` with:
   a part offers, without executing anything, because `_parts.py` "indexes and
   searches them; it never executes anything" (`:5-6`), and that property is not
   being given up;
-- **argument 1** any expression subject to: its chain root is `ast.Name` equal
-  to `root_name` (else `interface_root_violation`); it contains no
-  `ast.NamedExpr`, `ast.Lambda`, `ast.Await`, `ast.Starred`, `ast.JoinedStr`, or
-  any comprehension node; and every `ast.Name` it *loads* is either `root_name`,
-  a name in `bound_names`, or a name in the injected-namespace whitelist
-  (`core/src/hephaestus/core/executor/namespace.py:1-13`).
+- **argument 1** any expression subject to: its *chain root* (defined below) is
+  an `ast.Name` equal to `root_name`, else `interface_root_violation`; it
+  contains no `ast.NamedExpr`, `ast.Lambda`, `ast.Await`, `ast.Starred`,
+  `ast.JoinedStr`, or any comprehension node; and every `ast.Name` it *loads* is
+  either `root_name` or a name in the interface-selector whitelist (below). A
+  loaded name that is a generator body or bind local other than `root_name` is
+  **`interface_body_local_reference`** — see "No body locals", below.
+
+**Chain root, defined so a parser can compute it.** Starting from argument 1's
+expression node, repeatedly descend: from an `ast.Attribute` take `.value`, from
+an `ast.Subscript` take `.value`, from an `ast.Call` take `.func`. Stop at the
+first node that is none of the three. That node is the chain root. It is
+`interface_root_violation` unless it is an `ast.Name` whose `id == root_name`.
+So `_root.faces().sort_by(SortBy.AREA)[-1]` roots at `_root` and passes, while
+`Compound(children=[_root]).faces()[0]` roots at the `ast.Name` `Compound` and is
+refused — the case G11B clause 4 names as "a whitelisted callable rather than a
+name binding".
+
+**No body locals, and why the earlier draft's `bound_names` term was a hole.**
+An earlier draft admitted "a name in `bound_names`" as a loadable name in
+argument 1. That reintroduced the very defect this subsection exists to close.
+The post-placement rewrite below retargets the *root* to the placed instance;
+a body local such as `_shaft_face` or `_body_length` still names **pre-placement**
+geometry, or a coordinate in the pre-placement frame, and the rewrite cannot
+retarget it — there is no placed counterpart to retarget it to. A selector
+mixing the placed root with an unplaced local measures one shape against the
+other's frame and produces a plausible, silently wrong face. It is refused
+outright. The authoring cost is real and is the same cost §2.1 already imposes:
+express the discriminator as a **measure** on the placed shape, not as a
+remembered local. The canonical example loads only `_root`, `GeomType`, `SortBy`
+and `Axis`, so this refuses nothing the mechanism needs (G11B clause 3 is the
+negative control).
+
+**The whitelist must be a declared constant, not a live namespace.** "The
+injected-namespace whitelist" is not a static set today: `build_namespace`
+assembles it at execution time from `build123d.__all__` plus `math`, `Param`,
+`p`, `part`, `tag`, `approx` and `safe_builtins()`
+(`core/src/hephaestus/core/executor/namespace.py:502-536`,
+`_build123d_exports` at `:496-500`). A parse-time rule cannot cite a runtime
+dict. So `namespace.py` gains one exported frozenset, `SELECTOR_NAMES`, and
+`_check_interface_region` reads *that*. It is the injected key set minus two
+declared exclusions, and both exclusions are the existing contract, not a new
+policy:
+
+```
+SELECTOR_NAMES == injected_names(build_namespace(...)) - _DUNDERS - _HANDLES
+_DUNDERS = {"__builtins__", "__name__"}
+_HANDLES = {"p", "part", "tag", "hc", "check", "CHECKS", "import_step", "approx"}
+```
+
+`_DUNDERS` are not script vocabulary. `_HANDLES` are the harness handles, and
+the region has no business reading any of them: `p` is the bind region's alone —
+the bind region is exactly one `_<name> = p.<name>` line per parameter and "the
+body never touches `p`" (`_generator.py`'s own contract, `:99-113`) — and a
+parameter read in a selector is a *coordinate in the unplaced frame*, the same
+hazard as a body local. `part` would root the chain somewhere other than
+`root_name` and is caught anyway; `tag` is the statement's own callee; `hc`,
+`check`, `CHECKS` are already in `_FORBIDDEN_NAMES` (`:42`) and stay forbidden
+everywhere; `import_step` would put an ingest inside a selector. What remains is
+exactly the pure-geometry vocabulary — `build123d.__all__` and `math` — which is
+what a selector is for. The pinning test asserts the equation above, so a
+build123d upgrade cannot silently widen or narrow the region and a handle cannot
+creep back in (named new work item 2; rule 6 — one definition of the namespace,
+not two). Note what this does and does not cost `_parts.py`'s "indexes and
+searches them; it never executes anything" (`:5-6`): the index gains an *import*
+of a declared constant, and still executes no script. Importing a library is not
+executing untrusted source, and the property being preserved is the latter.
 
 Decidable violations, each its own gate case (G11B clauses 2 and 4): a
 statement that is not a `tag` call; a non-literal name argument; an `ast.Assign`
 or `ast.AugAssign` or walrus; a `tag` call appearing as a sub-expression rather
-than as the statement; a free name that is neither bound nor whitelisted; a
-chain root that is not `root_name`.
+than as the statement; a loaded name that is neither `root_name` nor in
+`SELECTOR_NAMES`; a loaded name that is a body or bind local other than
+`root_name`; a chain root that is not `root_name`.
 
 Note what the last two do to `tag(open("/etc/passwd").read(), "x")`: `open` is
 not `root_name`, so it is `interface_root_violation`, and `open` is not in the
@@ -426,7 +548,10 @@ reachable, by G11A clause 22.
   exactly. A surplus is `undeclared_interface`; a shortfall is
   `unimplemented_interface`. This is the `_dfm.py:261-271` invariant
   generalised — "a predicate can therefore never read an undeclared number"
-  becomes "a generator can never emit an undeclared interface".
+  becomes "a generator can never emit an undeclared interface". It is **G11B
+  work** (item 11, G11B clause 6), not G11A: half the comparison is the region
+  the G11B parser reads, so binding it to G11A would make every G11A clause that
+  indexes a component record depend on G11B — see the Gates preamble.
 - The region may not assign; `bound_names` is computed over bind + body only
   (`_generator.py:124`) and stays that way.
 - `part.geometry = <name>` remains the last statement of the **body**.
@@ -519,11 +644,40 @@ this stage edits. §10's "no change to the sandbox contract" means the sandbox
 boundary and the injected-namespace whitelist; it does **not** mean the worker
 result protocol, and §10 now says so.
 
+#### The decision table, written out
+
+The verdict is a total function of the observed pair, not a description of one.
+Five declared classes, five `geom_type` values and five `kind` values would
+otherwise leave the reader to guess three of the cells — in particular `solid`,
+which has no surface or curve adaptor at all. Stated:
+
+| declared class | admissible `(kind, geom_type)` |
+|---|---|
+| `planar_face` | `("face", "PLANE")` |
+| `cylindrical_face` | `("face", "CYLINDER")` |
+| `circular_edge` | `("edge", "CIRCLE")` |
+| `linear_edge` | `("edge", "LINE")` |
+| `solid` | `("solid", "OTHER")` |
+
+Every other pair is `interface_class_mismatch`. Three consequences are meant and
+none is an oversight. `geom_type` is `OTHER` for a solid **by definition**, not
+by failure: a solid has no single adaptor, the worker writes `OTHER`, and the
+table admits exactly that pair — so `("solid", "OTHER")` is a positive
+verification of `solid`, not a fallthrough. A face whose surface is a torus, a
+cone or a B-spline classifies `("face", "OTHER")` and matches **no** declared
+class; that is a refusal, because this stage's consumers (8C `coincident` /
+`concentric` / `fit`, Stage 9 `revolute` / `prismatic`) accept none of them, and
+admitting a class the consumers cannot use is how `mating_features` happened.
+Admitting a further surface class is a contract amendment, the `ASSEMBLY.md:45`
+convention. And `kind` values `wire` and `vertex` (`tags.py:105-118`) appear in
+no row: an interface tag may not name one, which is `interface_class_mismatch`
+naming the observed `kind`.
+
 #### The three verdicts
 
 - `interface_class_mismatch` — the declared class and the observed
-  `(kind, geom_type)` pair disagree. Names the interface, the declared class and
-  the observed one.
+  `(kind, geom_type)` pair are not the table's row for that class. Names the
+  interface, the declared class and the observed pair.
 - `interface_not_placed` — a tagged topology absent from the final compound, the
   condition `TagPlacement` already represents with `solid_index=None`
   (`tags.py:31-38`). It fires in **two** places, and the second is the one an
@@ -700,6 +854,21 @@ closed set (`torque_speed_curve`, `load_rating`, `speed_limit`,
 `unsourced_component_datum` and the registry does not index — and therefore
 does not publish, since `validate_content` builds the index (`_publish.py:50-63`).
 
+Two closure rules, so that §7.4's join is a total function rather than a rule
+with undefined cells:
+
+- **A non-empty `claims` list requires the record's `datasheet` block.** A cite
+  naming a page and quote in a block that is not there cites nothing;
+  `unsourced_component_datum` names the claim id. This is what makes
+  `K.datasheet.sha256` in §7.4 always defined for any component a ledger entry
+  can legally name — without it, a `cite` could name a claim of a component with
+  no datasheet and `datasheet_digest_mismatch` would have no right-hand side.
+- **`claims[].id` is unique within a record**, matching the same
+  `^[a-z][a-z0-9_]{0,47}$` grammar as an interface name; a repeat is
+  `duplicate_claim_id`. A ledger `cite.claim` resolves to exactly one claim or
+  the ledger op refuses (§7.4); an ambiguous id would make the refusal itself
+  ambiguous.
+
 ### 6.2 What is checked at load: well-formedness only
 
 The `_dfm.py:161-182` / `_materials.py:75-79` numeric compulsion generalised. A
@@ -767,6 +936,32 @@ about them is not mistaken for their existence.
 
 The part most likely to be got wrong, so it is stated as three lists and a
 join.
+
+**The operator's decision, 2026-08-29, which this section implements.** The
+licensing posture was never a spec author's to settle — it is a product decision
+about what this repository redistributes. It was put to the operator as D3 of
+`docs/frontier-staging-proposal.md` and decided in these words:
+
+> "D3 licensing: REFERENCE, DO NOT VENDOR. Third-party datasheets and vendor CAD
+> are referenced by URL and content hash with their terms declared; they are not
+> copied into this repository. If a pack cannot be built without vendoring
+> something, that pack does not ship in this stage — say so loudly rather than
+> vendoring."
+
+That is D3 option (b), and the three lists below are it, made mechanical: 7.1 is
+what "not copied into this repository" still permits, 7.2 is the refusal with
+`vendored_third_party_payload` and `trademark_in_component_id` as its enforcement,
+and 7.3 is "referenced by URL and content hash with their terms declared". Two
+consequences are recorded here rather than left to be inferred. **Third-party
+federated packs under their own licenses — D3 option (c) — are not authorised by
+this decision**; they remain available only behind both §8's federation gate and
+the fifth `LEGAL-REVIEW.md` scope field of §7.5. **Vendoring vendor CAD payloads —
+option (d) — is refused permanently by the 2026-08-29 amendment**, so reversing it
+requires reversing a dated operator decision in `mission_plan.md`, not editing a
+paragraph here. And the last sentence of the decision is a shipping rule with
+teeth: a component pack that cannot be authored without vendoring something **does
+not ship in this stage**, and the omission is stated loudly in the stage's
+completion report rather than quietly resolved by vendoring the payload.
 
 ### 7.1 What MAY be vendored into the repository
 
@@ -915,11 +1110,36 @@ therefore does not cite `LEGAL-REVIEW.md` as authority for anything, and no
 clause below depends on it. It instead **tightens** that gate, per rule 1, by
 adding a fifth required scope field — *third-party component data provenance
 and terms: which standards were used, that no vendor payload is vendored, and
-that every `datasheet` pointer's terms permit reference-by-citation* — checked
-by the same CI schema check that checks the other four. Publication of a
-component pack is blocked until that field is signed off; development is not,
-matching the existing rule that the review "blocks only publication, not
-development".
+that every `datasheet` pointer's terms permit reference-by-citation*.
+Publication of a component pack is blocked until that field is signed off;
+development is not, matching the existing rule that the review "blocks only
+publication, not development".
+
+**Where that fifth field is actually written, as of the 2026-08-29 amendment.**
+Not in G7's checklist sentence: an amendment opening one stage does not rewrite
+another stage's gate text, so the requirement is stated in the `mission_plan.md`
+Stage 11 block and here, and `mission_plan.md:643-646` still lists four fields.
+This is named rather than glossed because a reader who greps G7 for the fifth
+field will not find it. Two obligations follow. Whoever next amends G7 folds the
+field into that sentence — the amendment that adds it is a one-line edit, and
+the checker below already validates five fields, so the gate and the checker
+would otherwise disagree in G7's favour. And until then, nothing may cite G7 as
+the authority that third-party component data was reviewed; the authority is the
+Stage 11 block.
+
+**The CI schema check does not exist either, and this spec does not pretend it
+does.** `mission_plan.md:646` says "CI checks the file's schema", but the file
+is a declared forward reference — `scripts/docs_check.py:101` lists
+`LEGAL-REVIEW.md` in `FORWARD_REFERENCES` as "Stage 7 legal review, not a G7H
+blocker" — and there is no checker for its four fields anywhere in the tree
+(`grep -rn LEGAL-REVIEW --include=*.py --include=*.yml` returns that one line and
+nothing else). An earlier draft of this section wrote "checked by the same CI
+schema check that checks the other four", which asserts a mechanism that is not
+there — precisely the failure the `KINEMATICS.md` convention names, that unnamed
+or misnamed machinery is a claim of existence. So the checker is **named new
+work** (item 33), it ships with this stage rather than waiting on Stage 7, it
+validates all five fields against a fixture, and it is gated (G11C clause 15).
+Stage 7 then inherits a checker instead of owing one.
 
 ## 8. Federation: one registry per kind is a silent drop
 
@@ -932,13 +1152,16 @@ depends on `hephaestus.toml` table order plus the bundled fallback
 the bundled `hephaestus-parts` is broken today, and would fail as a missing
 part rather than as a configuration error.
 
-- **10S-A ships the refusal.** `setdefault` becomes an explicit check: two
+- **G11A ships the refusal.** `setdefault` becomes an explicit check: two
   registries of one kind is `duplicate_registry_kind`, naming both, refusing to
   open the set. Fail-closed, and it converts a silent wrong answer into a
   configuration error the operator can fix. This is a behaviour change for any
   project that currently pins two of a kind and is unknowingly using one — which
-  is precisely the population that should be told.
-- **10S-C ships merged federation**: several `parts` registries indexed
+  is precisely the population that should be told. **G11A clause 18 was amended
+  on 2026-08-29** to name the *unfederated* kinds outright rather than `parts`,
+  once the next bullet was scheduled into G11C; the amendment is written out at
+  that clause, and it scopes the refusal rather than waiving it.
+- **G11C ships merged federation**: several `parts` registries indexed
   together, ids addressed `<registry>/<id>` when ambiguous and bare when
   unique, with a named `ambiguous_component_id` refusal rather than a
   precedence rule. Deferred to its own sub-gate because the addressing decision
@@ -954,11 +1177,19 @@ Stated per artifact, because these do not all have the same status.
 - The registry Merkle root and its leaf list. `_digest.py` binds path and
   content into every leaf, so a rename is as detectable as an edit, and the
   publication record carries every `(path, digest)` pair (`_publish.py:99-125`).
-- The rendered `script_fragment`. `render_fragment` is pure string
-  manipulation (`_generator.py:296-340`) over a prefix derived from
+- The rendered `script_fragment` — **at a fixed tree state**, which is the only
+  comparison a gate makes of it. `render_fragment` is pure string manipulation
+  (`_generator.py:296-340`) over a prefix derived from
   `json.dumps(..., sort_keys=True)` then sha256 (`:249-255`), and numeric
   literals go through `_literal` (`:241-244`), which is `repr` of an int or a
-  float — round-trip exact, not formatted.
+  float — round-trip exact, not formatted. So two *processes* reading the same
+  tree produce the same bytes, header included (G11B clause 20). Two *tree
+  states* do not, and no clause asserts they do: the `# registry: … @ <digest>`
+  line carries the Merkle root, so any registry byte moving moves it. Every
+  cross-tree-state clause elides that line and asserts digest honesty separately
+  (G11A clauses 1–3). Read this bullet as "reproducible", never as "invariant
+  under this stage's own edits" — conflating the two is exactly the false claim
+  §10 withdraws.
 - The emitted interface tag names, their count, and their order.
 - Every named refusal above: same input, same reason, same detail.
 - A declared mass, COM, and every `claims` sample. Declared data is copied, not
@@ -1018,6 +1249,16 @@ unchanged — it changes**, by one field, `geom_type` on each `tag_fingerprints`
 entry, because §2.3's verdict cannot be computed anywhere else. The two are
 different contracts and this spec no longer lets one sentence cover both.
 
+Nor is it a claim that `namespace.py` is byte-untouched. It gains one **derived
+export**, `SELECTOR_NAMES` — the injected key set minus `__builtins__` and
+`__name__` — for §2.1's parse-time rule, which cannot cite a dict that
+`build_namespace` only assembles at execution time (`:496-538`). No name enters
+the namespace, none leaves, `DENIED_BUILTINS` is unchanged, and the constant is
+pinned equal to `injected_names(build_namespace(...))` so it can only ever
+*describe* the whitelist, never define a second one. Stating this rather than
+letting "no change to the sandbox contract" cover it is the same discipline the
+paragraph above applies to the §8 protocol: one sentence, one contract.
+
 No tool is added; two result schemas grow. No fetch of any URL, ever. No change
 to `references/`: registration stays operator-only.
 
@@ -1046,21 +1287,36 @@ convention that unnamed machinery is a claim of existence.
    argument 2 an `ast.Constant` `str` matching the interface-name grammar and
    free of `__`; argument 1 free of walrus/lambda/await/starred/f-string/
    comprehension nodes, with every loaded `ast.Name` in
-   `{root_name} ∪ bound_names ∪` the injected-namespace whitelist. `tag`
-   permitted here and nowhere else, with `_FORBIDDEN_NAMES` (`:42`) unchanged
-   for the body. Refusals: `interface_region_violation`.
+   `{root_name} ∪ SELECTOR_NAMES` — **not** `bound_names`, whose admission was
+   the §2.1 hole that let a selector mix the placed root with an unplaced local.
+   `tag` permitted here and nowhere else, with `_FORBIDDEN_NAMES` (`:42`)
+   unchanged for the body. Refusals: `interface_region_violation`,
+   `interface_body_local_reference`.
+
+   Riding with it, because the rule is undecidable without it:
+   **`SELECTOR_NAMES` in `namespace.py`** — one exported frozenset,
+   `injected_names(build_namespace(...)) - _DUNDERS - _HANDLES` with both
+   exclusion sets declared beside it (§2.1), so the parse-time rule cites a
+   declared constant instead of the runtime dict `build_namespace` assembles
+   (`namespace.py:496-538`). Pinned by that equation, so a build123d upgrade
+   cannot silently widen or narrow what the region may name, a harness handle
+   cannot creep back in, and there is one definition of the namespace rather
+   than two (rule 6).
 3. Static extraction of the declared interface-name set from the region, for
    the index, without execution.
 4. **The chain-root rule and the post-placement rewrite.** `parse_generator`
    refuses a selector whose chain root is not `root_name`
    (`interface_root_violation`, `_generator.py:230-238` supplies the name).
    `render_fragment` then emits the interface region *below* the tail
-   (`:334-337`), rewriting the renamed root token `{prefix}{root}` to `{prefix}`
-   — the placed instance — and rewriting each tag literal to
-   `<instance>__<name>`. Both rewrites, not the literal alone: rewriting only
-   the literal is the bug that made an earlier draft of §2 inoperative for any
-   instance not at the origin. Stripping stays exactly the `part.geometry` line
-   and no other (`:327`).
+   (`:334-337`), rewriting **every whole-token occurrence** of the renamed root
+   `{prefix}{root}` to `{prefix}` — the placed instance — and rewriting each tag
+   literal to `<instance>__<name>`. Three properties, none of them optional:
+   the region below the tail, *every* root occurrence rewritten (not just the
+   chain root), and the literal rewritten. Rewriting only the literal is the bug
+   that made an earlier draft of §2 inoperative for any instance not at the
+   origin; rewriting only the chain root is the same bug at one remove, and is
+   why item 2 refuses body locals in argument 1 as well. Stripping stays exactly
+   the `part.geometry` line and no other (`:327`).
 5. The `instance` argument: grammar validation, `invalid_instance_name`, and
    the fallback to `instance_prefix` (`:247-256`).
 6. `TagRegistry.tag` scoped duplicate refusal for `__`-infix names
@@ -1101,7 +1357,10 @@ convention that unnamed machinery is a claim of existence.
 15. Mass block, `mass_source_conflict`, `unsourced_component_datum`, and the
     `inertia_out_of_scope` refusal.
 16. `claims` block and the `torque_speed_curve` well-formedness validator
-    (`malformed_performance_curve`).
+    (`malformed_performance_curve`), plus the two §6.1 closure rules that make
+    §7.4's join total: a non-empty `claims` list requires the record's
+    `datasheet` block (`unsourced_component_datum`), and `claims[].id` is unique
+    within a record (`duplicate_claim_id`).
 17. `datasheet` pointer block with all six required fields and `sha256:`
     prefix validation.
 18. Publish-time payload scanner (`vendored_third_party_payload`) and the
@@ -1144,7 +1403,7 @@ convention that unnamed machinery is a claim of existence.
 **Registry set (`_set.py`)**
 
 24. `duplicate_registry_kind` replacing `setdefault` (`:33-35`).
-25. (10S-C) Merged multi-registry indexing per kind, `<registry>/<id>`
+25. (G11C) Merged multi-registry indexing per kind, `<registry>/<id>`
     addressing, and `ambiguous_component_id`.
 
 **Lint and ledger**
@@ -1167,7 +1426,7 @@ convention that unnamed machinery is a claim of existence.
 29. Two tool result-schema amendments and one new optional argument, through
     the five generated drift-tested artifacts, with per-profile dispatch tests
     on both profiles. The record-only fields (`component_class`, `series`,
-    `mass_g`, `has_datasheet`) land in 10S-A; `interfaces` lands in 10S-B with
+    `mass_g`, `has_datasheet`) land in G11A; `interfaces` lands in G11B with
     the renderer that populates it, because a schema field no code can fill is
     not evidence of anything.
 30. `heph registry components [--json]` operator listing.
@@ -1182,22 +1441,49 @@ convention that unnamed machinery is a claim of existence.
     selector authoring rule §2.1 names and `interface_placement_drift` can only
     partly enforce; `docs/registry-contributions.md` checklist items;
     `repo_conventions.md` and `CONTRIBUTING.md` clauses of §7.
-33. The `LEGAL-REVIEW.md` fifth scope field and its CI schema check
-    (`mission_plan.md:643`).
+33. The `LEGAL-REVIEW.md` fifth scope field **and the CI schema check itself**,
+    which does not exist today (`scripts/docs_check.py:101` carries the file as a
+    `FORWARD_REFERENCES` entry and nothing checks its fields). The check
+    validates all five scope fields against a fixture and is gated by G11C
+    clause 15; `mission_plan.md:643-646` is amended to name it. This stage does
+    not *hold* the human review — that stays Stage 7's one deliberately human
+    step — it ships the machine half so the review has something to fail against.
 34. A corpus family for component-bearing mechanisms, with its own split
     baselined on its own first measurement — never averaged into the v1/v2
     baselines, the `VALIDATION.md` §1 rule as G9C restates it
-    (`KINEMATICS.md:392-398`).
+    (`KINEMATICS.md:392-398`). **Amended 2026-08-29** (see G11C clause 12): the
+    family is a first-class object in `hephaestus.bench.scoring`, not a
+    convention a future operator applies by hand — `CORPUS_FAMILIES` (closed),
+    `split_name` carving family runs out of both spec splits so the 0.70 bar
+    cannot be diluted, `component-prose` / `component-seeded` splits carrying no
+    threshold, and `record_component_baseline` writing the first measurement
+    once and refusing one below three seeds per task by the name
+    `insufficient_component_seeds`.
 
 **Explicitly deferred, and NOT in this stage** (each would be its own
 amendment): the torque-margin predicate and its ledger demand side (§6.4); an
 enumerated `Param` kind (§4); inertia tensors and any dynamics; merged
-federation beyond 10S-C's scope; any vendor-CAD ingest path.
+federation beyond G11C's scope; any vendor-CAD ingest path.
 
 ## Gates
 
 Three sub-stages, strictly ordered. Every clause is a pytest assertion; a
 clause that could only be satisfied by inspection is a defect in this section.
+
+**And every one of them is a command in CI** (mission rule 1: "Gates are
+commands. Every criterion above maps to a CI job."). The three suites run in
+`.github/workflows/ci.yml`'s `stage gates 11A-11C` job on every PR and push to
+`main`, and that check name is in `release.yml`'s required prior-gate list, so a
+release cannot be cut over a red Stage 11. Added 2026-08-29, after a verifier
+observed that these were the only stage suites in the repository with no
+workflow lane: three Tier-1 gates that pass on a developer's machine are not
+gates yet. The lane provisions bubblewrap (G11A's runtime-sandbox refusal) and
+the Mesa software stack (G11C clause 11's engine-path grading) and deliberately
+no Node — the contract-drift clauses compare the committed `schema.gen.ts`
+against the generator's output in-process, and a prerequisite a lane does not
+need is noise rather than safety. G11C clause 12's Tier 3 measurement is the one
+thing not in that job, and it is archived bench evidence by construction; see
+the clause.
 
 **Ordering is a correctness property of this section, not a convenience.** A
 clause in sub-stage A that binds to machinery sub-stage B delivers cannot pass
@@ -1206,6 +1492,33 @@ routed through the interface region, and a contract-drift clause dispatching a
 result field only B's renderer can populate). Both have been moved to B, and
 each sub-stage's clauses are now satisfiable with only that sub-stage's Named
 new work and its predecessors'.
+
+**Every Named new work item is assigned to a sub-stage, in writing.** Leaving
+the assignment implicit is how the ordering bug above survived a draft: a
+reader could place an item in A because it sits in an `_parts.py` paragraph
+while its other half sits in B's parser. So:
+
+| Sub-stage | Named new work items |
+|---|---|
+| **G11A** | 8, 9, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20, 24, 30; item 23's `mass` / `datasheet` half; item 29's record-only half; item 31 for the seeded records |
+| **G11B** | 1, 2 (including `SELECTOR_NAMES`), 3, 4, 5, 6, 7, **11**, 21, 22; item 23's `interfaces` half; item 29's `interfaces` half; item 31 for those records' interface regions |
+| **G11C** | 25, 26, 27, 28, 32, 33, 34; item 23's `claims` half; item 31 for the completed packs |
+
+**Item 11 is the one that had to be decided rather than inherited.** Record ⇄
+region interface-name set equality (`undeclared_interface` /
+`unimplemented_interface`) is listed under "Record schema and index", which reads
+like A, but *half of it is B's parser*: there is no region to compare against
+until items 1–4 land. Assigning it to A would make every A clause that indexes a
+component record — 4–14, 19, 20, 21, 22, 23 — depend on B, which is the ordering
+bug in its purest form. So **item 11 is G11B work, gated by G11B clause 6.** The
+consequence is named, not hidden: for the duration of A, a component record may
+declare interfaces its generator does not yet emit, and A's own clauses do not
+catch that. This is honest because A publishes no component pack as a
+deliverable — item 31's packs complete in C — and because §1's per-class
+*required-interface* rule (item 10, record-only, G11A clause 5) still fires in A,
+so a record cannot omit the interfaces its class demands. What A cannot check is
+whether a generator implements them; B is where that becomes checkable, and B is
+where it is checked.
 
 ### Gate G11A — the component record
 
@@ -1224,20 +1537,51 @@ new work and its predecessors'.
    digest equals `merkle_digest(tree)` recomputed in the test
    (`_digest.py:53-60`), and equals the value the publication record carries. The
    header therefore still cannot drift silently.
-3. **The shipped six, and the digest change item 19 delivers.** Before item 19's
-   edit, each shipped part's fragment body is pinned under the clause-1 elision.
-   After it: the tree's Merkle root differs from the pre-edit root; the new root
-   is re-published and re-pinned; `publication_drift` against the pre-edit
-   publication record names **exactly** the edited `part.json` files and no
-   others (`_publish.py:190-224`); and every shipped part's fragment body is
-   unchanged under the clause-1 elision, including the parts item 19 did not
-   edit.
+3. **The shipped six, and the digest change item 19 delivers.** Each shipped
+   part's fragment body is pinned under the clause-1 elision against a
+   **recorded golden**, on both sides of item 19. After the edit: the tree's
+   Merkle root differs from the pre-edit root; the new root is re-published and
+   re-pinned; `publication_drift` against the pre-edit publication record names
+   **exactly** the edited `part.json` files and no others
+   (`_publish.py:190-224`); and every shipped part's fragment body is unchanged
+   under the clause-1 elision, including the parts item 19 did not edit.
+
+   **Amended 2026-08-29, under rule 1** — a tightening, and it closes a hole
+   this clause had rather than opening one. The "pre-edit" tree is a *recorded
+   fixture*, and the clause now says in writing what has to be recorded in it:
+   **both** `part.json` and `generator.py` for all six parts. An earlier form
+   recorded only `part.json` and read `generator.py` from the current shipped
+   tree, which made the reconstruction a hybrid the moment item 31 appended an
+   `interface` region to those same six generators — and made the fragment-body
+   assertion compare one generator against itself, so it could not fail. Three
+   consequences are now required rather than assumed:
+
+   - the recorded "before" bytes are asserted to *differ* from the shipped
+     bytes, for both files, so a "before" fixture cannot silently become a copy
+     of "after";
+   - the `publication_drift` sentence above is asserted over the **whole** drift
+     set of a tree where item 19 is the only difference (generators held at their
+     recorded bytes on both sides), not over a filtered view of the whole
+     stage's drift — and the whole stage's drift is *additionally* asserted in
+     full, with every file attributed to the item that moved it: item 19's six
+     `part.json`, item 31's six `generator.py` interface regions, `registry.toml`,
+     and the packs G11C's half of item 31 adds. Nothing is filtered out of either;
+   - "unchanged under the clause-1 elision" is asserted as the pre-stage
+     fragment being a strict **prefix** of the shipped one, with the remainder
+     parsed and required to be exactly item 31's region — every statement a `tag`
+     call whose name literal is instance-scoped (§2.2). Equality would be the
+     false statement: the bodies genuinely grew a region this stage, and the
+     claim clause 3 owns is that *item 19* moved no body line.
 4. `component.class` outside the closed set is `unknown_component_kind` at
    index time, the message listing the valid set.
 5. A `motor` record lacking `shaft` or `mount_face`, and a `bearing` lacking
    `bore` or `outer`, are each `missing_required_interface` naming the missing
    interface.
-6. A duplicate interface `name` within one record is `duplicate_interface_name`.
+6. A duplicate interface `name` within one record is `duplicate_interface_name`;
+   a duplicate `claims[].id` within one record is `duplicate_claim_id`. Both
+   name the repeated identifier, and both matter because a ledger
+   `cite.component`/`cite.claim` pair and an emitted `<instance>__<name>` tag
+   each have to resolve to exactly one thing (§6.1, §7.4).
 7. An interface `class` outside the closed set is `unknown_interface_class`.
 8. `param_schema_drift`: a record advertising a parameter the generator's
    `PARAMS` lacks, and a record omitting one it has, are each refused at index
@@ -1247,7 +1591,10 @@ new work and its predecessors'.
    an existing licensed tree still parses unchanged.
 10. `unsourced_component_datum` on (a) `mass.source="datasheet"` with no
     `datasheet` block, (b) `mass.source="standard"` with no `series.standard`,
-    (c) a `claims` entry with no `cite`.
+    (c) a `claims` entry with no `cite`, (d) a non-empty `claims` list on a
+    record with no `datasheet` block — the case that makes §7.4's
+    `K.datasheet.sha256` always defined for a component a ledger entry may name
+    (§6.1).
 11. `mass_source_conflict` when a datasheet mass and a computed-mass material id
     are both declared.
 12. `inertia_out_of_scope` on a record carrying an inertia tensor, the refusal
@@ -1272,8 +1619,29 @@ new work and its predecessors'.
     closed set; a published build's `tag_fingerprints` round-trips the field
     (`publication.py:472`); a descriptor with an out-of-set `geom_type` is
     refused at parse (`runner.py:375`).
-18. `duplicate_registry_kind`: a project pinning two `parts` registries refuses
-    to open the set, naming both; a project pinning one still opens.
+18. `duplicate_registry_kind`: a project pinning two registries of an
+    **unfederated** kind — any kind outside `RegistrySet.FEDERATED_KINDS`, which
+    today is `skills`, `materials` and `dfm` — refuses to open the set, naming
+    **both registry names and both roots**; a project pinning one still opens;
+    and `FEDERATED_KINDS` is itself asserted, so federating a further kind cannot
+    silently retire this clause's subject.
+
+    **Amended 2026-08-29, under rule 1.** This clause read "a project pinning two
+    `parts` registries", which was written before §8's own second bullet was
+    scheduled into a sub-gate: **G11C clause 9 federates `parts`**, so two
+    `parts` trees now index together and a colliding id is a per-id
+    `ambiguous_component_id` refusal. The refusal is therefore *scoped*, not
+    waived — it keeps its job for every kind where §8's silent drop is still
+    reachable, and the `parts` half of the behaviour is G11C clause 9's to
+    evidence. Leaving the old text standing would have left a clause no test
+    could satisfy while its covering test quietly re-sited itself, which is the
+    gate-to-test mismatch rule 1 exists to close.
+
+    The amendment **tightens** in the same breath: "naming both" is now "both
+    names and both roots". Two vendor packs of one kind routinely carry the same
+    manifest `name` — a fork, or a copy of the bundled tree — and a refusal that
+    prints one name twice tells the operator nothing about which pin to remove.
+    The roots are the part that is always distinct.
 19. `vendored_third_party_payload`: publishing a `parts` tree containing a
     `.pdf`, a `.step`, and a `.png` is refused, each file named.
 20. `trademark_in_component_id`: a component id on the deny-list is refused at
@@ -1297,6 +1665,12 @@ new work and its predecessors'.
     governing evidence; it is re-sited, not weakened.
 23. **Determinism.** Two processes produce identical Merkle roots, identical
     leaf lists, and identical refusal reasons and details for clauses 4–14.
+24. **`heph registry components [--json]`** (item 30) lists every component
+    record in the pinned registries with its class, series, declared interface
+    names and `has_datasheet`, listing legacy parts not at all; `--json` output
+    is byte-identical across two processes and its key order is stable. A
+    deliverable with no clause is an ungated deliverable, which this section
+    treats as a defect in itself.
 
 ### Gate G11B — mounting interfaces as tagged geometry
 
@@ -1315,29 +1689,51 @@ new work and its predecessors'.
    two positional arguments; an `ast.Assign`, `ast.AugAssign` or walrus; a `tag`
    call appearing as a sub-expression rather than as the statement; a lambda,
    comprehension, `await`, starred expression or f-string inside argument 1; a
-   loaded free name that is neither `root_name`, nor in `bound_names`, nor in
-   the injected-namespace whitelist (`namespace.py:1-13`).
+   loaded free name that is neither `root_name` nor in `SELECTOR_NAMES` —
+   including, specifically, a selector reading `p.<param>`, which is the bind
+   region's alone. The whitelist itself is asserted, not assumed:
+   `SELECTOR_NAMES == injected_names(build_namespace(...)) - _DUNDERS - _HANDLES`
+   holds exactly (`namespace.py:502-538`), every member of `_HANDLES` is refused
+   in the region by name, and `GeomType`, `SortBy`, `Axis` and `math` are
+   admitted — so the parse-time rule and the execution-time namespace cannot
+   drift apart in either direction.
 3. **The canonical region parses.** Both statements of §2.1's example —
    attribute chains, method calls, `filter_by`/`sort_by` arguments and a
    subscript — parse clean. This is the negative control on clause 2: a
    tightening that refuses the mechanism is a defect, not a stricter gate.
-4. `interface_root_violation`: a selector whose chain root is a body local other
-   than `root_name`, and one whose chain root is a whitelisted callable rather
-   than a name binding, are each refused, naming the offending root and
-   `root_name`.
+4. **Rooting, and the body-local refusal.** `interface_root_violation`: a
+   selector whose chain root is a body local other than `root_name`, and one
+   whose chain root is a whitelisted callable rather than a name binding
+   (`Compound(children=[_root]).faces()[0]`), are each refused, naming the
+   offending root and `root_name`. `interface_body_local_reference`: a selector
+   correctly rooted at `root_name` that nevertheless *loads* a bind or body
+   local anywhere in argument 1 — `_root.faces().sort_by(SortBy.DISTANCE,
+   _hub.center())[0]` and `_root.faces().filter_by(Plane(origin=(0, 0,
+   _body_length)))[0]` are the two shapes of it, one geometric and one scalar —
+   is refused, naming the local. This is the clause with the sharpest teeth in
+   the sub-gate: without it the post-placement rewrite retargets the root and
+   leaves the local in the unplaced frame, and the selector resolves to a real
+   face that is the wrong one.
 5. `tag` in the `params`, `bind` or `body` region is still refused, message
    unchanged from `_generator.py:199-206`.
-6. `undeclared_interface` (region tags a name the record omits) and
-   `unimplemented_interface` (record declares a name the region never tags).
+6. **Record ⇄ region set equality** (Named new work item 11, which lands here and
+   not in G11A because there is no region to compare against until clause 1's
+   parser exists): `undeclared_interface` (region tags a name the record omits)
+   and `unimplemented_interface` (record declares a name the region never tags),
+   each naming the offending interface. Both directions, on the same record, in
+   the same suite.
 7. **Emitted names.** The fragment's tag literals are exactly
    `<instance>__<name>` for every declared interface, with the caller's
    `instance` when supplied and the `instance_prefix`-derived value when not;
    `invalid_instance_name` for an instance not matching the ident grammar.
 8. **Emitted position and rooting.** In the rendered fragment the interface
-   region appears **below** both tail lines (`_generator.py:334-337`), and every
+   region appears **below** both tail lines (`_generator.py:334-337`), every
    selector's chain root is the instance name `{prefix}`, not the renamed body
-   local `{prefix}{root}`. Asserted on the fragment text, so the rewrite that
-   makes clause 9 possible is pinned independently of any build.
+   local `{prefix}{root}`, and the token `{prefix}{root}` does not appear
+   **anywhere** in the emitted region — asserted by tokenising the region, not by
+   substring search, so `{prefix}{root}_face` is not mistaken for it. Asserted on
+   the fragment text, so the rewrite that makes clause 9 possible is pinned
+   independently of any build.
 9. **Placement resolution at a non-trivial `pos`** — the clause the placement
    bug would have failed. A component is instanced at a **non-zero translation
    *and* a non-zero rotation**; the placement-verification build runs; every
@@ -1368,12 +1764,17 @@ new work and its predecessors'.
     `pos=None`, `pos={}`, an all-zero `pos`, and a non-zero `pos`. Wall clock
     for the two-build path stays within a named budget on the pinned CI image,
     per rule 4 (`mission_plan.md` performance rule).
-13. **Class verification.** A record declaring `planar_face` for topology that
-    builds as a cylindrical face is `interface_class_mismatch` naming declared
-    and observed, decided on the worker-computed `geom_type` and not on the
-    three-way `kind`; each of the five interface classes is verified positively
-    at least once. Fires at the default parameters, at a caller-supplied
-    parameter set, and at a non-zero `pos`.
+13. **Class verification, against the §2.3 table.** A record declaring
+    `planar_face` for topology that builds as a cylindrical face is
+    `interface_class_mismatch` naming declared and observed, decided on the
+    worker-computed `geom_type` and not on the three-way `kind`. Each of the
+    five table rows is verified **positively** at least once, `("solid",
+    "OTHER")` included, so the `solid` row is proved to be an admitting row and
+    not a fallthrough. Each of these is verified **negatively**: a face whose
+    surface is a torus or a cone, classifying `("face", "OTHER")`, matches no
+    row and is refused; a tag naming a wire and one naming a vertex are each
+    refused, naming the observed `kind`. Fires at the default parameters, at a
+    caller-supplied parameter set, and at a non-zero `pos`.
 14. **`interface_placement_drift`.** A generator whose interface selector is
     pos-dependent (`sort_by(Axis.Z)[-1]` over faces of unequal area) instanced
     under a rotation that reorders them is refused, naming the interface and
@@ -1475,6 +1876,123 @@ new work and its predecessors'.
     baselines**; the existing 0.70 prose bar keys on its own coverage and is not
     diluted. Re-baselining any combined bar is its own future amendment. The
     clause follows the G9C precedent verbatim (`KINEMATICS.md:392-398`).
+
+    **Amendment, 2026-08-29 — the machinery, not only the rule (rule 1:
+    tighten, never waive).** An independent verifier scored this clause
+    *uncovered*: the only assertions behind it pinned the clause's own prose and
+    one mechanical corollary, so the clause's subject had no evidence. The cause
+    was not the missing bench run. It was that **no component split existed to
+    measure.** `score_records` split runs by `VALIDATION.md` §1 spec alone, so a
+    detached sweep over the whole corpus would have folded `bearing-shaft` and
+    `motor-plate` into the very number compared against 0.70 — the dilution this
+    clause forbids, arriving through the plumbing rather than through anyone's
+    decision, and no test would have caught it. A clause whose subject the code
+    cannot express is a spec defect, so the clause is tightened into three
+    testable halves, all three gated here and none of them deferred:
+
+    a. **The split is a first-class object.** `CORPUS_FAMILIES` is a closed
+       family vocabulary whose single entry is `component`
+       (`COMPONENT_FAMILY_TASKS`), and `split_name` is the one function that
+       decides which split a run belongs to. Following the G9C precedent
+       verbatim, a family is its own split **per spec** — `component-prose` and
+       `component-seeded`, never averaged with each other either — which is a
+       tightening of this clause's earlier singular "its own split": one split
+       mixing prose and seeded runs would violate §1 while satisfying the
+       sentence. A family split carries no threshold, ever.
+    b. **Non-dilution is structural, not hoped for.** Family runs are carved out
+       of *both* spec splits, so the gated prose number shares no run with the
+       family and the 0.70 bar keeps covering exactly the corpus it was
+       baselined over. A family split appears in the artifact only when it has
+       runs, and **no key the family needs is written onto a split that does not
+       need it**, so re-scoring an archive measured before this stage
+       reproduces its stored artifact byte for byte. `tests/stage6`'s corpus-v1
+       shape pin is repointed to the carved gated split, **citing this
+       amendment**; it is strengthened in the same edit, not relaxed, by
+       asserting where the carved-out runs went.
+
+       *Second tightening, 2026-08-29, under rule 1.* As first written this
+       paragraph claimed byte-identity and asserted it nowhere, and the claim
+       was **false**: `SplitScore.to_json` emitted `min_seeds_per_task` on every
+       split, so a pre-stage archive re-scored today differed from its stored
+       artifact in exactly one key per split. A verifier demonstrated it on
+       `bench/results/gpt-5.6-sol/2026-08-03` and
+       `bench/results/gpt-5.6-sol/2026-08-13`. Two ways were
+       open — weaken the sentence to "no split row is added and no gate-bearing
+       number moves", or make the artifact genuinely stable — and rule 1 takes
+       the second: the artifact is archived evidence (mission rule 2), so an
+       amendment that rewrites a stored artifact on the next re-score has
+       damaged the record even though no number moved. `min_seeds_per_task` is
+       therefore serialised on family splits only, which is where its single
+       reader — the ≥3-seed floor of (c) — looks; `heph bench score`'s table
+       still prints it for every split, because a printed table is not
+       evidence. Both halves are now asserted rather than claimed: byte
+       identity against those two checked-in artifacts, and, over *every*
+       archive in `bench/results`, that none grows a family row. Three archives
+       there had already drifted from their stored artifacts before this stage
+       (one `--date`-named directory, two written by a scorer older than the §8
+       metric block); this stage neither caused nor repairs that, and the
+       byte-identity clause names its two clean witnesses rather than
+       pretending to a fleet-wide claim.
+    c. **The ≥3-seed floor is a named refusal.** `record_component_baseline`
+       writes the family's first measurement and never re-baselines, exactly as
+       `record_seeded_baseline` does — and because "first measurement" and
+       "never re-baselined" together make a thin first run permanent, it refuses
+       one below three distinct seeds per task by the name
+       `insufficient_component_seeds`, writing nothing. `heph bench score`
+       calls it and prints the refusal rather than swallowing it, so a family
+       whose baseline was refused never looks like a family that was not run.
+
+    **What remains deferred, stated plainly:** the live reference-model numbers.
+    No pytest can produce them, and this repository fakes nothing — `bench/results`
+    and `bench/archive` are untouched by this stage. The detached run now has a
+    baseline file to write (`component_baseline.json`) and a shape it cannot get
+    wrong, and the properties this clause exists to protect — its own split, its
+    own first measurement, at ≥3 seeds, never averaged in — are enforced by code
+    and asserted by `tests/stage11c`, not left to the operator's care.
+
+    **The measurement, 2026-08-29: what its status is and who says so.** This
+    clause has two halves with two different kinds of evidence, and conflating
+    them is how "G11C: all clauses green" would mislead an operator. Said
+    plainly:
+
+    * **The machinery is Tier 1 and closed.** (a), (b) and (c) above are pytest
+      assertions in `tests/stage11c`, run in CI by the `stage gates 11A-11C`
+      job (`.github/workflows/ci.yml`) and required by `release.yml`'s
+      prior-gate check, per mission rule 1.
+    * **The number is Tier 3 and outstanding.** No `component_baseline.json`
+      exists in this repository. Taking it is a detached run — `heph bench run`
+      over `bearing-shaft` and `motor-plate` at ≥3 seeds with the epoch's
+      reference model (mission rule 3), then `heph bench score` on the archive,
+      which writes the baseline or refuses it by name — and it is **archived
+      bench evidence, not a CI clause**, exactly as G9C's mechanism-split
+      baseline is (`KINEMATICS.md:392-398`, and the `stage gates 9A-9C` job's
+      own comment). A gate matrix reports this row as *machinery closed,
+      measurement outstanding*, never as green.
+    * **Nothing may report it as taken while it is not.** The absence is not
+      left to a reader's care either: `heph bench score` prints
+      `component family: NOT MEASURED` — naming both tasks and the file that
+      would hold the answer — on every archive that measured no family task,
+      and stops printing it once a baseline exists. Both directions are
+      asserted in `tests/stage11c`, so the warning is a report on the world
+      rather than a banner.
 13. Corpus-count pins repointed with this stage cited.
 14. **Determinism.** Two processes produce identical lint findings for clauses
     5, 6 and 7 and identical federated resolution for clause 9.
+15. **The `LEGAL-REVIEW.md` schema check exists and has teeth.** A fixture
+    carrying every required field passes; a fixture missing the field this stage
+    adds — *third-party component data provenance and terms* — is refused,
+    naming it; a fixture missing any one of the pre-existing fields is refused,
+    naming it. **The count, corrected 2026-08-29 under rule 1.** This clause
+    first read "all five scope fields (reviewer, date, and the four scope items
+    plus …)", which enumerates six and was flagged as such by a verifier. The
+    checker requires **six**: two identity fields (reviewer, date) and four
+    scope statements, the fourth being the one Stage 11 adds. The "four scope
+    fields"/"five" phrasing elsewhere is G7's own, inherited by §7.5 and the
+    `mission_plan.md` block, and it is G7's sentence to correct; this clause
+    stops repeating an arithmetic it cannot make true, and
+    `scripts/legal_review_check.py` resolves the conflict the only way that
+    drops nothing — every field either document names is required. The check is
+    asserted against fixtures,
+    not against the repository root, because `LEGAL-REVIEW.md` is a Stage 7
+    deliverable that deliberately does not exist here (§7.5) — so this clause
+    pins the checker, and Stage 7's own gate pins the signed file.

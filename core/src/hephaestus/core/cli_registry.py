@@ -18,6 +18,12 @@ registry verb runs; ``cli.build_parser`` registers these through
   deliberate act.
 - ``heph registry update [name ...] [--json]`` is the only re-pin path:
   recompute each named (or every pinned) registry's digest and write it.
+- ``heph registry components [--json]`` lists every *component* record the
+  pinned registries carry (``PARTS_STORE.md`` §1, named new work item 30) with
+  its class, series, declared interface names and whether it carries a
+  datasheet pointer. Legacy store parts — those with no ``component`` block —
+  are listed **not at all**: this verb answers "what components do I have", and
+  padding it with parts that have no record would answer a different question.
 - ``heph registry verify [name ...] [--record FILE] [--json]`` re-hashes each
   pinned tree and fails when a tree drifted from its pin **or** is not pinned at
   all; with ``--record`` (one registry only) it also verifies the tree against a
@@ -138,6 +144,61 @@ def _cmd_list(args: argparse.Namespace) -> int:
         print(f"  digest: {record.get('digest', '(unreadable)')}")
         if record["pinned_digest"] is not None and record["status"] == "drifted":
             print(f"  pinned: {record['pinned_digest']}")
+    return 0
+
+
+def _cmd_components(args: argparse.Namespace) -> int:
+    """List the component records in the project's pinned registries.
+
+    Goes through :class:`RegistrySet` rather than re-resolving pins by hand, so
+    a drifted tree refuses here exactly as it refuses everywhere else and this
+    verb can never report content that failed verify-on-load.
+    """
+    from hephaestus.core.registry import RegistrySet
+
+    project_root = _project_root()
+    try:
+        registries = RegistrySet.open(project_root)
+    except RegistryIntegrityError as exc:
+        print(f"heph: error (registry_integrity): {exc.message}", file=sys.stderr)
+        return 1
+    index = registries.parts
+    records: list[dict[str, JSONValue]] = []
+    for part_id in index.component_ids():
+        part = index.get(part_id)
+        component = part.component
+        if component is None:  # pragma: no cover - component_ids() filtered these
+            continue
+        records.append(
+            {
+                "id": part.id,
+                "name": part.name,
+                "class": component.component_class,
+                "series": component.series.to_json(),
+                "interfaces": list(component.interface_names),
+                "has_datasheet": component.datasheet is not None,
+                "registry": part.registry,
+                "registry_digest": part.digest,
+            }
+        )
+    if bool(args.json):
+        # Sorted ids, and every key emitted in this literal's order: the JSON is
+        # asserted byte-identical across two processes (G11A clause 24), so key
+        # order has to be a property of the code and not of dict iteration luck.
+        print(json.dumps(records))
+        return 0
+    if not records:
+        print("no component records in the pinned registries")
+        return 0
+    for record in records:
+        series = cast("Mapping[str, JSONValue]", record["series"])
+        family = series.get("family") or "-"
+        size = series.get("size") or "-"
+        print(f"{record['id']}: {record['class']} ({family} {size})")
+        print(f"  registry:   {record['registry']} @ {record['registry_digest']}")
+        interfaces = cast("list[JSONValue]", record["interfaces"])
+        print(f"  interfaces: {', '.join(str(name) for name in interfaces) or '(none)'}")
+        print(f"  datasheet:  {'yes' if record['has_datasheet'] else 'no'}")
     return 0
 
 
@@ -380,6 +441,12 @@ def add_subparsers(
     listing = verbs.add_parser("list", help="list resolved registries and their digests")
     listing.add_argument("--json", action="store_true", help="emit JSON records")
     listing.set_defaults(func=_guard(_cmd_list))
+
+    components = verbs.add_parser(
+        "components", help="list the component records in the pinned registries"
+    )
+    components.add_argument("--json", action="store_true", help="emit JSON records")
+    components.set_defaults(func=_guard(_cmd_components))
 
     publish = verbs.add_parser(
         "publish", help="validate a registry end to end, state its digest, and pin it"

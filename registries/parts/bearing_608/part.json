@@ -1,0 +1,52 @@
+{
+  "id": "bearing_608",
+  "name": "608 deep-groove ball bearing (ISO 15 boundary envelope)",
+  "summary": "Thread-free 608 bearing envelope: 8 mm bore, 22 mm outside diameter, 7 mm wide, modelled as a plain annular ring. Origin on the back face, on the bore axis.",
+  "preview": "608 bearing envelope, 8 x 22 x 7 mm, bore and outer ring faces tagged",
+  "keywords": [
+    "608",
+    "bearing",
+    "ball",
+    "deep",
+    "groove",
+    "radial",
+    "iso",
+    "15",
+    "8mm",
+    "shaft",
+    "skate",
+    "idler",
+    "pulley",
+    "metric",
+    "hardware"
+  ],
+  "params": {},
+  "component": {
+    "class": "bearing",
+    "series": {
+      "family": "60x",
+      "size": "608",
+      "standard": "ISO 15"
+    },
+    "license": "Apache-2.0",
+    "data_license": "facts-only",
+    "frame": "back face on the bore axis; the ring spans 0..+7 in Z",
+    "simplifications": [
+      "boundary envelope only: no raceways, balls, cage or shields",
+      "no bore or outer-ring chamfers",
+      "one rigid ring, so nothing rotates relative to anything"
+    ],
+    "interfaces": [
+      {
+        "name": "bore",
+        "class": "cylindrical_face",
+        "role": "bore"
+      },
+      {
+        "name": "outer",
+        "class": "cylindrical_face",
+        "role": "outer"
+      }
+    ]
+  }
+}

@@ -1217,7 +1217,27 @@ def _search_parts_store() -> ToolDecl:
         result={
             "type": "array",
             "items": _obj(
-                {"id": _STR, "name": _STR, "params": _dict(), "preview": _STR},
+                {
+                    "id": _STR,
+                    "name": _STR,
+                    "params": _dict(),
+                    "preview": _STR,
+                    # PARTS_STORE.md §3: present for a *component* record only,
+                    # absent for a legacy store part — which is why none of them
+                    # is required. Interface names are as declared, unprefixed:
+                    # the instance prefix is not known until instantiation.
+                    "component_class": _STR,
+                    "series": _dict(),
+                    "interfaces": {
+                        "type": "array",
+                        "items": _obj(
+                            {"name": _STR, "class": _STR, "role": _STR},
+                            ["name", "class", "role"],
+                        ),
+                    },
+                    "mass_g": _NUM,
+                    "has_datasheet": _BOOL,
+                },
                 ["id", "name"],
                 additional=True,
             ),
@@ -1237,11 +1257,41 @@ def _instance_store_part() -> ToolDecl:
                 "id": _STR,
                 "params": _dict(),
                 "pos": {"anyOf": [_dict(), {"type": "null"}], "default": None},
+                # PARTS_STORE.md §2.2: the scope of this instance's emitted
+                # interface tags. Absent means the deterministic
+                # `instance_prefix(id, params, pos)`, so two instances differing
+                # in any of those three are already distinct; `instance` is the
+                # escape hatch for pasting the SAME instance twice, which is
+                # otherwise a `duplicate_tag` build failure.
+                "instance": {"anyOf": [_ident(), {"type": "null"}], "default": None},
             },
             ["id", "params"],
         ),
         result=_result(
-            _ok({"script_fragment": _STR}, ["script_fragment"]),
+            # `mass` and `datasheet` are the declared blocks verbatim
+            # (PARTS_STORE.md §3, §5, §7.3), present only for a component
+            # record. Neither is a measurement and neither is required.
+            # `interfaces` carries the EMITTED names — `<instance>__<name>` —
+            # because those, not the declared ones, are what an 8C anchor or a
+            # Stage 9 joint spells.
+            #
+            # `claims` is a STRING, not an array, and that is the point
+            # (PARTS_STORE.md §6.3): no part of Hephaestus can evaluate a
+            # torque-speed curve, so a datasheet claim reaches the model wrapped
+            # in the same provenance delimiters registry text uses, whose footer
+            # restates that it is reference material and not instructions.
+            # Handing back a bare JSON array beside `metrics` would give a vendor
+            # assertion the shape, and so the standing, of a measurement.
+            _ok(
+                {
+                    "script_fragment": _STR,
+                    "interfaces": {"type": "array", "items": _STR},
+                    "mass": _dict(),
+                    "datasheet": _dict(),
+                    "claims": _STR,
+                },
+                ["script_fragment"],
+            ),
             _CAPABILITY_NOT_AVAILABLE,
         ),
         profiles=("part", "orchestrator", "quick_edit"),
@@ -1487,11 +1537,22 @@ def _ask_user() -> ToolDecl:
 #: reference, ``page`` is 1-based (documents only) and ``quote`` is the cited
 #: text — verified against the extracted text by ``heph lint`` for a document,
 #: and routed to the §5 vision reviewer for an image.
+#:
+#: ``PARTS_STORE.md`` §7.4 adds ``component`` and ``claim``, naming *what the
+#: quote transcribes*: a component record's claim id. Both are present or both
+#: absent (``incomplete_component_cite``), and an unknown component id or claim
+#: id is ``invalid_requirement`` with nothing written — the existing refusal on
+#: the existing path. They are what makes the store⇄project provenance join
+#: **operator-declared** rather than inferred from digest co-incidence, and so
+#: what makes ``datasheet_digest_mismatch`` a rule that can both fire and stay
+#: silent.
 _REQUIREMENT_CITE: Final[JsonSchema] = _obj(
     {
         "reference": _STR,
         "page": {"anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}], "default": None},
         "quote": _STR,
+        "component": {"anyOf": [_STR, {"type": "null"}], "default": None},
+        "claim": {"anyOf": [_STR, {"type": "null"}], "default": None},
     },
     ["reference", "quote"],
 )

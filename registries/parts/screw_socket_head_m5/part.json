@@ -30,23 +30,37 @@
       "doc": "shank length below the head, mm"
     }
   },
-  "envelope": {
-    "head_diameter_mm": 8.5,
-    "head_height_mm": 5.0,
-    "shank_diameter_mm": 5.0,
-    "socket_across_flats_mm": 4.0,
-    "socket_depth_mm": 3.0
-  },
-  "mating_features": {
-    "clearance_hole_mm": 5.5,
-    "counterbore_diameter_mm": 10.0,
-    "counterbore_min_depth_mm": 5.0
-  },
-  "origin": "head bearing face; head spans 0..+k in Z, shank runs -Z",
-  "simplifications": [
-    "no thread helix (envelope only)",
-    "no under-head fillet or washer face",
-    "hex socket is a straight prism, not a broached form"
-  ],
-  "license": "Apache-2.0"
+  "component": {
+    "class": "fastener",
+    "series": {
+      "family": "din912",
+      "size": "M5",
+      "standard": "DIN 912"
+    },
+    "license": "Apache-2.0",
+    "data_license": "facts-only",
+    "frame": "head bearing face; head spans 0..+k in Z, shank runs -Z",
+    "simplifications": [
+      "no thread helix (envelope only)",
+      "no under-head fillet or washer face",
+      "hex socket is a straight prism, not a broached form"
+    ],
+    "interfaces": [
+      {
+        "name": "head_bearing_face",
+        "class": "planar_face",
+        "role": "bearing_face"
+      },
+      {
+        "name": "head_outer",
+        "class": "cylindrical_face",
+        "role": "head"
+      },
+      {
+        "name": "shank",
+        "class": "cylindrical_face",
+        "role": "shank"
+      }
+    ]
+  }
 }

@@ -446,7 +446,8 @@ def _skills_registry(root: Path, body: str) -> Path:
     skills = root / "skills"
     skills.mkdir(parents=True)
     (skills / MANIFEST_FILENAME).write_text(
-        '[registry]\nname = "bounds"\nkind = "skills"\nversion = "0.0.1"\n\n'
+        '[registry]\nname = "bounds"\nkind = "skills"\nversion = "0.0.1"\n'
+        'license = "Apache-2.0"\n\n'
         '[[skills]]\nname = "bounds"\nfile = "bounds.md"\nsummary = "boundary fixture"\n',
         encoding="utf-8",
     )

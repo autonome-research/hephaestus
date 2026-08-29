@@ -865,6 +865,28 @@
                           {
                             "additionalProperties": false,
                             "properties": {
+                              "claim": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ],
+                                "default": null
+                              },
+                              "component": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ],
+                                "default": null
+                              },
                               "page": {
                                 "anyOf": [
                                   {
@@ -2898,6 +2920,28 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "claim": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "default": null
+                          },
+                          "component": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "default": null
+                          },
                           "page": {
                             "anyOf": [
                               {
@@ -3083,6 +3127,28 @@
                     {
                       "additionalProperties": false,
                       "properties": {
+                        "claim": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
+                        "component": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null
+                        },
                         "page": {
                           "anyOf": [
                             {
@@ -3248,6 +3314,28 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "claim": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "default": null
+                          },
+                          "component": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "default": null
+                          },
                           "page": {
                             "anyOf": [
                               {
@@ -3456,6 +3544,28 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "claim": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "default": null
+                          },
+                          "component": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "default": null
+                          },
                           "page": {
                             "anyOf": [
                               {
@@ -3637,6 +3747,28 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "claim": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "component": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
                   "page": {
                     "anyOf": [
                       {
@@ -13499,8 +13631,40 @@
           "items": {
             "additionalProperties": true,
             "properties": {
+              "component_class": {
+                "type": "string"
+              },
+              "has_datasheet": {
+                "type": "boolean"
+              },
               "id": {
                 "type": "string"
+              },
+              "interfaces": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "class": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "role": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "class",
+                    "role"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "mass_g": {
+                "type": "number"
               },
               "name": {
                 "type": "string"
@@ -13510,6 +13674,9 @@
               },
               "preview": {
                 "type": "string"
+              },
+              "series": {
+                "type": "object"
               }
             },
             "required": [
@@ -13559,6 +13726,21 @@
             {
               "additionalProperties": true,
               "properties": {
+                "claims": {
+                  "type": "string"
+                },
+                "datasheet": {
+                  "type": "object"
+                },
+                "interfaces": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "mass": {
+                  "type": "object"
+                },
                 "script_fragment": {
                   "type": "string"
                 }
@@ -13607,6 +13789,18 @@
         "properties": {
           "id": {
             "type": "string"
+          },
+          "instance": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "params": {
             "type": "object"

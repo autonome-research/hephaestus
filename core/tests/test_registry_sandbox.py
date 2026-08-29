@@ -53,6 +53,7 @@ HOSTILE_MANIFEST = """\
 name = "hostile-parts"
 kind = "parts"
 version = "0.0.1"
+license = "Apache-2.0"
 
 [[parts]]
 id = "reads_a_file"

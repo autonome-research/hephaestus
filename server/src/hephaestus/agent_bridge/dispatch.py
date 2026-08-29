@@ -1191,7 +1191,9 @@ class ToolDispatcher:
         params = cast("dict[str, Any]", raw_params) if isinstance(raw_params, dict) else {}
         raw_pos = arguments.get("pos")
         pos = cast("dict[str, Any]", raw_pos) if isinstance(raw_pos, dict) else None
-        return registry.instance_store_part(str(arguments["id"]), params, pos)
+        raw_instance = arguments.get("instance")
+        instance = raw_instance if isinstance(raw_instance, str) else None
+        return registry.instance_store_part(str(arguments["id"]), params, pos, instance)
 
     # -- delegation --------------------------------------------------------
 

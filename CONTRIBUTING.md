@@ -62,11 +62,24 @@ and it has to stay that way.
 - proprietary model weights or prompts;
 - verbatim message text or UX copy from the reference product. Acceptance tests
   assert on error/result **fields and information content**, never on someone
-  else's wording.
+  else's wording;
+- **third-party component data vendored into a registry.** The operator's
+  2026-08-29 decision is *reference, do not vendor* (`PARTS_STORE.md` §7): a
+  parts store may carry your own generator source and the nominal dimensions of
+  a published standard, and may *reference* a datasheet by URL and content hash
+  with its terms declared. It may not carry vendor CAD, vendor PDFs, drawing
+  images, artwork, or a vendor's dimension table copied wholesale. Publishing
+  refuses any file in a `parts` tree that is not `registry.toml`, `part.json`,
+  `generator.py` or `*.md`. If a component pack cannot be authored without
+  vendoring something, it does not ship — say so in the PR rather than
+  vendoring it.
 
 **Trademark hygiene:** no "Smith" or "Arche" naming in code identifiers,
 packages, or file names. The reference product is named only in prose, factually,
-where naming it is the honest thing to do.
+where naming it is the honest thing to do. The same rule covers component ids in
+a parts registry: generic or standard-derived (`bearing_608`), never
+`<vendor>_<sku>`. A vendor name and part number are factual reference and belong
+in a record's `datasheet` block, which redistributes nothing.
 
 If you have seen a commercial CAD product's source, say so in your PR. It does
 not necessarily disqualify a contribution, but it has to be a known fact rather

@@ -30,10 +30,23 @@ regions (``params`` / ``bind`` / ``body``), parameters reaching the body only
 through ``_name = p.name`` binds, every module-scope name underscore-prefixed,
 and a final ``part.geometry = <name>`` statement naming the instance root.
 
+A ``parts`` entry whose ``part.json`` carries a ``component`` block is a
+**component** (``PARTS_STORE.md`` §1): a validated record — closed ``class`` and
+interface-class vocabularies, required interfaces per class, a declared mass, a
+datasheet *pointer* that redistributes nothing, and provenance-bearing
+``claims`` — in place of the opaque metadata blob a store part used to carry.
+There is no ``components`` registry kind and no second store: ``BUNDLED_KINDS``
+and ``RegistryKind`` are untouched, because adding a kind would mean editing the
+registry subsystem in order to duplicate it (mission rule 6). A part without the
+block is a legacy store part and behaves exactly as it did before. Every record
+rule is a named refusal (:class:`RegistryRefusal`) at index time, and therefore
+at publish, since publishing builds the index.
+
 This module is the package facade; the implementation is split by concern:
 :mod:`._digest` (Merkle tree hashing), :mod:`._layout` (``registry.toml`` and
 verify-on-load), :mod:`._pins` (``hephaestus.toml`` pinning), :mod:`._skills` /
 :mod:`._parts` / :mod:`._materials` / :mod:`._dfm` (per-kind content indexes),
+:mod:`._component` (the validated component record and its vocabularies),
 :mod:`._publish` (end-to-end validation + the publication record), :mod:`._set`
 (project-wide resolution), :mod:`._reference` (provenance-delimited paging),
 :mod:`._generator` (the fragment contract) and :mod:`._ops` (the tool surface).
@@ -41,6 +54,23 @@ verify-on-load), :mod:`._pins` (``hephaestus.toml`` pinning), :mod:`._skills` /
 
 from __future__ import annotations
 
+from ._component import (
+    CLAIM_KINDS,
+    COMPONENT_CLASSES,
+    INTERFACE_CLASSES,
+    INTERFACE_NAME_RE,
+    INTERFACE_TOPOLOGY,
+    MASS_SOURCES,
+    REQUIRED_INTERFACE_ROLES,
+    TRADEMARK_DENY_LIST,
+    ComponentClaim,
+    ComponentDatasheet,
+    ComponentInterface,
+    ComponentMass,
+    ComponentRecord,
+    ComponentSeries,
+    parse_component,
+)
 from ._dfm import (
     PACK_FILENAME,
     SEVERITIES,
@@ -52,13 +82,18 @@ from ._dfm import (
 )
 from ._dfm import DfmSeverity as DfmSeverity  # re-exported, not in __all__
 from ._digest import merkle_digest, tree_leaves
-from ._errors import RegistryError, RegistryIntegrityError
+from ._errors import RegistryError, RegistryIntegrityError, RegistryRefusal
 from ._generator import (
     BIND_MARKER,
     BODY_MARKER,
+    INTERFACE_MARKER,
+    INTERFACE_TAG_INFIX,
     PARAMS_MARKER,
     GeneratorSource,
+    instance_name,
     instance_prefix,
+    instance_prefix_for,
+    is_placed,
     parse_generator,
     render_fragment,
 )
@@ -107,16 +142,32 @@ __all__ = [
     "BIND_MARKER",
     "BODY_MARKER",
     "BUNDLED_KINDS",
+    "CLAIM_KINDS",
+    "COMPONENT_CLASSES",
+    "INTERFACE_CLASSES",
+    "INTERFACE_MARKER",
+    "INTERFACE_NAME_RE",
+    "INTERFACE_TAG_INFIX",
+    "INTERFACE_TOPOLOGY",
     "MANIFEST_FILENAME",
+    "MASS_SOURCES",
     "PACK_FILENAME",
     "PARAMS_MARKER",
     "PUBLICATION_VERSION",
     "REFERENCE_END",
     "REFERENCE_START",
     "REGISTRIES_TABLE",
+    "REQUIRED_INTERFACE_ROLES",
     "SEVERITIES",
     "TEXT_MAX_BYTES",
     "TEXT_MAX_LINES",
+    "TRADEMARK_DENY_LIST",
+    "ComponentClaim",
+    "ComponentDatasheet",
+    "ComponentInterface",
+    "ComponentMass",
+    "ComponentRecord",
+    "ComponentSeries",
     "DfmIndex",
     "DfmPack",
     "DfmParam",
@@ -133,17 +184,22 @@ __all__ = [
     "RegistryManifest",
     "RegistryOps",
     "RegistryPin",
+    "RegistryRefusal",
     "RegistrySet",
     "SkillEntry",
     "SkillsIndex",
     "StorePart",
     "bundled_pins",
     "bundled_registries_root",
+    "instance_name",
     "instance_prefix",
+    "instance_prefix_for",
+    "is_placed",
     "json_bytes",
     "load_pack",
     "load_registry",
     "merkle_digest",
+    "parse_component",
     "parse_generator",
     "parse_manifest",
     "publication_drift",

@@ -113,6 +113,19 @@ def _reject_runtime_fields(context: str, supplied: Iterable[str]) -> None:
     )
 
 
+def _cite_text(entry_id: str, data: Mapping[str, JSONValue], key: str) -> str | None:
+    """One optional ``cite`` string field, refusing a non-string outright."""
+    value = data.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise CadOpError(
+            "invalid_requirement",
+            f"requirement {entry_id}: cite.{key} must be a non-empty string",
+        )
+    return value
+
+
 def _text(raw: JSONValue | None) -> str | None:
     if raw is None:
         return None
@@ -131,14 +144,49 @@ class RequirementCite:
     quote against the reference's extracted text — while an *image* citation
     (a callout on a scanned drawing) is lint-unverifiable by construction and is
     routed to the §5 termination reviewer's vision channel instead.
+
+    ``PARTS_STORE.md`` §7.4 adds two optional fields naming *what the quote
+    transcribes*: ``component`` (a store component the project's registries
+    carry) and ``claim`` (an id in that component's ``claims``). They are what
+    makes the store⇄project provenance join **operator-declared** rather than
+    inferred. An earlier draft proposed selecting the candidate reference *by*
+    ``sha256`` equality with the component's datasheet and reporting a mismatch
+    if the digests differed — a set defined by equality contains no unequal
+    member, so that rule could never fire. With the join declared, the digest
+    comparison is decidable in both directions, and both directions are gated
+    (G11C clauses 6 and 7).
+
+    Both fields are present or both absent: half a join names nothing, and
+    ``incomplete_component_cite`` says which half is missing rather than
+    silently ignoring the one that was supplied.
     """
 
     reference: str
     quote: str
     page: int | None = None
+    #: §7.4: the component id whose claim this quote transcribes.
+    component: str | None = None
+    #: §7.4: the ``claims[].id`` within that component.
+    claim: str | None = None
+
+    @property
+    def names_component_claim(self) -> bool:
+        """True when this citation declares the §7.4 join (both halves present)."""
+        return bool(self.component) and bool(self.claim)
 
     def to_json(self) -> dict[str, JSONValue]:
-        return {"reference": self.reference, "page": self.page, "quote": self.quote}
+        out: dict[str, JSONValue] = {
+            "reference": self.reference,
+            "page": self.page,
+            "quote": self.quote,
+        }
+        # Emitted only when declared: a stored entry from before §7.4 must round
+        # -trip byte-identically, and `lint_requirements` reads these documents.
+        if self.component is not None:
+            out["component"] = self.component
+        if self.claim is not None:
+            out["claim"] = self.claim
+        return out
 
     @classmethod
     def from_json(cls, entry_id: str, data: Mapping[str, JSONValue]) -> RequirementCite:
@@ -160,7 +208,28 @@ class RequirementCite:
                 "invalid_requirement",
                 f"requirement {entry_id}: cite.page must be a 1-based page number",
             )
-        return cls(reference=reference, quote=quote, page=None if page is None else int(page))
+        component = _cite_text(entry_id, data, "component")
+        claim = _cite_text(entry_id, data, "claim")
+        if (component is None) != (claim is None):
+            # §7.4: "Both fields are present or both absent". Half a join names
+            # nothing — a component with no claim id does not say which number
+            # was transcribed, and a claim id with no component does not say
+            # whose. Naming the missing half is the whole content of the refusal.
+            missing = "claim" if claim is None else "component"
+            supplied = "component" if claim is None else "claim"
+            raise CadOpError(
+                "incomplete_component_cite",
+                f"requirement {entry_id}: cite carries {supplied!r} but not {missing!r}; a "
+                "component-claim citation names both or neither (PARTS_STORE.md §7.4), and "
+                "nothing was written",
+            )
+        return cls(
+            reference=reference,
+            quote=quote,
+            page=None if page is None else int(page),
+            component=component,
+            claim=claim,
+        )
 
 
 @dataclass(frozen=True)
@@ -523,7 +592,7 @@ class RequirementOps(CadOpsState):
         try:
             with locks.holding(PROJECT_CONFIG_LOCK):
                 current = self.ledger_state()
-                validated = _validate_all(apply(current), cite_check=self._check_cite)
+                validated = _validate_all(apply(current), cite_check=self._cite_checks)
                 candidate = LedgerState(
                     generation=current.generation + 1,
                     entries=validated,
@@ -549,6 +618,17 @@ class RequirementOps(CadOpsState):
             # retry with the same invocation id is not a payload mismatch.
             self._store.wal.recover(outcome.op_key)
             raise
+
+    def _cite_checks(self, entry: RequirementEntry) -> None:
+        """Both citation checks, in the order their subjects resolve.
+
+        The reference first (``INGEST.md`` §2), then the component claim
+        (``PARTS_STORE.md`` §7.4): a cite whose reference does not resolve has
+        nothing for the component half to be a citation *of*, and reporting the
+        component before the reference would name the second problem first.
+        """
+        self._check_cite(entry)
+        self._check_component_cite(entry)
 
     def _check_cite(self, entry: RequirementEntry) -> None:
         """``INGEST.md`` §2: a citation must name a *registered* reference.
@@ -583,6 +663,48 @@ class RequirementOps(CadOpsState):
                 "invalid_requirement",
                 f"requirement {entry.id}: cite.page {cite.page} is past the end of "
                 f"{cite.reference!r} ({reference.pages} page(s))",
+            )
+
+    def _check_component_cite(self, entry: RequirementEntry) -> None:
+        """``PARTS_STORE.md`` §7.4: the named component and claim must both exist.
+
+        Checked on the *existing* refusal path, for the reason ``INGEST.md`` §2's
+        reference check is: a citation of a component the project's registries do
+        not carry, or of a claim that component does not declare, is not a weaker
+        provenance record — it is a fabricated one, and every reader downstream
+        (``datasheet_digest_mismatch`` included) would then be joining on a name
+        that resolves to nothing. ``invalid_requirement``, nothing written.
+
+        A citation carrying neither field never reaches here, so an entry written
+        before §7.4 is accepted and checked exactly as it was.
+        """
+        cite = entry.cite
+        if cite is None or not cite.names_component_claim:
+            return
+        # Imported here: the ledger is written far more often than it is written
+        # with a component citation, and opening the registry set verifies every
+        # pinned tree's Merkle root.
+        from hephaestus.core.registry import RegistryError, RegistrySet
+
+        registries = RegistrySet.open(self.layout.root)
+        try:
+            part = registries.parts.get(str(cite.component))
+        except RegistryError as exc:
+            raise CadOpError(
+                "invalid_requirement",
+                f"requirement {entry.id}: cite names component {cite.component!r}, which "
+                f"this project's pinned registries do not carry ({exc.reason}: {exc}) — "
+                "nothing was written",
+            ) from exc
+        component = part.component
+        declared = () if component is None else tuple(claim.id for claim in component.claims)
+        if str(cite.claim) not in declared:
+            raise CadOpError(
+                "invalid_requirement",
+                f"requirement {entry.id}: component {cite.component!r} declares no claim "
+                f"{cite.claim!r} (declared: {', '.join(declared) or 'none'}) — a ledger "
+                "citation resolves to exactly one claim or it is not a citation; nothing "
+                "was written",
             )
 
     def _replayed(self, response: str | None) -> LedgerState:

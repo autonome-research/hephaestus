@@ -1,0 +1,14 @@
+# M3 flat washer (DIN 125 envelope) — parts-store instance at (3, -2, 0) mm, rotated (0, 0, 45)deg.
+# registry: <elided: the tree's Merkle root>
+# Reference geometry from a pinned registry: review it, then compose
+#   _legacy_washer_927600 into part.geometry (e.g. Compound(children=[..., _legacy_washer_927600])).
+
+_legacy_washer_927600_thickness = 0.8
+_legacy_washer_927600_outer_d = 9.0
+_legacy_washer_927600_bore_d = 3.2
+_legacy_washer_927600_disc = Cylinder(_legacy_washer_927600_outer_d / 2, _legacy_washer_927600_thickness, align=(Align.CENTER, Align.CENTER, Align.MIN))
+_legacy_washer_927600_hole = Cylinder(_legacy_washer_927600_bore_d / 2, _legacy_washer_927600_thickness + 2.0, align=(Align.CENTER, Align.CENTER, Align.MIN))
+_legacy_washer_927600_washer = _legacy_washer_927600_disc - _legacy_washer_927600_hole
+_legacy_washer_927600_washer.label = "legacy_washer"
+_legacy_washer_927600 = Pos(3.0, -2.0, 0.0) * Rot(0.0, 0.0, 45.0) * _legacy_washer_927600_washer
+_legacy_washer_927600.label = "legacy_washer"

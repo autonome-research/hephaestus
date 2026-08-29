@@ -76,6 +76,26 @@ over 8 tasks × ≥3 seeds (n ≥ 24), plus `repair-fillet` passing every seed.
 `heph bench score` exits 0 only when both hold. Thresholds are mission-tunable
 *upward* only.
 
+The statistic covers the corpus it was baselined over and no more. A corpus
+**family** (`PARTS_STORE.md` G11C clause 12, following `KINEMATICS.md:392-398`)
+— currently `component`, the Stage 11 component-bearing mechanism tasks — is its
+own split per spec, carries no threshold, and is carved out of the gated number
+entirely, so adding tasks to the corpus can never dilute an existing bar by
+arithmetic. A family is baselined on its own **first** measurement at ≥3 seeds
+into `component_baseline.json`; a thinner first measurement is refused by name
+(`insufficient_component_seeds`) rather than recorded. Re-baselining any
+combined bar is its own explicit amendment.
+
+Two consequences worth stating, because both are properties of the *archive*
+rather than of the code that reads it. First, the carve-out never rewrites
+history: a family split appears in `<date>.json` only when it has runs, and
+`min_seeds_per_task` — the floor's one input — is serialised for family splits
+only, so re-scoring an archive measured before Stage 11 reproduces its stored
+artifact byte for byte. Second, the component family's baseline **has not been
+measured yet**; taking it is a detached run with the epoch's reference model, and
+`heph bench score` prints `component family: NOT MEASURED` on every archive that
+ran no family task so that the gap is never inferred away.
+
 ## External evaluation: the CADGenBench adapter
 
 `hephaestus.bench.cadgenbench` (`EXTERNAL_EVAL.md` §2) adapts the external

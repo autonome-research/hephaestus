@@ -43,6 +43,171 @@ Nothing outside the tree is content, and everything inside it is: dotfiles and
 `__pycache__` are skipped, symlinks are not followed, and `registry.toml` is
 hashed like any other file, so editing the manifest changes the digest too.
 
+A `parts` tree is additionally restricted at publish time to `registry.toml`,
+`part.json`, `generator.py` and `*.md`. Anything else — a `.pdf`, a `.step`, a
+`.png` — is refused as `vendored_third_party_payload`, naming every offending
+file. The rule is blunt on purpose: a store tree has no legitimate reason to
+hold a binary, the Merkle digest hashes every file it finds, and a smuggled
+vendor payload would otherwise be pinned and redistributed with the pack. Vendor
+datasheets and vendor CAD are referenced by URL and content hash from a
+component record's `datasheet` block, never copied here (`PARTS_STORE.md` §7).
+
+Two further `parts` rules bite at publish, both because publishing builds the
+content index:
+
+- a `part.json`'s `params` keys must equal the generator's `PARAMS` keys, or
+  publishing refuses with `param_schema_drift` naming the parameter. The
+  generator's list is what the build path actually enforces, so a record that
+  advertises a knob the generator lacks is advertising something a model cannot
+  set; and
+- a `part.json` may carry a validated `component` block, which makes the part a
+  *component* — a richer record with declared mounting interfaces, provenance
+  and licensing. Every rule that block obeys is stated in `PARTS_STORE.md` §1,
+  and every violation is a named refusal at index time. A part without the block
+  is a legacy store part and is unaffected.
+
+### A component's mounting interfaces
+
+A component's declared interfaces are **tagged geometry**, not prose: the
+generator gains a fourth marker region after `body`, and each statement in it
+names one declared interface on the shape the body published.
+
+```python
+# --- hephaestus-store: interface ---
+tag(_root.faces().filter_by(GeomType.PLANE).sort_by(SortBy.AREA)[-1], "mount_face")
+tag(_root.faces().filter_by(GeomType.CYLINDER).sort_by(SortBy.RADIUS)[0], "shaft")
+```
+
+The region is optional, appears at most once, and comes last. Publishing
+refuses a generator whose emitted names are not **exactly** the record's
+`component.interfaces[].name` set — a surplus is `undeclared_interface`, a
+shortfall `unimplemented_interface`, each naming the interface. A declared
+interface nothing emits is the `mating_features` mistake: metadata a consumer
+has to retype.
+
+Three authoring rules, in the order they bite:
+
+1. **Root every selector at the name the body publishes.** Anything else is
+   `interface_root_violation`, and a selector that also *loads* another
+   generator local is `interface_body_local_reference` — the fragment rewrite
+   retargets the root to the placed instance, and a local still names
+   pre-placement geometry, so mixing them measures the placed shape in the
+   unplaced frame and picks a real face that is silently the wrong one.
+2. **Order by a measure, never by a world axis.** `sort_by(SortBy.AREA)`,
+   `sort_by(SortBy.RADIUS)` and `sort_by_distance(...)` survive the `Pos`/`Rot`
+   a consumer applies; `sort_by(Axis.Z)[-1]` does not. This one is an authoring
+   rule because it is not decidable by a parser: `interface_placement_drift`
+   catches a selector that picks topology of a *different measure* under the
+   caller's placement, but two faces of equal measure are indistinguishable
+   that way, so the check is necessary, not sufficient.
+3. **Declare the class the topology actually is.** `planar_face`,
+   `cylindrical_face`, `circular_edge`, `linear_edge`, `solid` — verified on
+   every instantiation against the geometry that built, at the caller's
+   parameters and at the caller's placement, as `interface_class_mismatch`. A
+   torus, cone or B-spline face matches no class and is refused: this stage's
+   consumers cannot use one.
+
+The emitted tag literal is `<instance>__<name>`, so two pasted instances cannot
+overwrite each other's tags. A consumer anchors an ordinary 8C constraint or
+Stage 9 joint on that name; the anchor grammar is unchanged.
+
+### A component's provenance, and what may not be vendored
+
+The operator's 2026-08-29 decision is **reference, do not vendor**
+(`PARTS_STORE.md` §7): third-party datasheets and vendor CAD are referenced by
+URL and content hash with their terms declared, never copied into a registry.
+That splits cleanly into three lists.
+
+**What a pack may carry.** Independently authored generator source, Apache-2.0.
+Nominal dimensions from a published standard — a DIN 912 head diameter, an
+ISO 15 bearing bore/OD/width, a NEMA ICS 16 frame square and bolt circle —
+cited in `component.series.standard`. And the minimum set of derived numeric
+facts the geometry and its declared interfaces require, and no more.
+
+**What it may not.** Vendor CAD payloads (STEP, IGES, SLDPRT or any converted
+derivative), vendor PDFs, drawing images, artwork, logos and marketing renders.
+Bulk transcriptions of vendor tables: a number a declared interface or a
+declared claim requires is admissible, a table copied wholesale is not — the
+line is drawn at necessity because the harness cannot tell a fact from a
+compilation. Anything under terms you have not read. And a vendor trademark as
+a component id: ids are generic or standard-derived (`bearing_608`,
+`stepper_nema17_frame`), never `<vendor>_<sku>`.
+
+Two of those are mechanical, and both bite at publish. Any file in a `parts`
+tree that is not `registry.toml`, `part.json`, `generator.py` or `*.md` is
+`vendored_third_party_payload`, naming every offending file — blunt on purpose,
+because a store tree has no legitimate reason to contain a binary and the Merkle
+digest would otherwise pin and redistribute it. A component id matching the
+maintained trademark deny-list is `trademark_in_component_id`. **Neither check
+is the real control.** A deny-list is imperfect by construction and a scanner
+cannot read a licence; the human review of `docs/registry-contributions.md` —
+a reviewer other than the author — is what actually decides, and publication of
+a component pack is additionally blocked until `LEGAL-REVIEW.md`'s fifth scope
+field (third-party component data provenance and terms) is signed off.
+
+**The `datasheet` block is a pointer that redistributes nothing.** All six
+fields are required when it is present — `publisher`, `document_title`,
+`revision`, `url`, `sha256`, `retrieved` — and `sha256` is the digest of *the
+exact document the numbers were transcribed from*, in the `sha256:…` form. The
+URL is provenance, **not a fetch target**: nothing in Hephaestus retrieves it,
+the sandbox denies network by construction, and a registry that fetched at load
+would break the offline determinism the trust model rests on. A reader obtains
+the document themselves. If you cannot state that digest honestly, do not write
+the block — and if a pack cannot be authored without one you do not have, that
+pack does not ship, said loudly rather than resolved by inventing a hash.
+
+### Declared data: mass and claims
+
+`component.mass` is `{value_g, source, com_mm?}` with `source` from
+`datasheet` | `standard` | `computed`.
+
+- `datasheet` requires the `datasheet` block; `standard` requires a
+  `series.standard`. Absent, either is `unsourced_component_datum` — a record
+  whose numbers are recalled is a rumour with units on it.
+- `computed` is for a **homogeneous** component only (a fastener, an insert, a
+  gear blank). It requires a materials-registry id and a positive
+  `tolerance_pct`, and the value is then checked on *every instantiation*
+  against the built envelope's `volume x density`. A disagreement is
+  `computed_mass_disagreement` and is never reconciled or averaged: the record
+  is wrong or the envelope is, and both are yours to fix. Because the check runs
+  against the geometry that actually built, a component with a parameter that
+  moves its volume cannot carry a single computed mass.
+- Declaring both a datasheet mass and a computed material is
+  `mass_source_conflict`. An inertia tensor is `inertia_out_of_scope` — nothing
+  consumes one, and silently storing a field with no consumer is how
+  `mating_features` happened.
+
+`component.claims` is declared, provenance-bearing datasheet data, each entry
+`{id, kind, unit_x, unit_y, samples, cite}`. Read the vocabulary literally:
+**nothing in Hephaestus can evaluate a torque-speed curve**, so a claim is
+reference material and reaches a model wrapped in the same provenance
+delimiters skill text does, with a footer saying so. A non-empty `claims` list
+requires the `datasheet` block and each `cite` must name a page and quote in it;
+`claims[].id` is unique within a record. A `torque_speed_curve` is validated at
+load for at least two samples, finite pairs, strictly increasing in x,
+non-negative and non-increasing y, and units from the closed set — any violation
+is `malformed_performance_curve`, naming the sample index. That is the whole
+honest benefit available: a transcription error becomes a load-time contract
+error instead of a plausible-looking number.
+
+A number from a claim becomes a *commitment* only through the ledger: record it
+as a requirement citing `{reference, page, quote, component, claim}` after the
+operator has registered the document with `heph reference add`. `heph lint` then
+reports a `CHECKS` threshold that matches a claim value with no citation as
+`uncited_component_datum`, and a citation whose registered reference is not the
+bytes your `datasheet` pointer names as `datasheet_digest_mismatch`.
+
+### Several packs side by side
+
+Registries of kind `parts` **index together**. A part id unique across the
+resolved trees is addressed bare, exactly as before; an id two trees both carry
+is addressed `<registry>/<id>`, and addressing it bare is
+`ambiguous_component_id` naming both candidates — never resolved by pin order,
+because which pack the operator meant is not derivable from table order. Every
+search row carries its own `registry` and `registry_digest`, so a component
+always names the tree it came from. Registries of every *other* kind still index
+one per kind, and a second is `duplicate_registry_kind`.
+
 ## 2. DFM rule packs specifically
 
 A `dfm` registry holds one directory per manufacturing process:
@@ -263,3 +428,11 @@ PublicationRecord.from_json(json.loads(text))    # parse a distributed record
   write them as if they were.
 - Content is licensed for redistribution, and no reference names a bench corpus
   task (`repo_conventions.md`).
+- For a **component** pack (`PARTS_STORE.md` §7): no vendor payload of any kind
+  is in the tree; no id names a vendor product; every number is standard-derived
+  or required by a declared interface or claim; every `datasheet` pointer's
+  `sha256` is the digest of a document you really obtained, and its terms permit
+  reference-by-citation; every declared interface is emitted by the generator
+  and ordered by a measure rather than by a world axis; a `computed` mass agrees
+  with the built envelope. Publication is additionally blocked until
+  `LEGAL-REVIEW.md`'s third-party-component-data scope field is signed off.

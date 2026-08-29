@@ -136,7 +136,8 @@ def test_publish_refuses_a_dfm_pack_whose_rule_reads_an_undeclared_parameter(
     root = tmp_path / "broken-dfm"
     (root / "demo").mkdir(parents=True)
     (root / MANIFEST_FILENAME).write_text(
-        '[registry]\nname = "broken-dfm"\nkind = "dfm"\nversion = "0.0.1"\n\n'
+        '[registry]\nname = "broken-dfm"\nkind = "dfm"\nversion = "0.0.1"\n'
+        'license = "Apache-2.0"\n\n'
         '[[packs]]\nprocess = "demo"\ndir = "demo"\n',
         encoding="utf-8",
     )

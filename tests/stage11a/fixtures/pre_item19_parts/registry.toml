@@ -1,0 +1,34 @@
+[registry]
+name = "hephaestus-parts"
+kind = "parts"
+version = "0.1.0"
+license = "Apache-2.0"
+description = """
+Minimal metric-hardware parts store: socket-head cap screws and heat-set
+inserts as thread-free DIN/nominal envelopes. Every generator is an ordinary
+part script and executes only under the secure sandbox.
+"""
+
+[[parts]]
+id = "heatset_insert_m3"
+dir = "heatset_insert_m3"
+
+[[parts]]
+id = "heatset_insert_m4"
+dir = "heatset_insert_m4"
+
+[[parts]]
+id = "heatset_insert_m5"
+dir = "heatset_insert_m5"
+
+[[parts]]
+id = "screw_socket_head_m3"
+dir = "screw_socket_head_m3"
+
+[[parts]]
+id = "screw_socket_head_m4"
+dir = "screw_socket_head_m4"
+
+[[parts]]
+id = "screw_socket_head_m5"
+dir = "screw_socket_head_m5"

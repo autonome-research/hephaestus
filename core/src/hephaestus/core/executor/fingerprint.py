@@ -41,6 +41,14 @@ REL_EPS = 1e-9
 
 _KINDS = ("face", "edge", "solid", "wire", "vertex", "other")
 
+#: The closed surface/curve label ``PARTS_STORE.md`` §2.3 needs and nothing else
+#: crossed the sandbox boundary carrying. ``kind`` is a three-way face/edge/solid
+#: label, so four of the five declared interface classes — ``planar_face`` vs
+#: ``cylindrical_face``, ``circular_edge`` vs ``linear_edge`` — are invisible to
+#: it. This is a §8 worker result protocol change, not a sandbox-contract
+#: change: it is computed **in the worker**, where the shape lives.
+GEOM_TYPES = ("PLANE", "CYLINDER", "CIRCLE", "LINE", "OTHER")
+
 
 def rel_delta(new: float, old: float) -> float:
     """§5.3 relative delta: ``abs(new-old)/max(abs(old), 1e-9)``."""
@@ -67,22 +75,36 @@ class TagDescriptor:
     ``point`` is the face centroid / edge midpoint / solid centroid;
     ``normal`` is set for faces only; ``scalar`` is area (face, mm^2),
     length (edge, mm), or volume (solid, mm^3).
+
+    ``geom_type`` is the surface/curve class read off the OCP adaptor
+    (``PARTS_STORE.md`` §2.3). ``OTHER`` for a solid is *by definition*, not by
+    failure: a solid has no single adaptor, so ``("solid", "OTHER")`` is a
+    positive verification of the declared ``solid`` class rather than a
+    fallthrough.
     """
 
     kind: str
     point: tuple[float, float, float]
     scalar: float
     normal: tuple[float, float, float] | None = None
+    geom_type: str = "OTHER"
 
     def __post_init__(self) -> None:
         if self.kind not in _KINDS:
             raise ValidationError(f"invalid descriptor kind {self.kind!r}", kind="contract")
+        if self.geom_type not in GEOM_TYPES:
+            raise ValidationError(
+                f"invalid descriptor geom_type {self.geom_type!r}; the closed set is "
+                + ", ".join(GEOM_TYPES),
+                kind="contract",
+            )
 
     def to_json(self) -> dict[str, JSONValue]:
         out: dict[str, JSONValue] = {
             "kind": self.kind,
             "point": list(self.point),
             "scalar": self.scalar,
+            "geom_type": self.geom_type,
         }
         if self.normal is not None:
             out["normal"] = list(self.normal)
@@ -115,11 +137,19 @@ class TagDescriptor:
                     raise ValidationError("descriptor 'normal' must be numeric", kind="contract")
                 axes.append(float(value))
             normal = (axes[0], axes[1], axes[2])
+        # Absent => OTHER: a build bundle published before this stage carries no
+        # `geom_type`, and refusing to read one would make an existing project's
+        # fingerprint baseline unloadable. An out-of-set *value* is still refused
+        # (in __post_init__), which is the drift the gate cares about.
+        geom_type_raw = data.get("geom_type", "OTHER")
+        if not isinstance(geom_type_raw, str):
+            raise ValidationError("descriptor 'geom_type' must be a string", kind="contract")
         return cls(
             kind=kind,
             point=(coords[0], coords[1], coords[2]),
             scalar=float(scalar),
             normal=normal,
+            geom_type=geom_type_raw,
         )
 
 
@@ -142,8 +172,62 @@ class FingerprintBaseline:
         return hash((self.artifact_ref, tuple(sorted(self.descriptors))))
 
 
+def _surface_type(face: object) -> str:
+    """``PLANE`` / ``CYLINDER`` / ``OTHER`` for a build123d Face.
+
+    A torus, a cone or a B-spline classifies ``OTHER`` and therefore matches no
+    declared interface class. That is meant: this stage's consumers (8C
+    ``coincident`` / ``concentric`` / ``fit``, Stage 9 ``revolute`` /
+    ``prismatic``) accept none of them, and admitting a class the consumers
+    cannot use is how ``mating_features`` happened. Adding one is a contract
+    amendment, the ``ASSEMBLY.md:45`` convention.
+    """
+    try:
+        from OCP.BRepAdaptor import (
+            BRepAdaptor_Surface,  # pyright: ignore[reportAttributeAccessIssue]
+        )
+        from OCP.GeomAbs import (
+            GeomAbs_SurfaceType,  # pyright: ignore[reportAttributeAccessIssue]
+        )
+
+        surface_type = BRepAdaptor_Surface(cast("Any", face).wrapped).GetType()
+    except Exception:  # pragma: no cover - a shape with no usable adaptor
+        return "OTHER"
+    if surface_type == GeomAbs_SurfaceType.GeomAbs_Plane:
+        return "PLANE"
+    if surface_type == GeomAbs_SurfaceType.GeomAbs_Cylinder:
+        return "CYLINDER"
+    return "OTHER"
+
+
+def _curve_type(edge: object) -> str:
+    """``CIRCLE`` / ``LINE`` / ``OTHER`` for a build123d Edge."""
+    try:
+        from OCP.BRepAdaptor import (
+            BRepAdaptor_Curve,  # pyright: ignore[reportAttributeAccessIssue]
+        )
+        from OCP.GeomAbs import (
+            GeomAbs_CurveType,  # pyright: ignore[reportAttributeAccessIssue]
+        )
+
+        curve_type = BRepAdaptor_Curve(cast("Any", edge).wrapped).GetType()
+    except Exception:  # pragma: no cover - a shape with no usable adaptor
+        return "OTHER"
+    if curve_type == GeomAbs_CurveType.GeomAbs_Circle:
+        return "CIRCLE"
+    if curve_type == GeomAbs_CurveType.GeomAbs_Line:
+        return "LINE"
+    return "OTHER"
+
+
 def descriptor_for(shape: object) -> TagDescriptor:
-    """Compute the fingerprint descriptor of a build123d Face/Edge/Solid."""
+    """Compute the fingerprint descriptor of a build123d Face/Edge/Solid.
+
+    Called from the worker (``worker.py``'s ``tag_fingerprints`` block), which
+    is the only place the shape exists: the scratch tree holding the BRep is
+    deleted in a ``finally`` before any caller sees it, so a surface or curve
+    type computed anywhere else would have nothing to read.
+    """
     from build123d import Edge, Face, Solid
 
     if isinstance(shape, Face):
@@ -155,6 +239,7 @@ def descriptor_for(shape: object) -> TagDescriptor:
             point=point,
             scalar=float(shape.area),
             normal=(float(normal.X), float(normal.Y), float(normal.Z)),
+            geom_type=_surface_type(shape),
         )
     if isinstance(shape, Edge):
         mid = shape.position_at(0.5)
@@ -162,6 +247,7 @@ def descriptor_for(shape: object) -> TagDescriptor:
             kind="edge",
             point=(float(mid.X), float(mid.Y), float(mid.Z)),
             scalar=float(shape.length),
+            geom_type=_curve_type(shape),
         )
     if isinstance(shape, Solid):
         center = shape.center()
@@ -169,6 +255,7 @@ def descriptor_for(shape: object) -> TagDescriptor:
             kind="solid",
             point=(float(center.X), float(center.Y), float(center.Z)),
             scalar=float(shape.volume),
+            geom_type="OTHER",
         )
     center_of = getattr(shape, "center", None)
     volume = getattr(shape, "volume", 0.0)

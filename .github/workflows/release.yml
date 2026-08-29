@@ -569,6 +569,7 @@ jobs:
             "stage gates 1-6"             # G1, G2, G2V, G3, G6
             "stage gates 8A-8D"           # G8A, G8B, G8C, G8D
             "stage gates 9A-9C"           # G9A, G9B, G9C Tier 1
+            "stage gates 11A-11C"         # G11A, G11B, G11C Tier 1
             "render goldens (pinned image)"  # G1 goldens, G4.7, G4 e2e
             "agent (node)"                # GS pins / sidecar toolchain
             "web (node)"                  # Stage 4 web/ pins + bundle build

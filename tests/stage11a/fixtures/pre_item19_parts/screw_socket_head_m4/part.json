@@ -1,0 +1,52 @@
+{
+  "id": "screw_socket_head_m4",
+  "name": "M4 socket-head cap screw (DIN 912 envelope)",
+  "summary": "Thread-free M4 socket-head cap screw envelope: 7 mm head dia x 4 mm high, 4 mm shank, 3 mm hex socket. Origin on the head bearing face, shank along -Z.",
+  "preview": "M4 SHCS envelope, head 7x4 mm, shank 4 mm, length 6-40 mm (default 16)",
+  "keywords": [
+    "m4",
+    "screw",
+    "bolt",
+    "fastener",
+    "socket",
+    "head",
+    "cap",
+    "shcs",
+    "din",
+    "912",
+    "hex",
+    "allen",
+    "metric",
+    "counterbore",
+    "hardware"
+  ],
+  "params": {
+    "length": {
+      "type": "float",
+      "default": 16.0,
+      "min": 6.0,
+      "max": 40.0,
+      "unit": "mm",
+      "doc": "shank length below the head, mm"
+    }
+  },
+  "envelope": {
+    "head_diameter_mm": 7.0,
+    "head_height_mm": 4.0,
+    "shank_diameter_mm": 4.0,
+    "socket_across_flats_mm": 3.0,
+    "socket_depth_mm": 2.5
+  },
+  "mating_features": {
+    "clearance_hole_mm": 4.5,
+    "counterbore_diameter_mm": 8.0,
+    "counterbore_min_depth_mm": 4.0
+  },
+  "origin": "head bearing face; head spans 0..+k in Z, shank runs -Z",
+  "simplifications": [
+    "no thread helix (envelope only)",
+    "no under-head fillet or washer face",
+    "hex socket is a straight prism, not a broached form"
+  ],
+  "license": "Apache-2.0"
+}

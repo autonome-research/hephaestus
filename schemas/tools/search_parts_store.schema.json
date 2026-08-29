@@ -23,8 +23,40 @@
     "items": {
       "additionalProperties": true,
       "properties": {
+        "component_class": {
+          "type": "string"
+        },
+        "has_datasheet": {
+          "type": "boolean"
+        },
         "id": {
           "type": "string"
+        },
+        "interfaces": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "class": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "class",
+              "role"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "mass_g": {
+          "type": "number"
         },
         "name": {
           "type": "string"
@@ -34,6 +66,9 @@
         },
         "preview": {
           "type": "string"
+        },
+        "series": {
+          "type": "object"
         }
       },
       "required": [

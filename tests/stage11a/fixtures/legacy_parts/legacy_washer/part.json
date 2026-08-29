@@ -1,0 +1,33 @@
+{
+  "id": "legacy_washer",
+  "name": "M3 flat washer (DIN 125 envelope)",
+  "summary": "Flat washer envelope: 9 mm outer diameter, 3.2 mm bore, 0.4-4 mm thick. Origin on the lower face, disc along +Z.",
+  "preview": "M3 washer envelope, 9 mm OD, 3.2 mm bore, 0.8 mm thick",
+  "keywords": [
+    "washer",
+    "m3",
+    "din",
+    "125",
+    "legacy",
+    "hardware"
+  ],
+  "params": {
+    "thickness": {
+      "type": "float",
+      "default": 0.8,
+      "min": 0.4,
+      "max": 4.0,
+      "unit": "mm",
+      "doc": "washer thickness, mm"
+    }
+  },
+  "envelope": {
+    "outer_diameter_mm": 9.0,
+    "bore_diameter_mm": 3.2
+  },
+  "origin": "lower face; disc runs 0..+thickness in Z",
+  "simplifications": [
+    "no edge break"
+  ],
+  "license": "Apache-2.0"
+}

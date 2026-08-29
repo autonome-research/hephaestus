@@ -1,0 +1,14 @@
+# Round standoff spacer (envelope) — parts-store instance at (10, 0, 4) mm, rotated (0, 0, 0)deg.
+# registry: <elided: the tree's Merkle root>
+# Reference geometry from a pinned registry: review it, then compose
+#   _legacy_spacer_189150 into part.geometry (e.g. Compound(children=[..., _legacy_spacer_189150])).
+
+_legacy_spacer_189150_length = 25.0
+_legacy_spacer_189150_outer_d = 6.0
+_legacy_spacer_189150_bore_d = 3.2
+_legacy_spacer_189150_body = Cylinder(_legacy_spacer_189150_outer_d / 2, _legacy_spacer_189150_length, align=(Align.CENTER, Align.CENTER, Align.MIN))
+_legacy_spacer_189150_bore = Cylinder(_legacy_spacer_189150_bore_d / 2, _legacy_spacer_189150_length + 2.0, align=(Align.CENTER, Align.CENTER, Align.MIN))
+_legacy_spacer_189150_spacer = _legacy_spacer_189150_body - _legacy_spacer_189150_bore
+_legacy_spacer_189150_spacer.label = "legacy_spacer"
+_legacy_spacer_189150 = Pos(10.0, 0.0, 4.0) * _legacy_spacer_189150_spacer
+_legacy_spacer_189150.label = "legacy_spacer"

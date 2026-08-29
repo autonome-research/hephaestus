@@ -27,6 +27,15 @@ against the pre-2026-07-26 baseline would be a category error, so the code never
 offers the comparison. ``interpretation_gap`` (seeded - prose) is the first-class
 column: the interpretation tax this project exists to reduce.
 
+**Corpus families are carved out of the gated split** (``PARTS_STORE.md`` Gate
+G11C clause 12, following ``KINEMATICS.md:392-398``). A family
+(:data:`CORPUS_FAMILIES`) measures a capability the historical baselines never
+covered, so its runs get ``<family>-<spec>`` splits of their own, carry no
+threshold, and are baselined on their own first measurement at >= 3 seeds
+(:func:`record_component_baseline`). Without the carve-out, a sweep over the
+whole corpus would fold the new tasks into the number compared against 0.70 —
+dilution arriving through the plumbing rather than through a decision.
+
 Every run also contributes to the §8 metric table
 (:mod:`hephaestus.bench.metrics`), reported per split for the same reason.
 
@@ -64,10 +73,16 @@ from .metrics import (
 )
 
 __all__ = [
+    "COMPONENT_BASELINE_FILENAME",
+    "COMPONENT_BASELINE_MIN_SEEDS",
+    "COMPONENT_FAMILY_TASKS",
+    "CORPUS_FAMILIES",
     "CORPUS_V1_TASKS",
     "DEFAULT_STEP_POLICY",
+    "FAMILY_COMPONENT",
     "G2_AGGREGATE_THRESHOLD",
     "G6_AGGREGATE_THRESHOLD",
+    "INSUFFICIENT_COMPONENT_SEEDS",
     "PERFECT_TASKS",
     "RUNS_FILENAME",
     "SEEDED_BASELINE_FILENAME",
@@ -80,11 +95,17 @@ __all__ = [
     "StepScorePolicy",
     "TaskScore",
     "aggregate_threshold",
+    "base_task_id",
+    "family_split_name",
     "load_run_records",
+    "record_component_baseline",
     "record_seeded_baseline",
     "score_directory",
     "score_records",
     "score_step_files",
+    "split_family",
+    "split_name",
+    "task_family",
     "wilson_lower_bound",
     "write_score",
 ]
@@ -112,6 +133,92 @@ RUNS_FILENAME = "runs.jsonl"
 
 #: Where the seeded split's first measurement is recorded (never a gate input).
 SEEDED_BASELINE_FILENAME = "seeded_baseline.json"
+
+# --------------------------------------------------------------------------
+# Corpus families (PARTS_STORE.md Gate G11C clause 12, amended 2026-08-29)
+#
+# A *family* is a set of corpus tasks that measures a capability the historical
+# baselines never covered. It is orthogonal to the ``VALIDATION.md`` §1 spec
+# split: a family task exists in both prose and seeded form, and the two are
+# still never averaged with each other. What the family adds is the second
+# carve-out the G9C precedent (``KINEMATICS.md:392-398``) states and Stage 11
+# amends into code: **a family's runs are not part of the number the gate
+# compares against 0.70.** Before this, "its own split" was prose only, and a
+# detached bench run over the whole corpus would have silently folded the new
+# tasks into the corpus-v1 aggregate — which is exactly the dilution the rule
+# forbids, arriving through the plumbing rather than through a decision.
+
+#: The Stage 11 component-bearing mechanism family (Named new work item 34,
+#: corpus v4): a bearing-supported shaft with a declared ``fit`` and a
+#: motor-mounted plate with a declared ``coincident`` and bolt-circle
+#: ``concentric``, both anchored on tags a store component's own generator
+#: emitted. Closed vocabulary: a task joins the family by being named here.
+COMPONENT_FAMILY_TASKS: tuple[str, ...] = ("bearing-shaft", "motor-plate")
+
+#: The component family's name, and the prefix of its split names.
+FAMILY_COMPONENT = "component"
+
+#: The closed family vocabulary. G9C's mechanism family is deliberately absent:
+#: its split is G9C's own gate text to amend, and folding it in here would be
+#: this stage rewriting another stage's baseline rule.
+CORPUS_FAMILIES: Mapping[str, tuple[str, ...]] = {FAMILY_COMPONENT: COMPONENT_FAMILY_TASKS}
+
+#: Where the component family's first measurement is recorded (never a gate
+#: input, and never comparable to the v1/v2 baselines).
+COMPONENT_BASELINE_FILENAME = "component_baseline.json"
+
+#: G11C clause 12's floor: the family is baselined on its FIRST measurement and
+#: never re-baselined, so a first measurement thinner than this would enshrine
+#: noise as the family's permanent reference number.
+COMPONENT_BASELINE_MIN_SEEDS = 3
+
+#: The named refusal a too-thin first measurement gets. Named, not silent: the
+#: alternative is a baseline file that looks like evidence and is not.
+INSUFFICIENT_COMPONENT_SEEDS = "insufficient_component_seeds"
+
+
+def base_task_id(task_id: str) -> str:
+    """The prose id behind a run's task id (the seeded variant's stem)."""
+    return task_id.split(SEEDED_SUFFIX, 1)[0]
+
+
+def task_family(task_id: str) -> str | None:
+    """The corpus family ``task_id`` belongs to, or ``None`` for the base corpus."""
+    base = base_task_id(task_id)
+    for family, members in CORPUS_FAMILIES.items():
+        if base in members:
+            return family
+    return None
+
+
+def family_split_name(family: str, spec: str) -> str:
+    """The split name for one family and one spec, e.g. ``component-prose``."""
+    return f"{family}-{spec}"
+
+
+def split_family(split: str) -> str | None:
+    """The family a *split name* belongs to, or ``None`` for a §1 spec split.
+
+    The inverse of :func:`family_split_name`, and the one place that reads a
+    split name back into a family. It exists because the scoring artifact is
+    archived evidence (mission rule 2): a key that means something only for a
+    family split must be emitted only on family splits, or re-scoring an archive
+    measured before Stage 11 silently rewrites its stored artifact.
+    """
+    family, _, spec = split.partition("-")
+    if spec in (SPEC_PROSE, SPEC_SEEDED) and family in CORPUS_FAMILIES:
+        return family
+    return None
+
+
+def split_name(task_id: str, spec: str) -> str:
+    """The split a run belongs to: its family's when it has one, else its spec.
+
+    This is the single place the carve-out happens, so there is exactly one
+    answer to "which split is this run in" and no caller can arrive at another.
+    """
+    family = task_family(task_id)
+    return spec if family is None else family_split_name(family, spec)
 
 
 def aggregate_threshold(task_ids: Iterable[str]) -> float:
@@ -177,7 +284,31 @@ class SplitScore:
     ``threshold`` is ``None`` for the seeded split: it is baselined on first
     measurement and does not gate anything yet, and a ``None`` threshold is the
     only representation in which no arithmetic can accidentally compare it
-    against the prose baseline.
+    against the prose baseline. Every corpus-family split
+    (:data:`CORPUS_FAMILIES`) carries ``None`` for the same reason.
+
+    ``spec`` is the split's *name*: a ``VALIDATION.md`` §1 spec for the two base
+    splits, and ``<family>-<spec>`` for a family's (:func:`split_name`).
+
+    ``min_seeds_per_task`` is the smallest number of distinct seeds any task in
+    the split was run at — the honest reading of "at >= 3 seeds", since a mean
+    would let one thoroughly measured task cover for one measured once. A run
+    record carrying no ``seed`` contributes no seed, so a hand-assembled archive
+    reads low rather than inventing coverage it does not have.
+
+    It is computed for **every** split (the ``heph bench score`` table prints
+    it for all of them) but serialised only for **family** splits, and that
+    asymmetry is deliberate rather than an oversight. G11C clause 12(b) claims
+    that an archive measured before Stage 11 re-scores to byte-identical
+    output; emitting an informational key on the two §1 spec splits made that
+    claim false, which a 2026-08-29 verifier demonstrated by re-scoring
+    ``bench/results/gpt-5.6-sol/2026-08-03`` and finding exactly one added key
+    per split. The key is a gate input for exactly one reader —
+    :func:`record_component_baseline`'s >= 3-seed floor — so it is written
+    exactly where that reader looks, and every stored artifact stays the file
+    its run produced. A future amendment that wants it on the spec splits adds
+    it deliberately and re-records the archives; it does not arrive as a side
+    effect. ``tests/stage11c`` asserts both halves against the real archives.
     """
 
     spec: str
@@ -187,6 +318,7 @@ class SplitScore:
     wilson_lower_90: float
     metrics: ValidationMetrics = field(default_factory=ValidationMetrics)
     threshold: float | None = None
+    min_seeds_per_task: int = 0
 
     @property
     def meets_threshold(self) -> bool | None:
@@ -196,7 +328,7 @@ class SplitScore:
         return self.wilson_lower_90 >= self.threshold
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "spec": self.spec,
             "n": self.n,
             "passes": self.passes,
@@ -206,6 +338,12 @@ class SplitScore:
             "meets_threshold": self.meets_threshold,
             "metrics": self.metrics.to_json(),
         }
+        # Only a family split serialises the seed floor's input — see the class
+        # docstring: the artifact of an archive that measured no family task is
+        # the file that archive has always produced.
+        if split_family(self.spec) is not None:
+            payload["min_seeds_per_task"] = self.min_seeds_per_task
+        return payload
 
 
 @dataclass(frozen=True)
@@ -251,6 +389,18 @@ class BenchScore:
         return self.splits.get(
             SPEC_SEEDED,
             SplitScore(spec=SPEC_SEEDED, n=0, passes=0, pass_rate=0.0, wilson_lower_90=0.0),
+        )
+
+    def family_split(self, family: str, spec: str) -> SplitScore:
+        """One corpus family's split, or an empty one when it was not run.
+
+        A family that was not measured reads as ``n == 0`` — never as a missing
+        key a caller might paper over, and never as a fabricated zero pass rate
+        with a threshold attached (:attr:`SplitScore.threshold` stays ``None``).
+        """
+        name = family_split_name(family, spec)
+        return self.splits.get(
+            name, SplitScore(spec=name, n=0, passes=0, pass_rate=0.0, wilson_lower_90=0.0)
         )
 
     @property
@@ -330,6 +480,17 @@ def _run_dir(archive_dir: Path | None, record: Mapping[str, Any]) -> Path | None
     return candidate if candidate.is_dir() else None
 
 
+def _min_seeds_per_task(records: Sequence[Mapping[str, Any]]) -> int:
+    """The smallest distinct-seed count over the tasks present in ``records``."""
+    seeds: dict[str, set[int]] = {}
+    for record in records:
+        bucket = seeds.setdefault(str(record.get("task_id", "")), set())
+        seed = record.get("seed")
+        if isinstance(seed, int) and not isinstance(seed, bool):
+            bucket.add(seed)
+    return min((len(values) for values in seeds.values()), default=0)
+
+
 def _split_score(
     spec: str,
     records: Sequence[Mapping[str, Any]],
@@ -347,6 +508,7 @@ def _split_score(
         wilson_lower_90=wilson_lower_bound(passes, n),
         metrics=aggregate_metrics(metrics),
         threshold=threshold,
+        min_seeds_per_task=_min_seeds_per_task(records),
     )
 
 
@@ -362,6 +524,12 @@ def score_records(
     The two spec splits are tallied separately and never averaged together: the
     returned score's headline numbers are the prose split, and the seeded split
     is a sibling entry in :attr:`BenchScore.splits`.
+
+    Corpus-family runs (:data:`CORPUS_FAMILIES`) are carved out of *both* spec
+    splits into their own ``<family>-<spec>`` entries, so the gated number keeps
+    covering exactly the corpus it was baselined over. A family split appears in
+    :attr:`BenchScore.splits` only when it actually has runs — an archive that
+    measured no family task produces the artifact it always produced.
     """
     per_task_n: dict[str, int] = {}
     per_task_passes: dict[str, int] = {}
@@ -370,17 +538,17 @@ def score_records(
     per_task_budget: dict[str, int | None] = {}
     models: list[str] = []
     dates: list[str] = []
-    by_spec: dict[str, list[Mapping[str, Any]]] = {SPEC_PROSE: [], SPEC_SEEDED: []}
-    metrics_by_spec: dict[str, list[RunMetrics]] = {SPEC_PROSE: [], SPEC_SEEDED: []}
+    by_split: dict[str, list[Mapping[str, Any]]] = {SPEC_PROSE: [], SPEC_SEEDED: []}
+    metrics_by_split: dict[str, list[RunMetrics]] = {SPEC_PROSE: [], SPEC_SEEDED: []}
     total = 0
     passes = 0
     for record in records:
         task_id = str(record.get("task_id", ""))
         if not task_id:
             raise ValueError(f"run record without a task_id: {record!r}")
-        spec = record_spec(record)
-        by_spec.setdefault(spec, []).append(record)
-        metrics_by_spec.setdefault(spec, []).append(
+        split = split_name(task_id, record_spec(record))
+        by_split.setdefault(split, []).append(record)
+        metrics_by_split.setdefault(split, []).append(
             run_metrics(record, archive_dir=_run_dir(archive_dir, record))
         )
         total += 1
@@ -421,23 +589,29 @@ def score_records(
     resolved_date = date or (dates[0] if dates else datetime.now(UTC).date().isoformat())
     # The corpus the *gated* split covers decides the bound (v0: 0.60, v1: 0.70).
     threshold = aggregate_threshold(
-        str(record.get("task_id", "")) for record in by_spec[SPEC_PROSE]
+        str(record.get("task_id", "")) for record in by_split[SPEC_PROSE]
     )
     splits = {
         SPEC_PROSE: _split_score(
             SPEC_PROSE,
-            by_spec[SPEC_PROSE],
-            metrics_by_spec[SPEC_PROSE],
+            by_split[SPEC_PROSE],
+            metrics_by_split[SPEC_PROSE],
             threshold=threshold,
         ),
         # §1: the seeded split is baselined on first measurement, so it carries
         # no threshold at all — there is nothing here to compare it against.
         SPEC_SEEDED: _split_score(
-            SPEC_SEEDED, by_spec[SPEC_SEEDED], metrics_by_spec[SPEC_SEEDED], threshold=None
+            SPEC_SEEDED, by_split[SPEC_SEEDED], metrics_by_split[SPEC_SEEDED], threshold=None
         ),
     }
+    # G11C clause 12: each family split stands alone, with no threshold, so no
+    # arithmetic anywhere can compare it against a baseline it does not share.
+    for name in sorted(by_split):
+        if name in splits or not by_split[name]:
+            continue
+        splits[name] = _split_score(name, by_split[name], metrics_by_split[name], threshold=None)
     prose = splits[SPEC_PROSE]
-    all_metrics = [m for rows in metrics_by_spec.values() for m in rows]
+    all_metrics = [m for rows in metrics_by_split.values() for m in rows]
     return BenchScore(
         model=resolved_model,
         date=resolved_date,
@@ -529,6 +703,89 @@ def record_seeded_baseline(score: BenchScore, path: Path) -> dict[str, Any] | No
         "note": (
             "VALIDATION.md §1: baselined on first measurement; not a gate, and "
             "never comparable to the pre-2026-07-26 prose baseline."
+        ),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(baseline, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return baseline
+
+
+def record_component_baseline(score: BenchScore, path: Path) -> dict[str, Any] | None:
+    """Baseline the component family on its **first** measurement, at >= 3 seeds.
+
+    ``PARTS_STORE.md`` Gate G11C clause 12, following the G9C precedent
+    (``KINEMATICS.md:392-398``) verbatim: the component family is its own split
+    per spec, baselined on its own first measurement with the reference model at
+    >= 3 seeds, **neither compared against nor averaged into the v1/v2
+    baselines**. Three properties, each mechanical here rather than promised:
+
+    * *Its own split* — :func:`split_name` carved the family's runs out of the
+      gated prose split before this function ever sees them, so the number
+      written here shares no run with the 0.70 bar.
+    * *Its own first measurement* — an existing file is returned unchanged, as
+      :func:`record_seeded_baseline` does. A baseline that could be re-taken is
+      not a baseline.
+    * *At >= 3 seeds* — refused by name below, because "first measurement" and
+      "never re-baselined" together mean a thin first run would enshrine noise
+      permanently. This is the one place the seed floor can still be enforced.
+
+    The prose and seeded halves are recorded side by side and never averaged
+    with each other either; the payload carries no threshold, and nothing reads
+    it back into a verdict. Returns ``None`` when the family was not run.
+
+    :raises ValueError: :data:`INSUFFICIENT_COMPONENT_SEEDS` when a measured
+        half ran some task at fewer than :data:`COMPONENT_BASELINE_MIN_SEEDS`
+        distinct seeds. Nothing is written; the caller is told which half and
+        how thin it was.
+    """
+    rows = {spec: score.family_split(FAMILY_COMPONENT, spec) for spec in (SPEC_PROSE, SPEC_SEEDED)}
+    measured = {spec: row for spec, row in rows.items() if row.n}
+    if not measured:
+        return None
+    if path.is_file():
+        stored = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(stored, dict):
+            raise ValueError(f"{path}: component baseline is not a JSON object")
+        return cast("dict[str, Any]", stored)
+    thin = {
+        spec: row.min_seeds_per_task
+        for spec, row in measured.items()
+        if row.min_seeds_per_task < COMPONENT_BASELINE_MIN_SEEDS
+    }
+    if thin:
+        detail = ", ".join(
+            f"{family_split_name(FAMILY_COMPONENT, spec)}={seeds}"
+            for spec, seeds in sorted(thin.items())
+        )
+        raise ValueError(
+            f"{INSUFFICIENT_COMPONENT_SEEDS}: the component family is baselined on its "
+            f"first measurement and never re-baselined, so it will not be baselined "
+            f"below {COMPONENT_BASELINE_MIN_SEEDS} seeds per task ({detail}); "
+            f"PARTS_STORE.md Gate G11C clause 12"
+        )
+    baseline: dict[str, Any] = {
+        "family": FAMILY_COMPONENT,
+        "tasks": list(COMPONENT_FAMILY_TASKS),
+        "model": score.model,
+        "date": score.date,
+        "min_seeds": COMPONENT_BASELINE_MIN_SEEDS,
+        "threshold": None,
+        "splits": {
+            family_split_name(FAMILY_COMPONENT, spec): {
+                "n": row.n,
+                "passes": row.passes,
+                "pass_rate": row.pass_rate,
+                "wilson_lower_90": row.wilson_lower_90,
+                "min_seeds_per_task": row.min_seeds_per_task,
+                "threshold": None,
+            }
+            for spec, row in sorted(measured.items())
+        },
+        "note": (
+            "PARTS_STORE.md Gate G11C clause 12 (the KINEMATICS.md:392-398 G9C "
+            "precedent): baselined on its own first measurement at >= 3 seeds; not a "
+            "gate, and neither compared against nor averaged into the corpus v1/v2 "
+            "baselines. Re-baselining any combined bar is its own future amendment."
         ),
     }
     path.parent.mkdir(parents=True, exist_ok=True)

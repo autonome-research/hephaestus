@@ -1,0 +1,45 @@
+# M3 heat-set insert (brass envelope) — parts-store instance at (4, -1.5, 2) mm, rotated (0, 0, 30)deg.
+# registry: <elided: the tree's Merkle root>
+# Reference geometry from a pinned registry: review it, then compose
+#   _heatset_insert_m3_ef5c76 into part.geometry (e.g. Compound(children=[..., _heatset_insert_m3_ef5c76])).
+
+_heatset_insert_m3_ef5c76_clearance = 0.1
+_heatset_insert_m3_ef5c76_length = 5.8
+_heatset_insert_m3_ef5c76_body_d = 4.0 + 2 * _heatset_insert_m3_ef5c76_clearance
+_heatset_insert_m3_ef5c76_knurl_d = 4.6 + 2 * _heatset_insert_m3_ef5c76_clearance
+_heatset_insert_m3_ef5c76_knurl_h = 1.6
+_heatset_insert_m3_ef5c76_bore_d = 3.0
+_heatset_insert_m3_ef5c76_body = Cylinder(_heatset_insert_m3_ef5c76_body_d / 2, _heatset_insert_m3_ef5c76_length, align=(Align.CENTER, Align.CENTER, Align.MAX))
+# The knurl band sits just below the flange end, where the insert grips.
+_heatset_insert_m3_ef5c76_knurl = Pos(0, 0, -_heatset_insert_m3_ef5c76_knurl_h / 2 - 0.4) * Cylinder(
+    _heatset_insert_m3_ef5c76_knurl_d / 2, _heatset_insert_m3_ef5c76_knurl_h, align=(Align.CENTER, Align.CENTER, Align.CENTER)
+)
+_heatset_insert_m3_ef5c76_bore = Cylinder(_heatset_insert_m3_ef5c76_bore_d / 2, _heatset_insert_m3_ef5c76_length + 2.0, align=(Align.CENTER, Align.CENTER, Align.MAX))
+_heatset_insert_m3_ef5c76_insert = (_heatset_insert_m3_ef5c76_body + _heatset_insert_m3_ef5c76_knurl) - _heatset_insert_m3_ef5c76_bore
+_heatset_insert_m3_ef5c76_insert.color = Color(0.72, 0.58, 0.3)
+_heatset_insert_m3_ef5c76_insert.label = "heatset_insert_m3"
+_heatset_insert_m3_ef5c76 = Pos(4.0, -1.5, 2.0) * Rot(0.0, 0.0, 30.0) * _heatset_insert_m3_ef5c76_insert
+_heatset_insert_m3_ef5c76.label = "heatset_insert_m3"
+# PARTS_STORE.md §2.1: every selector is rooted at the published shape and is
+# ordered by a MEASURE — area, radius, distance between shapes — never by a
+# world axis. A measure is invariant under the placement the consumer applies;
+# `sort_by(Axis.Z)[-1]` is not, and would silently pick a different face once
+# the insert is instanced under a rotation.
+#
+# The bore and the knurl are the unique smallest- and largest-radius cylinders,
+# so radius alone names them. The top and bottom annuli are CONGRUENT — equal
+# area, equal geometry — so area alone cannot tell them apart. The knurl band
+# sits near the top by construction, so the nearer of the two large annuli to
+# the knurl face is the top face, and that distance is measured between two
+# pieces of the same placed shape.
+tag(
+    _heatset_insert_m3_ef5c76.faces()
+    .filter_by(GeomType.PLANE)
+    .sort_by(SortBy.AREA)[-2:]
+    .sort_by_distance(
+        _heatset_insert_m3_ef5c76.faces().filter_by(GeomType.CYLINDER).sort_by(SortBy.RADIUS)[-1]
+    )[0],
+    "heatset_insert_m3_ef5c76__top_face",
+)
+tag(_heatset_insert_m3_ef5c76.faces().filter_by(GeomType.CYLINDER).sort_by(SortBy.RADIUS)[0], "heatset_insert_m3_ef5c76__bore")
+tag(_heatset_insert_m3_ef5c76.faces().filter_by(GeomType.CYLINDER).sort_by(SortBy.RADIUS)[-1], "heatset_insert_m3_ef5c76__knurl")

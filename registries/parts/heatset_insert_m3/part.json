@@ -29,23 +29,36 @@
       "doc": "radial envelope inflation for pocket subtraction, mm"
     }
   },
-  "envelope": {
-    "length_mm": 5.8,
-    "body_diameter_mm": 4.0,
-    "knurl_diameter_mm": 4.6,
-    "knurl_band_height_mm": 1.6,
-    "bore_diameter_mm": 3.0
-  },
-  "mating_features": {
-    "pilot_hole_diameter_mm": 4.0,
-    "pilot_hole_min_depth_mm": 6.8,
-    "min_boss_wall_mm": 1.6
-  },
-  "origin": "boss top face; body runs 0..-length in Z",
-  "simplifications": [
-    "knurl modelled as one cylindrical band, not a diamond pattern",
-    "internal thread modelled as a plain bore",
-    "no melt-flow relief volume (a process allowance, not geometry)"
-  ],
-  "license": "Apache-2.0"
+  "component": {
+    "class": "insert",
+    "series": {
+      "family": "heatset_metric",
+      "size": "M3"
+    },
+    "license": "Apache-2.0",
+    "data_license": "facts-only",
+    "frame": "boss top face; body runs 0..-length in Z",
+    "simplifications": [
+      "knurl modelled as one cylindrical band, not a diamond pattern",
+      "internal thread modelled as a plain bore",
+      "no melt-flow relief volume (a process allowance, not geometry)"
+    ],
+    "interfaces": [
+      {
+        "name": "top_face",
+        "class": "planar_face",
+        "role": "mount"
+      },
+      {
+        "name": "bore",
+        "class": "cylindrical_face",
+        "role": "bore"
+      },
+      {
+        "name": "knurl",
+        "class": "cylindrical_face",
+        "role": "grip"
+      }
+    ]
+  }
 }

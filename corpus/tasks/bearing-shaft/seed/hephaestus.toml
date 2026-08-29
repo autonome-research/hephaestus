@@ -1,0 +1,5 @@
+# bearing-shaft bench task: an empty project. The shaft and its two store
+# bearings are both the run's to build.
+[project]
+name = "bearingshaft"
+description = "A stepped shaft carried on two 608 bearings from the parts store"

@@ -1,0 +1,5 @@
+# motor-plate bench task: an empty project. The plate and the store motor
+# instance are both the run's to build.
+[project]
+name = "motorplate"
+description = "A NEMA 17 motor mounted through a plate, diagonally"

@@ -246,7 +246,28 @@ docs/       generated/site-only mkdocs content and assets; links to root docs.
   the reference product's verbatim message text or UX copy. `CONTRIBUTING.md` states this boundary
   and CI license-checks dependencies.
 - Trademark hygiene: no "Smith"/"Arche" naming in code identifiers or
-  packages; the reference product is named only in docs, factually.
+  packages; the reference product is named only in docs, factually. The same
+  rule generalises to **third-party component data**: a store component's id is
+  generic or standard-derived (`bearing_608`, `stepper_nema17_frame`), never
+  `<vendor>_<sku>`; a vendor name and part number are factual reference and live
+  in the record's `datasheet` block only. Publishing scans ids against a
+  maintained deny-list (`trademark_in_component_id`), which is deliberately not
+  the only control — a deny-list is imperfect and the maintainer review below is
+  what actually decides.
+- Third-party component data: **reference, do not vendor** (operator decision,
+  2026-08-29; `PARTS_STORE.md` §7). A `parts` registry may carry independently
+  authored generator source, the nominal dimensions of a published standard, and
+  the minimum derived facts its declared interfaces and claims require. It may
+  not carry vendor CAD (STEP/IGES/SLDPRT or any converted derivative), vendor
+  PDFs, drawing images, artwork or marketing renders, or a bulk transcription of
+  a vendor table. A datasheet is referenced by URL and content hash with its
+  terms declared, never copied; nothing fetches that URL. Publishing refuses any
+  file in a `parts` tree that is not `registry.toml`, `part.json`,
+  `generator.py` or `*.md` (`vendored_third_party_payload`). A pack that cannot
+  be authored without vendoring something does not ship, and the omission is
+  stated loudly rather than resolved by vendoring. Publication of a component
+  pack is additionally gated on `LEGAL-REVIEW.md`'s third-party-component-data
+  scope field; development is not.
 
 ## Registry trust
 

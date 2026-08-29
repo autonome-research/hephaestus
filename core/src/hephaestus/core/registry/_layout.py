@@ -18,7 +18,7 @@ from hephaestus.core.errors import ValidationError
 from opstore.types import JSONValue
 
 from ._digest import merkle_digest
-from ._errors import RegistryIntegrityError
+from ._errors import RegistryIntegrityError, RegistryRefusal
 from ._fields import entries, opt_str, req_str, table
 
 __all__ = [
@@ -72,11 +72,25 @@ def parse_manifest(text: str, *, source: str = MANIFEST_FILENAME) -> RegistryMan
             f"{source}: registry kind {kind!r} is not one of {', '.join(sorted(_KINDS))}",
             kind="contract",
         )
+    license_text = opt_str(header, "license")
+    if not license_text:
+        # PARTS_STORE.md §1, tightening 2 (mission rule 1): `PUBLISHING.md:28`
+        # already told authors "state one — publishing checks it is present",
+        # which was false while this field read through `opt_str` and an absent
+        # license silently became "". Making the sentence true is the fix; a
+        # tree whose terms nobody stated is a tree nobody may redistribute.
+        raise RegistryRefusal(
+            "unlicensed_registry",
+            f"{source}: [registry].license is required — a registry states the terms its "
+            "content is distributed under, and publishing checks it is present "
+            "(registries/PUBLISHING.md)",
+            detail={"registry": opt_str(header, "name")},
+        )
     return RegistryManifest(
         name=req_str(header, "name", source=source),
         kind=cast("RegistryKind", kind),
         version=req_str(header, "version", source=source),
-        license=opt_str(header, "license"),
+        license=license_text,
         description=opt_str(header, "description"),
         skills=cast("tuple[Mapping[str, JSONValue], ...]", entries(data, "skills", source=source)),
         parts=cast("tuple[Mapping[str, JSONValue], ...]", entries(data, "parts", source=source)),

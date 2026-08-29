@@ -1,0 +1,52 @@
+{
+  "id": "screw_socket_head_m5",
+  "name": "M5 socket-head cap screw (DIN 912 envelope)",
+  "summary": "Thread-free M5 socket-head cap screw envelope: 8.5 mm head dia x 5 mm high, 5 mm shank, 4 mm hex socket. Origin on the head bearing face, shank along -Z.",
+  "preview": "M5 SHCS envelope, head 8.5x5 mm, shank 5 mm, length 8-50 mm (default 16)",
+  "keywords": [
+    "m5",
+    "screw",
+    "bolt",
+    "fastener",
+    "socket",
+    "head",
+    "cap",
+    "shcs",
+    "din",
+    "912",
+    "hex",
+    "allen",
+    "metric",
+    "counterbore",
+    "hardware"
+  ],
+  "params": {
+    "length": {
+      "type": "float",
+      "default": 16.0,
+      "min": 8.0,
+      "max": 50.0,
+      "unit": "mm",
+      "doc": "shank length below the head, mm"
+    }
+  },
+  "envelope": {
+    "head_diameter_mm": 8.5,
+    "head_height_mm": 5.0,
+    "shank_diameter_mm": 5.0,
+    "socket_across_flats_mm": 4.0,
+    "socket_depth_mm": 3.0
+  },
+  "mating_features": {
+    "clearance_hole_mm": 5.5,
+    "counterbore_diameter_mm": 10.0,
+    "counterbore_min_depth_mm": 5.0
+  },
+  "origin": "head bearing face; head spans 0..+k in Z, shank runs -Z",
+  "simplifications": [
+    "no thread helix (envelope only)",
+    "no under-head fillet or washer face",
+    "hex socket is a straight prism, not a broached form"
+  ],
+  "license": "Apache-2.0"
+}

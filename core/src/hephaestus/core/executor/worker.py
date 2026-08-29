@@ -59,7 +59,12 @@ from hephaestus.core.executor.splitter import (
     parse_module,
     split_statements,
 )
-from hephaestus.core.executor.tags import TagRegistry, resolve_placements
+from hephaestus.core.executor.tags import (
+    INTERFACE_TAG_INFIX,
+    TagPlacement,
+    TagRegistry,
+    resolve_placements,
+)
 from hephaestus.core.params import params_declaration_json
 from opstore.types import JSONValue
 
@@ -491,6 +496,7 @@ def execute_job(job: Mapping[str, JSONValue]) -> dict[str, JSONValue]:
     result["stdout"] = captured.getvalue()
 
     geometry = part.geometry_value
+    placements: dict[str, TagPlacement] = {}
     if failure is None:
         try:
             param_state.finalize()
@@ -498,6 +504,11 @@ def execute_job(job: Mapping[str, JSONValue]) -> dict[str, JSONValue]:
                 _raise_missing_geometry(part_name)
             if not hasattr(geometry, "wrapped"):
                 _raise_bad_geometry(geometry)
+            # Resolved here rather than in the success block below because an
+            # unplaced *store-interface* tag is a build ERROR, and an error has
+            # to be raised while there is still a failure path to take.
+            placements = resolve_placements(tag_registry, geometry)
+            _raise_unplaced_interface_tags(placements)
         except HephaestusError as exc:
             failure = exc
             failed_statement = None
@@ -557,7 +568,6 @@ def execute_job(job: Mapping[str, JSONValue]) -> dict[str, JSONValue]:
     }
     result["geometry_index"] = geometry_index
 
-    placements = resolve_placements(tag_registry, geometry)
     warnings: list[JSONValue] = []
     for name, placement in placements.items():
         if placement.solid_index is None and placement.kind in ("face", "edge", "solid"):
@@ -703,6 +713,38 @@ def _raise_missing_geometry(part_name: str) -> None:
 
     raise ValidationError(
         f"part {part_name!r} did not assign part.geometry (script contract §5.1)",
+        kind="contract",
+    )
+
+
+def _raise_unplaced_interface_tags(placements: Mapping[str, TagPlacement]) -> None:
+    """An unplaced *store-interface* tag fails the build (``PARTS_STORE.md`` §2.3).
+
+    A plain tag that misses the final compound keeps its ``tag_unresolved``
+    warning: that is right for a hand-authored tag whose author is still
+    iterating. For a pasted store fragment it means the instance's anchors are
+    **dead** — the consumer's own composition moved the instance after the paste,
+    so every 8C constraint and Stage 9 joint written against those names will
+    come back ``unaddressable_anchor`` at constraint time, long after a green
+    build said the paste was fine. Scoped to the reserved ``__`` infix, so no
+    existing script's warning becomes an error.
+    """
+    from hephaestus.core.errors import ValidationError
+
+    dead = sorted(
+        name
+        for name, placement in placements.items()
+        if INTERFACE_TAG_INFIX in name
+        and placement.solid_index is None
+        and placement.kind in ("face", "edge", "solid")
+    )
+    if not dead:
+        return
+    raise ValidationError(
+        f"interface_not_placed: the store-interface tag(s) {', '.join(dead)} name topology "
+        "that is not part of the final part.geometry compound. A pasted component "
+        "fragment tags the PLACED instance; composing a further transformed copy of it "
+        "leaves those anchors dead, so this is a build error rather than a warning",
         kind="contract",
     )
 

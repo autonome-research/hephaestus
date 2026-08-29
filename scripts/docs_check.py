@@ -43,6 +43,10 @@ from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Final
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import legal_review_check
+
 REPO_ROOT: Final[Path] = Path(__file__).resolve().parents[1]
 
 #: Root documents whose references are checked (the normative set plus README).
@@ -297,6 +301,13 @@ def check(documents: Iterable[Path]) -> list[str]:
         _check_links(path, problems, top_level)
         _check_code_paths(path, problems, top_level)
         _check_sections(path, problems)
+    # `mission_plan.md:646` says "CI checks the file's schema" about
+    # `LEGAL-REVIEW.md`, and until PARTS_STORE.md §7.5's item 33 that sentence
+    # described nothing. It is joined here rather than run as a second CI step so
+    # that the claim becomes true on the run that already makes the docs claim
+    # true. The file is absent by design in this checkout, so this contributes
+    # nothing until Stage 7 lands it — and then contributes without an edit.
+    problems.extend(legal_review_check.check_repository(REPO_ROOT))
     return problems
 
 

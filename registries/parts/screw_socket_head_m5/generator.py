@@ -36,3 +36,17 @@ _screw = (_head + _shank) - _socket
 _screw.color = Color(0.62, 0.64, 0.67)
 _screw.label = "screw_socket_head_m5"
 part.geometry = _screw
+
+# --- hephaestus-store: interface ---
+# PARTS_STORE.md §2.1: every selector is rooted at the published shape and is
+# ordered by a MEASURE, never by a world axis — a measure survives the Pos/Rot
+# the consumer applies, and `sort_by(Axis.Z)` does not.
+#
+# The head outer and the shank are the only two cylinders, and the head is the
+# larger radius at every declared length. The head top (a disc with the hex
+# socket cut out of it) is the largest planar face and the bearing face is the
+# next largest, at every size and every length in the declared range; the hex
+# flats, the socket floor and the shank end are all smaller.
+tag(_screw.faces().filter_by(GeomType.PLANE).sort_by(SortBy.AREA)[-2], "head_bearing_face")
+tag(_screw.faces().filter_by(GeomType.CYLINDER).sort_by(SortBy.RADIUS)[-1], "head_outer")
+tag(_screw.faces().filter_by(GeomType.CYLINDER).sort_by(SortBy.RADIUS)[0], "shank")
