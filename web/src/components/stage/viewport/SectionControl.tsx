@@ -27,6 +27,7 @@
 
 import { copy } from "../../../copy";
 import { useWorkspace, workspaceStore } from "../../../state/react";
+import { Button, Select, Slider } from "../../../system";
 import {
   SECTION_AXES,
   formatSectionPlane,
@@ -81,9 +82,9 @@ export function SectionControl({ bounds }: SectionControlProps): React.JSX.Eleme
   if (plane === null) {
     return (
       <div className={styles["control"]} data-section-control="off">
-        <button
-          type="button"
-          className={styles["enable"]}
+        <Button
+          variant="secondary"
+          icon="plane"
           data-testid="section-enable"
           onClick={() => {
             const initial = axisRange(bounds, "Z");
@@ -91,7 +92,7 @@ export function SectionControl({ bounds }: SectionControlProps): React.JSX.Eleme
           }}
         >
           {copy.viewport.section.enable}
-        </button>
+        </Button>
       </div>
     );
   }
@@ -100,74 +101,73 @@ export function SectionControl({ bounds }: SectionControlProps): React.JSX.Eleme
     <div className={styles["control"]} data-section-control="on" data-section-plane={plane.spec}>
       <span className={styles["label"]}>{copy.viewport.section.label}</span>
 
-      <select
-        className={styles["axis"]}
-        aria-label={copy.viewport.section.axis}
+      <Select
+        label={copy.viewport.section.axis}
+        hideLabel
         data-testid="section-axis"
         value={axis}
-        onChange={(event) => {
-          const nextAxis = event.target.value as SectionAxis;
+        options={SECTION_AXES}
+        onChange={(raw) => {
+          const nextAxis = raw as SectionAxis;
           const next = axisRange(bounds, nextAxis);
           setPlane(sign, nextAxis, (next.min + next.max) / 2);
         }}
-      >
-        {SECTION_AXES.map((name) => (
-          <option key={name} value={name}>
-            {name}
-          </option>
-        ))}
-      </select>
+      />
 
-      <button
-        type="button"
-        className={styles["side"]}
-        aria-label={copy.viewport.section.side}
+      <Button
+        variant="secondary"
+        iconLabel={copy.viewport.section.side}
+        title={copy.viewport.section.side}
         data-testid="section-side"
         data-section-side={sign === 1 ? "+" : "-"}
         onClick={() => {
           setPlane(sign === 1 ? -1 : 1, axis, offset);
         }}
       >
-        {sign === 1 ? "+" : "−"}
-        {axis}
-      </button>
+        {sign === 1 ? `+${axis}` : `−${axis}`}
+      </Button>
 
-      <input
+      <Slider
         className={styles["offset"]}
-        type="range"
-        aria-label={copy.viewport.section.offset}
+        label={copy.viewport.section.offset}
+        hideLabel
         data-testid="section-offset"
         min={range.min}
         max={range.max}
         step={range.step}
         value={offset}
-        onChange={(event) => {
-          setPlane(sign, axis, Number(event.target.value));
+        precision={2}
+        onChange={(next) => {
+          setPlane(sign, axis, next);
         }}
       />
 
-      <button
-        type="button"
-        className={styles["render"]}
-        data-testid="section-render"
-        disabled={overlay === "section"}
-        onClick={() => {
-          workspaceStore.update({ channel_overlay: "section" });
-        }}
-      >
-        {copy.viewport.section.render}
-      </button>
+      {overlay === "section" ? (
+        <Button variant="primary" disabled reason={copy.viewport.section.renderDisabled}>
+          {copy.viewport.section.render}
+        </Button>
+      ) : (
+        <Button
+          variant="primary"
+          data-testid="section-render"
+          onClick={() => {
+            workspaceStore.update({ channel_overlay: "section" });
+          }}
+        >
+          {copy.viewport.section.render}
+        </Button>
+      )}
 
-      <button
-        type="button"
-        className={styles["clear"]}
+      <Button
+        variant="quiet"
+        icon="close"
         data-testid="section-clear"
         onClick={() => {
           workspaceStore.update({ section_plane: null, channel_overlay: "none" });
         }}
       >
         {copy.viewport.section.disable}
-      </button>
+      </Button>
     </div>
   );
 }

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // `ResultsPanel` — the build result's geometry list, its per-entry visibility
-// toggles, and its metrics (INTERFACE.md §6.1, §5.4).
+// toggles, and its metrics (INTERFACE.md §6.1, §5.4, §4.7).
 //
 // §6.1's TIGHTENING (binds G4.2) fixes the row namespace and the count:
 //
@@ -14,19 +14,38 @@
 //
 // So: one row per entry, in server order, and the count beside the heading is
 // the server's `geometry_count` field — never `geometries.length`, never a GLTF
-// mesh count, never a `kind="solid"` row count off the selection table. The e2e
-// reads `geometry_count` over HTTP and compares it to the DOM row count.
+// mesh count, never a `kind="solid"` row count off the selection table.
 //
 // §5.4 puts the visibility toggles here. What a toggle changes is a scene-graph
 // property; it changes nothing about the result, and the panel says so rather
 // than leaving a reader to wonder whether hiding a solid re-measured anything.
-// The toggle's namespace is the geometry entry *label*, which is what the GLTF
-// carries in each mesh's `extras.label` — see `state/visibility.ts` for why that
-// is the only namespace available and what it costs on a multi-solid entry.
+//
+// §4.7's METRICS TABLE IS THE FOUR-DEFECT FIX. The metrics were a `<dl>` of raw
+// SCREAMING_SNAKE keys with left-aligned values and no tabular figures, and one
+// of those values was `74289.99999999999` shipped to an engineer as a
+// measurement. They are now a `DataTable`: the key becomes a label and a unit in
+// their own columns (`format.ts`, and a key with no declared suffix gets NO
+// unit rather than a guessed one), the value is right-aligned and tabular, and
+// `<Fact>`'s `data-value` still carries the server's number to fourteen digits
+// so the e2e's DOM-vs-JSON comparison reads exactly what it read before.
 
 import type { BuildDocument } from "../../api/types";
 import { useBuild } from "../../api/queries";
 import { copy } from "../../copy";
+import {
+  Button,
+  Chip,
+  DataTable,
+  EmptyState,
+  Panel,
+  PanelBody,
+  PanelHeader,
+  PanelNote,
+  PanelSection,
+  formatValue,
+  metricLabel,
+  metricUnit,
+} from "../../system";
 import { Fact } from "../Fact";
 import { useWorkspace } from "../../state/react";
 import { visibilityKey, visibilityStore } from "../../state/visibility";
@@ -40,7 +59,8 @@ import styles from "./panels.module.css";
  * a number stays the number. Nothing here rounds, converts units, or combines
  * two metrics — §1's closed list names distances and volumes explicitly, and a
  * client that reformatted a measurement into a different number would be
- * computing one.
+ * computing one. `formatValue` decides only what a human SEES; `data-value`
+ * keeps the server's own bytes.
  */
 function metricValue(value: unknown): string | number | boolean | null {
   if (value === null || value === undefined) return null;
@@ -61,99 +81,125 @@ export interface ResultsViewProps {
 /** The panel's rendering half: a pure function of one build document. */
 export function ResultsView({ part, build, hidden, onToggle }: ResultsViewProps): React.JSX.Element {
   const metrics = build.metrics ?? null;
+  /**
+   * How many of THIS part's entries are hidden.
+   *
+   * Client state, not a server count — §1 exempts it by name where the grid
+   * readout used to carry it ("How many solids the viewer has hidden — client
+   * state, not a server count"), and it is deliberately not a `<Fact>`.
+   *
+   * It reads here rather than in the viewport overlay for two reasons: §5.5
+   * defines that overlay as "camera state and scale", which this is not; and an
+   * overlay that grows a row when a solid is hidden puts chrome pixels into
+   * G4.5's control region, measured at 1.10% against a ≤1% ceiling. See
+   * `GridReadout.tsx`'s header for the measurement.
+   */
+  const hiddenCount = build.geometries.filter((geometry) =>
+    hidden.has(visibilityKey(part, geometry.label)),
+  ).length;
   return (
-    <section className={styles["panel"]} aria-label={copy.results.heading} data-panel="results">
-      <div className={styles["headingRow"]}>
-        <h3 className={styles["heading"]}>{copy.results.heading}</h3>
-        {build.status === "not_built" ? null : (
-          <Fact source="build.geometry_count" value={build.geometry_count} className={styles["dim"]}>
-            {`${build.geometry_count} ${copy.results.count}`}
-          </Fact>
-        )}
-      </div>
-
-      {build.status === "not_built" ? (
-        <p className={styles["absent"]}>{copy.results.notBuilt}</p>
-      ) : build.status === "error" ? (
-        <p className={styles["absent"]}>{copy.results.failed}</p>
-      ) : (
-        <>
-          <ul className={styles["list"]}>
-            {build.geometries.map((geometry, index) => {
-              const isHidden = hidden.has(visibilityKey(part, geometry.label));
-              return (
-                <li
-                  key={geometry.label}
-                  className={styles["row"]}
-                  data-geometry-row=""
-                  data-geometry-index={index}
-                  data-geometry-label={geometry.label}
-                  data-visible={isHidden ? "false" : "true"}
-                >
-                  <span className={styles["rowValue"]}>
-                    <Fact
-                      source="build.geometries[].label"
-                      value={geometry.label}
-                      className={styles["mono"]}
-                    />
-                  </span>
-                  <Fact
-                    source="build.geometries[].solids"
-                    value={geometry.solids}
-                    className={styles["dim"]}
-                  >
-                    {`${geometry.solids} ${copy.results.solids}`}
-                  </Fact>
-                  {geometry.solids > 1 ? (
-                    <span className={styles["chip"]} title={copy.results.groupNote}>
-                      {copy.results.groupNote}
-                    </span>
-                  ) : null}
-                  <button
-                    type="button"
-                    className={styles["toggle"]}
-                    aria-pressed={isHidden}
-                    data-visibility-toggle={geometry.label}
-                    onClick={onToggle === undefined ? undefined : () => onToggle(geometry.label)}
-                  >
-                    {isHidden ? copy.results.show : copy.results.hide}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-          <p className={styles["note"]}>{copy.results.hiddenNote}</p>
-          {/* The viewport (§5) applies these labels to the loaded GLB's mesh
-              nodes — `viewport/scene.ts::applyVisibility` reads the same store
-              through `visibilityStore.hiddenLabels(part)`. The note names where
-              the effect is visible, because the toggle and the picture live in
-              different regions of §4.1's shell. */}
-          <p className={styles["note"]}>{copy.results.appliesToViewport}</p>
-
-          {metrics === null ? null : (
+    <Panel label={copy.results.heading} data-panel="results">
+      <PanelHeader
+        title={copy.results.heading}
+        level={3}
+        actions={
+          build.status === "not_built" ? undefined : (
             <>
-              <h3 className={styles["heading"]}>{copy.results.metricsHeading}</h3>
-              <dl className={styles["pairs"]}>
-                {Object.keys(metrics)
-                  .sort()
-                  .map((name) => (
-                    <div key={name} className={styles["pairRow"]}>
-                      <dt data-metric={name}>{name}</dt>
-                      <dd>
-                        <Fact
-                          source="build.metrics[]"
-                          value={metricValue(metrics[name])}
-                          className={styles["mono"]}
-                        />
-                      </dd>
-                    </div>
-                  ))}
-              </dl>
+              <Chip data-results-count="">
+                <Fact source="build.geometry_count" value={build.geometry_count}>
+                  {`${String(build.geometry_count)} ${copy.results.count}`}
+                </Fact>
+              </Chip>
+              {hiddenCount === 0 ? null : (
+                <Chip data-results-hidden={hiddenCount}>
+                  {copy.results.hiddenCount(hiddenCount)}
+                </Chip>
+              )}
             </>
-          )}
-        </>
-      )}
-    </section>
+          )
+        }
+      />
+      <PanelBody>
+        {build.status === "not_built" ? (
+          <EmptyState icon="cube" title={copy.results.notBuiltTitle} body={copy.results.notBuilt} />
+        ) : build.status === "error" ? (
+          <EmptyState icon="alert" title={copy.results.failedTitle} body={copy.results.failed} />
+        ) : (
+          <>
+            <ul className={styles["list"]}>
+              {build.geometries.map((geometry, index) => {
+                const isHidden = hidden.has(visibilityKey(part, geometry.label));
+                return (
+                  <li
+                    key={geometry.label}
+                    className={styles["row"]}
+                    data-geometry-row=""
+                    data-geometry-index={index}
+                    data-geometry-label={geometry.label}
+                    data-visible={isHidden ? "false" : "true"}
+                  >
+                    <span className={styles["rowValue"]}>
+                      <Fact
+                        source="build.geometries[].label"
+                        value={geometry.label}
+                        className={styles["mono"]}
+                      />
+                    </span>
+                    <Fact
+                      source="build.geometries[].solids"
+                      value={geometry.solids}
+                      className={styles["muted"]}
+                    >
+                      {`${String(geometry.solids)} ${copy.results.solids}`}
+                    </Fact>
+                    {geometry.solids > 1 ? (
+                      <Chip title={copy.results.groupNote} data-geometry-group="">
+                        {copy.results.group}
+                      </Chip>
+                    ) : null}
+                    <Button
+                      variant="toggle"
+                      pressed={isHidden}
+                      onClick={onToggle === undefined ? undefined : () => onToggle(geometry.label)}
+                      data-visibility-toggle={geometry.label}
+                    >
+                      {isHidden ? copy.results.show : copy.results.hide}
+                    </Button>
+                  </li>
+                );
+              })}
+            </ul>
+            <PanelNote>{copy.results.hiddenNote}</PanelNote>
+            {/* The viewport (§5) applies these labels to the loaded GLB's mesh
+                nodes — `viewport/scene.ts::applyVisibility` reads the same store
+                through `visibilityStore.hiddenLabels(part)`. The note names where
+                the effect is visible, because the toggle and the picture live in
+                different regions of §4.1's shell. */}
+            <PanelNote>{copy.results.appliesToViewport}</PanelNote>
+
+            {metrics === null ? null : (
+              <PanelSection eyebrow={copy.results.metricsHeading}>
+                <DataTable
+                  rows={Object.keys(metrics)
+                    .sort()
+                    .map((name) => ({
+                      key: name,
+                      label: metricLabel(name),
+                      value: (
+                        <Fact source="build.metrics[]" value={metricValue(metrics[name])}>
+                          {formatValue(metrics[name])}
+                        </Fact>
+                      ),
+                      unit: metricUnit(name) ?? "",
+                      attrs: { "data-metric": name },
+                    }))}
+                />
+              </PanelSection>
+            )}
+          </>
+        )}
+      </PanelBody>
+    </Panel>
   );
 }
 
@@ -167,8 +213,10 @@ export function ResultsPanel(): React.JSX.Element {
     visibilityStore.getSnapshot,
   );
 
-  if (part === null) return <p className={styles["absent"]}>{copy.inspector.selectPart}</p>;
-  if (build.data === undefined) return <p className={styles["absent"]}>{copy.absent.loading}</p>;
+  if (part === null) {
+    return <EmptyState icon="cube" title={copy.inspector.noPartTitle} body={copy.inspector.selectPart} />;
+  }
+  if (build.data === undefined) return <PanelNote>{copy.absent.loading}</PanelNote>;
   return (
     <ResultsView
       part={part}

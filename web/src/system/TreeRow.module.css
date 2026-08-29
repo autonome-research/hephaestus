@@ -1,0 +1,79 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * INTERFACE.md §4.7: 26px rows, indent by depth, selected marked with an INSET
+ * ACCENT RULE. The rule is inset rather than a left border for the same reason
+ * the tab marker is a box-shadow: a border appearing on selection moves the
+ * text, and furniture does not move (§3.3, principle 4).
+ */
+
+.tree,
+.group {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.node {
+  min-width: 0;
+}
+
+.node:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+  border-radius: var(--radius-control);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  /* §4.7's 26px, which also clears §3.13.6's 24px hit floor. */
+  min-height: 26px;
+  padding-right: var(--space-2);
+  border-radius: var(--radius-control);
+  color: var(--ink-base);
+  cursor: pointer;
+  box-shadow: inset 2px 0 0 transparent;
+}
+
+.row:hover {
+  background: var(--surface-raised);
+  color: var(--ink-strong);
+}
+
+.node[aria-selected="true"] > .row {
+  background: var(--surface-raised);
+  color: var(--ink-strong);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.twisty,
+.spacer {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  flex: none;
+  color: var(--ink-muted);
+}
+
+.twisty {
+  cursor: pointer;
+}
+
+.label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trailing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+}

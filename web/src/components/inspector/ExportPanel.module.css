@@ -1,0 +1,130 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * LAYOUT ONLY, for the export panel (INTERFACE.md §3.4, §4.7).
+ *
+ * §4.7's last line: "`Composer`/`ExportPanel`/`ProvidersPanel`/`SignInDialog`
+ * build on the system layer and declare no colour, type or border of their own."
+ * Every rule here is a `display`, a `gap`, a `flex` or a `grid` — the type roles
+ * and the tokens come from `system/`. The one `color` reference is the muted ink
+ * for a struck-through byte total on a file too large to fetch, and it composes
+ * the role rather than declaring a size.
+ */
+
+/* EVERY DIRECT CHILD OF A `PanelSection` MUST SPAN THE THREE TRACKS.
+   `PanelBody` declares `grid-template-columns: max-content minmax(0,1fr)
+   max-content` and `PanelSection` is `grid-template-columns: subgrid`, so a
+   plain `<div>` inside a section is AUTO-PLACED into one of those columns —
+   `.body > *` spans, `.section > *` does not. A wide flex row placed in the
+   `max-content` first column then paints under whatever lands in the third,
+   which is how the Export button's row came to intercept pointer events over
+   the format buttons (caught by Playwright, not by a screenshot). `DataTable`
+   already carries `grid-column: 1 / -1` for the same reason, which is why the
+   tables were fine and only the layout rows were not. */
+.controls {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-inline);
+  align-items: flex-end;
+  min-width: 0;
+}
+
+.formats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.blank {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-inline);
+  align-items: flex-end;
+}
+
+.actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-inline);
+  align-items: center;
+}
+
+.history {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-stack);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+
+/* A history entry is a readout that must read as detached, so it takes
+   `--border-strong` and not `--border-control` — that border belongs to
+   interactive controls and only to them (§3.10). The Download button inside it
+   brings its own. */
+.entry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-stack);
+  padding: var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+  min-width: 0;
+}
+
+.entryHead {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--gap-inline);
+  min-width: 0;
+}
+
+.file {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--gap-inline);
+  min-width: 0;
+}
+
+.fileName {
+  composes: code from "../../system/type.module.css";
+  color: var(--ink-base);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.mono {
+  composes: code from "../../system/type.module.css";
+  color: var(--ink-base);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.muted {
+  color: var(--ink-muted);
+}
+
+/* …and so must a note or a chip row that sits directly in a section. */
+.span {
+  grid-column: 1 / -1;
+}
+
+.chips {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  align-items: center;
+  min-width: 0;
+}

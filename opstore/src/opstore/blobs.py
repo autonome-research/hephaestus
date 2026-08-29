@@ -92,7 +92,8 @@ class BlobStore:
 
     def has(self, blob_hash: str) -> bool:
         """True iff the blob is fully committed (accounting row and file both exist)."""
-        row = self._db.conn.execute("SELECT 1 FROM blobs WHERE hash = ?", (blob_hash,)).fetchone()
+        with self._db.reading() as conn:
+            row = conn.execute("SELECT 1 FROM blobs WHERE hash = ?", (blob_hash,)).fetchone()
         return row is not None and self.path_for(blob_hash).exists()
 
     def get(self, blob_hash: str) -> bytes:
@@ -109,27 +110,26 @@ class BlobStore:
 
     def size(self, blob_hash: str) -> int:
         """Recorded blob size in bytes, or ``NotFoundError``."""
-        row = self._db.conn.execute(
-            "SELECT size FROM blobs WHERE hash = ?", (blob_hash,)
-        ).fetchone()
+        with self._db.reading() as conn:
+            row = conn.execute("SELECT size FROM blobs WHERE hash = ?", (blob_hash,)).fetchone()
         if row is None:
             raise NotFoundError(f"blob {blob_hash} not found")
         return int(row["size"])
 
     def retention_class(self, blob_hash: str) -> str:
         """Recorded retention class, or ``NotFoundError``."""
-        row = self._db.conn.execute(
-            "SELECT retention_class FROM blobs WHERE hash = ?", (blob_hash,)
-        ).fetchone()
+        with self._db.reading() as conn:
+            row = conn.execute(
+                "SELECT retention_class FROM blobs WHERE hash = ?", (blob_hash,)
+            ).fetchone()
         if row is None:
             raise NotFoundError(f"blob {blob_hash} not found")
         return str(row["retention_class"])
 
     def read_pointer(self, name: str) -> str | None:
         """Current blob hash the named pointer addresses, or None."""
-        row = self._db.conn.execute(
-            "SELECT blob_hash FROM pointers WHERE name = ?", (name,)
-        ).fetchone()
+        with self._db.reading() as conn:
+            row = conn.execute("SELECT blob_hash FROM pointers WHERE name = ?", (name,)).fetchone()
         return None if row is None else str(row["blob_hash"])
 
     def cas_swap(self, name: str, expected_hash: str | None, new_hash: str | None) -> None:

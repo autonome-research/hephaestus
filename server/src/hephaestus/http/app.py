@@ -8,10 +8,18 @@ is versioned because this is a client API, not the headless surface, and a
 version segment is the cheapest way to keep it from calcifying into one.
 
 Absent, deliberately: no ``POST /artifacts`` (the workspace mints nothing), no
-``DELETE`` anywhere, no export/drawing/document routes, and no route that takes a
-raw filesystem path. "No export route" is enforced rather than merely declared:
-``/artifacts/{ref}/bytes`` is closed **by enumeration** and refuses an
-``export``-kind ref (:mod:`hephaestus.http.artifacts`).
+``DELETE`` anywhere, and no route that takes a raw filesystem path in a request
+body.
+
+**Export/drawing/document routes exist as of Stage 10A** (``INTERFACE.md`` §22,
+approved 2026-08-28). What §15.17 refused was two decisions welded together — a
+*mechanism* decision (close ``/artifacts/{ref}/bytes`` by enumeration) and a
+*product* decision (no export affordance); the product owner answered the second
+and the first is untouched. ``/artifacts/{ref}/bytes`` still refuses an
+``export``-kind ref by enumeration **and** refuses an export blob wearing another
+kind's label by the store's own publication record (§19.24,
+:mod:`hephaestus.http.artifacts`). Egress has its own third route with its own,
+strictly narrower authorization (:mod:`hephaestus.http.exports`).
 
 **Every tool route goes through** :meth:`ToolDispatcher.dispatch` **— there is no
 bypass** (§2.2). Nothing in this module computes a result; it validates a
@@ -42,6 +50,7 @@ from hephaestus.agent_bridge.project_projections import (
     open_project_projection,
 )
 from hephaestus.agent_bridge.serve_record import WORKSPACE_API_PREFIX
+from hephaestus.agent_bridge.supervisor import SupervisorError
 from hephaestus.contract import toolgen
 from hephaestus.contract.tools_decl import READ_ARTIFACT_PAGE_MAX, TOOLS_BY_NAME
 from hephaestus.core.checks.report import project_check_report
@@ -52,7 +61,15 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute, Route, WebSocketRoute
 from starlette.websockets import WebSocket
 
+from . import agent_attach, providers
 from . import git_projection as git
+from .agent_attach import AgentAlreadyAttached, AttachRefused
+from .agent_credentials import (
+    apply_credential_change,
+    credentials_or_refuse,
+    relay_async,
+    runs_in_flight_or_refuse,
+)
 from .artifacts import (
     GLTF_KIND,
     artifact_bytes,
@@ -60,8 +77,15 @@ from .artifacts import (
     artifact_text_page,
     mime_for_kind,
 )
+from .context import compose_context, parse_envelope
 from .errors import HttpRefusal, capability_result, error_body, refusal_for
 from .events_ws import serve_events
+from .exports import (
+    EXPORT_ROUTE_TOOLS,
+    export_arguments,
+    export_bytes,
+    exports_projection,
+)
 from .geometry import BUNDLE_HEADER, SOURCE_HEADER, gltf_for_ref
 from .idempotency import (
     REPLAYED_FIELD,
@@ -79,7 +103,12 @@ from .projections import (
     properties_projection,
 )
 from .runtime import WorkspaceRuntime
-from .sessions import SESSION_PROFILES, WorkspaceSessions, thread_projection
+from .sessions import (
+    QUICK_EDIT_PROFILE,
+    SESSION_PROFILES,
+    WorkspaceSessions,
+    thread_projection,
+)
 
 __all__ = ["API_PREFIX", "ROUTE_TABLE", "WEBSOCKET_ROUTES", "build_app"]
 
@@ -92,6 +121,11 @@ API_PREFIX: Final[str] = WORKSPACE_API_PREFIX
 
 #: Immutable, content-addressed refs make this honest rather than optimistic.
 _IMMUTABLE_CACHE: Final[str] = "public, max-age=31536000, immutable"
+
+#: §22.3: the same immutability, **privately**. An export byte response is
+#: fetched with the workspace bearer in an `Authorization` header, and a shared
+#: cache is the one place that pair should never land.
+_EXPORT_CACHE: Final[str] = "private, max-age=31536000, immutable"
 
 #: The closed route table, as ``(method, template)`` pairs. Kept as data so the
 #: §1 boundary test can assert the served surface *is* this list — a route added
@@ -112,11 +146,26 @@ ROUTE_TABLE: Final[tuple[tuple[str, str], ...]] = (
     ("GET", "/artifacts/{ref}/text"),
     ("GET", "/artifacts/{ref}/bytes"),
     ("GET", "/artifacts/{ref}/gltf"),
+    # Egress (§22, Stage 10A). The export **history** and the export **bytes**,
+    # both reads. The bytes route is addressed by blob hash rather than by an
+    # artifact ref — `export_hashes` is what the mutation returned and
+    # `artifact:export:…` is a ref production does not mint — and it is
+    # authorized by a `COMMITTED` `tp_exports` row, which is strictly narrower
+    # than `/artifacts/{ref}/bytes`'s reachability check. That narrowness is why
+    # it can exist without widening anything (§22.3).
+    ("GET", "/parts/{part}/exports"),
+    ("GET", "/exports/{export_blob}/bytes"),
     # Inspection and measurement (POST because their argument documents exceed
     # what a query string should carry; they take NO key — the key policy is per
     # route, not per HTTP verb).
     ("POST", "/parts/{part}/inspect"),
     ("POST", "/measure"),
+    # The composer's "what will the agent be told?" disclosure (§7A.3, §19.20).
+    # Project-scoped for the same reason `measure` is: its operands span parts
+    # and artifacts and a session id is not among them. Read, no key — it
+    # **starts no run and calls no tool**, which is the whole difference between
+    # it and the prompt route it previews.
+    ("POST", "/context/preview"),
     # Mutations — Idempotency-Key required, replayed byte-for-byte (§2.5)
     ("PUT", "/parts/{part}/script"),
     ("PATCH", "/parts/{part}/script"),
@@ -125,6 +174,15 @@ ROUTE_TABLE: Final[tuple[tuple[str, str], ...]] = (
     ("POST", "/parts/{part}/dfm"),
     ("POST", "/project/config/dfm"),
     ("POST", "/git/tag"),
+    # Egress, the writing half (§22.2, §22.3). Three keyed mutations that return
+    # a result document and **no bytes**: collapsing production and download into
+    # one response would make a retried *download* re-enter a keyed *mutation*,
+    # would put a multi-megabyte binary where §2.4's refusal payload has to fit,
+    # and would make "the export failed" and "the transfer failed" the same
+    # event. Two steps, two failures, two error messages.
+    ("POST", "/parts/{part}/export"),
+    ("POST", "/parts/{part}/drawing"),
+    ("POST", "/parts/{part}/doc"),
     # Streams, history, threading (§2.7, §2.8). `GET /events` is the WebSocket
     # upgrade; it is a row of this table like any other, and is served through
     # `WEBSOCKET_ROUTES` below rather than as an HTTP verb.
@@ -132,6 +190,33 @@ ROUTE_TABLE: Final[tuple[tuple[str, str], ...]] = (
     ("GET", "/sessions"),
     ("GET", "/sessions/{id}/history"),
     ("GET", "/sessions/{id}/thread"),
+    # Provider attachment (§23.0). Keyless for the same reason session control
+    # is (see `CREDENTIAL_ROUTES`), and deliberately in the row of §23.0's table
+    # that needs **no** sidecar: this route is the one that *creates* one, so
+    # refusing it `agent_unavailable` would be the deadlock §23.0 exists to
+    # remove.
+    ("POST", "/providers/attach"),
+    # Provider sign-in (§23.6). Split by dependency exactly as §23.0's table
+    # splits it: `GET /providers` and `PUT /providers/specs` read and write a
+    # FILE and stay serviceable with no sidecar; `/catalog` and every `auth/*`
+    # row is a relay to Pi and refuses `agent_unavailable` when there is none.
+    # Every row carries the route-level `not_loopback` precondition.
+    ("GET", "/providers"),
+    ("PUT", "/providers/specs"),
+    ("GET", "/providers/catalog"),
+    ("GET", "/providers/{id}/auth/status"),
+    ("POST", "/providers/{id}/auth/key"),
+    ("POST", "/providers/{id}/auth/begin"),
+    ("POST", "/providers/{id}/auth/complete"),
+    ("POST", "/providers/{id}/auth/cancel"),
+    ("POST", "/providers/{id}/auth/signout"),
+    ("POST", "/providers/auth/unlink"),
+    # Credential discovery — Stage 10C (§23.5). `discover` is a POST despite
+    # being a read so that reading the operator's home directory can never be
+    # something a page issues incidentally; `adopt` is the one explicit act, and
+    # its body carries the server-minted handle and nothing else.
+    ("POST", "/providers/discover"),
+    ("POST", "/providers/adopt"),
     # Session control — Idempotency-Key NOT required, and a supplied one is
     # ignored rather than honoured (§2.3, second table). Session control is not a
     # source/config/output mutation, and §2.5's byte-for-byte replay is incoherent
@@ -225,6 +310,25 @@ def _session(request: Request) -> str:
 
 def _ref(request: Request) -> str:
     return str(request.path_params["ref"])
+
+
+def _attach_data(runtime: WorkspaceRuntime) -> dict[str, Any]:
+    """The §7A.8 attach projection for a refusal's ``data``, or ``{}``.
+
+    Empty only when **nothing in this process has attempted an attach** — a
+    state a real serve is never in, because ``heph serve --web`` attaches at
+    start-up and records the outcome either way. An in-process harness that
+    never attached gets no cause rather than a guessed one: §7A.8's vocabulary
+    answers "why did the attach produce nothing", and inventing an answer where
+    there was no attempt would be the fabricated content §4.4 forbids.
+    """
+    state = runtime.agent_attach_state()
+    return {} if state is None else state.projection()
+
+
+def _attach_generation(runtime: WorkspaceRuntime) -> int:
+    state = runtime.agent_attach_state()
+    return 0 if state is None else state.generation
 
 
 # --------------------------------------------------------------------------
@@ -498,7 +602,7 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         return JSONResponse(build_projection(result))
 
     async def get_properties(request: Request) -> Response:
-        return JSONResponse(await asyncio.to_thread(_properties, runtime, _part(request)))
+        return JSONResponse(await asyncio.to_thread(part_properties, runtime, _part(request)))
 
     async def get_part_checks(request: Request) -> Response:
         # §2.3: "the shared `heph check --json` serializer" — the SAME document
@@ -508,13 +612,13 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         # parts, so there is no part-scoped subset to return. Inventing one here
         # would be the client-side derivation §1 forbids, one layer down.
         part = _part(request)
-        report = await asyncio.to_thread(_run_checks, runtime)
+        report = await asyncio.to_thread(project_checks, runtime)
         body = checks_projection(report)
         body["part"] = part
         return JSONResponse(body)
 
     async def get_checks(_: Request) -> Response:
-        report = await asyncio.to_thread(_run_checks, runtime)
+        report = await asyncio.to_thread(project_checks, runtime)
         return JSONResponse(checks_projection(report))
 
     async def get_params(request: Request) -> Response:
@@ -549,12 +653,26 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         return JSONResponse(artifact_text_page(runtime.store, _ref(request), offset, page))
 
     async def get_artifact_bytes(request: Request) -> Response:
+        # §2.6's TIGHTENING, which does not wait for §19.24: every response from
+        # this route carries `Content-Disposition: attachment` and
+        # `X-Content-Type-Options: nosniff`. An SVG is a document with script
+        # capability, the workspace origin holds the bearer token, and an
+        # inline-rendered artifact SVG would be script execution on the token's
+        # origin initiated by geometry. §22.3 puts the same pair on the
+        # export-bytes route; putting them only there would have left the
+        # mitigation on the route an SVG cannot currently be fetched through
+        # while omitting it from the one it can.
         ref = _ref(request)
         data, mime = artifact_bytes(runtime.store, ref)
         return Response(
             data,
             media_type=mime,
-            headers={"ETag": ref, "Cache-Control": _IMMUTABLE_CACHE},
+            headers={
+                "ETag": ref,
+                "Cache-Control": _IMMUTABLE_CACHE,
+                "Content-Disposition": "attachment",
+                "X-Content-Type-Options": "nosniff",
+            },
         )
 
     async def get_artifact_gltf(request: Request) -> Response:
@@ -592,6 +710,68 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
             },
         )
 
+    # -- egress (§22) ------------------------------------------------------
+
+    async def get_part_exports(request: Request) -> Response:
+        # §22.6's retention obligation, made visible. Every export pins its blob
+        # as an unconditional GC root and links it to its source build, and there
+        # is no unpin surface anywhere in the product — so the panel carries a
+        # history with a running byte total rather than a fire-and-forget button.
+        # The total is computed here because §1 puts numbers on the server side.
+        part = _part(request)
+        return JSONResponse(await asyncio.to_thread(exports_projection, runtime.store, part))
+
+    async def get_export_bytes(request: Request) -> Response:
+        # §22.3's third route, with its own authorization argument. The two
+        # headers below are the same pair `/artifacts/{ref}/bytes` carries, for
+        # the same reason and with one difference that matters: `Cache-Control`
+        # is **private**, not `public`, because this response is fetched with a
+        # bearer in an `Authorization` header and a shared cache is the one place
+        # that pair should never land.
+        #
+        # `Content-Disposition`'s filename is DERIVED from the blob digest and a
+        # suffix drawn from a closed vocabulary — never from the recorded
+        # `rel_path`, which for an agent-authored `target` may legally contain
+        # `"` and `;`, the two characters that structure the parameter list
+        # (§22.3's 2026-08-28 TIGHTENING).
+        blob = str(request.path_params["export_blob"])
+        data, file = await asyncio.to_thread(export_bytes, runtime.store, blob)
+        return Response(
+            data,
+            media_type=file.content_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{file.filename}"',
+                "X-Content-Type-Options": "nosniff",
+                # Honest: the address *is* the digest.
+                "ETag": file.blob,
+                "Cache-Control": _EXPORT_CACHE,
+            },
+        )
+
+    async def post_part_export(request: Request) -> Response:
+        return await _export_mutation(request, template="/parts/{part}/export")
+
+    async def post_part_drawing(request: Request) -> Response:
+        return await _export_mutation(request, template="/parts/{part}/drawing")
+
+    async def post_part_doc(request: Request) -> Response:
+        return await _export_mutation(request, template="/parts/{part}/doc")
+
+    async def _export_mutation(request: Request, *, template: str) -> Response:
+        """One of §22.3's three keyed mutations, on the one dispatcher.
+
+        The route validates (§22.1's refused arguments, §22.5's required pin),
+        applies §2.5's key ladder, and calls `ToolDispatcher.dispatch` — nothing
+        here computes an export. The result document is returned **verbatim**,
+        bytes included only as `export_hashes`, and the download is a second
+        request to a second route.
+        """
+        body = await _json_body(request)
+        arguments = export_arguments(body, part=_part(request), template=template)
+        return await api.keyed_mutation(
+            request, template=template, tool=EXPORT_ROUTE_TOOLS[template], arguments=arguments
+        )
+
     # -- inspection / measurement -----------------------------------------
 
     async def post_inspect(request: Request) -> Response:
@@ -606,6 +786,34 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         # would have to lie about one of its operands (§2.3).
         body = await _json_body(request)
         return JSONResponse(_result_body(await api.read_tool("measure", body)))
+
+    async def post_context_preview(request: Request) -> Response:
+        """§7A.3's disclosure: resolve an envelope, **start nothing**.
+
+        The body is ``{context: {...}}`` — the same member the prompt route
+        takes — or ``{}`` for the blank canvas. It calls no tool and opens no
+        session, so it does not go through ``sessions_or_refuse``: a serve with
+        no runtime can still show the operator what the agent *would* be told,
+        and gating the disclosure on the runtime would have made the disabled
+        composer's own explanation unavailable exactly when it is needed.
+
+        The preview is **advisory**. `post_session_prompt` composes again, from
+        this same function, at send time, and echoes the block it actually sent
+        (§7A.3) — claiming this response were authoritative would be a promise
+        two separate calls cannot keep.
+        """
+        body = await _json_body(request)
+        unexpected = sorted(set(body) - {"context"})
+        if unexpected:
+            raise HttpRefusal(
+                400,
+                "invalid_params",
+                "this route takes a context envelope and nothing else",
+                data={"unexpected": unexpected},
+            )
+        envelope = parse_envelope(body.get("context"))
+        composed = await asyncio.to_thread(compose_context, runtime, envelope)
+        return JSONResponse(composed.projection())
 
     # -- mutations (key required) -----------------------------------------
 
@@ -672,6 +880,420 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
             request, template="/project/config/dfm", body=body, operation=write
         )
 
+    # -- provider attachment (§23.0) ---------------------------------------
+
+    async def post_providers_attach(request: Request) -> Response:
+        """``POST /providers/attach`` — give a running serve an agent runtime.
+
+        §23.0's first row: this route needs no sidecar because it **creates**
+        one, so it is the one credential-adjacent route that never refuses
+        ``agent_unavailable``. Without it the section could not be used in the
+        only state it exists to fix.
+
+        No ``Idempotency-Key``: attaching is not a source, config, or output
+        mutation, and a byte-for-byte replay of "start a process" is incoherent.
+        A second attach is refused ``agent_already_attached`` by name, which is a
+        stronger guarantee than a replayed body would be.
+
+        The route-level ``not_loopback`` precondition arrives here with §23.14
+        item 2 (item 7 landed this route and recorded its absence as that item's
+        work). Checked at the route and not inherited, like every other
+        ``/providers/**`` row: §15.6 already says the serve is loopback-only,
+        and §23 re-checks it anyway on the §2.6 pattern.
+        """
+        providers.loopback_or_refuse(runtime.bind_host)
+        body = await _json_body(request)
+        if body:
+            # Closed, not permissive: §23's later routes carry real arguments,
+            # and a route that silently ignored an unknown field today would
+            # accept a misspelt one from a client written against tomorrow's.
+            raise HttpRefusal(
+                400,
+                "invalid_params",
+                "POST /providers/attach takes no arguments; "
+                "provider specs are written through their own route",
+                data={"unexpected": sorted(body)},
+            )
+        try:
+            # NOT `asyncio.to_thread`: the sidecar's orphan-free death signal is
+            # bound to the **spawning thread**, so a pooled worker's exit would
+            # kill a perfectly healthy runtime. See `spawn_executor`.
+            loop = asyncio.get_running_loop()
+            state = await loop.run_in_executor(runtime.spawn_executor(), runtime.attach_agent)
+        except AgentAlreadyAttached as exc:
+            raise HttpRefusal(
+                409,
+                "agent_already_attached",
+                str(exc),
+                data=_attach_data(runtime),
+            ) from exc
+        except AttachRefused as exc:
+            # NAMED, and the server is in its prior state: `attach_agent` binds
+            # nothing until the sidecar has started and been configured.
+            raise HttpRefusal(
+                409,
+                "attach_failed",
+                str(exc),
+                data=exc.state(generation=_attach_generation(runtime)).projection(),
+            ) from exc
+        return JSONResponse({"status": "ok", **state.projection()})
+
+    # -- provider sign-in (§23) --------------------------------------------
+    #
+    # Every handler below opens with `providers.loopback_or_refuse`. It is
+    # repeated per route rather than hoisted into `guarded` on purpose: §23.6
+    # says the precondition is "checked at the route and **not inherited**", on
+    # the §2.6 pattern. A precondition that lives in a wrapper is a precondition
+    # a future route can be added without, and the failure mode is silent.
+
+    def _providers_file() -> providers.ProvidersFile:
+        providers.loopback_or_refuse(runtime.bind_host)
+        return providers.read_providers_file(agent_attach.provider_config_path(runtime.root))
+
+    def _provider_or_refuse(file: providers.ProvidersFile, provider_id: str) -> dict[str, Any]:
+        for spec in file.providers:
+            if str(spec.get("id", "")) == provider_id:
+                return dict(spec)
+        raise HttpRefusal(
+            404,
+            "provider_unknown",
+            f"no provider {provider_id!r} is declared in {file.path}",
+            data={"provider_id": provider_id},
+        )
+
+    def _auth_states(file: providers.ProvidersFile) -> dict[str, dict[str, Any]]:
+        """Per-provider auth state, from the sidecar when there is one.
+
+        With no sidecar this is empty and every row renders ``source: none`` —
+        which is honest: Pi is the credential store, and with no Pi there is
+        nothing that knows. It is NOT a probe: the sidecar answers out of what
+        it already holds, and §15.41's "no background credential probe" stands.
+        """
+        backend = runtime.credentials
+        if backend is None:
+            return {}
+        states: dict[str, dict[str, Any]] = {}
+        for spec in file.providers:
+            provider_id = str(spec.get("id", ""))
+            if not provider_id:
+                continue
+            try:
+                states[provider_id] = backend.credential_status(provider_id)
+            except SupervisorError:
+                # A sidecar that cannot answer is not a provider that is signed
+                # out. The row keeps its default and the panel says "unused"
+                # rather than claiming a state nothing observed.
+                continue
+        return states
+
+    def _availability() -> dict[str, dict[str, Any]]:
+        backend = runtime.credentials
+        if backend is None:
+            return {}
+        return {str(row.get("id", "")): dict(row) for row in backend.provider_status()}
+
+    async def get_providers(_: Request) -> Response:
+        """``GET /providers`` — §23.8's two axes, and **no credential material**.
+
+        §23.0's first row: no sidecar needed, and refusing this in the
+        zero-config case is what made an earlier draft of §23 unusable in the
+        only state it exists to fix.
+        """
+        file = _providers_file()
+        # The sidecar reads go off the event loop: each is a blocking round trip
+        # over a pipe, and a panel refresh must not stall the `GET /events`
+        # socket the operator is watching while they sign in.
+        auth_states = await asyncio.to_thread(_auth_states, file)
+        return JSONResponse(
+            providers.providers_projection(
+                file,
+                project_root=runtime.root,
+                attach=_attach_data(runtime),
+                availability=_availability(),
+                auth_states=auth_states,
+            )
+        )
+
+    async def put_providers_specs(request: Request) -> Response:
+        """``PUT /providers/specs`` — the spec-only write (§23.6, §23.14 item 7).
+
+        Named ``/specs`` and not ``/providers`` because it is **not** the whole
+        file. A body carrying ``credential_allowlist`` or ``auth_source`` is
+        refused ``allowlist_not_web_writable`` **by name** — the one refusal
+        without which this section is an exfiltration primitive — and the
+        on-disk values are carried across the write rather than taken from the
+        request.
+        """
+        providers.loopback_or_refuse(runtime.bind_host)
+        body = await _json_body(request)
+        config_path = agent_attach.provider_config_path(runtime.root)
+        current = providers.read_providers_file(config_path)
+        specs = providers.validate_spec_write(body, current)
+        acknowledge = providers.acknowledge_hosts(body)
+
+        def write() -> dict[str, Any]:
+            written = providers.write_specs(current, specs, acknowledge=acknowledge)
+            return {
+                "status": "ok",
+                "config_path": str(written.path),
+                "file_mode": written.file_mode,
+                "providers": providers.provider_specs_of(written),
+                "egress_acknowledged": [dict(row) for row in written.egress_acknowledged],
+            }
+
+        return await api.keyed_non_tool(
+            request, template="/providers/specs", body=body, operation=write
+        )
+
+    async def get_providers_catalog(_: Request) -> Response:
+        """``GET /providers/catalog`` — Pi's built-in catalog, live over the bridge.
+
+        §23.1 rejects a Hephaestus-defined provider catalog outright: a curated
+        "sign in with X" list maintained in this repo would be a second catalog
+        beside Pi's, drifting the moment Pi ships a provider, which mission rule
+        6 forbids. §23.0's third row, so this one **does** refuse
+        ``agent_unavailable`` — correctly, because Pi is the catalog.
+        """
+        providers.loopback_or_refuse(runtime.bind_host)
+        backend = credentials_or_refuse(runtime)
+        catalog = await relay_async(backend.provider_catalog, provider_id="")
+        return JSONResponse({"status": "ok", **catalog})
+
+    async def get_provider_auth_status(request: Request) -> Response:
+        """``GET /providers/{id}/auth/status`` — **metadata only** (§23.8)."""
+        file = _providers_file()
+        provider_id = request.path_params["id"]
+        _provider_or_refuse(file, provider_id)
+        backend = credentials_or_refuse(runtime)
+        status = await relay_async(
+            lambda: backend.credential_status(provider_id), provider_id=provider_id
+        )
+        return JSONResponse({"status": "ok", **status})
+
+    async def post_provider_auth_key(request: Request) -> Response:
+        """``POST /providers/{id}/auth/key`` — the §23.3 paste.
+
+        The key is in the **body**: never a path segment, a query parameter, or
+        a fragment. §2.2's reasoning about the bearer does not transfer — the
+        bearer rides in a fragment because a fragment never reaches an access
+        log or a ``Referer``, but a provider key is same-origin-visible to the
+        page, does not expire with the serve, and is worth more than the token.
+        Body or nowhere.
+        """
+        file = _providers_file()
+        provider_id = request.path_params["id"]
+        _provider_or_refuse(file, provider_id)
+        body = await _json_body(request)
+        key = body.get("key")
+        if not isinstance(key, str) or not key.strip():
+            raise HttpRefusal(400, "invalid_params", "key must be a non-empty string")
+        scope = body.get("scope")
+        if scope is None:
+            # NOT defaulted. §23.2: a defaulted secret-persistence decision is
+            # the single most consequential default a local tool can have, and
+            # defaulting to `serve` "for safety" produces an operator who
+            # retypes a key every morning until they stop using the product.
+            raise HttpRefusal(
+                400,
+                "credential_scope_required",
+                "say where this key should live: 'serve' (this serving process only, "
+                "forgotten on restart) or 'project' (written to the app-owned auth.json)",
+                data={"scopes": list(providers.CREDENTIAL_SCOPES)},
+            )
+        if scope not in providers.CREDENTIAL_SCOPES:
+            raise HttpRefusal(
+                400,
+                "credential_scope_required",
+                f"scope must be one of {', '.join(providers.CREDENTIAL_SCOPES)}",
+                data={"scopes": list(providers.CREDENTIAL_SCOPES)},
+            )
+        # Before ANY credential write (§23.5): a write through the symlink would
+        # land in the operator's own ~/.pi/agent/auth.json and overwrite the
+        # login living there. Refresh through the link is safe; login is not.
+        providers.guard_unlinked(runtime.root)
+        backend = credentials_or_refuse(runtime)
+        runs_in_flight_or_refuse(
+            backend, confirm=body.get("confirm") is True, action="setting a credential"
+        )
+        result = await relay_async(
+            lambda: backend.set_api_key(provider_id, key, scope=str(scope)),
+            provider_id=provider_id,
+        )
+        providers.record_credential_source(file.path, provider_id=provider_id, source=str(scope))
+        await apply_credential_change(runtime, backend)
+        return JSONResponse(
+            {
+                "status": "ok",
+                "provider_id": provider_id,
+                "scope": scope,
+                # §23.9: rotation has no verb — the response names the state it
+                # replaced, so a rotation that landed in a different scope than
+                # intended is visible now rather than in three weeks.
+                "replaced": result.get("replaced", "none"),
+            }
+        )
+
+    async def post_provider_auth_begin(request: Request) -> Response:
+        """``POST /providers/{id}/auth/begin`` — start a subscription flow (§23.4).
+
+        Returns **four non-secret values** for a device-code flow and an
+        authorize URL for the fallback. The browser never touches the provider:
+        the **sidecar** polls, honouring ``authorization_pending`` and
+        ``slow_down``, and Pi mints and holds the PKCE verifier and the
+        ``state``.
+        """
+        file = _providers_file()
+        provider_id = request.path_params["id"]
+        _provider_or_refuse(file, provider_id)
+        body = await _json_body(request)
+        flow_type = body.get("type", "device_code")
+        if flow_type not in providers.AUTH_FLOW_TYPES:
+            raise HttpRefusal(
+                422,
+                "unsupported_auth_type",
+                f"type must be one of {', '.join(providers.AUTH_FLOW_TYPES)}",
+                data={"flows": list(providers.AUTH_FLOW_TYPES)},
+            )
+        providers.guard_unlinked(runtime.root)
+        backend = credentials_or_refuse(runtime)
+        flow = await relay_async(
+            lambda: backend.login_begin(provider_id, str(flow_type)), provider_id=provider_id
+        )
+        return JSONResponse({"status": "ok", **flow})
+
+    async def post_provider_auth_complete(request: Request) -> Response:
+        """``POST /providers/{id}/auth/complete`` — the operator's paste (§23.4).
+
+        Pi's ``parseAuthorizationInput`` accepts a full redirect URL, a
+        ``code#state`` pair, or a bare code, and **verifies ``state``**; a
+        mismatch is ``authorization_state_mismatch`` and the credential is
+        unchanged. This server never sees an authorization code, an access
+        token, or a refresh token.
+        """
+        file = _providers_file()
+        provider_id = request.path_params["id"]
+        _provider_or_refuse(file, provider_id)
+        body = await _json_body(request)
+        text = body.get("input")
+        if not isinstance(text, str) or not text.strip():
+            raise HttpRefusal(
+                400,
+                "authorization_input_malformed",
+                "paste the redirect URL, the code#state pair, or the authorization code",
+            )
+        backend = credentials_or_refuse(runtime)
+        flow = await relay_async(
+            lambda: backend.login_complete(provider_id, text), provider_id=provider_id
+        )
+        if str(flow.get("state")) == "complete":
+            providers.record_credential_source(file.path, provider_id=provider_id, source="project")
+            await apply_credential_change(runtime, backend)
+        return JSONResponse({"status": "ok", **flow})
+
+    async def post_provider_auth_cancel(request: Request) -> Response:
+        """``POST /providers/{id}/auth/cancel`` — abandon a flow. Idempotent."""
+        file = _providers_file()
+        provider_id = request.path_params["id"]
+        _provider_or_refuse(file, provider_id)
+        backend = credentials_or_refuse(runtime)
+        cancelled = await relay_async(
+            lambda: backend.login_cancel(provider_id), provider_id=provider_id
+        )
+        return JSONResponse({"status": "ok", **cancelled})
+
+    async def post_provider_auth_signout(request: Request) -> Response:
+        """``POST /providers/{id}/auth/signout`` — §23.9's three properties.
+
+        It does **not** delete the provider spec (the row stays, in state
+        ``none``), it is refused while ``linked`` (unlink first — signing out
+        through a symlink would sign the operator out of their own terminal),
+        and it cannot fail halfway because Pi's ``modify`` is a serialized
+        read-modify-write whose throwing operation propagates without writing.
+        """
+        file = _providers_file()
+        provider_id = request.path_params["id"]
+        _provider_or_refuse(file, provider_id)
+        body = await _json_body(request)
+        providers.guard_unlinked(runtime.root)
+        backend = credentials_or_refuse(runtime)
+        runs_in_flight_or_refuse(backend, confirm=body.get("confirm") is True, action="signing out")
+        result = await relay_async(lambda: backend.sign_out(provider_id), provider_id=provider_id)
+        providers.record_credential_source(file.path, provider_id=provider_id, source="none")
+        await apply_credential_change(runtime, backend)
+        return JSONResponse({"status": "ok", "provider_id": provider_id, **result})
+
+    async def post_providers_auth_unlink(_: Request) -> Response:
+        """``POST /providers/auth/unlink`` — stop borrowing (§23.5).
+
+        Replaces the symlink with an own file and **does not read, copy, or
+        modify the target**. A copy would put a second rotating refresh token
+        beside the operator's, which is the failure mode ``link_auth_source``'s
+        copy-versus-symlink reasoning already identified.
+        """
+        providers.loopback_or_refuse(runtime.bind_host)
+        return JSONResponse({"status": "ok", **providers.unlink_auth_source(runtime.root)})
+
+    # -- credential discovery — Stage 10C (§23.5) ---------------------------
+
+    async def post_providers_discover(_: Request) -> Response:
+        """``POST /providers/discover`` — the **offer**, and only when called.
+
+        Nothing here is configured, linked, read into a runtime, or written to
+        ``providers.json``. Each source is described by
+        ``{kind, provider_id, model_ids, source_path}`` and by nothing else: the
+        operator's ruling permits "a masked hint at most", which is a **ceiling**
+        (§0.2a), and §15.41's *no masked key tail* is stricter and stands.
+        """
+        providers.loopback_or_refuse(runtime.bind_host)
+        offers = providers.discover_sources(runtime.discoveries, project_root=runtime.root)
+        return JSONResponse({"status": "ok", "sources": [offer.projection() for offer in offers]})
+
+    async def post_providers_adopt(request: Request) -> Response:
+        """``POST /providers/adopt`` — the one explicit act (§23.5 constraint 1).
+
+        The body is ``{discovery_id}`` **only**. A body carrying a filesystem
+        path under any key is refused ``path_not_web_writable``; an unknown or
+        expired handle is refused ``discovery_source_unknown``. The offer
+        already told the operator the path, so a path here would add no
+        information they lack — it would only add a *client-chosen* path to a
+        credential route, which is the one shape §23.5 forbids by name.
+        """
+        providers.loopback_or_refuse(runtime.bind_host)
+        body = await _json_body(request)
+        for name, value in sorted(body.items()):
+            if name != "discovery_id" and providers.looks_like_path(value):
+                raise HttpRefusal(
+                    400,
+                    "path_not_web_writable",
+                    "adopt takes the discovery handle only; no provider route accepts a "
+                    "filesystem path in a request body",
+                    data={"fields": [name]},
+                )
+        unexpected = sorted(set(body) - {"discovery_id"})
+        if unexpected:
+            raise HttpRefusal(
+                400,
+                "invalid_params",
+                "adopt takes discovery_id and nothing else",
+                data={"unexpected": unexpected},
+            )
+        discovery_id = body.get("discovery_id")
+        if not isinstance(discovery_id, str) or not discovery_id:
+            raise HttpRefusal(400, "invalid_params", "discovery_id must be a non-empty string")
+        offer = runtime.discoveries.resolve(discovery_id)
+        config_path = agent_attach.provider_config_path(runtime.root)
+        written = providers.adopt_offer(offer, config_path=config_path)
+        return JSONResponse(
+            {
+                "status": "ok",
+                "adopted": offer.projection(),
+                "config_path": str(written.path),
+                "file_mode": written.file_mode,
+                "adopted_sources": [dict(row) for row in written.adopted_sources],
+                "providers": providers.provider_specs_of(written),
+            }
+        )
+
     # -- sessions, history, threading (§2.7, §2.8) -------------------------
 
     def sessions_or_refuse() -> WorkspaceSessions:
@@ -681,6 +1303,13 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         Node) still serves every read and mutation route; it simply has no
         sessions. Saying so by name beats an empty session list, which would read
         as "this project has never been driven by an agent".
+
+        §7A.8/§19.25: the refusal carries the **cause** as well as the name. The
+        serve used to know exactly why ``_attach_agent`` produced nothing and
+        write it to a stderr no browser will ever read; the panel was left to
+        render a state with its content missing, which §4.4 says reads as a bug
+        rather than as a design. The ``data`` is the same closed projection
+        ``POST /providers/attach`` returns — one shape for one fact.
         """
         sessions = runtime.sessions
         if sessions is None:
@@ -688,7 +1317,8 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
                 503,
                 "agent_unavailable",
                 "this server has no agent runtime attached; "
-                "start it with a provider config to create or attach sessions",
+                "attach one (POST /providers/attach) to create or attach sessions",
+                data=_attach_data(runtime),
             )
         return sessions
 
@@ -712,6 +1342,53 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
             )
         part_raw = body.get("part")
         part = None if part_raw is None else str(part_raw)
+        # §7A.2's two TIGHTENINGs (§19.26). `SESSION_PROFILES` is closed at
+        # three and this route accepted all three; it must accept **two**.
+        #
+        # A `quick_edit` session's entire meaning is the seeding
+        # `spawn_quick_edit` performs — part, source, provenance, crop ref and
+        # `parent_session_id`, resolved against the pinned artifact, with
+        # `stale_selection` raised before any lease is taken (§12.5). A bare
+        # create produces that profile's *restrictions* and **none** of its
+        # context: a scope the operator can feel but cannot see, and a
+        # `parent_session_id` that is nothing, so §2.8's edge is never written
+        # and the tab reopens `unlinked`. The refusal therefore names the route
+        # that does create one rather than merely saying no.
+        #
+        # SCOPED TO **CREATION**, and the narrowing is named rather than
+        # slipped in. §14 makes a committed >250-event transcript a fixture
+        # requirement and G4.11's archive is keyed on `(session_id, ordinal)`,
+        # so a persisted quick-edit transcript can only be read back by
+        # `{session_id, resume: true}` — the deviation `WorkspaceSessions.create`
+        # already records. Refusing that too would make §14's own fixture
+        # unloadable, so the refusal is on the *create* path, which is the one
+        # §7A.2 argues about ("a **bare** `POST /sessions {profile:"quick_edit",
+        # part:"tread"}`"). RESIDUAL, recorded not hidden: `resume: true` on an
+        # id with no persisted transcript is a fresh session under that name
+        # (the sidecar's own behaviour), so that one path can still reach an
+        # unseeded quick-edit session. It is the pre-existing resume deviation's
+        # hole, not a new one, and closing it needs a "has this id a persisted
+        # transcript?" question no surface answers today.
+        if profile == QUICK_EDIT_PROFILE and not bool(body.get("resume", False)):
+            raise HttpRefusal(
+                400,
+                "invalid_params",
+                "a quick-edit session is created by POST /parts/{part}/quick_edit, "
+                "which seeds it with the part, the resolved selection and its parent; "
+                "creating one here would produce the profile's restrictions with none "
+                "of its context",
+                data={"profile": profile, "route": "POST /parts/{part}/quick_edit"},
+            )
+        if profile == "part" and part is None:
+            # Unvalidated, this produced a part-profile session bound to nothing,
+            # whose every object-scoped tool call fails `scope_denied` against a
+            # `None` binding — a refusal the operator would read as a bug.
+            raise HttpRefusal(
+                400,
+                "invalid_params",
+                "a part session must name the part it is bound to",
+                data={"profile": profile, "part": None},
+            )
         # `session_id` + `resume` reopen a PERSISTED transcript by name. See
         # `WorkspaceSessions.create` for why the two gate clauses that need this
         # are unreachable without it; both arguments already existed on the
@@ -759,8 +1436,36 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
             raise HttpRefusal(400, "invalid_params", "text is required and must be a string")
         run_raw = body.get("run_id")
         run_id = None if run_raw is None else str(run_raw)
+        # §7A.3/§7A.4/§19.22 — the one optional member this route gained.
+        #
+        # THE INVARIANT, and it is the reason the block travels beside `text`
+        # rather than inside it: **the request text is exactly what the operator
+        # typed.** `BridgeRuntime.prompt` binds `text` to the run for
+        # `VALIDATION.md` §4/§5, and `_critique.py`'s `prompt_number_diff` then
+        # matches every number in "the request" against the build's own extents.
+        # A context block carrying `bbox 250 x 140 x 5.5 mm` prepended to the
+        # prompt would put the build's extents into the request and every one of
+        # them would come back `matched: true` **against itself** — the rung that
+        # exists to catch a design that does not meet its brief would be
+        # measuring the workspace's own context block.
+        #
+        # The envelope is validated and composed HERE, on the request thread,
+        # so its refusals (`unknown_part`, `unknown_artifact`, `stale_selection`,
+        # `invalid_params`) reach the client as themselves rather than as a
+        # failed run. §7A.3: "a lying client is caught, not believed."
+        envelope = parse_envelope(body.get("context"))
+        composed = await asyncio.to_thread(compose_context, runtime, envelope)
+        block = composed.block or None
         return JSONResponse(
-            await asyncio.to_thread(lambda: sessions.run_prompt(session_id, text, run_id=run_id))
+            await asyncio.to_thread(
+                lambda: {
+                    **sessions.run_prompt(session_id, text, run_id=run_id, context=block),
+                    # The block ACTUALLY SENT, echoed — §7A.3 makes
+                    # `/context/preview` advisory precisely because this is the
+                    # composition that happened.
+                    "context": composed.projection() if block is not None else None,
+                }
+            )
         )
 
     async def post_session_answer(request: Request) -> Response:
@@ -852,8 +1557,14 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         ("GET", "/artifacts/{ref}/text"): get_artifact_text,
         ("GET", "/artifacts/{ref}/bytes"): get_artifact_bytes,
         ("GET", "/artifacts/{ref}/gltf"): get_artifact_gltf,
+        ("GET", "/parts/{part}/exports"): get_part_exports,
+        ("GET", "/exports/{export_blob}/bytes"): get_export_bytes,
+        ("POST", "/parts/{part}/export"): post_part_export,
+        ("POST", "/parts/{part}/drawing"): post_part_drawing,
+        ("POST", "/parts/{part}/doc"): post_part_doc,
         ("POST", "/parts/{part}/inspect"): post_inspect,
         ("POST", "/measure"): post_measure,
+        ("POST", "/context/preview"): post_context_preview,
         ("PUT", "/parts/{part}/script"): put_script,
         ("PATCH", "/parts/{part}/script"): patch_script,
         ("POST", "/parts/{part}/params"): post_params,
@@ -861,6 +1572,19 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         ("POST", "/parts/{part}/dfm"): post_dfm,
         ("POST", "/project/config/dfm"): post_project_config_dfm,
         ("POST", "/git/tag"): post_git_tag,
+        ("POST", "/providers/attach"): post_providers_attach,
+        ("GET", "/providers"): get_providers,
+        ("PUT", "/providers/specs"): put_providers_specs,
+        ("GET", "/providers/catalog"): get_providers_catalog,
+        ("GET", "/providers/{id}/auth/status"): get_provider_auth_status,
+        ("POST", "/providers/{id}/auth/key"): post_provider_auth_key,
+        ("POST", "/providers/{id}/auth/begin"): post_provider_auth_begin,
+        ("POST", "/providers/{id}/auth/complete"): post_provider_auth_complete,
+        ("POST", "/providers/{id}/auth/cancel"): post_provider_auth_cancel,
+        ("POST", "/providers/{id}/auth/signout"): post_provider_auth_signout,
+        ("POST", "/providers/auth/unlink"): post_providers_auth_unlink,
+        ("POST", "/providers/discover"): post_providers_discover,
+        ("POST", "/providers/adopt"): post_providers_adopt,
         ("GET", "/sessions"): get_sessions,
         ("POST", "/sessions"): post_sessions,
         ("GET", "/sessions/{id}/history"): get_session_history,
@@ -931,7 +1655,7 @@ def _key_status(reason: str) -> int:
     return 409
 
 
-def _run_checks(runtime: WorkspaceRuntime) -> Any:
+def project_checks(runtime: WorkspaceRuntime) -> Any:
     """``heph check``'s own run, under the workspace principal's check.
 
     §19 item 5: the serializer and the run are extracted
@@ -942,7 +1666,7 @@ def _run_checks(runtime: WorkspaceRuntime) -> Any:
     return project_check_report(runtime.layout, runtime.store)
 
 
-def _properties(runtime: WorkspaceRuntime, part: str) -> dict[str, Any]:
+def part_properties(runtime: WorkspaceRuntime, part: str) -> dict[str, Any]:
     """The §6.2 properties body, read from the **runtime-metadata build record**.
 
     Two reads exist and they are not equivalent. ``BuildResult.metadata`` is the

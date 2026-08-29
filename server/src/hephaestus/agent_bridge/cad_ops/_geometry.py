@@ -25,9 +25,11 @@ because it looks like it works.
 
 from __future__ import annotations
 
+from typing import Any
+
 from hephaestus.core.errors import HephaestusError
 from hephaestus.core.project_store.store import blob_hash_of_ref
-from hephaestus.core.render.bundle import StaleSelectionError
+from hephaestus.core.render.bundle import StaleSelectionError, resolve_selection
 from hephaestus.core.render.gltf_publish import (
     PublishedGltf,
     publish_gltf_for_build,
@@ -67,6 +69,71 @@ class GeometryOps(CadOpsState):
                 f"no linked GLB could be published for {source_artifact_ref}: {exc.message}",
                 data={"ref": source_artifact_ref, "cause": exc.code},
             ) from exc
+
+    def describe_selection(
+        self,
+        bundle_ref: str,
+        selection_id: str,
+        *,
+        expected_source_artifact_ref: str | None = None,
+    ) -> dict[str, Any]:
+        """One selection id, resolved against its bundle (``INTERFACE.md`` §12.3).
+
+        The engine half of §7A.3's context envelope. The composer submits
+        ``{selection_id, bundle_ref}``; §7A.3 says the envelope "carries the ids;
+        the server resolves them through §12.3 against the pinned ref; a
+        selection that does not resolve is ``stale_selection`` — **never** a
+        fallback to current geometry (§15.3), and never a prompt that quietly
+        drops the selection it claimed to carry."
+
+        It lives here rather than in ``server/http`` for the reason this whole
+        module exists: the web layer may not import the renderer (§1's closed
+        list is unreachable from it *by construction*,
+        ``server/tests/test_http_boundary.py``), and a resolved selection is an
+        engine value — its kind, its owning solid, its tag and its label all come
+        from the selection table the renderer published. The route names ids and
+        renders words; this resolves them.
+
+        The returned document carries **no geometry**: four already-published
+        table fields plus the two refs the resolution is bound to. A caller that
+        needs the pass images asks the artifact routes for them.
+        """
+        self._require_stored(bundle_ref)
+        try:
+            resolution = resolve_selection(
+                self._store, bundle_ref, expected_source_artifact_ref=expected_source_artifact_ref
+            )
+        except StaleSelectionError as exc:
+            raise _stale(exc, bundle_ref) from exc
+        try:
+            numeric = int(selection_id)
+        except ValueError as exc:
+            raise CadOpError(
+                "stale_selection",
+                f"{selection_id!r} is not a selection id in {bundle_ref}",
+                data={"stale_reason": "malformed", "ref": bundle_ref},
+            ) from exc
+        entry = resolution.entries.get(numeric)
+        if entry is None:
+            # `mismatched` rather than `malformed`: the id is well formed and the
+            # bundle resolved — what failed is that THIS bundle does not contain
+            # it, which is the same fact as a selection taken against another
+            # build. Collapsing the two would make G5.15's enumeration untestable.
+            raise CadOpError(
+                "stale_selection",
+                f"selection {numeric} is not in the selection table of {bundle_ref}",
+                data={"stale_reason": "mismatched", "ref": bundle_ref},
+            )
+        return {
+            "selection_id": numeric,
+            "bundle_ref": resolution.bundle_ref,
+            "source_artifact_ref": resolution.source_artifact_ref,
+            "kind": entry.kind,
+            "solid_index": entry.solid_index,
+            "topology_index": entry.topology_index,
+            "tag": entry.tag,
+            "label": entry.label,
+        }
 
     def linked_gltf(self, gltf_artifact_ref: str) -> PublishedGltf:
         """An already-published GLB, re-checked against its bundle before serving.

@@ -1,75 +1,52 @@
 /*
  * Copyright 2026 The Hephaestus Authors
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * Layout only. §4.7: the dirty marker is a `Badge`, so its fill, icon and word
+ * come from the system layer — this file cannot re-introduce a colour-only dot.
  */
 
 .panel {
-  padding: var(--space-3);
-  border-top: 1px solid var(--line-1);
+  flex: none;
+  border-top: 1px solid var(--border);
 }
 
-.heading {
-  margin: 0 0 var(--space-2);
-  font-size: var(--size-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--ink-3);
+.body {
+  grid-template-columns: max-content minmax(0, 1fr);
+  padding: var(--space-2);
 }
 
-.subheading {
-  margin: var(--space-3) 0 var(--space-1);
-  font-size: var(--size-xs);
-  color: var(--ink-3);
+.marker {
+  flex: none;
 }
 
+/* `composes` must sit on a single-class rule, so each of these is written out
+   rather than grouped — the grouping would be a build error, not a style. */
 .clean {
+  composes: body from "../../system/type.module.css";
   margin: 0;
-  color: var(--ok);
-  font-size: var(--size-sm);
-}
-
-.count {
-  margin: 0;
-  color: var(--warn);
-  font-size: var(--size-sm);
+  color: var(--ink-base);
 }
 
 .absent {
+  composes: body from "../../system/type.module.css";
   margin: 0;
-  color: var(--ink-3);
-  font-size: var(--size-sm);
-  font-style: italic;
+  color: var(--ink-base);
 }
 
-.list {
+.count {
+  composes: body from "../../system/type.module.css";
   margin: 0;
-  padding: 0;
-  list-style: none;
+  color: var(--status-error-ink);
 }
 
-.row {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  padding: 1px 0;
-  font-size: var(--size-xs);
-  color: var(--ink-2);
+.subheading {
+  composes: eyebrow from "../../system/type.module.css";
+  margin: 0;
+  color: var(--ink-muted);
 }
 
-/* No colour-only encoding: the marker's glyph is constant and the `title` and
-   `aria-label` name the side of the index in words. Colour only reinforces. */
-.marker {
-  flex: none;
-  font-size: 8px;
-  line-height: 1;
-  color: var(--warn);
-}
-
-.marker[data-dirty="index"] {
-  color: var(--accent);
-}
-
-.marker[data-dirty="untracked"] {
-  color: var(--unknown);
+.path {
+  composes: code from "../../system/type.module.css";
+  min-width: 0;
 }

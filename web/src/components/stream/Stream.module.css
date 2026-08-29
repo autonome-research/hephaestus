@@ -4,16 +4,15 @@
  *
  * The STREAM column's chrome: header, session tabs, page counter.
  * The transcript's own rows live in `Transcript.module.css`.
+ *
+ * LAYOUT ONLY (§3.4). §7.4's five stream states were a bordered pill with four
+ * hand-written colour rules; they are a `Badge` now, so the state carries an
+ * icon and a word like every other status in the workspace.
  */
 
-/*
- * The column's own scrolling belongs to the shell's `aside` (`Shell.module.css`
- * already sets `overflow: auto` on it), so this panel stacks and does not fight
- * it for a scroll container.
- */
 .panel {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   min-height: 0;
 }
 
@@ -21,58 +20,27 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--space-2);
-  flex: none;
+  gap: var(--gap-inline);
   padding: var(--space-1) var(--space-3);
-  border-bottom: 1px solid var(--line-1);
-}
-
-/* §7.4's five states. Colour is never the only carrier: the word is the label. */
-.state {
-  flex: none;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-1);
-  padding: 0 var(--space-2);
-  font-size: var(--size-xs);
-  color: var(--ink-2);
-}
-
-.state[data-stream-state="live"] {
-  border-color: var(--ok);
-  color: var(--ok);
-}
-
-.state[data-stream-state="resyncing"],
-.state[data-stream-state="reconnecting"] {
-  border-color: var(--warn);
-  color: var(--warn);
-}
-
-.state[data-stream-state="detached"] {
-  border-color: var(--line-strong);
-  color: var(--ink-3);
+  min-height: var(--target-min);
+  border-bottom: 1px solid var(--border);
 }
 
 .resyncCount {
+  composes: data from "../../system/type.module.css";
   flex: none;
-  font-size: var(--size-xs);
-  color: var(--warn);
-  font-family: var(--font-mono);
+  color: var(--status-error-ink);
 }
 
 .tabs {
-  flex: none;
   padding: var(--space-2) var(--space-2) var(--space-2) 0;
-  border-bottom: 1px solid var(--line-1);
+  border-bottom: 1px solid var(--border);
 }
 
 .tabsHeading {
+  composes: eyebrow from "../../system/type.module.css";
   margin: 0 0 var(--space-1) var(--space-3);
-  font-size: var(--size-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--ink-3);
+  color: var(--ink-muted);
 }
 
 .tabList {
@@ -86,21 +54,27 @@
 }
 
 .tab {
+  composes: label from "../../system/type.module.css";
   display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
+  align-items: center;
+  gap: var(--gap-inline);
   width: 100%;
+  min-height: var(--target-min);
   padding: var(--space-1) var(--space-2);
   text-align: left;
-  border-radius: var(--radius-1);
+  border-radius: var(--radius-control);
+  color: var(--ink-base);
 }
 
 .tab:hover {
-  background: var(--ground-2);
+  background: var(--surface-raised);
+  color: var(--ink-strong);
 }
 
 .tab[aria-selected="true"] {
-  background: var(--ground-3);
+  background: var(--surface-raised);
+  color: var(--ink-strong);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .tabLabel {
@@ -109,53 +83,49 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--size-sm);
 }
 
 .tabMeta {
   flex: none;
-  font-size: var(--size-xs);
-  color: var(--ink-3);
+  color: var(--ink-muted);
 }
 
 .tabThread {
   flex: none;
-  font-size: var(--size-xs);
-  color: var(--ink-3);
+  color: var(--ink-muted);
 }
 
+/* §2.8's honesty state, STATED rather than dimmed. The shipped rule made it
+   italic in a grey below the legibility floor — the styling of a footnote on a
+   fact the section calls first-class. */
 .tab[data-thread-state="unlinked"] .tabThread {
-  color: var(--unknown);
-  font-style: italic;
+  color: var(--status-not-run-ink);
 }
 
 .historyBar {
+  composes: body from "../../system/type.module.css";
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
-  flex: none;
+  gap: var(--gap-stack);
   padding: var(--space-1) var(--space-3);
-  border-bottom: 1px solid var(--line-1);
-  font-size: var(--size-xs);
-  color: var(--ink-3);
+  border-bottom: 1px solid var(--border);
+  color: var(--ink-base);
 }
 
 .scroll {
-  flex: 1 1 auto;
   min-height: 0;
+  overflow: auto;
 }
 
 .absent {
+  composes: body from "../../system/type.module.css";
   margin: 0;
   padding: var(--space-3);
-  color: var(--ink-3);
-  font-size: var(--size-sm);
-  font-style: italic;
+  color: var(--ink-base);
 }
 
 .note {
+  composes: body from "../../system/type.module.css";
   margin: 0;
-  color: var(--ink-3);
-  font-size: var(--size-xs);
-  line-height: var(--line-body);
+  color: var(--ink-base);
 }

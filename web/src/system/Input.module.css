@@ -1,0 +1,84 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * INTERFACE.md §4.7. Inputs are CONTROLS, so they carry the control surface and
+ * `--border-control` — the same border a `Button` carries and the border no
+ * readout in this system is allowed to have (§3.10).
+ */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-stack);
+  min-width: 0;
+}
+
+.inline {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--gap-inline);
+}
+
+.label {
+  color: var(--ink-muted);
+}
+
+/* Visually hidden, still in the accessibility tree: a control whose only label
+   is an icon or a position still has to be nameable (§3.13.4). */
+.hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.input,
+.select {
+  min-height: var(--target-min);
+  padding: var(--pad-control);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  color: var(--ink-strong);
+  background: var(--surface-control);
+  min-width: 0;
+}
+
+.input:disabled,
+.select:disabled {
+  color: var(--ink-muted);
+}
+
+.invalid {
+  margin: 0;
+  color: var(--status-fail-ink);
+}
+
+.slider {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-inline);
+  min-width: 0;
+}
+
+.range {
+  flex: 1 1 auto;
+  min-width: 80px;
+  accent-color: var(--accent);
+  height: var(--target-min);
+}
+
+/* The editable readout. Right-aligned and tabular, like every other number the
+   reader reads (§4.7's DataTable value column, same rule). */
+.readout {
+  width: 7ch;
+  min-height: var(--target-min);
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  color: var(--ink-strong);
+  background: var(--surface-control);
+  text-align: right;
+}

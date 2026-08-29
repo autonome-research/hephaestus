@@ -37,7 +37,9 @@ import { parseSectionPlane } from "../../../viewport/section";
 import { installViewportHandle } from "../../../viewport/testHook";
 import { useGlb } from "../../../viewport/useGlb";
 import { labelsForPart, visibilityStore } from "../../../state/visibility";
+import { Badge, Chip, EmptyState, type IconId } from "../../../system";
 import type { SolidIndex } from "../../../viewport/scene";
+import { AxisTriad } from "./AxisTriad";
 import { ExplodeSlider } from "./ExplodeSlider";
 import { GridReadout } from "./GridReadout";
 import { SectionControl, type SceneBounds } from "./SectionControl";
@@ -46,6 +48,16 @@ import { ViewCube } from "./ViewCube";
 import styles from "./Viewport.module.css";
 
 type GlbState = "no-pin" | "loading" | "stale" | "ready" | "refused" | "no-webgl" | "empty";
+
+/** One sprite id per named absence. `ready` never reaches the empty state. */
+const ABSENCE_ICON: Readonly<Record<Exclude<GlbState, "ready">, IconId>> = {
+  "no-pin": "pin",
+  loading: "refresh",
+  stale: "refresh",
+  refused: "alert",
+  "no-webgl": "alert",
+  empty: "cube",
+};
 
 export function Viewport(): React.JSX.Element {
   const artifactRef = useWorkspace((s) => s.artifact_ref);
@@ -81,10 +93,17 @@ export function Viewport(): React.JSX.Element {
   const framedRef = useRef<string | null>(null);
   const framingKey = `${view}|${explodeT > 0 ? "exploded" : "collapsed"}`;
   const [engineReady, setEngineReady] = useState(false);
+  // The engine as *state* as well as a ref, for the one child that needs the
+  // object rather than the fact of it: `AxisTriad` subscribes to the engine's
+  // frame signal, and a subscription cannot be built from a ref that React never
+  // tells it changed. Written and cleared in the same effect that owns the ref.
+  const [engine, setEngine] = useState<ViewportEngine | null>(null);
   const [webglError, setWebglError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [bounds, setBounds] = useState<SceneBounds | null>(null);
   const [scale, setScale] = useState(0);
+  /** §3.11.5's grid spacing, so the readout describes the grid it is next to. */
+  const [step, setStep] = useState(0);
   // The ref whose geometry the engine last finished loading. It is written only
   // from the load callback; with no pin at all there is nothing on the canvas,
   // which `displayedRef` below expresses without a second write.
@@ -109,6 +128,7 @@ export function Viewport(): React.JSX.Element {
     setWebglError(failure);
     if (engine === null) return;
     engineRef.current = engine;
+    setEngine(engine);
     setEngineReady(true);
     const removeHandle = installViewportHandle(() => ({
       index: indexRef.current,
@@ -120,6 +140,7 @@ export function Viewport(): React.JSX.Element {
       engineRef.current = null;
       indexRef.current = null;
       loadedRefRef.current = null;
+      setEngine(null);
       setEngineReady(false);
       created.dispose();
     };
@@ -178,6 +199,7 @@ export function Viewport(): React.JSX.Element {
         engine.frame(view, explodeT > 0);
         framedRef.current = framingKey;
         setScale(engine.scale());
+        setStep(engine.gridStep());
       })
       .catch((error: unknown) => {
         if (!cancelled) setLoadError(String(error));
@@ -202,6 +224,7 @@ export function Viewport(): React.JSX.Element {
     engineRef.current?.frame(view, explodeT > 0);
     framedRef.current = framingKey;
     setScale(engineRef.current?.scale() ?? 0);
+    setStep(engineRef.current?.gridStep() ?? 0);
   }, [framingKey, view, explodeT, engineReady]);
 
   // -- visibility: a scene-graph property (§5.4) ----------------------------
@@ -258,24 +281,29 @@ export function Viewport(): React.JSX.Element {
       <canvas ref={canvasRef} className={styles["canvas"]} data-viewport-canvas="" />
 
       {state === "ready" ? null : (
-        <p className={styles["absent"]} data-viewport-absence={state}>
-          {state === "no-webgl"
-            ? copy.viewport.noWebgl
-            : state === "no-pin"
-              ? copy.viewport.noPin
-              : state === "loading"
-                ? copy.viewport.loading
-                : state === "stale"
-                  ? copy.viewport.stale
-                  : state === "empty"
-                    ? copy.viewport.empty
-                    : copy.viewport.refused}
-          {refusalReason === null ? null : (
-            <span className={styles["reason"]} data-refusal-reason={refusalReason}>
-              {refusalReason}
-            </span>
-          )}
-        </p>
+        // §3.3's principle 5, generalised past the stream column: every state —
+        // refusal, absence, "still loading" — is a first-class composed state
+        // with a shape, an icon, a heading and its prose in a legible ink. The
+        // shipped absence was an italic 3.10:1 sentence in the middle of a black
+        // rectangle, which reads as a bug rather than as a designed state.
+        <div className={styles["absent"]} data-viewport-absence={state}>
+          <EmptyState
+            icon={ABSENCE_ICON[state]}
+            title={copy.viewport.absenceTitle[state]}
+            body={
+              <>
+                <p>{copy.viewport.absence[state]}</p>
+                {refusalReason === null ? null : (
+                  <p>
+                    <Chip tone="code" data-refusal-reason={refusalReason}>
+                      {refusalReason}
+                    </Chip>
+                  </p>
+                )}
+              </>
+            }
+          />
+        </div>
       )}
 
       {sectionState === "preview" ? (
@@ -283,15 +311,25 @@ export function Viewport(): React.JSX.Element {
         // golden-compared". The attribute is on the host; this is the same fact
         // said to the person looking at it, which is the half a machine-readable
         // attribute cannot carry.
-        <p className={styles["previewNote"]} title={copy.viewport.section.previewExplain}>
-          {copy.viewport.section.previewLabel}
-        </p>
+        <span className={styles["previewNote"]} title={copy.viewport.section.previewExplain}>
+          <Badge status="error">{copy.viewport.section.previewLabel}</Badge>
+        </span>
       ) : null}
 
       {overlay === "section" && plane !== null ? <SectionPlate plane={plane.spec} /> : null}
 
       <ViewCube />
-      <GridReadout scale={scale} hiddenCount={hidden.size} />
+      {/* §3.11.6. Bottom-left with the readout, and — like the readout — an
+          overlay that never changes size, because a Playwright element
+          screenshot composites what is painted over the canvas and G4.5's
+          control region is exactly that frame (see `GridReadout`'s header). */}
+      <AxisTriad engine={engine} />
+      {/* The grid step is a fact about a grid, so it is reported only while
+          there is one. Derived at render rather than cleared from the load
+          effect: an effect that calls `setState` in its own body is the
+          cascading render `react-hooks/set-state-in-effect` refuses, and the
+          answer is a pure function of state we already hold. */}
+      <GridReadout scale={scale} step={displayedRef === null ? 0 : step} />
       <div className={styles["controls"]}>
         <ExplodeSlider />
         {/* The bounds belong to the *loaded* GLB: while none is loaded the

@@ -61,6 +61,56 @@ export type Rgb = readonly [number, number, number];
 /** One byte per pixel: 1 inside the region, 0 outside. */
 export type Region = Uint8Array;
 
+// ── THE THRESHOLD DERIVATION, 2026-08-28 (plan item 6, §3.11, §21.10) ───────
+//
+// §21.10 recorded that these two numbers were **chosen rather than measured**,
+// and §3.11 made re-deriving them a precondition on viewport display
+// authorship: they "must be re-derived against the new material **before that
+// work lands**, not loosened after it". Item 6 landed the material, the edge
+// pass, the ground grid and the axis triad. This is the derivation, recorded
+// where the constants are so it cannot drift away from them.
+//
+// MEASURED, at 960×720 over every toggleable entry in the public fixture, by
+// `viewport.spec.ts`'s "the G4.5 thresholds hold for EVERY solid" case. The
+// `before` row is the tread entry alone, because measuring one entry is all the
+// pre-item-6 suite did — which is itself part of why this derivation measures
+// all of them:
+//
+//   entry         mask px    inside    control    band (excluded)
+//   ─────────────────────────────────────────────────────────────
+//   tread  BEFORE  142025    1.0000    0.0000     0.5578
+//   tread  AFTER   142025    1.0000    0.0000     0.6527
+//   cleat_left      7957     1.0000    0.0000     0.6439
+//   cleat_right     7957     1.0000    0.0000     0.6439
+//                            ≥ 0.10    ≤ 0.01     no threshold
+//
+// The two cleats are an 18× smaller region than the tread and land on the same
+// two numbers, which is the part a single-solid measurement could not have told
+// anyone: the floor is not a property of a large silhouette.
+//
+// RESULT: **both thresholds are unchanged**, and neither was loosened.
+//
+//   * `INSIDE_CHANGED_MIN` stays 0.10 against a measurement of 1.0000. The
+//     margin is 10×, and it is structural rather than lucky: the mask IS the
+//     target solid's silhouette, so hiding the solid replaces every pixel in it.
+//     Raising the floor toward the measurement would convert a question about
+//     *where* the change is into a claim about this rasterizer's exact output,
+//     which is the claim §5.3 has just refused to make and §5.4 restates ("The
+//     thresholds are loose on purpose").
+//   * `CONTROL_CHANGED_MAX` stays 0.01 against a measurement of 0.0000 — exact
+//     byte equality outside the mask. Everything item 6 draws outside the
+//     silhouette is static under a visibility toggle (the grid is rebuilt only
+//     on a re-framing; the triad moves only with the camera; the readout's grid
+//     row is fixed-width), and the authored silhouette itself falls inside the
+//     two-pixel dilation band, which is excluded from both assertions by
+//     construction. That is where the change went: the band rose from 0.5578 to
+//     0.6527 because a bright edge now sits where a black one did.
+//
+// This is a *record*, not a licence. A future measurement that fails these
+// numbers is evidence that something moved pixels outside the toggled solid.
+// §5.4 states 0.10 and 0.01 normatively; this file may report against them and
+// may never quietly edit them.
+
 /** §5.4's two thresholds and its band width, as the constants they are. */
 export const INSIDE_CHANGED_MIN = 0.1;
 export const CONTROL_CHANGED_MAX = 0.01;

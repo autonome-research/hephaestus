@@ -5,7 +5,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, realpathSync, lstatSync, readlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createModelRuntime, RuntimeConfigError } from "../../src/session/runtime.js";
+import { createModelRuntime } from "../../src/session/runtime.js";
 
 const PROVIDER = "openai-codex";
 const MODEL = "gpt-5.6-sol";
@@ -53,7 +53,7 @@ describe("pi_native providers", () => {
     expect(lstatSync(link).isSymbolicLink()).toBe(true);
     expect(realpathSync(readlinkSync(link))).toBe(realpathSync(source));
 
-    const runtime = await createModelRuntime(
+    const { runtime } = await createModelRuntime(
       { providers: [{ id: PROVIDER, kind: "pi_native", models: [{ id: MODEL }] }] },
       { agentDir },
     );
@@ -77,19 +77,33 @@ describe("pi_native providers", () => {
     const saved = process.env.OPENAI_API_KEY;
     process.env.OPENAI_API_KEY = "hostile-ambient-key-must-be-ignored";
     try {
-      await expect(
-        createModelRuntime(
-          { providers: [{ id: PROVIDER, kind: "pi_native", models: [{ id: MODEL }] }] },
-          { agentDir },
-        ),
-      ).rejects.toThrow(/no stored credential/);
-      // …and the failure is the *auth* one, not a mistaken "unknown provider".
-      const err = await createModelRuntime(
+  // AMENDED by INTERFACE.md §23.7 (Stage 10B), and the property under test is
+  // UNCHANGED. `createModelRuntime` used to throw on the first provider that
+  // failed verification; it now records `available: false` with that provider's
+  // own code and brings the runtime up with whatever verified. §23.7 states why
+  // that is strictly stronger rather than weaker: "an unavailable provider is
+  // never silently replaced, never falls back, and cannot serve a turn. What
+  // changes is only that its failure no longer takes its neighbours and the
+  // login path down with it." So the assertion moves from "it threw" to "it is
+  // unavailable, by name" — which is the same claim about substitution, made
+  // against a runtime that can still be signed into.
+      const configured = await createModelRuntime(
         { providers: [{ id: PROVIDER, kind: "pi_native", models: [{ id: MODEL }] }] },
         { agentDir },
-      ).catch((e: unknown) => e);
-      expect(err).toBeInstanceOf(RuntimeConfigError);
-      expect((err as RuntimeConfigError).code).toBe("provider_not_authenticated");
+      );
+      // The failure is the *auth* one, not a mistaken "unknown provider", and
+      // it names the provider it belongs to.
+      expect(configured.providers).toEqual([
+        {
+          id: PROVIDER,
+          available: false,
+          unavailable_reason: "provider_not_authenticated",
+          message: expect.stringMatching(/no stored credential/) as unknown as string,
+        },
+      ]);
+      // THE PROPERTY THIS TEST EXISTS FOR, unchanged: a `pi_native` provider
+      // with no stored credential can never fall back to the ambient login.
+      expect(configured.runtime.hasConfiguredAuth(PROVIDER)).toBe(false);
     } finally {
       if (saved === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = saved;
@@ -106,15 +120,16 @@ describe("pi_native providers", () => {
     const unknownProvider = await createModelRuntime(
       { providers: [{ id: "not-a-real-provider", kind: "pi_native", models: [{ id: "x" }] }] },
       { agentDir },
-    ).catch((e: unknown) => e);
-    expect(unknownProvider).toBeInstanceOf(RuntimeConfigError);
-    expect((unknownProvider as RuntimeConfigError).code).toBe("provider_unknown");
+    );
+    expect(unknownProvider.providers[0]?.unavailable_reason).toBe("provider_unknown");
 
     const unknownModel = await createModelRuntime(
       { providers: [{ id: PROVIDER, kind: "pi_native", models: [{ id: "gpt-nonexistent" }] }] },
       { agentDir },
-    ).catch((e: unknown) => e);
-    expect(unknownModel).toBeInstanceOf(RuntimeConfigError);
-    expect((unknownModel as RuntimeConfigError).code).toBe("model_unknown");
+    );
+    // The two codes stay DISTINGUISHABLE (§23.11's closed vocabulary): a
+    // provider Pi does not have and a model it does not offer are different
+    // problems with different remedies, and neither degrades into the other.
+    expect(unknownModel.providers[0]?.unavailable_reason).toBe("model_unknown");
   }, 30000);
 });

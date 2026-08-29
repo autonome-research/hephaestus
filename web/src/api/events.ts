@@ -149,6 +149,19 @@ function str(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+/**
+ * A boolean payload field, with the **schema's** default for an absent one.
+ *
+ * `fallback` is never a guess: every caller passes the default written in
+ * `schemas/tools/`, so an omitted field reads as what the tool schema says it
+ * means. A non-boolean value is not coerced — `"false"` is not `false` — and
+ * takes the same default, because a payload that carried the wrong type said
+ * nothing about this field.
+ */
+function bool(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
 /** `text_delta` and `thought` both carry `{text}` (`live.ts`, `history.ts`). */
 export function readText(payload: unknown): string | null {
   const body = record(payload);
@@ -251,9 +264,26 @@ export interface QuestionPayload {
   readonly questionId: string | null;
   readonly question: string | null;
   readonly options: readonly ClarificationOption[];
+  /**
+   * `ask_user`'s own params, which §7A.7 makes the widget's affordance:
+   * "the widget's affordance is derived from the question's own params, never
+   * chosen by the client".
+   *
+   * `schemas/tools/ask_user.schema.json` declares the defaults — `true` and
+   * `false` — and a payload that omits a field gets the schema's value, not an
+   * invented one. An **older sidecar** omits both (they were added to the
+   * payload alongside this widget), which is exactly the case the defaults
+   * describe: a question that never said `allow_free_text: false` did not say
+   * it.
+   */
+  readonly allowFreeText: boolean;
+  readonly multi: boolean;
 }
 
-/** `question` → `{question_id, question, options}`. Live only (§7.3). */
+/**
+ * `question` → `{question_id, question, options, allow_free_text, multi}`.
+ * Live only (§7.3).
+ */
 export function readQuestion(payload: unknown): QuestionPayload | null {
   const body = record(payload);
   if (body === null) return null;
@@ -261,6 +291,8 @@ export function readQuestion(payload: unknown): QuestionPayload | null {
     questionId: str(body["question_id"]),
     question: str(body["question"]),
     options: readOptions(body["options"]),
+    allowFreeText: bool(body["allow_free_text"], true),
+    multi: bool(body["multi"], false),
   };
 }
 

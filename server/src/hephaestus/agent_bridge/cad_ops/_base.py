@@ -52,6 +52,8 @@ from opstore import (
     sha256_canonical_json,
 )
 
+from ._request import request_text_for_active_run
+
 #: CAS pointer holding a part's persisted parameter-override document.
 PART_PARAMS_POINTER_PREFIX: Final[str] = "part-params:"
 #: CAS pointer holding the project's persisted parameter-override document.
@@ -267,6 +269,10 @@ class CadOpsState:
         # production wiring passes a probed secure backend.
         self._backend: ExecBackend = backend or UnsafeLocalBackend()
         self.params = ParamStore(layout, store)
+        # The *embedder's* request, for a caller that is not a run at all: the
+        # HTTP tool routes, MCP, a test driving CadOps directly. A run's own text
+        # is bound per run (``_request.py``) and outranks this — see
+        # :attr:`request_text`.
         self._request_text: str | None = None
 
     @property
@@ -277,18 +283,33 @@ class CadOpsState:
 
     @property
     def request_text(self) -> str | None:
-        """The request this project is working from, or None when unknown.
+        """The request **this run** is working from, or None when unknown.
 
         ``VALIDATION.md`` §4 diffs the numbers in the request against the built
         geometry, and §5 hands the reviewer the request verbatim; both need the
         text to reach the ops layer, which the bridge does by binding it on the
         run's prompt. Unknown is a first-class state: a critique with no request
         **omits** ``prompt_number_diff`` rather than inventing one.
+
+        ``INTERFACE.md`` §7A.4 / §19.23: the binding is per **run**, not per
+        object. One field on ``CadOps`` was shared by every session, so two
+        overlapping turns made session A's build get critiqued against session
+        B's prompt — a fabricated request diff. The dispatcher scopes each tool
+        call to the run that issued it (``_request.active_run``) and this reads
+        that run's own text; the object's field answers only for callers that
+        are not runs (HTTP tool routes, MCP, direct tests).
         """
-        return self._request_text
+        return request_text_for_active_run(self._request_text)
 
     def set_request_text(self, text: str | None) -> None:
-        """Bind the request text (the latest user turn is the live request)."""
+        """Bind the *embedder's* request text, for callers that are not runs.
+
+        A run binds its own text through ``BridgeRuntime.prompt``, which is what
+        makes the §7A.4 invariant survive concurrency; this setter remains for
+        the surfaces that have no run to bind to and is not what the agent path
+        uses. It is deliberately **not** reachable from inside a run: writing it
+        mid-turn would be writing the one shared field §19.23 exists to remove.
+        """
         cleaned = text.strip() if text is not None else None
         self._request_text = cleaned or None
 

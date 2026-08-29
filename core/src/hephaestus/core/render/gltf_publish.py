@@ -62,6 +62,7 @@ from dataclasses import dataclass
 
 from hephaestus.core.errors import ValidationError
 from hephaestus.core.executor.artifact_geometry import load_brep_shape
+from hephaestus.core.project_store.artifact_kinds import record_artifact_kind
 from hephaestus.core.project_store.store import artifact_ref as make_artifact_ref
 from hephaestus.core.project_store.store import blob_hash_of_ref
 from hephaestus.core.render.bundle import (
@@ -241,6 +242,9 @@ def publish_gltf_for_build(
     # these edges in reverse (`resolve_published_gltf`).
     project.store.gc.link(blob, bundle_blob)
     project.store.gc.link(blob, source_blob)
+    # §2.6's CORRECTION / §19.24: bind `gltf` to these bytes in the store, so the
+    # ref this function returns is checkable rather than merely well spelled.
+    record_artifact_kind(project.store, GLTF_KIND, blob)
 
     published = _accept(project.store, data, blob, resolved.source_artifact_ref, minted=True)
     if published is None:  # pragma: no cover - `validate_gltf` above already ran

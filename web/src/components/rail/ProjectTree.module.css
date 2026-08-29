@@ -1,125 +1,38 @@
 /*
  * Copyright 2026 The Hephaestus Authors
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * Layout only (§3.4). The row chrome — height, indent, selected rule, hover —
+ * belongs to `system/TreeRow.module.css`, so the rail cannot drift away from the
+ * tree pattern the primitive implements.
  */
 
 .panel {
-  padding: var(--space-3);
-}
-
-.heading {
-  margin: 0 0 var(--space-2);
-  font-size: var(--size-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--ink-3);
-}
-
-.tree,
-.geometries {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.node + .node {
-  margin-top: 1px;
-}
-
-.partRow {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  border-radius: var(--radius-1);
-  padding-right: var(--space-2);
-}
-
-.partRow:hover {
-  background: var(--ground-2);
-}
-
-.node[aria-selected="true"] > .partRow {
-  background: var(--ground-3);
-}
-
-.partButton {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: var(--space-1) var(--space-2);
-  text-align: left;
-}
-
-.twisty {
-  width: 10px;
   flex: none;
-  color: var(--ink-3);
-  font-size: var(--size-xs);
+}
+
+/* The rail's panels are narrow; the three-column grid a `PanelBody` declares for
+   the inspector's tables is not what a tree wants, so this body is one column. */
+.body {
+  grid-template-columns: minmax(0, 1fr);
+  padding: var(--space-2);
 }
 
 .partName {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.counts {
-  flex: none;
-  font-size: var(--size-xs);
-}
-
-.count {
-  color: var(--ink-2);
-}
-
-.absentInline {
-  color: var(--ink-3);
-  font-style: italic;
-}
-
-.failed {
-  color: var(--fail);
-}
-
-.geometries {
-  margin: 1px 0 var(--space-2) 22px;
-  border-left: 1px solid var(--line-1);
-}
-
-.geometryRow {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: 1px var(--space-2) 1px var(--space-3);
-  font-size: var(--size-sm);
-  color: var(--ink-1);
-}
-
-.geometryRow:hover {
-  background: var(--ground-2);
+  min-width: 0;
 }
 
 .geometryLabel {
-  font-family: var(--font-mono);
-  font-size: var(--size-xs);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  composes: code from "../../system/type.module.css";
+  min-width: 0;
 }
 
 .solids {
-  flex: none;
-  color: var(--ink-3);
-  font-size: var(--size-xs);
+  color: var(--ink-muted);
 }
 
 .absent {
+  composes: body from "../../system/type.module.css";
   margin: 0;
-  color: var(--ink-3);
-  font-size: var(--size-sm);
-  font-style: italic;
+  color: var(--ink-base);
 }

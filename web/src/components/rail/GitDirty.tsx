@@ -18,11 +18,23 @@
 // it only for a path under `parts/` ending in `.py`, and a changed
 // `globals.py` is dirty with no part, which the panel shows as its own group
 // rather than silently dropping.
+//
+// §4.7's TreeRow clause: "The §13.1 dirty marker is a `Badge` variant carrying
+// an `aria-label`, **never a bare coloured dot**." The shipped marker was a `●`
+// whose only differentiator between staged, unstaged and untracked was its hue.
+// It is now a `Badge status="dirty"` with the side of the index in words.
+//
+// §4.7's SECOND EmptyState rule lives here too: "a shared cause is detected
+// once". `WORKING TREE` and `VERSIONS` shipped the *identical* sentence in
+// adjacent rail sections above ~1000px of void. `railGitAbsence` is that shared
+// cause, this panel prints it once for both sections, and `VersionList` renders
+// nothing while it holds.
 
 import { useGitStatus } from "../../api/queries";
 import { WorkspaceError } from "../../api/client";
 import { copy } from "../../copy";
 import type { GitDirtyEntry } from "../../api/types";
+import { Badge, DataTable, EmptyState, Panel, PanelBody, PanelHeader } from "../../system";
 import { Fact } from "../Fact";
 import styles from "./GitDirty.module.css";
 
@@ -76,64 +88,82 @@ export function useDirtyIndex(): DirtyIndex {
   return { byPart, others, entries: data.dirty, clean: data.clean, absence: null };
 }
 
+/**
+ * The cause `WORKING TREE` and `VERSIONS` share (§4.7's EmptyState rule 2).
+ *
+ * Non-null means both rail sections are empty **for the same reason**, so the
+ * sentence is printed once, by this panel, and `VersionList` stands down.
+ */
+export function railGitAbsence(index: DirtyIndex): string | null {
+  return index.absence;
+}
+
 /** The inline marker §13.1 puts on a part tree row and on the Script tab. */
 export function DirtyMarker({ entry }: { readonly entry: GitDirtyEntry }): React.JSX.Element {
   const side = dirtySide(entry);
+  const label = `${copy.rail.dirtyMarkerLabel} (${copy.gitStatus[side]})`;
   return (
-    <span
-      className={styles["marker"]}
-      data-dirty={side}
-      title={`${copy.rail.dirtyMarkerLabel} (${copy.gitStatus[side]})`}
-      aria-label={`${copy.rail.dirtyMarkerLabel} (${copy.gitStatus[side]})`}
-    >
-      ●
-    </span>
+    <Badge status="dirty" title={label} className={styles["marker"]}>
+      <span data-dirty={side}>{copy.gitStatus[side]}</span>
+    </Badge>
   );
 }
 
 export function GitDirtyPanel(): React.JSX.Element {
   const index = useDirtyIndex();
-
-  if (index.absence !== null) {
-    return (
-      <section className={styles["panel"]} aria-label={copy.rail.gitHeading}>
-        <h2 className={styles["heading"]}>{copy.rail.gitHeading}</h2>
-        <p className={styles["absent"]}>{index.absence}</p>
-      </section>
-    );
-  }
+  const absence = railGitAbsence(index);
 
   return (
-    <section className={styles["panel"]} aria-label={copy.rail.gitHeading}>
-      <h2 className={styles["heading"]}>{copy.rail.gitHeading}</h2>
-      {index.clean === null ? (
-        <p className={styles["absent"]}>{copy.absent.loading}</p>
-      ) : index.clean ? (
-        <p className={styles["clean"]}>
-          <span aria-hidden="true">✓</span> {copy.rail.cleanTree}
-        </p>
-      ) : (
-        <>
-          {/* Deliberately NOT a `<Fact>`. `git status` serves no count field,
-              and a count this component derived from the array it is about to
-              render would be exactly the client-side re-count §1 forbids. It is
-              a caption over the list; the rows below carry the attribution. */}
-          <p className={styles["count"]}>{copy.rail.dirtyCount(index.entries.length)}</p>
-          {index.others.length === 0 ? null : (
-            <>
-              <p className={styles["subheading"]}>{copy.rail.dirtyOutsideParts}</p>
-              <ul className={styles["list"]}>
-                {index.others.map((entry) => (
-                  <li key={entry.path} className={styles["row"]} data-dirty={dirtySide(entry)}>
-                    <DirtyMarker entry={entry} />
-                    <Fact source="git.dirty[].path" value={entry.path} mono />
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-        </>
-      )}
-    </section>
+    <Panel className={styles["panel"]} label={copy.rail.gitHeading}>
+      <PanelHeader title={copy.rail.gitHeading} level={2} />
+      <PanelBody className={styles["body"]}>
+        {absence !== null ? (
+          // One EmptyState for BOTH rail sections. §4.7: "a shared cause is
+          // detected once", and the heading names both so the reader is not
+          // left wondering why the panel below is silent.
+          <EmptyState
+            icon="tag"
+            density="inline"
+            title={copy.rail.gitAbsentTitle}
+            body={absence}
+            data-rail-shared-absence=""
+          />
+        ) : index.clean === null ? (
+          <p className={styles["absent"]}>{copy.absent.loading}</p>
+        ) : index.clean ? (
+          <p className={styles["clean"]}>
+            <Badge status="pass">{copy.rail.cleanTree}</Badge>
+          </p>
+        ) : (
+          <>
+            {/* Deliberately NOT a `<Fact>`. `git status` serves no count field,
+                and a count this component derived from the array it is about to
+                render would be exactly the client-side re-count §1 forbids. It is
+                a caption over the list; the rows below carry the attribution. */}
+            <p className={styles["count"]}>{copy.rail.dirtyCount(index.entries.length)}</p>
+            {index.others.length === 0 ? null : (
+              <>
+                <p className={styles["subheading"]}>{copy.rail.dirtyOutsideParts}</p>
+                <DataTable
+                  as="div"
+                  rows={index.others.map((entry) => ({
+                    key: entry.path,
+                    label: <DirtyMarker entry={entry} />,
+                    value: (
+                      <Fact
+                        source="git.dirty[].path"
+                        value={entry.path}
+                        className={styles["path"]}
+                      />
+                    ),
+                    attrs: { "data-dirty": dirtySide(entry) },
+                  }))}
+                />
+              </>
+            )}
+          </>
+        )}
+      </PanelBody>
+    </Panel>
   );
 }

@@ -16,7 +16,7 @@
 //
 //   status="not_built"          → not built
 //   status="error"              → failed
-//   status="ok",  current=true  → current
+//   status="ok",  current=true  → up to date
 //   status="ok",  current=false → preview
 //
 // **`stale` has no producer in this build and is not faked.** §5.5 defines it as
@@ -24,9 +24,16 @@
 // header shows `stale` with the ref it is showing" — a fact about an in-flight
 // rebuild, which arrives with the viewport and the build mutation. Rendering it
 // from anything available today would be inventing the state it names.
+//
+// §4.1's COPY DEFECT, fixed: `current` reads **"up to date"** here. The pin's
+// own vocabulary keeps "current". Two axes ~600px apart, two words.
+//
+// The chip is a `<Badge>` (§4.7), so the glyph and the fill come from the system
+// layer and the state cannot be encoded by colour alone.
 
 import type { BuildDocument } from "../api/types";
 import { copy } from "../copy";
+import { Badge, type BadgeStatus } from "../system";
 import { Fact } from "./Fact";
 import styles from "./BuildStateChip.module.css";
 
@@ -40,12 +47,20 @@ export function buildState(build: BuildDocument | undefined): BuildState | null 
   return build.current ? "current" : "preview";
 }
 
-const GLYPH: Readonly<Record<BuildState, string>> = {
-  current: "●",
-  preview: "○",
-  stale: "◑",
-  failed: "✕",
-  not_built: "–",
+/**
+ * §4.1's five build states onto §4.7's six-value badge vocabulary.
+ *
+ * The two vocabularies are different closed lists about different things, and
+ * this is the one place they meet. `stale` and `not_built` both land on
+ * `not_run` — an absence rather than a verdict — and take their distinctness
+ * from the word beside the icon, which is exactly §3.13.2's requirement.
+ */
+const BADGE: Readonly<Record<BuildState, BadgeStatus>> = {
+  current: "pass",
+  preview: "info",
+  stale: "error",
+  failed: "fail",
+  not_built: "not_run",
 };
 
 export function BuildStateChip({
@@ -56,15 +71,12 @@ export function BuildStateChip({
   const state = buildState(build);
   if (state === null || build === undefined) return null;
   return (
-    <span className={styles["chip"]} data-build-state={state} title={copy.header.buildState}>
-      {/* §3's accessibility floor: no colour-only status encoding — the glyph
-          and the word both carry the state, and the colour only reinforces it. */}
-      <span aria-hidden="true" className={styles["glyph"]}>
-        {GLYPH[state]}
-      </span>
-      <Fact source="build.status" value={build.status}>
-        {copy.buildState[state]}
-      </Fact>
+    <span className={styles["wrap"]} data-build-state={state} title={copy.header.buildState}>
+      <Badge status={BADGE[state]}>
+        <Fact source="build.status" value={build.status}>
+          {copy.buildState[state]}
+        </Fact>
+      </Badge>
       <Fact source="build.current" value={build.current} className={styles["hidden"]} />
     </span>
   );

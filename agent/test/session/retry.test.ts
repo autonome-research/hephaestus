@@ -51,7 +51,7 @@ async function makeFixture(script: readonly FakeTurnResolver[]): Promise<Fixture
   const agentDir = path.join(dir, "agent");
   mkdirSync(agentDir, { recursive: true });
   const fake = await FakeModel.start(script);
-  const runtime = await createModelRuntime({ providers: [fake.providerSpec()] }, { agentDir });
+  const { runtime } = await createModelRuntime({ providers: [fake.providerSpec()] }, { agentDir });
   const model = runtime.getModel(fake.providerId, fake.modelId);
   if (!model) throw new Error("fake model did not resolve");
   const service = new SessionService({ runtime, agentDir, model, customTools: [inspectTool] });

@@ -52,23 +52,32 @@ from types import FrameType
 from typing import Any, Protocol, TextIO, cast
 
 from hephaestus.core.project_store.layout import find_project_root
+from opstore.types import JSONValue
 
 from .app import AskUserAnswerer, AuthLinkError, BridgeRuntime, PromptResult
+from .cad_ops import option_display, option_label
 from .client_mode import ClientModeError, ServerAgentClient, attach_client
 from .sidecar import SidecarError
 from .supervisor import SupervisorError
 
 __all__ = [
+    "PROVIDER_CONFIG_ENV",
+    "PROVIDER_CONFIG_RELPATH",
     "AgentConsole",
     "AgentDriver",
     "ProviderConfig",
     "add_subparsers",
     "load_provider_config",
     "main",
+    "resolve_config_path",
 ]
 
 #: Default location of the provider config inside a project.
 PROVIDER_CONFIG_RELPATH = Path(".heph") / "providers.json"
+
+#: The standing override for that location, honoured by every verb that opens a
+#: provider config (``heph agent`` and ``heph serve --web``).
+PROVIDER_CONFIG_ENV = "HEPHAESTUS_AGENT_PROVIDERS"
 
 #: Where image blocks returned by tools are written for the operator to open.
 IMAGE_DIR_RELPATH = Path(".heph") / "agent_images"
@@ -150,10 +159,18 @@ def load_provider_config(path: Path) -> ProviderConfig:
     )
 
 
-def _resolve_config_path(project_root: Path, explicit: str | None) -> Path:
+def resolve_config_path(project_root: Path, explicit: str | None = None) -> Path:
+    """Where this process looks for ``providers.json`` (`--providers`, env, default).
+
+    Public because ``heph serve --web`` looks in exactly the same place, and
+    §23.0's attach capability has to *report* the path it checked to a browser
+    that cannot see stderr. Two derivations of "which file is the provider
+    config" would be two answers the moment one of them grew a case, which is
+    the duplication mission rule 6 forbids.
+    """
     if explicit is not None:
         return Path(explicit).expanduser()
-    from_env = os.environ.get("HEPHAESTUS_AGENT_PROVIDERS")
+    from_env = os.environ.get(PROVIDER_CONFIG_ENV)
     if from_env:
         return Path(from_env).expanduser()
     return project_root / PROVIDER_CONFIG_RELPATH
@@ -264,20 +281,40 @@ class AgentConsole:
 def interactive_answerer(
     console_out: TextIO | None = None, console_in: TextIO | None = None
 ) -> AskUserAnswerer:
-    """Build an ``ask_user`` answerer that prompts the operator on a terminal."""
+    """Build an ``ask_user`` answerer that prompts the operator on a terminal.
+
+    THE ANSWER NAMESPACE IS THE OPTION'S ``label`` (INTERFACE.md §7A.7, §19.29).
+    This function used to flatten options with ``str(o)``, so an object option
+    — ``_CLARIFICATION_OPTION`` is ``{label, consequence}``, which the schema
+    admits alongside a bare string — was resolved to its **Python dict repr**
+    and that repr became the selection the model received. The web widget sends
+    the label, the MCP elicitation sends the label, and this surface sent
+    ``"{'label': 'Keep 2 mm', 'consequence': '…'}"``: two surfaces answering one
+    question handed the model two different values. :func:`option_label` is the
+    one definition of that namespace and is shared with the MCP path, so the
+    answer cannot drift again; :func:`option_display` is the one definition of
+    what a human is *shown*, which is a different string on purpose.
+    """
     out = console_out if console_out is not None else sys.stdout
     src = console_in if console_in is not None else sys.stdin
 
     def answer(params: dict[str, Any]) -> Any:
         question = str(params.get("question", ""))
         options_raw = params.get("options")
-        options: list[str] = []
-        if isinstance(options_raw, list):
-            options = [str(o) for o in cast("list[Any]", options_raw)]
+        raw = cast("list[Any]", options_raw) if isinstance(options_raw, list) else []
+        options = [option_label(cast("JSONValue", o)) for o in raw]
+        # §7.3: an option renders label **and** geometric consequence. The
+        # numbered prompt is the CLI's rendering of the same widget, so the
+        # consequence is printed here too — an operator picking between two
+        # options with the consequences hidden is choosing blind.
+        displayed = [option_display(cast("JSONValue", o)) for o in raw]
+        # `allow_free_text` / `multi` come from the params the sidecar carries,
+        # and in §2.1 client mode those params are the `question` event payload
+        # (`agent/src/main.ts`) — which is why that payload carries both fields.
         allow_free_text = bool(params.get("allow_free_text", True))
         multi = bool(params.get("multi", False))
         out.write(f"\n  [question] {question}\n")
-        for index, option in enumerate(options, start=1):
+        for index, option in enumerate(displayed, start=1):
             out.write(f"    {index}) {option}\n")
         hint = "number" + ("s (comma-separated)" if multi else "")
         if allow_free_text:
@@ -335,7 +372,7 @@ def _cmd_agent(args: argparse.Namespace) -> int:
     if client is not None:
         return _cmd_agent_client(args, project_root, client)
 
-    config_path = _resolve_config_path(project_root, cast("str | None", args.providers))
+    config_path = resolve_config_path(project_root, cast("str | None", args.providers))
     try:
         config = load_provider_config(config_path)
     except ConfigError as exc:

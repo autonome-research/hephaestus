@@ -6,16 +6,32 @@
 // the inverse of an IDE, on purpose. This is a CAD workspace."
 //
 // The tab is workspace state (`stage_tab`, §4.5) and therefore lives in the URL,
-// so a link to a script view reopens on the script view.
+// so a link to a script view reopens on the script view. `TabBar` owns the
+// `role="tablist"` contract and preserves `[data-stage-tab]` verbatim (§4.7).
+//
+// §4.1(c) — **THE INSPECTOR DRAWER STOPS RESIZING THE VIEWPORT.** §4.1 called
+// the drawer "resizable"; the code made it *variable* — `grid-template-rows:
+// minmax(0,1fr) auto` with a 132px floor — which is not the same thing, and it
+// produced measured canvas heights of results 412 · properties 366 · checks 494 ·
+// dfm 645 · provenance 617. A **76% swing that re-fit the 3D camera on every tab
+// click.** Furniture does not move (§3.3, principle 4).
+//
+// The stage row is now an explicit `--drawer-height` (`clamp(200px, 32vh, 420px)`
+// by default) with a 6px drag handle writing it into `state/shell.ts`; the
+// drawer's own `overflow: auto` takes the excess. Height is then identical
+// across tabs **by construction**, which is what §3.14's e2e asserts.
 //
 // Two of the three tabs are not built here and say so by name rather than
 // rendering an empty frame. §4.4's discipline is a general one: a state that
 // exists for a reason reads as designed; the same state with its content missing
 // reads as a bug.
 
+import { useCallback, useEffect, useRef } from "react";
 import { copy } from "../../copy";
 import { useWorkspace, workspaceStore } from "../../state/react";
+import { shellStore } from "../../state/shell";
 import { STAGE_TABS, type StageTab } from "../../state/workspace";
+import { Badge, EmptyState, TabBar, useShell } from "../../system";
 import { useDirtyIndex } from "../rail/GitDirty";
 import { ScriptEditor } from "./ScriptEditor";
 import { Inspector } from "./Inspector";
@@ -26,38 +42,78 @@ export function Stage(): React.JSX.Element {
   const tab = useWorkspace((s) => s.stage_tab);
   const part = useWorkspace((s) => s.part);
   const dirty = useDirtyIndex();
+  const shell = useShell();
+  const hostRef = useRef<HTMLDivElement | null>(null);
   // §13.1: "a dot on the Script tab", from `git status` and from nothing else.
   const partDirty = part !== null && dirty.byPart.has(part);
 
+  /**
+   * The drag handle. Pointer capture rather than document listeners so a drag
+   * that leaves the window still ends where the pointer says it ended.
+   */
+  const onHandleDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const host = hostRef.current;
+    if (host === null) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const rect = host.getBoundingClientRect();
+    const move = (moveEvent: PointerEvent): void => {
+      shellStore.setDrawerHeight(rect.bottom - moveEvent.clientY);
+    };
+    const up = (): void => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }, []);
+
+  // The handle is keyboard-operable too (§3.13.4): a drag-only affordance is a
+  // control a keyboard user cannot reach at all.
+  const onHandleKey = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    const current = shell.drawerHeight ?? 0;
+    const host = hostRef.current;
+    const fallback = host === null ? 300 : host.getBoundingClientRect().height * 0.32;
+    const base = current === 0 ? Math.round(fallback) : current;
+    if (event.key === "ArrowUp") shellStore.setDrawerHeight(base + 16);
+    else if (event.key === "ArrowDown") shellStore.setDrawerHeight(base - 16);
+    else return;
+    event.preventDefault();
+  };
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (host === null) return;
+    // The explicit height is a CSS custom property on the grid host, so the row
+    // template names one value and React owns it. `null` falls back to the
+    // token default rather than to a second hard-coded number.
+    if (shell.drawerHeight === null) host.style.removeProperty("--drawer-height");
+    else host.style.setProperty("--drawer-height", `${String(shell.drawerHeight)}px`);
+  }, [shell.drawerHeight]);
+
   return (
-    <div className={styles["stage"]}>
+    <div className={styles["stage"]} ref={hostRef}>
       <div className={styles["region"]}>
-        <div className={styles["tabs"]} role="tablist" aria-label={copy.app.tagline}>
-          {STAGE_TABS.map((name: StageTab) => (
-            <button
-              key={name}
-              type="button"
-              role="tab"
-              aria-selected={tab === name}
-              className={styles["tab"]}
-              data-stage-tab={name}
-              onClick={() => {
-                workspaceStore.update({ stage_tab: name });
-              }}
-            >
-              {copy.stage.tabs[name]}
-              {name === "script" && partDirty ? (
-                <span
-                  className={styles["dot"]}
-                  data-dirty="worktree"
-                  aria-label={copy.rail.dirtyMarkerLabel}
-                >
-                  ●
-                </span>
-              ) : null}
-            </button>
-          ))}
-        </div>
+        <TabBar
+          attr="data-stage-tab"
+          label={copy.stage.tabsLabel}
+          selected={tab}
+          onSelect={(next: StageTab) => {
+            workspaceStore.update({ stage_tab: next });
+          }}
+          tabs={STAGE_TABS.map((name) => ({
+            id: name,
+            label: copy.stage.tabs[name],
+            ...(name === "script" && partDirty
+              ? {
+                  trailing: (
+                    <Badge status="dirty" title={copy.rail.dirtyMarkerLabel}>
+                      {copy.rail.dirtyShort}
+                    </Badge>
+                  ),
+                }
+              : {}),
+          }))}
+        />
 
         <div className={styles["content"]} role="tabpanel">
           {tab === "script" ? (
@@ -65,10 +121,28 @@ export function Stage(): React.JSX.Element {
           ) : tab === "viewport" ? (
             <Viewport />
           ) : (
-            <p className={styles["absent"]}>{copy.stage.diffPending}</p>
+            <EmptyState
+              icon="file"
+              title={copy.stage.diffPendingTitle}
+              body={copy.stage.diffPending}
+            />
           )}
         </div>
       </div>
+
+      {/* §4.1(c)'s 6px handle. `separator` with an orientation is the role a
+          resize grip carries; the value is a pixel height, so no min/max is
+          announced that the clamp would then contradict. */}
+      <div
+        className={styles["handle"]}
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label={copy.inspector.resize}
+        tabIndex={0}
+        data-drawer-handle=""
+        onPointerDown={onHandleDown}
+        onKeyDown={onHandleKey}
+      />
 
       <Inspector />
     </div>

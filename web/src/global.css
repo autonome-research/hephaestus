@@ -4,9 +4,16 @@
  *
  * The only global stylesheet. Everything else is a CSS Module (INTERFACE.md §3),
  * so a class name in a component file cannot collide with one in another.
+ *
+ * WHAT IS NOT HERE ANY MORE. The base type declarations moved into
+ * `system/type.module.css`, which §3.14's `no-raw-type` names as the only file
+ * in `web/` permitted to declare `font-size`, `font-weight`, `letter-spacing`,
+ * `text-transform` or `font-family`. A base `font-size` on `<body>` is a type
+ * declaration like any other, and exempting one file is how the shipped ramp
+ * drifted to 65 declarations at 11px in the first place.
  */
 
-@import "./tokens.css";
+@import "./system/tokens.css";
 
 *,
 *::before,
@@ -22,25 +29,31 @@ body,
 
 body {
   margin: 0;
-  background: var(--ground-0);
-  color: var(--ink-0);
-  font-family: var(--font-ui);
-  font-size: var(--size-md);
-  line-height: var(--line-body);
+  /* §3.10's surface assignment: `app` is the page and the stage. */
+  background: var(--surface-app);
+  color: var(--ink-base);
   -webkit-font-smoothing: antialiased;
 }
 
-/* §3's accessibility floor: a visible focus ring on every keyboard-reachable
-   control. `:focus-visible` and not `:focus`, so a mouse click does not paint
-   one, but a Tab always does. */
+/* §3.10's focus rule, at 2px and offset 2px — up from the shipped 1px so a ring
+   on a control sitting on a raised surface is not swallowed by its own border.
+   `:focus-visible` and not `:focus`, so a mouse click does not paint one but a
+   Tab always does (§3.13.3). */
 :focus-visible {
   outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
-  border-radius: var(--radius-1);
+  outline-offset: 2px;
+  border-radius: var(--radius-control);
+}
+
+/* §3.13.3 names the viewport canvas explicitly. Its ring draws INSIDE the canvas
+   because the canvas fills its region edge to edge and an outset ring would be
+   clipped by the overflow-hidden host. */
+canvas:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
 button {
-  font: inherit;
   color: inherit;
   background: none;
   border: none;
@@ -51,13 +64,7 @@ a {
   color: var(--accent);
 }
 
-code,
-kbd,
-pre {
-  font-family: var(--font-mono);
-  font-size: var(--size-sm);
-}
-
+/* §3.10's motion block, kept verbatim. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

@@ -15,22 +15,23 @@
 //   and the measurement were taken against the held artifact; the copy says so
 //   before the click, not after.
 //
+// §4.1's AMENDMENT: the pin chip is the header's ONE DOMINANT ELEMENT and its
+// dominant content is **the ref, in `.code`** — the printed `ARTIFACT PIN` label
+// is demoted to a `title`, because a label repeated on every load says less than
+// the value it labels.
+//
 // When the pin is held, `data-pin-mode="pinned"` marks the header and every
 // panel below inherits the marking through the shell's own attribute.
 
 import { copy } from "../copy";
 import { workspaceStore, useWorkspace } from "../state/react";
+import { Button, formatRef } from "../system";
 import { Fact } from "./Fact";
 import styles from "./ArtifactPin.module.css";
 
 export interface ArtifactPinProps {
   /** The artifact ref the server currently calls `current` for the open part. */
   readonly currentRef: string | null;
-}
-
-/** A ref is long and content-addressed; the head and tail identify it on sight. */
-function abbreviate(ref: string): string {
-  return ref.length <= 34 ? ref : `${ref.slice(0, 22)}…${ref.slice(-8)}`;
 }
 
 export function ArtifactPin({ currentRef }: ArtifactPinProps): React.JSX.Element {
@@ -45,38 +46,42 @@ export function ArtifactPin({ currentRef }: ArtifactPinProps): React.JSX.Element
       data-testid="artifact-pin"
       title={held ? copy.header.pinnedBanner : copy.header.unpinned}
     >
-      <span className={styles["label"]}>{copy.header.pin}</span>
       {ref === null ? (
         <span className={styles["absent"]}>{copy.absent.unavailable}</span>
       ) : (
-        <Fact source="build.artifact_ref" value={ref} mono className={styles["ref"]}>
-          {abbreviate(ref)}
+        <Fact source="build.artifact_ref" value={ref} className={styles["ref"]}>
+          {formatRef(ref)}
         </Fact>
       )}
       <span className={styles["mode"]}>{copy.pinMode[mode]}</span>
       {held ? (
-        <button
-          type="button"
-          className={styles["follow"]}
+        <Button
+          variant="secondary"
           title={copy.header.followCurrentExplain}
           onClick={() => {
             workspaceStore.followCurrent(currentRef);
           }}
+          data-pin-action="follow"
         >
           {copy.header.followCurrent}
-        </button>
+        </Button>
+      ) : ref === null ? (
+        // §4.7: a disabled control must always be able to say why. There is no
+        // ref to hold, and the button says that rather than sitting inert.
+        <Button variant="secondary" disabled reason={copy.header.holdUnavailable} data-pin-action="hold">
+          {copy.pinMode.pinned}
+        </Button>
       ) : (
-        <button
-          type="button"
-          className={styles["hold"]}
-          disabled={ref === null}
+        <Button
+          variant="secondary"
           title={copy.header.pinnedBanner}
           onClick={() => {
-            if (ref !== null) workspaceStore.hold(ref);
+            workspaceStore.hold(ref);
           }}
+          data-pin-action="hold"
         >
           {copy.pinMode.pinned}
-        </button>
+        </Button>
       )}
     </div>
   );

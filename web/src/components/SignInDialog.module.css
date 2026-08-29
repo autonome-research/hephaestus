@@ -1,0 +1,74 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * `SignInDialog` layout only (INTERFACE.md §3.4, §4.7's last line): the dialog
+ * is built from `Popover`, `Panel`, `Button`, `TextInput` and declares no
+ * colour, type role or border of its own. Every rule below is spacing, flow, or
+ * a type role composed from `type.module.css` — which is the one file in `web/`
+ * permitted to declare a font property (§3.14).
+ *
+ * The one apparent exception is `.code`, and it is not one: the device code is
+ * *read off one screen and typed into another* (§23.4), so it composes the
+ * `display` role rather than inventing a size. The role exists for exactly this.
+ */
+
+.modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.scopes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  border: 0;
+  margin: var(--space-3) 0 var(--space-1);
+  padding: 0;
+}
+
+.legend {
+  composes: label from "../system/type.module.css";
+  padding: 0;
+  margin-bottom: var(--space-2);
+}
+
+.label {
+  composes: label from "../system/type.module.css";
+  margin: var(--space-3) 0 var(--space-1);
+}
+
+.code {
+  composes: display from "../system/type.module.css";
+  margin: 0 0 var(--space-3);
+  user-select: all;
+}
+
+.link {
+  composes: body from "../system/type.module.css";
+  display: inline-block;
+  margin-bottom: var(--space-3);
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.confirm {
+  composes: body from "../system/type.module.css";
+  margin: var(--space-3) 0 0;
+}
+
+/*
+ * A refusal is WORDS. §3.13.2: colour is never the carrier, so this rule sets
+ * spacing and a role and nothing else — the sentence itself does the work, and
+ * `role="alert"` on the element is what reaches a screen reader.
+ */
+.refusal {
+  composes: body from "../system/type.module.css";
+  margin: var(--space-4) 0 0;
+}

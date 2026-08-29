@@ -40,6 +40,8 @@ from hephaestus.core.cutfile import CUT_LAYER, LAYER_COLORS, Mark, solid_marks
 from hephaestus.core.dfm import TopologyDescriptor, descriptors_from_source_map
 from hephaestus.core.errors import AddressingError, ValidationError
 from hephaestus.core.executor.artifact_geometry import load_brep_shape
+from hephaestus.core.project_store.artifact_kinds import record_artifact_kind
+from hephaestus.core.project_store.publication import EXPORT_ARTIFACT_KIND
 from hephaestus.core.project_store.store import blob_hash_of_ref
 from hephaestus.core.types import BuildResult
 from hephaestus.geom.kerf import (
@@ -60,12 +62,16 @@ from hephaestus.geom.nesting import (
     layout_to_svg,
     shelf_nest,
 )
+from opstore.errors import ProtectedQuotaExceededError
 from opstore.types import JSONValue
 
 from opstore import OpStore, canonical_json, sha256_bytes, sha256_canonical_json
 
 from ._base import CadOpError, CadOpsState
 from ._dfm import DfmOps, script_metadata
+from .export_history import EXPORTS_DIR, EXPORTS_TABLE
+from .export_history import recorded_outputs as _recorded_outputs
+from .export_history import row_json as _row_json
 
 #: Export formats and the file extension each produces.
 EXPORT_FORMATS: Final[dict[str, str]] = {
@@ -82,7 +88,11 @@ EXPORT_FORMATS: Final[dict[str, str]] = {
 #: must stay nominal, because whatever consumes it applies its own allowances.
 CUT_PATH_FORMATS: Final[frozenset[str]] = frozenset({"dxf", "svg"})
 
-_EXPORTS_TABLE: Final[str] = "tp_exports"
+#: The table name, the state tokens and the row decoders live in
+#: :mod:`.export_history` — the WAL is written here and read by three surfaces
+#: (this module's committed retry, §22.7's HTTP projection, and §19.40's
+#: ``heph export list``), so the row shape has exactly one owner.
+_EXPORTS_TABLE: Final[str] = EXPORTS_TABLE
 _CREATE_EXPORTS_TABLE: Final[str] = f"""
 CREATE TABLE IF NOT EXISTS {_EXPORTS_TABLE}(
   op_id TEXT PRIMARY KEY,
@@ -196,34 +206,6 @@ def _output_paths(
         return tuple(_validate_relative_target(f"{base}.{o.suffix}") for o in outputs)
     digest = sha256_bytes(b"".join(o.data for o in outputs)).removeprefix("sha256:")[:16]
     return tuple(PurePosixPath(f"{stem}-{digest}.{o.suffix}") for o in outputs)
-
-
-def _row_json(row: Mapping[str, Any], column: str, fallback: JSONValue) -> JSONValue:
-    """One JSON-encoded WAL column, tolerant of a row written before it existed."""
-    raw = row[column] if column in row.keys() else None  # noqa: SIM118 - sqlite3.Row
-    if raw is None:
-        return fallback
-    try:
-        return cast("JSONValue", json.loads(str(raw)))
-    except ValueError:  # pragma: no cover - the writer is this module
-        return fallback
-
-
-def _recorded_outputs(row: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
-    """``[(rel_path, export_blob)]`` of a committed row (single-file rows too)."""
-    recorded = _row_json(row, "outputs", None)
-    if isinstance(recorded, list):
-        out: list[tuple[str, str]] = []
-        for item in cast("list[JSONValue]", recorded):
-            if not isinstance(item, dict):
-                continue
-            entry = cast("Mapping[str, JSONValue]", item)
-            path, blob = entry.get("path"), entry.get("blob")
-            if isinstance(path, str) and isinstance(blob, str):
-                out.append((path, blob))
-        if out:
-            return tuple(out)
-    return ((str(row["rel_path"]), str(row["export_blob"])),)
 
 
 def _create_confined(exports_dir: Path, rel: PurePosixPath, data: bytes) -> None:
@@ -682,6 +664,42 @@ def _blank_payload(blank: Mapping[str, Any] | None) -> JSONValue:
 class ExportOps(FrozenMetadataOps):
     """Freeze a source artifact, write a confined target, pin the result."""
 
+    def _guard_admission(self) -> None:
+        """Refuse new export work when protected bytes alone are over quota.
+
+        ``INTERFACE.md`` §22.6's CORRECTION, and the second half of §19.40. Every
+        export ``gc.pin``s its outputs and ``gc.link``s them to the source build,
+        so an export is *"an unbounded, un-collectable retention obligation"* the
+        browser can create at will; ``GcCollector.admission_guard()`` exists to
+        fail new artifact-producing work before execution on exactly that
+        condition, and until this call site it had **no production caller at
+        all**, so exports pinned unboundedly and nothing refused. §22.7's table
+        row — *"(only once §19.40's guard is wired) protected bytes over quota →
+        ``protected_quota_exceeded``, the engine's reason verbatim, with
+        ``GcUsage``"* — is what this discharges.
+
+        **Where it sits, and why not one line earlier.** After the WAL row is
+        resolved and a committed replay has already returned, so a retry of an
+        export that *already exists* still replays: the bytes are on disk and the
+        pin is recorded, so refusing the replay would spend the retention twice
+        over and break the key contract of §22.2 for no reclaimed byte. What is
+        refused is **production** — the geometry work and the new blob.
+
+        The reason is the engine's, unchanged, and the ``GcUsage`` numbers ride
+        in ``data`` because the remedy ("raise the quota or unpin data") is a
+        comparison the operator cannot make without them. §22.6: *"'your builds
+        stopped working because you downloaded too much' is the most confusing
+        failure this section is capable of producing and the only defence is to
+        name it at the moment it is caused."*
+        """
+        try:
+            self._store.gc.admission_guard()
+        except ProtectedQuotaExceededError as exc:
+            data: dict[str, JSONValue] = {}
+            if exc.usage is not None:
+                data["usage"] = dict(exc.usage)
+            raise CadOpError(exc.code, exc.message, data=data) from exc
+
     def export_part(
         self,
         name: str,
@@ -733,6 +751,7 @@ class ExportOps(FrozenMetadataOps):
         )
         if replay is not None:
             return replay.to_result()
+        self._guard_admission()
         source_blob = blob_hash_of_ref(source_ref)
         kerf = self._kerf_decision(name, source_ref, kerf_mm) if fmt in CUT_PATH_FORMATS else None
         with self._scratch("heph-export-") as scratch:
@@ -807,6 +826,7 @@ class ExportOps(FrozenMetadataOps):
         )
         if replay is not None:
             return replay.to_result()
+        self._guard_admission()
         with self._scratch(f"heph-{operation.replace('_', '-')}-") as scratch:
             outputs, extra = produce(source_ref, Path(scratch))
         if not outputs:  # pragma: no cover - every generator produces a file
@@ -889,6 +909,11 @@ class ExportOps(FrozenMetadataOps):
             # and links its immutable source so provenance stays reachable.
             self._store.gc.pin(export_blob)
             self._store.gc.link(export_blob, source_blob)
+            # §2.6's CORRECTION / §19.24: bind `export` to these bytes in the
+            # store, so §15.17's refusal survives a caller relabelling the ref.
+            # Alongside the pin because both are the idempotent completion steps
+            # `_replay_commit` re-runs from any crash point.
+            record_artifact_kind(self._store, EXPORT_ARTIFACT_KIND, export_blob)
             recorded.append({"path": rel.as_posix(), "blob": export_blob})
             export_hashes[rel.as_posix()] = export_blob
         input_hashes = self._source_input_hashes(part, source_ref)
@@ -907,7 +932,7 @@ class ExportOps(FrozenMetadataOps):
                 ),
             )
         return ExportCommit(
-            paths=tuple(str(Path(".heph") / "exports" / rel.as_posix()) for rel in rels),
+            paths=tuple(str(Path(EXPORTS_DIR) / rel.as_posix()) for rel in rels),
             source_artifact_ref=source_ref,
             source_input_hashes=input_hashes,
             export_hashes=export_hashes,
@@ -1149,7 +1174,8 @@ class ExportOps(FrozenMetadataOps):
             # any crash point between install, pin and link.
             self._store.gc.pin(export_blob)
             self._store.gc.link(export_blob, blob_hash_of_ref(source_ref))
-            paths.append(str(Path(".heph") / "exports" / rel))
+            record_artifact_kind(self._store, EXPORT_ARTIFACT_KIND, export_blob)
+            paths.append(str(Path(EXPORTS_DIR) / rel))
             export_hashes[rel] = export_blob
         return ExportCommit(
             paths=tuple(paths),

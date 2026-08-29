@@ -1,0 +1,41 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * INTERFACE.md §4.7, §3.10. The overlay surface and one of the system's exactly
+ * two shadows. There is no third: `--elev-popover` for anchored surfaces,
+ * `--elev-dialog` for the two dialogs, and a surface not on §3.10's closed
+ * assignment list is not a surface.
+ */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: rgb(0 0 0 / 40%);
+}
+
+.panel {
+  position: absolute;
+  z-index: 31;
+  max-width: 44ch;
+  padding: var(--pad-overlay);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-card);
+  background: var(--surface-overlay);
+  box-shadow: var(--elev-popover);
+  color: var(--ink-base);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-group);
+}
+
+.panel[data-variant="dialog"] {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  max-width: 60ch;
+  border-radius: var(--radius-dialog);
+  box-shadow: var(--elev-dialog);
+}

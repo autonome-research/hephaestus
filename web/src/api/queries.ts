@@ -23,6 +23,8 @@
 
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { apiJson } from "./client";
+import { fetchExports, type ExportsDocument } from "./exports";
+import { loadProviders, type ProvidersDocument } from "./providers";
 import type {
   BuildDocument,
   ChecksDocument,
@@ -48,10 +50,36 @@ export const keys = {
   properties: (part: string) => ["parts", part, "properties"] as const,
   checks: (part: string) => ["parts", part, "checks"] as const,
   dfm: (part: string) => ["parts", part, "dfm"] as const,
+  exports: (part: string) => ["parts", part, "exports"] as const,
   gitStatus: () => ["git", "status"] as const,
   gitLog: (part: string | null) => ["git", "log", part] as const,
   gitTags: () => ["git", "tags"] as const,
+  /**
+   * §23.8's read. Project state like every other key here, and **not** a probe:
+   * it reads a file the serve already owns and, when a sidecar is attached, the
+   * auth state that sidecar already holds. Nothing on this path asks a provider
+   * anything, which is §15.41's "no background credential probe" — the refusal
+   * is about *outbound* traffic, and a cached local read makes none.
+   */
+  providers: () => ["providers"] as const,
 };
+
+/**
+ * `GET /providers` — the panel's whole read (§23.8).
+ *
+ * On the query layer rather than in a `useEffect` so the panel has one source of
+ * truth and a credential change invalidates rather than re-fetching by hand.
+ * **`POST /providers/discover` is deliberately NOT here**: a query hook runs on
+ * mount and refetches on focus, and §15.41 forbids exactly that for discovery.
+ * The offer is a click, and it lives in the panel's own state.
+ */
+export function useProviders(): UseQueryResult<ProvidersDocument, Error> {
+  return useQuery({
+    queryKey: keys.providers(),
+    queryFn: loadProviders,
+    staleTime: PROJECT_STALE_MS,
+  });
+}
 
 export function useProject(): UseQueryResult<ProjectDocument, Error> {
   return useQuery({
@@ -142,6 +170,25 @@ export function useDfm(part: string | null): UseQueryResult<DfmDocument, Error> 
     queryFn: () => apiJson<DfmDocument>(`/parts/${encodeURIComponent(part ?? "")}/dfm`),
     enabled: part !== null,
     staleTime: PROJECT_STALE_MS,
+    retry: false,
+  });
+}
+
+/**
+ * `GET /parts/{part}/exports` — §22.6's export history with its byte total.
+ *
+ * Never retried and never refetched on focus, for the same reason `useChecks`
+ * is not: this is the record of a *retention obligation*, and a window regaining
+ * focus is not a reason to re-read it. It is invalidated explicitly when an
+ * export commits, which is the only moment it can change from this client.
+ */
+export function useExports(part: string | null): UseQueryResult<ExportsDocument, Error> {
+  return useQuery({
+    queryKey: keys.exports(part ?? ""),
+    queryFn: () => fetchExports(part ?? ""),
+    enabled: part !== null,
+    staleTime: PROJECT_STALE_MS,
+    refetchOnWindowFocus: false,
     retry: false,
   });
 }

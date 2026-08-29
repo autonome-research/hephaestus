@@ -1,0 +1,362 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * The design tokens (INTERFACE.md §3.6, §3.7, §3.8, §3.9, §3.10).
+ *
+ * TWO LAYERS, AND THE SECOND IS THE ONLY PUBLIC ONE (§3.6).
+ *
+ *   Layer 1  `--p-*`   a PRIVATE palette. Raw hue lives here and nowhere else.
+ *   Layer 2  everything else — the semantic layer, and the entire public API.
+ *
+ * A file outside this one that references a `--p-*` token or writes a literal
+ * hex fails `no-palette-token` (§3.14). WHY the split: the shipped `tokens.css`
+ * had one layer, so `--ground-1` meant both "the rail" and "the fill behind a
+ * DFM finding card", and there was no name at all for "the surface a button sits
+ * on" — which is why five pill classes each invented their own border. A
+ * semantic name is a decision recorded once; a palette name is a colour anyone
+ * may spend anywhere.
+ *
+ * THEME: dark only (§3.5), and the seam is named. A light theme is a second
+ * palette block under `:root[data-theme="light"]` with **no component changes**,
+ * because no component may reference a palette token. That is what the two
+ * layers buy and it is why the deferral is safe.
+ *
+ * ---------------------------------------------------------------------------
+ * THE GUARANTEE TABLE (§3.9) — the normative artefact, not the hex values.
+ *
+ * The `@permit` lines below are MACHINE-READ by `heph/token-contrast`
+ * (§3.14's fourth check), which parses this file, composites every declared
+ * role × permitted-surface pairing, and asserts the floor for its class:
+ *
+ *   text   ≥ 4.5:1   every ink that carries words (§3.13.1)
+ *   ui     ≥ 3.0:1   non-text that CARRIES MEANING — the focus ring, the
+ *                    control border, the selected-tab underline (§3.13.1's
+ *                    own enumeration, quoted exactly)
+ *   part   ≥ 4.5:1   NAMED EXTENSION, 2026-08-28, plan item 6. §3.11.2 sets a
+ *                    floor of "≥ 4.5:1 part vs ground, exporter-independent"
+ *                    on a thing that carries no words, so none of the four
+ *                    existing classes states it: `ui` would under-state a
+ *                    number the spec writes out, and `text` would call the
+ *                    geometry text. The class exists so §3.11.2's floor is
+ *                    checked at the token layer as well as measured in the
+ *                    browser by `design-system.spec.ts` — the token check is
+ *                    the necessary condition, the browser measurement is the
+ *                    sufficient one, and §3.11.2 asks for the second.
+ *   mark   ≥ 3.0:1   a non-essential decorative mark (`--ink-faint`)
+ *   seam       —     measured and reported, no floor: a hairline between two
+ *                    named surfaces is not a meaning-carrier. §3.9 is explicit
+ *                    that plane separation "is carried by the border, not the
+ *                    fill", and that a fill pair strong enough to read as two
+ *                    planes on its own "is a mid-grey UI, which loses principle
+ *                    1". A 3:1 hairline is that same mid-grey UI drawn 1px at a
+ *                    time. The number is recorded so the choice stays visible.
+ *
+ * A `@refuse` line is a pairing the check asserts is NOT permitted anywhere in
+ * the table — §3.9's two refusals, encoded rather than asserted in prose.
+ *
+ * @permit text   --ink-strong          : canvas app panel raised control overlay
+ * @permit text   --ink-base            : canvas app panel raised control overlay
+ * @permit text   --ink-muted           : app panel raised control
+ * @refuse        --ink-muted           : overlay
+ * @permit mark   --ink-faint           : canvas app panel
+ * @refuse-text   --ink-faint
+ * @permit text   --accent              : app panel raised control
+ * @permit text   --accent-ink          : accent
+ * @permit ui     --accent              : app panel raised control overlay accent-quiet
+ * @permit ui     --focus-ring          : app panel raised control overlay
+ * @permit ui     --border-control      : app panel raised control overlay
+ * @permit seam   --border              : canvas app panel raised control overlay
+ * @permit seam   --border-strong       : canvas app panel raised control overlay
+ * @permit text   --status-pass-ink     : panel raised status-pass-fill
+ * @permit text   --status-fail-ink     : panel raised status-fail-fill
+ * @permit text   --status-error-ink    : panel raised status-error-fill
+ * @permit text   --status-not-run-ink  : panel raised status-not-run-fill
+ * @permit text   --status-info-ink     : panel raised status-info-fill
+ * @permit text   --status-dirty-ink    : panel raised status-dirty-fill
+ * @permit text   --code-comment        : app canvas
+ * @permit text   --code-string         : app canvas
+ * @permit text   --code-number         : app canvas
+ * @permit text   --code-keyword        : app canvas
+ * @permit part   --viewport-part       : canvas
+ * @permit part   --viewport-edge       : canvas
+ * @permit seam   --viewport-grid       : canvas
+ * @permit seam   --viewport-grid-axis  : canvas
+ * ---------------------------------------------------------------------------
+ *
+ * THE GRID IS A `seam`, AND THE CHOICE IS THE SAME ONE `--border` MAKES.
+ * §3.11.5 asks for a ground grid; §3.3's first principle is that the
+ * measurement outranks the chrome. A grid held to the 3:1 `ui` floor would be
+ * a lattice louder than several of the part's own shaded facets, which is the
+ * "mid-grey UI" §3.9 says loses principle 1 — drawn one hairline at a time.
+ * The grid carries no meaning a reader can lose: it is a reference rule, and
+ * the number it reports is printed as text in the readout beside it. So it is
+ * measured and recorded with no floor, exactly as the two border seams are.
+ * `--viewport-grid` measures 1.43:1 and `--viewport-grid-axis` 1.99:1 against
+ * `--surface-canvas`; the datum lines through the model origin are the louder
+ * pair on purpose, because those two are the ones a reader counts from.
+ *
+ * `--viewport-edge` is `part` and not `seam`, and that is the opposite call for
+ * the opposite reason. A silhouette is not a seam between two surfaces: it is
+ * the shape of the object, which is the one thing §3.3's first principle says
+ * outranks everything else on screen. §3.11.4 calls it "the single
+ * highest-value CAD viewport affordance". It measures 17.51:1 and is the
+ * brightest thing in the frame on purpose — brighter than the part's own lit
+ * facets, so an edge reads as an edge and not as a highlight.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* =========================================================================
+   * LAYER 1 — the private palette. PRIVATE: `no-palette-token` (§3.14) fails
+   * any reference to a `--p-*` name from outside this file.
+   * ====================================================================== */
+
+  /* An instrument graphite. Six rungs, deliberately close together: §3.9's
+     surface separation measures 1.065–1.166 between adjacent rungs, and that
+     is the design rather than a shortfall — the seam does the work. */
+  --p-graphite-950: #080a0d;
+  --p-graphite-900: #101318;
+  --p-graphite-800: #161a20;
+  --p-graphite-700: #1e232b;
+  --p-graphite-600: #272d38;
+  --p-graphite-500: #30374a;
+
+  /* Lines. `--p-line-hi` is bright enough to clear 3:1 on every surface a
+     control may sit on; §3.9's 2026-08-28 correction is that the half of the
+     floor which failed was the half the table omitted. */
+  --p-line-lo: #272d37;
+  --p-line-mid: #3b4352;
+  --p-line-hi: #7d8aa1;
+
+  /* Inks. */
+  --p-slate-050: #eef1f6;
+  --p-slate-200: #c9d1de;
+  --p-slate-400: #9aa5b6;
+  --p-slate-600: #6b7484;
+
+  /* Accent. One cool hue for interactive affordance, and nothing else. */
+  --p-blue-500: #4ea3f0;
+  --p-blue-300: #8cc8ff;
+  --p-blue-fill: #26374b; /* 16% --p-blue-500 over --p-graphite-700 */
+  --p-blue-ink: #06121d;
+
+  /* Status hues. Five, and every one of them ships with a word and a glyph
+     beside it (§3.9: "colour is never alone"). */
+  --p-green-400: #5ed69a;
+  --p-red-400: #ff8f8f;
+  --p-amber-400: #ecb54a;
+  --p-grey-400: #a9b0be;
+  --p-sky-300: #7cc4ff;
+
+  /* Status fills: each hue at 16%, resolved over `--p-graphite-800` so the
+     value is an opaque hex the contrast check can read without compositing a
+     translucent layer against an unknown parent. */
+  --p-green-fill: #223834;
+  --p-red-fill: #3b2d32;
+  --p-amber-fill: #383327;
+  --p-grey-fill: #2e3239;
+  --p-sky-fill: #263544;
+  --p-green-300: #9ad1a8;
+
+  /* The part, in the viewport. §3.11.2's floor is ≥ 4.5:1 against the ground,
+     measured in the browser; this value reaches 10.2:1 against
+     `--p-graphite-950` so the authored material has room above the floor. */
+  --p-part: #b8c2cf;
+
+  /* Faces. Unchanged from the shipped file (§3.8: "Faces are unchanged"). */
+  --p-font-ui:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --p-font-mono:
+    ui-monospace, "SFMono-Regular", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+
+  /* The five shipped `--size-*` steps, now palette-layer and private (§3.8).
+     The public API is the seven role classes in `type.module.css`, and 11px is
+     confined to `.eyebrow` — one rule that turns the shipped 65-of-91
+     distribution into a ramp with a shape. */
+  --p-size-xs: 11px;
+  --p-size-sm: 12px;
+  --p-size-md: 13px;
+  --p-size-lg: 15px;
+  --p-size-xl: 18px;
+
+  /* =========================================================================
+   * LAYER 2 — the semantic layer. This is the public API.
+   * ====================================================================== */
+
+  /* ---- surfaces: the six-rung ladder (§3.10, assignment is CLOSED) --------
+     canvas  → the viewport, and nothing else
+     app     → the page and the stage
+     panel   → header, rail, stream, inspector drawer
+     raised  → tab bars, row hover, cards, status fills
+     control → buttons and inputs at rest
+     overlay → popovers, HUDs, plates, dialogs
+     A surface not on this list is not a surface. */
+  --surface-canvas: var(--p-graphite-950);
+  --surface-app: var(--p-graphite-900);
+  --surface-panel: var(--p-graphite-800);
+  --surface-raised: var(--p-graphite-700);
+  --surface-control: var(--p-graphite-600);
+  --surface-overlay: var(--p-graphite-500);
+
+  /* ---- ink ---------------------------------------------------------------
+     `--ink-faint` is NOT A TEXT TOKEN (§3.9). No prose, no unit column, no
+     disabled-control label — those are `--ink-muted`. It exists for a
+     separator glyph and a decorative rule, and `token-contrast` refuses it a
+     text pairing. */
+  --ink-strong: var(--p-slate-050);
+  --ink-base: var(--p-slate-200);
+  --ink-muted: var(--p-slate-400);
+  --ink-faint: var(--p-slate-600);
+
+  /* ---- lines (§3.10) -----------------------------------------------------
+     border          seams between two named surfaces
+     border-strong   a card that must read as detached
+     border-control  EVERY interactive control, AND ONLY interactive controls.
+                     This is the mechanical form of principle 3 and it is the
+                     rule the shipped `.toggle`/`.state` pair violated
+                     byte-for-byte. */
+  --border: var(--p-line-lo);
+  --border-strong: var(--p-line-mid);
+  --border-control: var(--p-line-hi);
+
+  /* ---- accent: four, and no more -------------------------------------- */
+  --accent: var(--p-blue-500);
+  --accent-ink: var(--p-blue-ink);
+  --accent-quiet: var(--p-blue-fill);
+  --focus-ring: var(--p-blue-300);
+
+  /* ---- status: ink + 16% fill, per §3.9. Six names over five hues:
+     `dirty` and `error` share a hue and take DIFFERENT icon ids, because
+     §3.14's component test asserts a distinct icon per status and two statuses
+     sharing an id would make that assertion false by construction. */
+  --status-pass-ink: var(--p-green-400);
+  --status-pass-fill: var(--p-green-fill);
+  --status-fail-ink: var(--p-red-400);
+  --status-fail-fill: var(--p-red-fill);
+  --status-error-ink: var(--p-amber-400);
+  --status-error-fill: var(--p-amber-fill);
+  --status-not-run-ink: var(--p-grey-400);
+  --status-not-run-fill: var(--p-grey-fill);
+  --status-info-ink: var(--p-sky-300);
+  --status-info-fill: var(--p-sky-fill);
+  --status-dirty-ink: var(--p-amber-400);
+  --status-dirty-fill: var(--p-amber-fill);
+
+  /* ---- syntax (§4.7's ScriptEditor) -------------------------------------
+     NAMED EXTENSION TO §3.9's ROLE LIST, recorded rather than smuggled. §3.9
+     enumerates six surfaces, four inks, three lines, four accents and five
+     statuses; it does not name a syntax palette. The Script tab needs one —
+     §4.7 calls it "the best surface in the product… the existence proof that
+     the absence of a design system was a choice not yet made" and syntax colour
+     is part of what it praises — and Monaco's theme API takes literal colours,
+     so the only two options were four semantic tokens here or four hex literals
+     in `monaco.ts` that `no-palette-token` would (correctly) refuse. These are
+     the tokens; `monaco.ts` reads them at install time and defines no colour of
+     its own. Whoever owns §3.9 should fold four syntax roles into the list.
+
+     The shipped theme's comment colour was the 3.10:1 ink §3.9 retires; these
+     four all clear 4.5:1 on both surfaces an editor is ever painted on. */
+  --code-comment: var(--p-slate-400);
+  --code-string: var(--p-green-300);
+  --code-number: var(--p-amber-400);
+  --code-keyword: var(--p-blue-500);
+
+  /* ---- viewport (§3.11) --------------------------------------------------
+     The client authors the material. These are the two ends of §3.11.2's
+     floor, and they are tokens rather than literals in `engine.ts` so the
+     ground the WebGL clear colour uses and the ground the CSS paints are the
+     same decision recorded once.
+
+     THE FIVE ARE ONE DECISION AND `viewport/display.ts` READS ALL OF THEM. No
+     new hue is spent: the part and the edge are the two existing inks at the
+     top of the ramp, and the two grid rungs are the two existing line rungs.
+     §3.9 says raw hue is a decision recorded once, and a viewport that
+     invented five colours for itself would be the ad-hoc spending that
+     section exists to stop.
+
+     Note the asymmetry the browser will show, because it is worth knowing
+     before someone measures it and calls it a bug: `--viewport-ground` is the
+     WebGL **clear** colour, which three.js does not tone-map, so the ground
+     lands byte-exact on the token. Everything *drawn* — the part, the
+     silhouette, the grid — goes through ACES (§3.11.3) and lands near, not on,
+     its token. The floors above are therefore the authored decision; the
+     measurement that settles §3.11.2 is the browser one in
+     `e2e/design-system.spec.ts`. */
+  --viewport-ground: var(--surface-canvas);
+  --viewport-part: var(--p-part);
+  --viewport-edge: var(--p-slate-050);
+  --viewport-grid: var(--p-line-lo);
+  --viewport-grid-axis: var(--p-line-mid);
+
+  /* ---- type: the palette side. The roles are in `type.module.css`. ------ */
+  --font-ui: var(--p-font-ui);
+  --font-mono: var(--p-font-mono);
+  --line-tight: 1.25;
+  --line-body: 1.5;
+
+  /* ---- space: the scale was right, the ROLES were missing (§3.7) ---------
+     The five shipped steps keep their shipped values, so no existing rule
+     changes meaning. `--space-0` and `--space-6` are added. */
+  --space-0: 2px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* The role set components actually reference. This is the difference between
+     "12px because that's the rhythm" and "12px because I typed it". A component
+     may reference `--space-*` only for a one-off geometric offset it names in a
+     comment. */
+  --pad-panel: var(--space-3) var(--space-4);
+  --pad-panel-header: var(--space-2) var(--space-4);
+  --pad-row: var(--space-1) var(--space-2);
+  --pad-control: var(--space-1) var(--space-3);
+  --pad-overlay: var(--space-3);
+  --gap-inline: var(--space-2);
+  --gap-stack: var(--space-1);
+  --gap-group: var(--space-3);
+  --gap-section: var(--space-5);
+
+  /* ---- radius (§3.10): pill REPORTS, 3px ACTS -------------------------- */
+  --radius-control: 3px;
+  --radius-card: 6px;
+  --radius-dialog: 10px;
+  --radius-badge: 999px;
+
+  /* ---- elevation: two shadows, and there is no third (§3.10) ----------- */
+  --elev-popover: 0 6px 18px rgb(0 0 0 / 45%);
+  --elev-dialog: 0 18px 48px rgb(0 0 0 / 60%);
+
+  /* ---- motion: three durations, one easing (§3.10) ---------------------
+     REFUSAL: nothing animates that carries a measurement. A metric, a badge, a
+     check row and the viewport camera change instantly — an instrument that
+     eases a number into place has made the reader wait to trust it. */
+  --dur-1: 90ms;
+  --dur-2: 160ms;
+  --dur-3: 240ms;
+  --ease: cubic-bezier(0.2, 0, 0.13, 1);
+
+  /* ---- metrics: §4.1's shell, as numbers ------------------------------- */
+  --rail-width: 280px;
+  --stream-width: 420px;
+  --stream-strip-width: 44px;
+  --header-height: 44px;
+  /* §4.1(c): the drawer is an EXPLICIT height, not a `minmax` floor. Height is
+     then identical across inspector tabs BY CONSTRUCTION, which is what
+     §3.14's e2e asserts and what retires the 76% canvas-height swing. */
+  --drawer-height: clamp(200px, 32vh, 420px);
+  --drawer-handle: 6px;
+  /* §3.13.6: every control ≥ 24×24px hit area, achieved by padding rather than
+     by font-size. The shipped 11px pill controls were ~18px tall. */
+  --target-min: 24px;
+
+  /* §4.1's bands. `useBreakpoint.ts` is the SOLE authority that reads them;
+     `Shell.module.css` keeps no media query that changes
+     `grid-template-columns` (§4.1(a)). */
+  --breakpoint-stream: 1280px;
+  --breakpoint-rail: 1024px;
+}

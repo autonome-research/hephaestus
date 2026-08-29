@@ -15,23 +15,33 @@
 // nine-name vocabulary ships beside the values (`fields`), and an undeclared
 // field is rendered — a visible absence beats a silently missing row — but it
 // carries `data-undeclared-field`, not `data-field`, so the set the e2e compares
-// stays exactly the projection's keys.
+// stays exactly the projection's keys. `DataTable` carries `data-field` on the
+// ROW element, which is where the shipped `<dt>` carried it too, so the
+// selector is preserved verbatim (§3.14's migration criterion).
 //
 // WHY THE NINE `<Fact source>` PATHS ARE WRITTEN OUT. §6.2 says "each row
 // renders through `<Fact source="properties.<key>">`", and §1's `no-derived-fact`
 // rule requires `source` to be a **static string literal** — a computed
 // attribution cannot be reviewed or asserted on. Those two are only compatible
 // because the vocabulary is closed: nine names, enumerated in
-// `core/executor/namespace.py::METADATA_FIELDS`, so nine literals cover it. A
-// name outside them (engine drift) falls to the indexed path
-// `properties[].value` and is still rendered, still attributed, and still
-// carries `data-field` — `inspector.test.tsx` asserts against the recorded
-// `fields` list that no name actually takes that branch, which checks the client
-// against the *server's* vocabulary rather than against a copy of it.
+// `core/executor/namespace.py::METADATA_FIELDS`, so nine literals cover it. This
+// is also §3.4's tightening said from the other end: `DataTable` takes a
+// constructed `ReactNode`, never a `source` string, precisely so this stays a
+// reviewable literal instead of a runtime-minted attribution.
 
 import type { PropertiesDocument } from "../../api/types";
 import { useProperties } from "../../api/queries";
 import { copy } from "../../copy";
+import {
+  DataTable,
+  EmptyState,
+  Panel,
+  PanelBody,
+  PanelHeader,
+  PanelNote,
+  PanelSection,
+  type DataRow,
+} from "../../system";
 import { Fact } from "../Fact";
 import { useWorkspace } from "../../state/react";
 import styles from "./panels.module.css";
@@ -70,77 +80,79 @@ export function PropertiesView({ properties }: PropertiesViewProps): React.JSX.E
   const declared = Object.keys(properties.properties);
   const undeclared = properties.fields.filter((field) => !(field in properties.properties));
 
+  const rows: readonly DataRow[] = properties.fields
+    .filter((field) => field in properties.properties)
+    .map((field) => ({
+      key: field,
+      label: field.replace(/_/g, " "),
+      value: <PropertyFact field={field} value={properties.properties[field] ?? ""} />,
+      attrs: { "data-field": field },
+    }));
+
   return (
-    <section
-      className={styles["panel"]}
-      aria-label={copy.properties.heading}
+    <Panel
+      label={copy.properties.heading}
       data-panel="properties"
       data-properties-source={properties.source}
     >
-      <h3 className={styles["heading"]}>{copy.properties.heading}</h3>
+      <PanelHeader title={copy.properties.heading} level={3} />
+      <PanelBody>
+        {declared.length === 0 ? (
+          <EmptyState
+            icon="ruler"
+            title={copy.properties.emptyTitle}
+            body={copy.properties.empty}
+          />
+        ) : (
+          <DataTable rows={rows} />
+        )}
 
-      {declared.length === 0 ? (
-        <p className={styles["absent"]}>{copy.properties.empty}</p>
-      ) : (
-        <dl className={styles["pairs"]}>
-          {properties.fields
-            .filter((field) => field in properties.properties)
-            .map((field) => (
-              <div key={field} className={styles["pairRow"]}>
-                <dt data-field={field}>{field}</dt>
-                <dd>
-                  <PropertyFact field={field} value={properties.properties[field] ?? ""} />
-                </dd>
-              </div>
-            ))}
-        </dl>
-      )}
+        {undeclared.length === 0 ? null : (
+          <PanelSection eyebrow={copy.properties.undeclaredHeading}>
+            <DataTable
+              rows={undeclared.map((field) => ({
+                key: field,
+                label: <span className={styles["muted"]}>{field.replace(/_/g, " ")}</span>,
+                value: <span className={styles["muted"]}>{copy.properties.undeclared}</span>,
+                attrs: { "data-undeclared-field": field },
+              }))}
+            />
+            <PanelNote>{copy.properties.undeclaredNote}</PanelNote>
+          </PanelSection>
+        )}
 
-      {undeclared.length === 0 ? null : (
-        <>
-          <dl className={styles["pairs"]}>
-            {undeclared.map((field) => (
-              <div key={field} className={styles["pairRow"]}>
-                <dt data-undeclared-field={field} className={styles["dim"]}>
-                  {field}
-                </dt>
-                <dd className={styles["dim"]}>{copy.properties.undeclared}</dd>
-              </div>
-            ))}
-          </dl>
-          <p className={styles["note"]}>{copy.properties.undeclaredNote}</p>
-        </>
-      )}
-
-      {/* Which read answered is itself a fact, and it changes what the values
-          mean: the build record carries the values the worker EVALUATED, so a
-          computed `part.blank_size` reads like a literal one; the static parse
-          cannot see a computed field at all. */}
-      <dl className={styles["pairs"]}>
-        <div className={styles["pairRow"]}>
-          <dt>{copy.properties.sourceHeading}</dt>
-          <dd>
-            <Fact source="properties.source" value={properties.source} />
-          </dd>
-        </div>
-        <div className={styles["pairRow"]}>
-          <dt>{copy.properties.boundTo}</dt>
-          <dd>
-            {properties.build_artifact_ref === null ? (
-              <span className={styles["dim"]}>{copy.properties.unbound}</span>
-            ) : (
-              <Fact
-                source="properties.build_artifact_ref"
-                value={properties.build_artifact_ref}
-                className={styles["mono"]}
-                mono
-              />
-            )}
-          </dd>
-        </div>
-      </dl>
-      <p className={styles["note"]}>{copy.properties.source[properties.source]}</p>
-    </section>
+        {/* Which read answered is itself a fact, and it changes what the values
+            mean: the build record carries the values the worker EVALUATED, so a
+            computed `part.blank_size` reads like a literal one; the static parse
+            cannot see a computed field at all. */}
+        <PanelSection eyebrow={copy.properties.sourceHeading}>
+          <DataTable
+            rows={[
+              {
+                key: "source",
+                label: copy.properties.sourceLabel,
+                value: <Fact source="properties.source" value={properties.source} />,
+                note: copy.properties.source[properties.source],
+              },
+              {
+                key: "bound",
+                label: copy.properties.boundTo,
+                value:
+                  properties.build_artifact_ref === null ? (
+                    <span className={styles["muted"]}>{copy.properties.unbound}</span>
+                  ) : (
+                    <Fact
+                      source="properties.build_artifact_ref"
+                      value={properties.build_artifact_ref}
+                      mono
+                    />
+                  ),
+              },
+            ]}
+          />
+        </PanelSection>
+      </PanelBody>
+    </Panel>
   );
 }
 
@@ -148,9 +160,9 @@ export function PropertiesPanel(): React.JSX.Element {
   const part = useWorkspace((s) => s.part);
   const properties = useProperties(part);
 
-  if (part === null) return <p className={styles["absent"]}>{copy.inspector.selectPart}</p>;
-  if (properties.data === undefined) {
-    return <p className={styles["absent"]}>{copy.absent.loading}</p>;
+  if (part === null) {
+    return <EmptyState icon="cube" title={copy.inspector.noPartTitle} body={copy.inspector.selectPart} />;
   }
+  if (properties.data === undefined) return <PanelNote>{copy.absent.loading}</PanelNote>;
   return <PropertiesView properties={properties.data} />;
 }

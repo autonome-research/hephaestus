@@ -13,12 +13,21 @@ the rest of ``tests/stage4`` — which is not renderer-pinned and does run on
 every PR — instead of dragging the whole Stage 4 suite into the deferral.
 
 ``INTERFACE.md`` §14 says the browser gate runs "inside the same pinned CI
-container image as ``tests/render``". **That image does not exist yet** — the
-scope note at the top of ``ci.yml`` calls it the Stage S disposition and says
-``tests/render`` "runs locally today and moves here when the pinned CI container
-image lands". This module and ``web/e2e/viewport.spec.ts``'s G4.7 test move at
-the same time, for the same reason, and both fail **by name** on a renderer they
-were not baselined against rather than skipping.
+container image as ``tests/render``". **That image landed 2026-08-28**
+(``docker/ci/Dockerfile``, built and pushed by ``ci-image.yml``, consumed BY
+DIGEST), so this module is no longer deferred to nowhere: ``ci.yml``'s
+``render goldens (pinned image)`` job runs it by name, alongside
+``tests/render`` and ``pnpm --dir web test:e2e``, on the one renderer its
+sidecar was baselined against. The stock-runner job still excludes it by name.
+
+Consequently this module **cannot pass on a developer host** whose Mesa differs
+from the image's, and that is the design, not a defect: it fails **by name** on
+a renderer it was not baselined against rather than skipping, because a suite
+that quietly passed on the wrong rasterizer would be asserting nothing. Run it
+where it belongs — inside the pinned image, per ``docker/ci/README.md``, whose
+recipe keeps the container from writing build state into the mounted worktree —
+or run the rest of Stage 4 with CI's own
+``--ignore=tests/stage4/test_g4_section_golden.py``.
 """
 
 from __future__ import annotations

@@ -27,6 +27,8 @@ Hephaestus events, never raw frames.
 
 from __future__ import annotations
 
+import contextlib
+import stat
 import threading
 import uuid
 from collections import OrderedDict
@@ -43,10 +45,17 @@ from opstore.types import JSONValue, TerminalState
 from opstore import OpStore
 
 from .admission import BridgeAdmission, bridge_store_config
-from .cad_ops import CadOps, question_refusal, record_answers
+from .cad_ops import (
+    CadOps,
+    bind_run_request_text,
+    question_refusal,
+    record_answers,
+    release_run_request_text,
+)
 from .dispatch import DispatchError, Principal, ToolDispatcher
 from .events import EventPump, HephaestusEvent, ObserverClient, PerClientQueue
 from .protocol import ErrorCode, ProtocolError
+from .sessions import RunInFlightError
 from .sidecar import SidecarResolution, node_executable, resolve_sidecar
 from .supervisor import ProcessLossEvent, Supervisor, SupervisorConfig
 
@@ -63,6 +72,11 @@ __all__ = [
 ]
 
 _STATE_DB_NAME = "state.db"
+
+#: ``<project>/.heph/agent`` — the app-owned credential directory (§23.2).
+#: ``0700``, so the ``0600`` credential file inside it is not merely unreadable
+#: but unreachable by another local user.
+AGENT_DIR_MODE: int = 0o700
 
 #: How many run→session bindings a long-lived serving process keeps (§2.7).
 #: Chosen to match the pump's own 1024-slot per-client bound: a client that
@@ -195,6 +209,35 @@ def _node_executable() -> str:
     return node_executable()
 
 
+def _as_dict(value: Any) -> dict[str, Any]:
+    """Narrow a bridge result to an object; anything else is an empty one.
+
+    The bridge's results are ``Any`` by construction (they crossed a JSON-RPC
+    frame). Narrowing here once keeps every credential relay below free of a
+    cast, and a non-object result reads as "the sidecar said nothing" rather
+    than as a type error at a call site three layers up.
+    """
+    return cast("dict[str, Any]", value) if isinstance(value, dict) else {}
+
+
+def _provider_status_of(result: Any) -> list[dict[str, Any]]:
+    """``configure``'s per-provider verification list (§23.7), defensively read.
+
+    An older sidecar answers ``{ok, providers: <count>}`` — an integer where
+    this expects a list. That is not an error: it is a runtime built before
+    verification became per-provider, and it reports *no* per-provider facts
+    rather than inventing optimistic ones.
+    """
+    rows = _as_dict(result).get("providers")
+    if not isinstance(rows, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for row in cast("list[Any]", rows):
+        if isinstance(row, dict):
+            out.append(cast("dict[str, Any]", row))
+    return out
+
+
 class BridgeRuntime:
     """Composed runtime: supervised sidecar + Python dispatch/admission/events."""
 
@@ -243,6 +286,13 @@ class BridgeRuntime:
         )
         self._providers = list(providers)
         self._credentials = dict(credentials or {})
+        #: §23.2's ``serve`` scope: keys pasted into this serve, held in this
+        #: process's heap and nowhere else. Never written, never projected, and
+        #: gone when the process ends.
+        self._runtime_keys: dict[str, str] = {}
+        #: The last ``runtime.configure`` result's per-provider verification
+        #: (§23.7). Empty until a child has been configured.
+        self._provider_status: list[dict[str, Any]] = []
         self._default_answerer = answerer
 
         self._principals: dict[str, Principal] = {}
@@ -268,7 +318,24 @@ class BridgeRuntime:
         self._closed = False
 
         agent_dir = agent_dir or (self._layout.store_root / "agent")
-        agent_dir.mkdir(parents=True, exist_ok=True)
+        # 0700, created private and tightened if it already exists looser.
+        # INTERFACE.md §23.2 closes the list of places a provider secret may
+        # live and names the mode of each: ``<project>/.heph/agent/auth.json``
+        # at ``0600``, **parent ``0700``**. Pi writes the file privately; the
+        # directory was ours and was being created with the process umask
+        # (0755 on a default install), which leaves another local user able to
+        # stat the credential file and watch it appear. §23.13's second threat
+        # class is exactly "another local user", and this is the half of that
+        # defence the app owns.
+        #
+        # Tightened rather than only created: an agent dir made by an earlier
+        # version is still a directory THIS code created, so §23.2's "a file the
+        # operator hand-authored is not chmod'ed by the workspace" does not
+        # reach it — that rule is about the operator's own files.
+        agent_dir.mkdir(parents=True, exist_ok=True, mode=AGENT_DIR_MODE)
+        with contextlib.suppress(OSError):
+            if stat.S_IMODE(agent_dir.stat().st_mode) != AGENT_DIR_MODE:
+                agent_dir.chmod(AGENT_DIR_MODE)
         # Opt-in credential linking: with no auth_source the agent dir keeps only
         # what the sidecar itself writes, so a `pi_native` provider has nothing to
         # authenticate with and fails loudly instead of borrowing an ambient login.
@@ -310,6 +377,14 @@ class BridgeRuntime:
             # session.prompt with "runtime.configure has not run yet".
             spawn_hook=self._configure_runtime,
         )
+        # INTERFACE.md §23.6/§23.14 item 10: the allowlisted credentials this
+        # process is about to forward are exactly the values a provider's error
+        # text could quote back onto the sidecar's stderr, which the supervisor
+        # drains into a tail the bench harness archives. Registered before the
+        # first child exists, so there is no window in which a leak could be
+        # retained un-redacted.
+        for secret in self._credentials.values():
+            self._sup.add_redaction(secret)
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -331,25 +406,165 @@ class BridgeRuntime:
         Built here and nowhere else: two call sites that each assemble their own
         dict are two payloads that can drift, and the drift would only show up
         after a respawn nobody asked for.
+
+        ``runtime_keys`` is §23.2's ``serve`` scope on the wire: keys pasted
+        into this serve and held **only** in this process's heap. Omitted
+        entirely when empty, so the ordinary payload is byte-identical to what
+        it has always been and the respawn-replay goldens do not move.
         """
-        return {"providers": self._providers, "credentials": self._credentials}
+        payload: dict[str, Any] = {
+            "providers": self._providers,
+            "credentials": self._credentials,
+        }
+        if self._runtime_keys:
+            payload["runtime_keys"] = dict(self._runtime_keys)
+        return payload
 
     def _configure_runtime(self, sup: Supervisor) -> None:
-        """Supervisor spawn hook: push ``runtime.configure`` onto a fresh child."""
-        sup.call("runtime.configure", self.configure_payload)
+        """Supervisor spawn hook: push ``runtime.configure`` onto a fresh child.
+
+        The result is retained because §23.7 makes provider verification
+        **fail-closed per provider** rather than per runtime: ``configure``
+        answers ``providers: [{id, available, unavailable_reason?}]``, and that
+        list is what ``GET /providers`` renders and what a ``session.create``
+        against an unavailable provider is refused by. Retained here rather than
+        re-asked because it is replayed onto every child, so the freshest answer
+        is always the one the current child gave.
+        """
+        result = sup.call("runtime.configure", self.configure_payload)
+        self._provider_status = _provider_status_of(result)
+
+    def provider_status(self) -> list[dict[str, Any]]:
+        """Per-provider verification from the last ``runtime.configure`` (§23.7).
+
+        **This looks like a weakening and is not.** The property the old
+        fail-per-runtime behaviour carried is about *substitution*: an
+        unauthenticated provider can never fall back to an ambient login. That
+        is unchanged and asserted — an unavailable provider is never silently
+        replaced and cannot serve a turn. What changes is that its failure no
+        longer takes its neighbours, and the login path that would fix it, down
+        with it. `createModelRuntime` used to throw on the first provider that
+        failed verification, so a declared-but-unauthenticated provider meant no
+        sidecar, therefore no bridge, therefore no way to perform the login.
+        """
+        return [dict(row) for row in self._provider_status]
 
     def start(self) -> None:
         """Spawn the sidecar (the spawn hook pushes ``runtime.configure``)."""
         self._sup.start()
 
-    def restart(self) -> None:
+    def restart(self, *, reason: str = "manual") -> None:
         """Kill the whole sidecar and respawn it; the spawn hook re-configures.
 
         Generic in-flight runs are marked interrupted by the supervisor's
         recovery hook before this returns; persisted Pi sessions are re-openable
         via :meth:`resume_session`.
+
+        ``reason`` reaches the archived restart record. §23.7 applies a
+        credential change by restarting with ``reason="credentials"`` — a
+        credential change is not a hot swap and the record says which restarts
+        were one.
         """
-        self._sup.restart(reason="manual")
+        self._sup.restart(reason=reason)
+
+    # -- credentials (§23.14 item 3) ---------------------------------------
+    #
+    # Eight thin relays and nothing more. **Pi remains the single authority**:
+    # nothing below stores a credential, mints a PKCE verifier, exchanges a
+    # token, or refreshes one — mission rule 6 forbids a second implementation
+    # of what the pinned dependency owns, and §23.2 states the cost of that
+    # decision plainly (every credential write needs a live sidecar, which is
+    # why §23.0's attach capability is item 1 and not a footnote).
+    #
+    # The Python side sees four non-secret values on the way out of a login
+    # (`user_code`, `verification_uri`, `interval_seconds`, `expires_at`) and
+    # `{state, type, expires_at}` on the way back. It never sees an
+    # authorization code, an access token, or a refresh token at all.
+
+    def provider_catalog(self) -> dict[str, Any]:
+        """Pi's built-in catalog plus this runtime's registered providers (§23.1).
+
+        Read live over the bridge. §23.1 rejects a Hephaestus-defined provider
+        catalog outright: a second catalog beside Pi's would drift the moment Pi
+        ships a provider, which mission rule 6 forbids.
+        """
+        return _as_dict(self._sup.call("providers.list", {}))
+
+    def credential_status(self, provider_id: str) -> dict[str, Any]:
+        """``{state, type?, expires_at?, health, last_observed_at, flow?}`` — metadata only."""
+        return _as_dict(self._sup.call("credentials.status", {"provider_id": provider_id}))
+
+    def set_api_key(self, provider_id: str, key: str, *, scope: str) -> dict[str, Any]:
+        """Hand Pi an API key. The key crosses this boundary once and is never held.
+
+        ``scope="project"`` persists it through Pi's ``AuthStorage`` (``0600``
+        under a cross-process lock); ``scope="serve"`` keeps it in the configure
+        map for this serve only. The value is registered with the supervisor's
+        redaction pass **before** it is sent, so a provider that quotes it back
+        on stderr cannot leave it in the retained tail (§23.6).
+        """
+        self._sup.add_redaction(key)
+        if scope == "serve":
+            # The serving process's heap, en route to `runtime.configure` — one
+            # of §23.2's three permitted places, and the only one this process
+            # is on. Carried on the configure payload so a respawn replays it
+            # (a `serve`-scoped key that vanished on the watchdog's own respawn
+            # would be a credential the operator set and the product silently
+            # forgot); gone when the process ends, which is what `serve` means.
+            self._runtime_keys[provider_id] = key
+        result = _as_dict(
+            self._sup.call(
+                "credentials.set_key",
+                {"provider_id": provider_id, "key": key, "scope": scope},
+            )
+        )
+        return result
+
+    def sign_out(self, provider_id: str) -> dict[str, Any]:
+        """Remove the credential under Pi's lock and drop any serve-scoped key.
+
+        §23.9's three properties: the provider **spec** is not deleted (the row
+        stays, in state ``none``), and the write cannot fail halfway because
+        Pi's ``modify`` is a serialized read-modify-write whose throwing
+        operation propagates without writing.
+        """
+        self._runtime_keys.pop(provider_id, None)
+        return _as_dict(self._sup.call("credentials.signout", {"provider_id": provider_id}))
+
+    def login_begin(self, provider_id: str, flow_type: str) -> dict[str, Any]:
+        """Start a subscription flow. Returns non-secret values only (§23.4)."""
+        return _as_dict(
+            self._sup.call("login.begin", {"provider_id": provider_id, "type": flow_type})
+        )
+
+    def login_status(self, provider_id: str) -> dict[str, Any]:
+        """Poll the flow. The **sidecar** polls the provider; the browser never does."""
+        return _as_dict(self._sup.call("login.status", {"provider_id": provider_id}))
+
+    def login_complete(self, provider_id: str, text: str) -> dict[str, Any]:
+        """Hand Pi the operator's pasted redirect URL / ``code#state`` / bare code.
+
+        Pi's own ``parseAuthorizationInput`` accepts all three and **verifies
+        ``state``**; a mismatch is refused and the credential is unchanged. This
+        server is not an OAuth client and applies to become one for nobody.
+        """
+        return _as_dict(
+            self._sup.call("login.complete", {"provider_id": provider_id, "input": text})
+        )
+
+    def login_cancel(self, provider_id: str) -> dict[str, Any]:
+        """Abandon a pending flow. Idempotent by construction."""
+        return _as_dict(self._sup.call("login.cancel", {"provider_id": provider_id}))
+
+    def live_run_ids(self) -> list[str]:
+        """Run ids with a turn in flight right now (§23.7's ``runs_in_flight``).
+
+        A credential change restarts the sidecar and **a restart kills every
+        in-flight run in every session**. That cost is surfaced rather than
+        swallowed: the refusal lists these ids and the dialog names the count.
+        """
+        with self._lock:
+            return sorted(self._runs)
 
     def close(self) -> None:
         """Graceful shutdown: close the sidecar (no orphan) and the opstore."""
@@ -532,6 +747,7 @@ class BridgeRuntime:
         text: str,
         *,
         run_id: str | None = None,
+        context: str | None = None,
         answerer: AskUserAnswerer | None = None,
         on_event: EventCallback | None = None,
         timeout: float | None = None,
@@ -540,34 +756,98 @@ class BridgeRuntime:
 
         Pass ``run_id`` (from :meth:`new_run_id`) when the caller needs the id
         before the call blocks — that is what makes mid-run cancellation possible.
+
+        Refuses :class:`~.sessions.RunInFlightError` when a turn is already live
+        where this one would have to run (``INTERFACE.md`` §7A.5) — see
+        :meth:`_admit_turn` for which two conditions that is and why the reason
+        is not ``session_busy``.
+
+        ``context`` is the workspace's composed context block (``INTERFACE.md``
+        §7A.3/§7A.4, §19.22). It is **forwarded to the sidecar and never bound**:
+        :func:`bind_run_request_text` below receives ``text`` alone, so
+        ``VALIDATION.md`` §4's ``prompt_number_diff`` keeps diffing the
+        operator's own words against the built geometry. Prepending the block to
+        ``text`` instead would put the build's own extents into "the request" and
+        every one of them would come back ``matched: true`` **against itself** —
+        the rung that exists to catch a design that does not meet its brief would
+        be measuring the workspace's own context block.
         """
         run_id = run_id or self.new_run_id()
-        # VALIDATION.md §4/§5: the prompt IS the request every validation rung
-        # judges against, so it is bound to the ops layer here — the only place
-        # that sees it — rather than asked for later from a model that has
-        # already paraphrased it. Delegated child prompts never pass through
-        # this method, so a part agent's build is critiqued against the original.
-        self._cad.set_request_text(text)
         run = _Run(run_id=run_id, session_id=session_id, on_event=on_event)
-        with self._lock:
-            self._runs[run_id] = run
-            self._bind_run_session(run_id, session_id)
-            if answerer is not None:
-                self._answerers[run_id] = answerer
-        self._admission.admit_run(run_id)
-        self._sup.track_run(run_id)
+        self._admit_turn(run, answerer)
+        # Everything from here is inside the ``finally`` that un-registers the
+        # run. It has to be: with the §7A.5 guard in place, a turn that leaked
+        # its ``_runs`` entry on a failed admission would refuse the session's
+        # every later turn ``run_in_flight`` for the life of the process.
         try:
-            result = self._sup.call(
-                "session.prompt",
-                {"session_id": session_id, "run_id": run_id, "prompt": text},
-                timeout=timeout,
-            )
+            # VALIDATION.md §4/§5: the prompt IS the request every validation rung
+            # judges against, so it is bound here — the only place that sees it —
+            # rather than asked for later from a model that has already
+            # paraphrased it. INTERFACE.md §7A.4/§19.23: bound to the RUN, not to
+            # the ops object. One field on CadOps was shared by every session, so
+            # a second concurrent turn clobbered the first and session A's build
+            # was critiqued against session B's prompt. Delegated child prompts
+            # never pass through this method; they inherit the parent run's text
+            # at the dispatcher, so a part agent's build is still critiqued
+            # against the original.
+            bind_run_request_text(run_id, text)
+            self._admission.admit_run(run_id)
+            self._sup.track_run(run_id)
+            params: dict[str, Any] = {
+                "session_id": session_id,
+                "run_id": run_id,
+                "prompt": text,
+            }
+            if context is not None:
+                # Present only when there is one, so an unmodified sidecar sees
+                # the params it always saw and a turn with no workspace context
+                # is byte-identical on the wire to one from before this change.
+                params["context"] = context
+            result = self._sup.call("session.prompt", params, timeout=timeout)
             status = str(result.get("status", "completed"))
         finally:
+            release_run_request_text(run_id)
             with self._lock:
                 self._answerers.pop(run_id, None)
                 self._runs.pop(run_id, None)
         return PromptResult(run_id=run_id, status=status, events=run.events, terminal=run.terminal)
+
+    def _admit_turn(self, run: _Run, answerer: AskUserAnswerer | None) -> None:
+        """Register a turn, or refuse it ``run_in_flight`` (``INTERFACE.md`` §7A.5).
+
+        Two conditions, one reason, told apart by ``scope``:
+
+        * ``run_id`` — **this run id is already live**, anywhere under the
+          runtime. Its request text is bound by run, so a second live turn on one
+          id is exactly "the binding cannot be honoured": one key, two requests.
+          Before this guard ``_runs[run_id]`` was silently overwritten and the
+          first turn's events were routed to the second turn's buffer.
+        * ``session`` — **this session already has a live turn.** Two interleaved
+          turns on one Pi JSONL is the condition §2.1's lease design exists to
+          prevent, and nothing refused it: ``manager.ts`` guards run-id
+          uniqueness only.
+
+        §7A.5 scoped the guard project-wide *until* §19.23 bound request text to
+        the run, "then narrows to per-session and ``run_in_flight`` keeps its
+        meaning — the scope changes, the vocabulary does not". §19.23 is this
+        change, so the session clause is per session: a part session and the
+        orchestrator may now think at the same time, which is what §7.1's nested
+        tabs render and what the interim restriction cost.
+
+        Not ``session_busy``: that means a foreign lease holder owns the session
+        (§2.1), a different fact with a different remedy.
+        """
+        with self._lock:
+            live = self._runs.get(run.run_id)
+            if live is not None:
+                raise RunInFlightError(live.session_id, live.run_id, scope="run_id")
+            for other in self._runs.values():
+                if other.session_id == run.session_id:
+                    raise RunInFlightError(other.session_id, other.run_id, scope="session")
+            self._runs[run.run_id] = run
+            self._bind_run_session(run.run_id, run.session_id)
+            if answerer is not None:
+                self._answerers[run.run_id] = answerer
 
     def _bind_run_session(self, run_id: str, session_id: str) -> None:
         """Remember which session a run belongs to (caller holds ``_lock``)."""

@@ -1,0 +1,100 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * The control recipe (INTERFACE.md §4.7, §3.10).
+ *
+ * `--border-control` appears in exactly one place in the whole system layer:
+ * here. §3.10 — "`--border-control` for every interactive control **and only**
+ * for interactive controls" — is the mechanical form of §3.3's principle 3, and
+ * it only holds if nothing else in `web/` spends the token. A readout
+ * (`Badge`, `Chip`) has a tinted fill and no border; a control has a control
+ * surface and this border. The two are then distinguishable without hovering,
+ * which is the principle stated as a test.
+ */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  /* §3.13.6: the floor is a hit area, reached by padding. */
+  min-height: var(--target-min);
+  padding: var(--pad-control);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  color: var(--ink-base);
+  background: var(--surface-control);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--dur-1) var(--ease),
+    color var(--dur-1) var(--ease),
+    border-color var(--dur-1) var(--ease);
+}
+
+.button:hover:not(:disabled) {
+  color: var(--ink-strong);
+  background: var(--surface-overlay);
+}
+
+.button:disabled {
+  color: var(--ink-muted);
+  cursor: default;
+}
+
+/* ---- variants ------------------------------------------------------------ */
+
+/* §4.7: at most one per surface. The system cannot enforce "one", but it can
+   make the loud thing the *action* rather than a view-cube face (§3.3.1). */
+.button[data-variant="primary"] {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.button[data-variant="primary"]:hover:not(:disabled) {
+  color: var(--accent-ink);
+  background: var(--focus-ring);
+  border-color: var(--focus-ring);
+}
+
+.button[data-variant="primary"]:disabled {
+  color: var(--ink-muted);
+  background: var(--surface-control);
+  border-color: var(--border-control);
+}
+
+/* A toolbar or row action: no resting fill, but it keeps the control border on
+   hover and focus so the affordance is never *absent*, only quiet. */
+.button[data-variant="quiet"] {
+  color: var(--ink-muted);
+  background: transparent;
+  border-color: transparent;
+}
+
+.button[data-variant="quiet"]:hover:not(:disabled) {
+  color: var(--ink-strong);
+  background: var(--surface-raised);
+  border-color: var(--border-control);
+}
+
+.button[data-variant="toggle"][aria-pressed="true"] {
+  color: var(--ink-strong);
+  background: var(--accent-quiet);
+  border-color: var(--accent);
+}
+
+/* ---- the disabled reason, for assistive technology ----------------------- */
+
+/* Not `display: none`: an `aria-describedby` target must be in the
+   accessibility tree. It is clipped instead, which is the same technique the
+   header's hidden `<Fact>` uses. */
+.reason {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

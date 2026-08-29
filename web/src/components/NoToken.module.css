@@ -8,39 +8,51 @@
   place-items: center;
   height: 100%;
   padding: var(--space-5);
+  background: var(--surface-app);
 }
 
 .card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-group);
   max-width: 56ch;
   padding: var(--space-5);
-  border: 1px solid var(--line-1);
-  border-radius: var(--radius-2);
-  background: var(--ground-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-card);
+  background: var(--surface-panel);
 }
 
+.icon {
+  color: var(--status-error-ink);
+}
+
+/* §3.8: `.display` is for the fatal and no-token screens only. This is one of
+   the two, and it is the only heading in the app above `.title`. */
 .title {
-  margin: 0 0 var(--space-3);
-  font-size: var(--size-xl);
-  font-weight: 600;
+  composes: display from "../system/type.module.css";
+  margin: 0;
+  color: var(--ink-strong);
 }
 
 .body {
-  margin: 0 0 var(--space-4);
-  color: var(--ink-1);
+  composes: body from "../system/type.module.css";
+  margin: 0;
+  color: var(--ink-base);
 }
 
 .command {
-  margin: 0 0 var(--space-3);
+  composes: code from "../system/type.module.css";
+  margin: 0;
   padding: var(--space-3);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-1);
-  background: var(--ground-0);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface-canvas);
   color: var(--accent);
   overflow-x: auto;
 }
 
 .hint {
+  composes: body from "../system/type.module.css";
   margin: 0;
-  color: var(--ink-3);
-  font-size: var(--size-sm);
+  color: var(--ink-muted);
 }

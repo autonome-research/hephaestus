@@ -16,7 +16,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from hephaestus.agent_bridge import cli as agent_cli
@@ -344,6 +344,53 @@ def test_answerer_prints_numbered_options() -> None:
     printed = out.getvalue()
     assert "[question] Stock?" in printed
     assert "1) 6 mm" in printed and "2) 12 mm" in printed
+
+
+# --------------------------------------------------------------------------
+# INTERFACE.md §7A.7 / §19.29 — one question, one answer value, two surfaces
+
+#: The shared subject. ``web/test/stream/ask.test.ts`` reads the same file and
+#: asserts the browser's ``answerValue`` against the same ``selection``, so a
+#: surface that drifts fails the *other* surface's suite.
+ANSWER_NAMESPACE = (
+    Path(__file__).resolve().parents[2]
+    / "tests"
+    / "stage4"
+    / "goldens"
+    / "ask"
+    / "answer_namespace.json"
+)
+
+
+def answer_namespace_cases() -> list[dict[str, Any]]:
+    document = json.loads(ANSWER_NAMESPACE.read_text(encoding="utf-8"))
+    return [dict(case) for case in cast("list[Any]", document["cases"])]
+
+
+@pytest.mark.parametrize("case", answer_namespace_cases(), ids=lambda c: str(c["name"]))
+def test_the_cli_answers_with_the_option_label_the_web_widget_sends(
+    case: dict[str, Any],
+) -> None:
+    """§7A.7: the answer value is the option's ``label``, on every surface.
+
+    Before §19.29 this surface flattened options with ``str(o)``, so an object
+    option — the ``{label, consequence}`` form ``_CLARIFICATION_OPTION`` requires
+    — reached the model as a Python **dict repr** while the browser sent the
+    label. Two clients answering one question handed the model two different
+    values, and a value like ``"{'label': 'Go to 3 mm walls', …}"`` is not one
+    ``ask_user``'s own schema admits.
+    """
+    out = io.StringIO()
+    answerer = agent_cli.interactive_answerer(
+        console_out=out, console_in=io.StringIO(f"{case['cli_input']}\n")
+    )
+    selection = answerer(dict(cast("dict[str, Any]", case["params"])))
+    assert selection == case["selection"]
+
+    rendered = out.getvalue()
+    assert "{'label'" not in rendered, "a Python repr must never be shown as an option either"
+    for line in cast("list[str]", case["cli_display"]):
+        assert line in rendered, "§7.3: an option is shown with its geometric consequence"
 
 
 # --------------------------------------------------------------------------

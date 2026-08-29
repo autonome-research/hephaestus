@@ -206,13 +206,25 @@ describe("the ask_user widget (§7.3)", () => {
     ]);
   });
 
-  it("disables every control and says which kind of disabled it is", () => {
+  // REPOINTED, and the amendment is §7A.7. This assertion used to read "not
+  // part of this build", which was true of the hardcoded `disabled` §7A.7 calls
+  // a **deviation** and closes. What survives unweakened — and is what the
+  // assertion was actually for — is that a disabled control still states its
+  // reason: §7A.7 keeps the reopened widget non-interactive *correctly* ("there
+  // is no pending question; the run is over") and requires it to keep its
+  // stated reason. So the control is still disabled, and the reason is now the
+  // named `reopened` one rather than a build-status apology.
+  it("disables every control in a reopened transcript and says which kind of disabled it is", () => {
     const document_ = renderRows(groupRows(historyItems));
     const options = [...document_.querySelectorAll("[data-ask-option]")];
     expect(options.every((node) => node.hasAttribute("disabled"))).toBe(true);
-    expect(document_.querySelector("[data-ask-disabled]")?.textContent ?? "").toContain(
-      "not part of this build",
-    );
+    // The archived question was answered, so the widget's *state* is `answered`
+    // — but `data-ask-unavailable` is a property of answerability, not of the
+    // lifecycle, so the reason the controls are dead survives the answer.
+    const ask = document_.querySelector("[data-ask-state]");
+    expect(ask?.getAttribute("data-ask-state")).toBe("answered");
+    expect(ask?.getAttribute("data-ask-unavailable")).toBe("reopened");
+    expect(ask?.textContent ?? "").toContain("Rebuilt from the recorded ask_user call");
   });
 
   it("is built from the live question, and marks who answered", () => {

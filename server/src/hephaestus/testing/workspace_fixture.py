@@ -48,6 +48,9 @@ from hephaestus.core.render.goldens import GoldenSpec
 from hephaestus.core.render.offscreen import DEFAULT_HEIGHT, DEFAULT_WIDTH
 
 __all__ = [
+    "CONTEXT_GOLDEN_CASES",
+    "CONTEXT_GOLDEN_DIR",
+    "CURRENT_BUILD_REF",
     "EVENT_ARCHIVE",
     "EVENT_ARCHIVE_PROVENANCE",
     "GATE_PARTS",
@@ -66,6 +69,7 @@ __all__ = [
     "materialize_workspace_fixture",
     "record_requirements",
     "record_transcript_edges",
+    "resolve_context_case",
     "stage4_goldens",
 ]
 
@@ -131,6 +135,58 @@ SECTION_GOLDEN_SPEC = GoldenSpec(
     width=DEFAULT_WIDTH,
     height=DEFAULT_HEIGHT,
 )
+
+
+#: §7A.3's golden family: the composed context block, one file per case.
+#:
+#: "Goldened at ``tests/stage4/goldens/context/<case>.txt`` **so a change to
+#: what the agent is told is a diff in a review rather than a change nobody can
+#: see**". The block is the one artefact in this system that reaches a model's
+#: context window without a human reading it first, which is the whole argument
+#: for a committed text file over a substring assertion.
+CONTEXT_GOLDEN_DIR = "context"
+
+#: The stand-in for "the ref the operator pinned". §7A.3's ``artifact_ref`` is a
+#: **server-minted id the client echoes back**, so neither the test nor the
+#: rebaseline script may spell one: a hash typed into either would be a second
+#: copy of a value the store owns, rotting the first time the fixture changed.
+#: :func:`resolve_context_case` substitutes the fixture's own current build ref,
+#: which is what a browser holding a pin actually sends.
+CURRENT_BUILD_REF = "@current_build_ref"
+
+#: One case per committed golden: ``(name, envelope)``.
+#:
+#: The envelopes are the **client's** side of §7A.3 — every member either §4.5
+#: workspace state or a server-minted id echoed back — written exactly as a
+#: browser would send them, so each golden is a diff of what a real workspace
+#: state produces. They live here rather than in the test module because the
+#: rebaseline script reads the same table: one definition of "the cases", so a
+#: case added to one cannot go missing from the other.
+CONTEXT_GOLDEN_CASES: tuple[tuple[str, dict[str, Any]], ...] = (
+    ("part_only", {"part": SUBJECT_PART}),
+    (
+        "pinned_workspace",
+        {
+            "part": SUBJECT_PART,
+            "artifact_ref": CURRENT_BUILD_REF,
+            "pin_mode": "pinned",
+            "stage_tab": "viewport",
+            "inspector_tab": "checks",
+            "view": "iso",
+            "explode_t": 0.5,
+            "section_plane": SECTION_PLANE,
+            "hidden_labels": ["cleat_left"],
+            "focus": "geometry:tread_plate",
+        },
+    ),
+)
+
+
+def resolve_context_case(envelope: dict[str, Any], build_ref: str) -> dict[str, Any]:
+    """:data:`CURRENT_BUILD_REF` → the ref the store actually minted."""
+    if envelope.get("artifact_ref") != CURRENT_BUILD_REF:
+        return envelope
+    return {**envelope, "artifact_ref": build_ref}
 
 
 @dataclass(frozen=True, slots=True)

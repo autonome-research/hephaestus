@@ -213,7 +213,8 @@ class AdmissionControl:
 
     def occupied_run_ids(self) -> frozenset[str]:
         """Run ids occupying a slot: union of nonterminal and terminal-unacked ids."""
-        rows = self._db.conn.execute(_OCCUPIED_SQL).fetchall()
+        with self._db.reading() as conn:
+            rows = conn.execute(_OCCUPIED_SQL).fetchall()
         return frozenset(str(row["run_id"]) for row in rows)
 
     def active_count(self) -> int:

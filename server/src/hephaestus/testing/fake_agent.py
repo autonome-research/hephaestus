@@ -31,6 +31,7 @@ from typing import Any, Final
 
 from hephaestus.agent_bridge.app import PromptResult
 from hephaestus.agent_bridge.events import EventPump, HephaestusEvent, ObserverClient
+from hephaestus.agent_bridge.supervisor import SupervisorError
 from opstore.admission import AdmissionControl
 
 __all__ = ["HISTORY_PAGE_SIZE", "FakeAgent", "decode_cursor", "encode_cursor"]
@@ -78,8 +79,36 @@ class FakeAgent:
         #: assert the route forwarded it byte-for-byte.
         self.seen_cursors: list[str | None] = []
         self.cancelled: list[str] = []
+        #: Every ``(text, context)`` pair this backend was prompted with, in
+        #: order. §7A.4's invariant is **about the split**, so a test that could
+        #: only see the joined string could not tell a compliant caller from one
+        #: that prepended the block — this records the two halves as the route
+        #: passed them.
+        self.prompts: list[tuple[str, str | None]] = []
         self.rebinds = 0
         self.closed = False
+        # -- §23 credential state ------------------------------------------
+        #: What a signed-in provider holds, keyed by provider id. The literal
+        #: key is retained on purpose: the §23.14 item 12 leak test needs a
+        #: double that *has* a secret, or a read side that started echoing one
+        #: would still pass.
+        self.credentials: dict[str, dict[str, str]] = {}
+        #: Live login flows, in the sidecar's own projection shape.
+        self.flows: dict[str, dict[str, Any]] = {}
+        #: Pi's built-in catalog, as ``providers.list`` reports it.
+        self.catalog: list[dict[str, Any]] = []
+        #: §23.7's per-provider verification from the last configure.
+        self.verified: list[dict[str, Any]] = []
+        #: Run ids the ``runs_in_flight`` refusal should name.
+        self.live_runs: list[str] = []
+        #: Every ``restart(reason=…)`` this backend was asked for, in order.
+        self.restarts: list[str] = []
+        #: Every ``login_complete`` paste, so a leak grep can see where it went.
+        self.completions: list[tuple[str, str]] = []
+        #: §23.8's axis 2 per provider: ``{"health": …, "at": …}``. Written by a
+        #: test standing in for a turn that actually reached the provider.
+        self.observed: dict[str, dict[str, Any]] = {}
+        self._credential_failure: tuple[str, int] | None = None
 
     # -- sessions ----------------------------------------------------------
 
@@ -115,6 +144,7 @@ class FakeAgent:
         text: str,
         *,
         run_id: str | None = None,
+        context: str | None = None,
         answerer: Callable[[dict[str, Any]], Any] | None = None,
         on_event: Callable[[dict[str, Any]], None] | None = None,
         timeout: float | None = None,
@@ -122,6 +152,7 @@ class FakeAgent:
         run = run_id or self.new_run_id()
         with self._lock:
             self._run_sessions[run] = session_id
+            self.prompts.append((text, context))
         script = self.on_prompt
         if script is not None:
             script(self, session_id, run, text, answerer)
@@ -219,6 +250,147 @@ class FakeAgent:
         ]
         self.history[session_id] = events
         return events
+
+    # -- credentials (§23), satisfying ``http.agent_credentials.CredentialBackend``
+    #
+    # A scripted Pi, not a reimplemented one. What it doubles is the *store*: a
+    # dict where ``AuthStorage`` would be, and a flow object where Pi's login
+    # conversation would be. What it does NOT double is the shape of anything
+    # that crosses the bridge — the projections below are the sidecar's own,
+    # field for field, so a route asserted against this double is asserted
+    # against the wire the real sidecar speaks.
+    #
+    # **The double holds a secret and the tests rely on that.** §23.14 item 12's
+    # leak test signs in with a sentinel literal and greps for it; a double that
+    # discarded the key could not fail that test if the read side started
+    # echoing one.
+
+    def credential_failure(self, code: str, http_status: int) -> None:
+        """Script the next credential relay to refuse with a named code."""
+        self._credential_failure = (code, http_status)
+
+    def _maybe_fail(self) -> None:
+        failure = self._credential_failure
+        if failure is None:
+            return
+        self._credential_failure = None
+        code, http_status = failure
+        raise SupervisorError(
+            f"scripted credential refusal: {code}",
+            error={
+                "code": -32600,
+                "message": code,
+                "data": {"code": code, "http_status": http_status},
+            },
+        )
+
+    def provider_catalog(self) -> dict[str, Any]:
+        self._maybe_fail()
+        return {"catalog": list(self.catalog), "verified": self.provider_status()}
+
+    def provider_status(self) -> list[dict[str, Any]]:
+        return [dict(row) for row in self.verified]
+
+    def credential_status(self, provider_id: str) -> dict[str, Any]:
+        self._maybe_fail()
+        held = self.credentials.get(provider_id)
+        observed = self.observed.get(provider_id)
+        return {
+            "provider_id": provider_id,
+            "state": "none" if held is None else held["scope"],
+            # §23.8's axis 2, and it is a MEMORY of a turn rather than a probe:
+            # the double never asks a provider anything either, so a test that
+            # sees a health here saw one a scripted turn recorded.
+            "health": "unused" if observed is None else observed["health"],
+            "last_observed_at": None if observed is None else observed["at"],
+            "configured": held is not None,
+            **({} if held is None else {"type": "api_key"}),
+            **({} if provider_id not in self.flows else {"flow": dict(self.flows[provider_id])}),
+        }
+
+    def set_api_key(self, provider_id: str, key: str, *, scope: str) -> dict[str, Any]:
+        self._maybe_fail()
+        previous = self.credentials.get(provider_id)
+        self.credentials[provider_id] = {"key": key, "scope": scope}
+        return {
+            "ok": True,
+            "provider_id": provider_id,
+            "scope": scope,
+            "replaced": "none" if previous is None else str(previous["scope"]),
+        }
+
+    def sign_out(self, provider_id: str) -> dict[str, Any]:
+        self._maybe_fail()
+        self.credentials.pop(provider_id, None)
+        self.flows.pop(provider_id, None)
+        return {"ok": True, "provider_id": provider_id, "state": "none"}
+
+    def login_begin(self, provider_id: str, flow_type: str) -> dict[str, Any]:
+        self._maybe_fail()
+        live = self.flows.get(provider_id)
+        if live is not None and str(live.get("state")) not in {"complete", "failed", "cancelled"}:
+            raise SupervisorError(
+                "login_already_in_progress",
+                error={
+                    "code": -32600,
+                    "message": "login_already_in_progress",
+                    "data": {"code": "login_already_in_progress", "http_status": 409},
+                },
+            )
+        flow: dict[str, Any] = {"provider_id": provider_id, "type": flow_type}
+        if flow_type == "device_code":
+            flow.update(
+                state="authorization_pending",
+                user_code="HEPH-TEST",
+                verification_uri="https://provider.example/device",
+                interval_seconds=5,
+                expires_at=2_000_000_000,
+            )
+        else:
+            flow.update(
+                state="awaiting_input",
+                authorize_url="https://provider.example/authorize?state=opaque",
+                expires_at=2_000_000_000,
+            )
+        self.flows[provider_id] = flow
+        return dict(flow)
+
+    def login_status(self, provider_id: str) -> dict[str, Any]:
+        self._maybe_fail()
+        flow = self.flows.get(provider_id)
+        return {"ok": True, "flow": None if flow is None else dict(flow)}
+
+    def login_complete(self, provider_id: str, text: str) -> dict[str, Any]:
+        self._maybe_fail()
+        flow = self.flows.get(provider_id)
+        if flow is None:
+            raise SupervisorError(
+                "authorization_expired",
+                error={
+                    "code": -32600,
+                    "message": "authorization_expired",
+                    "data": {"code": "authorization_expired", "http_status": 409},
+                },
+            )
+        # The double verifies nothing about the paste: Pi does that, and a
+        # double that re-implemented `state` verification would be testing the
+        # double. It records the text so a leak grep can see it never escaped.
+        self.completions.append((provider_id, text))
+        flow["state"] = "complete"
+        self.credentials[provider_id] = {"key": "oauth-token-held-by-pi", "scope": "project"}
+        return dict(flow)
+
+    def login_cancel(self, provider_id: str) -> dict[str, Any]:
+        flow = self.flows.get(provider_id)
+        if flow is not None:
+            flow["state"] = "cancelled"
+        return {"ok": True, "flow": None if flow is None else dict(flow)}
+
+    def live_run_ids(self) -> list[str]:
+        return list(self.live_runs)
+
+    def restart(self, *, reason: str = "manual") -> None:
+        self.restarts.append(reason)
 
     # -- the rest of the protocol -----------------------------------------
 

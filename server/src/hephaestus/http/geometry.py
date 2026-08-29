@@ -67,6 +67,18 @@ def gltf_for_ref(runtime: WorkspaceRuntime, ref: str) -> PublishedGltf:
             f"artifact kind {kind!r} is not served by this route",
             data={"kind": kind, "served": sorted(GLTF_ROUTE_KINDS)},
         )
+    # NOT YET BOUND TO THE BLOB, and said out loud rather than left to be
+    # discovered. §19.24 binds the kind for the two routes §2.6's CORRECTION
+    # names (`/bytes` and `/text`, through `artifacts._blob`); this enumeration
+    # still reads the caller's label alone, so a `build`-labelled export blob is
+    # tessellated here and returned as geometry. The scope is narrower than the
+    # bytes hole — what comes back is a mesh of the operator's own model, not the
+    # stored bytes — and closing it is a **separate** change, because
+    # `test_http_gltf.py::test_a_build_checkpoint_ref_mints_a_linked_glb_without_a_part`
+    # addresses a checkpoint by re-kinding a build blob ("the hash is the whole
+    # identity") and would have to publish a genuinely failed build first. That
+    # test is evidence for §5.1, not for §19.24, and repointing it is not this
+    # correction's to make.
     try:
         if kind == GLTF_KIND:
             return runtime.cad.linked_gltf(ref)

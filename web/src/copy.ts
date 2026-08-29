@@ -51,6 +51,13 @@ export const copy = {
     pinnedBanner:
       "Showing a held artifact, not the current build. Every panel below reports against this artifact.",
     unpinned: "Following the current build",
+    /**
+     * §4.7: "Disabled requires a `reason` prop… a disabled control in this app
+     * must always be able to say why." There is nothing to hold until a build
+     * has named an artifact, and the control says that rather than sitting inert.
+     */
+    holdUnavailable:
+      "There is no artifact to hold: this part has no build whose artifact the workspace could pin.",
   },
 
   /** §4.5 `pin_mode`, and the §4.1 build-state chip. */
@@ -58,8 +65,15 @@ export const copy = {
     current: "current",
     pinned: "held",
   },
+  /**
+   * §4.1's COPY DEFECT, fixed. `pinMode.current` and `buildState.current` were
+   * two different closed vocabularies that both spelled "current", rendered in
+   * two chip styles ~600px apart on two different axes — pin freshness versus
+   * build state. The build-state vocabulary now says "up to date"; the pin
+   * vocabulary keeps "current". Two axes, two words.
+   */
   buildState: {
-    current: "current",
+    current: "up to date",
     preview: "preview",
     stale: "stale",
     failed: "failed",
@@ -68,16 +82,34 @@ export const copy = {
 
   rail: {
     title: "Project",
+    /** §4.1(b): the rail overlay's toggle and its close control. */
+    open: "Show the project rail",
+    close: "Hide the project rail",
     partsHeading: "Parts",
     /** §13.1: the rail shows the git axis; the header shows the artifact axis. */
     gitHeading: "Working tree",
     versionsHeading: "Versions",
+    /**
+     * §4.7's EmptyState: a heading and prose, not a lone grey sentence. Every
+     * absence in this workspace is a composed state with a shape.
+     */
+    partsEmptyTitle: "No parts",
     partsEmpty: "This project declares no parts.",
+    versionsEmptyTitle: "No history",
     versionsEmpty: "No commits touch this part yet.",
+    versionsNoPartTitle: "No part selected",
     versionsNoPart: "Select a part to see its history.",
+    /**
+     * §4.7's second EmptyState rule: a shared cause is detected once. This
+     * heading covers BOTH rail sections, which is why it names the pair rather
+     * than the section it happens to be printed in.
+     */
+    gitAbsentTitle: "No working tree or history",
     cleanTree: "Working tree clean",
     dirtyCount: (n: number): string => (n === 1 ? "1 changed path" : `${n} changed paths`),
     dirtyMarkerLabel: "changed in the working tree",
+    /** §13.1's Script-tab marker, as a word beside the icon (§3.13.2). */
+    dirtyShort: "changed",
     dirtyOutsideParts: "Changed paths outside parts/",
     /** §13.2: the read-only list of tags that exist on this repository. */
     tagsHeading: "Tags",
@@ -101,18 +133,34 @@ export const copy = {
   },
 
   stage: {
+    tabsLabel: "Stage view",
     tabs: {
       viewport: "Viewport",
       script: "Script",
       diff: "Diff",
     },
+    diffPendingTitle: "Diff is not in this build",
     diffPending: "Per-part diff lands with the versions panel's compare action.",
+    selectPartTitle: "No part selected",
     selectPart: "Select a part in the rail.",
   },
 
   /** §5. The viewport, its two overlays, and every named absence it can reach. */
   viewport: {
     label: "Geometry",
+    /**
+     * §3.3's principle 5: every viewport state is a composed state with a
+     * heading of its own. The sentences are unchanged; what they gained is a
+     * title, an icon, and an ink that clears the legibility floor.
+     */
+    absenceTitle: {
+      "no-pin": "No artifact pinned",
+      loading: "Loading geometry",
+      stale: "Showing the previous artifact",
+      refused: "Geometry refused",
+      "no-webgl": "No WebGL context",
+      empty: "Nothing to draw",
+    },
     loading: "Loading geometry…",
     noPin: "No artifact is pinned, so there is no geometry to show.",
     /**
@@ -133,16 +181,39 @@ export const copy = {
       "This browser did not give the page a WebGL context, so the geometry cannot be drawn here. " +
       "Rendered images from the server are still available through the inspector.",
     empty: "This build has no solids to draw.",
+    /** The same six sentences, keyed by the state the viewport reports. */
+    absence: {
+      "no-pin": "No artifact is pinned, so there is no geometry to show.",
+      loading: "Loading geometry…",
+      stale:
+        "Loading the newly pinned artifact. Until it arrives this is the last artifact that finished loading, not the one named in the header.",
+      refused: "The server did not serve geometry for this artifact.",
+      "no-webgl":
+        "This browser did not give the page a WebGL context, so the geometry cannot be drawn here. " +
+        "Rendered images from the server are still available through the inspector.",
+      empty: "This build has no solids to draw.",
+    },
     /** §5.5: a screen-space readout, never a measurement, never a <Fact>. */
     readout: {
       view: "View",
       scale: "Scale",
+      /** §3.11.5: the readout finally describes something visible. */
+      grid: "Grid",
       /** The camera's half-height in model units per the axis label beside it. */
       units: "mm",
-      hidden: (n: number): string => (n === 1 ? "1 solid hidden" : `${n} solids hidden`),
+    },
+    /**
+     * §3.11.6's axis triad. The letters are the whole vocabulary: the triad
+     * distinguishes its axes by letter rather than by hue, because §3.9 spends
+     * hue on status and in that vocabulary red already means `fail`.
+     */
+    triad: {
+      label: "Axis orientation",
+      axis: { x: "X", y: "Y", z: "Z" },
     },
     viewCube: {
       label: "Standard views",
+      namedLabel: "Named views",
       free: "Free orbit",
       /** §5.5: an orbited camera is still nameable, and the name is shown. */
       freeExplain:
@@ -154,6 +225,8 @@ export const copy = {
       explain:
         "Each solid moves along the displacement the server published for it. The slider scales that displacement; nothing here computes a distance.",
       reset: "Collapse",
+      /** §4.7: a disabled control always says why. */
+      resetDisabled: "The assembly is already collapsed.",
     },
     section: {
       label: "Section",
@@ -163,6 +236,8 @@ export const copy = {
       side: "Remove",
       offset: "Position",
       render: "Render section",
+      renderDisabled: "A plate for this plane has already been asked for.",
+      renderingTitle: "Rendering",
       rendering: "Rendering…",
       /** §5.3, said in the interface and not only in the spec. */
       previewLabel: "Live preview — not an evidentiary render",
@@ -171,6 +246,7 @@ export const copy = {
       plateLabel: "Server-rendered plate",
       plateFrom: "Rendered from",
       plateAbsent: "No plate has been rendered for this plane yet.",
+      plateRefusedTitle: "No plate for this plane",
       plateRefused: "The server did not produce a section render for this plane.",
     },
   },
@@ -193,14 +269,19 @@ export const copy = {
   },
 
   inspector: {
+    /** §4.1(c): the drawer's height is explicit and the handle resizes it. */
+    resize: "Resize the inspector",
+    tabsLabel: "Inspector",
     tabs: {
       results: "Results",
       properties: "Properties",
       provenance: "Provenance",
       checks: "Checks",
       dfm: "DFM",
+      export: "Export",
     },
     pending: "This panel is not part of this build of the workspace yet.",
+    noPartTitle: "No part selected",
     selectPart: "Select a part in the rail to inspect it.",
   },
 
@@ -209,6 +290,11 @@ export const copy = {
     heading: "Geometry",
     count: "geometries",
     solids: "solids",
+    /** §4.7's EmptyState: an absence is a composed state with a heading. */
+    notBuiltTitle: "Not built",
+    failedTitle: "Build failed",
+    /** The group marker, as a word rather than as a sentence in a chip. */
+    group: "group",
     notBuilt:
       "This part has no current build, so there is no build result to report. Nothing is being hidden.",
     failed: "The last build of this part failed. The geometry list below is empty for that reason.",
@@ -217,6 +303,13 @@ export const copy = {
     show: "Show in the viewport",
     hide: "Hide in the viewport",
     hidden: "hidden",
+    /**
+     * The count of this part's hidden entries, beside the toggles that produce
+     * it. It used to live in the viewport's grid readout, which §5.5 defines as
+     * "camera state and scale" — and where it also put chrome pixels into
+     * G4.5's control region. See `GridReadout.tsx` for the measurement.
+     */
+    hiddenCount: (n: number): string => (n === 1 ? "1 hidden" : `${String(n)} hidden`),
     hiddenNote:
       "Hiding removes the entry's meshes from the viewport scene graph. It changes nothing about the build result, and the numbers below are unaffected.",
     groupNote:
@@ -246,7 +339,10 @@ export const copy = {
     },
     boundTo: "Evaluated with artifact",
     unbound: "No current build; these values were parsed from the script text.",
+    emptyTitle: "No metadata declared",
     empty: "This part declares none of the manufacturing metadata fields.",
+    undeclaredHeading: "Not declared",
+    sourceLabel: "Source",
   },
 
   /** §6.3: the client never runs checks; it renders the report's own verdicts. */
@@ -255,6 +351,7 @@ export const copy = {
     measured: "measured",
     bundle: "Check bundle",
     generation: "Generation",
+    emptyTitle: "No checks",
     empty: "This project's check set declares no checks.",
     badge: {
       pass: "pass",
@@ -277,6 +374,10 @@ export const copy = {
   /** §6.4: findings, descriptors, and the two DFM controls kept apart. */
   dfm: {
     heading: "Manufacturability findings",
+    absentTitle: "Not evaluated",
+    capabilityTitle: "No secure executor",
+    cleanTitle: "No findings",
+    descriptorPendingTitle: "Address only",
     absent:
       "No design-for-manufacture evaluation has been recorded for this part. That is not a clean result — it is the absence of one.",
     autoRun: "Automatic evaluation after each build",
@@ -311,9 +412,125 @@ export const copy = {
       "This server has no secure executor, so design-for-manufacture rules cannot run at all. Nothing has been evaluated, and nothing about this part's manufacturability is known.",
   },
 
+  /**
+   * §22 — egress. The only Inspector tab containing a control that **writes**,
+   * so its copy has two jobs the others do not: state the subject before the
+   * controls, and name the retention every click creates.
+   */
+  export: {
+    heading: "Take this geometry out",
+    /** §22.7's TIGHTENING: the subject line, above any format button. */
+    subjectHeading: "Exporting",
+    pinned: "Artifact",
+    pinMode: { current: "following the current build", pinned: "held" },
+    part: "Part",
+    subjectNote:
+      "Every file below is made from this artifact, not from whatever the current build happens to be when you click.",
+
+    subjectKinds: { export: "Model or cut file", drawing: "Drawing", doc: "Document" },
+    /**
+     * The option TEXT of every picker that names an engine value is that enum
+     * value verbatim — `step`, `nested_sheet`, `bom` — and is not translated
+     * here. (The one picker that is not an engine enum is the subject chooser,
+     * whose values name which of §22.3's three routes a submission is for; its
+     * labels are `subjectKinds` above.)
+     * §22.1: "The engine's enum **is** the closed vocabulary and the client
+     * renders it… never from a list of its own." A friendly-name map would be a
+     * second vocabulary that has to be kept in step with the first, and the word
+     * an operator picks would then differ from the word the export history, the
+     * `paths` and the agent transcript all print. What follows is therefore only
+     * the *labels of the controls*, never the values inside them.
+     */
+    format: "Format",
+    layout: "Layout",
+    layoutNote:
+      "Layout applies to flat cut files only, so it is offered for DXF and SVG and nowhere else.",
+    blank: "Blank",
+    blankWidth: "Width (mm)",
+    blankHeight: "Height (mm)",
+    drawingKind: "Drawing",
+    sheet: "Sheet",
+    docKind: "Document",
+    /** §22.7: two steps, not one — two routes with two failure modes. */
+    run: "Export",
+    running: "Exporting…",
+    download: "Download",
+    downloading: "Downloading…",
+    twoSteps:
+      "Export writes the file and records it. Download fetches the bytes. They are separate because they fail differently.",
+
+    /** §22.1: the panel displays the resolved kerf; it never offers to set one. */
+    kerfHeading: "Kerf",
+    kerfApplied: "Applied",
+    kerfSource: "Resolved from",
+    kerfProcess: "Process",
+    kerfSources: {
+      dfm: "the process rule pack",
+      explicit: "an explicit value",
+      none: "nothing — this file is nominal",
+    },
+    kerfUncompensated:
+      "No kerf was applied, so this cut file is nominal. The file is correct; a machine cutting it will remove material the path does not account for.",
+    kerfNotBrowser:
+      "Kerf comes from the process rule pack and is not set here. A per-click override would be recorded nowhere a second person would read it.",
+
+    /** §22.6's retention, as designed copy rather than an omission. */
+    historyHeading: "Exported from this part",
+    historyEmpty: "Nothing has been exported from this part.",
+    historyTotal: "Kept on disk",
+    retention:
+      "Exports are kept until they are unpinned from the command line. This workspace does not delete them.",
+    retentionWhy:
+      "Each exported file is kept, and so is the build it came from — which is what lets an old artifact be re-exported and its provenance still resolve.",
+    source: "Made from",
+    recordedPath: "Written to",
+
+    /** §22.7's refusal table. Each is a designed state, not an error toast. */
+    refusalHeading: "This cannot be exported",
+    refusals: {
+      invalid_source:
+        "The held artifact is not a successful build's geometry, so there is nothing frozen to export.",
+      addressing_error:
+        "This part has no successful build to export. Build it, then hold the artifact you want.",
+      blank_unknown:
+        "Nesting needs a sheet size, and this part does not declare one that can be read without building it. Give a width and height below.",
+      target_exists:
+        "This exact file has already been exported from this artifact with these options, and files are never overwritten. Download the existing one below.",
+      key_payload_mismatch:
+        "This export was already run with different options. Change something, or download the file the first run produced.",
+      export_too_large:
+        "This file is too large for the browser to hold in memory. It is on disk in the project — fetch it from a terminal.",
+      unknown_export:
+        "The workspace has no committed record of this file, so it will not serve its bytes.",
+      capability_not_available:
+        "This server has no secure executor, so no geometry can be produced at all.",
+      /**
+       * §22.7's last table row, reachable since §19.40 wired the store's
+       * admission guard into the build and export paths. It has to be named:
+       * §22.6 calls "your builds stopped working because you downloaded too
+       * much" the most confusing failure this section can produce, and the
+       * generic `run_failed` below is exactly that failure with its cause
+       * hidden. The remedy is a command, so the sentence is the command.
+       */
+      protected_quota_exceeded:
+        "This project's kept files already exceed its storage quota, so nothing new can be produced until some of it is released. Run 'heph export list' to see what is held, and 'heph export unpin BLOB' to release one — it deletes nothing.",
+      run_failed: "The export did not complete.",
+    },
+    /** §22.7: a stale part is not a refusal — the pin is exported and says so. */
+    staleNote:
+      "This part's script has moved on since this artifact was built. That is not a reason to refuse: the artifact is a real, complete build, and it is what will be exported.",
+    noPin:
+      "There is no held artifact to export. Select a part with a build, or hold an artifact in the header.",
+    noPart: "Select a part to export from it.",
+    tooLarge: "Too large to download here",
+    downloadRefused: "The bytes could not be fetched",
+  },
+
   /** §4.3's spine and §4.4's three shapes, each a designed state. */
   provenance: {
     heading: "Selection provenance",
+    absentTitle: "Nothing selected",
+    addressHeading: "Artifact-bound address",
     absent:
       "Nothing is selected. Provenance answers are produced by the server from a selection; the workspace never infers one.",
     unreachable:
@@ -384,10 +601,13 @@ export const copy = {
     },
 
     /** §2.4's `agent_unavailable`, said in words rather than as an empty panel. */
+    noAgentTitle: "No runtime attached",
     noAgent:
       "This server has no agent runtime attached, so it has no sessions to show. Start it with a provider configuration to create or attach one.",
+    noSessionsTitle: "No sessions",
     noSessions: "No sessions are attached to this server.",
     sessionsHeading: "Sessions",
+    selectSessionTitle: "No session selected",
     selectSession: "Select a session to see its transcript.",
 
     /** §7.1's tab list; the profile and edge words are the server's own. */
@@ -486,20 +706,13 @@ export const copy = {
         "This run was stopped because a client attached to it could not keep up with its events, not because the model or a tool failed.",
     },
 
-    /** §7.3's AskUserWidget. Answering is not part of this build (see below). */
+    /** §7.3 / §7A.7's AskUserWidget — the one place this workspace answers. */
     ask: {
       title: "Question for you",
       question: "Question",
       options: "Options",
       noOptions: "This question recorded no options.",
       consequenceMissing: "No consequence was recorded for this option.",
-      /**
-       * §7.3 has the widget post `POST /sessions/{id}/answer`, first answer
-       * wins. That path is Stage 5 work here, so the widget renders the question
-       * and disables its controls **and says which of the two it is**: an
-       * unanswerable question with no explanation reads as a broken control.
-       */
-      disabled: "Answering from this page is not part of this build of the workspace.",
       answeredSelf: "Answered from this page.",
       answeredOther: "Answered from another client first.",
       answer: "Answer",
@@ -507,6 +720,46 @@ export const copy = {
       /** §7.3: a reopened widget is rebuilt from the call and result, not the events. */
       fromToolResult:
         "Rebuilt from the recorded ask_user call and its result. The live question and answer events are not part of a reopened transcript.",
+
+      /** §7A.7's affordance, named for the operator rather than implied. */
+      freeTextLabel: "Or answer in your own words",
+      freeTextPlaceholder: "Your answer",
+      submit: "Send answer",
+      submitMulti: "Send selected answers",
+      sending: "Sending your answer…",
+      multiHint: "Choose every option that applies, then send.",
+      /**
+       * §4.7's disabled-reason rule, for the three states that turn a control
+       * off without the widget already printing a sentence about it.
+       */
+      chooseFirst: "Choose at least one option before sending.",
+      typeFirst: "Type an answer before sending.",
+      answeredAlready: "This question has already been answered.",
+      /**
+       * §7A.7: `404 unknown_question` is a first-class rendered state, in place
+       * and not in a toast. The route cannot tell the three apart, so neither
+       * does this sentence — claiming "someone answered first" would state a
+       * fact the server did not give us.
+       */
+      abandoned:
+        "This question is no longer open. It was answered elsewhere, abandoned with its run, or never reached this server.",
+      /** A named refusal from §2.4's envelope, rendered as itself (§4.4). */
+      failed: "The server refused this answer:",
+      /**
+       * The four reasons a widget cannot be answered from this page, each said
+       * out loud: a disabled control with no explanation is indistinguishable
+       * from a broken one.
+       */
+      unavailable: {
+        reopened:
+          "This is a reopened transcript. The run that asked has ended, so there is no question left to answer.",
+        no_question_id:
+          "This question carries no question id, so no client can address an answer to it. It was raised by a sidecar older than the id.",
+        no_session:
+          "This event carries no session id — the run's session binding has been evicted — so an answer cannot be routed to the run that asked.",
+        no_answer_shape:
+          "This question offers no options and does not allow free text, so it admits no answer this page could give.",
+      },
     },
   },
 
@@ -516,6 +769,298 @@ export const copy = {
     noGit: "This project is not inside a git work tree, so there is no history to show.",
     gitUnavailable: "git is not available to the server, so the working tree cannot be read.",
     loading: "Loading…",
+  },
+
+  /**
+   * §7A — the composer. The surface that **speaks**.
+   *
+   * §7A.8's argument for why a disabled composer is right and its silence was
+   * wrong governs half of these strings: "a state that exists for a reason
+   * reads as designed; the same state with its content missing reads as a bug"
+   * (§4.4). Every disabled state below therefore has a reason, and every reason
+   * says what to do next.
+   */
+  composer: {
+    label: "Message the agent",
+    placeholder: "Ask the agent about this, or tell it what to change.",
+    send: "Send",
+    sending: "Sending…",
+    cancel: "Cancel the run",
+
+    /**
+     * §7A.5's TIGHTENING: the composer never retries a prompt automatically.
+     * "An auto-retry over an at-least-once route is a duplicate-turn generator
+     * with a spinner on it." So the failure state hands the operator their own
+     * words back and tells them where the truth is.
+     */
+    sendUnknownTitle: "This turn may have started",
+    sendUnknown:
+      "The request to start this turn did not come back. It may have started anyway, so it is not sent again automatically — your text is still here, and the transcript above is the authority for what actually ran.",
+    retry: "Send again",
+
+    /** §7A.5's named limit: cancel is unavailable until a run id arrives. */
+    cancelNoRun:
+      "This turn has not reported a run id yet. Cancelling needs one, and it arrives with the first event of the run.",
+    cancelNoStream:
+      "This page is not attached to the event stream, so it has no way to learn this run's id. Cancelling needs one.",
+    cancelIdle: "There is no turn running to cancel.",
+    cancelled: (questions: number): string =>
+      questions === 0
+        ? "Cancelled."
+        : questions === 1
+          ? "Cancelled. One pending question was released."
+          : `Cancelled. ${questions} pending questions were released.`,
+
+    /**
+     * §7A.10's closed `data-disabled-reason` vocabulary, one sentence each.
+     * `agent_unavailable` is the long one on purpose (§7A.8): it is the state
+     * that produced a product review finding, and silence is what produced it.
+     */
+    disabled: {
+      agent_unavailable:
+        "This server has no agent runtime attached, so there is nobody to send this to.",
+      run_in_flight:
+        "A turn is already running. Wait for it to finish, or cancel it, before starting another.",
+      no_session: "No session is selected, so this message has nowhere to go.",
+    },
+    runInFlightHolder: (sessionId: string): string => `The live run belongs to session ${sessionId}.`,
+
+    /**
+     * §7A.8's cause vocabulary, rendered where the operator can act on it.
+     * The `config_path` comes from the server and is printed beside these —
+     * §7A.8: "the disabled composer **names the file the server looked for and
+     * does not offer to write it**, because until §23 lands there is nothing
+     * behind such an offer but a text editor."
+     */
+    attachCause: {
+      no_provider_config: "No provider configuration was found at:",
+      provider_config_invalid: "The provider configuration could not be read:",
+      node_missing: "Node is not installed, and the agent runtime needs it.",
+      node_too_old: "The installed Node is older than the agent runtime needs.",
+      sidecar_failed: "The agent runtime failed to start.",
+      auth_link_refused: "The configured credential could not be linked.",
+      detached: "The agent runtime was detached from this server.",
+    },
+    attachHow:
+      "Write a provider configuration at that path and restart the server, or run `heph agent` once to create one. This page does not write credential files.",
+    attachRetry: "Attach a runtime",
+    attachFailed: "Attaching a runtime failed.",
+
+    /** §7A.3's chip row: the references this turn will carry, each droppable. */
+    contextHeading: "This message will carry",
+    contextDrop: (label: string): string => `Do not send ${label}`,
+    contextNone:
+      "This message carries no workspace references. The agent is told nothing about what is on this page.",
+    contextKey: {
+      part: "part",
+      artifact_ref: "artifact",
+      pin_mode: "pin",
+      stage_tab: "stage tab",
+      inspector_tab: "inspector tab",
+      view: "view",
+      explode_t: "explode t",
+      section_plane: "section",
+      hidden_labels: "hidden",
+      selection: "selection",
+      focus: "focus",
+    },
+    hiddenCount: (n: number): string => (n === 1 ? "1 label hidden" : `${n} labels hidden`),
+    /** §7A.3's disclosure: what the agent will actually be told. */
+    disclose: "What will the agent be told?",
+    discloseHide: "Hide what the agent will be told",
+    discloseAdvisory:
+      "A preview. The message is composed again when it is sent, so what the agent receives is the version echoed back on the turn — not this one.",
+    discloseTruncated:
+      "This is longer than one context block may be, so it was cut. The agent is told that it was cut.",
+    discloseEmpty: "Nothing. The agent is told only what you type.",
+    discloseFailed: "The preview could not be composed.",
+
+    /**
+     * §7A.2's create affordances. Two, both explicit, and the profile is shown
+     * before it is used — "a user who does not know their session cannot
+     * delegate reads `scope_denied` as a broken product".
+     */
+    createOrchestrator: "New session",
+    createPart: (part: string): string => `Ask about ${part}`,
+    createTitle: "No session yet",
+    /**
+     * §7A.2's "where a part comes from, said out loud". The parts-empty state's
+     * action creates an orchestrator session and focuses the composer, and the
+     * copy names `create_part` as the mechanism, because "a blank canvas the
+     * operator has to guess is filled by talking is the same defect as a
+     * composer that is not there."
+     */
+    blankCanvas:
+      "There is no part yet. Parts are made by asking an agent for one — it calls `create_part` and writes the script. Start a session and describe what you want.",
+    blankCanvasAction: "Start a session",
+    /** §15.30: a new *project* is out of reach from here, and is refused by name. */
+    noProject:
+      "A new project is `heph init` at a terminal. This server opens a project that already exists.",
+    /** §7A.2's profile line, composed from the server's own capability facts. */
+    profileWhat: (profile: string, canDelegate: boolean, partScoped: boolean): string =>
+      `A ${profile} session. It ${canDelegate ? "can delegate to part agents and" : "cannot delegate, and"} ${
+        partScoped ? "may only address the part it is bound to" : "addresses every part in this project"
+      }.`,
+    /** §7A.2: there is no route that closes a session, and none is invented. */
+    orphanNote:
+      "Starting a session twice leaves an extra idle one. Idle sessions cost nothing and there is no way to close one from here; leave it.",
+  },
+
+  /**
+   * §23.14 item 15: a **closed** copy vocabulary for both status axes, every
+   * refusal reason, and the scope choice — no reason string constructed at a
+   * call site. A refusal that a panel phrased for itself is a refusal that says
+   * something slightly different in each place it appears, and §23.11's whole
+   * point is that the vocabulary is closed and testable by enumeration.
+   */
+  providers: {
+    title: "Model providers",
+    eyebrow: "Sign in",
+    /** §23.0: the empty state is an action, not a green checkmark. */
+    emptyTitle: "No model provider yet",
+    emptyBody:
+      "This project has no provider configuration, so there is nothing to run a session against. " +
+      "Add a provider below, or look for one this machine already has.",
+    addProvider: "Add a provider",
+    configPath: "Configuration file",
+    fileMode: "File mode",
+    /** §23.2: a hand-authored file's mode is reported, never changed. */
+    fileModeOpen:
+      "This file is readable by other users on this machine. The workspace does not change the mode of a file it did not write.",
+    allowlist: "Approved credential variables",
+    /** §23.6: the one refusal without which this surface is an exfiltration path. */
+    allowlistNote:
+      "Prepared outside the workspace and read-only here. Nothing in this page can add a name to this list.",
+    authSource: "Borrowed credential file",
+    authSourceLinked:
+      "This project's credential file is a link into the file above. Signing in would write into it, so sign-in and sign-out are refused until the link is removed.",
+    unlink: "Stop borrowing",
+    egressHosts: "Acknowledged outbound hosts",
+    egressNote:
+      "Every turn against one of these hosts sends model geometry, script source and transcript to it. This list is kept on disk and printed when the server starts.",
+    adopted: "Adopted sources",
+    /** §4.4/§6.3: a blank field never stands in for "not known". */
+    noneRecorded: "None recorded",
+
+    /** §23.8 axis 1 — what would I have to change to change this? */
+    source: {
+      label: "Credential",
+      none: "None",
+      env: "Environment variable",
+      serve: "This server only",
+      project: "Saved in this project",
+      linked: "Borrowed from a linked file",
+    },
+    /** §23.8 axis 2 — does it work? Never collapsed into axis 1. */
+    health: {
+      label: "Last seen",
+      unused: "Not used yet",
+      accepted: "Accepted",
+      rejected: "Rejected",
+      expired: "Expired",
+      unreachable: "Unreachable",
+      rate_limited: "Rate limited",
+    },
+    /** §23.8: "The panel renders 'accepted 14:32', never 'connected'." */
+    healthNever: "Nothing has used this credential yet.",
+    healthStale: "Last observed",
+    availability: "Verification",
+    available: "Verified at startup",
+    unavailable: "Not usable",
+    unavailableNote:
+      "This provider is declared but did not verify. It is never substituted by another and cannot run a turn.",
+
+    signIn: "Sign in",
+    signOut: "Sign out",
+    rotate: "Replace key",
+    replaced: "Replaced the credential that was",
+
+    /** §23.7: a credential change is not a hot swap, and this never implies it is. */
+    runsInFlight: (count: number) =>
+      `Applying this restarts the agent and ends ${count} turn${count === 1 ? "" : "s"} that ${count === 1 ? "is" : "are"} running now.`,
+    runsInFlightConfirm: "End them and continue",
+
+    discover: {
+      title: "Already on this machine",
+      action: "Look for existing sign-ins",
+      /** §15.41: nothing here runs on mount, on a timer, or on hover. */
+      note:
+        "This reads your home directory only when you press the button, and only to list what it finds. Nothing is used until you adopt it.",
+      empty: "Nothing found to offer.",
+      adopt: "Use this one",
+      /** §23.5: the four fields, and nothing derived from a secret. */
+      sourcePath: "Found in",
+      models: "Models",
+      kind: {
+        pi_auth: "An existing sign-in",
+        providers_json: "An existing provider configuration",
+        local_endpoint: "A model server on this machine",
+      },
+      adopted: "Adopted. It is now named in this project's configuration file.",
+    },
+
+    dialog: {
+      title: "Sign in to a provider",
+      keyLabel: "API key",
+      /** §23.3: no `name` a password manager would save under a wrong identity. */
+      keyHint: "Pasted into this server only. It is never shown again and never sent anywhere else.",
+      scopeLabel: "Where should this key live?",
+      /** §23.2: no default. The operator picks, or the server refuses by name. */
+      scopeNote: "There is no default. Choose one.",
+      scope: {
+        serve: "This server only",
+        serveNote: "Held in memory. Restarting the server forgets it.",
+        project: "This project",
+        projectNote: "Written to this project's credential file, readable only by you.",
+      },
+      endpointLabel: "Endpoint",
+      endpointHint: "A local endpoint must be an address on this machine, not a name.",
+      egressLabel: "Type the host to confirm outbound traffic",
+      /** §23.4: said before the operator clicks, not after they wonder. */
+      subscriptionTitle: "Sign in with a subscription",
+      subscriptionDisclosure:
+        "Your provider will list this sign-in under the name of the agent library this server embeds, not under Hephaestus. This server never refreshes the token — the library does.",
+      deviceCode: "Enter this code",
+      deviceCodeOpen: "Open the sign-in page",
+      pasteLabel: "Paste the address you were redirected to",
+      pasteHint:
+        "The redirect goes to an address nothing is listening on, so the browser will show an error. Copy what is in its address bar and paste it here.",
+      submit: "Sign in",
+      cancel: "Cancel",
+      waiting: "Waiting for you to finish in the other tab…",
+    },
+
+    /** Every §23.11 reason, phrased once. Nothing is built at a call site. */
+    refusal: {
+      agent_unavailable: "There is no agent runtime attached to this server yet.",
+      allowlist_not_web_writable:
+        "The approved-variable list and the borrowed-credential path are prepared outside the workspace and cannot be written from this page.",
+      auth_source_linked:
+        "This project's credential file is a link into another file. Remove the link before signing in or out.",
+      authorization_expired: "That sign-in is no longer valid. Start it again.",
+      authorization_input_malformed:
+        "That does not look like a redirect address or an authorization code.",
+      authorization_state_mismatch:
+        "That authorization did not match the one this server started. Nothing was changed.",
+      credential_expired: "The stored credential has expired.",
+      credential_not_allowlisted:
+        "This provider reads its key from a variable that is not on the approved list, and this page cannot add one.",
+      credential_rejected: "The provider rejected the credential.",
+      credential_scope_required: "Choose where the key should live.",
+      discovery_source_unknown: "That offer is no longer current. Look again.",
+      egress_not_acknowledged: "Type the host name to confirm outbound traffic to it.",
+      endpoint_not_loopback: "A local endpoint must be an address on this machine, not a name.",
+      login_already_in_progress: "A sign-in for this provider is already under way.",
+      model_unknown: "The provider does not offer that model.",
+      not_loopback: "Provider settings are only available when the server is bound to this machine.",
+      path_not_web_writable: "This page cannot name a file for the server to read.",
+      provider_not_authenticated: "This provider has no credential yet.",
+      provider_rate_limited: "The provider is rate limiting this account.",
+      provider_unknown: "No such provider.",
+      provider_unreachable: "The provider could not be reached.",
+      runs_in_flight: "A turn is running. Applying this would end it.",
+      unsupported_auth_type: "The provider does not offer that way of signing in.",
+    },
   },
 
   errors: {

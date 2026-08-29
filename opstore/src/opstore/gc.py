@@ -92,6 +92,14 @@ class GcUsage:
     protected_bytes: int
     quota_bytes: int
 
+    def to_json(self) -> dict[str, int]:
+        """The three numbers, for a refusal payload or a CLI's ``--json``."""
+        return {
+            "total_bytes": self.total_bytes,
+            "protected_bytes": self.protected_bytes,
+            "quota_bytes": self.quota_bytes,
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class GcReport:
@@ -155,7 +163,8 @@ class Gc:
 
     def pins(self) -> frozenset[str]:
         """All pinned refs."""
-        rows = self._db.conn.execute("SELECT ref FROM pins").fetchall()
+        with self._db.reading() as conn:
+            rows = conn.execute("SELECT ref FROM pins").fetchall()
         return frozenset(str(row["ref"]) for row in rows)
 
     def link(self, from_ref: str, to_ref: str) -> None:
@@ -174,18 +183,26 @@ class Gc:
 
     def links(self) -> frozenset[tuple[str, str]]:
         """All reachability edges."""
-        rows = self._db.conn.execute("SELECT from_ref, to_ref FROM links").fetchall()
+        with self._db.reading() as conn:
+            rows = conn.execute("SELECT from_ref, to_ref FROM links").fetchall()
         return frozenset((str(row["from_ref"]), str(row["to_ref"])) for row in rows)
 
     # -- reachability and quota --------------------------------------------
 
     def reachable(self) -> frozenset[str]:
-        """Pins union caller-protected roots, closed transitively over links."""
-        roots = set(self.pins())
-        roots.update(self._protected_roots())
-        edges: dict[str, list[str]] = {}
-        for from_ref, to_ref in self.links():
-            edges.setdefault(from_ref, []).append(to_ref)
+        """Pins union caller-protected roots, closed transitively over links.
+
+        One ``reading()`` over the whole closure: the pin set, the caller's
+        protected roots (which read the store too) and the edge set are three
+        reads that have to agree, and taking the connection lock once is what
+        keeps a concurrent writer from committing between them.
+        """
+        with self._db.reading():
+            roots = set(self.pins())
+            roots.update(self._protected_roots())
+            edges: dict[str, list[str]] = {}
+            for from_ref, to_ref in self.links():
+                edges.setdefault(from_ref, []).append(to_ref)
         seen = set(roots)
         stack = list(roots)
         while stack:
@@ -196,11 +213,20 @@ class Gc:
         return frozenset(seen)
 
     def usage(self) -> GcUsage:
-        """Quota accounting: total stored bytes and protected+pinned (reachable) bytes."""
-        reachable = self.reachable()
-        total = 0
-        protected = 0
-        rows = self._db.conn.execute("SELECT hash, size FROM blobs").fetchall()
+        """Quota accounting: total stored bytes and protected+pinned (reachable) bytes.
+
+        Under one ``reading()`` because :meth:`admission_guard` compares the two
+        numbers this returns, and a comparison of two numbers read either side
+        of somebody else's commit is not a comparison of anything. It is also
+        the read that made the lock necessary: with the guard wired into
+        ``Publisher.freeze_inputs`` (INTERFACE.md §19.40) this runs on every
+        build, and builds run concurrently.
+        """
+        with self._db.reading() as conn:
+            reachable = self.reachable()
+            total = 0
+            protected = 0
+            rows = conn.execute("SELECT hash, size FROM blobs").fetchall()
         for row in rows:
             size = int(row["size"])
             total += size
@@ -221,7 +247,8 @@ class Gc:
         if usage.protected_bytes > usage.quota_bytes:
             raise ProtectedQuotaExceededError(
                 f"protected+pinned bytes {usage.protected_bytes} exceed "
-                f"quota {usage.quota_bytes}; raise the quota or unpin data"
+                f"quota {usage.quota_bytes}; raise the quota or unpin data",
+                usage=usage.to_json(),
             )
         return usage
 
@@ -248,9 +275,10 @@ class Gc:
         reachable = self.reachable()
         candidates: list[GcCandidate] = []
         reclaimed = 0
-        rows = self._db.conn.execute(
-            "SELECT hash, size, created_at, retention_class FROM blobs ORDER BY created_at"
-        ).fetchall()
+        with self._db.reading() as conn:
+            rows = conn.execute(
+                "SELECT hash, size, created_at, retention_class FROM blobs ORDER BY created_at"
+            ).fetchall()
         for row in rows:
             ref = str(row["hash"])
             if ref in reachable:

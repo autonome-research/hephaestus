@@ -214,6 +214,9 @@ def workspace(
         yield Workspace(runtime, app, client, agent=fake_agent)
     finally:
         client.close()
-        if runtime.sessions is not None:
-            runtime.sessions.close()
+        # The same one teardown ``heph serve --web`` runs (§23.0): it releases
+        # suspended questions *and* closes an agent runtime the test attached
+        # in-process, so a test that attaches a real sidecar cannot leave one
+        # behind by forgetting to.
+        runtime.detach_agent()
         runtime.close()

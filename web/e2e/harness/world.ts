@@ -34,6 +34,29 @@ export interface World {
   readonly sessions: readonly string[];
   readonly model_base_url: string;
   readonly pid: number;
+  /**
+   * §7A.7's scripted question: the sentinel a prompt carries to provoke an
+   * `ask_user` suspension, and the options the model will offer. Published by
+   * the harness so `ask.spec.ts` asserts the **server's** labels rather than a
+   * second copy of them typed into the spec.
+   */
+  readonly ask: {
+    readonly sentinel: string;
+    readonly options: readonly { readonly label: string; readonly consequence: string }[];
+    /** What §7A.7's mapping makes of the scripted question's own params. */
+    readonly affordance: string;
+  };
+  /**
+   * §7A.12's composer cases: the sentinel that makes the scripted model call
+   * `create_part`, and the part it creates. Published by the harness for the
+   * same reason `ask` is — a spec that hard-coded them would be asserting its
+   * own copy of the fixture rather than what the model was actually scripted
+   * to do.
+   */
+  readonly composer: {
+    readonly sentinel: string;
+    readonly part: string;
+  };
   /** The interpreter that runs `heph` verbs against the fixture. */
   readonly python: string;
 }

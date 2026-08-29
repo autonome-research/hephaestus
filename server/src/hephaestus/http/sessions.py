@@ -44,7 +44,9 @@ from hephaestus.agent_bridge.session_edges import (
 )
 
 __all__ = [
+    "CREATABLE_PROFILES",
     "LIVE_BUFFER_MAX",
+    "QUICK_EDIT_PROFILE",
     "SESSION_PROFILES",
     "AskAbandoned",
     "LiveBuffer",
@@ -52,6 +54,7 @@ __all__ = [
     "PendingQuestions",
     "SessionBackend",
     "WorkspaceSessions",
+    "profiles_projection",
     "thread_projection",
 ]
 
@@ -67,6 +70,21 @@ LIVE_BUFFER_MAX: Final[int] = BUFFERED_EVENTS_MAX
 #: ``reviewer`` are runtime-internal (ephemeral, own budget, empty or read-only
 #: tool allowlists) and are not offered to a client that could then prompt them.
 SESSION_PROFILES: Final[tuple[str, ...]] = ("orchestrator", "part", "quick_edit")
+
+#: The one profile ``POST /sessions`` may not **create** (§7A.2, §19.26). Named
+#: here rather than spelled as a literal at the route, so the route's refusal
+#: and this list cannot drift apart. It stays in :data:`SESSION_PROFILES`
+#: because it is still a profile a session may *have* — a quick-edit session
+#: exists, it is simply born at ``POST /parts/{part}/quick_edit``, which is the
+#: only place its seeding happens (§12.5).
+QUICK_EDIT_PROFILE: Final[str] = "quick_edit"
+
+#: The two profiles the web create affordance may offer, in the order §7A.2's
+#: table lists them. Served to the client as a **server projection** so the
+#: composer names the profile it will use and what that profile can do without
+#: keeping a client-side copy of the table (§7A.2: "the profile is never chosen
+#: silently … not from a client-side copy").
+CREATABLE_PROFILES: Final[tuple[str, ...]] = ("orchestrator", "part")
 
 
 class SessionBackend(Protocol):
@@ -94,6 +112,7 @@ class SessionBackend(Protocol):
         text: str,
         *,
         run_id: str | None = ...,
+        context: str | None = ...,
         answerer: Callable[[dict[str, Any]], Any] | None = ...,
         on_event: Callable[[dict[str, Any]], None] | None = ...,
         timeout: float | None = ...,
@@ -352,6 +371,47 @@ class PendingQuestions:
 # --------------------------------------------------------------------------
 
 
+def profiles_projection() -> list[dict[str, Any]]:
+    """What each creatable profile *is*, from the runtime's own authority.
+
+    §7A.2: "**The profile is never chosen silently.** The create affordance
+    shows the profile it will use and what that profile can do, in one line,
+    **from a server projection** — not from a client-side copy of the table
+    above. A user who does not know their session cannot delegate reads
+    ``scope_denied`` as a broken product."
+
+    So the capability facts are read from ``agent_bridge.sessions._SPECS``, the
+    same table :meth:`ToolDispatcher._authorize` enforces, rather than
+    transcribed. ``part_scoped`` is dispatch's own rule stated as a field:
+    ``_authorize`` returns early for an orchestrator principal ("orchestrator
+    addresses every part / project scope") and object-scope-checks everyone
+    else, so a ``part`` session's every out-of-binding call is ``scope_denied``.
+
+    **NAMED BOUNDARY.** This is facts, not prose. The *sentence* the affordance
+    renders is composed in ``web/src/copy.ts`` from these booleans, because
+    house style keeps every workspace string in one file and a server that
+    shipped English would be a second copy deck. What §7A.2 forbids — the client
+    keeping its own table of which profile can delegate — is what this
+    projection removes.
+    """
+    from hephaestus.agent_bridge.sessions import SessionProfile, profile_for
+
+    rows: list[dict[str, Any]] = []
+    for name in CREATABLE_PROFILES:
+        spec = profile_for(SessionProfile(name))
+        rows.append(
+            {
+                "profile": name,
+                "can_delegate": spec.can_delegate,
+                # An orchestrator is exempt from object scope; everything else
+                # is bound to the object it names (`dispatch.py::_authorize`).
+                "part_scoped": name != SessionProfile.ORCHESTRATOR.value,
+                "requires_part": name != SessionProfile.ORCHESTRATOR.value,
+            }
+        )
+    return rows
+
+
 def thread_projection(edges: SessionEdgeStore, session_id: str) -> dict[str, Any]:
     """``GET /sessions/{id}/thread`` — the transitive tree rooted at ``id`` (§2.8).
 
@@ -482,10 +542,10 @@ class WorkspaceSessions:
             edge = self.edges.get(str(row["session_id"]))
             row["parent_session_id"] = None if edge is None else edge.parent_session_id
             row["thread_state"] = THREAD_UNLINKED if edge is None else THREAD_LINKED
-        return {"status": "ok", "sessions": rows}
+        return {"status": "ok", "sessions": rows, "profiles": profiles_projection()}
 
     def run_prompt(
-        self, session_id: str, text: str, *, run_id: str | None = None
+        self, session_id: str, text: str, *, run_id: str | None = None, context: str | None = None
     ) -> dict[str, Any]:
         """One prompt turn, blocking, projected onto the wire.
 
@@ -497,12 +557,18 @@ class WorkspaceSessions:
         live surface; this list is what a client with no socket (the ``heph
         agent`` client-mode CLI on a machine where the upgrade failed) renders
         instead, so a run is never invisible.
+
+        ``context`` is §7A.3's composed block and travels **beside** ``text``,
+        never inside it: ``BridgeRuntime.prompt`` forwards it to the sidecar and
+        does not bind it, so ``VALIDATION.md`` §4's request diff still measures
+        the operator's own words against the geometry (§7A.4).
         """
         run = run_id or self.backend.new_run_id()
         result = self.backend.prompt(
             session_id,
             text,
             run_id=run,
+            context=context,
             answerer=self.questions.answerer(session_id),
         )
         return {

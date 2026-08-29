@@ -35,6 +35,20 @@ Env vars:
 * ``FAKE_SIDECAR_CONFIGURE_FAILS`` makes ``runtime.configure`` answer with an
   error — a child that starts but can never be made usable, which is what the
   bounded-respawn test for a failing spawn hook needs.
+
+A provider **id** in the configure payload is the second channel for the same
+knob, for tests that reach this process through the real sidecar resolver and
+control nothing but the provider config: ``configure-fails…`` refuses
+``runtime.configure``, and ``configure-echo…`` refuses it with the whole payload
+quoted back in the message (the provider-echoes-its-input channel §23.6 names),
+and ``oauth-echo…`` makes ``login.begin`` write that provider's ``name`` to
+**stderr** as if it were a token-endpoint response body and then refuse
+``credential_rejected`` — the second, independent pipe the bridge boundary
+cannot see (§23.6, §23.14 items 10 and 12).
+
+The credential methods (``providers.list`` / ``credentials.*`` / ``login.*``)
+answer the §23.6 shapes so the HTTP credential routes can be driven against a
+real child process.
 """
 
 from __future__ import annotations
@@ -94,14 +108,62 @@ def _call_py(method: str, params: dict[str, object], timeout: float = 5.0) -> di
 _configured = [False]
 
 
+#: The last ``runtime.configure`` payload, so a handler can answer out of the
+#: provider config the way the real sidecar answers out of its registry.
+_last_configure: dict[str, object] = {}
+
+
+def _oauth_echo_body(provider_id: str) -> str:
+    """The scripted token-endpoint body for ``oauth-echo*`` providers, else ""."""
+    if not provider_id.startswith("oauth-echo"):
+        return ""
+    providers = _last_configure.get("providers")
+    if not isinstance(providers, list):
+        return ""
+    for spec in cast("list[object]", providers):
+        if isinstance(spec, dict):
+            row = cast("dict[str, object]", spec)
+            if str(row.get("id", "")) == provider_id:
+                return str(row.get("name", ""))
+    return ""
+
+
 def _record_configure(params: dict[str, object]) -> None:
     _configured[0] = True
+    _last_configure.clear()
+    _last_configure.update(params)
     path = os.environ.get("FAKE_SIDECAR_CONFIGURE_LOG")
     if not path:
         return
     line = json.dumps(params, sort_keys=True) + "\n"
     with open(path, "a", encoding="utf-8") as handle:
         handle.write(line)
+
+
+def _configure_mode(params: dict[str, object]) -> str:
+    """How ``runtime.configure`` should answer: ``ok`` / ``fail`` / ``echo``.
+
+    Two channels, because they answer different questions. The environment knob
+    (``FAKE_SIDECAR_CONFIGURE_FAILS``) is the supervisor tests' — it makes *any*
+    child unusable. The provider-id channel is the attach tests': those spawn
+    through the real ``resolve_sidecar`` path, where the only thing they control
+    is the provider config, and routing the knob through the credential
+    allowlist would put a test fixture's value into the very payload one of them
+    greps for a secret.
+    """
+    if os.environ.get("FAKE_SIDECAR_CONFIGURE_FAILS"):
+        return "fail"
+    providers = params.get("providers")
+    ids = [
+        str(cast("dict[str, object]", p).get("id", ""))
+        for p in cast("list[object]", providers or [])
+        if isinstance(p, dict)
+    ]
+    if any(pid.startswith("configure-echo") for pid in ids):
+        return "echo"
+    if any(pid.startswith("configure-fails") for pid in ids):
+        return "fail"
+    return "ok"
 
 
 def _needs_configure(method: str) -> bool:
@@ -141,10 +203,83 @@ def _handle(msg: dict[str, object]) -> None:
         _respond(req_id, params)
     elif method == "runtime.configure":
         _record_configure(params)
-        if os.environ.get("FAKE_SIDECAR_CONFIGURE_FAILS"):
+        mode = _configure_mode(params)
+        if mode == "echo":
+            # A provider whose failure message quotes back what it was sent —
+            # the channel INTERFACE.md §23.6 is actually about. The attach path
+            # must reduce this before it reaches a client, a log or a stderr
+            # tail, and the only way to assert that is to have something echo.
+            echoed = json.dumps(params)
+            _send(
+                {
+                    "id": req_id,
+                    "error": {"code": -32603, "message": f"configure refused: {echoed}"},
+                }
+            )
+        elif mode == "fail":
             _send({"id": req_id, "error": {"code": -32603, "message": "configure refused"}})
         else:
             _respond(req_id, {"ok": True})
+    elif method == "credentials.set_key":
+        # INTERFACE.md §23.6's SECOND channel, modelled faithfully: a provider
+        # library that interpolates what it was sent into a message it writes to
+        # `console.error`. The bridge boundary cannot see this pipe — it is the
+        # supervisor's stderr drain — so it is exactly the channel the redaction
+        # pass at the append point exists for, and a fake that only ever refused
+        # over JSON-RPC could not exercise it.
+        print(
+            f"[fake-sidecar] provider rejected key {params.get('key')}",
+            file=sys.stderr,
+            flush=True,
+        )
+        _respond(req_id, {"ok": True, "provider_id": params.get("provider_id"), "replaced": "none"})
+    elif method == "login.begin":
+        # A scripted OAuth token endpoint that returns a sentinel in its BODY —
+        # §23.14 item 12's second half. The Python side never sees a key here at
+        # all, so no key-shaped sentinel could be planted; the sentinel has to
+        # come back from the "provider", and it does, on both channels at once.
+        # The knob rides in the PROVIDER CONFIG, not the environment, and that
+        # is itself evidence: `build_minimal_env` forwards only BASE_ENV_VARS,
+        # the allowlist and the app-owned extras, so an env-var channel would
+        # not reach this process at all (which is the isolation mission rule 7
+        # is about). A provider whose id begins `oauth-echo` puts its `name`
+        # into the "token endpoint" response, which is the shape §23.6 names.
+        body = _oauth_echo_body(str(params.get("provider_id", "")))
+        if body:
+            print(f"[fake-sidecar] token endpoint said: {body}", file=sys.stderr, flush=True)
+            _send(
+                {
+                    "id": req_id,
+                    "error": {
+                        "code": -32600,
+                        "message": "credential_rejected",
+                        # The REDUCTION: a code and a status, never the body.
+                        "data": {"code": "credential_rejected", "http_status": 409},
+                    },
+                }
+            )
+        else:
+            _respond(
+                req_id,
+                {
+                    "ok": True,
+                    "provider_id": params.get("provider_id"),
+                    "type": params.get("type"),
+                    "state": "authorization_pending",
+                    "user_code": "FAKE-CODE",
+                    "verification_uri": "https://provider.example/device",
+                    "interval_seconds": 5,
+                },
+            )
+    elif method in {
+        "providers.list",
+        "credentials.status",
+        "credentials.signout",
+        "login.status",
+        "login.complete",
+        "login.cancel",
+    }:
+        _respond(req_id, {"ok": True, "provider_id": params.get("provider_id"), "state": "none"})
     elif method == "session.create":
         _respond(req_id, {"session_id": f"sess-{req_id}"})
     elif method == "session.prompt":

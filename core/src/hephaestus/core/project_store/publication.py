@@ -21,7 +21,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Literal, cast
+from typing import Final, Literal, cast
 
 from hephaestus.core.errors import ConflictError, ValidationError
 from hephaestus.core.executor.fingerprint import (
@@ -32,6 +32,10 @@ from hephaestus.core.executor.fingerprint import (
 from hephaestus.core.executor.imports import ImportResolutionError, static_import_paths
 from hephaestus.core.executor.runner import UnpublishedBuild
 from hephaestus.core.hashing import consumed_hc_hash, toolchain_hash
+from hephaestus.core.project_store.artifact_kinds import (
+    record_artifact_kind,
+    record_artifact_refs,
+)
 from hephaestus.core.project_store.layout import ProjectLayout
 from hephaestus.core.project_store.locks import PROJECT_CONFIG_LOCK, LockManager, part_lock
 from hephaestus.core.project_store.projections import Projections, StaleReport
@@ -58,6 +62,7 @@ from opstore import (
 
 __all__ = [
     "CURRENT_POINTER_PREFIX",
+    "EXPORT_ARTIFACT_KIND",
     "EXPORT_REF_PREFIX",
     "ExportOutcome",
     "FrozenBuildInputs",
@@ -69,8 +74,13 @@ __all__ = [
 
 #: CAS pointer prefix for per-part current-build bundles.
 CURRENT_POINTER_PREFIX = "part-current:"
+#: The artifact kind every published export carries. Named rather than spelled
+#: inline at each site, because §19.24 makes it a value the *store* records and
+#: three places (here, ``cad_ops/_exports.py``, ``http/artifacts.py``) have to
+#: mean the same four letters by it.
+EXPORT_ARTIFACT_KIND: Final[str] = "export"
 #: Ref prefix for published exports.
-EXPORT_REF_PREFIX = "artifact:export:"
+EXPORT_REF_PREFIX = f"artifact:{EXPORT_ARTIFACT_KIND}:"
 
 SOURCE_MAP_REF_PREFIX = "artifact:source-map:"
 
@@ -156,7 +166,33 @@ class Publisher:
 
         Locks are held only for the capture and released before geometry
         computation (architecture §3.5 build lock discipline).
+
+        **The store's admission guard runs first** (``INTERFACE.md`` §22.6's
+        CORRECTION and the second half of §19.40). ``opstore/gc.py``'s contract
+        is *"if protected+pinned (reachable) bytes alone exceed
+        ``config.quota_bytes``, ``admission_guard()`` raises
+        ``ProtectedQuotaExceededError`` so new artifact-producing work fails
+        before execution"*, and until this call site that guard had **no
+        production caller anywhere in the repo** — so the sentence described a
+        protection nothing performed, and a project that pinned its way past the
+        quota (which §22's export panel makes easy, since every export pins its
+        outputs and its source build forever) grew without limit and refused
+        nothing.
+
+        WHY here and not at each of the four callers. This method is the single
+        funnel every production build passes through before execution — the
+        engine CLI's ``_build_and_publish``, ``build_part``, ``run_checks``'
+        rebuild and ``set_params``' rebuild — and it is itself the first write of
+        a build (it registers the script, globals and import snapshots). One seam
+        rather than four is also what keeps the guard from being forgotten by the
+        fifth caller.
+
+        The refusal is the store's own ``ProtectedQuotaExceededError``, carrying
+        its ``GcUsage`` snapshot: §22.6 is explicit that the reason is
+        ``protected_quota_exceeded`` and not a second name invented for the same
+        state, and §22.7 requires the numbers to travel with it.
         """
+        self._store.gc.admission_guard()
         with self.locks.holding(PROJECT_CONFIG_LOCK, part_lock(part)):
             script = self.parts.read_part(part)
             globals_snapshot: SourceSnapshot | None = self.parts.read_globals()
@@ -365,6 +401,13 @@ class Publisher:
                 )
             refs.append(ref)
             blobs.append(stored)
+        # §2.6's CORRECTION / §19.24: the kind is recorded where the blob is
+        # installed. This loop already proves the ref's *hash* half against the
+        # bytes; recording the *kind* half here is what lets a reader refuse a
+        # ref that relabels these bytes as something else. Every build artifact
+        # — `build`, `build-checkpoint`, `source-map` — is covered by
+        # construction, because they are exactly the keys of `artifact_files`.
+        record_artifact_refs(self._store, refs)
         return tuple(refs), tuple(blobs)
 
     def _revalidate(self, build: UnpublishedBuild) -> tuple[str, ...]:
@@ -550,6 +593,11 @@ class Publisher:
             )
         self._store.gc.pin(export_blob)
         self._store.gc.link(export_blob, source_blob)
+        # §19.24: an export blob is recorded as an `export`, so §15.17's refusal
+        # is about these bytes rather than about the four letters a caller chose
+        # to put in a ref. Recorded next to the pin because both are the
+        # idempotent completion steps a replay re-runs.
+        record_artifact_kind(self._store, EXPORT_ARTIFACT_KIND, export_blob)
         return ExportOutcome(
             name=name,
             path=target,

@@ -35,6 +35,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal, cast
 
+from hephaestus.core.project_store.artifact_kinds import record_artifact_kind, record_artifact_refs
 from hephaestus.core.project_store.store import artifact_ref, blob_hash_of_ref
 from hephaestus.core.render.palette import SelectionEntry, build_legend
 from opstore.types import JSONValue
@@ -195,6 +196,12 @@ class RenderStore:
     def publish_render(self, png: bytes, *, kind: str = RENDER_KIND) -> RenderArtifact:
         """Publish one PNG as a content-addressed blob and return its ref."""
         blob = self._store.blobs.put(png)
+        # §2.6's CORRECTION / §19.24: the publisher knows the kind, so the
+        # publisher records it. `kind` is a parameter here — §12.5's
+        # `selection-crop` comes through this same call — and recording whatever
+        # was actually published keeps the record true for every caller rather
+        # than for the default one.
+        record_artifact_kind(self._store, kind, blob)
         return RenderArtifact(ref=artifact_ref(kind, blob), blob_hash=blob)
 
     def publish_selection_bundle(
@@ -257,6 +264,20 @@ class RenderStore:
         # each layer -> bundle: pinning one layer keeps the whole bundle.
         for layer in layer_blobs:
             self._store.gc.link(layer, bundle_blob)
+        # §2.6's CORRECTION / §19.24. Every ref this method mints, recorded from
+        # the refs themselves so the record cannot drift from what is returned:
+        # a kind added to the bundle later is recorded by having been minted.
+        record_artifact_refs(
+            self._store,
+            [
+                pass_refs.solid,
+                pass_refs.face,
+                pass_refs.edge,
+                table_ref,
+                bundle_ref,
+                *([preview_ref] if preview_ref is not None else []),
+            ],
+        )
 
         return SelectionBundle(
             bundle_ref=bundle_ref,

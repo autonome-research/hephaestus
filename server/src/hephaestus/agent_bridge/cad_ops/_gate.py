@@ -288,6 +288,22 @@ def option_label(option: JSONValue) -> str:
     return str(option)
 
 
+def option_display(option: JSONValue) -> str:
+    """``label — consequence`` when the option states one, else just the label.
+
+    ONE definition for every surface that *shows* an option to a human: the MCP
+    elicitation message and ``heph agent``'s numbered prompt both read it, so
+    the two cannot drift into printing different text for one option (mission
+    rule 6). It is deliberately **not** the answer namespace — what is sent back
+    is :func:`option_label` alone (INTERFACE.md §7A.7), and a surface that
+    submitted this string would hand the model a value its own schema does not
+    admit.
+    """
+    consequence = option_consequence(option)
+    label = option_label(option)
+    return f"{label} — {consequence}" if consequence else label
+
+
 def option_consequence(option: JSONValue) -> str | None:
     """The stated geometric consequence of an option, if it carries one."""
     if not isinstance(option, Mapping):

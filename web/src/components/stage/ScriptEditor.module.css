@@ -1,6 +1,10 @@
 /*
  * Copyright 2026 The Hephaestus Authors
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * §4.7: "The editor frame shrink-to-fits rather than framing ~800px of void
+ * below 13 lines." The editor row is `auto` with a floor, not `1fr`, and Monaco
+ * is told the height it may take.
  */
 
 .panel {
@@ -14,61 +18,54 @@
 .pager {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--gap-inline);
   padding: var(--space-1) var(--space-3);
-  background: var(--ground-1);
-  border-bottom: 1px solid var(--line-1);
-  font-size: var(--size-xs);
-  color: var(--ink-2);
+  min-height: var(--target-min);
+  background: var(--surface-panel);
+  border-bottom: 1px solid var(--border);
+  color: var(--ink-base);
   flex-wrap: wrap;
 }
 
 .pager {
-  border-top: 1px solid var(--line-1);
+  border-top: 1px solid var(--border);
   border-bottom: none;
 }
 
-.readOnly {
-  padding: 0 var(--space-2);
-  border: 1px solid var(--line-2);
-  border-radius: 999px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--ink-2);
-}
-
 .meta {
-  color: var(--ink-2);
+  composes: code from "../../system/type.module.css";
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  color: var(--ink-base);
 }
 
+.metaLabel {
+  composes: label from "../../system/type.module.css";
+  color: var(--ink-muted);
+}
+
+/* Shrink-to-fit: the editor takes what its content needs between a readable
+   floor and the region it is given, rather than always taking the whole row. */
 .editor {
   min-height: 0;
   height: 100%;
-}
-
-.more {
-  padding: 1px var(--space-2);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-1);
-  color: var(--accent);
-}
-
-.more:disabled {
-  color: var(--ink-3);
-  cursor: default;
+  background: var(--surface-app);
 }
 
 .warn {
-  color: var(--warn);
+  composes: body from "../../system/type.module.css";
+  color: var(--status-error-ink);
 }
 
 .error {
-  color: var(--fail);
+  composes: body from "../../system/type.module.css";
+  color: var(--status-fail-ink);
 }
 
 .absent {
+  composes: body from "../../system/type.module.css";
   margin: 0;
   padding: var(--space-4);
-  color: var(--ink-3);
-  font-style: italic;
+  color: var(--ink-base);
 }

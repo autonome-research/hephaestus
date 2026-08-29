@@ -159,16 +159,16 @@ class LeaseManager:
 
     def get(self, lease_id: str) -> Lease | None:
         """The lease row if it still exists (regardless of expiry), else None."""
-        row = self._db.conn.execute(
-            "SELECT * FROM leases WHERE lease_id = ?", (lease_id,)
-        ).fetchone()
+        with self._db.reading() as conn:
+            row = conn.execute("SELECT * FROM leases WHERE lease_id = ?", (lease_id,)).fetchone()
         return None if row is None else _row_to_lease(row)
 
     def holders(self, ref: str) -> list[Lease]:
         """All lease rows on ``ref`` (including expired-but-unreclaimed ones)."""
-        rows = self._db.conn.execute(
-            "SELECT * FROM leases WHERE ref = ? ORDER BY created_at, lease_id", (ref,)
-        ).fetchall()
+        with self._db.reading() as conn:
+            rows = conn.execute(
+                "SELECT * FROM leases WHERE ref = ? ORDER BY created_at, lease_id", (ref,)
+            ).fetchall()
         return [_row_to_lease(row) for row in rows]
 
     def live_holders(self, ref: str) -> list[Lease]:
@@ -182,9 +182,10 @@ class LeaseManager:
 
     def takeover_record(self, lease_id: str) -> JSONValue | None:
         """The recorded takeover for a lease acquired via ``break_stale``, if any."""
-        row = self._db.conn.execute(
-            "SELECT value FROM meta WHERE key = ?", (TAKEOVER_META_PREFIX + lease_id,)
-        ).fetchone()
+        with self._db.reading() as conn:
+            row = conn.execute(
+                "SELECT value FROM meta WHERE key = ?", (TAKEOVER_META_PREFIX + lease_id,)
+            ).fetchone()
         return None if row is None else cast(JSONValue, json.loads(str(row["value"])))
 
     def _acquire(

@@ -19,23 +19,31 @@
 // value, exactly like `kind` and `line`.
 //
 // §4.4's three shapes are each a first-class designed state — "not a strong state
-// with fields missing" — and the italic sentence under a weak one is the design
-// point: "A weak answer that *says why it is weak* reads as instrument honesty;
-// the same answer with a blank field reads as a bug." So `owned` and
-// `unattributed` each carry their sentence, and the one case §4.4 singles out —
-// a face that *is* tagged whose pinned build's source map is no longer stored —
-// renders `owned` with the retention reason said out loud, never the generic
-// `unattributed` copy.
+// with fields missing" — and the italic sentence under a weak one WAS the design
+// point. §4.7 corrects the styling without touching the substance: **the
+// explanatory sentence is `.body` in a legible ink and is no longer italic.**
+// §3.9 measured the shipped `--ink-3` at 3.10:1 and §4.7 says outright that a
+// sentence which exists to make a weak answer read as designed "cannot itself be
+// below the legibility floor". The words are unchanged; the footnote styling that
+// contradicted them is gone.
 //
 // TWO STATIONS UPSTREAM ARE MISSING IN THIS BUILD, and the panel names them
 // rather than rendering an empty frame: there is no viewport to raycast, and
-// `POST /parts/{part}/selection/resolve` is not a served route (§19 item 8). A
-// descriptor clicked in the DFM panel therefore arrives here as an *address*, not
-// as a resolution, and the panel says which station is missing rather than
-// dressing the address up as a provenance answer.
+// `POST /parts/{part}/selection/resolve` is not a served route (§19 item 8).
 
 import type { ResolvedSelection } from "../../api/types";
 import { copy } from "../../copy";
+import {
+  Chip,
+  DataTable,
+  EmptyState,
+  Panel,
+  PanelBody,
+  PanelHeader,
+  PanelNote,
+  PanelSection,
+  type DataRow,
+} from "../../system";
 import { Fact } from "../Fact";
 import { useWorkspace } from "../../state/react";
 import type { DescriptorIntent } from "./DfmPanel";
@@ -44,13 +52,8 @@ import styles from "./panels.module.css";
 /**
  * The reasons a provenance answer may carry, CLOSED (§4.4).
  *
- * §12.3 names `provenance` in its response shape without giving it one, and §4.4
- * requires two answers that would otherwise look identical to be told apart. This
- * is the smallest closed record that discharges that: a state, and — where the
- * server has one — a reason. `source_map_not_stored` is §4.4's named case (the
- * attribution existed and was not retained); `boolean_result_face` is
- * `architecture.md` §3.1's cap (a boolean **result** face is not attributed to an
- * operand statement, because OCCT history tracking is out of scope). An
+ * `source_map_not_stored` is §4.4's named case (the attribution existed and was
+ * not retained); `boolean_result_face` is `architecture.md` §3.1's cap. An
  * unrecognized reason is dropped back to the state's own sentence rather than
  * rendered raw — a vocabulary that widened by echoing whatever arrived would not
  * be closed.
@@ -81,45 +84,55 @@ export function ProvenanceView({
   intent,
 }: ProvenanceViewProps): React.JSX.Element {
   return (
-    <section className={styles["panel"]} aria-label={copy.provenance.heading} data-panel="provenance">
-      <h3 className={styles["heading"]}>{copy.provenance.heading}</h3>
+    <Panel label={copy.provenance.heading} data-panel="provenance">
+      <PanelHeader
+        title={copy.provenance.heading}
+        level={3}
+        actions={
+          origin === undefined ? undefined : (
+            <Chip data-provenance-origin={origin}>{copy.provenance.origin[origin]}</Chip>
+          )
+        }
+      />
+      <PanelBody>
+        <DataTable
+          rows={[
+            {
+              key: "pinned",
+              label: copy.provenance.pinned,
+              value:
+                pinned === null ? (
+                  <span className={styles["muted"]}>{copy.absent.unavailable}</span>
+                ) : (
+                  <Fact source="workspace.artifact_ref" value={pinned} mono />
+                ),
+            },
+          ]}
+        />
 
-      {origin === undefined ? null : (
-        <p className={styles["note"]} data-provenance-origin={origin}>
-          {copy.provenance.origin[origin]}
-        </p>
-      )}
-
-      <dl className={styles["pairs"]}>
-        <div className={styles["pairRow"]}>
-          <dt>{copy.provenance.pinned}</dt>
-          <dd>
-            {pinned === null ? (
-              <span className={styles["dim"]}>{copy.absent.unavailable}</span>
-            ) : (
-              <Fact
-                source="workspace.artifact_ref"
-                value={pinned}
-                className={styles["mono"]}
-                mono
-              />
-            )}
-          </dd>
-        </div>
-      </dl>
-
-      {resolved === undefined ? (
-        <>
-          {intent === undefined ? null : <IntentAddress intent={intent} />}
-          <p className={styles["absent"]}>
-            {intent === undefined ? copy.provenance.absent : copy.dfm.descriptorPending}
-          </p>
-          <p className={styles["note"]}>{copy.provenance.unreachable}</p>
-        </>
-      ) : (
-        <Resolved resolved={resolved} />
-      )}
-    </section>
+        {resolved === undefined ? (
+          <>
+            {intent === undefined ? null : <IntentAddress intent={intent} />}
+            <EmptyState
+              icon="tag"
+              title={
+                intent === undefined
+                  ? copy.provenance.absentTitle
+                  : copy.dfm.descriptorPendingTitle
+              }
+              body={
+                <>
+                  <p>{intent === undefined ? copy.provenance.absent : copy.dfm.descriptorPending}</p>
+                  <p>{copy.provenance.unreachable}</p>
+                </>
+              }
+            />
+          </>
+        ) : (
+          <Resolved resolved={resolved} />
+        )}
+      </PanelBody>
+    </Panel>
   );
 }
 
@@ -128,42 +141,48 @@ export function ProvenanceView({
  *
  * Deliberately NOT dressed as a resolution: no `data-provenance-state`, because
  * no state was resolved. What is shown is exactly the descriptor the finding
- * reported plus the artifact it was measured against — every value a server
- * value, none of them joined to anything the client worked out.
+ * reported plus the artifact it was measured against.
  */
 function IntentAddress({ intent }: { readonly intent: DescriptorIntent }): React.JSX.Element {
   return (
-    <dl className={styles["pairs"]} data-provenance-intent={intent.rule_id}>
-      <div className={styles["pairRow"]}>
-        <dt>{copy.provenance.source}</dt>
-        <dd>
-          <Fact
-            source="dfm.last.findings[].source_artifact_ref"
-            value={intent.source_artifact_ref}
-            className={styles["mono"]}
-            mono
-          />
-        </dd>
-      </div>
-      <div className={styles["pairRow"]}>
-        <dt>{copy.provenance.solid}</dt>
-        <dd>
-          <Fact
-            source="dfm.last.findings[].topology[].solid_id"
-            value={intent.descriptor.solid_id}
-          />
-        </dd>
-      </div>
-      <div className={styles["pairRow"]}>
-        <dt>{copy.provenance.topology}</dt>
-        <dd>
-          <Fact
-            source="dfm.last.findings[].topology[].topology_index"
-            value={intent.descriptor.topology_index}
-          />
-        </dd>
-      </div>
-    </dl>
+    <PanelSection eyebrow={copy.provenance.addressHeading}>
+      <DataTable
+        rows={[
+          {
+            key: "source",
+            label: copy.provenance.source,
+            value: (
+              <Fact
+                source="dfm.last.findings[].source_artifact_ref"
+                value={intent.source_artifact_ref}
+                mono
+              />
+            ),
+            attrs: { "data-provenance-intent": intent.rule_id },
+          },
+          {
+            key: "solid",
+            label: copy.provenance.solid,
+            value: (
+              <Fact
+                source="dfm.last.findings[].topology[].solid_id"
+                value={intent.descriptor.solid_id}
+              />
+            ),
+          },
+          {
+            key: "topology",
+            label: copy.provenance.topology,
+            value: (
+              <Fact
+                source="dfm.last.findings[].topology[].topology_index"
+                value={intent.descriptor.topology_index}
+              />
+            ),
+          },
+        ]}
+      />
+    </PanelSection>
   );
 }
 
@@ -171,126 +190,105 @@ function IntentAddress({ intent }: { readonly intent: DescriptorIntent }): React
 function Resolved({ resolved }: { readonly resolved: ResolvedSelection }): React.JSX.Element {
   const state = resolved.provenance.state;
   // §4.4: "the attribution existed and was not retained" is a DIFFERENT fact
-  // from "the machinery cannot attribute this face", and a panel that rendering
+  // from "the machinery cannot attribute this face", and a panel that rendered
   // them identically would claim the first while the second is true. WHICH ONE
   // IS TRUE IS A SERVER VALUE — `provenance.reason` — never an inference from
   // `tag !== null && line === null`, which would be the client deducing a
   // provenance answer that §1 makes a server value.
   const reason = provenanceReason(resolved.provenance.reason);
 
+  const rows: readonly DataRow[] = [
+    {
+      key: "kind",
+      label: copy.provenance.kind,
+      value: (
+        <>
+          <Fact source="selection.kind" value={resolved.kind} />{" "}
+          {resolved.label === null ? null : (
+            <Fact source="selection.label" value={resolved.label} className={styles["mono"]} />
+          )}
+        </>
+      ),
+    },
+    ...(resolved.tag === null
+      ? []
+      : [
+          {
+            key: "tag",
+            label: copy.provenance.tag,
+            value: <Fact source="selection.tag" value={resolved.tag} mono />,
+          },
+        ]),
+    {
+      key: "solid",
+      label: copy.provenance.solid,
+      value: <Fact source="selection.solid_index" value={resolved.solid_index} />,
+    },
+    {
+      key: "topology",
+      label: copy.provenance.topology,
+      value: <Fact source="selection.topology_index" value={resolved.topology_index} />,
+    },
+    {
+      key: "line",
+      label: copy.provenance.line,
+      value:
+        resolved.line === null ? (
+          <span className={styles["muted"]}>{copy.provenance.noLine}</span>
+        ) : (
+          <Fact source="selection.line" value={resolved.line} mono />
+        ),
+    },
+    {
+      key: "source",
+      label: copy.provenance.source,
+      value: <Fact source="selection.source_artifact_ref" value={resolved.source_artifact_ref} mono />,
+    },
+    {
+      key: "bundle",
+      label: copy.provenance.bundle,
+      value: <Fact source="selection.bundle_ref" value={resolved.bundle_ref} mono />,
+    },
+    {
+      key: "table",
+      label: copy.provenance.table,
+      value: <Fact source="selection.selection_table_ref" value={resolved.selection_table_ref} mono />,
+    },
+    {
+      key: "crop",
+      label: copy.provenance.crop,
+      value:
+        resolved.crop_artifact_ref === null ? (
+          <span className={styles["muted"]}>{copy.provenance.noCrop}</span>
+        ) : (
+          <Fact source="selection.crop_artifact_ref" value={resolved.crop_artifact_ref} mono />
+        ),
+    },
+  ];
+
   return (
     <>
-      <div className={styles["headingRow"]}>
-        <span className={styles["state"]} data-provenance-state={state}>
-          {copy.provenance.state[state]}
-        </span>
+      <div className={styles["chips"]}>
+        <Chip data-provenance-state={state}>{copy.provenance.state[state]}</Chip>
         <Fact
           source="selection.selection_id"
           value={resolved.selection_id}
-          className={styles["dim"]}
+          className={styles["muted"]}
         >
           {`${copy.provenance.selectionId} ${resolved.selection_id}`}
         </Fact>
       </div>
 
-      <dl className={styles["pairs"]}>
-        <div className={styles["pairRow"]}>
-          <dt>{copy.provenance.kind}</dt>
-          <dd>
-            <Fact source="selection.kind" value={resolved.kind} />{" "}
-            {resolved.label === null ? null : (
-              <Fact source="selection.label" value={resolved.label} className={styles["mono"]} />
-            )}
-          </dd>
-        </div>
-        {resolved.tag === null ? null : (
-          <div className={styles["pairRow"]}>
-            <dt>{copy.provenance.tag}</dt>
-            <dd>
-              <Fact source="selection.tag" value={resolved.tag} className={styles["mono"]} />
-            </dd>
-          </div>
-        )}
-        <div className={styles["pairRow"]}>
-          <dt>{copy.provenance.solid}</dt>
-          <dd>
-            <Fact source="selection.solid_index" value={resolved.solid_index} />
-          </dd>
-        </div>
-        <div className={styles["pairRow"]}>
-          <dt>{copy.provenance.topology}</dt>
-          <dd>
-            <Fact source="selection.topology_index" value={resolved.topology_index} />
-          </dd>
-        </div>
-        <div className={styles["pairRow"]}>
-          <dt>{copy.provenance.line}</dt>
-          <dd>
-            {resolved.line === null ? (
-              <span className={styles["dim"]}>{copy.provenance.noLine}</span>
-            ) : (
-              <Fact source="selection.line" value={resolved.line} className={styles["mono"]} />
-            )}
-          </dd>
-        </div>
-        <div className={styles["pairRow"]}>
-          <dt>{copy.provenance.source}</dt>
-          <dd>
-            <Fact
-              source="selection.source_artifact_ref"
-              value={resolved.source_artifact_ref}
-              className={styles["mono"]}
-              mono
-            />
-          </dd>
-        </div>
-        <div className={styles["pairRow"]}>
-          <dt>{copy.provenance.bundle}</dt>
-          <dd>
-            <Fact
-              source="selection.bundle_ref"
-              value={resolved.bundle_ref}
-              className={styles["mono"]}
-              mono
-            />
-          </dd>
-        </div>
-        <div className={styles["pairRow"]}>
-          <dt>{copy.provenance.table}</dt>
-          <dd>
-            <Fact
-              source="selection.selection_table_ref"
-              value={resolved.selection_table_ref}
-              className={styles["mono"]}
-              mono
-            />
-          </dd>
-        </div>
-        <div className={styles["pairRow"]}>
-          <dt>{copy.provenance.crop}</dt>
-          <dd>
-            {resolved.crop_artifact_ref === null ? (
-              <span className={styles["dim"]}>{copy.provenance.noCrop}</span>
-            ) : (
-              <Fact
-                source="selection.crop_artifact_ref"
-                value={resolved.crop_artifact_ref}
-                className={styles["mono"]}
-                mono
-              />
-            )}
-          </dd>
-        </div>
-      </dl>
+      <DataTable rows={rows} />
 
       {state === "tagged" && reason === null ? null : (
-        <p
-          className={styles["why"]}
+        <PanelNote
           data-provenance-why={reason ?? state}
           data-provenance-reason={reason ?? ""}
+          className={styles["why"]}
         >
           {reason === null ? copy.provenance.why[state] : copy.provenance.reason[reason]}
-        </p>
+        </PanelNote>
       )}
     </>
   );

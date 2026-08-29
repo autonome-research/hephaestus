@@ -68,7 +68,15 @@ from hephaestus.core.project_store.store import ProjectStore, WriteConflictError
 from hephaestus.core.registry import TEXT_MAX_LINES, RegistryError, RegistryOps
 from opstore.types import TerminalState
 
-from .cad_ops import CadOpError, CadOps, ParamConflict, check_template, clarification_gate
+from .cad_ops import (
+    CadOpError,
+    CadOps,
+    ParamConflict,
+    active_run,
+    check_template,
+    clarification_gate,
+    inherit_run_request_text,
+)
 from .delegation import (
     DEADLINE_DEFAULT_S,
     DelegationError,
@@ -361,7 +369,14 @@ class ToolDispatcher:
         run_id = str(params.get("run_id", ""))
         self._authorize(principal, decl, arguments)
         try:
-            return self._route(principal, decl, arguments, invocation, run_id)
+            # INTERFACE.md §7A.4/§19.23: the run this call belongs to is the
+            # scope ``CadOps.request_text`` answers in. Entered HERE — the one
+            # dispatcher every tool rides (mission rule 6) — so no op has to
+            # remember to ask, and two overlapping turns cannot read each
+            # other's request. An absent run id (an HTTP tool route, MCP) scopes
+            # nothing and leaves the ops object's own text in force.
+            with active_run(run_id):
+                return self._route(principal, decl, arguments, invocation, run_id)
         except ParamConflict as exc:
             # A stale expected_state_hash is a discriminated *result*, not an error.
             return {
@@ -1242,6 +1257,12 @@ class ToolDispatcher:
                 "part_session_id": _part_session_id(part),
             }
         row = outcome
+        # INTERFACE.md §7A.4/§19.23 + ``app.py``'s delegation rule: the child part
+        # agent is working the ORIGINAL request, so its build is critiqued against
+        # that and not against this hand-off sentence. That used to fall out of one
+        # shared ``_request_text``; with the text bound per run it has to be said,
+        # and the child's own run id is the only key its tool calls will carry.
+        inherit_run_request_text(run_id, row.child_run_id)
         if delivery is Delivery.FOLLOW_UP:
             # The slot is reserved at ADMITTED and held through terminal ack.
             return _delegation_result(row)

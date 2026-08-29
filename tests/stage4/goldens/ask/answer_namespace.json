@@ -1,0 +1,132 @@
+{
+  "$comment": [
+    "INTERFACE.md §7A.7's TIGHTENING, as a fixture both surfaces are pinned to.",
+    "",
+    "'The answer value is the option's label for an object option and the string",
+    "itself for a bare-string option; a multi answer is an array of those.' Two",
+    "surfaces answer one ask_user question — the web widget (web/src/stream/ask.ts",
+    "answerValue) and heph agent's numbered prompt (agent_bridge/cli.py",
+    "interactive_answerer) — and before §19.29 they disagreed: the CLI flattened",
+    "options with str(o), so an object option arrived at the model as a Python",
+    "dict repr while the browser sent the label.",
+    "",
+    "Neither surface can run the other's tests, so this file is the shared",
+    "subject: server/tests/test_cli_agent.py types cli_input and asserts the",
+    "answerer returns selection; web/test/stream/ask.test.ts makes choice and",
+    "asserts answerValue returns the same selection, and asserts affordance",
+    "against §7A.7's mapping. A change to one surface's answer namespace fails",
+    "the other surface's suite, which is the point.",
+    "",
+    "Hand-written, not recorded: it states what the spec requires, and a",
+    "recording of today's behaviour could only state what today's code does."
+  ],
+  "cases": [
+    {
+      "name": "object options, no free text",
+      "params": {
+        "question": "The tread wall is thinner than the nozzle can print. Which way?",
+        "options": [
+          { "label": "Keep 2 mm walls", "consequence": "the wall stays under one nozzle width" },
+          { "label": "Go to 3 mm walls", "consequence": "outer diameter grows by 2 mm" }
+        ],
+        "allow_free_text": false,
+        "multi": false
+      },
+      "affordance": "options",
+      "choice": { "kind": "option", "index": 1 },
+      "cli_input": "2",
+      "cli_display": [
+        "Keep 2 mm walls — the wall stays under one nozzle width",
+        "Go to 3 mm walls — outer diameter grows by 2 mm"
+      ],
+      "selection": "Go to 3 mm walls"
+    },
+    {
+      "name": "bare string options, no free text",
+      "params": {
+        "question": "Which stock?",
+        "options": ["6 mm plate", "12 mm plate"],
+        "allow_free_text": false,
+        "multi": false
+      },
+      "affordance": "options",
+      "choice": { "kind": "option", "index": 0 },
+      "cli_input": "1",
+      "cli_display": ["6 mm plate", "12 mm plate"],
+      "selection": "6 mm plate"
+    },
+    {
+      "name": "object options, multi select",
+      "params": {
+        "question": "Which features may be dropped to make the part printable?",
+        "options": [
+          { "label": "The rim fillet", "consequence": "the rim edge becomes sharp" },
+          { "label": "The mounting boss", "consequence": "the bracket loses its locator" },
+          { "label": "The drain slot", "consequence": "water is trapped in the pocket" }
+        ],
+        "allow_free_text": false,
+        "multi": true
+      },
+      "affordance": "multi",
+      "choice": { "kind": "options", "indices": [0, 2] },
+      "cli_input": "1,3",
+      "cli_display": [
+        "The rim fillet — the rim edge becomes sharp",
+        "The mounting boss — the bracket loses its locator",
+        "The drain slot — water is trapped in the pocket"
+      ],
+      "selection": ["The rim fillet", "The drain slot"]
+    },
+    {
+      "name": "no options, free text by default",
+      "params": {
+        "question": "What wall thickness should the tread use?"
+      },
+      "affordance": "text",
+      "choice": { "kind": "text", "text": "18 mm" },
+      "cli_input": "18 mm",
+      "cli_display": [],
+      "selection": "18 mm"
+    },
+    {
+      "name": "object options and free text together",
+      "params": {
+        "question": "Which bore fit?",
+        "options": [
+          { "label": "H7 clearance", "consequence": "the shaft slides by hand" },
+          { "label": "H7/p6 press", "consequence": "the shaft needs an arbor press" }
+        ],
+        "allow_free_text": true,
+        "multi": false
+      },
+      "affordance": "options_text",
+      "choice": { "kind": "option", "index": 0 },
+      "cli_input": "1",
+      "cli_display": [
+        "H7 clearance — the shaft slides by hand",
+        "H7/p6 press — the shaft needs an arbor press"
+      ],
+      "selection": "H7 clearance"
+    },
+    {
+      "name": "object options, answered in the operator's own words",
+      "params": {
+        "question": "Which bore fit?",
+        "options": [
+          { "label": "H7 clearance", "consequence": "the shaft slides by hand" },
+          { "label": "H7/p6 press", "consequence": "the shaft needs an arbor press" }
+        ],
+        "allow_free_text": true,
+        "multi": false
+      },
+      "affordance": "options_text",
+      "choice": { "kind": "text", "text": "  H8 running fit  " },
+      "cli_input": "  H8 running fit  ",
+      "cli_display": [
+        "H7 clearance — the shaft slides by hand",
+        "H7/p6 press — the shaft needs an arbor press"
+      ],
+      "selection": "H8 running fit"
+    }
+  ]
+}

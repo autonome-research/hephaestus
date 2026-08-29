@@ -348,9 +348,8 @@ class Wal:
 
     def recover(self, op_key: str) -> WalOutcome:
         """Resolve one operation after crash/retry (see module contract)."""
-        row = self._db.conn.execute(
-            "SELECT * FROM operations WHERE op_key = ?", (op_key,)
-        ).fetchone()
+        with self._db.reading() as conn:
+            row = conn.execute("SELECT * FROM operations WHERE op_key = ?", (op_key,)).fetchone()
         if row is None:
             raise NotFoundError(f"operation {op_key} not found")
         state = OperationState(str(row["state"]))
@@ -389,9 +388,10 @@ class Wal:
 
     def recover_all(self) -> tuple[WalOutcome, ...]:
         """Startup recovery: resolve every PREPARED operation."""
-        rows = self._db.conn.execute(
-            "SELECT op_key FROM operations WHERE state = 'PREPARED' ORDER BY created_at, op_key"
-        ).fetchall()
+        with self._db.reading() as conn:
+            rows = conn.execute(
+                "SELECT op_key FROM operations WHERE state = 'PREPARED' ORDER BY created_at, op_key"
+            ).fetchall()
         return tuple(self.recover(str(row["op_key"])) for row in rows)
 
     def _recover_file(self, op_key: str, row: sqlite3.Row, target_path: str) -> WalOutcome:
@@ -468,9 +468,10 @@ class Wal:
             )
 
     def _require_skeleton(self, op_key: str) -> None:
-        row = self._db.conn.execute(
-            "SELECT state, target_path FROM operations WHERE op_key = ?", (op_key,)
-        ).fetchone()
+        with self._db.reading() as conn:
+            row = conn.execute(
+                "SELECT state, target_path FROM operations WHERE op_key = ?", (op_key,)
+            ).fetchone()
         if row is None:
             raise NotFoundError(f"operation {op_key} not registered; call begin() first")
         if str(row["state"]) != "PREPARED" or row["target_path"] is not None:

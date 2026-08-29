@@ -1,16 +1,21 @@
 /*
  * Copyright 2026 The Hephaestus Authors
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * `Fact.tsx` is unchanged by the §3 design-system amendment (§4.6) and its
+ * markup contract is untouched. Its *styling* joins the system: `.fact` composes
+ * the `.data` role, which is where `tabular-nums` now lives for every number in
+ * the workspace at once, and `.mono` composes `.code`. Neither class declares a
+ * type property of its own, so `heph/no-raw-type` (§3.14) holds here like
+ * everywhere else.
  */
 
 .fact {
-  font-variant-numeric: tabular-nums;
-  color: var(--ink-0);
+  composes: data from "../system/type.module.css";
+  color: var(--ink-strong);
 }
 
 .mono {
-  font-family: var(--font-mono);
-  font-size: var(--size-sm);
-  color: var(--ink-1);
-  word-break: break-all;
+  composes: code from "../system/type.module.css";
+  color: var(--ink-base);
 }

@@ -33,7 +33,9 @@ from opstore import (
 )
 
 __all__ = [
+    "IMPORT_ARTIFACT_KIND",
     "IMPORT_REF_PREFIX",
+    "SNAPSHOT_ARTIFACT_KIND",
     "SNAPSHOT_REF_PREFIX",
     "DriftEvidence",
     "ImportSnapshot",
@@ -41,14 +43,20 @@ __all__ = [
     "SourceSnapshot",
     "WriteConflictError",
     "WriteOutcome",
+    "artifact_kind_of_ref",
     "artifact_ref",
     "blob_hash_of_ref",
 ]
 
+#: The artifact kinds the two registered-snapshot prefixes name. Split out
+#: because §19.24 makes the kind a value the store *records*, not only a string
+#: a prefix happens to contain.
+SNAPSHOT_ARTIFACT_KIND = "part-snapshot"
+IMPORT_ARTIFACT_KIND = "import"
 #: Ref prefix for registered source snapshots (part scripts and globals.py).
-SNAPSHOT_REF_PREFIX = "artifact:part-snapshot:"
+SNAPSHOT_REF_PREFIX = f"artifact:{SNAPSHOT_ARTIFACT_KIND}:"
 #: Ref prefix for registered ``imports/`` payload snapshots (INGEST.md §1).
-IMPORT_REF_PREFIX = "artifact:import:"
+IMPORT_REF_PREFIX = f"artifact:{IMPORT_ARTIFACT_KIND}:"
 #: Reserved name for the globals.py snapshot.
 GLOBALS_NAME = "globals"
 
@@ -58,12 +66,35 @@ def artifact_ref(kind: str, blob_hash: str) -> str:
     return f"artifact:{kind}:{blob_hash}"
 
 
-def blob_hash_of_ref(ref: str) -> str:
-    """The ``sha256:<hex>`` blob hash embedded in an ``artifact:`` ref."""
+def _split_ref(ref: str) -> tuple[str, str]:
+    """``(kind, "sha256:<hex>")`` for a well-formed ref, or ``ValidationError``.
+
+    One parse of the ``artifact:<kind>:<alg>:<hash>`` grammar, because both
+    halves are read — the hash to resolve bytes, the kind to check them against
+    the store's publication record (``INTERFACE.md`` §2.6's CORRECTION, §19.24).
+    A second copy of these four conditions is how the two halves would come to
+    disagree about which refs are well formed (mission rule 6).
+    """
     parts = ref.split(":")
     if len(parts) != 4 or parts[0] != "artifact" or parts[2] != "sha256" or not parts[3]:
         raise ValidationError(f"malformed artifact ref: {ref!r}", kind="contract")
-    return f"sha256:{parts[3]}"
+    return parts[1], f"sha256:{parts[3]}"
+
+
+def blob_hash_of_ref(ref: str) -> str:
+    """The ``sha256:<hex>`` blob hash embedded in an ``artifact:`` ref."""
+    return _split_ref(ref)[1]
+
+
+def artifact_kind_of_ref(ref: str) -> str:
+    """The ``<kind>`` segment of an ``artifact:`` ref.
+
+    A **claim** by whoever wrote the ref, never evidence about the bytes: only
+    :func:`hephaestus.core.project_store.artifact_kinds.recorded_kinds` speaks
+    for the store. Kept here anyway so the claim is extracted by the same grammar
+    that resolves the hash.
+    """
+    return _split_ref(ref)[0]
 
 
 @dataclass(frozen=True)
@@ -151,8 +182,22 @@ class ProjectStore:
 
     # -- reads --------------------------------------------------------------
 
+    def _record_snapshot_kind(self, blob_hash: str) -> None:
+        """Bind ``part-snapshot`` to these bytes in the store (§2.6, §19.24).
+
+        The import is deferred because :mod:`.artifact_kinds` parses the ref
+        grammar this module owns; importing it at module scope would be a cycle,
+        and duplicating the grammar to break the cycle is the reimplementation
+        mission rule 6 forbids. Same shape as the ``executor.imports`` import in
+        :meth:`read_import` below.
+        """
+        from hephaestus.core.project_store.artifact_kinds import record_artifact_kind
+
+        record_artifact_kind(self._store, SNAPSHOT_ARTIFACT_KIND, blob_hash)
+
     def _register(self, name: str, path: Path, data: bytes) -> SourceSnapshot:
         content_hash = self._store.blobs.put(data)
+        self._record_snapshot_kind(content_hash)
         return SourceSnapshot(
             name=name,
             path=path,
@@ -196,9 +241,11 @@ class ProjectStore:
         :mod:`hephaestus.core.executor.imports` rather than reading anything.
         """
         from hephaestus.core.executor.imports import read_import as confined_read
+        from hephaestus.core.project_store.artifact_kinds import record_artifact_kind
 
         data = confined_read(self.layout.imports_dir, path)
         content_hash = self._store.blobs.put(data)
+        record_artifact_kind(self._store, IMPORT_ARTIFACT_KIND, content_hash)
         return ImportSnapshot(
             path=path,
             data=data,
@@ -316,6 +363,10 @@ class ProjectStore:
             if live_hash != base_hash:
                 self._store.wal.recover(outcome.op_key)  # aborts the fresh skeleton
                 attempted = self._store.blobs.put(raw)
+                # `attempted_ref` below is a `part-snapshot` ref the §9.3 merge
+                # prompt pages through `GET /artifacts/{ref}/text`; it is minted
+                # here rather than by `_register`, so it is bound here too.
+                self._record_snapshot_kind(attempted)
                 live_snapshot_ref = None
                 if live is not None:
                     live_snapshot_ref = self._register(part, path, live).snapshot_ref

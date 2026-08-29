@@ -10,6 +10,8 @@ exception type); message text is informational only.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 
 class OpStoreError(Exception):
     """Base class for all opstore errors; carries a stable ``code``."""
@@ -70,9 +72,22 @@ class ArtifactExpiredError(OpStoreError):
 
 
 class ProtectedQuotaExceededError(OpStoreError):
-    """Protected + pinned artifacts alone exceed the configured quota."""
+    """Protected + pinned artifacts alone exceed the configured quota.
+
+    Carries the accounting snapshot that produced the refusal, as a plain
+    ``{total_bytes, protected_bytes, quota_bytes}`` mapping. A caller cannot act
+    on this condition without the three numbers — the remedy is "raise the quota
+    or unpin data", and both halves are a comparison — and a caller that has to
+    re-run ``usage()`` to learn them would be reporting a *different* snapshot
+    than the one that refused. A mapping rather than the ``GcUsage`` dataclass
+    keeps this module free of an import from ``gc``, which imports this one.
+    """
 
     code = "protected_quota_exceeded"
+
+    def __init__(self, message: str, *, usage: Mapping[str, int] | None = None) -> None:
+        super().__init__(message)
+        self.usage: Mapping[str, int] | None = None if usage is None else dict(usage)
 
 
 class ConflictedError(OpStoreError):

@@ -23,6 +23,20 @@ and this route. Mission rule 6 forbids reimplementation and G5.8's word
 is closed **by enumeration, not by set membership** (§19 item 14). See
 :data:`BYTES_ROUTE_KINDS` for why that distinction is the whole point.
 
+**The kind is the store's, not the ref's** (§2.6 CORRECTION, §19.24). The
+enumeration alone was a naming convention: :func:`artifact_kind` reads the kind
+out of the caller-supplied string while :func:`reachable_blob` resolves bytes by
+hash, so
+``GET /artifacts/artifact:build:sha256:<an export blob>/bytes`` served export
+bytes and the only thing in the way was that no client knew the hash — which is
+exactly what §22 changes. :func:`reachable_blob` now asks the store which kinds
+that blob
+was published under
+(:func:`hephaestus.core.project_store.artifact_kinds.recorded_kinds`) and refuses
+``artifact_kind_mismatch`` when the ref's label is not among them. The
+enumeration stays, as defence in depth and as the surface's own vocabulary: two
+independent mechanisms refuse an export, and neither is load-bearing alone.
+
 **No image transformation** (§2.6 TIGHTENING, binds G5.10): no re-encode, no
 resample, no colour-profile insertion, no compression change. The palette
 bijection (``id_to_rgb``, 24-bit big-endian ``n+1``, ``BACKGROUND_RGB = (0,0,0)``
@@ -38,7 +52,10 @@ from typing import Any, Final
 
 from hephaestus.agent_bridge.cad_ops._artifacts import TEXT_ARTIFACT_MIME
 from hephaestus.core.artifacts import page_text
-from hephaestus.core.project_store.store import blob_hash_of_ref
+from hephaestus.core.errors import ValidationError
+from hephaestus.core.project_store.artifact_kinds import recorded_kinds
+from hephaestus.core.project_store.publication import EXPORT_ARTIFACT_KIND
+from hephaestus.core.project_store.store import artifact_kind_of_ref, blob_hash_of_ref
 
 from opstore import OpStore
 
@@ -49,12 +66,15 @@ __all__ = [
     "BYTES_ROUTE_KINDS",
     "GLTF_KIND",
     "GLTF_ROUTE_KINDS",
+    "KIND_MISMATCH_REASON",
     "REFUSED_BYTES_KINDS",
     "artifact_bytes",
     "artifact_kind",
     "artifact_meta",
     "artifact_text_page",
     "mime_for_kind",
+    "reachable_blob",
+    "verify_recorded_kind",
 ]
 
 #: ``INTERFACE.md`` §2.6 TIGHTENING (binds §15.17's refusal, which was otherwise
@@ -69,9 +89,23 @@ __all__ = [
 #: what the server will serve. A refusal a route quietly contradicts is worse
 #: than no refusal, because a reader stops looking.
 #:
-#: ``selection-crop`` (§12.5) is on the list because Stage 5 mints it. There is
-#: no ``selection-pass`` kind — the three pass layers are ``selection-solid``,
-#: ``selection-face``, ``selection-edge``.
+#: ``selection-crop`` (§12.5) is on the list because Stage 5 mints it.
+#:
+#: **DEVIATION, recorded rather than reconciled (found 2026-08-28 while binding
+#: §19.24, and NOT fixed here).** This list says "there is no ``selection-pass``
+#: kind — the three pass layers are ``selection-solid``, ``selection-face``,
+#: ``selection-edge``", and §2.6 says the same. The shipped producer disagrees:
+#: ``core/render/bundle.py``:62 defines ``SELECTION_PASS_KIND = "selection-pass"``
+#: and mints **all three** layers under it (:meth:`RenderStore.
+#: publish_selection_bundle`, lines 223-225), which ``tests/stage1/
+#: test_cli_no_node_gate.py``:122 pins. So this route enumerates three kinds
+#: nothing produces and refuses the one kind that exists: **no real selection
+#: pass is servable through ``/bytes`` today**, and G4.5 / G5.9 / G5.10 — every
+#: one of which fetches pass bytes from this route — will hit it. Left alone
+#: because the enumeration is the spec's literal text and reinterpreting it is
+#: not this correction's to do; §19.24's binding does not change the outcome
+#: either way, since a real pass ref's label and its recorded kind agree
+#: (``selection-pass``) and it is the enumeration that refuses it.
 BYTES_ROUTE_KINDS: Final[frozenset[str]] = frozenset(
     {
         "build",
@@ -105,8 +139,18 @@ GLTF_ROUTE_KINDS: Final[frozenset[str]] = BUILD_REF_KINDS | {GLTF_KIND}
 #: Named explicitly rather than left to fall out of the enumeration: ``export``
 #: is *the* kind this route refuses, and the pytest that proves it submits an
 #: ``export`` ref (§19 item 14). A constant makes the refusal greppable from the
-#: test as well as from the route.
-REFUSED_BYTES_KINDS: Final[frozenset[str]] = frozenset({"export"})
+#: test as well as from the route. The string is the publisher's
+#: (``core.project_store.publication``) so the kind the store *records* and the
+#: kind this route *refuses* cannot drift apart — which is the whole subject of
+#: §2.6's CORRECTION.
+REFUSED_BYTES_KINDS: Final[frozenset[str]] = frozenset({EXPORT_ARTIFACT_KIND})
+
+#: §19.24's refusal, by the name the spec gives it. **Distinct from
+#: ``unknown_artifact``** and deliberately so: the blob is present and reachable
+#: from the open project, and what fails is the ref's claim about *what it is*.
+#: Folding the two together would hide the attack this correction exists to stop
+#: behind the answer a typo gets.
+KIND_MISMATCH_REASON: Final[str] = "artifact_kind_mismatch"
 
 #: Content types for the kinds the bytes route serves. Every kind of
 #: :data:`BYTES_ROUTE_KINDS` has a row; the fallback exists only for a kind added
@@ -125,29 +169,81 @@ _BYTES_MIME: Final[dict[str, str]] = {
 
 
 def artifact_kind(ref: str) -> str:
-    """The kind segment of ``artifact:<kind>:<alg>:<hash>``.
+    """The kind segment of ``artifact:<kind>:<alg>:<hash>``, as *claimed*.
 
     A ref that is not an artifact ref at all is ``invalid_ref`` — the same
-    reason ``cad_ops`` raises, because it is the same malformation.
+    reason ``cad_ops`` raises, because it is the same malformation. The grammar
+    is the core's (``project_store.store``), so the two segments this module
+    reads — the kind here, the hash in :func:`reachable_blob` — are parsed once and
+    cannot
+    come to disagree about which refs are well formed (mission rule 6).
+
+    What comes back is the caller's claim and never evidence:
+    :func:`verify_recorded_kind` is the function that asks the store.
     """
-    parts = ref.split(":")
-    if len(parts) != 4 or parts[0] != "artifact":
-        raise HttpRefusal(400, "invalid_ref", f"{ref!r} is not an artifact reference")
-    return parts[1]
+    try:
+        return artifact_kind_of_ref(ref)
+    except ValidationError as exc:
+        raise HttpRefusal(400, "invalid_ref", f"{ref!r} is not an artifact reference") from exc
 
 
-def _blob(store: OpStore, ref: str) -> bytes:
+def verify_recorded_kind(store: OpStore, ref: str) -> None:
+    """Refuse ``ref`` when the store published its blob under a different kind.
+
+    §2.6's CORRECTION / §19.24. ``recorded_kinds`` is a *set* because the store
+    is content-addressed: identical bytes published under two kinds are one blob
+    and both publications are legitimate, so membership — not equality — is the
+    honest test.
+
+    **The unrecorded case, stated rather than defaulted.** A blob whose kind no
+    publication has recorded — one written before this table existed, or by a
+    path §19.24 has not yet instrumented — reports the empty set. It is treated
+    as *unverified*: the label is not corroborated, and the route falls back to
+    the mechanism it already had, the enumeration. Refusing instead would make
+    every artifact published before this change unreadable, which is a data-loss
+    bug wearing a security fix's clothes. This is the residual §19.24 leaves,
+    and it is named here rather than papered over: the binding is total only for
+    the publication paths that record, ``export`` first among them.
+
+    The refusal does **not** name the recorded kind. Echoing it would turn the
+    route into a kind oracle — label anything ``build`` and be told what it
+    really is — which is a smaller version of the defect being corrected.
+    """
+    recorded = recorded_kinds(store, blob_hash_of_ref(ref))
+    if recorded and artifact_kind(ref) not in recorded:
+        raise HttpRefusal(
+            404,
+            KIND_MISMATCH_REASON,
+            f"artifact {ref} names a blob the store published under a different kind",
+        )
+
+
+def reachable_blob(store: OpStore, ref: str) -> bytes:
     """The stored bytes for ``ref``, or the §2.2 project-scoped refusal.
 
-    This *is* the authorization: an artifact ref is a project-scoped capability
-    for the web principal, so "reachable from the open project's opstore" is the
-    whole check. A ref minted in another project simply is not here.
+    Reachability is the authorization: an artifact ref is a project-scoped
+    capability for the web principal, so "reachable from the open project's
+    opstore" is that whole check. A ref minted in another project simply is not
+    here.
+
+    Reachability is no longer the *only* check, because it was never a check on
+    the ref's kind: §19.24's :func:`verify_recorded_kind` runs before a byte is
+    read, so a ref that relabels somebody else's blob is refused rather than
+    served under the label it chose.
+
+    **Public rather than private, since §22.** ``GET /exports/{blob}/bytes`` is a
+    third surface with its own, narrower authorization (a ``COMMITTED``
+    ``tp_exports`` row), and §22.3 requires it to reach the bytes through *this*
+    function rather than its own ``blobs.get``: "the extraction is shared … so
+    mission rule 6 is satisfied by construction". One blob-reading path in this
+    layer, three authorizations in front of it.
     """
     blob = blob_hash_of_ref(ref)
     if not store.blobs.has(blob):
         raise HttpRefusal(
             404, "unknown_artifact", f"artifact {ref} is not stored in the open project"
         )
+    verify_recorded_kind(store, ref)
     return store.blobs.get(blob)
 
 
@@ -167,7 +263,7 @@ def artifact_meta(store: OpStore, ref: str) -> dict[str, Any]:
     list it would otherwise have to carry (and drift from).
     """
     kind = artifact_kind(ref)
-    data = _blob(store, ref)
+    data = reachable_blob(store, ref)
     links: dict[str, str] = {}
     if kind in BYTES_ROUTE_KINDS:
         links["bytes"] = f"/api/v1/artifacts/{ref}/bytes"
@@ -196,7 +292,7 @@ def artifact_text_page(
     """``GET /artifacts/{ref}/text`` — the shared UTF-8 pager under the web principal.
 
     The principal check is the caller's (``WorkspacePrincipal`` + reachability,
-    applied by :func:`_blob`); the boundary contract is
+    applied by :func:`reachable_blob`); the boundary contract is
     :func:`hephaestus.core.artifacts.page_text`, which the ``read_artifact`` tool
     also calls under *its* different check. One contract, two authorizations.
 
@@ -205,7 +301,7 @@ def artifact_text_page(
     with a 200 would read as "this artifact is empty".
     """
     kind = artifact_kind(ref)
-    data = _blob(store, ref)
+    data = reachable_blob(store, ref)
     if kind not in TEXT_ARTIFACT_MIME and not _decodes_utf8(kind, data):
         raise HttpRefusal(
             404,
@@ -230,6 +326,14 @@ def artifact_bytes(store: OpStore, ref: str) -> tuple[bytes, str]:
     ``export`` first among them, is a 404 ``unknown_artifact_kind_for_route``.
     The refusal is raised *before* the blob is read, so a refused kind never even
     loads its bytes into this process.
+
+    Two mechanisms, in this order, and both are needed (§2.6's CORRECTION). The
+    enumeration answers "is this a kind the *surface* serves" and it reads the
+    caller's label, so it is the one relabelling defeats. :func:`reachable_blob` then
+    answers "is that label what the *store* published these bytes as", which is
+    the one that survives relabelling but knows nothing about routes. An export
+    ref is refused by the first; an export blob wearing a ``build`` label reaches
+    the second and is refused there.
     """
     kind = artifact_kind(ref)
     if kind not in BYTES_ROUTE_KINDS:
@@ -239,7 +343,7 @@ def artifact_bytes(store: OpStore, ref: str) -> tuple[bytes, str]:
             f"artifact kind {kind!r} is not served by this route",
             data={"kind": kind, "served": sorted(BYTES_ROUTE_KINDS)},
         )
-    return _blob(store, ref), mime_for_kind(kind)
+    return reachable_blob(store, ref), mime_for_kind(kind)
 
 
 def _decodes_utf8(kind: str, data: bytes) -> bool:

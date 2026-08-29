@@ -52,7 +52,6 @@ STARTUP_TIMEOUT_S = 180.0
 
 def main(handshake_path: str) -> int:
     from hephaestus.testing.fake_openai import start_fake_openai
-    from hephaestus.testing.stream_assertions import text, tool_call
     from hephaestus.testing.workspace_fixture import (
         GATE_PARTS,
         ORCHESTRATOR_SESSION_ID,
@@ -67,15 +66,7 @@ def main(handshake_path: str) -> int:
     materialize_workspace_fixture(project_root)
     build(project_root, GATE_PARTS)
 
-    fake = start_fake_openai(
-        [
-            tool_call("run_checks", {"name": SUBJECT_PART}, "c-live-checks"),
-            text(
-                "The check set ran against the current tread: one passing, one failing, "
-                "one that cannot be evaluated."
-            ),
-        ]
-    )
+    fake = start_fake_openai(scripted_turns(SUBJECT_PART))
     write_provider_config(project_root, fake.provider_spec())
 
     server = start_server(project_root)
@@ -92,6 +83,25 @@ def main(handshake_path: str) -> int:
                     "sessions": sessions,
                     "model_base_url": fake.base_url,
                     "pid": server.pid,
+                    # §7A.7's spec needs the prompt that provokes a question and
+                    # the labels the model will offer. They are published here
+                    # rather than retyped in the spec: a spec that hard-coded the
+                    # labels would assert its own copy of the fixture, and the
+                    # one thing that clause is about is that the label the
+                    # *server* sent is the value that comes back.
+                    "ask": {
+                        "sentinel": ASK_SENTINEL,
+                        "options": ASK_OPTIONS,
+                        "affordance": ASK_AFFORDANCE,
+                    },
+                    # §7A.12's composer cases. The sentinel and the part it
+                    # creates are published for the same reason the ask block
+                    # is: a spec that hard-coded them would assert its own copy
+                    # of the fixture rather than the harness's.
+                    "composer": {
+                        "sentinel": COMPOSER_SENTINEL,
+                        "part": COMPOSER_PART,
+                    },
                     # The interpreter that runs the product here. A spec that
                     # shelled `uv run` from inside the materialized project
                     # would be outside this repository's uv workspace and would
@@ -114,6 +124,105 @@ def main(handshake_path: str) -> int:
 
 def log(message: str) -> None:
     print(f"[g4-harness] {message}", file=sys.stderr, flush=True)
+
+
+#: The token a spec puts in its prompt when it wants the model to ask a question.
+#: Deliberately a sentinel and not a phrase: the dispatcher below is a *fake
+#: model*, and keying it on plausible English would make one spec's prompt
+#: wording silently change another spec's turn.
+ASK_SENTINEL = "HEPH_ASK_USER"
+
+#: The `ask_user` call the sentinel produces. Object options, because
+#: `_CLARIFICATION_OPTION` is `{label, consequence}` and INTERFACE.md §7A.7's
+#: answer namespace — the `label`, on every surface — is only testable against an
+#: option whose label differs from its serialization.
+ASK_OPTIONS = [
+    {"label": "Keep 2 mm walls", "consequence": "the wall stays under one nozzle width"},
+    {"label": "Go to 3 mm walls", "consequence": "the outer diameter grows by 2 mm"},
+]
+
+#: The scripted question, in one place because the handshake publishes what the
+#: spec must expect and the script has to ask exactly that.
+#:
+#: ``allow_free_text`` is **false** on purpose. §7A.7 derives the affordance from
+#: the question's own params, and a question that forbids free text must render
+#: with no text field at all (§15.35). It is also the one param that proves the
+#: sidecar carries it: the schema default is ``true``, so a `question` event
+#: minted without the field renders a free-text box and the spec fails — which is
+#: what makes `agent/src/main.ts`'s payload change end-to-end evidence rather
+#: than a comment.
+ASK_PARAMS: dict[str, Any] = {
+    "question": "The tread wall is thinner than the nozzle can print. Which way?",
+    "options": ASK_OPTIONS,
+    "allow_free_text": False,
+    "multi": False,
+}
+
+#: What §7A.7's mapping makes of :data:`ASK_PARAMS`. Published so the spec
+#: asserts the harness's own answer instead of a second copy of the rule.
+ASK_AFFORDANCE = "options"
+
+#: The token a spec puts in its prompt when it wants the model to create a part.
+#:
+#: §7A.12's case 1 is the blank canvas, and its assertion is not about the
+#: transcript: "assert the turn's events reach the transcript, ``run_status`` is
+#: terminal, **and** the created part appears in the tree, is selectable, and
+#: renders (§7A.11)". So the scripted turn has to make a real mutation through
+#: the real dispatcher, and ``create_part`` is the one §7A.2 names as the only
+#: way a part comes into existence from the browser: "the only way to bring a
+#: part into existence from the browser is to **type English at an orchestrator
+#: agent, which calls ``create_part``**".
+COMPOSER_SENTINEL = "HEPH_CREATE_PART"
+
+#: The part that turn creates. A name no fixture part uses, so its appearance in
+#: the tree is unambiguously this turn's doing and not the fixture's.
+COMPOSER_PART = "composer_probe"
+
+
+def scripted_turns(subject_part: str) -> list[Any]:
+    """The fake model's script, dispatched on the **request** rather than on order.
+
+    A positional script (turn 1, turn 2, …) makes every spec's turns depend on
+    which specs ran before it, so adding one spec silently re-aims another's
+    model. Playwright runs this suite serially against one server, so that
+    coupling is real: G4.8's `run_checks` round trip and §7A.7's `ask_user`
+    suspension share one fake. Each resolver therefore reads the request and
+    answers it:
+
+    * a conversation that already contains a tool result gets the closing text
+      turn — the tool call it was asked for has been answered;
+    * a prompt carrying :data:`ASK_SENTINEL` gets the `ask_user` suspension;
+    * anything else gets G4.8's `run_checks` call, unchanged.
+
+    The list is resolvers rather than turns because `FakeOpenAI` consumes one
+    entry per tool-enabled request; the entries are identical, so the *cursor*
+    no longer decides anything. It is long enough for every spec in the suite,
+    and an exhausted script still settles the loop with a terminal text turn.
+    """
+    from hephaestus.testing.fake_openai import RequestInfo
+    from hephaestus.testing.stream_assertions import text, tool_call
+
+    def resolve(info: RequestInfo) -> dict[str, Any]:
+        if info.has_tool_result:
+            return text(
+                "The check set ran against the current tread: one passing, one failing, "
+                "one that cannot be evaluated."
+            )
+        if ASK_SENTINEL in info.body_text:
+            return tool_call("ask_user", dict(ASK_PARAMS), "c-live-ask")
+        if COMPOSER_SENTINEL in info.body_text:
+            # §7A.12 case 1. A REAL mutation through the real dispatcher: the
+            # clause's assertion is that the part appears in the tree without a
+            # manual reload, and a scripted text turn would leave nothing for
+            # the read-refresh boundary to refresh.
+            return tool_call(
+                "create_part",
+                {"name": COMPOSER_PART, "description": "a part the composer asked for"},
+                "c-live-create",
+            )
+        return tool_call("run_checks", {"name": subject_part}, "c-live-checks")
+
+    return [resolve] * 16
 
 
 def build(root: Path, parts: tuple[str, ...]) -> None:

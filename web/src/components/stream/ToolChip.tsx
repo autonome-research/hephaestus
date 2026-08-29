@@ -41,6 +41,7 @@
 
 import { readToolCall, readToolResult } from "../../api/events";
 import { copy } from "../../copy";
+import { StatusBadge } from "../../system";
 import { EventImageInline } from "./EventImage";
 import { fieldDisplay, parseToolResult, referenceFields } from "../../stream/toolResult";
 import type { ChipStatus, TranscriptItem } from "../../stream/transcript";
@@ -101,9 +102,11 @@ export function ToolChip({
     >
       <header className={styles["chipHeader"]}>
         <span className={styles["chipName"]}>{toolName}</span>
-        <span className={styles["chipStatus"]} data-chip-status={status}>
-          {copy.stream.chip.status[status]}
-        </span>
+        {/* §4.7: "status via `Badge`". The shipped bordered pill was the fifth
+            independent spelling of a status readout in this repo; the primitive
+            makes it the same recipe as a check badge and a DFM severity, icon
+            and word included. */}
+        <StatusBadge status={status}>{copy.stream.chip.status[status]}</StatusBadge>
       </header>
 
       {status === "unknown" ? (
@@ -141,7 +144,7 @@ export function ToolChip({
           <p className={styles["note"]}>{copy.stream.chip.unparsedNote}</p>
           {resultPayload !== null && resultPayload.text !== "" ? (
             <details className={styles["rawResult"]}>
-              <summary>{copy.stream.chip.raw}</summary>
+              <summary className={styles["rawSummary"]}>{copy.stream.chip.raw}</summary>
               <pre className={styles["raw"]}>{resultPayload.text}</pre>
             </details>
           ) : null}

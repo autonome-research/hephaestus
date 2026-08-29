@@ -160,8 +160,36 @@ class Database:
             else:
                 self.conn.execute("COMMIT")
 
+    @contextmanager
+    def reading(self) -> Generator[sqlite3.Connection]:
+        """Serialize a read-only ``SELECT`` against in-process transactions.
+
+        Threads share one connection (``check_same_thread=False``), and only
+        :meth:`transaction` serializes on ``_txn_lock``. A bare
+        ``conn.execute("SELECT …")`` from a second thread therefore interleaves
+        with an open ``BEGIN IMMEDIATE`` on the *same connection object*, and
+        sqlite3 raises ``InterfaceError("bad parameter or other API misuse")``
+        — the crash ``server/tests/test_request_binding.py``'s two-thread build
+        test reproduces the moment any read joins the concurrent build path.
+
+        WHY this and not ``transaction()``: ``BEGIN IMMEDIATE`` takes the
+        database *write* lock, cross-process, so wrapping a read in it would
+        serialize readers against every writer of every process for the length
+        of the SELECT. This takes only the in-process connection lock, which is
+        the thing that is actually shared. Re-entrant, so a caller already
+        inside a transaction — or a read composed of other reads — nests freely.
+
+        It does not make a read repeatable across processes: another process may
+        commit between two of these. Callers that need one consistent snapshot
+        take a single ``reading()`` around the whole read, which is what
+        :meth:`~opstore.gc.Gc.usage` does.
+        """
+        with self._txn_lock:
+            yield self.conn
+
     def schema_version(self) -> int:
-        row = self.conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+        with self.reading() as conn:
+            row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
         return 0 if row is None else int(row["value"])
 
     def _migrate(self) -> None:

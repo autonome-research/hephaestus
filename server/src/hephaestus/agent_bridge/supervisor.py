@@ -111,6 +111,13 @@ _PR_SET_PDEATHSIG = 1
 STDERR_TAIL_LINES: int = 200
 STDERR_TAIL_LINE_CHARS: int = 500
 
+#: What replaces a registered secret in the retained stderr tail (§23.6).
+REDACTED_MARKER: str = "[redacted]"
+
+#: Shorter than this and a "secret" is not one; substituting it would blank out
+#: unrelated text and make the archive useless without protecting anything.
+_REDACTION_MIN_CHARS: int = 8
+
 #: Sync handler for a ``py.*`` request: ``(method, params) -> result``.
 #: Raising :class:`ProtocolError` maps to its code; any other exception maps to
 #: ``INTERNAL_ERROR``.
@@ -127,7 +134,19 @@ SpawnHook = Callable[["Supervisor"], None]
 
 
 class SupervisorError(Exception):
-    """A supervisor-layer failure (spawn, or a call against a dead sidecar)."""
+    """A supervisor-layer failure (spawn, or a call against a dead sidecar).
+
+    ``error`` carries the sidecar's JSON-RPC error envelope when there was one.
+    Structured rather than only stringified because ``INTERFACE.md`` §23.6's
+    credential routes must map a sidecar refusal onto a **named** reason and an
+    HTTP status, and re-parsing a formatted message would be a second, weaker
+    copy of a fact the frame already carries. Everything else keeps reading the
+    message exactly as before; the attribute is additive and defaults to empty.
+    """
+
+    def __init__(self, message: str, *, error: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.error: dict[str, Any] = dict(error or {})
 
 
 def build_minimal_env(
@@ -301,6 +320,10 @@ class Supervisor:
         #: supervisor spawned (a crash's last words arrive just before the
         #: replacement's first). Read it for the archive; never unbounded.
         self.stderr_tail: deque[str] = deque(maxlen=STDERR_TAIL_LINES)
+        #: Values substituted out of every retained stderr line (§23.6). Guarded
+        #: by ``_plock`` because the drain runs on its own thread while a
+        #: credential route registers from another.
+        self._redactions: set[str] = set()
 
         self._atexit = self._kill_now
         atexit.register(self._atexit)
@@ -542,7 +565,7 @@ class Supervisor:
                 self._pending.pop(call.id, None)
             raise SupervisorError(f"{method} timed out after {deadline_s}s with no response")
         if call.error is not None:
-            raise SupervisorError(f"{method} failed: {call.error}")
+            raise SupervisorError(f"{method} failed: {call.error}", error=call.error)
         return call.result
 
     def _await_child(self) -> None:
@@ -620,14 +643,55 @@ class Supervisor:
             return
         self._on_child_exit(proc, crash=not self._closing.is_set())
 
+    def add_redaction(self, secret: str) -> None:
+        """Register a value that must never survive into the retained stderr tail.
+
+        BLOCKING FINDING, folded in (``INTERFACE.md`` §23.6, §23.14 item 10). A
+        draft of §23 promised that a provider's raw-body interpolation "is
+        caught at the bridge boundary and reduced to a code plus an HTTP status
+        before it reaches a client, a log, or a ``stderr_tail``". **The bridge
+        boundary cannot see this channel.** It is the framed JSON-RPC pipe;
+        stderr is a second, independent pipe that this supervisor drains
+        verbatim into a tail the bench harness archives. Nothing done to an
+        error *frame* can reduce what the child wrote to ``console.error``.
+
+        So the reduction happens where the bytes are. Every credential this
+        process hands the sidecar — the allowlisted variables at configure time
+        and every key pasted into ``POST /providers/{id}/auth/key`` afterwards —
+        is registered here, and :meth:`_drain_stderr` substitutes it at the one
+        place every sidecar line passes through. Exact-substring, because the
+        values are known exactly; a pattern-matching redactor would be a guess
+        about what a secret looks like.
+
+        Short values are ignored: a one- or two-character "secret" would blank
+        out unrelated text and make the archive useless, and nothing that short
+        is a credential.
+        """
+        if len(secret) < _REDACTION_MIN_CHARS:
+            return
+        with self._plock:
+            self._redactions.add(secret)
+
+    def redact(self, text: str) -> str:
+        """Substitute every registered secret in ``text``."""
+        with self._plock:
+            secrets = tuple(self._redactions)
+        for secret in secrets:
+            text = text.replace(secret, REDACTED_MARKER)
+        return text
+
     def _drain_stderr(self, proc: subprocess.Popen[bytes]) -> None:
         assert proc.stderr is not None
         # The logs are still the sidecar's — nothing here is parsed or acted on.
         # A bounded tail is retained purely as archive evidence (EXTERNAL_EVAL.md
         # §5): the 2026-07-29 sweep's crashes left no stderr anywhere.
+        #
+        # The ONE transformation is the §23.6 redaction pass, and it happens at
+        # the append point because that is the single place every line from
+        # every child passes through. See :meth:`add_redaction`.
         for line in proc.stderr:
             text = line.decode("utf-8", errors="replace").rstrip("\n")
-            self.stderr_tail.append(text[:STDERR_TAIL_LINE_CHARS])
+            self.stderr_tail.append(self.redact(text)[:STDERR_TAIL_LINE_CHARS])
 
     def _on_frame(self, raw: bytes) -> None:
         try:

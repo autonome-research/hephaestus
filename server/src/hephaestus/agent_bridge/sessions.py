@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Final, Protocol, runtime_checkable
 
 from opstore.errors import LeaseHeldError
 from opstore.leases import Lease, LeaseManager
@@ -32,9 +32,11 @@ from opstore.types import Clock, OwnerId, SystemClock
 from .session_edges import SessionEdgeStore
 
 __all__ = [
+    "RUN_IN_FLIGHT_SCOPES",
     "QuickEditContext",
     "QuickEditRequest",
     "ResolvedSelection",
+    "RunInFlightError",
     "SelectionResolver",
     "SessionBusyError",
     "SessionLease",
@@ -111,6 +113,42 @@ class SessionBusyError(Exception):
     def __init__(self, session_id: str) -> None:
         super().__init__(f"session {session_id} is owned by another live process")
         self.session_id = session_id
+
+
+#: The two conditions that share the ``run_in_flight`` reason, kept apart because
+#: the remedies differ: ``session`` is another turn already running on this
+#: session (wait for it, or cancel it), ``run_id`` is a run id that is already
+#: live (mint a fresh one — ``BridgeRuntime.new_run_id`` owns that namespace).
+#: A closed vocabulary, extended only by a spec amendment.
+RUN_IN_FLIGHT_SCOPES: Final[tuple[str, ...]] = ("session", "run_id")
+
+
+class RunInFlightError(Exception):
+    """A turn is already live where this one needs to run. ``code``.
+
+    ``INTERFACE.md`` §7A.5. Deliberately **not** :class:`SessionBusyError`, which
+    already means *a foreign lease holder owns this session* (§2.1) — a different
+    fact with a different remedy. Collapsing them would make "your terminal holds
+    this session" and "another tab is mid-turn" indistinguishable in the one
+    place the operator must tell them apart, so the vocabulary gains a reason
+    rather than overloading one.
+
+    Carries the **holding** session and run ids (§7A.5: "naming which session
+    holds it"), which is what the composer renders and what a client needs to
+    offer a cancel.
+    """
+
+    code = "run_in_flight"
+
+    def __init__(self, session_id: str, run_id: str, *, scope: str) -> None:
+        super().__init__(
+            f"run {run_id} is already live on session {session_id}"
+            if scope == "session"
+            else f"run {run_id} is already live"
+        )
+        self.session_id = session_id
+        self.run_id = run_id
+        self.scope = scope
 
 
 class StaleSelectionError(Exception):

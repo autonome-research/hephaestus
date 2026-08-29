@@ -1,0 +1,68 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * INTERFACE.md §4.7's three columns. `subgrid` twice — once for the table
+ * inside the panel body, once for the row inside the table — so every row in
+ * every table in one panel lands on the SAME three tracks. That is the whole
+ * fix for "the Properties value column visibly jogging between two groups that
+ * each compute their own `max-content`".
+ */
+
+.table {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-content: start;
+  gap: var(--gap-stack) var(--gap-inline);
+  margin: 0;
+}
+
+.row {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: baseline;
+  gap: var(--gap-stack) var(--gap-inline);
+  padding: var(--pad-row);
+  border-radius: var(--radius-control);
+  min-width: 0;
+}
+
+.row:hover {
+  background: var(--surface-raised);
+}
+
+.label {
+  color: var(--ink-muted);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* §4.7: right-aligned, tabular. A column of measurements whose digits do not
+   line up cannot be scanned, which is the defect the shipped left-aligned
+   numerals produced. */
+.value {
+  color: var(--ink-strong);
+  text-align: right;
+  justify-self: stretch;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Left-aligned deliberately, so the units form their own column against the
+   right-aligned numbers beside them. §3.9's 2026-08-28 correction struck the
+   earlier `--ink-faint` here: `--ink-faint` is not a text token, and a unit
+   column is text. */
+.unit {
+  color: var(--ink-muted);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.note {
+  grid-column: 1 / -1;
+  margin: 0;
+  max-width: 68ch;
+  color: var(--ink-base);
+}

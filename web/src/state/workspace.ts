@@ -41,7 +41,27 @@ export type ChannelOverlay = (typeof CHANNEL_OVERLAYS)[number];
 export const STAGE_TABS = ["viewport", "script", "diff"] as const;
 export type StageTab = (typeof STAGE_TABS)[number];
 
-export const INSPECTOR_TABS = ["results", "properties", "provenance", "checks", "dfm"] as const;
+/**
+ * §4.2's panel inventory, plus §22.7's sixth tab.
+ *
+ * §22.7's DECISION: "the Inspector gains a sixth tab, `export`. The header gains
+ * nothing." The Inspector because §4.3's provenance spine puts the *pin* in the
+ * header and everything the pin *implies* in the Inspector — Results,
+ * Properties, Provenance, Checks and DFM are all statements about the pinned
+ * artifact, and an export is another one; it inherits the pin without a second
+ * control and sits beside the DFM panel whose process pack decides the kerf it
+ * reports. Not the header, which is 44px of the most contested space in the app
+ * and already renders the word "current" twice in two different closed
+ * vocabularies (§4.1).
+ */
+export const INSPECTOR_TABS = [
+  "results",
+  "properties",
+  "provenance",
+  "checks",
+  "dfm",
+  "export",
+] as const;
 export type InspectorTab = (typeof INSPECTOR_TABS)[number];
 
 export const PIN_MODES = ["current", "pinned"] as const;

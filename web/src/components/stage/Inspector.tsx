@@ -1,7 +1,7 @@
 // Copyright 2026 The Hephaestus Authors
 // SPDX-License-Identifier: Apache-2.0
 //
-// The INSPECTOR drawer (INTERFACE.md §4.1) — the five tabs of §4.2's panel
+// The INSPECTOR drawer (INTERFACE.md §4.1) — the six tabs of §4.2's panel
 // inventory, as a bottom drawer of the Stage rather than a third column.
 //
 // §4.1: "INSPECTOR is a bottom drawer of the Stage rather than a third column:
@@ -9,27 +9,37 @@
 // relation costs more than the vertical pixels."
 //
 // The tab is workspace state (`inspector_tab`, §4.5), so the drawer's selection
-// is in the URL and survives a reload like everything else. All five panels of
+// is in the URL and survives a reload like everything else. All six panels of
 // the closed inventory are mounted; each is a projection of one read route and
 // owns its own named absences (§6.1–§6.4, §4.4).
 //
+// The sixth is §22.7's `export`, and it is the only one containing a control that
+// WRITES. It is here rather than in the header because §4.3's provenance spine
+// puts the pin in the header and everything the pin implies in the Inspector, so
+// the export tab inherits the pin without a second control.
+//
+// §4.1(c): the drawer's HEIGHT is not this component's any more — the Stage owns
+// it as an explicit grid row, and `.content { overflow: auto }` takes the excess.
+// The shipped `min-height: 132px` let the drawer grow with whichever panel was
+// open, which is what produced the 76% canvas-height swing across tabs.
+//
+// `TabBar` owns the roving-tabindex contract and preserves `[data-inspector-tab]`
+// verbatim (§4.7, §3.14's migration criterion).
+//
 // ONE PIECE OF STATE LIVES HERE AND NOWHERE ELSE: the descriptor a reader
-// clicked in the DFM panel. §6.4 makes a finding's topology descriptor clickable
-// and says it "drives the same server resolve path as a raycast (§12.3) against
-// the finding's `source_artifact_ref`" — so the click is a *navigation along
-// §4.3's spine*, from a finding to the provenance station. It is deliberately
-// not workspace state: §4.5's record is closed, its `selection` field is a
-// resolved server selection, and a clicked descriptor is not one (see
-// `DfmPanel`'s `DescriptorIntent` for why the resolve route cannot accept a
-// descriptor yet). Putting an unresolved address in the field reserved for a
-// resolved selection is exactly the short-circuit §4.3 forbids.
+// clicked in the DFM panel. It is deliberately not workspace state: §4.5's record
+// is closed, its `selection` field is a resolved server selection, and a clicked
+// descriptor is not one. Putting an unresolved address in the field reserved for
+// a resolved selection is exactly the short-circuit §4.3 forbids.
 
 import { useState } from "react";
 import { copy } from "../../copy";
 import { useWorkspace, workspaceStore } from "../../state/react";
 import { INSPECTOR_TABS, type InspectorTab } from "../../state/workspace";
+import { TabBar } from "../../system";
 import { ChecksPanel } from "../inspector/ChecksPanel";
 import { DfmPanel, type DescriptorIntent } from "../inspector/DfmPanel";
+import { ExportPanel } from "../inspector/ExportPanel";
 import { PropertiesPanel } from "../inspector/PropertiesPanel";
 import { ProvenancePanel } from "../inspector/ProvenancePanel";
 import { ResultsPanel } from "../inspector/ResultsPanel";
@@ -41,23 +51,15 @@ export function Inspector(): React.JSX.Element {
 
   return (
     <section className={styles["drawer"]} aria-label={copy.inspector.tabs[tab]}>
-      <div className={styles["tabs"]} role="tablist">
-        {INSPECTOR_TABS.map((name: InspectorTab) => (
-          <button
-            key={name}
-            type="button"
-            role="tab"
-            aria-selected={tab === name}
-            className={styles["tab"]}
-            data-inspector-tab={name}
-            onClick={() => {
-              workspaceStore.update({ inspector_tab: name });
-            }}
-          >
-            {copy.inspector.tabs[name]}
-          </button>
-        ))}
-      </div>
+      <TabBar
+        attr="data-inspector-tab"
+        label={copy.inspector.tabsLabel}
+        selected={tab}
+        onSelect={(next: InspectorTab) => {
+          workspaceStore.update({ inspector_tab: next });
+        }}
+        tabs={INSPECTOR_TABS.map((name) => ({ id: name, label: copy.inspector.tabs[name] }))}
+      />
       <div className={styles["content"]} role="tabpanel" data-inspector-panel={tab}>
         {tab === "results" ? (
           <ResultsPanel />
@@ -67,6 +69,8 @@ export function Inspector(): React.JSX.Element {
           <ChecksPanel />
         ) : tab === "provenance" ? (
           <ProvenancePanel intent={intent} />
+        ) : tab === "export" ? (
+          <ExportPanel />
         ) : (
           <DfmPanel
             onResolveDescriptor={(next) => {

@@ -1,0 +1,34 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * `ProvidersPanel` layout only (INTERFACE.md §3.4, §4.7's last line).
+ *
+ * The panel is built from `Panel`, `DataTable`, `Button`, `Chip`, `StatusBadge`
+ * and `EmptyState` and declares no colour, type role, or border of its own. The
+ * one separator below uses `--border` — a seam, which §3.10 assigns to exactly
+ * this job — and every other rule is spacing.
+ */
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) 0;
+}
+
+.row + .row {
+  border-top: 1px solid var(--border);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* A refusal is WORDS (§3.13.2): this sets spacing and a role, nothing else. */
+.refusal {
+  composes: body from "../system/type.module.css";
+  margin: var(--space-4) 0 0;
+}

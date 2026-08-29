@@ -1,0 +1,24 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * INTERFACE.md §4.7: raised fill, no border, 3px radius. The absence of a border
+ * is the contract, not an omission — it is what tells a reader at a glance that
+ * this is something to read rather than something to press (§3.3, principle 3).
+ */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+  min-height: 18px;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-control);
+  color: var(--ink-muted);
+  background: var(--surface-raised);
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

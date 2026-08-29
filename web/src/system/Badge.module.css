@@ -1,0 +1,116 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * The badge recipe (INTERFACE.md §4.7, §3.9, §3.10).
+ *
+ * The three status attributes `heph/system-owns-status` (§3.14) watches —
+ * `data-badge`, `data-severity`, `data-chip-status` — are selected HERE, in the
+ * same directory as the only component that writes them. That co-location is
+ * the whole check: `ChecksPanel.tsx`:59 put the attribute one element away from
+ * its selector and nothing said so.
+ *
+ * A badge is a READOUT: tinted status fill, **no border**, pill radius (§3.10 —
+ * "pill reports, 3px acts"). `not_run` is the single exception and takes a
+ * dashed `--border-strong`, so an absence reads as an absence rather than as a
+ * quieter presence.
+ *
+ * §3.13.6: ≥ 24px hit area is achieved by padding, not by font-size. A badge is
+ * inert so the floor is a legibility floor rather than a target floor, but the
+ * min-height keeps it on the same rhythm as the controls beside it.
+ */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+  min-height: 18px;
+  padding: 1px var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-badge);
+  white-space: nowrap;
+  /* Neutral until a vocabulary claims it. A badge with no recognised value is
+     visibly a fallback rather than an accidental `pass`. */
+  color: var(--ink-muted);
+  background: var(--surface-raised);
+}
+
+.badge svg {
+  flex: none;
+}
+
+/* ---- §6.3's check badges ------------------------------------------------- */
+
+.badge[data-badge="pass"] {
+  color: var(--status-pass-ink);
+  background: var(--status-pass-fill);
+}
+
+.badge[data-badge="fail"] {
+  color: var(--status-fail-ink);
+  background: var(--status-fail-fill);
+}
+
+.badge[data-badge="error"] {
+  color: var(--status-error-ink);
+  background: var(--status-error-fill);
+}
+
+/* §4.7: "`not_run` takes a dashed `--border-strong` so an absence reads as an
+   absence". It is the only bordered badge in the system. */
+.badge[data-badge="not_run"] {
+  color: var(--status-not-run-ink);
+  background: var(--status-not-run-fill);
+  border: 1px dashed var(--border-strong);
+}
+
+.badge[data-badge="info"] {
+  color: var(--status-info-ink);
+  background: var(--status-info-fill);
+}
+
+.badge[data-badge="dirty"] {
+  color: var(--status-dirty-ink);
+  background: var(--status-dirty-fill);
+}
+
+/* ---- §6.4's finding severities ------------------------------------------- */
+
+.badge[data-severity="error"] {
+  color: var(--status-fail-ink);
+  background: var(--status-fail-fill);
+}
+
+.badge[data-severity="warning"] {
+  color: var(--status-error-ink);
+  background: var(--status-error-fill);
+}
+
+.badge[data-severity="info"] {
+  color: var(--status-info-ink);
+  background: var(--status-info-fill);
+}
+
+/* ---- §7.2's tool-chip statuses ------------------------------------------- */
+
+.badge[data-chip-status="running"] {
+  color: var(--status-info-ink);
+  background: var(--status-info-fill);
+}
+
+.badge[data-chip-status="ok"] {
+  color: var(--status-pass-ink);
+  background: var(--status-pass-fill);
+}
+
+.badge[data-chip-status="error"] {
+  color: var(--status-fail-ink);
+  background: var(--status-fail-fill);
+}
+
+.badge[data-chip-status="unknown"] {
+  color: var(--status-not-run-ink);
+  background: var(--status-not-run-fill);
+  border: 1px dashed var(--border-strong);
+}

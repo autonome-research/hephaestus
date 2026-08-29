@@ -697,6 +697,105 @@ authored). Stage 9 lands in three gated sub-stages, strictly ordered:
   splits. Gate G9C: `uv run pytest tests/stage9c -q` exits 0 per
   `KINEMATICS.md` "Gates".
 
+## Stage 10 — Workspace egress and provider attachment (amendment 2026-08-28, maintainer-directed)
+
+Recorded on the product owner's review of the running Stage 4 workspace. Two
+capabilities the workspace lacks are product decisions rather than UI
+additions, and mission rule 5 requires each to enter by a new gated stage
+rather than by widening G4 or G5. G4 and G5 are unedited. Normative spec:
+`INTERFACE.md` §22 and §23. Stage 10 lands in two gated sub-stages, strictly
+ordered.
+
+- **10A — Egress** (`INTERFACE.md` §22): `export_part`, `generate_drawing` and
+  `generate_doc` as keyed REST mutations replaying from the existing
+  `tp_exports` WAL; a `tp_exports` projection; a blob-addressed download route
+  authorized by a `COMMITTED` row; and an `ExportPanel` bound to the workspace
+  pin. Prerequisite, landing in Stage 4: the artifact kind is bound to the
+  blob, so `/artifacts/{ref}/bytes`'s enumeration constrains reachability and
+  not only labelling.
+
+  **Gate G10A** (Tier 2): `pnpm test:e2e` exits 0 — Playwright pins artifact A,
+  exports STEP from the pin, and asserts the downloaded bytes' sha-256 equals
+  the `export_hashes` entry the route returned; publishes build B for the same
+  part; re-exports from the still-pinned A and asserts the same digest, and
+  that a `null`-ref export is not reachable from the client. A DXF export of
+  the same pin asserts `kerf.source == "dfm"` and `applied_mm == 0.2` from the
+  process pack. `GET /artifacts/{ref}/bytes` refuses the export's ref **and**
+  refuses a `build`-relabelled ref naming the same blob. An export with no
+  `Idempotency-Key` is `400 idempotency_key_required` with no file created; the
+  same key twice yields one file and `"replayed": true`; the same key with a
+  changed format yields `key_payload_mismatch`. `heph build` on the fixture,
+  then a `gc.collect()`, leaves the exported blob and its source build blob
+  both reachable. `heph export list` and `heph export unpin BLOB` exist and are
+  exercised.
+
+- **10B — Provider attachment** (`INTERFACE.md` §23): an agent runtime
+  attachable to a running serve; provider specs writable from the workspace
+  **without** the credential allowlist or `auth_source`; API-key and
+  subscription-OAuth sign-in relayed to Pi, which remains the sole credential
+  store; per-provider fail-closed verification; and a `ProvidersPanel` whose
+  source and health axes are never collapsed.
+
+  **Gate G10B** (Tier 2 + Tier 1): `pnpm test:e2e` exits 0 — serve a project
+  with **no** `providers.json`; the panel renders `agent_unavailable` by name;
+  provider specs are written and a runtime is attached without restarting the
+  process; a provider is configured against a scripted `FakeModel`; a session
+  then runs and streams into the panel; sign-out returns the panel to `none`
+  and the session routes to `agent_unavailable`. Tier 1: the web path **cannot**
+  add a name to `credential_allowlist` (refused by name), and a variable outside
+  the allowlist never reaches the sidecar's environment; a sentinel credential
+  literal appears nowhere in the opstore, the archived event goldens, the
+  sidecar `stderr_tail`, or the bench evidence bundle, including under a
+  scripted OAuth fixture whose token endpoint returns the sentinel in its
+  response body; and the process holds exactly one listening socket after a
+  full OAuth flow.
+
+**The open question this amendment carried, and the ruling that closed it on the
+same day.** The amendment as drafted carried one question forward — whether the
+workspace may **discover** a Pi `auth.json` outside the project root and offer it
+as a credential source — on the ground that mission rule 7's approval mechanism
+is a supervisor-prepared allowlisted environment and that a spec section may not
+decide a mission-wide rule by argument. The operator ruled on it in the same
+2026-08-28 review, in these words:
+
+> "The server should be able to work locally, the same way that Claude for
+> science works."
+
+**Ruling: approved, with binding constraints, and it enters as its own gated
+sub-stage.** The server MAY enumerate the operator's existing home-directory
+credential sources and **offer** them. Discovery is an **offer, never a silent
+adoption**; a secret is **never** echoed to the client, logged, or placed in a
+URL, an event, or an artifact; the serve stays **loopback-only**; anything the
+server writes is mode **0600**; and **mission rule 7 is unchanged and still
+forbids ambient provider keys reaching a run unapproved** — the credential
+allowlist remains supervisor-prepared and is not web-writable. The ruling grants
+a ceiling, not a floor: `INTERFACE.md` §15.41's "no masked key tail" refusal is
+stricter than the ceiling and is **not** relaxed by this approval.
+
+- **10C — Credential discovery** (`INTERFACE.md` §23.5): an explicit
+  enumeration route that describes each discovered source **without** its
+  secret — kind, provider id, model ids, source path — and an adoption route
+  that takes effect only on a request **naming** the discovered source. Strictly
+  after 10B, because a discovered source is worthless without the attach path
+  10B builds.
+
+  **Gate G10C** (Tier 2 + Tier 1): `pnpm test:e2e` exits 0 — serve a project
+  with no `providers.json` beside a scripted home-directory Pi `auth.json` and a
+  scripted local OpenAI-compatible endpoint; the panel lists both by kind,
+  provider id, model ids and source path, and the response body carries **no**
+  secret material and **no** masked key tail; a session before adoption routes to
+  `agent_unavailable`, byte-identically to the run with nothing discovered; one
+  explicit adoption request naming a discovered source configures it; and
+  `providers.json` afterwards **names every credential source in use**, at mode
+  `0600`. Tier 1: no credential path outside `<project>/.heph` is read unless
+  `providers.json` already names it or the operator's adoption request named it;
+  no discovery runs on panel mount or on a timer; every `/providers/**` route
+  refuses `not_loopback` off a loopback bind; discovery adopts **no** ambient
+  environment variable and the web path still cannot add a name to
+  `credential_allowlist`; and the §23 sentinel-leak grep is extended to the
+  discovered file's secret, which appears nowhere in the opstore, the archived
+  event goldens, the sidecar `stderr_tail`, or the bench evidence bundle.
+
 ## Mission-wide rules
 
 1. **Gates are commands.** Every criterion above maps to a CI job; the

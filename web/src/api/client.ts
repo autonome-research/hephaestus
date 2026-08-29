@@ -92,6 +92,19 @@ function refusal(status: number, text: string): WorkspaceError {
   return new WorkspaceError(status, "transport_error", `HTTP ${status}`);
 }
 
+/**
+ * The `WorkspaceError` for a non-ok response, envelope preserved.
+ *
+ * Exported for the one caller that cannot use `apiJson`: §22.4's download reads
+ * a `Blob`, not JSON, and a refused download still answers with §2.4's JSON
+ * envelope. Without this the download path would either re-issue the request to
+ * get its error shape or invent one, and `unknown_export` / `export_too_large`
+ * would reach the panel as "the download failed".
+ */
+export async function refusalFor(response: Response): Promise<WorkspaceError> {
+  return refusal(response.status, await response.text());
+}
+
 /** One authenticated JSON read, with §2.4's refusal envelope preserved. */
 export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await apiFetch(path, init);

@@ -1,0 +1,43 @@
+# Workspace context
+
+The operator is looking at this workspace. Everything below is this server's own projection of the state their client named; it is not part of their request.
+
+## Part: tread
+build status: ok
+build artifact: artifact:build:sha256:f908224c3e73b64032d7a6b954162d6e5a4ac546b9285b1d8ed50b6319d14384
+geometry entries: 3
+geometry labels: tread, cleat_left, cleat_right
+effective parameters: groove_count=5
+declared properties (from build_record):
+  part.assembly_method = PVA the two cleats to the tread underside, flush with the short edges; clamp 30 min
+  part.blank_size = 250 x 156 x 5.5 mm
+  part.description = Flat-pack stair tread: a grooved tread plate and two cleats, nested in one sheet
+  part.finish = Sand the laser char off every edge; clear water-based poly on the tread
+  part.general_tolerance = +/-0.25 mm cut profile
+  part.joint = Glued lap; the cleats register on the tread's long edges and take the riser screws
+  part.material_spec = Baltic birch plywood (BB/BB) sheet
+  part.process = laser_cut
+  part.stock_form = sheet
+project checks:
+  tread_checks:tread_clears_the_absent_stringer: error
+  tread_checks:tread_fits_a_100_mm_sheet: fail
+  tread_checks:tread_is_one_sheet_thick: pass
+no DFM run has been recorded for this part
+the operator has hidden the geometry labelled cleat_left
+(that is a statement about their visibility toggles, not about what is on their screen)
+
+## Pinned artifact
+ref: artifact:build:sha256:f908224c3e73b64032d7a6b954162d6e5a4ac546b9285b1d8ed50b6319d14384
+kind: build
+stored bytes: 31359
+the operator has pinned this artifact; it is not necessarily the current build
+
+## Viewport
+camera view: iso
+exploded-view parameter t: 0.5 (0 is assembled)
+section plane: +X@0
+
+## Panels the operator has open
+stage tab: viewport
+inspector tab: checks
+focused on: geometry:tread_plate

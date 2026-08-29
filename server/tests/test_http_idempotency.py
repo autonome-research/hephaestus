@@ -16,6 +16,15 @@ subject exactly:
 The freshness asymmetry is the documented trap and is honoured here: the replay
 tests **do not re-assert freshness**, because a recognized key replays for the
 full 30-day horizon without the check being re-run.
+
+**The first table grew by three under Stage 10A** (``INTERFACE.md``
+§22.2, approved 2026-08-28): egress adds ``POST /parts/{part}/export``,
+``…/drawing`` and ``…/doc``, which *"join §2.3's first table"* on all three of
+the product's own definitions of a mutation. §2.3's quoted paragraph above says
+"seven" because it predates that amendment; the discipline it describes is
+unchanged and every rung is still enumerated over every row. Each new row's
+``no execution`` witness is the **filesystem** — G10A's clause is *"with no file
+created"* — which is why :func:`_project_state` now reads ``.heph/exports/``.
 """
 
 from __future__ import annotations
@@ -53,6 +62,42 @@ KEY_REQUIRED_CASES: dict[tuple[str, str], tuple[str, dict[str, Any]]] = {
     ("POST", "/parts/{part}/dfm"): ("/parts/widget/dfm", {}),
     ("POST", "/project/config/dfm"): ("/project/config/dfm", {"auto_run": True}),
     ("POST", "/git/tag"): ("/git/tag", {"name": "v0.0.1", "message": "release"}),
+    # §22.2's three egress rows. The `artifact_ref` is well formed and names a
+    # blob this scaffold has never built: every rung exercised over this table is
+    # a **no execution** rung, refused by the key ladder before dispatch, so the
+    # ref's resolvability is irrelevant here and its *presence* is what §22.5
+    # requires of any admitted body. A ref that resolved would make these cases
+    # depend on a build, which is a different test's subject.
+    ("POST", "/parts/{part}/export"): (
+        "/parts/widget/export",
+        {"artifact_ref": f"artifact:build:sha256:{'0' * 64}", "format": "step"},
+    ),
+    ("POST", "/parts/{part}/drawing"): (
+        "/parts/widget/drawing",
+        {"artifact_ref": f"artifact:build:sha256:{'0' * 64}", "kind": "dimensioned"},
+    ),
+    ("POST", "/parts/{part}/doc"): (
+        "/parts/widget/doc",
+        {"artifact_ref": f"artifact:build:sha256:{'0' * 64}", "kind": "bom"},
+    ),
+    # §23.6's spec-only write (Stage 10B, approved 2026-08-28). A CONFIG
+    # mutation with no tool behind it, so it joins the row above it in
+    # `NON_TOOL_KEY_ROUTES` too. The body is one that would genuinely write —
+    # `_providers_on_disk` below is what makes "no execution" falsifiable for
+    # this row, exactly as `_exports_on_disk` does for §22.2's three.
+    ("PUT", "/providers/specs"): (
+        "/providers/specs",
+        {
+            "providers": [
+                {
+                    "id": "key-ladder-probe",
+                    "kind": "local",
+                    "baseUrl": "http://127.0.0.1:9/v1",
+                    "models": [{"id": "m", "name": "m", "contextWindow": 8192, "maxTokens": 512}],
+                }
+            ]
+        },
+    ),
 }
 
 
@@ -60,28 +105,85 @@ def _widget_script(root: Path) -> str:
     return (root / "parts" / "widget.py").read_text(encoding="utf-8")
 
 
-def _project_state(web: Workspace) -> tuple[str, bool, list[str]]:
-    """Everything the seven routes could change, as one comparable tuple."""
+def _exports_on_disk(web: Workspace) -> list[str]:
+    """Every file under ``.heph/exports/``.
+
+    §22.2 puts three **output** mutations on this table, and none of them touches
+    a script, the manifest, or a part hash — so without this the "no execution"
+    assertion below would be unfalsifiable for exactly the three rows whose gate
+    clause says *"with no file created"*. The filesystem is read rather than the
+    projection because a create-only install writes the file before it writes its
+    WAL row, so the file is the earlier and stricter witness.
+    """
+    exports = web.root / ".heph" / "exports"
+    if not exports.is_dir():
+        return []
+    return sorted(str(p.relative_to(exports)) for p in exports.rglob("*") if p.is_file())
+
+
+def _providers_on_disk(web: Workspace) -> str:
+    """``.heph/providers.json`` verbatim, or a named absence.
+
+    §23.6's spec write is the fifth thing a key-required route can change, and
+    without reading it the "no execution" assertion would be unfalsifiable for
+    that row — the file it writes touches no script, no manifest, no part hash
+    and no export.
+    """
+    path = web.root / ".heph" / "providers.json"
+    return path.read_text(encoding="utf-8") if path.is_file() else "(absent)"
+
+
+def _project_state(web: Workspace) -> tuple[str, bool, list[str], list[str], str]:
+    """Everything the key-required routes could change, as one comparable tuple."""
     return (
         _widget_script(web.root),
         bool(web.runtime.layout.manifest.dfm_auto_run),
         sorted(p["content_hash"] for p in web.get("/parts").json()["parts"]),
+        _exports_on_disk(web),
+        _providers_on_disk(web),
     )
 
 
-def test_the_key_required_table_is_the_seven_routes_the_spec_enumerates() -> None:
+def test_the_key_required_table_is_the_routes_the_spec_enumerates() -> None:
     """§2.3's first table, as data — and its two non-tool rows, named.
 
     Enumerated, never derived from ``MUTATION_TOOLS``: that rule was **withdrawn**
     because ``ToolDecl.idempotent`` decides nothing for a route with no
     ``ToolDecl``, and a rule that silently exempts the routes a reader most
     expects it to cover is worse than no rule.
+
+    **REPOINTED, with the amendment cited.**
+    ``INTERFACE.md`` §22.2 (normative under Stage 10A, approved 2026-08-28) adds
+    ``POST /parts/{part}/{export,drawing,doc}`` to this very table — *"It joins
+    §2.3's first table, and it is the only member of that table needing **no**
+    ledger extension"*. Nothing is weakened: every rung is still asserted over
+    every row, and the set assertion still fails on a row added without a case.
+    The three new rows are deliberately **not** in ``NON_TOOL_KEY_ROUTES``,
+    because unlike the config write and the git tag they replay a complete
+    ``ExportCommit`` from the export WAL's own ``COMMITTED`` row.
     """
-    assert len(KEY_REQUIRED_ROUTES) == 7
+    # Set equality is the structural guard, and it is the strong one: a row added
+    # to the table without a concrete request here fails immediately, so no route
+    # can join §2.3's first table and quietly escape every rung below. A bare
+    # count was the previous guard and is dropped rather than bumped — it said
+    # only how many rows there were, which is the least interesting fact about
+    # them, and it made every amendment a merge conflict over an integer.
     assert set(KEY_REQUIRED_CASES) == set(KEY_REQUIRED_ROUTES)
+    # …and §22.2's three, named, so the amendment is legible from the test.
+    assert {
+        ("POST", "/parts/{part}/export"),
+        ("POST", "/parts/{part}/drawing"),
+        ("POST", "/parts/{part}/doc"),
+    } <= set(KEY_REQUIRED_ROUTES)
+    # REPOINTED a second time, with its own amendment cited. §23.14 item 8 puts
+    # `PUT /providers/specs` "in the non-tool ledger extension §19.7 already
+    # requires for `POST /project/config/dfm` and `POST /git/tag`" — the same
+    # key space, the same recorded-outcome ledger. It is a *config* write with
+    # no tool behind it, which is precisely what that extension is for.
     assert set(NON_TOOL_KEY_ROUTES) == {
         ("POST", "/project/config/dfm"),
         ("POST", "/git/tag"),
+        ("PUT", "/providers/specs"),
     }
     assert set(NON_TOOL_KEY_ROUTES) < set(KEY_REQUIRED_ROUTES)
 

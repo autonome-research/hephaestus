@@ -18,8 +18,15 @@
 // centroid distances out of the scene graph rather than any number rendered here
 // (G4.6, §5.2).
 
+// §4.7's `Input`: the slider's numeric readout is `.data`, right-aligned, and
+// **EDITABLE**. "A slider whose value cannot be typed is not a parameter
+// control (§10)." The shipped readout was `t.toFixed(2)` as inert text, so a
+// reader who wanted exactly 0.60 had to drag for it. The `Slider` primitive
+// pairs the range with a number input over the same value.
+
 import { copy } from "../../../copy";
 import { useWorkspace, workspaceStore } from "../../../state/react";
+import { Button, Slider } from "../../../system";
 import styles from "./ExplodeSlider.module.css";
 
 const STEP = 0.01;
@@ -29,33 +36,33 @@ export function ExplodeSlider(): React.JSX.Element {
 
   return (
     <div className={styles["control"]} data-explode-t={t} title={copy.viewport.explode.explain}>
-      <label className={styles["label"]} htmlFor="explode-t">
-        {copy.viewport.explode.label}
-      </label>
-      <input
-        id="explode-t"
+      <Slider
         className={styles["slider"]}
-        type="range"
+        label={copy.viewport.explode.label}
+        value={t}
         min={0}
         max={1}
         step={STEP}
-        value={t}
         data-testid="explode-slider"
-        onChange={(event) => {
-          workspaceStore.update({ explode_t: Number(event.target.value) });
+        onChange={(next) => {
+          workspaceStore.update({ explode_t: next });
         }}
       />
-      <span className={styles["value"]}>{t.toFixed(2)}</span>
-      <button
-        type="button"
-        className={styles["reset"]}
-        disabled={t === 0}
-        onClick={() => {
-          workspaceStore.update({ explode_t: 0 });
-        }}
-      >
-        {copy.viewport.explode.reset}
-      </button>
+      {t === 0 ? (
+        <Button variant="quiet" disabled reason={copy.viewport.explode.resetDisabled}>
+          {copy.viewport.explode.reset}
+        </Button>
+      ) : (
+        <Button
+          variant="quiet"
+          data-explode-reset=""
+          onClick={() => {
+            workspaceStore.update({ explode_t: 0 });
+          }}
+        >
+          {copy.viewport.explode.reset}
+        </Button>
+      )}
     </div>
   );
 }

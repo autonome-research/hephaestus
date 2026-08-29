@@ -54,7 +54,7 @@ from hephaestus.agent_bridge.admission import open_project_store
 from hephaestus.agent_bridge.cad_ops import (
     CadOps,
     invalid_question_result,
-    option_consequence,
+    option_display,
     option_label,
     question_problems,
     requirement_ids,
@@ -474,7 +474,10 @@ class HephaestusMCP:
             return self._question_fallback(session_id, question, options, allow_free_text, multi)
 
         response_type = _elicit_response_type(options, allow_free_text, multi)
-        displayed = tuple(_option_display(cast("JSONValue", o)) for o in raw_options)
+        # `option_display` is shared with `heph agent`'s numbered prompt so the
+        # two surfaces show one option one way; the *answer* stays `option_label`
+        # on both (§7A.7's answer namespace).
+        displayed = tuple(option_display(cast("JSONValue", o)) for o in raw_options)
         action, data = await _elicit(ctx, _elicit_message(question, displayed), response_type)
         if action != "accept":
             raise McpToolError(
@@ -656,13 +659,6 @@ async def _elicit(ctx: Context, message: str, response_type: Any) -> tuple[str, 
     action = str(getattr(outcome, "action", "decline"))  # pyright: ignore[reportUnknownArgumentType]
     data: Any = getattr(outcome, "data", None)  # pyright: ignore[reportUnknownArgumentType]
     return action, data
-
-
-def _option_display(option: JSONValue) -> str:
-    """``label — consequence`` when the option states one, else just the label."""
-    consequence = option_consequence(option)
-    label = option_label(option)
-    return f"{label} — {consequence}" if consequence else label
 
 
 def _elicit_message(question: str, options: Sequence[str]) -> str:

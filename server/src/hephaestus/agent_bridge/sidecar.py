@@ -61,6 +61,8 @@ __all__ = [
     "MANIFEST_NAME",
     "MINIMUM_NODE",
     "SIDECAR_PACKAGE",
+    "NodeMissingError",
+    "NodeTooOldError",
     "NodeVersionError",
     "SidecarError",
     "SidecarIntegrityError",
@@ -129,6 +131,24 @@ class NodeVersionError(SidecarError):
     """Node is absent, or older than :data:`MINIMUM_NODE`."""
 
     code = "node_incompatible"
+
+
+class NodeMissingError(NodeVersionError):
+    """No ``node`` on PATH at all.
+
+    Split from :class:`NodeTooOldError` — both keep ``node_incompatible`` as
+    their bridge code, so nothing that catches :class:`NodeVersionError` or
+    reads ``.code`` changes — because ``INTERFACE.md`` §7A.8's closed
+    ``agent_unavailable`` cause vocabulary distinguishes ``node_missing`` from
+    ``node_too_old``, and the two need different sentences from an operator's
+    point of view: install Node, or upgrade it. Deriving that distinction by
+    matching on an exception *message* would put a machine-readable refusal at
+    the mercy of a sentence edit.
+    """
+
+
+class NodeTooOldError(NodeVersionError):
+    """Node exists but is older than :data:`MINIMUM_NODE` (or unreadable)."""
 
 
 def _str_map(value: object) -> dict[str, str] | None:
@@ -381,10 +401,10 @@ def _node_version(executable: str) -> tuple[int, int, int]:
             [executable, "--version"], capture_output=True, text=True, timeout=30, check=False
         )
     except OSError as exc:
-        raise NodeVersionError(f"could not execute node at {executable}: {exc}") from exc
+        raise NodeTooOldError(f"could not execute node at {executable}: {exc}") from exc
     match = _VERSION_RE.search(proc.stdout.strip())
     if proc.returncode != 0 or match is None:
-        raise NodeVersionError(
+        raise NodeTooOldError(
             f"`{executable} --version` did not report a version "
             f"(exit {proc.returncode}, output {proc.stdout.strip()!r})"
         )
@@ -416,13 +436,13 @@ def node_executable() -> str:
 
     executable = shutil.which("node")
     if executable is None:
-        raise NodeVersionError(
+        raise NodeMissingError(
             f"node executable not found (set {NODE_ENV} or install Node "
             f">={MINIMUM_NODE[0]}.{MINIMUM_NODE[1]})"
         )
     major, minor, patch = _node_version(executable)
     if (major, minor) < MINIMUM_NODE:
-        raise NodeVersionError(
+        raise NodeTooOldError(
             f"node {major}.{minor}.{patch} at {executable} is older than the required "
             f">={MINIMUM_NODE[0]}.{MINIMUM_NODE[1]} (agent/package.json engines.node)"
         )

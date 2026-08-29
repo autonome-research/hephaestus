@@ -5,11 +5,22 @@ SPDX-License-Identifier: Apache-2.0
 
 # 12 — The web workspace (Stages 4 and 5)
 
-**DRAFT — pending adversarial review.** Not normative. Promotion follows the
-`ASSEMBLY.md` / `COMPARE.md` / `KINEMATICS.md` pattern: a dated `mission_plan.md`
-amendment carrying the Stage 4 and Stage 5 headings and citing this spec, after
-an adversarial pass against the codebase. Until then `mission_plan.md` Stage 4
+**DRAFT — pending adversarial review, EXCEPT §22 and §23.** The Stage 4/5 body
+of this document is not yet normative. Promotion follows the `ASSEMBLY.md` /
+`COMPARE.md` / `KINEMATICS.md` pattern: a dated `mission_plan.md` amendment
+carrying the Stage 4 and Stage 5 headings and citing this spec, after an
+adversarial pass against the codebase. Until then `mission_plan.md` Stage 4
 and Stage 5 are the only binding text.
+
+**§22 and §23 are NORMATIVE as of 2026-08-28.** They were promoted by exactly
+that mechanism, ahead of the rest of this document and independently of it:
+`mission_plan.md` §"Stage 10 — Workspace egress and provider attachment
+(amendment 2026-08-28, maintainer-directed)" is a dated amendment that names
+Stage 10A, 10B and 10C, cites this spec's §22 and §23 as their normative
+specification, and carries gates G10A, G10B and G10C. The two sections are
+therefore the binding design beneath those three gates, on the same footing
+`KINEMATICS.md` holds beneath G9A–G9C. The rest of this document's status is
+unchanged (§0.2).
 
 This spec **adds design detail beneath G4 and G5**. It does not restate,
 reword, weaken, or extend either gate. Where a gate clause is ambiguous,
@@ -141,9 +152,9 @@ product**. Ruling, per complaint:
 | Complaint | Ruling | Where the answer lives |
 |---|---|---|
 | 1 — no way to chat | **The spec was wrong, and it was wrong by miscitation.** §9 says nothing about prompting; `Composer` was already on §4.2's Stage-4/5 inventory. The deferral had no clause behind it. | **§7A** (new), Stage 4/5 |
-| 2 — no export | **The mechanism decision was right; the product decision was a deferral that was escalated and never answered.** It is answered now, and the mechanism argument turned out to be weaker than §2.6 claimed (§2.6, §22.3). | **§22** (new), new gated stage |
+| 2 — no export | **The mechanism decision was right; the product decision was a deferral that was escalated and never answered.** It is answered now, and the mechanism argument turned out to be weaker than §2.6 claimed (§2.6, §22.3). | **§22** (new), **Stage 10A**, approved 2026-08-28 |
 | 3 — design | **The row was wrong about what it had bought.** CSS Modules is a delivery mechanism, not a design system; five of the layers a design system supplies were never authored. The *dependency* rejections all survive review. | **§3.1–§3.14**, **§4.7** (rewritten/new), Stage 4 |
-| 4 — sign-in | **§2.2's sentence answered a different question than it was read as answering.** It is narrowed, not withdrawn. | **§23** (new), new gated stage |
+| 4 — sign-in | **§2.2's sentence answered a different question than it was read as answering.** It is narrowed, not withdrawn. | **§23** (new), **Stage 10B/10C**, approved 2026-08-28 |
 
 **Numbering allocation, done once and up front.** All four amendments touch the
 same closed lists, and this document's own rule (§7A's opening) is that section
@@ -154,7 +165,8 @@ refusals **24–41** in one sequence; §19 items **17–41** in one sequence; §
 new; §3 replaced in place. No section between §8 and §21 is renumbered.
 
 **Stage status of each amendment, and what is DRAFT beyond this document's own
-draft status.**
+draft status.** Updated 2026-08-28 by the approval recorded two paragraphs
+below: nothing in this document is DRAFT-for-want-of-a-stage any more.
 
 | Amendment | Stage | Gate status |
 |---|---|---|
@@ -163,13 +175,52 @@ draft status.**
 | §7A composer in a quick-edit tab | Stage 5 | **Already gated** by G5.16, verbatim. |
 | §3.1–§3.14, §4.7 design system | Stage 4 | Tightenings under G4's shell/panel deliverables; §3.14 adds checks, not clauses. |
 | §2.6 kind-binding correction (§19.24) | Stage 4 | A correction to a route this document already specifies; it is a **prerequisite** of §22. |
-| **§22 egress** | **NEW STAGE — DRAFT** | Requires the `mission_plan.md` amendment of §22.10. Not buildable until it is approved. |
-| **§23 provider sign-in** | **NEW STAGE — DRAFT** | Requires the same amendment (§23.14). Contains one **open rule-7 question** (§23.5) that needs maintainer sign-off, not a spec argument. |
+| **§22 egress** | **Stage 10A — APPROVED 2026-08-28** | The `mission_plan.md` amendment of §22.10 landed as Stage 10A with **Gate G10A**. §22 is normative beneath it. |
+| **§23 provider sign-in** | **Stage 10B — APPROVED 2026-08-28**; discovery is **Stage 10C** | The same amendment landed as Stage 10B with **Gate G10B**. The **open rule-7 question** (§23.5) was ruled on the same day and enters as **Stage 10C** with **Gate G10C**. |
 
-Sections **§22** and **§23** are marked **DRAFT (new stage)** at their heading
-and every clause in them is conditional on that amendment. G4 and G5 keep their
-text verbatim; neither mentions export or credentials, and nothing in this
-amendment weakens or rewords either.
+Sections **§22** and **§23** are **normative** beneath Gates G10A, G10B and
+G10C. G4 and G5 keep their text verbatim; neither mentions export or
+credentials, and the Stage 10 amendment edits neither.
+
+### 0.2a The 2026-08-28 approval, recorded
+
+Two operator decisions of the same date, both binding, closed everything §0.2
+had left open.
+
+**1 — The Stage 10 amendment is APPROVED.** `mission_plan.md` now carries
+§"Stage 10 — Workspace egress and provider attachment (amendment 2026-08-28,
+maintainer-directed)", citing this document's §22 and §23 as its normative
+spec. §22.10's clause shape landed as **G10A** and §23.14 item 16's clause
+shape landed as **G10B**, both verbatim from `docs/workspace-plan.md` §9. The
+amendment boundary that section 3 of the plan drew — *"items 7–10 are not
+buildable until `mission_plan.md` carries the amendment"* — is **crossed**.
+Every "DRAFT (new stage)" marking in this document is struck, and §21's risk 15
+("specified against a stage that does not exist yet") is closed by the stage
+existing.
+
+**2 — Local-first credentials are APPROVED**, resolving the item §23.5 marked
+**OPEN — MAINTAINER SIGN-OFF REQUIRED**. In the operator's words:
+
+> "The server should be able to work locally, the same way that Claude for
+> science works."
+
+The server MAY discover the operator's existing home-directory credential
+sources — a Pi `auth.json`, an existing `providers.json`, a local
+OpenAI-compatible endpoint — and **offer** them. The binding constraints that
+survive the approval are written into §23.5 in full and are gated by **G10C**:
+discovery is an offer and never a silent adoption; a secret is never echoed to
+the client, never logged, and never in a URL, an event or an artifact; the
+serve stays loopback-only; anything written is `0600`; and **mission rule 7 is
+unchanged** — it still forbids ambient provider keys reaching a run unapproved,
+and `credential_allowlist` stays supervisor-prepared and not web-writable.
+
+**The approval is a ceiling, not a floor.** It permits describing a discovered
+source with "a masked hint at most". §15.41's **no masked key tail** refusal is
+stricter than that ceiling, so it stands unrelaxed: a discovered source is
+described by kind, provider id, model ids and source path, and by nothing
+derived from its secret. An approval that permits *at most* X does not oblige
+X, and this document does not weaken a shipped refusal on the strength of a
+permission it did not need.
 
 ---
 
@@ -361,10 +412,10 @@ genuinely replays.
 | `POST /parts/{part}/dfm` | `run_dfm` | existing tool ledger |
 | `POST /project/config/dfm` | `[dfm] auto_run` project-config write (§6.4) | **NEW WORK**: non-tool ledger extension |
 | `POST /git/tag` | publish-as-tag (§13.2) | **NEW WORK**: non-tool ledger extension |
-| `POST /parts/{part}/export` **DRAFT (new stage, §22)** | `export_part` | **existing `tp_exports` WAL** |
-| `POST /parts/{part}/drawing` **DRAFT (new stage, §22)** | `generate_drawing` | **existing `tp_exports` WAL** |
-| `POST /parts/{part}/doc` **DRAFT (new stage, §22)** | `generate_doc` | **existing `tp_exports` WAL** |
-| `PUT /providers/specs` **DRAFT (new stage, §23)** | the `providers.json` **spec-only** write (§23.6) | **NEW WORK**: the same non-tool ledger extension the two rows above it need |
+| `POST /parts/{part}/export` **Stage 10A (§22)** | `export_part` | **existing `tp_exports` WAL** |
+| `POST /parts/{part}/drawing` **Stage 10A (§22)** | `generate_drawing` | **existing `tp_exports` WAL** |
+| `POST /parts/{part}/doc` **Stage 10A (§22)** | `generate_doc` | **existing `tp_exports` WAL** |
+| `PUT /providers/specs` **Stage 10B (§23)** | the `providers.json` **spec-only** write (§23.6) | **NEW WORK**: the same non-tool ledger extension the two rows above it need |
 
 The three export rows are the only rows in this table that need **no** ledger
 extension: they replay a complete `ExportCommit` — paths,
@@ -425,7 +476,7 @@ implementation happens to check".
 | `GET /git/diff?part=&from=&to=` | bounded unified diff text |
 | `GET /git/tags` | `git tag -l` projection |
 
-**Egress and credential reads — DRAFT (new stage)**
+**Egress and credential reads — Stage 10A (§22) and Stage 10B (§23)**
 
 | Route | Returns | § |
 |---|---|---|
@@ -434,21 +485,42 @@ implementation happens to check".
 | `GET /providers` | specs, availability, auth state, egress acknowledgements, `auth_source`, file mode — **no credential material** | §23.8 |
 | `GET /providers/catalog` | Pi's built-in catalog, live over the bridge | §23.1 |
 | `GET /providers/{id}/auth/status` | `{state, type?, expires_at?, health, last_observed_at, flow?}` — metadata only | §23.8 |
+| `POST /providers/discover` **Stage 10C** | the discovery **offer**: `[{kind, provider_id, model_ids[], source_path}]` — never a secret, never a masked tail, and it runs **only** on this explicit request | §23.5 |
 
-**Credential mutations — key not required, and sending one is ignored — DRAFT
-(new stage).** `POST /providers/attach`, `POST /providers/{id}/auth/key`,
+`POST /providers/discover` is a `POST` and sits in the read table on purpose: it
+returns a projection and mutates nothing, but it reads the operator's
+home directory, so it must never be reachable by a `GET` a page can issue
+incidentally. It requires no idempotency key, on the same argument as the
+credential mutations below.
+
+**Credential mutations — key not required, and sending one is ignored — Stage
+10B, plus `POST /providers/adopt` at Stage 10C.** `POST /providers/attach`,
+`POST /providers/{id}/auth/key`,
 `.../auth/begin`, `.../auth/complete`, `.../auth/cancel`, `.../auth/signout`,
-`POST /providers/auth/unlink`. Each carries its own no-key argument in §23.6;
+`POST /providers/auth/unlink`, `POST /providers/adopt`. Each carries its own no-key argument in §23.6;
 none is a source, config, or output mutation, and a byte-for-byte replay of a
 credential rotation would be a silent security failure.
 
 Absent, deliberately: no `POST /artifacts` (the workspace mints nothing), no
 `DELETE` anywhere — sign-out is a `POST` because signed-out is a *state*, not an
-absence (§23.9) — no route that takes a raw filesystem path in **either**
-direction, no OAuth callback route, and no route that returns credential
+absence (§23.9) — **no route that takes a raw filesystem path in a request
+body**, no OAuth callback route, and no route that returns credential
 material. The `auth_source` path is specifically **not** admitted into any
 request body (§23.5): it is the path the server symlinks the project's
 credential file at, and Pi subsequently writes through it.
+
+**AMENDED 2026-08-28 (Stage 10C), and narrowed rather than widened.** This rule
+previously read "in **either** direction". Discovery has to name what it found
+or the offer is unreadable, so the outbound half is now an enumerated exception
+and the inbound half is stated more strictly than before:
+`POST /providers/discover` returns a `source_path` **as display text**, beside a
+server-minted opaque `discovery_id`. `POST /providers/adopt` takes the
+`discovery_id` **only**; a body carrying a path — under any key — is refused
+`path_not_web_writable` by name, exactly as `PUT /providers/specs` refuses
+`auth_source`. The direction that matters is inbound: a client-supplied path is
+what turns a credential route into a traversal primitive, and no route accepts
+one. Outbound, on a loopback-only serve, the server is telling the operator
+where their own file is.
 
 **What changed about "no export route".** Until the 2026-08-28 review this row
 read *no export/drawing/document routes (§15)*, and justified itself with
@@ -1417,9 +1489,10 @@ claimed otherwise.
 built, not entries in this inventory. Adding one is not §18 work; adding a
 **panel** still is.
 
-**Three panels join the inventory under new stages, and are marked as such —
-DRAFT.** `ExportPanel` (§22.7) and `ProvidersPanel` + `SignInDialog` (§23.8)
-are **not** Stage 4/5 work and do not become so by appearing here. They are
+**Three panels join the inventory under Stage 10, and are marked as such.**
+`ExportPanel` (§22.7) is **Stage 10A**; `ProvidersPanel` + `SignInDialog`
+(§23.8) are **Stage 10B**, with the panel's discovery affordance **Stage 10C**
+(§23.5). They are **not** Stage 4/5 work and do not become so by appearing here. They are
 listed because a closed list that silently acquires members is not closed, and
 because §3.14's migration criterion has to be able to name them.
 
@@ -2577,8 +2650,12 @@ does not offer to write it**, because until §23 lands there is nothing behind
 such an offer but a text editor. §2.2's "it never prompts for credentials"
 remains true of what it was about — the **workspace bearer token**: no login, no
 cookie, no user model. §15.34 records this as a **dated, conditional** refusal
-rather than an absolute one, and §23, when its stage is approved, strikes it and
-re-specs this state to render §23's entry point. Writing it as absolute would
+rather than an absolute one, and §23 — whose stage was **approved 2026-08-28 as
+Stage 10B** (§0.2a) — strikes it and re-specs this state to render §23's entry
+point **when §23 ships**. Note the two events are distinct and the refusal is
+keyed to the second: §15.34 says *until §23 lands*, and a stage being gated is
+not a panel existing. Until the ProvidersPanel is built, the disabled composer
+still names the file and still does not offer to write it. Writing it as absolute would
 have had the document forbid and specify the same surface, which is exactly the
 collision §0.2's allocation pass exists to prevent.
 
@@ -2607,7 +2684,8 @@ is a floor, not a ceiling.
 | The composer in a quick-edit tab | **Stage 5, already gated** | G5, verbatim: *"Submitting 'add a 2 mm chamfer to this face' to the quick-edit agent … results in an `edit_part` diff visible in the transcript."* That is a browser submission through a composer. G5.16 already carries it. |
 | The composer on an orchestrator / part session, and the blank-canvas create | **Stage 4** | No clause asks and no clause forbids. §4.1 places it, §4.2 lists it in an inventory closed for Stage 4/5 jointly, and §2.3 already carries `POST /sessions` and `POST /sessions/{id}/prompt` as closed routes with a stated no-key policy **G5.19 obliges a test of, in the negative direction**. It ships as the entry point G4's own `ask_user` and live-stream deliverables presuppose. |
 
-**No new stage.** Export needs one (§22) and provider sign-in needs one (§23);
+**No new stage.** Export needed one and got one (§22, Stage 10A) and provider
+sign-in needed one and got one (§23, Stage 10B/10C);
 chat does not, because every route it uses is already inside two closed lists
 this document owns. A session creation is not a project mutation: §2.3 states
 that `session.create`, `prompt`, `cancel`, `answer` and `spawn_quick_edit` have
@@ -3222,7 +3300,8 @@ expect and will not find.
     branch, stash, or merge.
 17. **REWRITTEN 2026-08-28. The workspace serves export bytes only through
     `GET /exports/{blob}/bytes`, addressed by a blob a `COMMITTED` `tp_exports`
-    row names (§22.3), and only under the new gated stage §22 requires.**
+    row names (§22.3), and only under **Stage 10A**, the gated stage §22
+    required and was granted on 2026-08-28.**
     `/artifacts/{ref}/bytes` remains closed **by enumeration** and `export`
     remains in `REFUSED_BYTES_KINDS`: the generic blob-fetch primitive is not
     the export path, and a pytest still asserts it refuses an `export`-kind ref.
@@ -3252,9 +3331,10 @@ expect and will not find.
     on it.
 
 **Added 2026-08-28 (§0.2). Numbers 24–41 are allocated in one sequence across
-all four amendments, so no two of them claim a number.** Entries marked
-**DRAFT** belong to a section whose stage is not yet approved and are not in
-force until it is.
+all four amendments, so no two of them claim a number.** **Updated 2026-08-28
+(§0.2a): the entries formerly marked DRAFT belong to §22 and §23, whose stages
+were approved the same day (Stage 10A, 10B, 10C). Every refusal below is in
+force under the gate its section names.**
 
 *From §7A — the composer (Stage 4/5):*
 
@@ -3293,7 +3373,7 @@ force until it is.
 35. **No session-close route, so no close button** (§7A.2), and **no free-text
     answer to a question that declared `allow_free_text: false`** (§7A.7).
 
-*From §22 — egress (**DRAFT**, new stage):*
+*From §22 — egress (**Stage 10A**, gate G10A):*
 
 36. **No metadata injected into STEP, STL, GLB or SVG; no provenance sidecar
     file; no filesystem path on the wire in either direction; no kerf override
@@ -3312,7 +3392,8 @@ force until it is.
     amendment to `heph/no-derived-fact` to permit one (§3.4).
 40. **Nothing animates that carries a measurement** (§3.10).
 
-*From §23 — provider sign-in (**DRAFT**, new stage):*
+*From §23 — provider sign-in (**Stage 10B**, gate G10B; discovery **Stage 10C**,
+gate G10C):*
 
 41. **No OAuth client registration of our own, no loopback callback listener, no
     background credential probe, no masked key tail, no mid-run
@@ -3321,6 +3402,14 @@ force until it is.
     `credential_allowlist` or `auth_source`** (§23.6) — the one refusal in this
     list whose absence would have made the sign-in surface an exfiltration
     primitive.
+
+    **UNCHANGED by the 2026-08-28 credential ruling, and the two clauses it
+    could have been read to touch are named.** The ruling permits describing a
+    discovered source "with a masked hint at most", which is a **ceiling**;
+    **no masked key tail** is stricter and stands (§0.2a). And **no background
+    credential probe** stands: discovery runs on an explicit
+    `POST /providers/discover` and never on panel mount, on a timer, or as a
+    side effect of another route (§23.5).
 
 ---
 
@@ -3441,7 +3530,8 @@ named, not omitted.
 6. ~~**Export / drawing / document surfaces.**~~ **STRUCK 2026-08-28.** This
    entry was a correctly-escalated deferral of a genuine product decision, and
    the product owner made the decision. It is now **§22**, with its own gated
-   stage under mission rule 5 (§22.10). The sentence "the workspace would be the
+   stage under mission rule 5 (§22.10) — **approved 2026-08-28 as Stage 10A,
+   Gate G10A**. The sentence "the workspace would be the
    first non-agent, non-CLI export path in the product" survives as the reason
    it needed a stage rather than a button, and §22 keeps it in view.
 7. **Orchestrator delegation-tree view.** §7.1 renders three levels as nested
@@ -3519,8 +3609,9 @@ not exist today and must be built:
     and the quick-edit region golden (§14).
 
 **Added 2026-08-28 (§0.2). Items 17–41 are allocated in one sequence across all
-four amendments.** Each names its stage; items in a **DRAFT** stage are not
-buildable until the `mission_plan.md` amendment of §22.10 / §23.14 is approved.
+four amendments.** Each names its stage. **Updated 2026-08-28: the
+`mission_plan.md` amendment of §22.10 / §23.14 is approved (Stage 10A, 10B,
+10C), so no item below is blocked on a stage that does not exist.**
 
 *§7A — the composer. Stage 4, except where noted.*
 
@@ -3607,7 +3698,7 @@ buildable until the `mission_plan.md` amendment of §22.10 / §23.14 is approved
     a scrim, close control and `Escape`, and a fixed `--drawer-height` with a
     drag handle (§4.1a–c). Three shipped defects, one owner.
 
-*§22 — egress. **DRAFT**, new gated stage.*
+*§22 — egress. **Stage 10A**, Gate G10A (approved 2026-08-28).*
 
 35. **`POST /parts/{part}/export` · `/drawing` · `/doc`** — three key-required
     rows riding `ToolDispatcher.dispatch` with no bypass, replaying from the
@@ -3643,7 +3734,8 @@ buildable until the `mission_plan.md` amendment of §22.10 / §23.14 is approved
     purpose**, so `export_part(layout="nested_sheet")` refuses on the product's
     own showcase part (§22.1, §22.7).
 
-*§23 — provider sign-in. **DRAFT**, new gated stage. Its own new-work list is
+*§23 — provider sign-in. **Stage 10B**, Gate G10B, with credential discovery at
+**Stage 10C**, Gate G10C (both approved 2026-08-28). Its own new-work list is
 §23.14 and is numbered inside that section, because its first item is a
 capability the product does not have and the review found the section
 unbuildable without it.*
@@ -3775,31 +3867,49 @@ Named so review has targets, not so they are pre-forgiven.
     measurement rather than by the geometry pipeline. If a later stage wants the
     viewport to show material provenance, this decision is what it has to
     revisit.
-15. **§22 and §23 are specified against a stage that does not exist yet.** Both
-    are marked DRAFT throughout, but a spec section is a strong attractor and
-    the risk is that they get built because they are written. The mitigating
-    mechanism is that neither has a gate clause, so neither has a CI job, so
-    neither can be *completed* — but a reviewer should treat any PR touching
-    `/exports/**` or `/providers/**` before the amendment lands as out of scope
-    on its face.
-16. **§23.5's discovery offer is a proposed reading of mission rule 7, not an
-    established one.** It is written as an open question with a named owner
-    rather than resolved by argument inside a spec section, because rule 7 is
-    mission-wide and its approval mechanism is a supervisor-prepared allowlist,
-    not a browser click. If the maintainer rules the other way, §23.5's offer is
-    deleted and `auth_source` stays entirely operator-authored — which costs the
-    section one convenience and nothing structural.
+15. ~~**§22 and §23 are specified against a stage that does not exist yet.**~~
+    **CLOSED 2026-08-28.** The stage exists: `mission_plan.md` §"Stage 10"
+    carries G10A, G10B and G10C, so each section now has the gate clause — and
+    therefore the CI job — whose absence was the whole of this risk. The
+    out-of-scope-on-its-face rule for `/exports/**` and `/providers/**` PRs is
+    retired with it; those PRs are now ordinary stage work, reviewed against
+    their gate. **What the closure does not buy:** the strict ordering
+    10A → 10B → 10C is a real dependency (§23.0's attach path is the
+    precondition for a discovered credential being usable), and building 10C
+    first would produce an offer with nothing behind it.
+16. **§23.5's discovery offer was a proposed reading of mission rule 7. The
+    maintainer ruled, and it is now an established one — under constraints that
+    are themselves the residual risk.** The 2026-08-28 approval (§0.2a) grants
+    discovery and keeps rule 7 intact, which means the two can now be confused:
+    a reader who remembers "the operator approved local credentials" may take it
+    for approval of *ambient* credentials, which it explicitly is not. The
+    mitigating mechanism is mechanical rather than editorial and is the test
+    §23.5 already named: **after any sign-in, `providers.json` must contain a
+    record of every credential source in use — if a source works and no file
+    names it, rule 7 has been broken.** G10C asserts it. The second residual is
+    scope creep in the offer itself: discovery is permitted to describe
+    `{kind, provider_id, model_ids, source_path}` and a reviewer should treat any
+    additional field — a tail, a fingerprint, a validity probe result — as a new
+    decision needing its own ruling, not as a detail of this one.
 
 ---
 
 ## 22. Egress — taking geometry out
 
-> **DRAFT — NEW GATED STAGE REQUIRED. Not in force.** Every clause in this
-> section is conditional on the `mission_plan.md` amendment of §22.10 being
-> approved under mission rule 5, on the precedent of Stages 8 and 9. G4 and G5
-> keep their text verbatim; neither mentions export, and nothing here weakens or
-> rewords either. Until the amendment lands, §15.17's refusal stands and no
-> `/exports/**` route exists.
+> **NORMATIVE — Stage 10A, Gate G10A. Approved 2026-08-28.** The
+> `mission_plan.md` amendment of §22.10 was granted under mission rule 5, on the
+> precedent of Stages 8 and 9; `mission_plan.md` §"Stage 10 — Workspace egress
+> and provider attachment (amendment 2026-08-28, maintainer-directed)" cites this
+> section as its normative spec. Every clause below is in force as the design
+> beneath **G10A**, which is the only text that binds. G4 and G5 keep their text
+> verbatim; neither mentions export, and the amendment edits neither.
+>
+> **What the promotion does and does not license.** It licenses building §22:
+> `/exports/**` exists as Stage 10A work. It does **not** retroactively license
+> anything already shipped — §15.17's rewritten refusal is part of §22 and binds
+> the implementation — and it does not move §22 ahead of its prerequisite: the
+> §19.24 kind-binding correction lands in **Stage 4**, and G10A's
+> relabelled-ref clause is unsatisfiable until it does.
 
 **What this replaces.** §15.17 was two decisions welded into one sentence: a
 *mechanism* decision (close `/artifacts/{ref}/bytes` by enumeration) and a
@@ -4262,10 +4372,18 @@ Carried into §15 as refusals 36–37. Each with its WHY:
    (§22.5).
 9. **No import. Egress is one-way** (§22.8).
 
-### 22.10 The `mission_plan.md` amendment this section needs
+### 22.10 The `mission_plan.md` amendment this section needed — GRANTED 2026-08-28
 
-Reproduced in `docs/workspace-plan.md` in the form the maintainer would approve,
-so it can be read in one pass. Clause shape:
+**Status: landed.** `mission_plan.md` §"Stage 10 — Workspace egress and provider
+attachment (amendment 2026-08-28, maintainer-directed)" carries **Stage 10A** and
+**Gate G10A**, citing this section as its normative spec. The clause shape below
+was reproduced in `docs/workspace-plan.md` §9 in the form the maintainer would
+approve, so it could be read in one pass, and **G10A carries it verbatim** — plus
+the two CLI clauses §22.6 requires, `heph export list` and `heph export unpin
+BLOB`, which the plan's gate text already named. `mission_plan.md` is the only
+text that binds; the shape is repeated here so this section can be read without
+leaving it, and if the two ever disagree, the gate wins and the disagreement is a
+defect in this section.
 
 > Playwright pins artifact **A**, exports STEP from the pin, and asserts the
 > downloaded bytes' sha-256 equals the `export_hashes` entry the route returned;
@@ -4290,11 +4408,19 @@ route that serves the same bytes under a different label.
 
 ## 23. Provider sign-in — attaching a model to the workspace
 
-> **DRAFT — NEW GATED STAGE REQUIRED. Not in force.** Conditional on the
-> `mission_plan.md` amendment of §23.14 under mission rule 5. **This section also
-> contains one question it does not have the authority to answer** (§23.5): it is
-> marked **OPEN — MAINTAINER SIGN-OFF REQUIRED** and is a proposed reading of
-> mission rule 7, not an established one.
+> **NORMATIVE — Stage 10B, Gate G10B. Approved 2026-08-28.** The
+> `mission_plan.md` amendment of §23.14 was granted under mission rule 5. Every
+> clause below is in force as the design beneath **G10B**, which is the only
+> text that binds.
+>
+> **And the one question this section did not have the authority to answer is
+> answered** (§23.5). The operator ruled on home-directory credential discovery
+> on the same day — *"The server should be able to work locally, the same way
+> that Claude for science works"* — approving it **with binding constraints**.
+> It enters as its own gated sub-stage, **Stage 10C, Gate G10C**, strictly after
+> 10B, because a discovered credential is unusable without 10B's attach path.
+> §23.5 carries the ruling and its constraints in full; the marker
+> **OPEN — MAINTAINER SIGN-OFF REQUIRED** is struck wherever it appeared.
 
 **What it amends, enumerated.**
 
@@ -4305,7 +4431,8 @@ route that serves the same bytes under a different label.
   **narrowed to the workspace bearer token**, which remains exactly as specified.
   Provider credentials are a different object with a different lifetime and a
   different store, and §23 is that store's contract.
-- **§4.2** — gains `ProvidersPanel` and `SignInDialog`, marked DRAFT.
+- **§4.2** — gains `ProvidersPanel` and `SignInDialog`, marked **Stage 10B**
+  (the panel's discovery affordance is Stage 10C).
 - **§2.3** — gains the `/providers/**` block, split across both key-policy tables.
 - **§15** — refusal 41; and it **strikes refusal 34**, which §7A.8 wrote as dated
   and conditional precisely so this strike is a one-line edit rather than a
@@ -4520,7 +4647,7 @@ and finds Hephaestus dead was misled by our silence; and **Hephaestus never
 refreshes a token** — there is no refresh clock, no refresh route, and no refresh
 error vocabulary of our own.
 
-### 23.5 The `auth_source` symlink — and the one question this section cannot answer
+### 23.5 The `auth_source` symlink — and the one question this section could not answer, now ruled
 
 `link_auth_source` symlinks `<project>/.heph/agent/auth.json` at an existing Pi
 `auth.json` so `pi_native` providers can use a login the operator already has. It
@@ -4555,33 +4682,77 @@ credential" check has the same blind spot. Therefore: **`auth_source` stays an
 operator-authored line in `providers.json`**, `GET /providers` reports it, and
 `PUT /providers/specs` refuses a body carrying it.
 
-**OPEN — MAINTAINER SIGN-OFF REQUIRED. The discovery offer is a proposed reading
-of mission rule 7, and this section does not decide it.** A draft had the panel
-scan for `~/.pi/agent/auth.json` and present it as an acceptable credential
-source, arguing compliance on the ground that acceptance is recorded in
-`providers.json`. The counter-argument is strong and is recorded here rather than
-answered: **mission rule 7 is mission-wide**, its approval mechanism is *an
-allowlisted credential environment prepared by the supervisor* — a terminal act —
-and a global Pi auth file is exactly the class of thing G2's session tests
-currently prove inert. Deciding a mission-rule question by argument inside a spec
-section is the move mission rule 1 exists to prevent.
+**RESOLVED — APPROVED 2026-08-28. Stage 10C, Gate G10C.** This paragraph
+previously read **OPEN — MAINTAINER SIGN-OFF REQUIRED** and recorded the
+argument without answering it, because mission rule 7 is mission-wide and
+deciding a mission-rule question by argument inside a spec section is the move
+mission rule 1 exists to prevent. The operator answered it, in these words:
 
-The section therefore ships **without** home-directory discovery. If the
-maintainer wants the offer, it enters with its own gate clauses, stated here so
-approval is one read: assert that **no credential path outside `<project>/.heph`
-is read unless `providers.json` already names it**; that the panel's offer
-performs **no read of the discovered file before acceptance**; and that a run
-with a discovered-but-unaccepted login behaves **identically** to one with no
-login at all.
+> "The server should be able to work locally, the same way that Claude for
+> science works."
 
-The distinguishing test, if it is approved, is mechanical: **after any sign-in,
+**The counter-argument is recorded, not deleted**, because it is what shapes the
+constraints: rule 7's approval mechanism is *an allowlisted credential
+environment prepared by the supervisor* — a terminal act — and a global Pi auth
+file is exactly the class of thing G2's session tests prove inert. The ruling
+does not overturn that. It draws a line the counter-argument did not have: a
+credential the operator **explicitly adopts, by one act, naming the source, with
+the adoption recorded on disk** is not an ambient credential, and rule 7 is about
+ambient credentials. Rule 7 is unchanged and still binds.
+
+**What is approved.** The server MAY enumerate the operator's existing
+credential sources — a Pi `auth.json` outside the project root, an existing
+`providers.json`, a local OpenAI-compatible endpoint — and **offer** them.
+
+**The binding constraints, each a refusal the implementation must demonstrate it
+cannot violate.** These are the operator's own conditions and none is
+negotiable at implementation time:
+
+1. **An offer, never a silent adoption.** Discovery returns a list. Nothing is
+   configured, linked, read into a runtime, or written to `providers.json` by
+   it. Adoption is **one explicit request naming the discovered source**
+   (`POST /providers/adopt`, carrying the server-minted `discovery_id` from the
+   offer). No other route adopts as a side effect.
+2. **A secret is never echoed to the client, never logged, never in a URL, an
+   event, or an artifact.** The offer describes a source by
+   `{kind, provider_id, model_ids, source_path}` and by nothing else. The
+   operator's ruling permits "a masked hint at most"; that is a **ceiling**, and
+   §15.41's **no masked key tail** is stricter and stands unrelaxed (§0.2a).
+3. **Loopback only.** `POST /providers/discover` and `POST /providers/adopt`
+   carry §23.6's route-level `not_loopback` precondition like every other
+   `/providers/**` route. A discovery route reachable off-loopback is a
+   home-directory enumeration primitive.
+4. **`0600` on anything written.** The `providers.json` adoption record goes
+   through `write_private` (§23.14 item 7); an operator-authored file's mode is
+   **reported, never changed**.
+5. **Mission rule 7 intact.** `credential_allowlist` stays supervisor-prepared
+   and is **not web-writable** (§23.6). Discovery adopts **no** ambient
+   environment variable.
+
+**What is still forbidden, unchanged by the approval** — each a refusal the
+implementation must be able to demonstrate it cannot perform: reading
+`~/.pi/agent/auth.json` because it happens to exist **and no one adopted it**;
+forwarding `ANTHROPIC_API_KEY` because it happens to be exported; shelling out to
+a global `pi login`; widening `BASE_ENV_VARS`; and letting the browser choose
+which environment variables are forwarded.
+
+**One draft clause is superseded by the ruling, and it is named rather than
+quietly dropped.** The draft's third gate clause was that the offer performs
+**no read of the discovered file before acceptance**. The operator's decision
+directs the opposite and says why: *"enumerate what exists, describe it WITHOUT
+its secret (kind, provider id, model ids, source path…)"* — an offer that has
+read nothing cannot say what provider or which models, and is not an offer. So
+the clause is **narrowed, not struck**: the offer may read a discovered file's
+**non-secret** fields, and the secret material is never read into a response,
+a log, an event, or an artifact. What the draft was protecting — that nothing
+happens to a credential you did not choose — is carried by constraint 1
+instead, which is where it belongs.
+
+**The distinguishing test is mechanical and G10C asserts it: after any sign-in,
 `providers.json` must contain a record of every credential source in use. If a
-source works and no file names it, rule 7 has been broken.** Specifically
-forbidden either way, each a refusal the implementation must be able to
-demonstrate it cannot perform: reading `~/.pi/agent/auth.json` because it happens
-to exist; forwarding `ANTHROPIC_API_KEY` because it happens to be exported;
-shelling out to a global `pi login`; widening `BASE_ENV_VARS`; and letting the
-browser choose which environment variables are forwarded.
+source works and no file names it, rule 7 has been broken.** Its negative half
+matters as much: a discovered-but-**unadopted** login behaves **identically** to
+no login at all — the session routes to `agent_unavailable`, byte for byte.
 
 ### 23.6 Routes, and the one field that must never cross the wire
 
@@ -4617,6 +4788,34 @@ sidecar's env lacks it) passes trivially and proves nothing, **because the attac
 is to put the variable inside the allowlist.**
 
 Therefore: the route is `PUT /providers/specs` and it accepts **specs only**.
+
+**Discovery — Stage 10C, added by the 2026-08-28 credential ruling (§23.5).**
+Two routes, neither taking a key, both under the same route-level `not_loopback`
+precondition as everything else in this block:
+
+- `POST /providers/discover` — the **offer**. Returns
+  `[{discovery_id, kind, provider_id, model_ids[], source_path}]` and nothing
+  else. `discovery_id` is **server-minted and opaque**; `source_path` is display
+  text. It reads only non-secret fields of what it finds, mutates nothing, and
+  runs **only** when called — never on panel mount, never on a timer, never as a
+  side effect of another route (§15.41's "no background credential probe" is
+  unrelaxed). It is a `POST` despite being a read (§2.3) so that reading the
+  operator's home directory can never be something a page issues incidentally.
+- `POST /providers/adopt` — the **explicit act**. Body is
+  `{discovery_id}` **only**. A body carrying a filesystem path under any key is
+  refused `path_not_web_writable`, and an unknown or expired handle is refused
+  `discovery_source_unknown`; both by name, on the `allowlist_not_web_writable`
+  pattern. On success the adoption is recorded in `providers.json` through
+  `write_private` at `0600` — which is what makes §23.5's distinguishing test
+  (*if a source works and no file names it, rule 7 has been broken*) mechanical
+  rather than aspirational.
+
+**Why the handle and not the path.** The offer already told the operator the
+path, so a path in the adopt body would add no information the operator lacks —
+it would only add a **client-chosen** path to a credential route, which is the
+one shape §23.5 forbids by name. The handle is the same discipline
+`PUT /providers/specs` uses on `auth_source`: the server keeps authority over
+which file it touches.
 `credential_allowlist` and `auth_source` are read-only projections; a body
 carrying either is refused `allowlist_not_web_writable` **by name**. A spec whose
 `credential` names a variable not already in the on-disk allowlist is refused
@@ -4794,6 +4993,11 @@ Introduced here and used nowhere else: `not_loopback`, `auth_source_linked`,
 `credential_expired`, `provider_unreachable`, `provider_rate_limited` (distinct
 from §2.4's `busy`, which is Hephaestus's own admission ceiling).
 
+Added by the 2026-08-28 credential ruling (Stage 10C, §23.5, §23.6), and the
+vocabulary stays closed: `path_not_web_writable` — an adopt body carried a
+filesystem path — and `discovery_source_unknown` — the `discovery_id` names no
+current offer. Neither degrades to `invalid_params`.
+
 Every one is a **named** refusal in the sense this codebase already uses: a
 closed set, tested by enumeration, never degraded to a generic 400 and never
 collapsed into a neighbour.
@@ -4916,11 +5120,42 @@ have**, and burying that in §19's sequence would misrepresent the section's siz
     empty-state → create-session → prompt path (§23.0).
 15. **Closed copy vocabulary in `copy.ts`** for both status axes, every refusal
     reason, and the scope choice — no reason string constructed at a call site.
-16. **The gate clause shape** for the amending stage, in `docs/workspace-plan.md`:
-    serve a project with **no** `providers.json`; assert the panel renders
-    `agent_unavailable` **by name**; write specs; **attach**; configure a provider
-    against a scripted `FakeModel`; assert a session then runs and streams;
-    assert sign-out returns the panel to `none` and the session routes to
-    `agent_unavailable`; plus items 11, 12 and 13. **The zero-config path is
-    asserted end to end, because that is the clause that proves the complaint is
-    answered.**
+16. ~~**The gate clause shape** for the amending stage~~ — **LANDED 2026-08-28
+    as Gate G10B**, verbatim from `docs/workspace-plan.md` §9: serve a project
+    with **no** `providers.json`; assert the panel renders `agent_unavailable`
+    **by name**; write specs; **attach**; configure a provider against a scripted
+    `FakeModel`; assert a session then runs and streams; assert sign-out returns
+    the panel to `none` and the session routes to `agent_unavailable`; plus items
+    11, 12 and 13. **The zero-config path is asserted end to end, because that is
+    the clause that proves the complaint is answered.** `mission_plan.md` is now
+    the binding text; this entry is a pointer, not a second gate.
+
+**Added 2026-08-28 by the credential ruling — Stage 10C, Gate G10C (§23.5).**
+Numbered on, because §19's rule that a closed list may not silently acquire
+members applies to this list too.
+
+17. **`POST /providers/discover` and `POST /providers/adopt`** (§23.6) — the
+    offer and the one explicit act, with the opaque server-minted
+    `discovery_id`, the `{kind, provider_id, model_ids, source_path}` projection
+    that reads **only** non-secret fields, the `providers.json` adoption record
+    through `write_private` at `0600`, and the two new named refusals
+    `path_not_web_writable` and `discovery_source_unknown`. Enumerates a Pi
+    `auth.json` outside the project root, an existing `providers.json`, and a
+    local OpenAI-compatible endpoint.
+18. **The Stage 10C negative tests, which are the whole of what the ruling's
+    constraints buy.** Four, each aimed at a property rather than a message:
+    a discovered-but-**unadopted** source leaves a session routing to
+    `agent_unavailable` **byte-identically** to a run with nothing discovered;
+    no credential path outside `<project>/.heph` is read unless
+    `providers.json` names it or the adoption request named it; discovery fires
+    on **no** code path but its own route — not on mount, not on a timer, not as
+    a side effect; and item 12's sentinel grep is **extended to the discovered
+    file's secret**, which appears nowhere in the opstore, the archived event
+    goldens, `stderr_tail`, or the bench bundle. Item 11's rule-7 assertion is
+    unchanged and still binds: the web path cannot add a name to
+    `credential_allowlist`, and discovery adopts no ambient environment
+    variable.
+19. **The `ProvidersPanel` discovery affordance** (§23.8, §23.5) — the offer
+    list rendered with its four fields and **no** masked tail (§15.41), and an
+    adopt control that is unmistakably an act: nothing in the panel adopts on
+    render, on hover, or on selection.

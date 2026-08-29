@@ -1,0 +1,50 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * §3.11.6's axis triad. Bottom-left, above the grid readout and in the same
+ * column as it, so §4.1's bottom-left corner holds one cluster rather than two
+ * boxes competing for a corner.
+ *
+ * NO PLATE, NO BORDER, NO FILL. The readout below is a plate because it holds
+ * words that must stay legible over whatever the canvas is showing; the triad is
+ * three strokes, and a plate around it would make the corner heavier than the
+ * geometry — the exact inversion §3.3's first principle refuses. It sits
+ * directly on the canvas ground, which is the surface the ink tokens below are
+ * permitted against.
+ */
+
+.triad {
+  position: absolute;
+  /* One-off geometric offset: the readout is `--space-3` from the bottom and is
+     about seven rems tall, so the triad clears it and keeps the same left edge.
+     A shared grid would be furniture for two boxes that never gain a third. */
+  left: var(--space-3);
+  bottom: calc(var(--space-3) + 5.5rem);
+  width: 48px;
+  height: 48px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.axis {
+  stroke: var(--ink-base);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+/* An axis leaning away from the viewer keeps its ink and loses weight, so the
+   near axis of an overlapping pair is the one that reads. Opacity rather than a
+   second token: this is depth, not meaning, and §3.9 spends a token on meaning. */
+.axis[data-axis-facing="away"] {
+  opacity: 0.45;
+}
+
+.label {
+  composes: eyebrow from "../../../system/type.module.css";
+  fill: var(--ink-strong);
+}
+
+.label[data-axis-facing="away"] {
+  opacity: 0.55;
+}

@@ -263,6 +263,55 @@ project's `references/` directory and registers it under `--name` (default: the
 filename). The original is untouched and the project stays self-contained.
 `remove` deregisters and deletes the copy. `--json` emits the registry entry.
 
+### `heph export {list,unpin}`
+
+Show what this project has exported and release an exported file's retention
+hold. Exports are produced by the `export_part`, `generate_drawing` and
+`generate_doc` **tools** — from an agent session, over MCP, or from the
+workspace's Export panel — and every output they write is pinned as a garbage
+collection root that also protects the build it came from, permanently. These
+two verbs are how that retention is inspected and given back.
+
+```console
+$ heph export list
+part     format  layout    bytes  pin     blob                                                                     path
+bracket  step    as_built  37056  pinned  sha256:7768d0fc357e4be96e72b767e7cbf018bac6d97af4be9333cb23db7f476a2111  .heph/exports/bracket-7768d0fc357e4be9.step
+
+1 export(s), 1 file(s), 37056 bytes
+store: 50563 protected of 10737418240 quota (52923 stored)
+drop an export's GC root with 'heph export unpin BLOB' (deletes nothing)
+
+$ heph export unpin sha256:7768d0fc357e4be96e72b767e7cbf018bac6d97af4be9333cb23db7f476a2111
+unpinned sha256:7768d0fc357e4be96e72b767e7cbf018bac6d97af4be9333cb23db7f476a2111 (37056 bytes) — bracket bracket-7768d0fc357e4be9.step
+now collectable: the blob and anything it alone protected are eligible for the next GC pass once past their retention horizon
+store: 13507 protected of 10737418240 quota (52923 stored)
+```
+
+`list` takes an optional part name to filter, computes nothing, and loads no
+geometry kernel. The `pin` column has three values and they are three different
+facts: `pinned` is a garbage collection root in its own right, `reachable` is
+unpinned but still protected by something else (so unpinning it reclaimed
+nothing), and `collectable` is eligible for the next pass once past its
+retention horizon.
+
+`unpin` **deletes nothing**. It removes one pin; the bytes survive until they are
+both unreachable and past their retention horizon, and the collection itself is
+the store's own pass. It is idempotent, and it refuses a hash that is not the
+output of a committed export in this project — including one that is genuinely
+stored for another reason, because this is an export verb and not a general
+unpin.
+
+The `store:` line is the quota accounting, and it is actionable: when
+*protected* bytes alone exceed the quota, new builds and new exports refuse with
+`protected_quota_exceeded` before they run. Unpinning is one of the two remedies;
+the other is a larger quota.
+
+The workspace deliberately offers neither verb: there is no unpin and no delete
+in the browser, which is why the Export panel says exports are kept until they
+are unpinned from the command line. Both verbs need no Node and no network; they
+ship with the server package, which owns the export record, so they are present
+whenever `export_part` is.
+
 ---
 
 ## Agent verbs — Node ≥ 22.19 and a provider config
@@ -471,12 +520,17 @@ through the same engine path rather than a bespoke one.
 
 ## Verbs that do not exist (and why)
 
-- **`heph export`.** Exports are a *tool* surface (`export_part`), reachable
-  from the agent and over MCP, not a CLI verb. `repo_conventions.md` names
-  `heph export` in a list of Node-free capabilities; that clause is about the
-  engine's independence from Node, which holds, and not about a verb that
-  shipped.
+- **`heph export create`** (or any verb that *produces* an export). Producing an
+  export is a *tool* surface — `export_part`, `generate_drawing`, `generate_doc`
+  — reachable from the agent, over MCP and from the workspace's Export panel,
+  and there is deliberately no fourth path to it: one write-ahead record, one set
+  of confinement and pinning rules. What the CLI owns is the *retention* half,
+  `heph export list` and `heph export unpin` — see their section above.
+- **`heph export delete`.** `unpin` is reversible bookkeeping; a delete verb
+  would make an irreversible removal a keystroke away from it, and the store's
+  own collection pass already removes what is unreachable and past its horizon.
 
-It is recorded here rather than quietly omitted, because a docs set that
-promises a verb the binary does not have is worse than one that admits the gap.
-(`heph init` used to be listed here too; it shipped — see its section above.)
+This section is kept rather than emptied, because a docs set that promises a verb
+the binary does not have is worse than one that admits the gap. (`heph init` used
+to be listed here; it shipped — see its section above. So did `heph export`,
+which was listed here in full until its two retention verbs landed.)

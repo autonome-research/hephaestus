@@ -16,11 +16,23 @@
 // a user-visible fact, not only a test fact" is the same rule here.
 //
 // The dirty dot on this tab is §13.1's, driven by `GET /git/status` alone.
+//
+// §4.7's TWO LABEL FIXES. The bar read `READ ONLY | 13 lines | cbe552b4cf
+// cbe552b4cf`: two DIFFERENT refs both rendered `.slice(-10)`, colliding on the
+// fixture, so the same hash appeared twice with no labels and read as a
+// rendering bug. Both now carry visible labels (`content …` / `snapshot …`) as
+// `Field`s in `.code`, keeping their distinct `data-source` values — and the
+// shortening goes through `formatRef`, which keeps the head as well as the tail
+// so two different refs cannot collide into the same glyphs again.
+//
+// The editor frame also shrink-to-fits rather than framing ~800px of void below
+// a 13-line file.
 
 import { useEffect, useRef } from "react";
 import { useScript } from "../../api/queries";
 import { copy } from "../../copy";
 import { useWorkspace } from "../../state/react";
+import { Button, Chip, EmptyState, formatRef } from "../../system";
 import { Fact } from "../Fact";
 import { installMonaco } from "./monaco";
 import { useScriptPages } from "./useScriptPages";
@@ -72,31 +84,38 @@ export function ScriptEditor(): React.JSX.Element {
   }, [pages.text]);
 
   if (part === null) {
-    return <p className={styles["absent"]}>{copy.stage.selectPart}</p>;
+    return (
+      <EmptyState icon="file" title={copy.stage.selectPartTitle} body={copy.stage.selectPart} />
+    );
   }
 
   return (
     <div className={styles["panel"]} data-panel="script">
       <div className={styles["bar"]}>
-        <span className={styles["readOnly"]} title={copy.script.readOnlyWhy}>
+        <Chip title={copy.script.readOnlyWhy} data-script-readonly="">
           {copy.script.readOnly}
-        </span>
+        </Chip>
         {pages.lineCount === null ? null : (
           <span className={styles["meta"]}>
             <Fact source="script.line_count" value={pages.lineCount} /> {copy.script.lines}
           </span>
         )}
+        {/* §4.7: both refs are LABELLED. Two unlabelled `.slice(-10)` tails that
+            happened to collide on the fixture is what made this bar read as a
+            rendering bug rather than as two facts. */}
         {pages.contentHash === null ? null : (
           <span className={styles["meta"]} title={copy.script.contentHash}>
+            <span className={styles["metaLabel"]}>{copy.script.contentHash}</span>{" "}
             <Fact source="script.content_hash" value={pages.contentHash} mono>
-              {pages.contentHash.slice(-10)}
+              {formatRef(pages.contentHash, 14)}
             </Fact>
           </span>
         )}
         {pages.snapshotRef === null ? null : (
           <span className={styles["meta"]} title={copy.script.snapshot}>
+            <span className={styles["metaLabel"]}>{copy.script.snapshot}</span>{" "}
             <Fact source="script.snapshot_ref" value={pages.snapshotRef} mono>
-              {pages.snapshotRef.slice(-10)}
+              {formatRef(pages.snapshotRef, 14)}
             </Fact>
           </span>
         )}
@@ -113,14 +132,15 @@ export function ScriptEditor(): React.JSX.Element {
             <span className={styles["meta"]}>
               {copy.script.paged(pages.loadedBytes, pages.totalBytes ?? pages.loadedBytes)}
             </span>
-            <button
-              type="button"
-              className={styles["more"]}
-              onClick={pages.loadMore}
-              disabled={pages.loading}
-            >
-              {copy.script.more}
-            </button>
+            {pages.loading ? (
+              <Button variant="secondary" disabled reason={copy.script.loading}>
+                {copy.script.more}
+              </Button>
+            ) : (
+              <Button variant="secondary" onClick={pages.loadMore} data-script-more="">
+                {copy.script.more}
+              </Button>
+            )}
           </>
         ) : (
           <span className={styles["meta"]}>{copy.script.complete}</span>

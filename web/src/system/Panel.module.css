@@ -1,0 +1,88 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * INTERFACE.md §4.7's Panel. Padding is spent through the ROLE tokens of §3.7
+ * (`--pad-panel`, `--pad-panel-header`, `--gap-group`) and never through a
+ * `--space-*` step directly, which is the difference between "12px because
+ * that's the rhythm" and "12px because I typed it" — and the reason panel,
+ * overlay and drawer padding no longer disagree.
+ */
+
+.panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  min-width: 0;
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--gap-inline);
+  padding: var(--pad-panel-header);
+  /* §3.9: every boundary between two named surfaces carries a 1px border. The
+     shipped 1.068:1 rail/stage figure was a defect not because 1.068 is wrong
+     but because the seam was a hairline and the ladder had two rungs in play. */
+  border-bottom: 1px solid var(--border);
+}
+
+.headingBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 2px; /* one-off: an eyebrow sits ON its title, tighter than --gap-stack */
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  color: var(--ink-strong);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eyebrow {
+  color: var(--ink-muted);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-stack);
+  flex: none;
+}
+
+.body {
+  display: grid;
+  /* The three columns of §4.7's DataTable, declared ONCE per panel so every
+     table and field inside aligns down the whole drawer via `subgrid`. */
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  align-content: start;
+  gap: var(--gap-group);
+  padding: var(--pad-panel);
+  overflow: auto;
+  min-height: 0;
+}
+
+/* Anything in the body that is not itself a three-column row spans all three. */
+.body > * {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.section {
+  display: grid;
+  grid-template-columns: subgrid;
+  gap: var(--gap-stack);
+}
+
+.note {
+  margin: 0;
+  max-width: 68ch;
+  /* §3.9's retired defect: `--ink-3` on `--ground-1` measured 3.10:1 and was the
+     empty-state colour in four files. Base ink, and no italics. */
+  color: var(--ink-base);
+}

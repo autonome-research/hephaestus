@@ -349,7 +349,14 @@ describe("ChecksView renders the report's own badges (§6.3)", () => {
     for (const name of Object.keys(checks.badges).sort()) {
       const result = checks.report.checks[name];
       if (result === undefined) continue;
-      const row = host.querySelector(`[data-check="${name}"]`);
+      // REPOINTED, and the amendment is §4.7's `Badge` clause: `data-badge` is
+      // emitted "on the element it styles", and G4.4's e2e reads `data-check`
+      // and `data-badge` **off the same node** — so `data-check` now sits on the
+      // badge rather than on the `<li>` around it. The assertion itself is
+      // unchanged; only the walk from the check's name to its row is, and the
+      // row is still the element the measured value lives in.
+      const badge = host.querySelector(`[data-check="${name}"]`);
+      const row = badge?.closest("li") ?? null;
       expect(row?.querySelector('[data-source="checks.report.checks[].measured"]')
         ?.getAttribute("data-value")).toBe(JSON.stringify(result.measured));
     }

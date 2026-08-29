@@ -5,10 +5,21 @@ SPDX-License-Identifier: Apache-2.0
 
 # Workspace plan — answering the 2026-08-28 product review
 
-**Status: a plan, not a gate.** `mission_plan.md` is the only binding text, and
-this document proposes an amendment to it (§9). `INTERFACE.md` is the normative
-spec for everything below; every item names the section that governs it. Nothing
-here weakens or rewords G4 or G5.
+**Status: APPROVED 2026-08-28. Still a plan, not a gate.** `mission_plan.md`
+remains the only binding text. The amendment this document proposed in §9 was
+approved by the operator on 2026-08-28 and **has landed** in `mission_plan.md`
+as §"Stage 10 — Workspace egress and provider attachment (amendment 2026-08-28,
+maintainer-directed)", carrying **G10A** and **G10B** verbatim from §9 below,
+plus **G10C** for the credential ruling of the same day (§9a). `INTERFACE.md` is
+the normative spec for everything below; every item names the section that
+governs it. Nothing here weakens or rewords G4 or G5, and the amendment edits
+neither.
+
+**The amendment boundary of §3 is CROSSED.** Items 7–10 are buildable. Read §3
+for what the boundary was and why it existed; it is kept rather than deleted
+because a boundary that vanishes on being crossed teaches nobody why it was
+drawn. Ordering within Stage 10 is now a dependency question, not a permission
+question: 10A → 10B → 10C, strictly.
 
 ## 0. What was reported, and what the review concluded
 
@@ -31,9 +42,9 @@ the ordering below:
 | Complaint | Ruling | Section | Stage |
 |---|---|---|---|
 | 1 chat | **Spec was wrong, and by miscitation** — the code cited §9, and §9 says nothing about prompting. `Composer` was already on the Stage-4/5 panel inventory. | §7A | **Stage 4** (quick-edit half already gated by G5.16) |
-| 2 export | Mechanism decision right; **product decision was an unanswered deferral**, now answered. Mechanism argument turned out weaker than claimed. | §22 | **New stage** |
+| 2 export | Mechanism decision right; **product decision was an unanswered deferral**, now answered. Mechanism argument turned out weaker than claimed. | §22 | **Stage 10A**, G10A |
 | 3 design | **Row was wrong about what it bought.** CSS Modules is a delivery mechanism, not a design system. Every *dependency* rejection survives. | §3, §4.7 | **Stage 4** |
-| 4 sign-in | §2.2's sentence answered a different question than it was read as answering. Narrowed, not withdrawn. | §23 | **New stage** |
+| 4 sign-in | §2.2's sentence answered a different question than it was read as answering. Narrowed, not withdrawn. | §23 | **Stage 10B**, G10B; discovery **Stage 10C**, G10C |
 
 ## 1. The ordering, in one table
 
@@ -49,11 +60,12 @@ effort for one engineer who knows this codebase: **h** = hours, **d** = days,
 | 4 | Composer, blank canvas, read-refresh | §7A | 4 | **d–w** | Complaint 1. The largest single answer to the review. |
 | 5 | Request text bound per run | §19.23 | 4 | **d** | Makes §7A.4's invariant true rather than conditional, and buys back the concurrency the composer must otherwise refuse. |
 | 6 | Viewport display authorship | §3.11 | 4 | **d** | Complaint 3's other half — the part is currently the dimmest object on screen. Gated on G4.5 threshold re-derivation. |
-| — | **Amendment approval boundary** | §9 below | — | — | Nothing past this line is buildable until the maintainer approves the new stage. |
-| 7 | Attach a runtime to a running serve | §23.0, §23.14.1 | new | **d** | The capability without which sign-in cannot be used in the state it exists to fix. Also useful on its own. |
-| 8 | Provider sign-in surface | §23 | new | **w+** | Complaint 4. Largest item in the plan. |
-| 9 | Export: routes, panel, download | §22 | new | **w** | Complaint 2. Blocked on item 2. |
-| 10 | `heph export list` / `unpin`, `admission_guard` wiring | §19.40 | new | **d** | Makes §22's "unpin it from the command line" name something that exists. |
+| — | **Amendment approval boundary — CROSSED 2026-08-28 (§3)** | §9 below | — | — | Was: nothing past this line is buildable until the maintainer approves the new stage. The stage is approved; what remains below the line is dependency order, not permission. |
+| 7 | Attach a runtime to a running serve | §23.0, §23.14.1 | **10B** | **d** | The capability without which sign-in cannot be used in the state it exists to fix. Also useful on its own. |
+| 8 | Provider sign-in surface | §23 | **10B** | **w+** | Complaint 4. Largest item in the plan. |
+| 8a | Credential discovery: offer and adopt | §23.5, §23.14.17–19 | **10C** | **d** | The 2026-08-28 credential ruling (§9a). Additive after item 8; strictly after it. |
+| 9 | Export: routes, panel, download | §22 | **10A** | **w** | Complaint 2. Blocked on item 2. |
+| 10 | `heph export list` / `unpin`, `admission_guard` wiring | §19.40 | **10A** | **d** | Makes §22's "unpin it from the command line" name something that exists. |
 
 ## 2. Stage 4 items, in detail
 
@@ -226,13 +238,25 @@ the single highest-value CAD viewport affordance in the list.
 material **before** it lands. §21.10 already records that they were chosen rather
 than measured. G4.7 is untouched — the section render is server pixels.
 
-## 3. The amendment boundary
+## 3. The amendment boundary — CROSSED 2026-08-28
 
-**Items 7–10 are not buildable until `mission_plan.md` carries the amendment in
-§9 below.** Both §22 and §23 are marked DRAFT throughout `INTERFACE.md` for that
-reason. Neither has a gate clause, so neither has a CI job, so neither can be
-*completed* — a PR touching `/exports/**` or `/providers/**` before the amendment
-lands is out of scope on its face.
+**As drafted:** *"Items 7–10 are not buildable until `mission_plan.md` carries
+the amendment in §9 below. Both §22 and §23 are marked DRAFT throughout
+`INTERFACE.md` for that reason. Neither has a gate clause, so neither has a CI
+job, so neither can be completed — a PR touching `/exports/**` or
+`/providers/**` before the amendment lands is out of scope on its face."*
+
+**As of 2026-08-28 the amendment landed.** `mission_plan.md` §"Stage 10" carries
+G10A, G10B and G10C; the DRAFT markings in `INTERFACE.md` §22 and §23 are struck
+and both sections are normative beneath those gates; each now has a gate clause,
+so each has a CI job, so each can be completed. The out-of-scope-on-its-face rule
+for `/exports/**` and `/providers/**` PRs is **retired** — those are ordinary
+stage work now, reviewed against their gate like anything else.
+
+**Kept, because it survived the crossing:** items 7–10 are still ordered by
+dependency. Item 9 (export) is blocked on item 2; item 8 (sign-in) is blocked on
+item 7 (attach); discovery is blocked on item 8. A permission that arrived does
+not dissolve a prerequisite.
 
 ## 4. Item 7 — Attach an agent runtime to a running serve · §23.0 · days
 
@@ -284,15 +308,21 @@ spec-only `providers.json` writer; the symlink guard; and two panels.
    callback-only subscription flow is a copy-paste and will look unpolished next
    to a one-click login.
 
-**OPEN — needs the maintainer, not a spec argument (§23.5).** Whether the panel
-may **discover** `~/.pi/agent/auth.json` and offer it as a credential source is a
-**mission rule 7** question. Rule 7 is mission-wide and its approval mechanism is
-a supervisor-prepared allowlist — a terminal act, not a browser click — and a
-global Pi auth file is exactly the class of thing G2's session tests currently
-prove inert. **The section ships without discovery.** If it is wanted, it enters
-with its own gate clauses: no credential path outside `<project>/.heph` is read
-unless `providers.json` already names it; the offer performs **no read before
-acceptance**; and a discovered-but-unaccepted login behaves identically to none.
+**RULED 2026-08-28 — was OPEN, needing the maintainer rather than a spec
+argument (§23.5).** Whether the panel may **discover** `~/.pi/agent/auth.json`
+and offer it as a credential source is a **mission rule 7** question. Rule 7 is
+mission-wide and its approval mechanism is a supervisor-prepared allowlist — a
+terminal act, not a browser click — and a global Pi auth file is exactly the
+class of thing G2's session tests currently prove inert. The argument is kept
+because it is what shaped the constraints. **The operator approved discovery**
+(§9a), and it enters as **item 8a / Stage 10C with its own gate clauses**, which
+is the form the open question itself required: no credential path outside
+`<project>/.heph` is read unless `providers.json` names it or an adoption request
+named it; the offer is an **offer and never a silent adoption**, reading
+**non-secret fields only** and never echoing, logging or emitting a secret; and a
+discovered-but-**unadopted** login behaves identically to none. Rule 7 is
+unchanged: `credential_allowlist` stays supervisor-prepared and not web-writable,
+and no ambient environment variable is adopted.
 
 **Acceptance evidence:** the zero-config path end to end (no `providers.json` →
 panel names `agent_unavailable` → write specs → attach → configure against a
@@ -374,10 +404,19 @@ Each is in `INTERFACE.md` §15 or §18 with its reason:
 - **No masked key tail, no background credential probe, no mid-run
   re-authentication** (§15.41).
 
-## 9. The `mission_plan.md` amendment, in the form to approve
+## 9. The `mission_plan.md` amendment — APPROVED 2026-08-28, LANDED
 
-Approving this one block is what unblocks items 7–10. It adds a stage and edits
-no existing gate.
+Approving this one block is what unblocked items 7–10. It adds a stage and edits
+no existing gate. **It was approved by the operator on 2026-08-28 and is now in
+`mission_plan.md` §"Stage 10 — Workspace egress and provider attachment
+(amendment 2026-08-28, maintainer-directed)". G10A and G10B are carried there
+verbatim from the block below.** The block is retained unaltered as the record of
+what was put and approved; `mission_plan.md` is the text that binds, and if the
+two ever disagree the gate wins and the disagreement is a defect here.
+
+**One departure from the block, recorded rather than folded in silently:** the
+block's closing paragraph carries an open question forward. It is no longer open
+— see §9a. `mission_plan.md`'s Stage 10 records the ruling in its place.
 
 > ## Stage 10 — Workspace egress and provider attachment (amendment 2026-08-28, maintainer-directed)
 >
@@ -438,6 +477,43 @@ no existing gate.
 > Mission rule 7's approval mechanism is a supervisor-prepared allowlisted
 > environment; `INTERFACE.md` §23.5 records the argument on both sides and ships
 > without discovery pending that ruling.
+
+## 9a. The carried open question, ruled 2026-08-28
+
+§9's block closes by carrying one question: *whether the workspace may*
+**discover** *a Pi `auth.json` outside the project root and offer it as a
+credential source.* The operator ruled on it the same day, in these words:
+
+> "The server should be able to work locally, the same way that Claude for
+> science works."
+
+**Approved, with binding constraints, entering as its own gated sub-stage
+`10C` with `G10C`** — which is the form §23.5 itself demanded of an approval
+("if the maintainer wants the offer, it enters with its own gate clauses"). The
+server MAY enumerate the operator's existing credential sources — a Pi
+`auth.json`, an existing `providers.json`, a local OpenAI-compatible endpoint —
+and **offer** them, describing each *without* its secret. The constraints that
+survive the approval, each now written into `INTERFACE.md` §23.5 and gated by
+G10C: discovery is an **offer, never a silent adoption**, and adoption is one
+explicit request naming the discovered source; a secret is **never** echoed to
+the client, logged, or placed in a URL, an event, or an artifact; the serve stays
+**loopback-only**; anything written is **`0600`**; and **mission rule 7 is
+unchanged**, still forbidding ambient provider keys reaching a run unapproved,
+with `credential_allowlist` supervisor-prepared and not web-writable.
+
+**Two consequences worth stating, because they are where an implementer would
+drift.** First, the ruling permits describing a source "with a masked hint at
+most" — a **ceiling**, not an instruction. `INTERFACE.md` §15.41's *no masked
+key tail* is stricter and stands: the offer carries kind, provider id, model ids
+and source path, and nothing derived from a secret. Second, §23.5's draft clause
+*"no read of the discovered file before acceptance"* is **narrowed** by the
+ruling rather than kept — an offer that has read nothing cannot name a provider
+or its models — to: the offer reads **non-secret fields only**, and what the
+clause was protecting is carried by "never a silent adoption" instead.
+
+**Item 8's size and shape are unchanged by this.** Discovery is additive work
+after item 8, not a rewrite of it: two routes, one panel affordance, and four
+negative tests (`INTERFACE.md` §23.14 items 17–19).
 
 ## 10. If only one thing is built
 

@@ -49,7 +49,7 @@ async function makeFixture(
   mkdirSync(agentDir, { recursive: true });
   mkdirSync(projectRoot, { recursive: true });
   const fake = await FakeModel.start(script, opts.fake ?? {});
-  const runtime = await createModelRuntime({ providers: [fake.providerSpec()] }, { agentDir });
+  const { runtime } = await createModelRuntime({ providers: [fake.providerSpec()] }, { agentDir });
   const model = runtime.getModel(fake.providerId, fake.modelId);
   if (!model) throw new Error("fake model did not resolve");
   const probe: ToolProbe = { count: 0 };
@@ -232,24 +232,43 @@ describe("isolation from ambient globals", () => {
     try {
       // A provider that references a credential missing from the allowlist is
       // rejected — the env var is never consulted as a fallback.
-      await expect(
-        createModelRuntime(
-          {
-            providers: [
-              {
-                id: "anthropic",
-                kind: "anthropic",
-                credential: "ANTHROPIC_APPROVED",
-                models: [{ id: "claude-x", name: "X", contextWindow: 1000, maxTokens: 100 }],
-              },
-            ],
-          },
-          { agentDir },
-        ),
-      ).rejects.toThrow(/allowlist/);
+  // AMENDED by INTERFACE.md §23.7 (Stage 10B), and the property under test is
+  // UNCHANGED. `createModelRuntime` used to throw on the first provider that
+  // failed verification; it now records `available: false` with that provider's
+  // own code and brings the runtime up with whatever verified. §23.7 states why
+  // that is strictly stronger rather than weaker: "an unavailable provider is
+  // never silently replaced, never falls back, and cannot serve a turn. What
+  // changes is only that its failure no longer takes its neighbours and the
+  // login path down with it." So the assertion moves from "it threw" to "it is
+  // unavailable, by name" — which is the same claim about substitution, made
+  // against a runtime that can still be signed into.
+      const refused = await createModelRuntime(
+        {
+          providers: [
+            {
+              id: "anthropic",
+              kind: "anthropic",
+              credential: "ANTHROPIC_APPROVED",
+              models: [{ id: "claude-x", name: "X", contextWindow: 1000, maxTokens: 100 }],
+            },
+          ],
+        },
+        { agentDir },
+      );
+      expect(refused.providers).toEqual([
+        {
+          id: "anthropic",
+          available: false,
+          unavailable_reason: "credential_not_allowlisted",
+          message: expect.stringMatching(/allowlist/) as unknown as string,
+        },
+      ]);
+      // NOT REGISTERED, which is the substitution half: an unavailable provider
+      // cannot serve a turn, so the ambient key has nothing to be a fallback for.
+      expect(refused.runtime.getRegisteredProviderIds()).not.toContain("anthropic");
 
       // With the credential explicitly approved in the payload, it succeeds.
-      const runtime = await createModelRuntime(
+      const { runtime } = await createModelRuntime(
         {
           providers: [
             {

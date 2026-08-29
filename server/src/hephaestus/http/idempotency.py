@@ -76,6 +76,7 @@ from opstore.errors import OpStoreError
 from opstore import OpStore
 
 __all__ = [
+    "CREDENTIAL_ROUTES",
     "FRESHNESS_SKEW_S",
     "KEY_REQUIRED_ROUTES",
     "NON_TOOL_KEY_ROUTES",
@@ -115,6 +116,38 @@ KEY_REQUIRED_ROUTES: Final[tuple[tuple[str, str], ...]] = (
     ("POST", "/parts/{part}/dfm"),
     ("POST", "/project/config/dfm"),
     ("POST", "/git/tag"),
+    # §22.2 — the three egress mutations. An export is a mutation on all three of
+    # the product's own definitions: ``export_part`` carries
+    # ``ToolDecl.idempotent = True`` and is in ``MUTATION_TOOLS``;
+    # ``tool_schema.md`` says "Export invocation metadata carries the idempotency
+    # key"; and it **writes** — a create-only file under ``.heph/exports/``, a
+    # blob, a GC-root pin, a reachability link and a ``tp_exports`` row.
+    #
+    # WHY key what the operator experiences as "a download": ``_commit_export``
+    # installs create-only, so a keyless retry after a dropped 145 KB response
+    # would collide with its own first attempt and refuse. With a key a dropped
+    # download is a replay returning the identical result and the identical
+    # bytes. The key is what makes retry the obvious thing to do rather than the
+    # thing that breaks.
+    #
+    # These are the only members of this table needing **no** ledger extension:
+    # unlike ``POST /git/tag`` and ``POST /project/config/dfm`` they replay a
+    # complete ``ExportCommit`` from a ``COMMITTED`` row of the export WAL. Two
+    # key layers, and they agree — the REST ladder decides whether the request is
+    # admitted, the export WAL decides whether it re-runs, and both raise the same
+    # ``key_payload_mismatch`` string on a same-key-different-payload
+    # presentation. No new key vocabulary is introduced.
+    ("POST", "/parts/{part}/export"),
+    ("POST", "/parts/{part}/drawing"),
+    ("POST", "/parts/{part}/doc"),
+    # §23.6 / §23.14 item 8 — the `providers.json` spec-only write, under the
+    # SAME non-tool ledger extension `POST /project/config/dfm` and
+    # `POST /git/tag` already need, with the same key space. It is a config
+    # mutation with no tool behind it, so it is on both this table and the one
+    # below. The route is named `/specs` and not `/providers` because it is not
+    # the whole file: `credential_allowlist` and `auth_source` are read-only
+    # projections and a body carrying either is refused by name.
+    ("PUT", "/providers/specs"),
 )
 
 #: The two key-required routes with **no tool behind them** (§19 item 7): a
@@ -123,6 +156,7 @@ KEY_REQUIRED_ROUTES: Final[tuple[tuple[str, str], ...]] = (
 NON_TOOL_KEY_ROUTES: Final[tuple[tuple[str, str], ...]] = (
     ("POST", "/project/config/dfm"),
     ("POST", "/git/tag"),
+    ("PUT", "/providers/specs"),
 )
 
 #: ``INTERFACE.md`` §2.3, second table — session control. A key is **not
@@ -136,6 +170,47 @@ SESSION_CONTROL_ROUTES: Final[tuple[tuple[str, str], ...]] = (
     ("POST", "/sessions/{id}/answer"),
     ("POST", "/runs/{run_id}/cancel"),
     ("POST", "/parts/{part}/quick_edit"),
+)
+
+#: ``INTERFACE.md`` §2.3, third group — credential mutations (§23.6). A key is
+#: **not required** and a supplied one is ignored, and the argument is its own
+#: rather than borrowed from session control: none of these is a source, config,
+#: or output mutation, and a byte-for-byte replay of a credential change would be
+#: a *silent security failure* — a rotation swallowed because the key matched.
+#:
+#: Only §23.0's ``attach`` is served today (§23.14 item 1); the rest of §23.6's
+#: routes are item 2's work. The policy is declared for the whole group anyway,
+#: exactly as ``/parts/{part}/quick_edit`` above is declared before Stage 5
+#: serves it: the alternative is a route arriving with no policy and picking one
+#: up from whatever the implementation happens to check.
+CREDENTIAL_ROUTES: Final[tuple[tuple[str, str], ...]] = (
+    ("POST", "/providers/attach"),
+    # §23.6's credential mutations. A key is **not required** and a supplied one
+    # is ignored, and the argument is per route rather than per group:
+    #
+    # * `auth/key` — a repeat with the SAME key sets the same credential; a
+    #   repeat with a DIFFERENT key is a deliberate rotation, and a byte-for-byte
+    #   replay that swallowed it would be a silent security failure (the same
+    #   shape as `prompt`).
+    # * `auth/begin` — at most one flow per provider, and a second is refused
+    #   `login_already_in_progress`: **flow identity, not key identity**, is the
+    #   guard.
+    # * `auth/complete` — governed by `state` verification, which is stronger and
+    #   already exists in Pi; a second mechanism over it is the duplication
+    #   mission rule 6 forbids.
+    # * `auth/cancel`, `auth/signout`, `auth/unlink`, `adopt` — idempotent by
+    #   construction.
+    #
+    # `POST /providers/discover` is here too: it mutates nothing, and a key
+    # ladder over a read would record a replay of a projection.
+    ("POST", "/providers/discover"),
+    ("POST", "/providers/adopt"),
+    ("POST", "/providers/auth/unlink"),
+    ("POST", "/providers/{id}/auth/key"),
+    ("POST", "/providers/{id}/auth/begin"),
+    ("POST", "/providers/{id}/auth/complete"),
+    ("POST", "/providers/{id}/auth/cancel"),
+    ("POST", "/providers/{id}/auth/signout"),
 )
 
 
@@ -161,7 +236,7 @@ def route_identity(method: str, template: str) -> str:
 
 
 def requires_key(method: str, template: str) -> bool:
-    """True for exactly the seven routes of §2.3's first table."""
+    """True for exactly the routes of §2.3's first table (seven + §22's three)."""
     return (method.upper(), template) in KEY_REQUIRED_ROUTES
 
 

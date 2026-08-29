@@ -58,6 +58,10 @@ export interface StreamView {
   readonly threadState: ThreadDocument["thread_state"] | null;
   readonly threadBounded: boolean;
   readonly resyncs: number;
+  /** The run of the last live frame for this session — the composer's own (§7A.5). */
+  readonly runId: string | null;
+  /** Live `terminal` frames seen; §7A.11's read-refresh trigger. */
+  readonly terminals: number;
   readonly error: Error | null;
 }
 
@@ -190,6 +194,8 @@ export function useStream(sessionId: string | null): StreamView {
     threadState: shownThread.document?.thread_state ?? null,
     threadBounded: shownThread.bounded,
     resyncs: shownLive.resyncs,
+    runId: shownLive.runId,
+    terminals: shownLive.terminals,
     error: shownError ?? shownHistory.error,
   };
 }

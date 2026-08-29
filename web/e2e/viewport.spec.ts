@@ -20,7 +20,13 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { assertVisibilityDelta, type Rgb } from "./helpers/maskDelta";
+import {
+  CONTROL_CHANGED_MAX,
+  INSIDE_CHANGED_MIN,
+  assertVisibilityDelta,
+  visibilityDelta,
+  type Rgb,
+} from "./helpers/maskDelta";
 import { archive } from "./harness/archive";
 import { api, apiBytes, open, refSegment, route } from "./harness/world";
 
@@ -86,14 +92,40 @@ async function awaitViewport(page: Page): Promise<void> {
 }
 
 // --------------------------------------------------------------------------
-// G4.5 — the visibility toggle, inside the mask and nowhere else
+// The world G4.5 and its threshold derivation share.
 
-test("hiding a solid changes the viewport inside its mask and not outside (G4.5)", async ({
-  page,
-}, testInfo) => {
-  // 1. The **solid-ID pass**, byte-exact from §2.6, and its legend. Both are
-  //    server values: §1's closed list bars the client from decoding a palette,
-  //    and this decode happens in the harness against downloaded pass bytes.
+interface PassWorld {
+  readonly pass: Buffer;
+  readonly legend: Record<string, LegendEntry>;
+  readonly size: { width: number; height: number };
+  readonly build: BuildDocument;
+}
+
+/**
+ * Fetch the **solid-ID pass**, byte-exact from §2.6, and its legend, then size
+ * the canvas to it.
+ *
+ * Both are server values: §1's closed list bars the client from decoding a
+ * palette, and this decode happens in the harness against downloaded pass bytes.
+ *
+ * THE CANVAS IS SIZED BEFORE THE SCENE IS FRAMED, and that order is
+ * load-bearing. `inspect_part` exposes no width/height (they are not schema
+ * parameters), so the pass is always the server's default and it is the CANVAS
+ * that has to move. `assertVisibilityDelta` refuses mismatched dimensions rather
+ * than comparing a resampler, and an element only partly on screen screenshots
+ * as page chrome.
+ *
+ * Sizing it *after* the load is not good enough: `Engine.resize` holds the
+ * framing's `halfHeight` and recomputes `halfWidth` from the new aspect, so a
+ * scene framed at the flex layout's aspect and then resized to 4:3 keeps a
+ * vertical extent the server never used, and the mask lands next to the solid
+ * instead of on it. An init script installs the style before React mounts, so
+ * the first framing is already the pass's aspect.
+ *
+ * `pointer-events: none` keeps the Results toggle underneath genuinely clickable
+ * rather than clicked through a `force` flag.
+ */
+async function passWorld(page: Page): Promise<PassWorld> {
   const build = await api<BuildDocument>(`/parts/${PART}/build`);
   const inspection = await api<InspectDocument>(`/parts/${PART}/inspect`, {
     method: "POST",
@@ -112,26 +144,8 @@ test("hiding a solid changes the viewport inside its mask and not outside (G4.5)
   expect(passRef).toContain("artifact:render:");
   const pass = await apiBytes(`/artifacts/${refSegment(passRef)}/bytes`);
 
-  // 2. The canvas is sized to the pass BEFORE the scene is framed, and that
-  //    order is load-bearing.
-  //
-  //    `inspect_part` exposes no width/height (they are not schema parameters),
-  //    so the pass is always the server's default and it is the CANVAS that has
-  //    to move. `assertVisibilityDelta` refuses mismatched dimensions rather
-  //    than comparing a resampler, and an element only partly on screen
-  //    screenshots as page chrome.
-  //
-  //    Sizing it *after* the load is not good enough: `Engine.resize` holds the
-  //    framing's `halfHeight` and recomputes `halfWidth` from the new aspect, so
-  //    a scene framed at the flex layout's aspect and then resized to 4:3 keeps
-  //    a vertical extent the server never used, and the mask lands next to the
-  //    solid instead of on it. An init script installs the style before React
-  //    mounts, so the first framing is already the pass's aspect.
-  //
-  //    `pointer-events: none` keeps the Results toggle underneath genuinely
-  //    clickable rather than clicked through a `force` flag.
-  const passSize = sizeOf(pass);
-  await page.setViewportSize({ width: passSize.width + 480, height: passSize.height + 320 });
+  const size = sizeOf(pass);
+  await page.setViewportSize({ width: size.width + 480, height: size.height + 320 });
   await page.addInitScript(
     ([width, height]: [number, number]) => {
       const install = (): void => {
@@ -145,8 +159,37 @@ test("hiding a solid changes the viewport inside its mask and not outside (G4.5)
       if (document.head as HTMLElement | null) install();
       else document.addEventListener("DOMContentLoaded", install);
     },
-    [passSize.width, passSize.height] as [number, number],
+    [size.width, size.height] as [number, number],
   );
+  return { pass, legend, size, build };
+}
+
+/** The palette values a Results row's label owns — the union over its solids. */
+function paletteFor(
+  legend: Record<string, LegendEntry>,
+  solidIndices: ReadonlySet<number>,
+): Rgb[] {
+  return Object.entries(legend)
+    .filter(([, entry]) => entry.kind === "solid" && solidIndices.has(entry.solid_index))
+    .map(([hex]) => hexToRgb(hex));
+}
+
+/** Wait until the canvas has actually taken the pass's box before shooting it. */
+async function awaitCanvasBox(page: Page, size: { width: number; height: number }): Promise<void> {
+  const canvas = page.locator("[data-viewport-canvas]");
+  await expect
+    .poll(async () => await canvas.boundingBox(), { timeout: 30_000 })
+    .toMatchObject({ x: 0, y: 0, width: size.width, height: size.height });
+}
+
+// --------------------------------------------------------------------------
+// G4.5 — the visibility toggle, inside the mask and nowhere else
+
+test("hiding a solid changes the viewport inside its mask and not outside (G4.5)", async ({
+  page,
+}, testInfo) => {
+  // 1./2. The pass, its legend, and a canvas sized to it.
+  const { pass, legend, size: passSize } = await passWorld(page);
 
   // 3. The target row. §5.4 keys visibility by geometry-entry LABEL, so the
   //    clause is only about one solid when the entry owns one — which
@@ -157,9 +200,7 @@ test("hiding a solid changes the viewport inside its mask and not outside (G4.5)
   const scene = await solids(page);
   const target = scene.find((solid) => solid.label === "tread");
   expect(target, "the fixture's tread solid is missing from the scene").toBeDefined();
-  const palette = Object.entries(legend)
-    .filter(([, entry]) => entry.kind === "solid" && entry.solid_index === target?.solid_index)
-    .map(([hex]) => hexToRgb(hex));
+  const palette = paletteFor(legend, new Set([target?.solid_index ?? -1]));
   expect(palette.length).toBeGreaterThan(0);
 
   // 4. Two frames of the canvas. The camera needs no further help: the viewport
@@ -169,9 +210,7 @@ test("hiding a solid changes the viewport inside its mask and not outside (G4.5)
   const toggle = page.locator(`[data-visibility-toggle="${target?.label ?? ""}"]`);
   await expect(toggle).toBeEnabled();
   const canvas = page.locator("[data-viewport-canvas]");
-  await expect
-    .poll(async () => await canvas.boundingBox(), { timeout: 30_000 })
-    .toMatchObject({ x: 0, y: 0, width: passSize.width, height: passSize.height });
+  await awaitCanvasBox(page, passSize);
 
   const before = await canvas.screenshot();
   await toggle.click();
@@ -183,6 +222,9 @@ test("hiding a solid changes the viewport inside its mask and not outside (G4.5)
   const measured = assertVisibilityDelta({ before, after, pass, palette });
   // Printed as well as annotated: the numbers §21 item 10 says were "chosen,
   // not measured" are worth reading off a passing run, not only a failing one.
+  // They have since been RE-DERIVED against §3.11's authored material — see the
+  // dated block above `INSIDE_CHANGED_MIN` in `helpers/maskDelta.ts` and the
+  // envelope case below, which measures every entry rather than this one.
   process.stdout.write(
     `\n[G4.5] frame ${String(measured.width)}x${String(measured.height)} ` +
       `mask ${String(measured.maskPixels)}px inside ${measured.insideChanged.toFixed(4)} ` +
@@ -195,6 +237,145 @@ test("hiding a solid changes the viewport inside its mask and not outside (G4.5)
       `${measured.insideChanged.toFixed(4)}; control changed ${measured.controlChanged.toFixed(4)}`,
   });
   await archive(page, testInfo, "g4.5-visibility-after");
+});
+
+// --------------------------------------------------------------------------
+// THE G4.5 THRESHOLD RE-DERIVATION — 2026-08-28, plan item 6 (§3.11, §21.10)
+//
+// §3.11 states the consequence rather than leaving it to be discovered: "It does
+// move the numbers: §21.10 already records that the 0.10 / 0.01 thresholds are
+// chosen rather than measured, and they must be **re-derived against the new
+// material before this work lands**, not loosened after it."
+//
+// This case is that re-derivation, and it is a test rather than a note in a
+// commit message so the derivation runs on every gate rather than once. It
+// measures the delta for **every toggleable geometry entry** in the fixture, not
+// only the one G4.5 names, and asserts the *envelope*: the worst inside-mask
+// change over all of them still clears the floor, and the worst control-region
+// change over all of them still clears the ceiling. A threshold derived from one
+// lucky solid is a threshold that has not been derived.
+//
+// ── WHAT WAS MEASURED, AND WHAT IT SAYS ─────────────────────────────────────
+//
+// At 960×720, over the fixture's three entries (the `before` row is `tread`
+// alone, because one entry is all the pre-item-6 suite measured):
+//
+//   entry         mask px    inside    control    band (excluded)
+//   ─────────────────────────────────────────────────────────────
+//   tread  BEFORE  142025    1.0000    0.0000     0.5578
+//   tread  AFTER   142025    1.0000    0.0000     0.6527
+//   cleat_left      7957     1.0000    0.0000     0.6439
+//   cleat_right     7957     1.0000    0.0000     0.6439
+//                            ≥ 0.10    ≤ 0.01     no threshold
+//
+// The cleats are an 18× smaller region than the tread and land on the same two
+// numbers — which is the part a single-solid measurement could not establish.
+//
+// **The thresholds are therefore UNCHANGED at 0.10 and 0.01, and that is the
+// derivation's result rather than an omission.** Three things follow from the
+// numbers and each is the reason a different change was not made:
+//
+// 1. *Inside* did not need raising even though it could be. It measures 1.0000
+//    — every pixel of the target's silhouette changed — which is 10× the floor.
+//    It is 1.0000 for a structural reason that survives any material: hiding a
+//    solid replaces every pixel of its own silhouette with whatever is behind
+//    it, and the mask IS that silhouette. Raising the floor to fit a measurement
+//    that is already saturated would pin the gate to the *rasterizer's* exact
+//    output, which is precisely the claim §5.3 has refused to make. §5.4 says so
+//    in as many words: "The thresholds are loose on purpose: the clause asks
+//    whether the toggle changed the right region."
+// 2. *Control* did not need loosening, which is the failure mode §3.11 was
+//    warning about. It measures 0.0000 — exact byte equality outside the mask —
+//    and the reason is that everything item 6 added outside the silhouette is
+//    **static under a visibility toggle**: the ground grid is rebuilt only on a
+//    re-framing, the axis triad moves only with the camera, and the readout's
+//    new grid row is fixed-width. The one thing that could have leaked into the
+//    control region — the authored silhouette, which is drawn along the mask's
+//    own boundary — is absorbed by §5.4's two-pixel dilation band, and the band
+//    is where the change shows up: it rose from 0.5578 to 0.6527 because a
+//    bright edge now sits where a black one did.
+// 3. Nothing was loosened to accommodate a regression, explained or otherwise,
+//    because there was no regression: both measurements are identical to the
+//    pre-item-6 run and the control region is at its absolute floor.
+//
+// If a later change makes this case fail, the honest reading is that the change
+// moved pixels outside the toggled solid — not that the ceiling is too tight.
+// §5.4's numbers are normative; this file may report against them, never edit
+// them.
+
+test("the G4.5 thresholds hold for EVERY solid, not only the named one (§3.11, item 6)", async ({
+  page,
+}, testInfo) => {
+  const { pass, legend, size: passSize, build } = await passWorld(page);
+
+  await open(page, route(PART, { tab: "viewport", itab: "results", t: "0" }));
+  await awaitViewport(page);
+  await awaitCanvasBox(page, passSize);
+  const scene = await solids(page);
+  const canvas = page.locator("[data-viewport-canvas]");
+
+  // The toggle's namespace is the geometry-entry LABEL (§5.4), so the rows are
+  // the build's own entries and the mask for a row is the union of its solids'
+  // palette values. Both sides of that join are server values.
+  const labels = build.geometries.map((geometry) => geometry.label);
+  expect(labels.length).toBeGreaterThanOrEqual(1);
+
+  const rows: string[] = [];
+  let worstInside = Number.POSITIVE_INFINITY;
+  let worstControl = 0;
+
+  for (const label of labels) {
+    const owned = new Set(
+      scene.filter((solid) => solid.label === label).map((solid) => solid.solid_index),
+    );
+    const palette = paletteFor(legend, owned);
+    if (palette.length === 0) {
+      // An entry with no solid in the pass has no region to assert in. Named
+      // rather than skipped: `assertVisibilityDelta` refuses this case outright,
+      // and a derivation that silently dropped a row would be measuring a
+      // subset it never disclosed.
+      rows.push(`${label}: no palette value in the pass — not measurable`);
+      continue;
+    }
+
+    const toggle = page.locator(`[data-visibility-toggle="${label}"]`);
+    await expect(toggle).toBeEnabled();
+    const before = await canvas.screenshot();
+    await toggle.click();
+    await expect
+      .poll(async () => (await solids(page)).find((s) => s.label === label)?.visible ?? true)
+      .toBe(false);
+    const after = await canvas.screenshot();
+    // Restore, so the next row is measured against the whole assembly rather
+    // than against whatever the previous row left hidden.
+    await toggle.click();
+    await expect
+      .poll(async () => (await solids(page)).find((s) => s.label === label)?.visible ?? false)
+      .toBe(true);
+
+    const measured = visibilityDelta({ before, after, pass, palette });
+    worstInside = Math.min(worstInside, measured.insideChanged);
+    worstControl = Math.max(worstControl, measured.controlChanged);
+    rows.push(
+      `${label}: mask ${String(measured.maskPixels)}px inside ${measured.insideChanged.toFixed(4)} ` +
+        `control ${measured.controlChanged.toFixed(4)} band ${measured.bandChanged.toFixed(4)}`,
+    );
+  }
+
+  expect(Number.isFinite(worstInside), "no entry was measurable at all").toBe(true);
+  process.stdout.write(`\n[G4.5 derivation] ${rows.join(" | ")}\n`);
+  testInfo.annotations.push({ type: "g4.5-derivation", description: rows.join(" | ") });
+
+  // The envelope, against §5.4's own constants — imported, not retyped, so a
+  // future edit to the thresholds cannot leave this derivation asserting the
+  // old pair.
+  expect(worstInside, "an entry changed too little inside its own mask").toBeGreaterThanOrEqual(
+    INSIDE_CHANGED_MIN,
+  );
+  expect(worstControl, "an entry changed pixels outside its mask").toBeLessThanOrEqual(
+    CONTROL_CHANGED_MAX,
+  );
+  await archive(page, testInfo, "g4.5-threshold-derivation");
 });
 
 // --------------------------------------------------------------------------

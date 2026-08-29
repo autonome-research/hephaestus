@@ -6,9 +6,17 @@
  * that carry INTERFACE.md §8's honesty — the seam, the named absences, and the
  * labelled resync break.
  *
+ * LAYOUT ONLY (§3.4). Every status that used to be a hand-mixed bordered pill
+ * here is now a `Badge` from the system layer: the `.chipStatus` block with its
+ * four `[data-chip-status=…]` rules is gone, and with it the fifth independent
+ * spelling of "a bordered pill in a status colour". §7.2's `data-*` contract is
+ * untouched — §4.7 is explicit that "the generic `data-tool-name` /
+ * `data-field` contract is the whole of §7.2 and the e2e depends on it; it does
+ * not change."
+ *
  * §3's accessibility floor applies here in one specific way: no status is
- * carried by colour alone. Every chip status, every absence and the resync break
- * carry their word, and the colour is a second channel over the top of it.
+ * carried by colour alone. That is now a property of `Badge` (icon + word,
+ * always) rather than a convention this file had to keep.
  */
 
 .transcript {
@@ -17,7 +25,7 @@
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--gap-group);
 }
 
 .row {
@@ -27,126 +35,96 @@
 /* ---- text and reasoning -------------------------------------------- */
 
 .text {
+  composes: body from "../../system/type.module.css";
   margin: 0;
-  font-size: var(--size-md);
-  line-height: var(--line-body);
-  color: var(--ink-0);
+  color: var(--ink-strong);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
 .thought {
-  border-left: 2px solid var(--line-2);
-  padding-left: var(--space-2);
+  border-left: 2px solid var(--border-strong);
+  padding-left: var(--space-3);
 }
 
 .thoughtSummary {
+  composes: eyebrow from "../../system/type.module.css";
   display: flex;
-  gap: var(--space-2);
+  align-items: center;
+  gap: var(--gap-inline);
+  min-height: var(--target-min);
   cursor: pointer;
-  font-size: var(--size-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--ink-3);
+  color: var(--ink-muted);
 }
 
 .thoughtCount {
-  color: var(--ink-3);
-  text-transform: none;
-  letter-spacing: 0;
+  composes: label from "../../system/type.module.css";
+  color: var(--ink-muted);
 }
 
 .thoughtBody {
+  composes: body from "../../system/type.module.css";
   margin-top: var(--space-1);
-  font-size: var(--size-sm);
-  line-height: var(--line-body);
-  color: var(--ink-2);
+  color: var(--ink-base);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-/* ---- §7.2's chip ---------------------------------------------------- */
+/* ---- §7.2's chip ----------------------------------------------------
+   §4.7: "a raised card, tool name in `.code`, status via `Badge`, fields via
+   `DataTable` — which is what finally right-aligns the numbers an agent
+   reports." */
 
 .chip {
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-2);
-  background: var(--ground-1);
-  padding: var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-stack);
+  min-width: 0;
 }
 
 .chipHeader {
   display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
+  align-items: center;
+  gap: var(--gap-inline);
+  min-width: 0;
 }
 
 .chipName {
+  composes: code from "../../system/type.module.css";
   flex: 1 1 auto;
-  font-family: var(--font-mono);
-  font-size: var(--size-sm);
-  color: var(--ink-0);
-}
-
-.chipStatus {
-  flex: none;
-  font-size: var(--size-xs);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-1);
-  padding: 0 var(--space-1);
-  color: var(--ink-2);
-}
-
-.chipStatus[data-chip-status="ok"] {
-  border-color: var(--ok);
-  color: var(--ok);
-}
-
-.chipStatus[data-chip-status="error"] {
-  border-color: var(--fail);
-  color: var(--fail);
-}
-
-.chipStatus[data-chip-status="unknown"] {
-  border-color: var(--unknown);
-  color: var(--unknown);
-}
-
-.chipStatus[data-chip-status="running"] {
-  border-color: var(--accent-dim);
-  color: var(--accent);
+  min-width: 0;
+  color: var(--ink-strong);
 }
 
 .args {
-  margin-top: var(--space-1);
   display: flex;
-  gap: var(--space-2);
-  font-size: var(--size-xs);
+  gap: var(--gap-inline);
   min-width: 0;
 }
 
 .argsLabel {
+  composes: label from "../../system/type.module.css";
   flex: none;
-  color: var(--ink-3);
+  color: var(--ink-muted);
 }
 
 .argsBody {
-  font-family: var(--font-mono);
-  color: var(--ink-2);
+  composes: code from "../../system/type.module.css";
+  color: var(--ink-base);
   overflow-wrap: anywhere;
 }
 
+/* The chip's own three-column grid: `DataTable` uses `subgrid`, and a chip is
+   not inside a `PanelBody`, so the tracks are declared here instead. */
 .fields {
-  margin: var(--space-2) 0 0;
   display: grid;
-  gap: 1px;
-}
-
-.field {
-  display: grid;
-  grid-template-columns: minmax(0, 10rem) minmax(0, 1fr);
-  gap: var(--space-2);
-  padding: 1px 0;
-  font-size: var(--size-xs);
+  grid-template-columns: minmax(0, 10rem) minmax(0, 1fr) max-content;
+  margin: 0;
+  min-width: 0;
 }
 
 .field[data-field-reference="true"] .fieldName {
@@ -154,42 +132,52 @@
 }
 
 .fieldName {
+  composes: code from "../../system/type.module.css";
   margin: 0;
-  font-family: var(--font-mono);
-  color: var(--ink-3);
+  color: var(--ink-muted);
   overflow-wrap: anywhere;
 }
 
 .fieldValue {
+  composes: code from "../../system/type.module.css";
   margin: 0;
-  font-family: var(--font-mono);
-  color: var(--ink-1);
+  color: var(--ink-strong);
   overflow-wrap: anywhere;
   max-height: 8rem;
   overflow-y: auto;
 }
 
+/* §4.7's promoted refusal: "a reading surface never receives `JSON.stringify`
+   output". The typed error's `message` is the row value and its `code` is a
+   `Chip`; the raw object goes behind this `<details>`. */
 .degraded {
   margin-top: var(--space-2);
-  border-top: 1px dashed var(--line-2);
+  border-top: 1px dashed var(--border-strong);
   padding-top: var(--space-2);
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--gap-stack);
 }
 
 .rawResult {
-  font-size: var(--size-xs);
-  color: var(--ink-3);
+  color: var(--ink-muted);
+}
+
+.rawSummary {
+  composes: label from "../../system/type.module.css";
+  cursor: pointer;
+  min-height: var(--target-min);
+  display: flex;
+  align-items: center;
+  color: var(--ink-muted);
 }
 
 .raw {
+  composes: code from "../../system/type.module.css";
   margin: var(--space-1) 0 0;
   max-height: 12rem;
   overflow: auto;
-  font-family: var(--font-mono);
-  font-size: var(--size-xs);
-  color: var(--ink-2);
+  color: var(--ink-base);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -198,15 +186,15 @@
   margin-top: var(--space-2);
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-2);
+  gap: var(--gap-inline);
 }
 
 /* ---- §7.3's image, in its three states ------------------------------ */
 
 .image {
   margin: 0;
-  border: 1px solid var(--line-1);
-  border-radius: var(--radius-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
   padding: var(--space-1);
   max-width: 100%;
 }
@@ -215,55 +203,54 @@
   display: block;
   max-width: 100%;
   height: auto;
-  border-radius: var(--radius-1);
+  border-radius: var(--radius-control);
 }
 
 .imagePlaceholder {
+  composes: body from "../../system/type.module.css";
   padding: var(--space-2);
-  background: var(--ground-2);
-  border-radius: var(--radius-1);
-  font-size: var(--size-xs);
-  color: var(--ink-2);
-  line-height: var(--line-body);
+  background: var(--surface-raised);
+  border-radius: var(--radius-control);
+  color: var(--ink-base);
 }
 
 .imageCaption {
+  composes: code from "../../system/type.module.css";
   display: flex;
-  gap: var(--space-2);
+  gap: var(--gap-inline);
   margin-top: var(--space-1);
-  font-size: var(--size-xs);
-  color: var(--ink-3);
-  font-family: var(--font-mono);
+  color: var(--ink-muted);
 }
 
-/* ---- §7.3's ask_user widget ----------------------------------------- */
+/* ---- §7.3 / §7A.7's ask_user widget --------------------------------- */
 
 .ask {
-  border: 1px solid var(--accent-dim);
-  border-radius: var(--radius-2);
-  background: var(--ground-1);
-  padding: var(--space-2);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-stack);
+  min-width: 0;
 }
 
 .askHeader {
   display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
+  align-items: center;
+  gap: var(--gap-inline);
 }
 
 .askTitle {
+  composes: eyebrow from "../../system/type.module.css";
   flex: 1 1 auto;
-  font-size: var(--size-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
   color: var(--accent);
 }
 
 .askQuestion {
+  composes: body from "../../system/type.module.css";
   margin: var(--space-1) 0 var(--space-2);
-  font-size: var(--size-md);
-  line-height: var(--line-body);
-  color: var(--ink-0);
+  color: var(--ink-strong);
 }
 
 .askOptions {
@@ -272,152 +259,151 @@
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--gap-stack);
 }
 
 .askOption {
   display: grid;
   grid-template-columns: minmax(0, auto) minmax(0, 1fr);
-  gap: var(--space-2);
-  align-items: baseline;
+  gap: var(--gap-inline);
+  align-items: center;
 }
 
-.askButton {
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-1);
-  padding: var(--space-1) var(--space-2);
-  font-size: var(--size-sm);
-  color: var(--ink-1);
-  background: var(--ground-2);
-}
-
-.askButton:disabled {
-  color: var(--ink-3);
-  cursor: not-allowed;
+.askCheck {
+  composes: label from "../../system/type.module.css";
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--target-min);
+  color: var(--ink-base);
 }
 
 .askConsequence {
-  font-size: var(--size-xs);
-  color: var(--ink-2);
-  line-height: var(--line-body);
+  composes: body from "../../system/type.module.css";
+  color: var(--ink-base);
 }
 
+/* An absent consequence is a NAMED absence, not a quieter presence. It keeps a
+   legible ink and says so in words; the shipped rule dropped it to the 3.10:1
+   ink and italicised it, which reads as a footnote about a missing field. */
 .askConsequence[data-ask-consequence="absent"] {
-  color: var(--ink-3);
-  font-style: italic;
+  color: var(--ink-muted);
+}
+
+.askForm {
+  margin-top: var(--space-2);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--gap-stack) var(--gap-inline);
+}
+
+.askText {
+  flex: 1 1 12rem;
+  min-width: 0;
 }
 
 .askAnswer {
   margin-top: var(--space-2);
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--gap-stack);
 }
 
 /* ---- bands, seams, absences, breaks --------------------------------- */
 
 .audit {
+  composes: code from "../../system/type.module.css";
   margin: 0;
   display: flex;
-  gap: var(--space-2);
-  font-size: var(--size-xs);
-  color: var(--ink-3);
-  font-family: var(--font-mono);
+  gap: var(--gap-inline);
+  color: var(--ink-muted);
 }
 
 .auditLabel {
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  composes: eyebrow from "../../system/type.module.css";
+  color: var(--ink-muted);
 }
 
 .terminal {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-2);
-  padding: var(--space-2);
-  background: var(--ground-2);
-  font-size: var(--size-xs);
-  color: var(--ink-1);
+  gap: var(--gap-stack);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-card);
+  padding: var(--space-3);
+  background: var(--surface-raised);
+  color: var(--ink-base);
 }
 
 .terminalTitle {
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--ink-3);
+  composes: eyebrow from "../../system/type.module.css";
+  color: var(--ink-muted);
 }
 
 .terminal[data-terminal-state="failed"] {
-  border-color: var(--fail);
+  border-color: var(--status-fail-ink);
 }
 
 .terminal[data-terminal-state="cancelled"],
 .terminal[data-terminal-state="interrupted"],
 .terminal[data-terminal-state="timed_out"] {
-  border-color: var(--warn);
+  border-color: var(--status-error-ink);
 }
 
 .terminalId {
-  font-family: var(--font-mono);
-  color: var(--ink-3);
+  composes: code from "../../system/type.module.css";
+  color: var(--ink-muted);
 }
 
 .absence {
+  composes: body from "../../system/type.module.css";
   margin: 0;
-  border-left: 2px solid var(--line-2);
-  padding-left: var(--space-2);
-  font-size: var(--size-xs);
-  font-style: italic;
-  color: var(--ink-3);
-  line-height: var(--line-body);
+  border-left: 2px solid var(--border-strong);
+  padding-left: var(--space-3);
+  color: var(--ink-base);
 }
 
 /* §8: the boundary between history and live is a seam, not a silent join. */
 .seam {
+  composes: eyebrow from "../../system/type.module.css";
   margin: var(--space-2) 0;
-  border-top: 1px dashed var(--line-strong);
-  padding-top: var(--space-1);
-  font-size: var(--size-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--ink-3);
+  border-top: 1px dashed var(--border-strong);
+  padding-top: var(--space-2);
+  color: var(--ink-muted);
 }
 
 /* §7.4: `resyncing` is visible. A labelled gap beats a silent one. */
 .resync {
+  composes: body from "../../system/type.module.css";
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
-  border: 1px dashed var(--warn);
-  border-radius: var(--radius-2);
-  padding: var(--space-2);
-  font-size: var(--size-xs);
-  color: var(--ink-1);
-  line-height: var(--line-body);
+  gap: var(--gap-stack);
+  border: 1px dashed var(--status-error-ink);
+  border-radius: var(--radius-card);
+  padding: var(--space-3);
+  color: var(--ink-base);
 }
 
 .resync[data-resync="gap"] {
   border-style: solid;
-  border-color: var(--fail);
+  border-color: var(--status-fail-ink);
 }
 
 .resyncTitle {
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--warn);
+  composes: eyebrow from "../../system/type.module.css";
+  color: var(--status-error-ink);
 }
 
 .resyncAfter {
-  font-family: var(--font-mono);
-  color: var(--ink-3);
+  composes: code from "../../system/type.module.css";
+  color: var(--ink-muted);
   overflow-wrap: anywhere;
 }
 
 .note {
+  composes: body from "../../system/type.module.css";
   margin: 0;
-  font-size: var(--size-xs);
-  color: var(--ink-3);
-  line-height: var(--line-body);
+  color: var(--ink-base);
 }

@@ -46,6 +46,7 @@ import numpy as np
 from hephaestus.core.errors import AddressingError, ValidationError
 from hephaestus.core.executor.artifact_geometry import load_brep_shape
 from hephaestus.core.executor.tags import TagPlacement
+from hephaestus.core.project_store.artifact_kinds import record_artifact_kind
 from hephaestus.core.project_store.layout import ProjectLayout
 from hephaestus.core.project_store.publication import Publisher
 from hephaestus.core.project_store.retention import last_failure_pointer
@@ -513,7 +514,12 @@ def _publish_legend(
     inline: Mapping[str, JSONValue] | None = None if truncated else legend
     ref: str | None = None
     if truncated or force_ref:
-        ref = make_artifact_ref(MASK_LEGEND_KIND, store.blobs.put(payload))
+        blob = store.blobs.put(payload)
+        # §2.6's CORRECTION / §19.24: this is the ref G5.8 pages through
+        # `GET /artifacts/{ref}/text`, so the kind it is read under is bound to
+        # the bytes here rather than trusted from the URL the client sends back.
+        record_artifact_kind(store, MASK_LEGEND_KIND, blob)
+        ref = make_artifact_ref(MASK_LEGEND_KIND, blob)
     return inline, ref, truncated
 
 

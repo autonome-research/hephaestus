@@ -35,6 +35,11 @@
 - ``heph motion [--json]`` / ``heph motion check [IDS]`` show and re-evaluate
   the declared motion checks with their §4 sweep results (``KINEMATICS.md``
   §6, Stage 9B); see ``hephaestus.core.cli_motion``.
+- ``heph export list [PART]`` / ``heph export unpin BLOB`` show the committed
+  exports with their GC-root pins and drop one of those pins (``INTERFACE.md``
+  §19.40, §22.6 — the verbs the workspace's "unpin it from the command line"
+  sentence names). They ship with the server package, which owns the export
+  write-ahead table, but need no Node; see ``hephaestus.agent_bridge.cli_export``.
 
 Exit codes: 0 success, 1 failure (build failed / raced, failing checks,
 sandbox unavailable), 2 usage (bad arguments, no project, unknown part).
@@ -85,6 +90,7 @@ from hephaestus.core.project_store.projections import SnapshotRejectedError
 from hephaestus.core.project_store.publication import PublicationKind, Publisher
 from hephaestus.core.types import BuildResult
 from hephaestus.core.version import version as _version
+from opstore.errors import OpStoreError
 from opstore.types import JSONValue
 
 from opstore import canonical_json
@@ -625,6 +631,19 @@ def build_parser() -> argparse.ArgumentParser:
     else:
         agent_cli.add_subparsers(sub)
 
+    # Stage 10A export verbs (heph export list / unpin) ship with the server
+    # package because the export write-ahead table is written there
+    # (`agent_bridge/cad_ops`). They need no Node and no network, and `list`
+    # imports no geometry kernel — the module is registered here on the same
+    # try/except footing as `heph agent` so the Node-free engine CLI is unchanged
+    # when the server package is absent (INTERFACE.md §19.40, §22.6).
+    try:
+        from hephaestus.agent_bridge import cli_export
+    except ImportError:
+        pass
+    else:
+        cli_export.add_subparsers(sub)
+
     # Stage 2 bench verbs (heph bench run/score) ship with the server package too;
     # the handlers import the harness lazily, so registering costs nothing.
     try:
@@ -674,6 +693,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"heph: {detail}", file=sys.stderr)
         return 2
     except SandboxDeniedError as exc:
+        print(f"heph: error ({exc.code}): {exc.message}", file=sys.stderr)
+        return 1
+    except OpStoreError as exc:
+        # The store's own taxonomy is not a `HephaestusError`, so before this
+        # branch every opstore refusal left the CLI as a traceback. §19.40 made
+        # that reachable on the ordinary path: `Publisher.freeze_inputs` now runs
+        # `gc.admission_guard()`, so a project whose protected bytes exceed its
+        # quota refuses `protected_quota_exceeded` on `heph build` — the refusal
+        # §22.6 calls "the most confusing failure this section is capable of
+        # producing", which a stack trace would make worse rather than better.
+        # Reported in the same shape as every other engine refusal, exit 1: the
+        # operation ran and the answer was no.
         print(f"heph: error ({exc.code}): {exc.message}", file=sys.stderr)
         return 1
     except HephaestusError as exc:

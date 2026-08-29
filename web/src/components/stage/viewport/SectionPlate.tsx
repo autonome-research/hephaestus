@@ -22,6 +22,7 @@ import { WorkspaceError } from "../../../api/client";
 import { copy } from "../../../copy";
 import { useWorkspace } from "../../../state/react";
 import { CapabilityRefusal, useSectionPlate } from "../../../viewport/useSectionPlate";
+import { Badge, Chip, EmptyState } from "../../../system";
 import { Fact } from "../../Fact";
 import styles from "./SectionPlate.module.css";
 
@@ -64,7 +65,13 @@ export function SectionPlate({ plane }: SectionPlateProps): React.JSX.Element | 
   if (plate.isPending) {
     return (
       <div className={styles["plate"]} data-section-plate="pending">
-        <p className={styles["absent"]}>{copy.viewport.section.rendering}</p>
+        <div className={styles["centre"]}>
+          <EmptyState
+            icon="plane"
+            title={copy.viewport.section.renderingTitle}
+            body={copy.viewport.section.rendering}
+          />
+        </div>
       </div>
     );
   }
@@ -78,12 +85,22 @@ export function SectionPlate({ plane }: SectionPlateProps): React.JSX.Element | 
           : "section_render_absent";
     return (
       <div className={styles["plate"]} data-section-plate="refused">
-        <p className={styles["absent"]}>
-          {copy.viewport.section.plateRefused}
-          <span className={styles["reason"]} data-refusal-reason={reason}>
-            {reason}
-          </span>
-        </p>
+        <div className={styles["centre"]}>
+          <EmptyState
+            icon="alert"
+            title={copy.viewport.section.plateRefusedTitle}
+            body={
+              <>
+                <p>{copy.viewport.section.plateRefused}</p>
+                <p>
+                  <Chip tone="code" data-refusal-reason={reason}>
+                    {reason}
+                  </Chip>
+                </p>
+              </>
+            }
+          />
+        </div>
       </div>
     );
   }
@@ -95,7 +112,7 @@ export function SectionPlate({ plane }: SectionPlateProps): React.JSX.Element | 
       data-plate-ref={plate.data.render_artifact_ref}
     >
       <header className={styles["header"]}>
-        <span className={styles["label"]}>{copy.viewport.section.plateLabel}</span>
+        <Badge status="info">{copy.viewport.section.plateLabel}</Badge>
         <span className={styles["from"]}>
           {copy.viewport.section.plateFrom}{" "}
           <Fact

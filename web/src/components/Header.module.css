@@ -1,35 +1,45 @@
 /*
  * Copyright 2026 The Hephaestus Authors
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * INTERFACE.md §4.1's amended header: `auto 1fr auto`, left-aligned on one
+ * baseline. The shipped `minmax(0,1fr) auto minmax(0,1fr)` centred the pin and
+ * left ~800px of a 44px bar dead.
  */
 
 .header {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-columns: auto 1fr auto;
   align-items: center;
-  gap: var(--space-4);
+  gap: var(--gap-inline);
   padding: 0 var(--space-3);
-  border-bottom: 1px solid var(--line-1);
-  background: var(--ground-1);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-panel);
 }
 
 .identity {
+  composes: label from "../system/type.module.css";
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--gap-inline);
   min-width: 0;
+  color: var(--ink-base);
 }
 
+/* A geometric mark, not an icon: it is the product's own glyph and it carries
+   no meaning a reader has to decode, so it is not in the sprite (§3.12's
+   vocabulary is closed and is about meaning). */
 .mark {
   width: 10px;
   height: 10px;
   flex: none;
-  background: linear-gradient(135deg, var(--accent), var(--accent-dim));
+  background: var(--accent);
   clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
 }
 
 .project {
-  font-weight: 600;
+  composes: title from "../system/type.module.css";
+  color: var(--ink-strong);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -37,34 +47,22 @@
 
 .meta,
 .dot {
-  color: var(--ink-2);
-  font-size: var(--size-sm);
+  color: var(--ink-muted);
 }
 
 .head {
-  color: var(--ink-2);
+  composes: code from "../system/type.module.css";
+  color: var(--ink-muted);
 }
 
 .absent {
-  color: var(--ink-3);
-  font-style: italic;
+  color: var(--ink-muted);
 }
 
 .right {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--space-3);
+  gap: var(--gap-inline);
   min-width: 0;
-}
-
-.token {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  font-size: var(--size-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--ok);
-  white-space: nowrap;
 }

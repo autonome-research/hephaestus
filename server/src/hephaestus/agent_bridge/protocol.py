@@ -67,6 +67,22 @@ SIDECAR_REQUEST_METHODS: Final[frozenset[str]] = frozenset(
         "query.snapshot",
         "runtime.configure",
         "shutdown",
+        # INTERFACE.md §23.14 item 3 — the bridge credential methods, over
+        # ``ModelRuntime``'s existing login/logout/setRuntimeApiKey/
+        # listCredentials/getProviderAuthStatus. **Pi remains the single
+        # authority**: nothing on either side of this bridge re-implements
+        # storage, PKCE, token exchange, or refresh (mission rule 6). Requests,
+        # not events — §17 exclusion 10 (no event-vocabulary extension) is
+        # explicitly *not* amended by §23, so the whole sign-in conversation
+        # rides plain request/response.
+        "providers.list",
+        "credentials.status",
+        "credentials.set_key",
+        "credentials.signout",
+        "login.begin",
+        "login.status",
+        "login.complete",
+        "login.cancel",
     }
 )
 

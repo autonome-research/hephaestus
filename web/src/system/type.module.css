@@ -1,0 +1,116 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * The seven type roles (INTERFACE.md §3.8).
+ *
+ * THIS FILE IS THE ONLY PLACE IN `web/` THAT MAY DECLARE `font-size`,
+ * `font-weight`, `letter-spacing`, `text-transform` or `font-family`.
+ * `heph/no-raw-type` (§3.14) fails any other file that does, which is what
+ * converts the shipped 65-of-91-declarations-at-11px collapse into a ramp with
+ * a shape: eyebrows 11, controls and data 12, prose 13, panel titles 15.
+ *
+ *   .display   18 / 600  ui             fatal + no-token screens only
+ *   .title     15 / 600  ui             panel headers, dialog titles, part name
+ *   .body      13 / 400  ui             prose, transcript text, refusal copy
+ *   .label     12 / 500  ui             tabs, button text, control labels, tree
+ *   .data      12 / 500  mono, tabular  EVERY number the user reads
+ *   .code      12 / 400  mono           refs, hashes, selectors, script, tools
+ *   .eyebrow   11 / 600  ui, uppercase  section eyebrows above a group
+ *
+ * TIGHTENING (§3.8): 11px may appear ONLY inside `.eyebrow`, checked
+ * mechanically. There is exactly one 11px declaration in this file and the
+ * check counts them.
+ *
+ * The two `:global` blocks at the end are the document's base type. They live
+ * here rather than in `global.css` for one reason: this file is the declared
+ * owner of type, and a base `font-size` on `body` is a type declaration like
+ * any other. Putting it anywhere else would either defeat the check or require
+ * an exemption, and an exemption is how the shipped ramp drifted in the first
+ * place.
+ */
+
+.display {
+  font-family: var(--font-ui);
+  font-size: var(--p-size-xl);
+  font-weight: 600;
+  line-height: var(--line-tight);
+}
+
+.title {
+  font-family: var(--font-ui);
+  font-size: var(--p-size-lg);
+  font-weight: 600;
+  line-height: var(--line-tight);
+}
+
+.body {
+  font-family: var(--font-ui);
+  font-size: var(--p-size-md);
+  font-weight: 400;
+  line-height: var(--line-body);
+}
+
+.label {
+  font-family: var(--font-ui);
+  font-size: var(--p-size-sm);
+  font-weight: 500;
+  line-height: var(--line-tight);
+}
+
+/* Every number the user reads. `tabular-nums` is the whole reason this role is
+   separate from `.code`: a column of measurements whose digits do not line up
+   cannot be scanned, and §4.7 makes the DataTable value column right-aligned
+   for the same reason. */
+.data {
+  font-family: var(--font-mono);
+  font-size: var(--p-size-sm);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: var(--line-tight);
+}
+
+.code {
+  font-family: var(--font-mono);
+  font-size: var(--p-size-sm);
+  font-weight: 400;
+  line-height: var(--line-tight);
+  word-break: break-all;
+}
+
+/* The one role that may be 11px, and the reason the tightening is checkable. */
+.eyebrow {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: var(--line-tight);
+}
+
+/* ---- the document's base type ------------------------------------------- */
+
+:global(body) {
+  font-family: var(--font-ui);
+  font-size: var(--p-size-md);
+  font-weight: 400;
+  line-height: var(--line-body);
+}
+
+/* A bare `<code>`/`<kbd>`/`<pre>` inherits the mono face; a *rendered* ref or
+   hash still composes `.code`, which is what carries the size and weight. */
+:global(code),
+:global(kbd),
+:global(pre) {
+  font-family: var(--font-mono);
+  font-size: var(--p-size-sm);
+}
+
+:global(button),
+:global(input),
+:global(select),
+:global(textarea) {
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+}

@@ -1,7 +1,7 @@
 // Copyright 2026 The Hephaestus Authors
 // SPDX-License-Identifier: Apache-2.0
 //
-// `DfmPanel` — the manufacturability findings (INTERFACE.md §6.4).
+// `DfmPanel` — the manufacturability findings (INTERFACE.md §6.4, §4.7).
 //
 // §6.4 is the orphaned G6 clause given a home. What it asks this panel to render
 // is enumerated, and every item of the list is here:
@@ -20,21 +20,41 @@
 // THE TWO CONTROLS ARE NOT COLLAPSED, AND NEITHER IS BUILT HERE. §6.4 splits the
 // "DFM toggle" into (a) a **Run DFM** action (`POST /parts/{part}/dfm`) and (b) a
 // project-settings write (`POST /project/config/dfm`), because `[dfm] auto_run`
-// is a project setting and not a per-message flag. This panel is the read half:
-// it shows `auto_run` as a fact and offers neither control. Both are keyed
-// mutations and belong with the rest of the mutation surface.
+// is a project setting and not a per-message flag. This panel is the read half.
+//
+// §4.7's `Chip` CLAUSE, DISCHARGED. Line 225 used to render *"Automatic
+// evaluation after each build: off"* as a chip in the panel's ACTION CORNER,
+// looking exactly like a settings toggle — and the panel's prose then had to
+// apologise underneath: *"This is a project setting in the manifest, not a
+// per-message flag, and it is read-only here."* **When a layout has to be
+// corrected by a caption, the layout is wrong.** The fact has moved into the
+// `Field` list where every other read-only fact lives, and the caption is
+// deleted. `Chip` renders a `<span>` and takes no `onClick`, so the arrangement
+// cannot come back.
 //
 // `data-dfm-source` — §6.4 requires a finding on a transient preview and a
 // finding on the current artifact to be *distinguishable in the panel*. The
 // engine's `resolved_from` has three values and §6.4's attribute has two, so both
 // are emitted: `data-dfm-resolved-from` carries the engine's word unrewritten,
 // and `data-dfm-source` carries §6.4's `current` / `preview` distinction over it.
-// Collapsing three into two without keeping the three would lose the difference
-// between a transient preview and a project snapshot.
 
 import type { DfmDocument, DfmFinding, DfmRun, TopologyDescriptor } from "../../api/types";
 import { useDfm, useProject } from "../../api/queries";
 import { copy } from "../../copy";
+import {
+  Button,
+  Chip,
+  DataTable,
+  EmptyState,
+  Panel,
+  PanelBody,
+  PanelHeader,
+  PanelNote,
+  PanelSection,
+  SeverityBadge,
+  formatValue,
+  type Severity,
+} from "../../system";
 import { Fact } from "../Fact";
 import { useWorkspace } from "../../state/react";
 import styles from "./panels.module.css";
@@ -46,16 +66,10 @@ import styles from "./panels.module.css";
  * as a raycast (§12.3) against the finding's `source_artifact_ref`."
  *
  * DEVIATION, recorded rather than papered over: **that path does not exist
- * yet, and its request shapes do not accept a descriptor.** §12.3's route takes
- * a GLTF pick `{build_artifact_ref, gltf_artifact_ref, mesh_index,
- * primitive_index?}` or a mask submission `{build_artifact_ref,
- * selection_artifact_ref, selection_id}`; a `TopologyDescriptor` is neither, and
- * turning `(kind, solid_id, topology_index)` into a `selection_id` is a lookup in
- * the selection table — a server operation nothing exposes (§19 item 8). So the
- * click emits this intent and the workspace routes it to the Provenance panel,
- * which renders the artifact-bound address the finding carries and names the
- * station of §4.3's spine that is missing. It never fabricates a resolution, and
- * the day the route lands the handler is the only thing that changes.
+ * yet, and its request shapes do not accept a descriptor.** So the click emits
+ * this intent and the workspace routes it to the Provenance panel, which renders
+ * the artifact-bound address the finding carries and names the station of §4.3's
+ * spine that is missing. It never fabricates a resolution.
  */
 export interface DescriptorIntent {
   readonly part: string;
@@ -67,6 +81,11 @@ export interface DescriptorIntent {
 /** §6.4's two-value attribute over the engine's three-value `resolved_from`. */
 export function dfmSource(run: DfmRun): "current" | "preview" {
   return run.resolved_from === "current" ? "current" : "preview";
+}
+
+/** §6.4's closed severity vocabulary, mapped onto the system's own (§4.7). */
+function severityOf(value: string): Severity {
+  return value === "error" || value === "warning" || value === "info" ? value : "info";
 }
 
 /** A finding's `measured` map as the rule reported it. Serialized, not computed. */
@@ -85,27 +104,31 @@ function Descriptor({
   readonly onResolve?: (() => void) | undefined;
 }): React.JSX.Element {
   return (
-    <button
-      type="button"
-      className={styles["descriptor"]}
+    <Button
+      variant="quiet"
       title={copy.dfm.descriptorTitle}
+      onClick={onResolve}
       data-dfm-descriptor={index}
       data-descriptor-kind={descriptor.kind}
       data-descriptor-solid={descriptor.solid_id}
       data-descriptor-index={descriptor.topology_index}
       data-descriptor-tag={descriptor.tag ?? ""}
-      onClick={onResolve}
     >
-      <Fact source="dfm.last.findings[].topology[].kind" value={descriptor.kind} />
-      <Fact source="dfm.last.findings[].topology[].solid_id" value={descriptor.solid_id} />
-      <Fact
-        source="dfm.last.findings[].topology[].topology_index"
-        value={descriptor.topology_index}
-      />
-      {descriptor.tag === null ? null : (
-        <Fact source="dfm.last.findings[].topology[].tag" value={descriptor.tag} />
-      )}
-    </button>
+      <span className={styles["mono"]}>
+        <Fact source="dfm.last.findings[].topology[].kind" value={descriptor.kind} />{" "}
+        <Fact source="dfm.last.findings[].topology[].solid_id" value={descriptor.solid_id} />{" "}
+        <Fact
+          source="dfm.last.findings[].topology[].topology_index"
+          value={descriptor.topology_index}
+        />
+        {descriptor.tag === null ? null : (
+          <>
+            {" "}
+            <Fact source="dfm.last.findings[].topology[].tag" value={descriptor.tag} />
+          </>
+        )}
+      </span>
+    </Button>
   );
 }
 
@@ -129,9 +152,9 @@ function Finding({
       data-dfm-source={source}
     >
       <div className={styles["findingHead"]}>
-        <span className={styles["badge"]} data-severity={finding.severity}>
+        <SeverityBadge severity={severityOf(finding.severity)}>
           <Fact source="dfm.last.findings[].severity" value={finding.severity} />
-        </span>
+        </SeverityBadge>
         <Fact
           source="dfm.last.findings[].title"
           value={finding.title}
@@ -144,40 +167,38 @@ function Finding({
         />
       </div>
 
-      <Fact source="dfm.last.findings[].message" value={finding.message} />
+      <Fact
+        source="dfm.last.findings[].message"
+        value={finding.message}
+        className={styles["findingMessage"]}
+      />
 
       <div className={styles["chips"]}>
-        <span className={styles["chip"]}>
+        <Chip data-finding-measured="">
           {copy.dfm.measured}:{" "}
-          <Fact
-            source="dfm.last.findings[].measured"
-            value={measuredText(finding.measured)}
-            className={styles["mono"]}
-          />
-        </span>
+          <Fact source="dfm.last.findings[].measured" value={measuredText(finding.measured)}>
+            {formatValue(finding.measured)}
+          </Fact>
+        </Chip>
         {finding.suggested_bound === null ? null : (
-          <span className={styles["chip"]}>
+          <Chip data-finding-bound="">
             {copy.dfm.suggested}:{" "}
-            <Fact
-              source="dfm.last.findings[].suggested_bound"
-              value={finding.suggested_bound}
-              className={styles["mono"]}
-            />{" "}
+            <Fact source="dfm.last.findings[].suggested_bound" value={finding.suggested_bound} />{" "}
             <Fact source="dfm.last.findings[].bound_unit" value={finding.bound_unit} />
-          </span>
+          </Chip>
         )}
         {finding.tags.map((tag) => (
-          <span key={tag} className={styles["chip"]} data-dfm-tag={tag}>
-            <Fact source="dfm.last.findings[].tags[]" value={tag} className={styles["mono"]} />
-          </span>
+          <Chip key={tag} tone="code" data-dfm-tag={tag}>
+            <Fact source="dfm.last.findings[].tags[]" value={tag} />
+          </Chip>
         ))}
       </div>
 
       <div className={styles["chips"]}>
-        <span className={styles["rowName"]}>{copy.dfm.topology}</span>
+        <span className={styles["muted"]}>{copy.dfm.topology}</span>
         {finding.topology.map((descriptor, descriptorIndex) => (
           <Descriptor
-            key={`${descriptor.kind}-${descriptor.solid_id}-${descriptor.topology_index}`}
+            key={`${descriptor.kind}-${String(descriptor.solid_id)}-${String(descriptor.topology_index)}`}
             descriptor={descriptor}
             index={descriptorIndex}
             onResolve={onResolve === undefined ? undefined : () => onResolve(descriptor)}
@@ -213,155 +234,163 @@ export function DfmView({
   const severities = run === null ? [] : Object.keys(run.severity_counts).sort();
 
   return (
-    <section
-      className={styles["panel"]}
-      aria-label={copy.dfm.heading}
+    <Panel
+      label={copy.dfm.heading}
       data-panel="dfm"
       data-dfm-source={source ?? ""}
       data-dfm-resolved-from={dfm.resolved_from ?? ""}
     >
-      <div className={styles["headingRow"]}>
-        <h3 className={styles["heading"]}>{copy.dfm.heading}</h3>
-        <span className={styles["chip"]} data-dfm-auto-run={String(dfm.auto_run)}>
-          {copy.dfm.autoRun}:{" "}
-          <Fact source="dfm.auto_run" value={dfm.auto_run}>
-            {dfm.auto_run ? copy.dfm.autoRunOn : copy.dfm.autoRunOff}
-          </Fact>
-        </span>
-      </div>
-      <p className={styles["note"]}>{copy.dfm.autoRunNote}</p>
+      <PanelHeader title={copy.dfm.heading} level={3} />
+      <PanelBody>
+        {run === null ? (
+          <EmptyState
+            icon={secureExecutor === false ? "alert" : "plane"}
+            title={secureExecutor === false ? copy.dfm.capabilityTitle : copy.dfm.absentTitle}
+            body={secureExecutor === false ? copy.dfm.capabilityRefused : copy.dfm.absent}
+            data-dfm-absence={secureExecutor === false ? "capability" : "no_run"}
+          />
+        ) : (
+          <>
+            <DataTable
+              rows={[
+                {
+                  key: "resolved",
+                  label: copy.dfm.resolvedFrom,
+                  value: (
+                    <Fact source="dfm.last.resolved_from" value={run.resolved_from}>
+                      {copy.dfm.resolved[run.resolved_from]}
+                    </Fact>
+                  ),
+                  note: (
+                    <Fact
+                      source="dfm.last.source_artifact_ref"
+                      value={run.source_artifact_ref}
+                      mono
+                    />
+                  ),
+                  attrs: { "data-dfm-resolved-from": run.resolved_from },
+                },
+                {
+                  key: "process",
+                  label: copy.dfm.process,
+                  value: <Fact source="dfm.last.process" value={run.process} />,
+                },
+                {
+                  key: "pack",
+                  label: copy.dfm.pack,
+                  value: (
+                    <>
+                      <Fact source="dfm.last.pack.name" value={run.pack.name} />{" "}
+                      <Fact source="dfm.last.pack.version" value={run.pack.version} />
+                    </>
+                  ),
+                },
+                {
+                  key: "registry",
+                  label: copy.dfm.registry,
+                  value: <Fact source="dfm.last.pack.registry" value={run.pack.registry} />,
+                  note: (
+                    <Fact
+                      source="dfm.last.pack.registry_digest"
+                      value={run.pack.registry_digest}
+                      mono
+                    />
+                  ),
+                },
+                {
+                  key: "material",
+                  label: copy.dfm.material,
+                  value:
+                    run.material === null ? (
+                      <span className={styles["muted"]}>{copy.absent.unavailable}</span>
+                    ) : (
+                      <Fact
+                        source="dfm.last.material.name"
+                        value={String(run.material["name"] ?? "")}
+                      />
+                    ),
+                },
+                {
+                  // §4.7: this is a READ-ONLY PROJECT FACT and it lives in the
+                  // field list with every other one. It was a chip in the action
+                  // corner with an apologetic caption underneath.
+                  key: "auto_run",
+                  label: copy.dfm.autoRun,
+                  value: (
+                    <Fact source="dfm.auto_run" value={dfm.auto_run}>
+                      {dfm.auto_run ? copy.dfm.autoRunOn : copy.dfm.autoRunOff}
+                    </Fact>
+                  ),
+                  attrs: { "data-dfm-auto-run": String(dfm.auto_run) },
+                },
+              ]}
+            />
 
-      {run === null ? (
-        <p className={styles["absent"]} data-dfm-absence={secureExecutor === false ? "capability" : "no_run"}>
-          {secureExecutor === false ? copy.dfm.capabilityRefused : copy.dfm.absent}
-        </p>
-      ) : (
-        <>
-          <dl className={styles["pairs"]}>
-            <div className={styles["pairRow"]}>
-              <dt>{copy.dfm.resolvedFrom}</dt>
-              <dd>
-                <span className={styles["state"]} data-dfm-resolved-from={run.resolved_from}>
-                  <Fact source="dfm.last.resolved_from" value={run.resolved_from}>
-                    {copy.dfm.resolved[run.resolved_from]}
-                  </Fact>
-                </span>{" "}
-                <Fact
-                  source="dfm.last.source_artifact_ref"
-                  value={run.source_artifact_ref}
-                  className={styles["mono"]}
-                  mono
-                />
-              </dd>
-            </div>
-            <div className={styles["pairRow"]}>
-              <dt>{copy.dfm.process}</dt>
-              <dd>
-                <Fact source="dfm.last.process" value={run.process} />
-              </dd>
-            </div>
-            <div className={styles["pairRow"]}>
-              <dt>{copy.dfm.pack}</dt>
-              <dd>
-                <Fact source="dfm.last.pack.name" value={run.pack.name} />{" "}
-                <Fact source="dfm.last.pack.version" value={run.pack.version} />
-              </dd>
-            </div>
-            <div className={styles["pairRow"]}>
-              <dt>{copy.dfm.registry}</dt>
-              <dd>
-                <Fact source="dfm.last.pack.registry" value={run.pack.registry} />{" "}
-                <Fact
-                  source="dfm.last.pack.registry_digest"
-                  value={run.pack.registry_digest}
-                  className={styles["mono"]}
-                  mono
-                />
-              </dd>
-            </div>
-            <div className={styles["pairRow"]}>
-              <dt>{copy.dfm.material}</dt>
-              <dd>
-                {run.material === null ? (
-                  <span className={styles["dim"]}>{copy.absent.unavailable}</span>
+            <PanelSection eyebrow={copy.dfm.severity}>
+              <div className={styles["chips"]}>
+                {severities.length === 0 ? (
+                  <Chip data-dfm-clean="">{copy.dfm.clean}</Chip>
                 ) : (
-                  <Fact
-                    source="dfm.last.material.name"
-                    value={String(run.material["name"] ?? "")}
-                  />
+                  severities.map((severity) => (
+                    <SeverityBadge key={severity} severity={severityOf(severity)}>
+                      {severity}:{" "}
+                      <Fact
+                        source="dfm.last.severity_counts[]"
+                        value={run.severity_counts[severity] ?? null}
+                      />
+                    </SeverityBadge>
+                  ))
                 )}
-              </dd>
-            </div>
-          </dl>
+              </div>
+            </PanelSection>
 
-          <div className={styles["chips"]}>
-            <span className={styles["rowName"]}>{copy.dfm.severity}</span>
-            {severities.length === 0 ? (
-              <span className={styles["chip"]}>{copy.dfm.clean}</span>
-            ) : (
-              severities.map((severity) => (
-                <span key={severity} className={styles["badge"]} data-severity={severity}>
-                  {severity}:{" "}
-                  <Fact
-                    source="dfm.last.severity_counts[]"
-                    value={run.severity_counts[severity] ?? null}
-                  />
-                </span>
-              ))
+            {run.truncated ? (
+              <PanelNote data-dfm-truncated="true">{copy.dfm.truncated}</PanelNote>
+            ) : null}
+
+            {run.errored_rules.length === 0 ? null : (
+              <PanelSection eyebrow={copy.dfm.errored}>
+                <div className={styles["chips"]}>
+                  {run.errored_rules.map((rule) => (
+                    <SeverityBadge key={rule} severity="warning" data-dfm-errored-rule={rule}>
+                      <Fact source="dfm.last.errored_rules[]" value={rule} />
+                    </SeverityBadge>
+                  ))}
+                </div>
+                <PanelNote>{copy.dfm.erroredNote}</PanelNote>
+              </PanelSection>
             )}
-          </div>
 
-          {run.truncated ? (
-            <p className={styles["absent"]} data-dfm-truncated="true">
-              {copy.dfm.truncated}
-            </p>
-          ) : null}
-
-          {run.errored_rules.length === 0 ? null : (
-            <div className={styles["chips"]}>
-              <span className={styles["rowName"]}>{copy.dfm.errored}</span>
-              {run.errored_rules.map((rule) => (
-                <span key={rule} className={styles["badge"]} data-dfm-errored-rule={rule}>
-                  <Fact
-                    source="dfm.last.errored_rules[]"
-                    value={rule}
-                    className={styles["mono"]}
+            {run.findings.length === 0 ? (
+              <EmptyState icon="check" title={copy.dfm.cleanTitle} body={copy.dfm.clean} />
+            ) : (
+              <ul className={styles["list"]}>
+                {run.findings.map((finding, index) => (
+                  <Finding
+                    key={`${finding.rule_id}-${String(index)}`}
+                    finding={finding}
+                    index={index}
+                    source={source ?? "current"}
+                    onResolve={
+                      onResolveDescriptor === undefined
+                        ? undefined
+                        : (descriptor) => {
+                            onResolveDescriptor({
+                              part: dfm.part,
+                              source_artifact_ref: finding.source_artifact_ref,
+                              rule_id: finding.rule_id,
+                              descriptor,
+                            });
+                          }
+                    }
                   />
-                </span>
-              ))}
-              <p className={styles["note"]}>{copy.dfm.erroredNote}</p>
-            </div>
-          )}
-
-          {run.findings.length === 0 ? (
-            <p className={styles["absent"]}>{copy.dfm.clean}</p>
-          ) : (
-            <ul className={styles["list"]}>
-              {run.findings.map((finding, index) => (
-                <Finding
-                  key={`${finding.rule_id}-${index}`}
-                  finding={finding}
-                  index={index}
-                  source={source ?? "current"}
-                  onResolve={
-                    onResolveDescriptor === undefined
-                      ? undefined
-                      : (descriptor) => {
-                          onResolveDescriptor({
-                            part: dfm.part,
-                            source_artifact_ref: finding.source_artifact_ref,
-                            rule_id: finding.rule_id,
-                            descriptor,
-                          });
-                        }
-                  }
-                />
-              ))}
-            </ul>
-          )}
-        </>
-      )}
-    </section>
+                ))}
+              </ul>
+            )}
+          </>
+        )}
+      </PanelBody>
+    </Panel>
   );
 }
 
@@ -374,8 +403,10 @@ export function DfmPanel({
   const dfm = useDfm(part);
   const project = useProject();
 
-  if (part === null) return <p className={styles["absent"]}>{copy.inspector.selectPart}</p>;
-  if (dfm.data === undefined) return <p className={styles["absent"]}>{copy.absent.loading}</p>;
+  if (part === null) {
+    return <EmptyState icon="cube" title={copy.inspector.noPartTitle} body={copy.inspector.selectPart} />;
+  }
+  if (dfm.data === undefined) return <PanelNote>{copy.absent.loading}</PanelNote>;
   return (
     <DfmView
       dfm={dfm.data}

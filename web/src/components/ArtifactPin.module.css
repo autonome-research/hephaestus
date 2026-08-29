@@ -1,37 +1,37 @@
 /*
  * Copyright 2026 The Hephaestus Authors
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * INTERFACE.md §4.1: the header's one dominant element. It is a card on the
+ * raised surface with a `--border-strong` (§3.10: "a detached card"), which is
+ * deliberately NOT `--border-control` — the chip is a readout that CONTAINS a
+ * control, and only the control inside it carries the control border.
  */
 
 .pin {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--gap-inline);
   min-width: 0;
-  padding: 2px var(--space-2);
-  border: 1px solid var(--line-1);
-  border-radius: var(--radius-2);
-  background: var(--ground-2);
+  justify-self: start;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
 }
 
 /* §4.1: "When the pin is not the current build the header is visibly marked."
-   A dashed accent edge, plus the word in `.mode`, plus `data-pin-mode` — three
-   carriers, none of them colour alone. */
+   A dashed edge in the error hue, plus the word in `.mode`, plus
+   `data-pin-mode` — three carriers, none of them colour alone. */
 .pin[data-pin-mode="pinned"] {
   border-style: dashed;
-  border-color: var(--warn);
-  background: color-mix(in srgb, var(--warn) 8%, var(--ground-2));
-}
-
-.label {
-  font-size: var(--size-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--ink-3);
-  white-space: nowrap;
+  border-color: var(--status-error-ink);
+  background: var(--status-error-fill);
 }
 
 .ref {
+  composes: code from "../system/type.module.css";
+  color: var(--ink-strong);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -39,38 +39,15 @@
 }
 
 .absent {
-  color: var(--ink-3);
-  font-style: italic;
+  composes: body from "../system/type.module.css";
+  color: var(--ink-muted);
 }
 
 .mode {
-  font-size: var(--size-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--ink-2);
+  composes: eyebrow from "../system/type.module.css";
+  color: var(--ink-muted);
 }
 
 .pin[data-pin-mode="pinned"] .mode {
-  color: var(--warn);
-}
-
-.follow,
-.hold {
-  padding: 1px var(--space-2);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-1);
-  font-size: var(--size-xs);
-  color: var(--ink-1);
-  white-space: nowrap;
-}
-
-.follow:hover,
-.hold:hover:not(:disabled) {
-  color: var(--ink-0);
-  border-color: var(--accent-dim);
-}
-
-.hold:disabled {
-  color: var(--ink-3);
-  cursor: default;
+  color: var(--status-error-ink);
 }

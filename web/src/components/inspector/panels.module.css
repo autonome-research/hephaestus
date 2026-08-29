@@ -2,59 +2,24 @@
  * Copyright 2026 The Hephaestus Authors
  * SPDX-License-Identifier: Apache-2.0
  *
- * One stylesheet for the inspector's five panels (INTERFACE.md §4.2).
+ * LAYOUT ONLY, for the inspector's five panels (INTERFACE.md §3.4).
+ *
+ * What used to be here and is now the system layer's: the panel frame, the
+ * heading, the definition grid, the status pill, the five bordered-pill classes,
+ * every `font-size`, and every `color`. §3.2's arithmetic on this file is what
+ * convicted "CSS Modules + a design-token file" as an *answer*: five pill
+ * classes whose `border` declarations were byte-identical, so `.toggle` (a
+ * `<button>`) and `.state` (inert text) were the same rectangle.
  *
  * The drawer is one region with five faces, and a reader comparing a check badge
- * to a DFM severity should not have to hold two visual grammars in mind. So the
- * chrome — the panel frame, the heading, the definition rows, the named-absence
- * paragraph, the status pill — is declared once here and imported by all five,
- * rather than copied into five modules that drift.
- *
- * `--glyph-*` (tokens.css) pairs a glyph with every status colour: §3's
- * accessibility floor forbids colour-only status encoding, and a badge that is
- * only red is a badge nobody can read in monochrome.
+ * to a DFM severity should not have to hold two visual grammars in mind. That
+ * is now true by construction rather than by copying: both are `<Badge>`.
  */
 
-.panel {
-  padding: var(--space-3) var(--space-4);
-  font-size: var(--size-sm);
-  color: var(--ink-1);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.heading {
-  margin: 0;
-  font-size: var(--size-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--ink-3);
-}
-
-.headingRow {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-/* A named absence. Italic, full sentences, never an empty frame (§4.4, §6.3). */
-.absent {
-  margin: 0;
-  max-width: 68ch;
-  color: var(--ink-2);
-  font-style: italic;
-  line-height: var(--line-body);
-}
-
-.note {
-  margin: 0;
-  max-width: 68ch;
-  color: var(--ink-3);
-  font-size: var(--size-xs);
-  line-height: var(--line-body);
+/* One column for panels whose content is a list rather than a table; the
+   three-track grid `PanelBody` declares is what the tables opt into. */
+.wide {
+  grid-column: 1 / -1;
 }
 
 .list {
@@ -63,28 +28,21 @@
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--gap-stack);
 }
 
 .row {
   display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-1);
+  align-items: center;
+  gap: var(--gap-inline);
+  min-height: var(--target-min);
+  padding: var(--pad-row);
+  border-radius: var(--radius-control);
+  min-width: 0;
 }
 
 .row:hover {
-  background: var(--ground-2);
-}
-
-.rowName {
-  flex: 0 0 auto;
-  min-width: 13ch;
-  color: var(--ink-2);
-  font-size: var(--size-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  background: var(--surface-raised);
 }
 
 .rowValue {
@@ -93,214 +51,80 @@
   overflow-wrap: anywhere;
 }
 
-.mono {
-  font-family: var(--font-mono);
-  font-size: var(--size-xs);
+.name {
+  composes: code from "../../system/type.module.css";
+  color: var(--ink-strong);
 }
 
-.dim {
-  color: var(--ink-3);
-}
-
-/* ---- definition grid: label / value pairs -------------------------------- */
-
-.pairs {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  gap: var(--space-1) var(--space-3);
+.why {
+  composes: body from "../../system/type.module.css";
   margin: 0;
-}
-
-/* A keyed wrapper that must not become a grid item: the pair below it is. */
-.pairRow {
-  display: contents;
-}
-
-.pairs dt {
-  color: var(--ink-3);
-  font-size: var(--size-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.pairs dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-/* ---- status pill --------------------------------------------------------- */
-
-.badge {
-  display: inline-flex;
-  align-items: baseline;
-  gap: var(--space-1);
-  flex: none;
-  padding: 0 var(--space-2);
-  border: 1px solid var(--line-2);
-  border-radius: 999px;
-  font-size: var(--size-xs);
-  line-height: 1.6;
-  color: var(--ink-1);
-  white-space: nowrap;
-}
-
-.badge::before {
-  font-size: var(--size-xs);
-}
-
-.badge[data-badge="pass"] {
-  color: var(--ok);
-  border-color: var(--ok);
-}
-
-.badge[data-badge="pass"]::before {
-  content: var(--glyph-ok);
-}
-
-.badge[data-badge="fail"],
-.badge[data-severity="error"] {
-  color: var(--fail);
-  border-color: var(--fail);
-}
-
-.badge[data-badge="fail"]::before {
-  content: var(--glyph-fail);
-}
-
-.badge[data-badge="error"] {
-  color: var(--warn);
-  border-color: var(--warn);
-}
-
-.badge[data-badge="error"]::before,
-.badge[data-severity="warning"]::before {
-  content: var(--glyph-error);
-}
-
-.badge[data-badge="not_run"] {
-  color: var(--unknown);
-  border-color: var(--unknown);
-  border-style: dashed;
-}
-
-.badge[data-badge="not_run"]::before {
-  content: var(--glyph-not-run);
-}
-
-.badge[data-severity="warning"] {
-  color: var(--warn);
-  border-color: var(--warn);
-}
-
-.badge[data-severity="info"] {
-  color: var(--ink-2);
-}
-
-/* ---- buttons ------------------------------------------------------------- */
-
-.toggle {
-  flex: none;
-  padding: 0 var(--space-2);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-1);
-  color: var(--ink-2);
-  font-size: var(--size-xs);
-  line-height: 1.7;
-}
-
-.toggle:hover {
-  color: var(--ink-0);
-  border-color: var(--line-strong);
-}
-
-.toggle[aria-pressed="true"] {
-  color: var(--ink-3);
-  border-style: dashed;
-}
-
-.descriptor {
-  display: inline-flex;
-  align-items: baseline;
-  gap: var(--space-1);
-  padding: 0 var(--space-2);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-1);
-  font-family: var(--font-mono);
-  font-size: var(--size-xs);
-  line-height: 1.7;
-  color: var(--ink-1);
-}
-
-.descriptor:hover {
-  border-color: var(--accent-dim);
-  color: var(--ink-0);
-}
-
-/* ---- hidden geometry ----------------------------------------------------- */
-
-.row[data-visible="false"] .rowValue {
-  color: var(--ink-3);
-  text-decoration: line-through;
-}
-
-/* ---- findings ------------------------------------------------------------ */
-
-.finding {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-2);
-  border: 1px solid var(--line-1);
-  border-radius: var(--radius-2);
-  background: var(--ground-1);
-}
-
-.findingHead {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-}
-
-.findingTitle {
-  font-weight: 600;
-  color: var(--ink-0);
-}
-
-.findingRule {
-  font-family: var(--font-mono);
-  font-size: var(--size-xs);
-  color: var(--ink-3);
+  max-width: 68ch;
+  color: var(--ink-base);
 }
 
 .chips {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1);
-  align-items: baseline;
+  align-items: center;
+  min-width: 0;
 }
 
-.chip {
-  padding: 0 var(--space-2);
-  border: 1px solid var(--line-1);
-  border-radius: var(--radius-1);
-  font-size: var(--size-xs);
-  color: var(--ink-2);
+/* §5.4: a hidden entry is struck through as well as marked, so the state is not
+   carried by an attribute a reader cannot see. */
+.row[data-visible="false"] .rowValue {
+  color: var(--ink-muted);
+  text-decoration: line-through;
 }
 
-.state {
-  display: inline-block;
-  padding: 0 var(--space-2);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-1);
-  font-size: var(--size-xs);
-  color: var(--ink-1);
+/* ---- findings ------------------------------------------------------------ */
+
+/* §3.10: a card that must read as detached takes `--border-strong`. It is a
+   readout, so it does NOT take `--border-control` — that border belongs to
+   interactive controls and only to them. */
+.finding {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-stack);
+  padding: var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+  min-width: 0;
 }
 
-.why {
-  margin: 0;
+.findingHead {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-inline);
+  flex-wrap: wrap;
+}
+
+.findingTitle {
+  composes: title from "../../system/type.module.css";
+  color: var(--ink-strong);
+}
+
+.findingRule {
+  composes: code from "../../system/type.module.css";
+  color: var(--ink-muted);
+}
+
+.findingMessage {
+  composes: body from "../../system/type.module.css";
+  color: var(--ink-base);
   max-width: 68ch;
-  font-style: italic;
-  color: var(--ink-2);
-  line-height: var(--line-body);
+}
+
+/* ---- code-shaped values -------------------------------------------------- */
+
+.mono {
+  composes: code from "../../system/type.module.css";
+  color: var(--ink-base);
+  min-width: 0;
+}
+
+.muted {
+  color: var(--ink-muted);
 }

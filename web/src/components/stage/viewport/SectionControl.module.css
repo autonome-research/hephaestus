@@ -1,55 +1,29 @@
 /*
  * Copyright 2026 The Hephaestus Authors
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * Layout only. Every control inside is a `Button`, a `Select` or a `Slider` from
+ * the system layer, so the shipped `.side`/`.render`/`.clear`/`.enable` quartet —
+ * four classes with one shared `border` declaration — is gone.
  */
 
 .control {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--gap-inline);
+  flex-wrap: wrap;
   padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-2);
-  background: color-mix(in srgb, var(--ground-1) 92%, transparent);
-  font-size: var(--size-xs);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-card);
+  background: var(--surface-overlay);
+  box-shadow: var(--elev-popover);
 }
 
 .label {
-  color: var(--ink-2);
-}
-
-.axis {
-  padding: 2px var(--space-1);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-1);
-  background: var(--ground-2);
-  color: var(--ink-1);
-  font-family: var(--font-mono);
-}
-
-.side,
-.render,
-.clear,
-.enable {
-  padding: 2px var(--space-2);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-1);
-  color: var(--ink-2);
-  font-family: var(--font-mono);
-}
-
-.side:hover,
-.render:not(:disabled):hover,
-.clear:hover,
-.enable:hover {
-  color: var(--ink-0);
-  background: var(--ground-3);
-}
-
-.render:disabled {
-  opacity: 0.4;
+  composes: label from "../../../system/type.module.css";
+  color: var(--ink-base);
 }
 
 .offset {
-  width: 120px;
+  min-width: 120px;
 }

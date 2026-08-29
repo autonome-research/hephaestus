@@ -110,6 +110,33 @@ export interface RuntimeConfig {
   readonly providers: readonly ProviderSpec[];
   /** The ONLY credential source. Supervisor pre-filters to approved vars. */
   readonly credentials?: Readonly<Record<string, string>>;
+  /**
+   * INTERFACE.md §23.2's `serve` scope: keys pasted into a running serve and
+   * held only in the serving process's heap, replayed onto every child so a
+   * respawn does not silently forget a credential the operator set. Keyed by
+   * provider id — NOT by a variable name, because a pasted key has none and
+   * inventing one would put it on the same footing as an allowlisted ambient
+   * variable, which is exactly the confusion mission rule 7 forbids.
+   */
+  readonly runtimeKeys?: Readonly<Record<string, string>>;
+}
+
+/**
+ * Per-provider verification outcome (§23.7). `available: false` means the
+ * provider is declared but cannot serve a turn; it is **never** substituted,
+ * never falls back to an ambient login, and never silently replaced.
+ */
+export interface ProviderAvailability {
+  readonly id: string;
+  readonly available: boolean;
+  readonly unavailable_reason?: RuntimeConfigErrorCode;
+  readonly message?: string;
+}
+
+/** What `createModelRuntime` now returns: the runtime and what verified. */
+export interface ConfiguredRuntime {
+  readonly runtime: ModelRuntime;
+  readonly providers: readonly ProviderAvailability[];
 }
 
 export interface RuntimePaths {
@@ -129,12 +156,29 @@ function apiForKind(kind: KeyedProviderSpec["kind"]): string {
 /**
  * Build the app-owned ModelRuntime from a configure payload. Network model
  * discovery is disabled; only the providers explicitly listed are registered.
- * Throws if a provider references a credential absent from the allowlist.
+ *
+ * TIGHTENING (INTERFACE.md §23.7): verification is **fail-closed per provider,
+ * not per runtime**. This function used to throw on the first provider that
+ * failed, so one declared-but-unauthenticated provider took down the entire
+ * runtime — no sidecar, therefore no bridge, therefore no way to perform the
+ * login that would fix it. The operator could only reach a working state by
+ * hand-editing a file, which is the state the product review's complaint 4 is
+ * about.
+ *
+ * **The property this preserves is substitution, and it is preserved exactly.**
+ * The old behaviour's value is that a `pi_native` provider *"simply fails
+ * configuration — it can never fall back to an ambient login"*. An unavailable
+ * provider is still never substituted, never falls back, and cannot serve a
+ * turn: it is recorded as `available: false` with its own code, and
+ * `firstAvailableModel` will not select from it. Failing closed per provider is
+ * strictly stronger than per runtime, because the per-runtime version's
+ * practical effect is that operators delete providers from a config file to get
+ * unstuck.
  */
 export async function createModelRuntime(
   config: RuntimeConfig,
   paths: RuntimePaths,
-): Promise<ModelRuntime> {
+): Promise<ConfiguredRuntime> {
   const runtime = await ModelRuntime.create({
     authPath: path.join(paths.agentDir, "auth.json"),
     modelsPath: null,
@@ -142,29 +186,51 @@ export async function createModelRuntime(
     allowModelNetwork: false,
   });
   const credentials = config.credentials ?? {};
+  const runtimeKeys = config.runtimeKeys ?? {};
+  const availability: ProviderAvailability[] = [];
   for (const provider of config.providers) {
-    if (provider.kind === "pi_native") {
-      // No registerProvider: the provider *is* Pi's built-in one, and its
-      // credential comes from authPath (auth.json under the agent dir).
-      verifyPiNativeProvider(runtime, provider);
-      continue;
-    }
-    let apiKey = "app-managed-no-network";
-    if (provider.credential !== undefined) {
-      const secret = credentials[provider.credential];
-      if (secret === undefined) {
-        throw new RuntimeConfigError(
-          "credential_not_allowlisted",
-          provider.id,
-          `provider '${provider.id}' references credential '${provider.credential}' ` +
-            `which is not in the allowlist`,
-        );
+    try {
+      if (provider.kind === "pi_native") {
+        // No registerProvider: the provider *is* Pi's built-in one, and its
+        // credential comes from authPath (auth.json under the agent dir).
+        verifyPiNativeProvider(runtime, provider);
+        availability.push({ id: provider.id, available: true });
+        continue;
       }
-      apiKey = secret;
+      let apiKey = runtimeKeys[provider.id] ?? "app-managed-no-network";
+      if (provider.credential !== undefined && runtimeKeys[provider.id] === undefined) {
+        const secret = credentials[provider.credential];
+        if (secret === undefined) {
+          throw new RuntimeConfigError(
+            "credential_not_allowlisted",
+            provider.id,
+            `provider '${provider.id}' references credential '${provider.credential}' ` +
+              `which is not in the allowlist`,
+          );
+        }
+        apiKey = secret;
+      }
+      registerProvider(runtime, provider, apiKey);
+      availability.push({ id: provider.id, available: true });
+    } catch (err) {
+      if (!(err instanceof RuntimeConfigError)) throw err;
+      availability.push({
+        id: provider.id,
+        available: false,
+        unavailable_reason: err.code,
+        message: err.message,
+      });
     }
-    registerProvider(runtime, provider, apiKey);
   }
-  return runtime;
+  // Apply serve-scoped keys Pi should hold for the life of this process. These
+  // never touch auth.json: `setRuntimeApiKey` is the in-memory path, which is
+  // what `scope: "serve"` means (§23.2).
+  for (const [providerId, key] of Object.entries(runtimeKeys)) {
+    if (runtime.getProvider(providerId) !== undefined) {
+      await runtime.setRuntimeApiKey(providerId, key);
+    }
+  }
+  return { runtime, providers: availability };
 }
 
 /**

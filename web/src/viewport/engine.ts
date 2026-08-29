@@ -26,19 +26,26 @@
 //   compositing; a screenshot taken afterwards can come back blank. G4.5 reads
 //   viewport pixels, so the buffer is preserved. It costs a copy per frame and
 //   buys a deterministic screenshot.
-// * **The GLB's own materials are kept.** They carry the server's per-solid
-//   palette colour, and §5.4 describes the viewport as exactly that: "lit and
-//   antialiased", the thing a mask is *not* decoded from. Lighting and AA are
-//   what make it undecodable, and replacing the colours would only make the
-//   picture less like the render the same build produces elsewhere.
+// * **The client authors the display; the GLB's materials are kept anyway.**
+//   §3.11.2 makes the material the client's decision, and `viewport/display.ts`
+//   makes it — for the reason its header measures out: the exporter's
+//   `baseColorFactor` is `id_to_rgb(solid_id)`, an albedo of zero to three
+//   decimal places, not a dark colour choice. This bullet used to say the
+//   opposite ("replacing the colours would make the picture less like the
+//   render"), and the sentence under it was the reason the part was the dimmest
+//   object in frame. What survives from it is the half that was right: the
+//   exporter's material is a **selection channel**, so it is preserved on the
+//   node rather than discarded, and §5.4's "lit and antialiased" is still the
+//   reason a mask is never decoded from this canvas.
 
 import {
+  ACESFilmicToneMapping,
   AmbientLight,
-  Color,
   DirectionalLight,
   Group,
   OrthographicCamera,
   Plane,
+  SRGBColorSpace,
   Scene,
   Vector2,
   Vector3,
@@ -48,6 +55,16 @@ import type { Box3 } from "three";
 import { GLTFLoader, type GLTF } from "three/addons/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { nameForDirection } from "./cameras";
+import {
+  authorDisplay,
+  buildGroundGrid,
+  gridStep,
+  groundGridSpec,
+  readViewportPalette,
+  type AuthoredDisplay,
+  type GroundGrid,
+  type ViewportPalette,
+} from "./display";
 import type { GlbGeometry } from "./glb";
 import {
   applyClipping,
@@ -70,9 +87,6 @@ export class NoWebglError extends Error {
   }
 }
 
-/** Instrument ground, matching `--ground-0`; the geometry is the bright thing. */
-const BACKGROUND = new Color("#0d0f12");
-
 export interface ViewportEngineOptions {
   /** Called when a free orbit settles, with the nearest nameable camera (§5.5). */
   readonly onCameraSettled: (viewName: string) => void;
@@ -85,8 +99,22 @@ export class ViewportEngine {
   private readonly camera: OrthographicCamera;
   private readonly controls: OrbitControls;
   private readonly root = new Group();
+  /**
+   * The ground grid (§3.11.5), OUTSIDE `root` on purpose.
+   *
+   * `clearRoot` empties `root` on every load and `applyClipping` walks `root` to
+   * install §5.3's clipping planes. The grid belongs to neither: it is not the
+   * artifact, so a reload must not take the floor away for a frame, and a
+   * section plane cuts the *part*, not the ruler the part is measured against.
+   */
+  private readonly gridRoot = new Group();
   private readonly options: ViewportEngineOptions;
+  private readonly palette: ViewportPalette;
 
+  private readonly frameListeners = new Set<() => void>();
+  private display: AuthoredDisplay | null = null;
+  private grid: GroundGrid | null = null;
+  private step = 0;
   private index: SolidIndex | null = null;
   /** The plain scene bbox — the `rgb`/`mask`/`section` framing (`_framing`). */
   private bounds: Box3 | null = null;
@@ -109,12 +137,29 @@ export class ViewportEngine {
     } catch (error) {
       throw new NoWebglError(String(error));
     }
-    this.renderer.setClearColor(BACKGROUND, 1);
+    // §3.11.3. `outputColorSpace` is SET EXPLICITLY THOUGH IT IS ALREADY THE
+    // DEFAULT, and the distinction matters enough to write down: three@0.185.1
+    // defaults it to `SRGBColorSpace` (`three.module.js`:16298), so §3.11.3's
+    // claim that its absence produced "the flat desaturated grey" does not hold
+    // against this version — `display.ts`'s header measures what actually did.
+    // The line stays because the spec names the value and a default is not a
+    // decision; if three.js changes its mind, this viewport does not.
+    // `toneMapping` genuinely was absent (`:16263` defaults to `NoToneMapping`).
+    this.renderer.outputColorSpace = SRGBColorSpace;
+    this.renderer.toneMapping = ACESFilmicToneMapping;
+    this.palette = readViewportPalette();
+    const background = this.palette.ground;
+    this.renderer.setClearColor(background, 1);
     this.renderer.localClippingEnabled = true;
 
     this.scene = new Scene();
-    this.scene.background = BACKGROUND;
+    // The clear colour is NOT tone-mapped by three.js, so the ground lands on
+    // `--viewport-ground` byte for byte while everything drawn over it goes
+    // through ACES. `design-system.spec.ts` asserts that byte equality at a
+    // corner pixel, and this is why it can.
+    this.scene.background = background;
     this.scene.add(this.root);
+    this.scene.add(this.gridRoot);
 
     this.camera = new OrthographicCamera(-1, 1, 1, -1, 0.1, 1000);
     // Z-up, matching `cameras.py`'s frame. three.js defaults to Y-up, and a
@@ -123,6 +168,16 @@ export class ViewportEngine {
 
     // Lights ride with the camera so shading does not change meaning when the
     // view does: the picture is an instrument reading, not a beauty render.
+    //
+    // §3.11.7 says these are correct and asks for them "unchanged", and they
+    // ARE unchanged — but "unchanged" was written before ACES was in the chain,
+    // so the three intensities were checked against it rather than assumed. A
+    // facet square to the camera receives `(2.2·0.743 + 0.8·0.266 + 0.9)/π ≈
+    // 0.874` of albedo, which for `--viewport-part` is a linear radiance near
+    // 0.41-0.54 — the part of the ACES curve with the most slope, so facets
+    // separate. Nothing reaches the shoulder, so nothing clips to white, and an
+    // ambient-only facet still clears §3.11.2's floor on its own. Raising them
+    // for a brighter part would have flattened the shading instead.
     const key = new DirectionalLight(0xffffff, 2.2);
     key.position.set(1, 1.5, 2);
     const fill = new DirectionalLight(0xffffff, 0.8);
@@ -140,6 +195,11 @@ export class ViewportEngine {
   async load(bytes: ArrayBuffer, geometry: GlbGeometry): Promise<SolidIndex> {
     const gltf: GLTF = await new GLTFLoader().parseAsync(bytes, "");
     this.clearRoot();
+    // §3.11.2 and §3.11.4, and BEFORE the index is built rather than after: the
+    // silhouettes become children of the meshes, and `indexSolidNodes` reads the
+    // loader's `associations` map, which only ever names nodes the loader made.
+    // Authoring first proves the join is unaffected by what we add.
+    this.display = authorDisplay(gltf.scene, this.palette);
     this.root.add(gltf.scene);
     this.index = indexSolidNodes(gltf, geometry);
     this.bounds = boundsAt(this.index, 0);
@@ -154,6 +214,9 @@ export class ViewportEngine {
     this.bounds = null;
     this.explodedBounds = null;
     this.framing = null;
+    // No part, no floor. A grid left standing over an empty canvas would be the
+    // viewport drawing a ruler for something it is not showing.
+    this.rebuildGrid();
     this.render();
   }
 
@@ -200,7 +263,23 @@ export class ViewportEngine {
     this.camera.updateProjectionMatrix();
     this.controls.target.set(framing.target[0], framing.target[1], framing.target[2]);
     this.controls.update();
+    // §3.11.5's grid is stepped off the span this framing just fixed — the same
+    // number `GridReadout` prints — so it is rebuilt exactly when that number
+    // changes and at no other time. §5.2's "framed once and held" therefore
+    // holds the grid still through a whole explode drag as well.
+    this.rebuildGrid();
     this.render();
+  }
+
+  /**
+   * The ground grid's spacing in model units, or 0 before a framing.
+   *
+   * §3.11.5 wants the readout to "finally describe something visible", so the
+   * readout reads this rather than deriving a second answer. A screen-space
+   * quantity like `scale()`, and rendered the same way: never through `<Fact>`.
+   */
+  gridStep(): number {
+    return this.step;
   }
 
   setExplode(t: number): void {
@@ -249,10 +328,26 @@ export class ViewportEngine {
     return this.camera.top / this.camera.zoom;
   }
 
+  /**
+   * Be told after every drawn frame. Returns the unsubscribe.
+   *
+   * The axis triad (§3.11.6) is the only listener and it needs one per orbit
+   * frame, which is why this is a plain callback set and not a React state
+   * write: sixty re-renders a second to move three lines is what §5.5's
+   * camera-settle write already exists to avoid.
+   */
+  onFrame(listener: () => void): () => void {
+    this.frameListeners.add(listener);
+    return () => {
+      this.frameListeners.delete(listener);
+    };
+  }
+
   /** Draw one frame now. Synchronous on purpose; see the header. */
   render(): void {
     if (this.disposed) return;
     this.renderer.render(this.scene, this.camera);
+    for (const listener of this.frameListeners) listener();
   }
 
   dispose(): void {
@@ -261,8 +356,44 @@ export class ViewportEngine {
     this.controls.removeEventListener("change", this.requestFrame);
     this.controls.removeEventListener("end", this.settleCamera);
     this.controls.dispose();
+    this.frameListeners.clear();
     this.clearRoot();
+    this.grid?.dispose();
+    this.grid = null;
     this.renderer.dispose();
+  }
+
+  /**
+   * The three world axes as **screen-space** unit vectors, for the axis triad.
+   *
+   * `[x, y]` in a `+x right, +y down` frame — the frame an SVG uses — so the
+   * triad's markup is the projection and nothing else. `depth` is the axis's
+   * component along the view direction, negative toward the viewer; the triad
+   * uses it only to order the three so the nearest is drawn last.
+   *
+   * §1 hands this to the client outright: "The client may compute screen-space
+   * quantities … camera transforms". Nothing here is or becomes a measurement —
+   * the vectors are unit-length by construction, so no model distance survives
+   * the projection at all.
+   */
+  cameraBasis(): readonly { readonly axis: "x" | "y" | "z"; readonly screen: readonly [number, number]; readonly depth: number }[] {
+    const right = new Vector3();
+    const up = new Vector3();
+    const forward = new Vector3();
+    this.camera.matrixWorld.extractBasis(right, up, forward);
+    const axes = [
+      { axis: "x" as const, world: new Vector3(1, 0, 0) },
+      { axis: "y" as const, world: new Vector3(0, 1, 0) },
+      { axis: "z" as const, world: new Vector3(0, 0, 1) },
+    ];
+    return axes.map(({ axis, world }) => ({
+      axis,
+      // `-up` because screen y grows downward and the camera's up does not.
+      screen: [world.dot(right), -world.dot(up)] as const,
+      // `+forward` points from the target toward the eye, so a positive dot is
+      // an axis leaning toward the viewer.
+      depth: world.dot(forward),
+    }));
   }
 
   private aspect(): number {
@@ -272,6 +403,41 @@ export class ViewportEngine {
 
   private clearRoot(): void {
     for (const child of [...this.root.children]) this.root.remove(child);
+    // The authored material and the edge geometries are ours; the GLB's own
+    // buffers are the loader's and are collected with the parsed document. The
+    // preserved exporter material is NEVER disposed here — see `display.ts`.
+    this.display?.dispose();
+    this.display = null;
+  }
+
+  /**
+   * Rebuild the ground grid for the current framing and bounds.
+   *
+   * The grid follows the **plain** bounds even while explode is engaged: the
+   * floor a part stands on does not move when the part comes apart, and a pad
+   * that grew with the explosion would make the readout's step describe a
+   * different picture at every `t`.
+   */
+  private rebuildGrid(): void {
+    this.grid?.dispose();
+    for (const child of [...this.gridRoot.children]) this.gridRoot.remove(child);
+    this.grid = null;
+    const framing = this.framing;
+    const bounds = this.bounds;
+    if (framing === null || bounds === null) {
+      this.step = 0;
+      return;
+    }
+    const span = framing.halfHeight * 2;
+    this.step = gridStep(span);
+    const spec = groundGridSpec(bounds, span);
+    if (spec === null) {
+      this.step = 0;
+      return;
+    }
+    const grid = buildGroundGrid(spec, this.palette);
+    this.grid = grid;
+    this.gridRoot.add(grid.object);
   }
 
   /** A user drag: coalesce to one frame per animation frame. */

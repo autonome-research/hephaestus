@@ -21,30 +21,60 @@
 
 import { copy } from "../../../copy";
 import { useWorkspace, workspaceStore } from "../../../state/react";
-import { STANDARD_VIEWS } from "../../../state/workspace";
+import { STANDARD_VIEWS, type StandardView } from "../../../state/workspace";
+import { Button } from "../../../system";
 import styles from "./ViewCube.module.css";
+
+/**
+ * §4.7's 3×3 orientation cross, and the one named view on its own row.
+ *
+ * The VOCABULARY is closed at `cameras.py`'s eight names and is unchanged; what
+ * changes is where they sit. The shipped 4×2 grid put `+Y` and `-Y` on different
+ * rows and stood `front` — a named view — beside `+Z`, an axis. `null` is an
+ * empty cell of the cross, not a ninth camera.
+ */
+const CROSS: readonly (StandardView | null)[] = [
+  "+Y",
+  "+Z",
+  null,
+  "-X",
+  "iso",
+  "+X",
+  null,
+  "-Z",
+  "-Y",
+];
+
+/** The names that are not orientations. Kept apart because they are not one. */
+const NAMED: readonly StandardView[] = ["front"];
 
 export function ViewCube(): React.JSX.Element {
   const view = useWorkspace((s) => s.view);
   const standard = (STANDARD_VIEWS as readonly string[]).includes(view);
 
+  const face = (name: StandardView): React.JSX.Element => (
+    <Button
+      key={name}
+      variant="toggle"
+      pressed={view === name}
+      data-view={name}
+      onClick={() => {
+        workspaceStore.update({ view: name });
+      }}
+    >
+      {name}
+    </Button>
+  );
+
   return (
     <div className={styles["cube"]} data-view-cube="" aria-label={copy.viewport.viewCube.label}>
-      <div className={styles["grid"]} role="group" aria-label={copy.viewport.viewCube.label}>
-        {STANDARD_VIEWS.map((name) => (
-          <button
-            key={name}
-            type="button"
-            className={styles["face"]}
-            data-view={name}
-            aria-pressed={view === name}
-            onClick={() => {
-              workspaceStore.update({ view: name });
-            }}
-          >
-            {name}
-          </button>
-        ))}
+      <div className={styles["cross"]} role="group" aria-label={copy.viewport.viewCube.label}>
+        {CROSS.map((name, index) =>
+          name === null ? <span key={`gap-${String(index)}`} /> : face(name),
+        )}
+      </div>
+      <div className={styles["named"]} role="group" aria-label={copy.viewport.viewCube.namedLabel}>
+        {NAMED.map((name) => face(name))}
       </div>
       {standard ? null : (
         <p className={styles["free"]} data-view-free={view} title={copy.viewport.viewCube.freeExplain}>

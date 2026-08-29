@@ -27,24 +27,21 @@ string, so it never enters an access log or a ``Referer``.
 
 from __future__ import annotations
 
-import os
 import signal
 import sys
 import webbrowser
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import Final
 
 from hephaestus.agent_bridge.serve_record import owning_server
 from hephaestus.core.project_store.layout import find_project_root
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from .agent_attach import AttachRefused
 from .app import build_app
 from .principal import clear_serve_record, mint_token, write_serve_record
 from .runtime import WorkspaceRuntime
-
-if TYPE_CHECKING:
-    from hephaestus.agent_bridge.app import BridgeRuntime
 
 __all__ = [
     "DEFAULT_WEB_HOST",
@@ -96,10 +93,15 @@ def serve_web(
 
     host, port = parse_web_address(web)
     token, token_path = mint_token(project_root / ".heph")
-    runtime = WorkspaceRuntime.open(project_root, token=token, serve_mode=True)
-    bridge = _attach_agent(runtime)
+    # The bound host is recorded so §23.6's route-level `not_loopback`
+    # precondition checks the fact rather than a constant.
+    runtime = WorkspaceRuntime.open(project_root, token=token, serve_mode=True, bind_host=host)
     url = f"http://{host}:{port}"
     try:
+        # Inside the `try`, so the `finally` below owns the teardown of whatever
+        # it attached: a sidecar started here and then lost to a failure on the
+        # next line would outlive the serve that spawned it.
+        _announce_attach(runtime)
         write_serve_record(project_root / ".heph", http=url, token_path=token_path)
         entry = f"{url}/#t={token}"
         # Flushed explicitly: stdout is block-buffered when it is not a TTY, and
@@ -117,65 +119,49 @@ def serve_web(
         # :func:`owning_server` probes the recorded pid, so a stale record reads
         # as "no owner" instead of wedging the project permanently.
         clear_serve_record(project_root / ".heph")
-        if runtime.sessions is not None:
-            runtime.sessions.close()
-        if bridge is not None:
-            bridge.close()
+        # One teardown for whatever is attached *now*, which is not necessarily
+        # what was attached at start-up: §23.0's attach and detach both run
+        # against a live serve, so the shutdown path asks the runtime rather
+        # than closing a local handle from an hour ago.
+        runtime.detach_agent()
         runtime.close()
     return 0
 
 
-def _attach_agent(runtime: WorkspaceRuntime) -> BridgeRuntime | None:
-    """Start the one agent runtime this process owns, if it can (§2.1, §2.7).
+def _announce_attach(runtime: WorkspaceRuntime) -> None:
+    """Attach at start-up and say, on stderr, what happened (§23.0, §7A.8).
 
-    **The store, project store, CadOps and dispatcher are injected**, not opened
-    again: two opstore handles in one process would be two ``LockManager`` owners
-    over one project's ``.heph/locks/``, which is precisely what "one process owns
-    the leases" exists to prevent.
+    **Absence is a named state, not a degraded one**, and since §23.0 it is also
+    a *recoverable* one. A project with no provider config has nothing to
+    configure a sidecar with, and a machine with no (or too old a) Node has
+    nothing to spawn; in either case the workspace still serves every read,
+    mutation, artifact and git route, the session routes refuse by name
+    (``agent_unavailable``) **carrying the cause**, and the operator can attach a
+    runtime later from the browser instead of restarting the server. Failing the
+    whole serve because an agent could not start would make the panels that need
+    no agent unreachable too.
 
-    Absence is a **named** state, not a degraded one. A project with no provider
-    config has nothing to configure a sidecar with, and a machine with no (or too
-    old a) Node has nothing to spawn; in either case the workspace still serves
-    every read, mutation, artifact and git route, and the session routes refuse
-    by name (``agent_unavailable``). Failing the whole serve because an agent
-    could not start would make the panels that need no agent unreachable too.
+    The line is still printed because a terminal operator is still an operator.
+    What changed is that the cause is no longer *only* printed: §19 item 25 is
+    that it is recorded on the runtime, and §2.4's ``agent_unavailable`` carries
+    it to the browser that cannot read this stream.
     """
-    from hephaestus.agent_bridge.app import AuthLinkError, BridgeRuntime
-    from hephaestus.agent_bridge.cli import ConfigError, load_provider_config
-    from hephaestus.agent_bridge.sidecar import SidecarError
-    from hephaestus.agent_bridge.supervisor import SupervisorError
-
-    config_path = runtime.root / ".heph" / "providers.json"
-    env_path = os.environ.get("HEPHAESTUS_AGENT_PROVIDERS")
-    if env_path:
-        config_path = Path(env_path).expanduser()
-    if not config_path.is_file():
+    try:
+        state = runtime.attach_agent()
+    except AttachRefused as exc:
         print(
-            f"heph: serve: no provider config at {config_path}; "
-            "serving without an agent runtime (session routes refuse agent_unavailable)",
+            f"heph: serve: no agent runtime ({exc.cause}: {exc.detail}); "
+            "session routes refuse agent_unavailable until one is attached "
+            "(POST /api/v1/providers/attach)",
             file=sys.stderr,
             flush=True,
         )
-        return None
-    try:
-        config = load_provider_config(config_path)
-        bridge = BridgeRuntime(
-            project_root=runtime.root,
-            providers=config.providers,
-            credentials=config.credentials(),
-            credential_allowlist=config.credential_allowlist,
-            auth_source=config.auth_source,
-            store=runtime.store,
-            project_store=runtime.project_store,
-            cad=runtime.cad,
-            dispatcher=runtime.dispatcher,
-        )
-        bridge.start()
-    except (ConfigError, AuthLinkError, SidecarError, SupervisorError, RuntimeError) as exc:
-        print(f"heph: serve: agent runtime unavailable ({exc})", file=sys.stderr, flush=True)
-        return None
-    runtime.attach_sessions(bridge)
-    return bridge
+        return
+    print(
+        f"heph: serve: agent runtime attached from {state.config_path}",
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 def _install_shutdown_handlers() -> None:

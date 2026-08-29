@@ -37,6 +37,19 @@ export const SIDECAR_REQUEST_METHODS: ReadonlySet<string> = new Set([
   "query.snapshot",
   "runtime.configure",
   "shutdown",
+  // INTERFACE.md §23.14 item 3 — the bridge credential methods over Pi's own
+  // login/logout/setRuntimeApiKey/listCredentials/getProviderAuthStatus. Pi
+  // stays the single credential authority; these are a relay for a flow this
+  // repo does not implement (mission rule 6). Requests rather than events:
+  // §17 exclusion 10 (no event-vocabulary extension) is not amended by §23.
+  "providers.list",
+  "credentials.status",
+  "credentials.set_key",
+  "credentials.signout",
+  "login.begin",
+  "login.status",
+  "login.complete",
+  "login.cancel",
 ]);
 
 // Requests the sidecar ORIGINATES (sidecar -> supervisor).

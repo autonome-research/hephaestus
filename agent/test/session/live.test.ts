@@ -194,7 +194,7 @@ describe("live streaming over a real Pi session", () => {
       { kind: "tool_calls", calls: [{ name: "inspect_part", arguments: { name: "w" } }] },
       { kind: "text", chunks: ["done"] },
     ]);
-    const runtime = await createModelRuntime({ providers: [fake.providerSpec()] }, { agentDir });
+    const { runtime } = await createModelRuntime({ providers: [fake.providerSpec()] }, { agentDir });
     const model = runtime.getModel(fake.providerId, fake.modelId);
     if (!model) throw new Error("fake model did not resolve");
     const service = new SessionService({
