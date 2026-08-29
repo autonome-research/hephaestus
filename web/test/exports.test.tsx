@@ -201,6 +201,12 @@ function stubDownloadEnvironment(): { readonly created: string[]; readonly revok
   return { created, revoked };
 }
 
+// Response bodies here are `Uint8Array`, never a jsdom `Blob`: undici's
+// `Response` calls `.stream()` on what it wraps, jsdom's Blob has none, and
+// whether that surfaces depends on the Node/jsdom pairing — green on this
+// machine, `object.stream is not a function` on the runner (CI run
+// 33233646522). A Uint8Array is accepted natively everywhere, and every
+// assertion below only reads the bytes back.
 describe("§22.4 — bytes without a token in a URL", () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
@@ -217,7 +223,7 @@ describe("§22.4 — bytes without a token in a URL", () => {
       "fetch",
       (url: string, init?: RequestInit): Promise<Response> => {
         seen.push({ url, init });
-        return Promise.resolve(new Response(new Blob([new Uint8Array([1, 2, 3])])));
+        return Promise.resolve(new Response(new Uint8Array([1, 2, 3])));
       },
     );
 
@@ -237,7 +243,7 @@ describe("§22.4 — bytes without a token in a URL", () => {
     const { created, revoked } = stubDownloadEnvironment();
     vi.stubGlobal(
       "fetch",
-      (): Promise<Response> => Promise.resolve(new Response(new Blob([new Uint8Array([1])]))),
+      (): Promise<Response> => Promise.resolve(new Response(new Uint8Array([1]))),
     );
     const appendChild = document.body.appendChild.bind(document.body);
     vi.spyOn(document.body, "appendChild").mockImplementation((node: Node): Node => {

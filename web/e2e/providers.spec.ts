@@ -453,9 +453,17 @@ test("write specs, attach, configure, stream, sign out — in one process", asyn
   // (3) a session now runs and STREAMS INTO THE PANEL. The reply is a sentinel
   // the harness scripts, so a panel that rendered without a turn having run
   // cannot pass this.
-  await page.locator("[data-session-create]").click();
+  // Creating the first session SPAWNS A SIDECAR PROCESS and opens a Pi session
+  // through it, so each step is waited for by its own rendered state rather
+  // than by one inflated timeout: a bare timeout bump would hide a create that
+  // silently never happened. Budgets match the attach step above, which spawns
+  // the same class of work on the same runner.
+  const create = page.locator("[data-session-create]");
+  await expect(create).toBeEnabled({ timeout: 120_000 });
+  await create.click();
+  await expect(page.locator("[data-session-id]").first()).toBeVisible({ timeout: 180_000 });
   const input = page.locator("[data-composer-input]");
-  await expect(input).toBeEnabled({ timeout: 60_000 });
+  await expect(input).toBeEnabled({ timeout: 180_000 });
   await input.fill("say the sentinel");
   await page.locator("[data-composer-send]").click();
   await expect(page.getByText(ARC_REPLY, { exact: false }).first()).toBeVisible({
