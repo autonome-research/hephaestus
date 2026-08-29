@@ -56,6 +56,11 @@ from serve_fixture import (  # the sys.path insert above is what makes this reso
 #: substring of it anywhere in a response, a file, or a log is unambiguous.
 DISCOVERED_SECRET = "oauth-refresh-E2E-71bc4a09-never-echo-me"
 
+#: What the scripted endpoint replies with once a runtime is attached. The arc
+#: test asserts this reaches the stream panel, so a turn that never ran cannot
+#: be mistaken for one that did.
+ARC_REPLY = "attached-and-streaming-9f3c1d"
+
 #: The provider the scripted home directory is signed in to.
 DISCOVERED_PROVIDER = "openai-codex"
 
@@ -92,35 +97,28 @@ def write_home(home: Path) -> Path:
     return auth
 
 
-def start_local_endpoint() -> tuple[subprocess.Popen[str], str]:
-    """A loopback OpenAI-compatible ``/v1/models`` responder, in its own process.
+def start_local_endpoint() -> tuple[object, str]:
+    """The shipped scripted OpenAI-compatible fake, on its own ephemeral port.
 
-    Its own process rather than a thread so it survives independently of this
-    harness's signal handling, and so the serve genuinely reaches it over a
-    socket rather than through anything shared.
+    Previously a twelve-line inline stub that answered only ``/v1/models``. That
+    was enough for discovery — which asks a candidate endpoint what models it
+    has — but it could not serve a completion, so the four G10B clauses that run
+    a turn (attach without restart, configure against a scripted model, stream
+    into the panel, sign out) had nothing to run against and were left to
+    pytest. Using ``testing.fake_openai`` is mission rule 6 applied to harnesses:
+    the suite that drives the shipped serve should drive the shipped fake, not a
+    second definition of one. Its script answers any prompt with a terminal text
+    turn, which is all the arc needs — the *tool* half of the loop is G4.8's
+    fixture and is asserted there.
     """
-    port = free_port()
-    script = (
-        "import http.server, json\n"
-        "class H(http.server.BaseHTTPRequestHandler):\n"
-        "    def do_GET(self):\n"
-        "        body = json.dumps({'data': [{'id': 'qwen3.6:27b'}]}).encode()\n"
-        "        self.send_response(200)\n"
-        "        self.send_header('content-type', 'application/json')\n"
-        "        self.send_header('content-length', str(len(body)))\n"
-        "        self.end_headers()\n"
-        "        self.wfile.write(body)\n"
-        "    def log_message(self, *a):\n"
-        "        pass\n"
-        f"http.server.HTTPServer(('127.0.0.1', {port}), H).serve_forever()\n"
-    )
-    proc = subprocess.Popen(
-        [sys.executable, "-c", script],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        text=True,
-    )
-    return proc, f"http://127.0.0.1:{port}/v1"
+    from hephaestus.testing.fake_openai import RequestInfo, start_fake_openai
+    from hephaestus.testing.stream_assertions import text
+
+    def resolve(_info: RequestInfo) -> dict[str, object]:
+        return text(ARC_REPLY)
+
+    fake = start_fake_openai([resolve] * 8)
+    return fake, fake.base_url
 
 
 def start_server(root: Path, *, home: Path, local_endpoint: str) -> subprocess.Popen[str]:
@@ -194,7 +192,7 @@ def main() -> int:
             time.sleep(0.25)
     finally:
         stop(server)
-        endpoint.terminate()
+        endpoint.close()  # FakeOpenAI, not a Popen
     return 0
 
 

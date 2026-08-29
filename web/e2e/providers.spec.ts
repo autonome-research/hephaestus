@@ -32,6 +32,8 @@ import { world } from "./harness/world";
 /** Kept in step with `providers_serve.py`; a drift fails loudly rather than quietly. */
 const DISCOVERED_SECRET = "oauth-refresh-E2E-71bc4a09-never-echo-me";
 const DISCOVERED_PROVIDER = "openai-codex";
+/** Kept in step with `providers_serve.py`s ARC_REPLY; a drift fails loudly. */
+const ARC_REPLY = "attached-and-streaming-9f3c1d";
 
 interface Serve {
   readonly proc: ChildProcess;
@@ -380,6 +382,102 @@ test("the sign-in response and the panel carry no credential material", async ()
 });
 
 /** A UUIDv7, because §2.5 refuses a v4 by name. Mirrors `api/idempotency.ts`. */
+// ---------------------------------------------------------------------------
+// G10B — the arc the gate binds to THIS command
+// ---------------------------------------------------------------------------
+//
+// Added 2026-08-28 after independent verification found four G10B clauses that
+// bind to `pnpm test:e2e` and were exercised only in pytest: this suite ran
+// against a serve with no sidecar throughout, never attached one, never
+// configured a provider against a scripted model, never streamed a turn, and
+// never signed out. The behaviour was real and live-verified; the gate's own
+// command did not reach it, which is a mission-rule-1 mapping gap of exactly
+// the shape G4 carried until 0701af4. Nothing below duplicates pytest: the
+// property-level negatives stay where a browser cannot see them, and this
+// asserts only what crossing the browser boundary can prove.
+
+test("write specs, attach, configure, stream, sign out — in one process", async ({
+  page,
+}) => {
+  await page.goto(`${serve.baseUrl}/#t=${serve.token}`);
+
+  // The process that refuses is the process that will serve: pinned before the
+  // attach, so "without restarting" is measured rather than assumed (§23.0).
+  const before = (await call("GET", "/providers")).json;
+  expect((before["attach"] as Record<string, unknown>)["cause"]).toBe("no_provider_config");
+  expect((await call("POST", "/sessions", { profile: "orchestrator" })).status).toBe(503);
+  const pid = serve.proc.pid;
+
+  // (1) write specs against the scripted model. The clause's path is specs +
+  // sign-in, NOT discovery-adoption: an adopted source is `linked`, and §23
+  // refuses sign-out while linked ("unlink first"), so the adoption path cannot
+  // reach this clause's last assertion.
+  const wrote = await call(
+    "PUT",
+    "/providers/specs",
+    {
+      providers: [
+        {
+          id: "e2e-scripted",
+          kind: "openai_compatible",
+          baseUrl: serve.modelUrl,
+          models: [{ id: "heph-fake-model", name: "Heph Fake Model", contextWindow: 8192, maxTokens: 1024 }],
+        },
+      ],
+    },
+    { "Idempotency-Key": uuid7() },
+  );
+  expect(wrote.status).toBe(200);
+
+  // (2) configure the credential, then attach — WITHOUT restarting the process
+  const keyed = await call("POST", "/providers/e2e-scripted/auth/key", {
+    key: "e2e-scripted-key-not-echoed",
+    scope: "serve",
+  });
+  expect([200, 503]).toContain(keyed.status);
+  expect(keyed.text).not.toContain("e2e-scripted-key-not-echoed");
+
+  const attached = await call("POST", "/providers/attach", {}, { "Idempotency-Key": uuid7() });
+  expect(attached.status).toBe(200);
+  expect(attached.json["attached"]).toBe(true);
+  expect(serve.proc.pid).toBe(pid);
+  // The page was loaded before the specs existed, so its cache predates them.
+  // A reload is the honest way to see the new state: §7A.11's read-refresh
+  // boundary governs a session's OWN turn, not a provider written out of band
+  // by this test through the API.
+  await page.reload();
+  await expect(page.locator('[data-provider-available="true"]').first()).toBeVisible({
+    timeout: 120_000,
+  });
+
+  // (3) a session now runs and STREAMS INTO THE PANEL. The reply is a sentinel
+  // the harness scripts, so a panel that rendered without a turn having run
+  // cannot pass this.
+  await page.locator("[data-session-create]").click();
+  const input = page.locator("[data-composer-input]");
+  await expect(input).toBeEnabled({ timeout: 60_000 });
+  await input.fill("say the sentinel");
+  await page.locator("[data-composer-send]").click();
+  await expect(page.getByText(ARC_REPLY, { exact: false }).first()).toBeVisible({
+    timeout: 180_000,
+  });
+
+  // (4) sign-out returns the panel to `none` and the session routes to refusing
+  const out = await call("POST", "/providers/e2e-scripted/auth/signout", {});
+  expect(out.status).toBe(200);
+  await page.reload();
+  // "returns the panel to `none`" is the SOURCE axis: ProvidersPanel derives
+  // signedIn as `row.source !== "none"`, so `none` is the rendered fact that a
+  // credential is gone. The health/available axis is about reachability and is
+  // deliberately unaffected by signing out.
+  await expect(page.locator('[data-provider-source="none"]').first()).toBeVisible({
+    timeout: 60_000,
+  });
+  expect((await call("GET", "/providers")).text).not.toContain("e2e-scripted-key-not-echoed");
+  expect(serve.proc.pid).toBe(pid);
+});
+
+
 function uuid7(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);

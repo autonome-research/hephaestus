@@ -164,6 +164,31 @@ def start_fake_openai(script: list[TurnResolver] | None = None) -> FakeOpenAI:
         def log_message(self, format: str, *args: Any) -> None:
             return  # silence access logs
 
+        def do_GET(self) -> None:
+            """``/v1/models`` — the one GET a real OpenAI-compatible server owes.
+
+            Added 2026-08-28: provider discovery probes ``<base>/models`` with no
+            credential (``http/providers.py::_probe_openai_models``), so a fake
+            that answers only POST is undiscoverable and any harness using it has
+            to keep a second, GET-only stub beside it. Answering here keeps one
+            fake per protocol, which is mission rule 6 applied to test doubles.
+            The ids come from the same ``provider_spec`` the POST path reports,
+            so a script cannot advertise one model and complete as another.
+            """
+            fake = fake_holder["fake"]
+            if not self.path.rstrip("/").endswith("/models"):
+                self.send_error(404)
+                return
+            models = cast("list[dict[str, Any]]", fake.provider_spec()["models"])
+            body = json.dumps(
+                {"object": "list", "data": [{"id": m["id"]} for m in models]}
+            ).encode()
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         def do_POST(self) -> None:
             fake = fake_holder["fake"]
             length = int(self.headers.get("content-length", "0"))
