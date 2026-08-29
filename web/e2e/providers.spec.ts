@@ -26,7 +26,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { world } from "./harness/world";
 
 /** Kept in step with `providers_serve.py`; a drift fails loudly rather than quietly. */
@@ -80,6 +80,34 @@ async function startServe(): Promise<Serve> {
 }
 
 /** One authenticated call against this suite's own serve. */
+/** The same authorized call, against a serve this test owns rather than the shared one. */
+async function callOn(
+  target: Serve,
+  method: string,
+  path: string,
+  body?: unknown,
+  headers: Record<string, string> = {},
+): Promise<{ status: number; text: string; json: Record<string, unknown> }> {
+  const response = await fetch(`${target.baseUrl}/api/v1${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${target.token}`,
+      Connection: "close",
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+      ...headers,
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  const text = await response.text();
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    parsed = {};
+  }
+  return { status: response.status, text, json: parsed };
+}
+
 async function call(
   method: string,
   path: string,
@@ -399,6 +427,28 @@ test("the sign-in response and the panel carry no credential material", async ()
 test("write specs, attach, configure, stream, sign out — in one process", async ({
   page,
 }) => {
+  // THIS TEST OWNS ITS SERVE. The clause opens "serve a project with **no**
+  // `providers.json`", and by the time this runs last in the file, eight
+  // earlier tests have adopted a source (leaving it `linked`) and written a
+  // remote provider whose host does not resolve — so the shared serve is no
+  // longer the one the clause describes, and the composer correctly refuses to
+  // enable against it. Passing in isolation and failing in the full suite was
+  // that difference, not a timing budget (CI run 33234619571).
+  const own = await startServe();
+  try {
+    await runArc(page, own);
+  } finally {
+    own.proc.kill("SIGTERM");
+  }
+});
+
+async function runArc(page: Page, serve: Serve): Promise<void> {
+  const call = (
+    method: string,
+    path: string,
+    body?: unknown,
+    headers: Record<string, string> = {},
+  ) => callOn(serve, method, path, body, headers);
   await page.goto(`${serve.baseUrl}/#t=${serve.token}`);
 
   // The process that refuses is the process that will serve: pinned before the
@@ -453,19 +503,32 @@ test("write specs, attach, configure, stream, sign out — in one process", asyn
   // (3) a session now runs and STREAMS INTO THE PANEL. The reply is a sentinel
   // the harness scripts, so a panel that rendered without a turn having run
   // cannot pass this.
-  // Creating the first session SPAWNS A SIDECAR PROCESS and opens a Pi session
-  // through it, so each step is waited for by its own rendered state rather
-  // than by one inflated timeout: a bare timeout bump would hide a create that
-  // silently never happened. Budgets match the attach step above, which spawns
-  // the same class of work on the same runner.
-  const create = page.locator("[data-session-create]");
-  await expect(create).toBeEnabled({ timeout: 120_000 });
-  await create.click();
-  await expect(page.locator("[data-session-id]").first()).toBeVisible({ timeout: 180_000 });
-  const input = page.locator("[data-composer-input]");
-  await expect(input).toBeEnabled({ timeout: 180_000 });
-  await input.fill("say the sentinel");
-  await page.locator("[data-composer-send]").click();
+  // Create through the API and OPEN THAT SESSION BY ID, which is the path
+  // composer.spec.ts uses: the composer is per-session and derives
+  // `no_session` from `sessionId === null`, so a create that does not also
+  // select leaves a correctly disabled box. Clicking create and waiting for
+  // the input to enable was waiting for a selection nothing had made — that,
+  // not a timing budget, is why this failed only in the full suite where the
+  // page had not been navigated with an `s` query (CI run 33234619571).
+  const created = (await call("POST", "/sessions", { profile: "orchestrator" })).json;
+  const sessionId = String(created["session_id"] ?? "");
+  expect(sessionId).not.toBe("");
+  // The token is claimed on the first load and moved to sessionStorage, so the
+  // route navigation carries no credential in its URL (§2.2) — the same
+  // two-step arrival `harness/world.ts::open` makes, done here against the
+  // serve this test owns.
+  await page.waitForFunction(() => document.querySelector("[data-pin-mode]") !== null, null, {
+    timeout: 60_000,
+  });
+  const search = new URLSearchParams({ s: sessionId }).toString();
+  await page.evaluate((next: string) => {
+    window.location.hash = next;
+  }, `#/p/tread?${search}`);
+  const composer = page.locator(`[data-composer][data-session-id="${sessionId}"]`);
+  await expect(composer).toHaveCount(1, { timeout: 120_000 });
+  await expect(composer).toHaveAttribute("data-disabled-reason", "null", { timeout: 180_000 });
+  await composer.locator("[data-composer-input]").fill("say the sentinel");
+  await composer.locator("[data-composer-send]").click();
   await expect(page.getByText(ARC_REPLY, { exact: false }).first()).toBeVisible({
     timeout: 180_000,
   });
@@ -483,7 +546,7 @@ test("write specs, attach, configure, stream, sign out — in one process", asyn
   });
   expect((await call("GET", "/providers")).text).not.toContain("e2e-scripted-key-not-echoed");
   expect(serve.proc.pid).toBe(pid);
-});
+}
 
 
 function uuid7(): string {

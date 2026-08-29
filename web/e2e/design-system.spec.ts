@@ -422,6 +422,14 @@ test("every status the fixture reaches carries an icon AND a word (§3.13.2)", a
   await open(page, route(PART));
   await page.locator('[data-inspector-tab="checks"]').click();
   await expect(page.locator('[data-inspector-panel="checks"]')).toBeVisible();
+  // The PANEL is visible before its REPORT has landed, so evaluating here can
+  // read zero badges and report "the fixture rendered no check badges" for a
+  // fixture that has them. Wait for the data, not the container (CI run
+  // 33234619571, reproduced in the pinned image; the isolated run never lost
+  // the race).
+  await expect(
+    page.locator("[data-inspector-panel='checks'] [data-badge]").first(),
+  ).toBeVisible({ timeout: 60_000 });
 
   const badges = await page.locator("[data-inspector-panel='checks'] [data-badge]").evaluateAll(
     (nodes) =>
