@@ -13,7 +13,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { postBuild, postParams } from "../../api/params";
-import { keys, useParams } from "../../api/queries";
+import { useParams } from "../../api/queries";
+import { refreshAfterParamWrite } from "../../api/refresh";
 import { uuid7 } from "../../api/idempotency";
 import type { ParamRejection, ParamRow, ParamsDocument } from "../../api/types";
 import { copy } from "../../copy";
@@ -176,7 +177,7 @@ export function ParamSliders(): React.JSX.Element {
             rejected: [],
             conflict: true,
           }));
-          void client.invalidateQueries({ queryKey: keys.params(part) });
+          refreshAfterParamWrite(client, part, "conflict");
           return;
         }
         if (result.rejected.length > 0) {
@@ -189,8 +190,7 @@ export function ParamSliders(): React.JSX.Element {
           return;
         }
         return postBuild(part, uuid7()).then(() => {
-          void client.invalidateQueries({ queryKey: keys.params(part) });
-          void client.invalidateQueries({ queryKey: keys.build(part) });
+          refreshAfterParamWrite(client, part, "rebuilt");
         });
       })
       .finally(() => {

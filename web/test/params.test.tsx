@@ -8,8 +8,11 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactElement } from "react";
 
+import type { QueryClient } from "@tanstack/react-query";
 import paramsJson from "./fixtures/params.json";
 import type { ParamRejection, ParamsDocument } from "../src/api/types";
+import { keys } from "../src/api/queries";
+import { refreshAfterParamWrite, refreshKeys } from "../src/api/refresh";
 import {
   controlStep,
   isIntegerParam,
@@ -93,6 +96,38 @@ describe("G5.3 — rejected[] is verbatim, and the primitive does not clamp", ()
     expect(message?.textContent).toContain("11");
     expect(message?.textContent).toContain("2");
     expect(message?.textContent).toContain("10");
+  });
+
+  it("a successful commit invalidates the refreshKeys set, not just params+build", () => {
+    const invalidated: unknown[] = [];
+    const client = {
+      invalidateQueries: ({ queryKey }: { queryKey: readonly unknown[] }) => {
+        invalidated.push(queryKey);
+      },
+    } as Pick<QueryClient, "invalidateQueries"> as QueryClient;
+    refreshAfterParamWrite(client, "tread", "rebuilt");
+    expect(invalidated).toEqual(refreshKeys("tread"));
+    expect(invalidated).toEqual(
+      expect.arrayContaining([
+        keys.params("tread"),
+        keys.build("tread"),
+        keys.properties("tread"),
+        keys.checks("tread"),
+        keys.dfm("tread"),
+      ]),
+    );
+    expect(invalidated).not.toEqual([keys.params("tread"), keys.build("tread")]);
+  });
+
+  it("a conflict re-reads params only — nothing rebuilt", () => {
+    const invalidated: unknown[] = [];
+    const client = {
+      invalidateQueries: ({ queryKey }: { queryKey: readonly unknown[] }) => {
+        invalidated.push(queryKey);
+      },
+    } as Pick<QueryClient, "invalidateQueries"> as QueryClient;
+    refreshAfterParamWrite(client, "tread", "conflict");
+    expect(invalidated).toEqual([keys.params("tread")]);
   });
 
   it("the number input has no min/max when clamp is off, so a typed 11 can leave", () => {

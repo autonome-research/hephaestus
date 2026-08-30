@@ -189,7 +189,7 @@ describe("the chip row", () => {
 // §7A.11 — the read-refresh boundary
 
 describe("the read-refresh boundary", () => {
-  it("names the §7A.11 keys plus the PARAMS projection for a selected part", () => {
+  it("names the §7A.11 keys for a selected part", () => {
     expect(refreshKeys("tread")).toEqual([
       keys.project(),
       keys.parts(),

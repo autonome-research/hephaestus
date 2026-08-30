@@ -2749,7 +2749,7 @@ far as "words go in and events come back" and no further.)*
 
 The composer makes the browser the **originator** of agent mutations for the
 first time. Nothing today refreshes the read caches when the agent writes:
-`queries.ts` defines `keys.{project,parts,build,script,properties,checks,dfm,
+`queries.ts` defines `keys.{project,parts,build,script,params,properties,checks,dfm,
 gitStatus,gitLog,gitTags}` and a 5s project staleness, and no mutation path
 invalidates any of them. The blank-canvas flow would therefore end with a
 transcript full of successful tool calls and a rail that still says the project
@@ -2759,8 +2759,11 @@ has no parts.
 this project — and on the prompt response, which §7A.6 already makes the
 authority for turn completion — the client invalidates
 `keys.project`, `keys.parts`, `keys.build(part)`, `keys.script(part)`,
-`keys.properties(part)`, `keys.checks(part)`, `keys.dfm(part)` and
-`keys.gitStatus()`.
+`keys.params(part)`, `keys.properties(part)`, `keys.checks(part)`,
+`keys.dfm(part)` and `keys.gitStatus()`. A slider commit that rebuilds the part
+invalidates the same set (§10): Results / Checks / DFM / properties are
+projections of that build, and an invalidation of only `params` + `build`
+leaves those panels stale.
 
 **TIGHTENING (binds §1).** The invalidation is a **refetch of the server
 projection**, never a client-side merge of tool results. A composer that patched
