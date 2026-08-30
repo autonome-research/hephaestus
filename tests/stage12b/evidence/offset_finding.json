@@ -1,0 +1,18 @@
+{
+  "correct_volume_mm3": 44602.0,
+  "face_count": 279,
+  "fixture": "tessellate(Sphere(20)) raw, 2004 triangles, 1027 vertices",
+  "genus": 0,
+  "is_done": true,
+  "is_null": false,
+  "is_sealed": true,
+  "join_type": "GeomAbs_Intersection",
+  "offset_mm": 2.0,
+  "provenance": {
+    "image_digest": "sha256:0bd0427bd17b617235a4f599de0b389ff7159e38dac738778a9e234304cdddd6",
+    "occt_version": "cadquery-ocp-novtk 7.9.3.1.1"
+  },
+  "seconds": 29.91,
+  "spec": "MESH_INGEST.md \u00a74.2",
+  "volume_mm3": 0.0030195900915868396
+}

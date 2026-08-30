@@ -80,11 +80,16 @@ __all__ = [
     "CORPUS_V1_TASKS",
     "DEFAULT_STEP_POLICY",
     "FAMILY_COMPONENT",
+    "FAMILY_SCAN",
     "G2_AGGREGATE_THRESHOLD",
     "G6_AGGREGATE_THRESHOLD",
     "INSUFFICIENT_COMPONENT_SEEDS",
+    "INSUFFICIENT_SCAN_SEEDS",
     "PERFECT_TASKS",
     "RUNS_FILENAME",
+    "SCAN_BASELINE_FILENAME",
+    "SCAN_BASELINE_MIN_SEEDS",
+    "SCAN_FAMILY_TASKS",
     "SEEDED_BASELINE_FILENAME",
     "SPEC_PROSE",
     "SPEC_SEEDED",
@@ -99,6 +104,7 @@ __all__ = [
     "family_split_name",
     "load_run_records",
     "record_component_baseline",
+    "record_scan_baseline",
     "record_seeded_baseline",
     "score_directory",
     "score_records",
@@ -158,10 +164,23 @@ COMPONENT_FAMILY_TASKS: tuple[str, ...] = ("bearing-shaft", "motor-plate")
 #: The component family's name, and the prefix of its split names.
 FAMILY_COMPONENT = "component"
 
+#: The Stage 12 scan family (``MESH_INGEST.md`` §7.5, Named new work item 34,
+#: corpus v5): a cuff authored against a synthesized limb scan and a relief
+#: frame around a scanned boss, both graded on distance to the scan through the
+#: engine's own ``compare_to_scan`` path. Closed vocabulary, same as above: a
+#: task joins the family by being named here.
+SCAN_FAMILY_TASKS: tuple[str, ...] = ("scan-socket-cuff", "scan-boss-relief")
+
+#: The scan family's name, and the prefix of its split names.
+FAMILY_SCAN = "scan"
+
 #: The closed family vocabulary. G9C's mechanism family is deliberately absent:
 #: its split is G9C's own gate text to amend, and folding it in here would be
 #: this stage rewriting another stage's baseline rule.
-CORPUS_FAMILIES: Mapping[str, tuple[str, ...]] = {FAMILY_COMPONENT: COMPONENT_FAMILY_TASKS}
+CORPUS_FAMILIES: Mapping[str, tuple[str, ...]] = {
+    FAMILY_COMPONENT: COMPONENT_FAMILY_TASKS,
+    FAMILY_SCAN: SCAN_FAMILY_TASKS,
+}
 
 #: Where the component family's first measurement is recorded (never a gate
 #: input, and never comparable to the v1/v2 baselines).
@@ -175,6 +194,17 @@ COMPONENT_BASELINE_MIN_SEEDS = 3
 #: The named refusal a too-thin first measurement gets. Named, not silent: the
 #: alternative is a baseline file that looks like evidence and is not.
 INSUFFICIENT_COMPONENT_SEEDS = "insufficient_component_seeds"
+
+#: Where the scan family's first measurement is recorded (never a gate input,
+#: and never comparable to the v1/v2 baselines) — ``MESH_INGEST.md`` §7.5,
+#: following the same G9C precedent Stage 11 followed.
+SCAN_BASELINE_FILENAME = "scan_baseline.json"
+
+#: The scan family's seed floor and its named refusal. Same numbers and the same
+#: reasoning as the component family's: a first measurement is permanent, so a
+#: thin one would enshrine noise.
+SCAN_BASELINE_MIN_SEEDS = 3
+INSUFFICIENT_SCAN_SEEDS = "insufficient_scan_seeds"
 
 
 def base_task_id(task_id: str) -> str:
@@ -710,14 +740,23 @@ def record_seeded_baseline(score: BenchScore, path: Path) -> dict[str, Any] | No
     return baseline
 
 
-def record_component_baseline(score: BenchScore, path: Path) -> dict[str, Any] | None:
-    """Baseline the component family on its **first** measurement, at >= 3 seeds.
+def _record_family_baseline(
+    score: BenchScore,
+    path: Path,
+    *,
+    family: str,
+    tasks: tuple[str, ...],
+    min_seeds: int,
+    refusal: str,
+    citation: str,
+) -> dict[str, Any] | None:
+    """One corpus family baselined on its **first** measurement, at ``min_seeds``.
 
-    ``PARTS_STORE.md`` Gate G11C clause 12, following the G9C precedent
-    (``KINEMATICS.md:392-398``) verbatim: the component family is its own split
-    per spec, baselined on its own first measurement with the reference model at
-    >= 3 seeds, **neither compared against nor averaged into the v1/v2
-    baselines**. Three properties, each mechanical here rather than promised:
+    The G9C precedent (``KINEMATICS.md:392-398``) as both Stage 11 and Stage 12
+    apply it: a family is its own split per spec, baselined on its own first
+    measurement with the reference model at >= ``min_seeds`` seeds, **neither
+    compared against nor averaged into the v1/v2 baselines**. Three properties,
+    each mechanical here rather than promised:
 
     * *Its own split* — :func:`split_name` carved the family's runs out of the
       gated prose split before this function ever sees them, so the number
@@ -725,7 +764,7 @@ def record_component_baseline(score: BenchScore, path: Path) -> dict[str, Any] |
     * *Its own first measurement* — an existing file is returned unchanged, as
       :func:`record_seeded_baseline` does. A baseline that could be re-taken is
       not a baseline.
-    * *At >= 3 seeds* — refused by name below, because "first measurement" and
+    * *At >= min_seeds* — refused by name below, because "first measurement" and
       "never re-baselined" together mean a thin first run would enshrine noise
       permanently. This is the one place the seed floor can still be enforced.
 
@@ -733,45 +772,46 @@ def record_component_baseline(score: BenchScore, path: Path) -> dict[str, Any] |
     with each other either; the payload carries no threshold, and nothing reads
     it back into a verdict. Returns ``None`` when the family was not run.
 
-    :raises ValueError: :data:`INSUFFICIENT_COMPONENT_SEEDS` when a measured
-        half ran some task at fewer than :data:`COMPONENT_BASELINE_MIN_SEEDS`
-        distinct seeds. Nothing is written; the caller is told which half and
-        how thin it was.
+    This is ONE function over a family vocabulary rather than one per family
+    (mission rule 6): a second copy would be a second place for the seed floor
+    and the never-re-baseline rule to drift apart.
+
+    :raises ValueError: ``refusal`` when a measured half ran some task at fewer
+        than ``min_seeds`` distinct seeds. Nothing is written; the caller is told
+        which half and how thin it was.
     """
-    rows = {spec: score.family_split(FAMILY_COMPONENT, spec) for spec in (SPEC_PROSE, SPEC_SEEDED)}
+    rows = {spec: score.family_split(family, spec) for spec in (SPEC_PROSE, SPEC_SEEDED)}
     measured = {spec: row for spec, row in rows.items() if row.n}
     if not measured:
         return None
     if path.is_file():
         stored = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(stored, dict):
-            raise ValueError(f"{path}: component baseline is not a JSON object")
+            raise ValueError(f"{path}: {family} baseline is not a JSON object")
         return cast("dict[str, Any]", stored)
     thin = {
         spec: row.min_seeds_per_task
         for spec, row in measured.items()
-        if row.min_seeds_per_task < COMPONENT_BASELINE_MIN_SEEDS
+        if row.min_seeds_per_task < min_seeds
     }
     if thin:
         detail = ", ".join(
-            f"{family_split_name(FAMILY_COMPONENT, spec)}={seeds}"
-            for spec, seeds in sorted(thin.items())
+            f"{family_split_name(family, spec)}={seeds}" for spec, seeds in sorted(thin.items())
         )
         raise ValueError(
-            f"{INSUFFICIENT_COMPONENT_SEEDS}: the component family is baselined on its "
+            f"{refusal}: the {family} family is baselined on its "
             f"first measurement and never re-baselined, so it will not be baselined "
-            f"below {COMPONENT_BASELINE_MIN_SEEDS} seeds per task ({detail}); "
-            f"PARTS_STORE.md Gate G11C clause 12"
+            f"below {min_seeds} seeds per task ({detail}); {citation}"
         )
     baseline: dict[str, Any] = {
-        "family": FAMILY_COMPONENT,
-        "tasks": list(COMPONENT_FAMILY_TASKS),
+        "family": family,
+        "tasks": list(tasks),
         "model": score.model,
         "date": score.date,
-        "min_seeds": COMPONENT_BASELINE_MIN_SEEDS,
+        "min_seeds": min_seeds,
         "threshold": None,
         "splits": {
-            family_split_name(FAMILY_COMPONENT, spec): {
+            family_split_name(family, spec): {
                 "n": row.n,
                 "passes": row.passes,
                 "pass_rate": row.pass_rate,
@@ -782,15 +822,46 @@ def record_component_baseline(score: BenchScore, path: Path) -> dict[str, Any] |
             for spec, row in sorted(measured.items())
         },
         "note": (
-            "PARTS_STORE.md Gate G11C clause 12 (the KINEMATICS.md:392-398 G9C "
-            "precedent): baselined on its own first measurement at >= 3 seeds; not a "
-            "gate, and neither compared against nor averaged into the corpus v1/v2 "
-            "baselines. Re-baselining any combined bar is its own future amendment."
+            f"{citation} (the KINEMATICS.md:392-398 G9C precedent): baselined on its "
+            f"own first measurement at >= {min_seeds} seeds; not a gate, and neither "
+            "compared against nor averaged into the corpus v1/v2 baselines. "
+            "Re-baselining any combined bar is its own future amendment."
         ),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(baseline, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return baseline
+
+
+def record_component_baseline(score: BenchScore, path: Path) -> dict[str, Any] | None:
+    """The component family's first measurement (``PARTS_STORE.md`` G11C clause 12)."""
+    return _record_family_baseline(
+        score,
+        path,
+        family=FAMILY_COMPONENT,
+        tasks=COMPONENT_FAMILY_TASKS,
+        min_seeds=COMPONENT_BASELINE_MIN_SEEDS,
+        refusal=INSUFFICIENT_COMPONENT_SEEDS,
+        citation="PARTS_STORE.md Gate G11C clause 12",
+    )
+
+
+def record_scan_baseline(score: BenchScore, path: Path) -> dict[str, Any] | None:
+    """The scan family's first measurement (``MESH_INGEST.md`` §7.5, G12C.51).
+
+    Its own split, its own first measurement, its own threshold — and the
+    existing 0.70 prose bar keys on its own coverage constant and is not
+    diluted, because :func:`split_name` never let these runs into it.
+    """
+    return _record_family_baseline(
+        score,
+        path,
+        family=FAMILY_SCAN,
+        tasks=SCAN_FAMILY_TASKS,
+        min_seeds=SCAN_BASELINE_MIN_SEEDS,
+        refusal=INSUFFICIENT_SCAN_SEEDS,
+        citation="MESH_INGEST.md §7.5 Gate G12C clause 51",
+    )
 
 
 def write_score(score: BenchScore, path: Path) -> Path:

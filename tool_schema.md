@@ -617,6 +617,102 @@ partial facts, ask a cheaper question, or raise the ceiling.
 policy, cited like any other requirement under `VALIDATION.md` §1. There are no
 `build:<id>` targets in Stage 8B.
 
+### compare_to_scan
+```
+compare_to_scan(part: str, scan: str, units: "mm"|"cm"|"m"|"in",
+                align: "as_posed"|"declared" = "as_posed",
+                declared_transform: number[16]|null = null)
+    -> {status: "ok", align,
+        part: {kind: "part", name, artifact_ref},
+        scan: {kind: "scan", path, units, sha256, canonical_hash, snapshot_ref},
+        distance: {align, declared_transform,
+                   scan_to_part_mean_mm, scan_to_part_max_mm,
+                   scan_to_part_min_mm, scan_samples,
+                   part_to_scan_mean_mm, part_to_scan_max_mm,
+                   part_to_scan_upper_bound_mm, part_to_scan_method,
+                   part_to_scan_bias, part_to_scan_refusal, part_samples,
+                   scan_canonical_hash, part_artifact_ref},
+        quality, resolved_artifact_refs}
+```
+`MESH_INGEST.md` §6/§7.2. How far an authored part is from a **scan** — a
+triangle mesh under `imports/` — as facts. Read-only, freely retryable, stores
+nothing; on the `part` and `orchestrator` profiles, matching `compare_solids`.
+
+`part` is compared as its **current successful build artifact**, never a live
+build. `scan` is an `imports/`-relative path (the `scan:` prefixed spelling a
+`CHECKS` predicate uses is accepted too), read through the `INGEST.md` §1
+confinement walk under the §1.6 byte ceiling for a mesh, then canonicalized by
+the §1.5 pipeline — so what this tool measures is exactly what a build would
+have admitted, refusals included.
+
+`units` is **required and has no default**. STL, PLY, OBJ, OFF and XYZ carry no
+unit and the engine is millimetres throughout (§1.3); a default here would be
+the harness guessing a scale on the operator's behalf at exactly the size where
+the guess is plausible and wrong. The response carries **two hashes**: `sha256`
+is the file's identity and `canonical_hash` is the geometry's, so two runs can
+say "the file changed, the geometry did not" (§1.4).
+
+**The record's missing fields are the design** (§6.4). There is no `iou`: a
+`volume_diff` needs a solid on both sides, and getting one from a scan costs a
+sew whose `BRepCheck_Analyzer` gate refuses most real scans, so the boolean's
+answer would be untrustworthy even when it returned — asking for one is refused
+`scan_iou_unavailable`. There is no `chamfer_mm`: one of the two directions may
+be an upper bound, and the mean of an exact number and a bound has no defined
+meaning. The two directions are reported separately, always.
+
+- **scan → part** (`scan_to_part_*`) is exact: the canonical mesh's welded
+  vertices measured against the true B-rep surface, with `scan_samples` saying
+  how many were used. `scan_to_part_min_mm` is the closest any sampled scan
+  vertex came to the part — the field a clearance requirement reads, because
+  "clears the scan at every sampled vertex" is a statement about the minimum.
+- **part → scan** (`part_to_scan_*`) samples the part's faces on the existing
+  deterministic parameter grid and measures them mesh-side. `part_to_scan_method`
+  is `kdtree_bound_exact_triangle` — kd-tree candidates plus exact
+  point-to-triangle refinement, *exact*, not approximate — or
+  `vertex_nn_upper_bound`, the declared fallback when a neighbourhood overflowed
+  (`part_to_scan_refusal: "scan_neighborhood_overflow"`, `part_to_scan_bias:
+  "over"`). `part_to_scan_mean_mm` and `part_to_scan_max_mm` are both populated
+  or both null, and `part_to_scan_upper_bound_mm` is the complement of both:
+  never an exact field beside a bound, never all three absent.
+
+A comparison with **nothing to sample on one side** is refused
+`scan_unmeasurable` (§6.4, §10) rather than answered: a part with no faces (a
+`Line`, a `Wire`, an unbuilt shape) measures no part→scan direction at all, and
+a directed distance of `0.0` computed from zero samples is the absence of a
+measurement, not a measurement of coincidence. The record has no state for a
+direction that did not run — its nulls mean "the exact refinement was
+abandoned", which is a different fact — so the refusal is the honest shape.
+
+`align` is a declared choice, never a silent normalization: `as_posed` compares
+the scan where the operator placed it, `declared` applies the supplied row-major
+4×4, which is validated as **rigid** (orthonormal to 1e-9, determinant +1, last
+row `0 0 0 1`) or refused `declared_transform_not_rigid` — a rigid alignment may
+rotate a scan, never mirror or scale it. `align="principal"` is refused by name
+with `scan_principal_unavailable`: `principal_alignment` needs a shape with
+volume, and a limb scan is always partial, so the sampled region's principal
+axes are not the object's. There is **no fitted registration** — no ICP exists
+in the pinned stack and this stage adds none.
+
+A `scan:` target on `compare_solids` (or `m.diff`) is refused
+`scan_target_unsupported` naming this tool, rather than widening `SolidDiff` to
+carry fields it cannot fill.
+
+**Bounded execution** (§7.3). The distance runs in a killable subprocess under a
+wall-clock ceiling (`HEPHAESTUS_SCAN_TIMEOUT_S`, default 300 s). The cheap facts
+— the §3 quality record, both bboxes, the counts — are computed first; a
+comparison that cannot finish refuses **`scan_timeout`** carrying whatever
+arrived plus `lost` naming the directions that were cut short. Each direction
+is reported the moment it finishes rather than at the end, so a kill during the
+expensive part→scan half still hands back the exact scan→part figures under
+`partial.completed`; `lost` and `completed` partition the same two names, and
+the §6.4 invariant travels with the partial, so a completed half is never a
+bound wearing an exact field's name.
+
+**Nothing here is a clinical claim** (§11.3). This is a geometric distance at
+named samples to a named tolerance. A distance figure is not a fit;
+rectification is clinical judgement the harness cannot verify; structural
+adequacy is FEA and is deferred by name.
+
 ### run_checks
 ```
 run_checks(scope: "part"|"project" = "part", name: str|null = null,

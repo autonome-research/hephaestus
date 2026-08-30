@@ -36,6 +36,17 @@ decides). One frozen record and the functions that fill it:
   declared choice, NEVER a silent normalization — an editing task that must
   preserve pose compares `as_posed`; a generation score that shouldn't
   punish a rigid transform compares `principal`.
+  **Amended 2026-08-29 (`MESH_INGEST.md` §6.5, Stage 12C):** a third declared
+  mode, **`declared`**, carries an operator- or script-supplied rigid transform,
+  validated as rigid (orthonormal to 1e-9, determinant +1) or refused by name,
+  and echoed on the record it produced. It exists for scan targets, where
+  `principal` is refused (`scan_principal_unavailable`: `principal_alignment`
+  raises for a shape with no volume, and a limb scan is always *partial*, so the
+  sampled region's principal axes are not the object's). `as_posed` and
+  `principal` semantics are unchanged, `compare_solids` still takes exactly
+  those two, and there is still **no fitted registration** anywhere — no ICP
+  exists in the pinned stack and Stage 12 adds none. Alignment is declared or it
+  is refused.
 - **`topology_diff(a, b)`** — census deltas over the §topology descriptors:
   solid/face/edge counts, per-kind face counts (planar/cylindrical/other),
   `genus`, `is_sealed` — the cheap first look before any boolean runs.
@@ -79,9 +90,45 @@ in 8B.
 ## 4. What deliberately does NOT change
 
 No feature recognition, no semantic "what edit happened" inference — the
-diff reports where the solids disagree, not why. No mesh-based comparison
-path (sampling is on the BRep); no point-cloud imports. No new persistence:
+diff reports where the solids disagree, not why. No new persistence:
 `compare_solids` computes on demand and stores nothing.
+
+**Amended 2026-08-29 (`MESH_INGEST.md` §6, Stage 12C).** The sentence "No
+mesh-based comparison path (sampling is on the BRep); no point-cloud imports"
+is replaced by the scoped rule below. What it protected is kept: `compare_solids`
+and the `SolidDiff` record are **byte-for-byte unchanged**, their sampling is
+still on the BRep, and a `scan:` target on `compare_solids` or `m.diff` is
+refused `scan_target_unsupported` naming the replacement rather than widening
+`SolidDiff`.
+
+A **scan-target** comparison path exists, and it is a *different record type*:
+`compare_to_scan` / `m.scan_diff` return a `ScanDistance`, which reports the two
+directed distances separately with the method that produced each, and which has
+**no `iou`** (an intersection-over-union needs a solid on both sides, and a scan
+yields one only through a sew whose validity gate refuses most real scans) and
+**no `chamfer_mm`** (one direction may be an upper bound, and averaging an exact
+number with a bound produces a number with no defined meaning). `align="principal"`
+is refused against a scan target by name. Point-cloud imports exist as a
+measurement target only (`MESH_INGEST.md` §2.3): a point cloud is not a shape,
+and passing one where a shape is expected is refused `point_cloud_not_a_shape`
+rather than silently sampled to zeros.
+
+Carried forward across the replacement, because it is a rule about a different
+mesh entirely: **an FEA mesh is a solver input, never a comparison operand**
+(`PHYSICS.md` §9, whose "explicit non-amendment" re-anchors here). A solver
+discretization is not a measurement target and nothing in Stage 12 admits one.
+
+*Provenance, stated exactly, because an earlier draft of this paragraph said
+"carried forward verbatim from the replaced sentence" and that was not true.*
+The replaced sentence read "No mesh-based comparison path (sampling is on the
+BRep); no point-cloud imports" — it never contained the FEA rule. The FEA rule
+is `PHYSICS.md` §9's **reading** of that sentence: §9 declares it an explicit
+non-amendment at Stage 15 on the grounds that a solver discretization was
+already excluded by it. What `mission_plan.md`'s Stage 12 row requires is that
+the exclusion **survive this rewrite**, and it does — stated here in its own
+words, above, rather than inherited from a sentence that no longer exists. The
+requirement is met in substance; the earlier claim about where the words came
+from was not, and is corrected rather than left to be discovered.
 
 ## Gate G8B
 

@@ -30,14 +30,16 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Final, cast
 
 from hephaestus.agent_bridge.app import repo_root
 from hephaestus.agent_bridge.cad_ops import EXPORT_FORMATS
 from hephaestus.core.executor.namespace import METADATA_FIELDS
+from hephaestus.geom.mesh import MESH_UNITS
 
 __all__ = [
     "PROMPT_SUFFIXES",
+    "SCAN_CHECK_KINDS",
     "SEEDED_SUFFIX",
     "SPECS",
     "SPEC_PROSE",
@@ -52,6 +54,7 @@ __all__ = [
     "MotionCheckRequirement",
     "PoseRequirement",
     "RenderRequirement",
+    "ScanRequirement",
     "base_task_id",
     "corpus_solutions_dir",
     "corpus_tasks_dir",
@@ -501,6 +504,107 @@ class MotionCheckRequirement:
         return {"entry": dict(self.entry), "expect": self.expect}
 
 
+#: The closed ``scan_requirements`` check vocabulary (``MESH_INGEST.md`` §7.5).
+#: Two kinds, and both are FUNCTIONAL: they measure the delivered part against
+#: the scan the task seeded, never against the reference solution's geometry.
+#: A third kind is an amendment, not a keyword argument.
+SCAN_CHECK_KINDS: Final[tuple[str, ...]] = ("clearance_min", "deviation_max")
+
+
+@dataclass(frozen=True)
+class ScanRequirement:
+    """One scan-fit property the graded part must have (``MESH_INGEST.md`` §7.5).
+
+    Graded **through the engine path** — the same ``compare_to_scan`` the model
+    calls, over the same confined read and the same §1.5 canonicalization a
+    build would run — never from anything the run reported about its own fit.
+
+    Every field the check needs is required and none is defaulted, which is the
+    whole point of :meth:`from_json`'s validation: a ``clearance_min`` with no
+    ``min_mm`` is a requirement that cannot fail, and a requirement that cannot
+    fail is worse than no requirement at all (``VALIDATION.md`` §1's functional-
+    check rule, and §82-98's named-tolerance rule).
+
+    ``units`` is required for the same reason it is required everywhere else in
+    Stage 12: STL/PLY/OBJ/OFF/XYZ carry no unit, and a default here would be the
+    acceptance guessing a scale (``MESH_INGEST.md`` §1.3).
+
+    What this vocabulary deliberately CANNOT express is a fit: a clearance is a
+    geometric distance at named samples, and no entry here may be read as
+    evidence that a socket fits a limb (§11.3).
+    """
+
+    part: str
+    scan: str
+    units: str
+    kind: str
+    #: ``clearance_min``: the closest any sampled scan vertex may come to the
+    #: part. Read from ``scan_to_part_min_mm``, which is exact.
+    min_mm: float | None = None
+    #: ``deviation_max``: the furthest any sampled scan vertex may be from it.
+    max_mm: float | None = None
+    align: str = "as_posed"
+    note: str = ""
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> ScanRequirement:
+        for field_name in ("part", "scan", "units", "kind"):
+            if not data.get(field_name):
+                raise ValueError(f"a scan requirement needs {field_name!r} (MESH_INGEST.md §7.5)")
+        kind = str(data["kind"])
+        if kind not in SCAN_CHECK_KINDS:
+            raise ValueError(
+                f"scan requirement kind must be one of {list(SCAN_CHECK_KINDS)}, got "
+                f"{kind!r} (MESH_INGEST.md §7.5: the vocabulary is closed)"
+            )
+        units = str(data["units"])
+        if units not in MESH_UNITS:
+            raise ValueError(
+                f"scan requirement units must be one of {list(MESH_UNITS)}, got {units!r} "
+                "— a scan carries none and the engine is millimetres throughout "
+                "(MESH_INGEST.md §1.3)"
+            )
+        align = str(data.get("align", "as_posed"))
+        if align not in ("as_posed", "declared"):
+            raise ValueError(
+                f"scan requirement align must be 'as_posed' or 'declared', got {align!r}; "
+                "'principal' is refused against a scan by name (MESH_INGEST.md §6.5)"
+            )
+        needed = "min_mm" if kind == "clearance_min" else "max_mm"
+        if data.get(needed) is None:
+            raise ValueError(
+                f"a {kind!r} scan requirement needs {needed!r}: a check without its "
+                "named tolerance cannot fail, which is worse than no check "
+                "(VALIDATION.md §1, MESH_INGEST.md §7.5)"
+            )
+        return cls(
+            part=str(data["part"]),
+            scan=str(data["scan"]),
+            units=units,
+            kind=kind,
+            min_mm=None if data.get("min_mm") is None else float(cast("float", data["min_mm"])),
+            max_mm=None if data.get("max_mm") is None else float(cast("float", data["max_mm"])),
+            align=align,
+            note=str(data.get("note", "")),
+        )
+
+    def to_json(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "part": self.part,
+            "scan": self.scan,
+            "units": self.units,
+            "kind": self.kind,
+            "align": self.align,
+        }
+        if self.min_mm is not None:
+            out["min_mm"] = self.min_mm
+        if self.max_mm is not None:
+            out["max_mm"] = self.max_mm
+        if self.note:
+            out["note"] = self.note
+        return out
+
+
 @dataclass(frozen=True)
 class MetadataRequirement:
     """§5.2 manufacturing metadata the graded part must really carry.
@@ -641,6 +745,10 @@ class BenchTask:
     joints: tuple[JointRequirement, ...] = ()
     poses: tuple[PoseRequirement, ...] = ()
     motion_checks: tuple[MotionCheckRequirement, ...] = ()
+    #: ``MESH_INGEST.md`` §7.5 (Stage 12C, corpus v5): scan-fit properties the
+    #: grader measures through ``compare_to_scan`` against the scan the task
+    #: seeded into ``imports/``.
+    scans: tuple[ScanRequirement, ...] = ()
     #: Seeded, task-owned files (inspection gauges, broken fixtures) restored
     #: from ``seed/`` before grading, so a run cannot pass by editing them.
     protected_paths: tuple[str, ...] = ()
@@ -684,6 +792,8 @@ class BenchTask:
                 anchor = str(joint.entry.get(side, ""))
                 if anchor:
                     names.add(anchor.split(":", 1)[0])
+        for scan in self.scans:
+            names.add(scan.part)
         for check in self.motion_checks:
             for field_name in ("a", "b", "anchor"):
                 anchor = str(check.entry.get(field_name, "") or "")
@@ -783,6 +893,7 @@ class BenchTask:
         joints_raw = data.get("joint_requirements", [])
         poses_raw = data.get("pose_requirements", [])
         motion_checks_raw = data.get("motion_check_requirements", [])
+        scans_raw = data.get("scan_requirements", [])
         task = cls(
             id=task_id,
             directory=directory,
@@ -825,6 +936,10 @@ class BenchTask:
                 MotionCheckRequirement.from_json(cast("Mapping[str, Any]", item))
                 for item in cast("Sequence[Any]", motion_checks_raw)
             ),
+            scans=tuple(
+                ScanRequirement.from_json(cast("Mapping[str, Any]", item))
+                for item in cast("Sequence[Any]", scans_raw)
+            ),
             protected_paths=tuple(
                 str(item) for item in cast("Sequence[Any]", data.get("protected_paths", []))
             ),
@@ -855,6 +970,7 @@ class BenchTask:
             "joint_requirements": [j.to_json() for j in self.joints],
             "pose_requirements": [p.to_json() for p in self.poses],
             "motion_check_requirements": [m.to_json() for m in self.motion_checks],
+            "scan_requirements": [s.to_json() for s in self.scans],
             "protected_paths": list(self.protected_paths),
         }
 

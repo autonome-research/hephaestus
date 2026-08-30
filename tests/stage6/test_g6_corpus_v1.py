@@ -41,6 +41,7 @@ from hephaestus.bench.harness import (
 )
 from hephaestus.bench.scoring import (
     COMPONENT_FAMILY_TASKS,
+    CORPUS_FAMILIES,
     FAMILY_COMPONENT,
     G2_AGGREGATE_THRESHOLD,
     G6_AGGREGATE_THRESHOLD,
@@ -66,8 +67,11 @@ from hephaestus.core.executor.sandbox.bwrap import find_bwrap
 #: component-bearing pair ``bearing-shaft`` and ``motor-plate`` brings it to
 #: twenty-one. Same clause, same 0.70 bar on the same v1 coverage — G11C
 #: clause 12 keeps the component family in its OWN split for exactly that
-#: reason.
-CORPUS_SIZE = 21
+#: reason. Repointed again 2026-08-29 (Stage 12, MESH_INGEST.md §7.5 / G12C
+#: clause 50, the same "repointed with this stage cited" rule): the scan family
+#: ``scan-socket-cuff`` and ``scan-boss-relief`` brings it to twenty-three, and
+#: G12C.51 keeps that family in its own split for the same reason again.
+CORPUS_SIZE = 23
 
 #: The Stage 6 additions the clause names by role.
 DFM_REPAIR_TASK = "dfm-repair"
@@ -97,7 +101,9 @@ def test_the_public_corpus_loads_with_a_reference_solution_each(
     solution — is unchanged; only the count moved: sixteen with the corpus-v2
     additions (the ingest pair and the assembly pair), nineteen with the
     corpus-v3 mechanism tasks (KINEMATICS.md §6), twenty-one with the
-    corpus-v4 component pair (2026-08-29, PARTS_STORE.md G11C clause 13). The
+    corpus-v4 component pair (2026-08-29, PARTS_STORE.md G11C clause 13),
+    twenty-three with the corpus-v5 scan family (2026-08-29, MESH_INGEST.md
+    §7.5 / G12C clause 50). The
     v1 dozen the G6 measurement stands on are all still present (the
     meta-suite asserts the subset).
     """
@@ -213,12 +219,22 @@ def test_a_corpus_v1_archive_is_gated_against_070_on_the_prose_split_alone(
     The pin is strengthened rather than relaxed in the same edit: the carved-out
     runs are followed to where they went, so "not in the gate" can never quietly
     become "not measured at all".
+
+    **Repointed again 2026-08-29**, citing ``MESH_INGEST.md`` §7.5 / G12C clause
+    51, which registers a second family — the scan pair — under the same rule.
+    The clause is unchanged and is asserted against the family VOCABULARY rather
+    than against one family's members, so the next family lands here as a
+    declared carve-out instead of as a failure; what may never happen, and is
+    what this still pins, is a task leaving the gated split without being in a
+    declared family.
     """
     prose = sorted(task_ids(specs=("prose",)))
     gated = sorted(task for task in prose if task_family(task) is None)
-    assert set(prose) - set(gated) == set(COMPONENT_FAMILY_TASKS), (
-        "the only tasks outside the gated split are the declared component family"
+    declared = {task for members in CORPUS_FAMILIES.values() for task in members}
+    assert set(prose) - set(gated) == declared & set(prose), (
+        "the only tasks outside the gated split are the declared corpus families"
     )
+    assert set(COMPONENT_FAMILY_TASKS) <= declared
     records: list[dict[str, Any]] = []
     for task_id in prose:
         for seed in (1, 2, 3):

@@ -350,8 +350,11 @@ def test_committed_schema_files_match_the_declared_surface() -> None:
     # +3 for the KINEMATICS.md Stage 9B motion-check triplet
     # (declare_motion_check / update_motion_check / read_motion_checks, §4/§6);
     # +3 for the KINEMATICS.md Stage 9C coupling triplet
-    # (declare_coupling / update_coupling / read_couplings, §5/§6).
-    assert len(TOOL_NAMES) == 53
+    # (declare_coupling / update_coupling / read_couplings, §5/§6);
+    # +1 for MESH_INGEST.md §7.2 compare_to_scan (Stage 12C) — the amendment
+    # manifest's `tool_schema.md` row, and the only tool the whole mesh-ingest
+    # stage adds.
+    assert len(TOOL_NAMES) == 54
 
 
 def test_sequential_declarations_cover_the_normative_list() -> None:
@@ -413,7 +416,12 @@ def test_orchestrator_only_families_are_declared_orchestrator_only() -> None:
     # ("part + orchestrator profiles"): converging on a target is interpretation
     # work with a ledger behind it, not a quick edit, and the §5 reviewer reads
     # published evidence rather than re-running comparisons.
-    comparison_family = {"compare_solids"}
+    # MESH_INGEST.md §7.2 (Stage 12C) declares compare_to_scan on exactly those
+    # two profiles, "matching compare_solids", and for the same reasons: scoring
+    # a part against a scan is interpretation work with a ledger behind it, not
+    # a quick edit, and the §5 reviewer is HANDED the scan facts rather than
+    # re-running the comparison.
+    comparison_family = {"compare_solids", "compare_to_scan"}
     # ASSEMBLY.md §3 declares the constraint quartet on the CANONICAL PIPELINE
     # only ("part + orchestrator profiles"): declaring a cross-part mate is
     # interpretation work with a ledger behind it, not a quick edit, and the §5

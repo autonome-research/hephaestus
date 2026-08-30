@@ -1,0 +1,8 @@
+# scan-socket-cuff bench task: an empty project carrying one scan.
+# `imports/limb.stl` is a SYNTHESIZED scan (scripts/synthesize_scan_fixture.py):
+# a tessellated R25 x 60 cylinder, so the clearance the acceptance measures has
+# an analytic ground truth. A real scan has none, and a task graded against one
+# could only ever compare two measurements.
+[project]
+name = "scansocketcuff"
+description = "A cuff authored AGAINST a limb scan, never offset from it"

@@ -1029,6 +1029,109 @@ def _compare_solids() -> ToolDecl:
     )
 
 
+#: The ``MESH_INGEST.md`` §6.4 ``ScanDistance``, as the tool returns it. The
+#: two fields it deliberately LACKS are the design: no ``iou`` (an IoU needs a
+#: solid on both sides, and getting one from a scan means a sew whose validity
+#: gate refuses most real scans) and no ``chamfer_mm`` (one direction may be an
+#: upper bound, and the mean of an exact number and a bound has no defined
+#: meaning). The two directions are reported separately, always, with the method
+#: that produced each.
+_SCAN_DISTANCE: Final[JsonSchema] = _obj(
+    {
+        "align": _enum(["as_posed", "declared"]),
+        "declared_transform": {"anyOf": [{"type": "array", "items": _NUM}, {"type": "null"}]},
+        "scan_to_part_mean_mm": _NUM,
+        "scan_to_part_max_mm": _NUM,
+        "scan_to_part_min_mm": _NUM,
+        "scan_samples": _INT,
+        "part_to_scan_mean_mm": {"anyOf": [_NUM, {"type": "null"}]},
+        "part_to_scan_max_mm": {"anyOf": [_NUM, {"type": "null"}]},
+        "part_to_scan_upper_bound_mm": {"anyOf": [_NUM, {"type": "null"}]},
+        "part_to_scan_method": _enum(["kdtree_bound_exact_triangle", "vertex_nn_upper_bound"]),
+        "part_to_scan_bias": _enum(["exact", "over"]),
+        "part_to_scan_refusal": {"anyOf": [_STR, {"type": "null"}]},
+        "part_samples": _INT,
+        "scan_canonical_hash": _STR,
+        "part_artifact_ref": _STR,
+    },
+    [
+        "align",
+        "scan_to_part_mean_mm",
+        "scan_to_part_max_mm",
+        "scan_to_part_min_mm",
+        "scan_samples",
+        "part_to_scan_method",
+        "part_samples",
+    ],
+    additional=True,
+)
+
+
+def _compare_to_scan() -> ToolDecl:
+    return ToolDecl(
+        name="compare_to_scan",
+        summary="Scan-distance between a part and a scan: mesh under imports/ (both directions).",
+        params=_obj(
+            {
+                "part": _ident(),
+                "scan": _STR,
+                # MESH_INGEST.md §1.3: STL/PLY/OBJ/OFF/XYZ carry no unit and the
+                # engine is millimetres throughout, so the unit is DECLARED or
+                # the file is refused. It is required here — a default would be
+                # the harness guessing a scale on the operator's behalf at
+                # exactly the size where the guess is plausible and wrong.
+                "units": _enum(["mm", "cm", "m", "in"]),
+                # §6.5: 'principal' is absent from the enum because it is
+                # refused, not defaulted away — principal_alignment needs a
+                # shape with volume, and a limb scan is always partial.
+                "align": _enum(["as_posed", "declared"], "as_posed"),
+                "declared_transform": {
+                    "anyOf": [
+                        {"type": "array", "items": _NUM, "minItems": 16, "maxItems": 16},
+                        {"type": "null"},
+                    ],
+                    "default": None,
+                },
+            },
+            ["part", "scan", "units"],
+        ),
+        result=_ok(
+            {
+                "status": {"const": "ok"},
+                "align": _STR,
+                "part": _obj(
+                    {"kind": {"const": "part"}, "name": _STR, "artifact_ref": _STR},
+                    ["kind", "name"],
+                    additional=True,
+                ),
+                # Two hashes, because they answer different questions (§1.4):
+                # ``sha256`` is the file's identity, ``canonical_hash`` is the
+                # geometry's, and two runs can say "the file changed, the
+                # geometry did not".
+                "scan": _obj(
+                    {
+                        "kind": {"const": "scan"},
+                        "path": _STR,
+                        "units": _STR,
+                        "sha256": _STR,
+                        "canonical_hash": _STR,
+                        "snapshot_ref": _STR,
+                    },
+                    ["kind", "path", "units", "sha256", "canonical_hash"],
+                    additional=True,
+                ),
+                "distance": _SCAN_DISTANCE,
+                "quality": _dict(),
+                "resolved_artifact_refs": {"type": "array", "items": _STR},
+            },
+            ["status", "align", "part", "scan", "distance", "quality"],
+        ),
+        profiles=("part", "orchestrator"),
+        sequential=False,
+        idempotent=False,
+    )
+
+
 def _run_checks() -> ToolDecl:
     conditional = [
         {
@@ -3041,6 +3144,10 @@ TOOLS: Final[tuple[ToolDecl, ...]] = (
     _read_artifact(),
     _measure(),
     _compare_solids(),
+    # MESH_INGEST.md §7.2: exactly ONE new tool for the whole of Stage 12 —
+    # mesh FACTS ride the build record and ``heph scan``, because each tool
+    # costs five drift-tested generated artifacts and a per-profile decision.
+    _compare_to_scan(),
     _run_checks(),
     _record_requirements(),
     _read_requirements(),

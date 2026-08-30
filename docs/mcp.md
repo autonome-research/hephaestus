@@ -122,7 +122,7 @@ they cover
   `read_part`, `write_part`, `edit_part`, `read_globals`, `edit_globals`,
   `set_params`;
 - **build and inspect** — `build_part`, `inspect_part`, `measure`,
-  `query_snapshot`, `read_artifact`, `compare_solids`;
+  `query_snapshot`, `read_artifact`, `compare_solids`, `compare_to_scan`;
 - **checks and requirements** — `create_project_check`, `read_project_check`,
   `edit_project_check`, `list_project_checks`, `run_checks`,
   `record_requirements`, `read_requirements`, `update_requirement`;

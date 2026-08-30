@@ -43,10 +43,16 @@ from opstore import OpStore
 # clause 15 — contract drift, record-only half
 
 
-def test_the_tool_count_is_unchanged_at_53() -> None:
+def test_the_tool_count_is_unchanged_by_this_stage() -> None:
     """§3: two result schemas grow; no tool is added. That is the whole point
-    of putting the capability in the result rather than on the surface."""
-    assert len(tools_decl.tool_names()) == 53
+    of putting the capability in the result rather than on the surface.
+
+    The literal moved 53 -> 54 when MESH_INGEST.md §7.2 (Stage 12C) added
+    ``compare_to_scan``. What THIS clause pins is unchanged and is asserted
+    directly: Stage 11 adds no tool of its own.
+    """
+    assert len(tools_decl.tool_names()) == 54
+    assert "compare_to_scan" in tools_decl.tool_names()
 
 
 def test_the_generated_artifacts_regenerate_identically() -> None:
@@ -313,9 +319,18 @@ def test_the_geom_import_boundary_suite_passes_unchanged() -> None:
     assert completed.returncode == 0, completed.stdout[-4000:] + completed.stderr[-2000:]
 
 
-def test_the_geom_seam_still_holds_exactly_nine_pure_services() -> None:
+def test_the_geom_seam_holds_exactly_the_declared_pure_services() -> None:
     """§10: "this stage adds nothing to the nine pure services". Enumerated, so
-    the claim fails here if a later edit smuggles a tenth in."""
+    the claim fails here if a later edit smuggles one in unannounced.
+
+    The list moved from nine to eleven, and both additions are declared by a
+    later stage rather than by this one: ``MESH_INGEST.md`` §2.1 adds
+    ``geom.mesh`` as the tenth pure service (external triangles -> facts, the
+    mission rule 6 seam against ``render.tessellate``) and §4 adds
+    ``geom.mesh_solid`` as the eleventh (the OCCT half — sew, the
+    ``BRepCheck_Analyzer`` gate, the loft). What THIS clause pins is unchanged:
+    Stage 11 adds none of them, and every name below is still here.
+    """
     package = REPO / "core" / "src" / "hephaestus" / "geom"
     services = sorted(path.stem for path in package.glob("*.py") if path.stem != "__init__")
     assert services == [
@@ -324,6 +339,8 @@ def test_the_geom_seam_still_holds_exactly_nine_pure_services() -> None:
         "kerf",
         "kinematics",
         "measure",
+        "mesh",
+        "mesh_solid",
         "metrics",
         "nesting",
         "step_io",

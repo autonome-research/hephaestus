@@ -16,16 +16,17 @@ from __future__ import annotations
 
 import builtins as _builtins
 import math as _math
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, cast
 
 from hephaestus.core.errors import SandboxDeniedError, ValidationError
 from hephaestus.core.params import Param, extract_params, merge_overrides
 
 if TYPE_CHECKING:
     from hephaestus.core.executor.tags import TagRegistry
+    from hephaestus.geom.mesh import MeshAsset
     from opstore.types import JSONValue
 
 #: §5.2 manufacturing-metadata field names (schema'd for lint, free-text valued).
@@ -43,6 +44,32 @@ METADATA_FIELDS: tuple[str, ...] = (
 
 #: The §2 injected name for STEP ingest (``INGEST.md`` §1).
 _IMPORT_STEP = "import_step"
+#: The two §2 injected names for mesh ingest (``MESH_INGEST.md`` §1.1, §7.1).
+#: Terms, not tools — the 8A precedent: ``import_step`` never became a tool
+#: either, and at a tool surface pinned in two places the capability belongs in
+#: the script.
+_IMPORT_MESH = "import_mesh"
+_IMPORT_POINT_CLOUD = "import_point_cloud"
+#: The three ``MESH_INGEST.md`` 12B terms (§4.3, §5.2, §5.3). Each must be
+#: injected because ``__import__`` is absent and the §2 namespace is closed: a
+#: part script has no route to ``BRepBuilderAPI_Sewing`` or
+#: ``GeomAPI_PointsToBSpline``, so a workflow naming one would name an
+#: unreachable path. G12B.29 asserts the injected set is exactly these five
+#: plus the pre-existing §2 list.
+_MESH_TO_SOLID = "mesh_to_solid"
+_SECTION_POLYLINES = "section_polylines"
+_LOFT_SECTIONS = "loft_sections"
+
+#: The five ``MESH_INGEST.md`` names this stage injects, in the order
+#: ``script_contract.md`` §2 lists them. Declared as a value so the closure test
+#: can compare against a constant rather than transcribe one.
+MESH_INJECTED_NAMES: Final[tuple[str, ...]] = (
+    _IMPORT_MESH,
+    _IMPORT_POINT_CLOUD,
+    _MESH_TO_SOLID,
+    _SECTION_POLYLINES,
+    _LOFT_SECTIONS,
+)
 
 #: Builtins deliberately absent; attempting them raises ``sandbox_denied``.
 DENIED_BUILTINS: tuple[str, ...] = (
@@ -331,6 +358,40 @@ class PartOutput:
         # hc.sheet_t) — semantically right, silently stored, and failed later
         # as "missing" when the grader's blank parser saw a list. The loud
         # error names the expected form so the author converts in-run.
+        if name == "geometry":
+            # MESH_INGEST.md §2.3: a point cloud is not a shape. It has no
+            # faces, and ``geom.compare.surface_distance`` on a shape with no
+            # faces returns ZEROS with zero sample counts rather than refusing
+            # — honest only because the counts are in the record, and not
+            # honest enough for something that will be handed a point cloud by
+            # mistake. The refusal is at the boundary, by name, so it can never
+            # be silently sampled to zeros downstream.
+            from hephaestus.geom.mesh import MeshAsset, MeshTypeError, PointCloudAsset
+
+            if isinstance(value, PointCloudAsset):
+                # ``MeshTypeError`` rather than a bare ``ValidationError``: this
+                # site used to hand-write ``point_cloud_not_a_shape:`` into its
+                # own prose with no ``reason=`` behind it, so the §10 code
+                # existed as text and nowhere a caller could branch on — and
+                # G12A.14 binds it by message substring, which such prose can
+                # keep saying after the vocabulary has moved. The code now
+                # derives from ``reason``.
+                raise MeshTypeError(
+                    "a PointCloudAsset has no faces, no "
+                    "volume and no topology, so it cannot be part.geometry. In 12A a "
+                    "point cloud can be measured (bbox, count) and nothing else; "
+                    "reconstruction to a mesh is out of scope (MESH_INGEST.md §2.3)",
+                    reason="point_cloud_not_a_shape",
+                )
+            if isinstance(value, MeshAsset):
+                raise ValidationError(
+                    "a MeshAsset is a measurement target, not geometry: a mesh has no "
+                    "exact topology, so it is not a Shape and part.geometry will not "
+                    "take one. Author the socket against the scan and measure the gap "
+                    "(MESH_INGEST.md §5.2); mesh_to_solid lands in 12B behind a "
+                    "mandatory validity gate (§4.3)",
+                    kind="contract",
+                )
         if name != "geometry" and not isinstance(value, str):
             raise ValidationError(
                 f"part.{name} is a string-valued §5.2 metadata field "
@@ -398,12 +459,424 @@ class ImportRegistry:
         self._staged = dict(staged)
         self._failures = dict(failures or {})
         self.used: list[str] = []
+        #: ``{declared path: mesh_canonical_hash}`` for every mesh asset this
+        #: script resolved (``MESH_INGEST.md`` §1.4, §12 item 15). A second hash
+        #: the build record has never carried: two builds whose
+        #: ``input_hashes`` differ but whose canonical hashes agree can say
+        #: "the file changed, the geometry did not". It is an explanatory fact
+        #: and never an invalidation key — reversing that would let a
+        #: normalizer decide what counts as a changed build.
+        self.mesh_hashes: dict[str, str] = {}
+        #: ``{mesh_canonical_hash: canonical blob}`` for every mesh this script
+        #: resolved. A :class:`~hephaestus.geom.mesh.MeshAsset` is a FACTS
+        #: record — §2.2's whole mechanism is that it has no field a solid's
+        #: vocabulary would recognise — so the geometry cannot ride on it, and
+        #: ``mesh_to_solid`` / ``section_polylines`` look it up here by the hash
+        #: that names it. The blob is keyed by its own hash rather than by path,
+        #: so two declarations of one file at one unit share one entry and two
+        #: units never do.
+        self._mesh_blobs: dict[str, bytes] = {}
+        #: Whether this build ever converted a mesh into geometry (§4.3). It is
+        #: what ``geometry_source`` reads: importing a mesh and MEASURING
+        #: against it leaves a build ``"authored"`` — the scan was measurement
+        #: data — and §5.2 exists precisely so that distinction stays true.
+        self.mesh_derived = False
 
     def import_step(self, name: str) -> object:
         """Deserialize the staged shape for ``name`` (script contract §2)."""
         shape = self.resolve(name)
         self._record(name)
         return shape
+
+    def import_mesh(self, name: str, units: str | None = None) -> object:
+        """The ``MESH_INGEST.md`` §1.1 mesh term, inside the worker (§7.1).
+
+        Three steps, not the two ``import_step`` does, and this does not claim
+        parity with it: a dictionary lookup, a deserialize of the ``.hmesh``
+        blob, and a read of its ``.hmesh.facts`` sidecar. The third exists
+        because ``welded_vertex_pairs``, ``degenerate_triangles_dropped`` and
+        ``vertex_count_as_read`` are facts about the mesh *before*
+        canonicalization and are unrecoverable from a post-weld blob; the
+        sidecar is the only honest channel for them (§1.5.2).
+
+        What IS unchanged from ``import_step`` is the property that matters: the
+        worker never sees a project path, both files are staged read-only in the
+        worker's own input area, and ``open`` stays absent from the script
+        namespace — the registry reads them, not the script.
+        """
+        from hephaestus.core.executor.imports import staged_key
+        from hephaestus.geom.mesh import mesh_asset_from_staged
+
+        blob, facts, resolved = self._staged_mesh(name, units, "import_mesh")
+        asset = mesh_asset_from_staged(blob, facts, source_path=name, units=resolved)
+        self._record(name)
+        # Keyed by (path, unit), not by path: two units over one file are two
+        # canonical geometries, and a path-keyed record would report one of
+        # them as if it were both (§1.5.1).
+        self.mesh_hashes[staged_key(name, resolved)] = asset.canonical_hash
+        self._mesh_blobs[asset.canonical_hash] = blob
+        return asset
+
+    def import_point_cloud(self, name: str, units: str | None = None) -> object:
+        """The §1.1 point-cloud term: a :class:`PointCloudAsset`, never a shape.
+
+        A point cloud has no faces and cannot ride ``shape_from_brep``. It is
+        also the sharpest silent-failure risk in the stage — ``surface_distance``
+        on a shape with no faces returns zeros with zero sample counts rather
+        than refusing — so it is a *distinct kind*, and passing one where a shape
+        is expected is refused ``point_cloud_not_a_shape`` at the boundary (§2.3).
+        """
+        from hephaestus.core.executor.imports import staged_key
+        from hephaestus.geom.mesh import point_cloud_asset_from_staged
+
+        blob, _facts, resolved = self._staged_mesh(name, units, "import_point_cloud")
+        asset = point_cloud_asset_from_staged(blob, source_path=name, units=resolved)
+        self._record(name)
+        # Keyed by (path, unit), not by path: two units over one file are two
+        # canonical geometries, and a path-keyed record would report one of
+        # them as if it were both (§1.5.1).
+        self.mesh_hashes[staged_key(name, resolved)] = asset.canonical_hash
+        return asset
+
+    # ------------------------------------------------------------------
+    # MESH_INGEST.md 12B: the three terms that turn a scan into something a
+    # script can build with — behind the refusals that keep each of them from
+    # producing a surface the geometry does not support.
+
+    def mesh_to_solid(self, asset: object, intent: str | None = None) -> object:
+        """§4.3: sew a mesh into a B-rep solid, behind a MANDATORY validity gate.
+
+        ``intent`` is the closed set ``{"measurement_target", "boolean_operand"}``
+        and is required. There is no ``"offset_operand"`` value and there will
+        not be one: §4.2 measured ``BRepOffsetAPI_MakeOffsetShape`` at +2 mm over
+        a faceted solid returning ``IsDone``, non-null, sealed, genus 0 — and a
+        volume 0.003 mm³ where the answer is 44602 mm³. Naming the intent is
+        what makes the absent third value visible at the call site.
+
+        The sew runs under the §4.1 subprocess ceiling and
+        ``BRepCheck_Analyzer.IsValid()`` is then checked, with a False verdict
+        refusing ``mesh_solid_invalid``. On the pinned kernel that verdict is
+        False even for a clean tessellated sphere, so this term is expected to
+        refuse most real scans, and §5.2 is the workflow that does not need it.
+        """
+        from hephaestus.core.mesh_solid import bounded_sew_to_solid
+        from hephaestus.geom.mesh_solid import MESH_SOLID_INTENTS, gate_sewn_solid
+
+        mesh = self._mesh_operand(asset, "mesh_to_solid")
+        if not isinstance(intent, str) or intent not in MESH_SOLID_INTENTS:
+            raise ValidationError(
+                f"mesh_to_solid(asset, intent=…): intent is required and comes from the "
+                f"closed set {sorted(MESH_SOLID_INTENTS)}, got {intent!r}. There is no "
+                "'offset_operand': offsetting a mesh-derived solid was measured "
+                "returning a sealed, genus-0, plausible solid whose volume is five "
+                "million times too small (MESH_INGEST.md §4.2, §4.3)",
+                kind="contract",
+            )
+        blob = self._mesh_blobs.get(mesh.canonical_hash)
+        if blob is None:  # pragma: no cover - only reachable via a forged asset
+            raise ValidationError(
+                f"mesh_to_solid({mesh.source_path!r}): that MeshAsset was not produced by "
+                "import_mesh in this build, so its canonical geometry is not staged here",
+                kind="contract",
+            )
+        solid, report = bounded_sew_to_solid(
+            blob,
+            source=mesh.source_path,
+            quality=mesh.quality,
+            bbox_mm=mesh.bbox_mm,
+        )
+        gated = gate_sewn_solid(solid, report, source=mesh.source_path, quality=mesh.quality)
+        # Only a SUCCESSFUL conversion makes the build mesh-derived. A refused
+        # one leaves no mesh geometry in the part, and recording it as derived
+        # would tell a reviewer the part contains scan surface it does not.
+        self.mesh_derived = True
+        return gated
+
+    def section_polylines(
+        self,
+        asset: object,
+        plane: object = None,
+        *,
+        spacing: float | None = None,
+    ) -> object:
+        """§5.3: ordered contours where ``plane`` crosses the scan.
+
+        ``plane`` is a build123d ``Plane`` (or any object exposing ``origin``
+        and ``z_dir``); ``(origin, normal)`` as a pair of triples is accepted
+        too, because a script that computed a cut height arithmetically should
+        not have to construct a ``Plane`` to say so.
+
+        A contour that does not close comes back OPEN and flagged
+        ``open_section_contour`` — never joined end to end, because that would
+        fabricate limb surface at exactly the place a socket presses. A plane
+        that misses is ``empty_section``.
+        """
+        from hephaestus.geom.mesh import deserialize_mesh
+        from hephaestus.geom.mesh import section_polylines as _sections
+
+        mesh = self._mesh_operand(asset, "section_polylines")
+        origin, normal = _plane_terms(plane)
+        blob = self._mesh_blobs.get(mesh.canonical_hash)
+        if blob is None:  # pragma: no cover - only reachable via a forged asset
+            raise ValidationError(
+                f"section_polylines({mesh.source_path!r}): that MeshAsset was not produced "
+                "by import_mesh in this build",
+                kind="contract",
+            )
+        vertices, faces, _factor = deserialize_mesh(blob, source=mesh.source_path)
+        return _sections(
+            vertices,
+            faces,
+            origin=origin,
+            normal=normal,
+            spacing=spacing,
+            source=mesh.source_path,
+        )
+
+    def loft_sections(
+        self,
+        polylines: object,
+        *,
+        closed: bool = True,
+        ruled: bool = False,
+    ) -> object:
+        """§5.2: section contours -> one B-spline each -> an ANALYTIC solid.
+
+        The result is an ordinary build123d ``Solid``, not a mesh-derived one,
+        and that is the point: it was authored through the scan's measurements
+        rather than sewn from its triangles, so ``offset`` / ``thicken`` /
+        ``fillet`` on it are the operations §5.1 measured as working. The scan
+        stays measurement data; the socket is authored geometry.
+
+        ``closed`` is accepted and must be ``True``: this helper lofts through
+        closed contours, and an open one is refused ``open_section_contour``
+        rather than closed on the caller's behalf. It is a keyword rather than
+        an absence so a script reads as §5.2 writes it.
+        """
+        from hephaestus.geom.mesh import SectionPolyline
+        from hephaestus.geom.mesh_solid import loft_sections as _loft
+
+        if closed is not True:
+            raise ValidationError(
+                "loft_sections(polylines, closed=True): closed=False would ask this "
+                "helper to loft through contours it must not close, which is the "
+                "fabrication MESH_INGEST.md §5.3 refuses",
+                kind="contract",
+            )
+        if isinstance(polylines, SectionPolyline):
+            sections = [polylines]
+        elif isinstance(polylines, Sequence) and not isinstance(polylines, str | bytes):
+            sections = list(cast("Sequence[object]", polylines))
+        else:
+            raise ValidationError(
+                "loft_sections(polylines, …) takes the section_polylines results to "
+                f"loft through, got {type(polylines).__name__}",
+                kind="contract",
+            )
+        flat: list[SectionPolyline] = []
+        for entry in sections:
+            if isinstance(entry, SectionPolyline):
+                flat.append(entry)
+            elif isinstance(entry, Sequence) and not isinstance(entry, str | bytes):
+                for inner in cast("Sequence[object]", entry):
+                    if not isinstance(inner, SectionPolyline):
+                        raise ValidationError(
+                            "loft_sections(polylines, …): every entry must be a "
+                            f"SectionPolyline, got {type(inner).__name__}",
+                            kind="contract",
+                        )
+                    flat.append(inner)
+            else:
+                raise ValidationError(
+                    "loft_sections(polylines, …): every entry must be a SectionPolyline, "
+                    f"got {type(entry).__name__}",
+                    kind="contract",
+                )
+        return _loft(flat, ruled=ruled, source="section_polylines")
+
+    def _mesh_operand(self, asset: object, term: str) -> MeshAsset:
+        """The one place a mesh term checks what it was handed (§2.3).
+
+        A ``PointCloudAsset`` here is ``point_cloud_not_a_shape`` by name, never
+        a silent zero: ``geom.compare.surface_distance`` on a shape with no
+        faces returns zeros with zero sample counts, and a point cloud reaching
+        a sew would be the same silent-failure shape one level up.
+        """
+        from hephaestus.geom.mesh import MeshAsset as _MeshAsset
+        from hephaestus.geom.mesh import MeshTypeError, PointCloudAsset
+
+        if isinstance(asset, PointCloudAsset):
+            raise MeshTypeError(
+                f"{term}({asset.source_path!r}) was handed a "
+                "PointCloudAsset. A point cloud has no faces, no volume, no area and "
+                "no topology; there is nothing to sew or section. Surface "
+                "reconstruction is not available and is not approximated "
+                "(MESH_INGEST.md §2.3, §4.4)",
+                reason="point_cloud_not_a_shape",
+            )
+        if not isinstance(asset, _MeshAsset):
+            raise ValidationError(
+                f"{term}(asset, …) takes the MeshAsset that import_mesh returned, got "
+                f"{type(asset).__name__}",
+                kind="contract",
+            )
+        return asset
+
+    def _staged_mesh(self, name: str, units: object, term: str) -> tuple[bytes, str, str]:
+        """``(blob, sidecar text, declared unit)`` for one staged mesh import.
+
+        The lookup key carries the declared unit, because the staged geometry
+        does (§1.5.1): one script may name one file at two units and the two
+        staged blobs are different geometry, so a name-only lookup would hand
+        the second declaration the first's mesh.
+        """
+        from hephaestus.core.executor.imports import ImportResolutionError, staged_key
+
+        if not isinstance(name, str) or not name:  # pyright: ignore[reportUnnecessaryIsInstance]
+            raise ValidationError(
+                f"{term}(name, units=…) requires a non-empty path relative to imports/",
+                kind="contract",
+            )
+        if not isinstance(units, str) or not units:
+            # Raised as an ``ImportResolutionError`` rather than a bare
+            # ``ValidationError`` so the §1.7 code lands in the message by
+            # derivation instead of by hand (G12A.2): this is the site that
+            # actually fires for a positional-only ``import_mesh("x.stl")``, and
+            # a hand-written code here could drift away from the vocabulary
+            # while every message-level assertion downstream stayed green.
+            raise ImportResolutionError(
+                f"{term}({name!r}): units= is required — STL, PLY, OBJ, OFF and XYZ "
+                "carry no unit and the engine is millimetres throughout, so the unit "
+                "is declared or the import is refused (MESH_INGEST.md §1.3)",
+                reason="mesh_units_undeclared",
+                path=name,
+            )
+        key = staged_key(name, units)
+        failure = self._failures.get(key) or self._failures.get(name)
+        if failure is not None:
+            raise ValidationError(failure, kind="contract")
+        staged = self._staged.get(key)
+        if staged is None:
+            available = ", ".join(sorted(self._staged)) or "(none)"
+            raise ValidationError(
+                f"{term}({name!r}, units={units!r}): no such import was staged for this "
+                f"build; imports are resolved from the declared string literals in this "
+                f"script (staged: {available!r})",
+                kind="contract",
+            )
+        facts = staged.with_name(staged.name + ".facts")
+        return staged.read_bytes(), facts.read_text(encoding="utf-8"), units
+
+    def resolve_scan(
+        self,
+        shape: object,
+        path: str,
+        align: str = "as_posed",
+        declared_transform: tuple[float, ...] | None = None,
+    ) -> dict[str, JSONValue]:
+        """The ``m.scan_diff`` resolver inside the worker (``MESH_INGEST.md`` §7.3).
+
+        The scan was frozen and staged with the script's own imports, so this is
+        the same staged-blob lookup ``import_mesh`` does and the sandbox still
+        opens no project path. Two refusals live here and both are named:
+
+        * the target's path was never declared at a unit — a ``scan:`` string
+          carries none and §1.3 forbids inferring one — so the check refuses
+          ``mesh_units_undeclared`` and names the ``import_mesh`` that would fix
+          it, rather than measuring against a scale nobody declared;
+        * the script declared the SAME path at two different units, which makes
+          "the scan" ambiguous: two staged geometries differing by a factor of
+          25.4 are not one target, and picking either would be the §1.5.1
+          failure at check time.
+
+        ``part_artifact_ref`` is deliberately empty on this path. Inside a build
+        the artifact does not exist yet — checks run before publication — and
+        minting a ref for bytes that are not in the store would attribute a
+        measurement to evidence nobody can fetch. The tool and CLI surfaces fill
+        it, because there the build is already published.
+        """
+        import hashlib
+
+        from hephaestus.core.scan_compare import bounded_scan_distance
+
+        staged = self._staged_scan(path)
+        blob = staged.read_bytes()
+        facts = staged.with_name(staged.name + ".facts").read_text(encoding="utf-8")
+        record = bounded_scan_distance(
+            shape,
+            blob,
+            facts,
+            source=path,
+            align=align,
+            declared_transform=None if declared_transform is None else list(declared_transform),
+            scan_canonical_hash="sha256:" + hashlib.sha256(blob).hexdigest(),
+            part_artifact_ref="",
+        )
+        # The §3 quality record is lifted beside the distance rather than left
+        # nested under the cheap-facts section: a predicate reading
+        # ``m.scan_diff(...).quality`` is reading the defects the canonicalizer
+        # measured in the scan it was just compared against, and a check that
+        # had to walk a partial-facts envelope to find them would not be read.
+        cheap = record.pop("scan_facts", None)
+        if isinstance(cheap, dict):
+            quality = cast("dict[str, JSONValue]", cheap).get("quality")
+            record["quality"] = quality if isinstance(quality, dict) else {}
+        return record
+
+    def _staged_scan(self, path: str) -> Path:
+        """The one staged mesh a ``scan:`` target names, or a named refusal."""
+        from hephaestus.core.executor.imports import ImportResolutionError, staged_key
+
+        # ``staged_key(path, unit)`` is ``f"{path}\x00{unit}"`` for a mesh, so
+        # every staged unit of one path shares this prefix. Derived from the
+        # function rather than spelled out, so a change to the key format cannot
+        # silently make this lookup find nothing.
+        prefix = staged_key(path, "")
+        matches = sorted(key for key in self._staged if key.startswith(prefix))
+        if len(matches) == 1:
+            return self._staged[matches[0]]
+        if not matches:
+            failure = self._failures.get(path)
+            detail = f" ({failure})" if failure else ""
+            # The code is DERIVED from ``reason`` by
+            # ``ImportResolutionError.__init__``, never written into this prose.
+            # This site used to hand-write ``mesh_units_undeclared:`` into a bare
+            # ``ValidationError`` — the last such copy in the repository after
+            # the G12A.2 repair routed the others through the constructor, and
+            # the same drift that repair exists to stop: prose and ``reason=``
+            # that can disagree, plus a ``code: `` prefix that a search for the
+            # derived ``[code]`` form does not find. Raised in the same class as
+            # the ``import_mesh`` site above (line ~741) because it is the same
+            # refusal seen from the other end — a declared import that never
+            # happened — and ``ImportResolutionError`` is a ``ValidationError``
+            # with ``kind="contract"``, so every caller that catches one still
+            # does.
+            raise ImportResolutionError(
+                f"the scan target {path!r} was frozen as a build "
+                "input, but no unit was ever declared for it. A scan: target is a string "
+                "and STL/PLY/OBJ/OFF/XYZ carry no unit, so the unit comes from this "
+                f"script's own import_mesh({path!r}, units=…) — declare one of mm, cm, "
+                f"m, in (MESH_INGEST.md §1.3, §7.3){detail}",
+                reason="mesh_units_undeclared",
+                path=path,
+            )
+        units = ", ".join(key[len(prefix) :] for key in matches)
+        # Named, for the reason every other refusal in this stage is: an
+        # unnamed refusal is one a caller can only match by prose, and until
+        # the third repair pass this was the one branch here that had no code
+        # behind it. ``scan_target_ambiguous_units`` is its own term rather
+        # than a reuse of ``mesh_units_conflict`` (§1.3's in-file-versus-
+        # declaration conflict, asserted unreachable in 12A): the same code
+        # spent on two different facts is exactly what §10's disjointness
+        # paragraph forbids.
+        raise ImportResolutionError(
+            f"the scan target {path!r} is ambiguous: this script declared it at "
+            f"{units}. Two staged geometries at different units are not one target — "
+            "they differ by the whole factor the declaration exists to fix — so the "
+            "check names which one it means or it is refused (MESH_INGEST.md §1.5.1)",
+            reason="scan_target_ambiguous_units",
+            path=path,
+        )
 
     def resolve(self, name: str) -> object:
         """The staged shape for ``name``, without recording it as script-used.
@@ -441,6 +914,46 @@ class ImportRegistry:
     def _record(self, name: str) -> None:
         if name not in self.used:
             self.used.append(name)
+
+
+def _plane_terms(plane: object) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+    """``(origin, normal)`` from a build123d ``Plane`` or an explicit pair.
+
+    Kept here rather than in ``geom.mesh`` for the reason the whole geom seam
+    exists: the pure section function takes numbers, and translating a script's
+    vocabulary into numbers is the executor's job. A ``Plane`` is read through
+    its public ``origin`` / ``z_dir``, so anything build123d calls a plane works
+    without this module naming a build123d type.
+    """
+    origin_obj = getattr(plane, "origin", None)
+    normal_obj = getattr(plane, "z_dir", None)
+    if origin_obj is not None and normal_obj is not None:
+        return _triple(origin_obj, "plane.origin"), _triple(normal_obj, "plane.z_dir")
+    if isinstance(plane, Sequence) and not isinstance(plane, str | bytes) and len(plane) == 2:
+        pair = cast("Sequence[object]", plane)
+        return _triple(pair[0], "origin"), _triple(pair[1], "normal")
+    raise ValidationError(
+        "section_polylines(asset, plane, …): plane must be a build123d Plane, or an "
+        f"(origin, normal) pair of three numbers each; got {type(plane).__name__}",
+        kind="contract",
+    )
+
+
+def _triple(value: object, label: str) -> tuple[float, float, float]:
+    """Three floats out of a ``Vector``, a tuple, or anything indexable by x/y/z."""
+    if all(hasattr(value, axis) for axis in ("X", "Y", "Z")):
+        return (
+            float(cast("float", getattr(value, "X"))),  # noqa: B009 - OCP-style attrs
+            float(cast("float", getattr(value, "Y"))),  # noqa: B009
+            float(cast("float", getattr(value, "Z"))),  # noqa: B009
+        )
+    if isinstance(value, Sequence) and not isinstance(value, str | bytes) and len(value) == 3:
+        numbers = cast("Sequence[float]", value)
+        return (float(numbers[0]), float(numbers[1]), float(numbers[2]))
+    raise ValidationError(
+        f"section_polylines: {label} must be three numbers, got {value!r}",
+        kind="contract",
+    )
 
 
 class Approx:
@@ -530,6 +1043,11 @@ def build_namespace(
         namespace["check"] = check_registry.register
     if imports is not None:
         namespace[_IMPORT_STEP] = imports.import_step
+        namespace[_IMPORT_MESH] = imports.import_mesh
+        namespace[_IMPORT_POINT_CLOUD] = imports.import_point_cloud
+        namespace[_MESH_TO_SOLID] = imports.mesh_to_solid
+        namespace[_SECTION_POLYLINES] = imports.section_polylines
+        namespace[_LOFT_SECTIONS] = imports.loft_sections
     namespace["approx"] = approx
     namespace["__builtins__"] = safe_builtins()
     namespace["__name__"] = "__hephaestus_script__"
@@ -558,8 +1076,28 @@ _DUNDERS: Final[frozenset[str]] = frozenset({"__builtins__", "__name__"})
 #: ``_FORBIDDEN_NAMES`` and stay forbidden everywhere; ``import_step`` would put
 #: an ingest inside a selector; ``approx`` is a check helper. None of this is new
 #: policy — it is the existing contract, written down where a parser can cite it.
+#: The two ``MESH_INGEST.md`` §1.1 terms join for exactly the ``import_step``
+#: reason, and one stronger: a selector addresses topology, and mesh topology
+#: carries no identity at all (§2.4). The three 12B terms join with them: a
+#: selector names a region of an already-built solid, and every one of these
+#: three *makes* geometry — ``mesh_to_solid`` sews it, ``loft_sections`` lofts
+#: it, and ``section_polylines`` measures the thing they build from.
 _HANDLES: Final[frozenset[str]] = frozenset(
-    {"p", "part", "tag", "hc", "check", "CHECKS", "import_step", "approx"}
+    {
+        "p",
+        "part",
+        "tag",
+        "hc",
+        "check",
+        "CHECKS",
+        "import_step",
+        "import_mesh",
+        "import_point_cloud",
+        "mesh_to_solid",
+        "section_polylines",
+        "loft_sections",
+        "approx",
+    }
 )
 
 if TYPE_CHECKING:

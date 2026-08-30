@@ -1,0 +1,101 @@
+{
+  "base_image": "ubuntu:24.04@sha256:353675e2a41babd526e2b837d7ec780c2a05bca0164f7ea5dbbd433d21d166fc",
+  "image_digest": "sha256:0bd0427bd17b617235a4f599de0b389ff7159e38dac738778a9e234304cdddd6",
+  "image_ref": "heph-ci-local:latest \u2014 local build of docker/ci/Dockerfile (the GHCR digest ci.yml pins is not pullable from this host: 403 without read:packages)",
+  "measurements": {
+    "sew_canonical_key": {
+      "analyzer_statuses": [],
+      "face_count": 2002,
+      "is_valid": true,
+      "shell_count": 1,
+      "triangle_count": 2002,
+      "vertex_count": 1003
+    },
+    "sew_two_process": {
+      "first": {
+        "sphere_canonical": {
+          "analyzer_statuses": [],
+          "face_count": 2002,
+          "is_valid": true,
+          "shell_count": 1,
+          "triangle_count": 2002,
+          "vertex_count": 1003
+        },
+        "sphere_raw": {
+          "analyzer_statuses": [
+            "face:BRepCheck_UnorientableShapex1",
+            "shell:invalid_unreportedx1",
+            "solid:invalid_unreportedx1",
+            "wire:BRepCheck_SelfIntersectingWirex1"
+          ],
+          "face_count": 2004,
+          "is_valid": false,
+          "shell_count": 1,
+          "triangle_count": 2004,
+          "vertex_count": 1003
+        }
+      },
+      "second": {
+        "sphere_canonical": {
+          "analyzer_statuses": [],
+          "face_count": 2002,
+          "is_valid": true,
+          "shell_count": 1,
+          "triangle_count": 2002,
+          "vertex_count": 1003
+        },
+        "sphere_raw": {
+          "analyzer_statuses": [
+            "face:BRepCheck_UnorientableShapex1",
+            "shell:invalid_unreportedx1",
+            "solid:invalid_unreportedx1",
+            "wire:BRepCheck_SelfIntersectingWirex1"
+          ],
+          "face_count": 2004,
+          "is_valid": false,
+          "shell_count": 1,
+          "triangle_count": 2004,
+          "vertex_count": 1003
+        }
+      }
+    },
+    "shapefix_max_seconds": 0.3062,
+    "shapefix_outcomes": [
+      {
+        "face_count_after": 2004,
+        "face_count_before": 2004,
+        "fixer": "ShapeFix_Shape",
+        "reached_valid": false,
+        "seconds": 0.3062076699861791,
+        "volume_after_mm3": -33273.571202151834,
+        "volume_before_mm3": 33273.571202151834
+      },
+      {
+        "face_count_after": 2004,
+        "face_count_before": 2004,
+        "fixer": "ShapeFix_Solid",
+        "reached_valid": false,
+        "seconds": 0.25541874300688505,
+        "volume_after_mm3": -33273.571202151834,
+        "volume_before_mm3": 33273.571202151834
+      },
+      {
+        "face_count_after": 2004,
+        "face_count_before": 2004,
+        "fixer": "ShapeFix_Shell",
+        "reached_valid": false,
+        "seconds": 0.21217919202172197,
+        "volume_after_mm3": 33273.571202151834,
+        "volume_before_mm3": 33273.571202151834
+      }
+    ],
+    "shapefix_reached_valid": [
+      false,
+      false,
+      false
+    ]
+  },
+  "occt_version": "cadquery-ocp-novtk 7.9.3.1.1",
+  "python": "3.13.11",
+  "spec": "MESH_INGEST.md \u00a7Gates G12B.25, G12B.33 \u2014 ShapeFix disposition, sew determinism"
+}

@@ -175,9 +175,25 @@ CORPUS_V4_ADDITIONS: tuple[tuple[str, int], ...] = (
     ("motor-plate", 17),
 )
 
-#: The whole public split as it stands (v1 + the v2, v3 and v4 additions).
+#: Corpus v5 (2026-08-29, MESH_INGEST.md §7.5 / Stage 12C, G12C clause 50): the
+#: scan family, graded on distance to a SYNTHESIZED scan through the engine's own
+#: ``compare_to_scan`` path — a cuff whose bore must clear a scanned limb, and a
+#: relief frame that must clear a scanned boss without standing off it. Budgets
+#: are dated hand-count derivations per the 2026-08-25 measured-budget policy; no
+#: observe-mode journals exist for them yet, and each task.json's ``notes``
+#: carries the derivation.
+CORPUS_V5_ADDITIONS: tuple[tuple[str, int], ...] = (
+    ("scan-socket-cuff", 15),
+    ("scan-boss-relief", 15),
+)
+
+#: The whole public split as it stands (v1 + the v2, v3, v4 and v5 additions).
 CORPUS: tuple[tuple[str, int], ...] = (
-    CORPUS_V1 + CORPUS_V2_ADDITIONS + CORPUS_V3_ADDITIONS + CORPUS_V4_ADDITIONS
+    CORPUS_V1
+    + CORPUS_V2_ADDITIONS
+    + CORPUS_V3_ADDITIONS
+    + CORPUS_V4_ADDITIONS
+    + CORPUS_V5_ADDITIONS
 )
 
 #: Tasks whose acceptance re-runs a DFM rule pack. Predicates are registry
@@ -305,9 +321,10 @@ def test_corpus_is_the_nineteen_public_tasks() -> None:
     additions are still exactly :data:`CORPUS_V1_TASKS`.
     """
     prose = {task_id for task_id, _ in CORPUS}
-    assert len(prose) == 21, (
-        "corpus v4 is twenty-one public tasks (v1 + the ingest and assembly pairs "
-        "+ the Stage 9C mechanism trio + the Stage 11 component pair)"
+    assert len(prose) == 23, (
+        "corpus v5 is twenty-three public tasks (v1 + the ingest and assembly pairs "
+        "+ the Stage 9C mechanism trio + the Stage 11 component pair + the Stage 12C "
+        "scan family; MESH_INGEST.md §7.5, G12C clause 50)"
     )
     # The gated split is exactly the public tasks…
     assert set(task_ids(specs=("prose",))) == prose
@@ -419,7 +436,11 @@ def test_every_budget_meets_the_measured_calibration_floor(
     observed = _archived_passing_max()
     assert observed, "no archived corpus journals found; the floor cannot be recomputed"
     unmeasured = {
-        task_id for task_id, _ in CORPUS_V2_ADDITIONS + CORPUS_V3_ADDITIONS + CORPUS_V4_ADDITIONS
+        task_id
+        for task_id, _ in CORPUS_V2_ADDITIONS
+        + CORPUS_V3_ADDITIONS
+        + CORPUS_V4_ADDITIONS
+        + CORPUS_V5_ADDITIONS
     }
     for task_id, _budget in CORPUS:
         budget = tasks[task_id].budget_tool_calls

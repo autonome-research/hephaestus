@@ -160,11 +160,21 @@ def _cmd_score(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(f"heph bench score: component baseline not written: {exc}", file=sys.stderr)
         component = None
+    # MESH_INGEST.md §7.5 / G12C.51: the scan family is baselined on exactly the
+    # same terms — its own split per spec, its own first measurement, >= 3 seeds,
+    # never averaged into the v1/v2 baselines.
+    scan_path = directory.parent / scoring.SCAN_BASELINE_FILENAME
+    try:
+        scan = scoring.record_scan_baseline(score, scan_path)
+    except ValueError as exc:
+        print(f"heph bench score: scan baseline not written: {exc}", file=sys.stderr)
+        scan = None
     if bool(args.json):
         print(json.dumps(score.to_json(), indent=2, sort_keys=True))
     else:
         print(f"model {score.model} date {score.date}: {score.passes_total}/{score.n_total} passed")
         _print_splits(score, baseline, component, component_path)
+        _print_family(score, scoring.FAMILY_SCAN, scoring.SCAN_FAMILY_TASKS, scan, scan_path)
         for task_id, row in sorted(score.per_task.items()):
             calls = "-" if row.mean_tool_calls is None else f"{row.mean_tool_calls:.1f}"
             print(f"  {task_id:<24} {row.passes}/{row.n}  mean_tool_calls={calls}")
@@ -278,6 +288,50 @@ def _print_splits(
                 f"and no {component_path}. PARTS_STORE.md G11C clause 12's "
                 f"reference-model baseline is outstanding."
             )
+
+
+def _print_family(
+    score: scoring.BenchScore,
+    family: str,
+    tasks: tuple[str, ...],
+    baseline: dict[str, Any] | None,
+    path: Path,
+) -> None:
+    """One family's baseline lines, or the reason there are none.
+
+    Absence of measurement is a fact about the evidence, so the tool that reads
+    the evidence states it — the same three cases the component block above
+    distinguishes: measured but refused, not measured but already recorded, and
+    never measured at all.
+    """
+    from hephaestus.bench.metrics import SPEC_PROSE, SPEC_SEEDED
+
+    if baseline is not None:
+        rows = cast("dict[str, Any]", baseline.get("splits", {}))
+        for name, row in sorted(rows.items()):
+            entry = cast("dict[str, Any]", row)
+            print(
+                f"{name} baseline (first measurement, not a gate): "
+                f"{entry.get('passes')}/{entry.get('n')} "
+                f"wilson_lower_90={entry.get('wilson_lower_90')}"
+            )
+        return
+    measured = sum(int(score.family_split(family, spec).n) for spec in (SPEC_PROSE, SPEC_SEEDED))
+    if measured:
+        print(
+            f"{family} family: {measured} runs measured, NOT BASELINED — "
+            f"see the refusal above; nothing was written to {path}."
+        )
+    elif path.is_file():
+        print(
+            f"{family} family: not measured in this archive; baseline already recorded in {path}."
+        )
+    else:
+        print(
+            f"{family} family: NOT MEASURED — no {', '.join(tasks)} runs in this archive "
+            f"and no {path}. MESH_INGEST.md §7.5 Gate G12C clause 51's reference-model "
+            f"baseline is outstanding."
+        )
 
 
 def _print_metrics(metrics: ValidationMetrics) -> None:

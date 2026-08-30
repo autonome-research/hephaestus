@@ -39,14 +39,75 @@ communicates its output by assigning to `part.*`.
   as a term in the expression. `name` MUST be a string literal path relative to
   the project's `imports/`; the executor resolves, hashes and stages the file
   before the worker runs, so this is not script I/O and `open` stays absent.
+- **`import_mesh(name, units=…)`** — EXTENSION (`MESH_INGEST.md` §1.1, Stage
+  12A), a triangle mesh from `imports/` as a **`MeshAsset`**, not a shape. Both
+  arguments MUST be string literals: the path for the same reason
+  `import_step`'s is, and the unit because §1.5 bakes its scale into the staged
+  geometry before the build runs, so a unit the freeze cannot read is a unit the
+  geometry cannot be staged at. `units` is required and comes from the closed
+  set `{"mm", "cm", "m", "in"}` — STL, PLY, OBJ and OFF carry no unit, the
+  engine is millimetres throughout, and inferring one from the bounding box is a
+  guess dressed as a measurement. Omitting it is `mesh_units_undeclared`. A
+  `MeshAsset` is a **measurement target**, not geometry: it carries counts, a
+  bbox, and a quality record whose every defect is measured and named rather
+  than repaired, and it is refused at `part.geometry`. Converting one to a solid
+  is `mesh_to_solid` (12B), behind a mandatory validity gate.
+- **`import_point_cloud(name, units=…)`** — EXTENSION (`MESH_INGEST.md` §2.3,
+  Stage 12A), an `.xyz` point cloud as a **`PointCloudAsset`**. Same grammar,
+  same closed unit set. It is a distinct kind because it is not a shape: no
+  faces, no volume, no area, no topology, and the record carries none of those
+  names. Passing one where a shape is expected is `point_cloud_not_a_shape`.
+- **`mesh_to_solid(asset, intent=…)`** — EXTENSION (`MESH_INGEST.md` §4.3,
+  Stage 12B), a `MeshAsset` sewn into a B-rep solid, **behind a mandatory
+  validity gate**. `intent` is required and comes from the closed set
+  `{"measurement_target", "boolean_operand"}`; there is no `"offset_operand"`
+  and there will not be one, because offsetting a mesh-derived solid was
+  measured returning a sealed, genus-0, plausible solid whose volume is five
+  million times too small (§4.2). The sew runs under a killable-subprocess
+  ceiling (`mesh_sew_timeout`), and a `BRepCheck_Analyzer.IsValid()` verdict of
+  False refuses `mesh_solid_invalid` carrying the analyzer's status list and the
+  §3 quality record. The result refuses `offset` / `shell` / `thicken` /
+  `fillet` / `chamfer` on itself (`mesh_derived_operation_refused`, §5.1);
+  a boolean against authored geometry is the one operation §5.1 measured as
+  working, and it is not refused.
+- **`section_polylines(asset, plane, spacing=…)`** — EXTENSION
+  (`MESH_INGEST.md` §5.3, Stage 12B), the ordered contours where a plane crosses
+  a scan. `plane` is a `Plane` or an `(origin, normal)` pair. A contour that does
+  not close comes back **open**, flagged `open_section_contour`, and is never
+  joined end to end: the plane crossed a hole in the scan, and closing it would
+  fabricate limb surface the scanner never saw. A plane that misses is
+  `empty_section`, not an empty success. `spacing` resamples by arc length and
+  is recorded on each returned record.
+- **`loft_sections(polylines, closed=True)`** — EXTENSION (`MESH_INGEST.md`
+  §5.2, Stage 12B), the section → B-spline → loft helper. It returns an ordinary
+  **analytic** `Solid`, which is the whole point: `offset`, `thicken` and
+  `fillet` on it are plain build123d, working on authored geometry rather than
+  on a facet soup. An open contour is refused `open_section_contour`, and a loft
+  the kernel leaves uncapped is refused `mesh_solid_invalid`. It exists as an
+  injected helper rather than as script code because `GeomAPI_PointsToBSpline`
+  is unreachable from a part script — see the next bullet.
 - Nothing else. `open`, `__import__`, filesystem and network access are
-  absent; attempting them is a build error.
+  absent; attempting them is a build error. That rule is exactly why the five
+  terms above are listed: a part script has no route to `trimesh`, to
+  `GeomAPI_PointsToBSpline`, to `BRepBuilderAPI_Sewing`, to any other OCP
+  symbol, or to the filesystem, so a mesh capability that were not injected here
+  would be unreachable from a script rather than merely undocumented. Stage 12B
+  asserts this as an **exact set equality** on the injected names (G12B.29), so
+  an undocumented addition fails a gate just as a missing one does.
 
 **A note, and a note precisely so no reader mistakes it for a change.** The
 namespace gains no name and loses none. One *derived* constant is exported from
 `namespace.py`: `SELECTOR_NAMES`, the injected key set minus the two dunder keys
 and minus the harness handles (`p`, `part`, `tag`, `hc`, `check`, `CHECKS`,
-`import_step`, `approx`). `PARTS_STORE.md` §2.1's parse-time rule for a store
+`import_step`, `import_mesh`, `import_point_cloud`, `mesh_to_solid`,
+`section_polylines`, `loft_sections`, `approx`). All five mesh
+terms join the handles for exactly the `import_step` reason and one stronger: a
+selector addresses topology, and mesh topology carries no identity at all
+(`MESH_INGEST.md` §2.4). The three 12B terms have a second reason of their own —
+each of them *makes* geometry, and a selector names a region of geometry already
+built. So `SELECTOR_NAMES` is unchanged by Stage 12, in both waves, and G12B.29
+asserts that too.
+`PARTS_STORE.md` §2.1's parse-time rule for a store
 generator's `interface` region has to cite a *static* set, and `build_namespace`
 assembles the real one at execution time from `build123d.__all__`. It is pinned
 by that equation, so there is one definition of the namespace and not two, and a
@@ -267,6 +328,43 @@ refuses an `import:` target by name rather than reading bytes no build input
 attests to. Cross-part checks compare with `part:` targets, or the part's own
 script carries the `m.diff` threshold. The threshold is the predicate's —
 `m.diff` reports, it never decides.
+
+`m.scan_diff(part, "scan:<relpath>", align="as_posed")` (`MESH_INGEST.md` §6/§7.3;
+amendment dated 2026-08-29) returns the §6.4 `ScanDistance` facts against a
+**scan** under `imports/`, flattened on exactly the `m.diff` rule:
+
+```python
+CHECKS = {
+    # the socket wall clears the scan by >= 1.5 mm at every sampled scan vertex
+    "clears_the_limb": lambda m: m.scan_diff("part", "scan:limb-l.stl").scan_to_part_mean_mm
+    >= 1.5,
+}
+```
+
+Fields: `scan_to_part_mean_mm`, `scan_to_part_max_mm`, `scan_samples`,
+`part_to_scan_mean_mm`, `part_to_scan_max_mm`, `part_to_scan_upper_bound_mm`,
+`part_to_scan_method`, `part_to_scan_bias`, `part_to_scan_refusal`,
+`part_samples`, `scan_canonical_hash`, `part_artifact_ref`, `align`,
+`declared_transform`, `quality` (the §3 record) and `raw`. There is **no `iou`
+and no `chamfer_mm`**, and reading either names the refusal
+(`scan_iou_unavailable`) rather than raising an attribute error: an IoU needs a
+solid on both sides, and a chamfer would average an exact number with a possible
+upper bound. `part_to_scan_mean_mm` and `part_to_scan_max_mm` are both populated
+or both null, with `part_to_scan_upper_bound_mm` the complement of both.
+
+A `scan:` target is a **build input** on exactly the `import:` terms — frozen,
+hashed and staged with the script's own imports — so it is available to a **part
+script's** `CHECKS` only, and the cross-part `checks/*.py` facade refuses one by
+name. One further rule the `import:` case does not need: a scan carries no unit,
+and §1.3 forbids inferring one, so the unit comes from this script's own
+`import_mesh(path, units=…)` of the same path. A `scan:` target the script never
+imported is `mesh_units_undeclared` at check time, and a path imported at two
+units is refused as ambiguous rather than measured against either. `align`
+is `as_posed` or a declared rigid transform; `principal` is refused
+(`scan_principal_unavailable`). The threshold is the predicate's — `m.scan_diff`
+reports, it never decides — and no predicate over a `ScanDistance` may be
+presented as evidence that a socket *fits*: that is clinical judgement the
+harness cannot verify (`MESH_INGEST.md` §11.3).
 
 `m.at_pose(pose_id)` and `m.sweep(check_id)` (`KINEMATICS.md` §4; amendment
 dated 2026-08-26) are the two motion read surfaces of the **project-scope**

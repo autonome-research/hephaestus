@@ -359,6 +359,8 @@ def execute_job(job: Mapping[str, JSONValue]) -> dict[str, JSONValue]:
         "hc_state": {},
         "geometry_index": {"labels": [], "bindings": {}, "tags": []},
         "imports_used": [],
+        "mesh_canonical_hashes": {},
+        "geometry_source": "authored",
         "geometries": [],
         "source_map": None,
         "tag_fingerprints": {},
@@ -518,6 +520,17 @@ def execute_job(job: Mapping[str, JSONValue]) -> dict[str, JSONValue]:
     result["consumed_hc"] = hc.consumed_projection()
     result["metadata"] = part.metadata()
     result["imports_used"] = cast("list[JSONValue]", list(imports.used))
+    # MESH_INGEST.md §1.4: the SECOND hash. ``input_hashes.imports`` is the raw
+    # file bytes and stays the invalidation key; this is geometry identity, and
+    # it is what lets two builds say "the file changed, the geometry did not".
+    result["mesh_canonical_hashes"] = cast("dict[str, JSONValue]", dict(imports.mesh_hashes))
+    # MESH_INGEST.md §4.3: a CLOSED two-member set, and every build carries one
+    # of them from this stage on. A field absent on non-mesh builds would make
+    # "no geometry_source" ambiguous between *authored* and *this build predates
+    # the field*, and a reviewer cannot act on that difference. Importing a mesh
+    # and measuring against it stays "authored" — the scan was measurement data,
+    # not geometry, and §5.2 exists precisely so that distinction stays true.
+    result["geometry_source"] = "mesh_derived" if imports.mesh_derived else "authored"
     feature_metadata: dict[str, JSONValue] = dict(part.feature_metadata())
     result["feature_metadata"] = feature_metadata
 
@@ -679,9 +692,15 @@ def _run_part_checks(
         # COMPARE.md §2: an ``m.diff`` import target was frozen and staged with
         # the script's own imports, so resolving it here is the same staged-BRep
         # lookup — the sandbox still opens no project path.
+        # MESH_INGEST.md §7.3: a ``scan:`` check target was frozen and staged
+        # with the script's own imports too, and ``m.scan_diff`` is a PART-scope
+        # surface — the cross-part facade is never handed this resolver, which
+        # is the scope enforcement itself.
         results = run_checks(
             predicates,
-            lambda: part_measurement(part_name, source, imports=imports.resolve),
+            lambda: part_measurement(
+                part_name, source, imports=imports.resolve, scan=imports.resolve_scan
+            ),
         )
         return {name: outcome.to_json() for name, outcome in results.items()}
     except Exception as exc:  # facade wiring failure: fail every check, not the build

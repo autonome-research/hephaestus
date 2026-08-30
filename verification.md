@@ -46,7 +46,14 @@ exercises CAD/core adapters and product surfaces. Categories:
   prose. Mutation tests (below) corrupt each field to prove each assertion
   bites.
 - **Kernel-service tests.** interference/clearance/distance/mass against
-  hand-computable fixtures (two boxes at known offsets, etc.).
+  hand-computable fixtures (two boxes at known offsets, etc.), and — Stage 12A
+  (`MESH_INGEST.md` §3, gate G12A clause 10) — **mesh quality** against
+  hand-computable fixtures. Hand-computable is the requirement, not a
+  convenience: a cube has 8 vertices, 18 edges and 12 triangles so `V - E + F`
+  is 2; delete one triangle and it has exactly 3 boundary edges in exactly 1
+  loop of `10 + 10 + 10√2` mm. A golden captured from the implementation would
+  pass just as happily if the implementation were wrong from the first run,
+  which is the whole reason this row says what it says.
 - **Export round-trips.** Each export freezes and reports an immutable
   successful source artifact plus source/output hashes. STEP re-imports via OCP
   with equal solid count and volume within 1e-3; DXF profiles re-parse via
@@ -71,6 +78,21 @@ Gate form: `uv run pytest tests/<stage-dir> -q` exits 0.
   container image; renderer, mesa, and font versions are part of the image
   tag. Goldens are valid only for a (container image, hephaestus renderer
   version) pair recorded in each golden's provenance sidecar.
+- **Kernel-derived goldens carry a (container image, OCCT version) pair**
+  (`MESH_INGEST.md` §8 Tier 3, Stage 12B). The rule above, extended from the
+  renderer to the kernel, and for the same reason: `BRepBuilderAPI_Sewing` is a
+  tolerance-driven merge whose output topology this project does **not** claim
+  is stable across OCCT builds. A sew golden therefore records **counts and the
+  `BRepCheck_Analyzer` verdict, never sewn bytes** — the most a sew can honestly
+  offer — and a mismatched pair **invalidates** it: the comparison is refused by
+  name rather than run, because a difference under a moved kernel says nothing
+  about the code under test. An OCCT bump is a re-baseline PR, exactly as a
+  renderer digest bump is (`repo_conventions.md`:186-194); regeneration happens
+  only under `HEPHAESTUS_REBASELINE_SEW_GOLDENS`, so a golden can never quietly
+  rewrite itself into agreement. The OCCT version is a **measurement** — read
+  from the wheel that shipped the kernel, since this binding exports no
+  `Standard_Version` — and the image digest reads `unpinned` outside a pinned
+  image rather than an empty string that could be mistaken for one.
 - **Render goldens.** For fixture parts, rgb/mask/section/explode renders are
   compared to committed goldens with SSIM ≥ 0.995 within the pinned image.
   Mask
@@ -215,7 +237,40 @@ statement edit ≤ 1.5× the changed statement's original cost plus fixed
 overhead ≤ 2 s (this is the test that keeps per-statement checkpointing
 honest — see the lazy-metrics note in the mission plan); 4-view rgb+mask
 render of the shelf ≤ 10 s; `measure interference` across all shelf pairs
-≤ 5 s. Budgets tighten (never loosen) by amendment.
+≤ 5 s; **parse + canonicalize + quality for the reference fixture scan**
+(Stage 12A, `MESH_INGEST.md` §1.5/§3, gate G12A clause 19). Budgets tighten
+(never loosen) by amendment.
+
+**The mesh budget: ≤ 18.4 s, and where that number comes from.** It was
+previously owed a re-measurement — set in the repository venv, and this row
+refused to quote a second-value until the image had produced one. The image
+produced one on 2026-08-30: **6.1365 s** for a 20 480-triangle reference scan,
+archived with the (image digest, OCCT version, Python) stamp of the world that
+measured it at `tests/stage12a/evidence/pinned_measurements.json`. The ceiling
+the gate enforces is **derived** from that figure at import — three times it —
+rather than transcribed, so it cannot drift from its record; and it is asserted
+to be at or below the 20 s that stood before, because budgets tighten and never
+loosen.
+
+**What "in the pinned image" means here, since one machine could not pull it.**
+`ci.yml` consumes the image by GHCR digest, and that digest is the pin. A
+private package answers `403` without `read:packages`, so a record may instead
+be taken in a container built from the repository's own **unchanged**
+`docker/ci/Dockerfile`, whose `FROM` is digest-pinned — the route
+`docker/ci/README.md` documents and commit `f3a4d42` took for the G1/G4
+goldens. The record names which route produced it; a run outside any pinned
+image cannot produce a record at all; and the record carries the Dockerfile's
+`FROM` digest, re-read from the repository at test time, so a base bump
+invalidates it exactly as an OCCT bump invalidates a sew golden.
+
+**And it is re-taken, not just taken.** The
+`stage12 measurements (pinned image)` lane in `.github/workflows/ci.yml` runs
+`scripts/stage12_pinned_measure.py --check` inside the image on every PR — every
+recorded figure measured again, failing if the committed numbers no longer
+describe that image — then runs this clause and the other three Stage 12 clauses
+that name the image (`MESH_INGEST.md` G12B.25, G12B.33, G12C.45/46) there with
+`-s`. That lane is in `release.yml`'s prior-gate list. Changing any of these
+numbers is a re-record PR that cites the run that produced them.
 
 ## CI contract
 

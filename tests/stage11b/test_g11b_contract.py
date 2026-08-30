@@ -55,9 +55,13 @@ def _result_variants(tool: str) -> list[dict[str, Any]]:
 # the declared surface
 
 
-def test_the_tool_count_is_still_53() -> None:
-    """No tool is added: the capability lands in the results, not on the surface."""
-    assert len(tools_decl.tool_names()) == 53
+def test_the_tool_count_is_not_moved_by_this_stage() -> None:
+    """No tool is added HERE: the capability lands in the results, not on the
+    surface. The literal moved 53 -> 54 with MESH_INGEST.md §7.2 (Stage 12C,
+    ``compare_to_scan``), which is a different stage's declared addition.
+    """
+    assert len(tools_decl.tool_names()) == 54
+    assert "compare_to_scan" in tools_decl.tool_names()
 
 
 def test_the_generated_artifacts_regenerate_identically_with_the_field_present() -> None:

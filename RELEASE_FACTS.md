@@ -363,8 +363,17 @@ Reusable step recipe every sidecar/sandbox job uses:
 
 Documented exclusion: `tests/render` (G1 byte-pinned goldens) is not run on
 stock `ubuntu-latest` — Mesa drift. It moves in when the pinned CI image lands.
-That pinned image is still outstanding and `repo_conventions.md` still records
-the CI image tag as "pending first CI run".
+
+> **Correction, 2026-08-30 (third Stage 12 repair pass).** The two sentences
+> that stood here — that the pinned image was still outstanding and that
+> `repo_conventions.md` recorded the CI image tag as "pending first CI run" —
+> were true when this survey was taken at `341da20` and have not been true since
+> **2026-08-28**: `docker/ci/Dockerfile` landed, `ci-image.yml` builds and pushes
+> it to GHCR, `ci.yml` consumes it **by digest** in the `render goldens (pinned
+> image)` job, and `tests/render` runs there. The rest of this document is left
+> as the dated survey it is; this line is corrected in place rather than left
+> standing, because a stale claim about a measurement is the one kind of doc
+> drift this project's own rules refuse.
 
 Missing workflows G7H needs: `bench.yml` (leaderboard artifact — named in the
 gate), the release/matrix workflow itself, and the docs-layout/link check.

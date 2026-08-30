@@ -182,6 +182,50 @@ is what you want when checking an assembly. `--align principal` aligns principal
 axes first, which is what you want when comparing shapes irrespective of pose.
 `--json` emits the comparison document.
 
+### `heph scan PATH --units` / `heph scan check PART PATH --units`
+
+Read a mesh or point cloud under `imports/` and print what the harness can
+honestly say about it (`MESH_INGEST.md` §7.3). The first form prints the file's
+facts; the `check` form additionally measures a built part against it.
+
+```console
+$ heph scan limb-l.stl --units mm
+scan limb-l.stl  units declared mm
+  canonical hash           sha256:9f2c…
+  vertices as read/welded  1027 / 1003
+  triangles                2002
+  bbox                     40.000000 x 30.000000 x 20.000000 mm
+  tessellated volume       33273.571711 mm^3 (polyhedron, inscribed — low)
+  watertight at weld tol   True
+quality (measured and named; nothing was repaired):
+  boundary edges / loops   0 / 0
+  self-intersecting pairs  0  [uniform_grid_exact_pairs]
+```
+
+```console
+$ heph scan check socket limb-l.stl --units mm
+scan check socket against limb-l.stl  units mm  align as_posed
+  scan -> part            mean 2.31 mm   max 4.02 mm
+  part -> scan            mean 2.19 mm   max 3.88 mm
+  part -> scan method      kdtree_bound_exact_triangle (bias exact)
+```
+
+`--units` is **required in both forms**: STL, PLY, OBJ, OFF and XYZ carry no
+unit, the engine is millimetres throughout, and inferring one from the bounding
+box would be a guess dressed as a measurement. The path is resolved under the
+project's `imports/` through the same confined read a build uses, so what you
+inspect is exactly what a build would admit, refusals included.
+
+The facts are facts about the **file**: nothing was repaired, no surface was
+reconstructed, and a defect the scanner left is reported rather than cleaned.
+`--align declared --transform …` supplies a rigid 4×4 for the check form;
+`principal` is refused by name, because a limb scan is always partial and the
+sampled region's principal axes are not the object's. `--json` emits the record.
+
+**Nothing here is a clinical claim** (`MESH_INGEST.md` §11.3). A distance is not
+a fit: rectification is clinical judgement the harness cannot verify, and
+structural adequacy is FEA, which this project defers by name.
+
 ### `heph assembly` / `heph assembly check`
 
 Show the declared cross-part constraints and their latest residuals; `check`

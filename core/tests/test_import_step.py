@@ -29,6 +29,7 @@ import pytest
 from hephaestus.core.executor.imports import (
     STAGE_DIRNAME,
     DynamicImportPathError,
+    ImportPayload,
     ImportResolutionError,
     declared_imports,
     read_import,
@@ -74,10 +75,15 @@ def build(
     imports: dict[str, bytes] | None = None,
     import_errors: dict[str, str] | None = None,
 ) -> UnpublishedBuild:
+    # Stage 12 amendment (``MESH_INGEST.md`` §1.1, §12 item 6a):
+    # ``BuildRequest.imports`` carries an ``ImportPayload`` per path rather than
+    # bare bytes, because the declared kind and unit have to reach the staging
+    # code. STEP declares neither, so every payload here is the default kind
+    # with no units and the staged bytes are what they always were.
     request = BuildRequest(
         part="ingested",
         script=script,
-        imports=imports or {},
+        imports={path: ImportPayload(data) for path, data in (imports or {}).items()},
         import_errors=import_errors or {},
     )
     return run_build(request, backend=UnsafeLocalBackend(), out_dir=out_dir)
@@ -185,42 +191,42 @@ class TestConfinedResolution:
         return root
 
     def test_reads_a_confined_file(self, imports_dir: Path) -> None:
-        assert read_import(imports_dir, "plate.step") == plate_bytes()
+        assert read_import(imports_dir, "plate.step", max_bytes=None) == plate_bytes()
 
     def test_reads_a_nested_file(self, imports_dir: Path) -> None:
-        assert read_import(imports_dir, "vendor/boss.step") == BOSS.read_bytes()
+        assert read_import(imports_dir, "vendor/boss.step", max_bytes=None) == BOSS.read_bytes()
 
     def test_missing_file_is_import_not_found(self, imports_dir: Path) -> None:
         with pytest.raises(ImportResolutionError) as excinfo:
-            read_import(imports_dir, "absent.step")
+            read_import(imports_dir, "absent.step", max_bytes=None)
         assert excinfo.value.reason == "import_not_found"
         assert excinfo.value.path == "absent.step"
 
     def test_missing_imports_dir_is_import_not_found(self, tmp_path: Path) -> None:
         with pytest.raises(ImportResolutionError) as excinfo:
-            read_import(tmp_path / "nowhere", "plate.step")
+            read_import(tmp_path / "nowhere", "plate.step", max_bytes=None)
         assert excinfo.value.reason == "import_not_found"
 
     def test_traversal_is_refused(self, imports_dir: Path) -> None:
         with pytest.raises(ImportResolutionError) as excinfo:
-            read_import(imports_dir, "../secret.txt")
+            read_import(imports_dir, "../secret.txt", max_bytes=None)
         assert excinfo.value.reason == "path_confinement"
 
     def test_absolute_paths_are_refused(self, imports_dir: Path) -> None:
         with pytest.raises(ImportResolutionError) as excinfo:
-            read_import(imports_dir, "/etc/passwd")
+            read_import(imports_dir, "/etc/passwd", max_bytes=None)
         assert excinfo.value.reason == "invalid_import_path"
 
     def test_backslash_and_nul_are_refused(self, imports_dir: Path) -> None:
         for path in ("vendor\\boss.step", "plate.step\x00"):
             with pytest.raises(ImportResolutionError) as excinfo:
-                read_import(imports_dir, path)
+                read_import(imports_dir, path, max_bytes=None)
             assert excinfo.value.reason == "invalid_import_path"
 
     def test_symlinked_leaf_escape_is_refused(self, imports_dir: Path, tmp_path: Path) -> None:
         (imports_dir / "escape.step").symlink_to(tmp_path / "project" / "secret.txt")
         with pytest.raises(ImportResolutionError) as excinfo:
-            read_import(imports_dir, "escape.step")
+            read_import(imports_dir, "escape.step", max_bytes=None)
         assert excinfo.value.reason == "path_confinement"
 
     def test_symlinked_directory_escape_is_refused(self, imports_dir: Path, tmp_path: Path) -> None:
@@ -229,12 +235,12 @@ class TestConfinedResolution:
         shutil.copy(PLATE, outside / "plate.step")
         (imports_dir / "linked").symlink_to(outside)
         with pytest.raises(ImportResolutionError) as excinfo:
-            read_import(imports_dir, "linked/plate.step")
+            read_import(imports_dir, "linked/plate.step", max_bytes=None)
         assert excinfo.value.reason == "path_confinement"
 
     def test_a_directory_is_not_an_import(self, imports_dir: Path) -> None:
         with pytest.raises(ImportResolutionError) as excinfo:
-            read_import(imports_dir, "vendor")
+            read_import(imports_dir, "vendor", max_bytes=None)
         assert excinfo.value.reason == "path_confinement"
 
 

@@ -981,6 +981,371 @@ plan, not a normative contract, and **this amendment is what settles the
 collision**: Stage 11 is the component store, and no other stage takes the
 number. No other stage's gate text is edited by this block.
 
+## Stage 12 — Mesh and scan ingest (amendment 2026-08-29, operator-directed)
+
+Frontier-capability work under the engine-first decision recorded for Stage 8 —
+the optimal CAD harness outranks the soonest release. Recorded on the operator's
+2026-08-29 approval of the recommended build order in
+`docs/frontier-staging-proposal.md`, which puts mesh and scan ingest **second** of
+the five frontier capabilities, immediately after the component store, and opens
+it as its own gated stage under rule 5. It is second on that document's own
+argument: it is the one capability that changes what the harness can *read*. A
+prosthetic socket begins with a limb scan, `import_step` is the only door into the
+harness today, and `COMPARE.md` §4 closes the mesh door in so many words. Rule 5's
+deferred list is untouched — mesh ingest was never on it, which is precisely why
+it needs a new gated stage rather than a waiver. Normative spec: `MESH_INGEST.md`
+(a mesh or point cloud admitted as an immutable, content-addressed measurement
+target on the `INGEST.md` §1 terms — no feature recognition, no surface
+reconstruction, no mesh-native modeller, no tagging of mesh topology, no clinical
+claim). Stage 12 lands in three gated sub-stages, strictly ordered.
+
+**The honesty problem this stage exists to solve, stated before the gates.** A
+mesh has no exact topology. Almost every fact the harness knows how to state
+about a solid becomes a *different, weaker* fact when the solid came from
+triangles, and the entire difficulty of this stage is refusing to let the two
+vocabularies share a field name. Three consequences bind rather than describe:
+mesh repair is **measured and named**, never silently performed; a mesh record
+carries no `volume`, `sealed`, `genus`, `chamfer_mm` or `iou` attribute, and
+G12A.12 fails the gate if a rename reintroduces one; and every refusal is a named
+code drawn from a closed set. A plausible-looking wrong surface is worse than a
+named refusal — the same reason this project reports `holds_at_samples` rather
+than `holds`.
+
+- **12A — admission, canonicalization, facts** (`MESH_INGEST.md` §1–§3):
+  `import_mesh` / `import_point_cloud` as script terms; the closed five-extension
+  format set with magic sniffing; declared units, with the declared unit part of
+  the staged blob's identity; two separately named hashes (raw file bytes, and the
+  canonical geometry) whose meanings never merge; the `.hmesh.facts` sidecar
+  carrying the pre-canonical counts a post-weld blob cannot recover; ceilings
+  refused before the parser runs; and `hephaestus.geom.mesh` as a tenth pure geom
+  service that measures quality without repairing it.
+
+  **Gate G12A** (Tier 1): `uv run pytest tests/stage12a -q` exits 0 per
+  `MESH_INGEST.md` "Gates" — 20 clauses. The happy path over each admitted format,
+  binary and ASCII, against independently computed counts and bboxes. Every §1.7
+  refusal **reachable in 12A** fires with its exact code at the right layer as a
+  build error at the offending statement — ten of the eleven; the eleventh,
+  `mesh_units_conflict`, is asserted **unreachable** rather than skipped, by
+  enumerating the admitted extensions, asserting none of them carries an in-file
+  unit and asserting that the two unit-carrying formats refuse at admission, so
+  that admitting one later without making the code fire breaks the clause. A
+  clause claiming "every" while testing ten would itself have been the defect.
+  Also: the confinement walk intact for the new terms, exactly as G8A proves it
+  for STEP; the `units` keyword grammar, with a computed value still
+  `DynamicImportPathError` and `import_step` unregressed; `input_hashes` carrying
+  the **raw** bytes while a re-exported file with only a changed ASCII header
+  yields a different input hash and the **same** canonical hash; staleness and
+  revalidation re-run on the new kind; canonicalization determinism across two
+  processes, invariant under triangle and vertex permutation; unit scaling
+  asserted in one build as the exact ratios 1 : 10 : 1000 : 25.4 **together with**
+  the mechanism that permits it — four pairwise-distinct staged filenames, and
+  reuse preserved for a repeated (bytes, unit) pair — a clause that fails against
+  the unmodified `staged_filename`, which is the point of writing it;
+  pre-canonical counts surviving the sandbox boundary through the sidecar, with
+  the separation pinned in both directions (mutating the sidecar leaves the
+  canonical hash unchanged; mutating the blob changes it) and worker-side
+  recomputation asserted impossible by fixture; `MeshQuality` against
+  hand-computable fixtures; a self-intersection ceiling that reports `None` with a
+  named method and is asserted **not** to read as zero; the field-name discipline
+  above; `point_cloud_not_a_shape`; `tag()` on mesh topology refused; mixed
+  mesh + STEP + authored builds; the geom import-boundary tests admitting `mesh`
+  as a pure service that reaches the renderer nowhere; `heph scan`; the
+  parse + canonicalize + quality budget measured in the pinned image and enforced
+  as a ceiling; and the byte ceiling firing **inside the confinement walk before
+  anything is spent** — no new opstore blob, no `ImportSnapshot`, and the bytes
+  never read, asserted against a sparse fixture larger than the process's memory
+  that a read-first implementation cannot survive, with STEP's path proven
+  unaffected. That clause carries a second half without which it would be
+  half-true: the same fixture is left in the imports tree with **no script
+  declaring it** and a full `sync_import_state` is run, because that path resolves
+  no declaration and a ceiling read only from a declaration could never bound it.
+
+- **12B — mesh → B-rep, sections, the socket path** (`MESH_INGEST.md` §4–§5):
+  `mesh_to_solid` behind a mandatory `BRepCheck_Analyzer` validity gate,
+  `section_polylines`, the injected `loft_sections` helper, and the fit-then-offset
+  socket design that offsets the *authored* solid rather than the mesh-derived one.
+
+  **Gate G12B** (Tier 1 + Tier 3): `uv run pytest tests/stage12b -q` exits 0 per
+  `MESH_INGEST.md` "Gates" — 13 clauses. `mesh_to_solid` on a clean tessellated
+  fixture **records the measured validity verdict rather than presuming it**, and
+  refuses `mesh_solid_invalid` carrying the analyzer status list where it is
+  False. The §4.2 finding is pinned as a regression: the 279-face, `sealed=True`,
+  0.003 mm³ offset result is asserted to be exactly what the validity gate
+  withholds, and no `intent` value reaches it. `geom.metrics.is_sealed` True
+  beside `IsValid()` False is asserted **as a fact**, so the two predicates can
+  never be silently conflated. Also: `mesh_sew_timeout` under fault injection,
+  with partial facts attached and the subprocess dead afterwards; the `ShapeFix`
+  experiment run on the pinned image with its outcome archived and the gate
+  asserting whichever branch of the §4.5 disposition rule that outcome selects —
+  including that `repair=True` does not exist when it fails; `section_polylines`
+  against hand-computable fixtures, where a holed fixture yields an **open**
+  contour flagged by name and never closed; section determinism across two
+  processes; the §5.2 socket path written as a real part script and run through
+  the executor, which also proves the new terms are reachable because an
+  unreachable name fails it as a `NameError` at its own line; the injected surface
+  asserted as **exact set equality** against the documented list, with
+  `GeomAPI_PointsToBSpline`, `BRepBuilderAPI_Sewing`, `OCP` and `trimesh` all
+  unreachable and `open` / `__import__` still absent, so `script_contract.md` §2's
+  closure is proven at the moment three terms are added underneath it rather than
+  assumed; `mesh_derived_operation_refused` for offset, shell/thicken and fillet;
+  `heph lint`'s `mesh_derived_offset` rule asserted **with** a defeating case it
+  does not flag, so its reach is pinned and can never be read as a guarantee; and
+  sew-derived goldens carrying an (image digest, OCCT version) sidecar that
+  refuses a mismatched pair. Tier 3: sewn face and vertex counts and the validity
+  verdict identical across two processes in the pinned image — counts and verdict,
+  never sewn bytes.
+
+- **12C — scan scoring, surface, corpus** (`MESH_INGEST.md` §6–§7): the
+  `ScanDistance` record and the fields it deliberately lacks, the `declared`
+  alignment mode, `compare_to_scan` as the single new tool, `m.scan_diff` on the
+  part-scope facade, reviewer delivery of mesh-quality facts, and the `scan-*`
+  corpus family.
+
+  **Gate G12C** (Tier 1 + Tier 2 + Tier 3): `uv run pytest tests/stage12c -q`
+  exits 0 per `MESH_INGEST.md` "Gates" — 18 clauses. Direction A exact to 1e-9
+  against closed-form distances; direction B's `kdtree_bound_exact_triangle`
+  matched against a brute-force all-triangle reference to 1e-9, which is what
+  proves the `d_v + L_max` candidate set a sound superset rather than a heuristic;
+  `scan_neighborhood_overflow` abandoning refinement **by name**, populating a
+  named upper bound asserted **≥** the true distance and leaving the exact field
+  `None`. Record discipline runs over **all three** part→scan fields — mean and
+  max both populated or both `None`, the bound the complement of both, and no
+  record carrying an exact field beside a bound. Also: `scan_iou_unavailable`;
+  `declared` alignment echoed and validated rigid (orthonormal to 1e-9, det +1) or
+  refused, with `principal` refused by name on both a mesh and a point cloud;
+  `compare_solids` and `m.diff` refusing a `scan:` target while a byte-for-byte
+  regression holds every existing G8B `SolidDiff` record unchanged;
+  `compare_to_scan` through dispatch on **both** profiles with the scan's
+  canonical hash and the part's artifact ref attributed; the tool-surface pin
+  asserted both relatively and absolutely (below); `m.scan_diff` passing and
+  failing either side of its threshold, with the cross-part facade refusing a
+  `scan:` target and the scan appearing in the build's frozen inputs;
+  `scan_timeout` landing inside a predicate as `unverifiable` — not a pass, not a
+  crash. The round-trip is **two** clauses because one cannot do both jobs:
+  round-trip **identity** (tessellate → export → import → compare) is labelled in
+  the test as a corruption check with a ×1.001 negative control, and round-trip
+  **fidelity** is the clause that actually binds the declared deflection, holding
+  `part_to_scan_max_mm` inside a **two-sided** window with the exact method
+  asserted **first** so a bound cannot satisfy it, and a negative control on each
+  side. Tier 2: identical `ScanDistance` records to 1e-9 across two processes,
+  with identical sample counts and identical method strings — a differing method
+  string fails the clause. Plus reviewer context carrying `MeshQuality`,
+  `geometry_source` and `ScanDistance`, with a mesh-derived source surfaced and
+  asserted **not** to produce a blocking finding; `heph scan check`; and the
+  `scan-*` corpus tasks' two independent reference solutions passing their own
+  acceptance through the engine path. Tier 3: **scan-prose and scan-seeded are
+  each their own split**, each baselined on its own first measurement with the
+  reference model at ≥3 seeds, neither compared against nor averaged into the
+  v1/v2/v3 baselines, and the existing 0.70 prose bar keys on its own coverage
+  constant so it cannot be diluted by the plumbing. Re-baselining any combined bar
+  is its own explicit future amendment.
+
+**The tool-surface pin moves here: 53 → 54.** Stage 12 is the first of the five
+frontier stages to move it. `PARTS_STORE.md` adds no tool, so the pin stood at 53
+where this stage opened, and `compare_to_scan` is the single addition. G12C.42
+asserts **both** halves: that the pin in both places increments by exactly one
+from a pre-stage value recorded as a named constant in the stage-12 test module at
+gate-authoring time — never re-derived from git history at test time, which would
+make the gate depend on the checkout's depth and shape — and that the recorded
+value **is 53**, so the post-stage pin is **54**. A future reorder that changes
+the pre-stage value updates the constant *and* cites the amendment that moved it.
+
+**One refusal-code rename, taken unilaterally by this stage.** `PHYSICS.md`
+(Stage 15, this document's successor) also drafts a `mesh_too_large`. Rather than
+leave a live collision in a closed vocabulary, this stage names its byte-ceiling
+refusal `mesh_import_too_large`, on two order-independent grounds: it is an
+`ImportResolutionReason` about a *file*, and the two refusals are about different
+objects at different times. **No clause here obliges any other document to rename
+anything**, and no "the later document renames" rule is invoked — under the
+settled order that rule would point the wrong way and would have a future agent
+revert this rename and re-open the collision.
+
+**The document amendments this stage carries, each landing with its own
+machinery.** `INGEST.md` §1 and §3, `repo_conventions.md`'s spike disposition, and
+`script_contract.md` §2's first wave (`import_mesh`, `import_point_cloud`) land at
+12A, together with two `verification.md` additions whose evidence is G12A's own —
+the Tier 1 kernel-service list gains mesh quality against hand-computable
+fixtures, and the Tier 1 performance-budget list gains the parse + canonicalize +
+quality budget. `script_contract.md` §2's second wave (`mesh_to_solid`,
+`section_polylines`, `loft_sections`) and `verification.md`'s golden-provenance
+(container image, OCCT version) pair land at 12B. `COMPARE.md` §1 and §4,
+`script_contract.md` §6, `tool_schema.md`, `VALIDATION.md` §1 and §5, and the
+`scipy` pin in `core/pyproject.toml` land at 12C. Two of those rows are
+constrained rather than free. The `COMPARE.md` §4 replacement **carries the
+FEA-mesh exclusion forward verbatim** — an FEA mesh is a solver input, never a
+comparison operand — because `PHYSICS.md` declares that sentence an explicit
+non-amendment at Stage 15 and this stage rewrites it first; preserving it is a
+requirement of the row, not a courtesy. The `verification.md` row **adds a pair to
+whatever list stands** rather than rewriting the block, so `PHYSICS.md`'s later
+mesher/solver pin joins it without conflict. **This block edits no other stage's
+gate text.**
+
+**The one open question this stage does not pre-decide.** Whether OCCT's
+`ShapeFix_*` can repair a faceted solid to validity, and at what cost, was not
+measured. `MESH_INGEST.md` §4.5 pre-commits to the **disposition rule** rather
+than to a result — success within the §4.1 ceiling gives `mesh_to_solid` a
+recorded `repair=True`; failure keeps `mesh_solid_invalid` and leaves the socket
+workflow as §5.2 only — and G12B.25 measures it on the pinned image, archives the
+evidence under rule 2, and asserts whichever branch the outcome selects. Naming an
+unmeasured mechanism as new work rather than assuming it is the `KINEMATICS.md`
+discipline. **Measured 2026-08-30, in the image:** all three fixers
+(`ShapeFix_Shape`, `ShapeFix_Solid`, `ShapeFix_Shell`) complete in under 0.32 s
+and **none reaches `IsValid()`**; two of them hand back a solid whose volume has
+flipped sign. The rule's second branch holds, `repair=True` does not exist, and
+the archived evidence carries the (image digest, OCCT version) stamp saying which
+world produced that answer.
+
+**Constants set from the pinned image's own measurement, under rule 4 — TAKEN,
+2026-08-30.** `MESH_ROUNDTRIP_EPS_MM`, `MESH_TESSELLATION_VOLUME_BIAS` and the
+G12A performance budget were previously set in the repository venv and the debt
+was recorded here as outstanding. It is now discharged, and by a measurement
+rather than by a promise: `scripts/stage12_pinned_measure.py --write` takes all
+four figures **inside the pinned image**, refuses to write anywhere else
+(`hephaestus.testing.pinned_image.pinned_stamp`), and archives them stamped with
+the world they came from at `evidence/pinned_measurements.json` in each of `tests/stage12a`, `tests/stage12b` and `tests/stage12c`.
+Each constant is then **derived at import from its recorded figure** rather than
+transcribed beside it, so a constant cannot exist without the record and cannot
+drift from it in silence. The recorded numbers: parse + canonicalize + quality
+**6.1365 s** for 20 480 triangles (ceiling 18.4 s, three times the measurement);
+round-trip identity **9.3686e-7 mm** (ceiling 1e-3 mm, three orders of magnitude
+rounded up to the next power of ten); tessellated-volume bias **0.70650 %** at
+the pinned 0.1 mm deflection (ceiling 0.883 %); the `ShapeFix` disposition and
+the two-process sew counts recorded outright. Every derived ceiling is asserted
+**at or below** the value that stood before the image measured anything: budgets
+tighten, never loosen, and a re-measurement on a slower image may not buy an
+implementation room it never earned.
+
+**Where that measurement was taken, stated exactly rather than implied.** The
+GHCR digest `ci.yml` pins is not resolvable from the machine that took it — a
+private package answers `403` without `read:packages` — so the record was taken
+in a container built from the repository's own **unchanged**
+`docker/ci/Dockerfile`, whose `FROM` is itself digest-pinned. That is the route
+`docker/ci/README.md` documents and the route commit `f3a4d42` took to re-record
+the G1/G4 goldens "inside the pinned CI image", and the record says which of the
+two routes produced it rather than claiming a digest it does not have. What ties
+it to the pin mechanically is the **base image**: `load_pinned` re-reads the
+`FROM` digest from `docker/ci/Dockerfile` at test time and refuses a record taken
+against a different one, so a base bump invalidates every record that did not
+move with it. And the `stage12 measurements (pinned image)` lane re-takes all
+four in the GHCR image on every PR (`--check`), failing if the recorded numbers
+no longer describe it. A recorded number nobody re-takes is a number nobody is
+accountable for.
+
+`MESH_MAX_BYTES` / `MESH_MAX_TRIANGLES` / `MESH_MAX_POINTS` remain deliberately
+unvalued here: they are admission ceilings whose *shape* is what G12A.2 and
+G12A.20 bind, not wall clocks, and rule 4's re-measurement obligation does not
+reach them.
+
+**One Tier 3 clause carries a different debt, and it is not this one.**
+**G12C.51** (the `scan-prose` / `scan-seeded` splits) needs a **live
+reference-model sweep**, which is a detached run this repository does not take
+and must never fake — rule 2's archive is evidence precisely because nothing
+writes into it that did not happen. Its machinery is closed and asserted (own
+splits in both specs, own first-measurement baseline at ≥ 3 seeds, the 0.70
+prose bar keying on its own coverage constant with the family carved out and not
+dropped, and `INSUFFICIENT_SCAN_SEEDS` refusing a thin first measurement with
+nothing written), and `heph bench score` prints `scan family: NOT MEASURED …
+outstanding` on any archive with no scan runs — a tool that says what it does not
+know, which is the same disposition Stage 11 took for its own Tier 3 clause.
+
+**Three repair passes, and what the third one found (2026-08-30).** Each pass was
+an independent verifier reading all 51 clauses against the code that claimed to
+satisfy them; the findings are recorded in `MESH_INGEST.md` ("The repair pass…",
+"The second repair pass…", "The third repair pass…") rather than only in a
+session log, because a finding closed and reported nowhere is a finding the next
+agent rediscovers. The third pass passed 50 of 51 and found the defect this stage
+exists to make impossible: **`compare_to_scan` on a part with no faces returned a
+distance of `0.0` under the name of the exact method, from zero samples, with no
+refusal spent** — a plausible-looking wrong number, reachable through the
+product's own tool, and *invisible* to the clause (G12C.37) written to police
+those very fields, because the bad record's shape is a legal one. Fixed at the
+producer, which now refuses `scan_unmeasurable` before spending either
+direction. Beside it: the `[code]` derivation rule was closed for the admission
+third of §10 and open for the other two thirds (two §10 codes existed only as
+message prose, with no `reason=` behind them); two clauses asserted a weaker case
+than the one their own spec text names; one asserted a recomputation instead of
+the build's own output; and `ci.yml` still carried two comments claiming a
+pinned-image measurement was owed after it had been taken. Every one is closed by
+tightening — two refusal codes were **added** to the §10 vocabulary
+(`scan_target_ambiguous_units`, `declared_transform_not_rigid`), none removed,
+none relaxed — and the count stands at 51.
+
+**Clinical claims, refused in contract form (`MESH_INGEST.md` §11).** A prosthetic
+socket is a load-bearing medical device. This stage evidences **geometric distance
+between an authored solid and a scan, at named samples, to a named tolerance** —
+and nothing else. **Fit** is refused: rectification is clinical judgement the
+harness cannot verify, and no `CHECKS` predicate over a `ScanDistance` may be
+presented as evidence of it. **Load** is refused: structural adequacy is FEA,
+deferred by name by rule 5 and entering only by its own gated stage. **Softness**
+is refused: the scan is a rigid capture of a deformable limb and nothing here
+models tissue. Shipping the geometric half honestly is real capability; shipping
+either half while calling it "validated for fit" is the failure this project
+exists to prevent. This block creates no clinical-claim exception anywhere else in
+the plan.
+
+**Structural lattices are deferred by name, with a precondition.** Gyroid/TPMS and
+strut lattices are out of scope and are their own gated stage under rule 5, whose
+**explicit precondition** is the rule 6 second-kernel question — answered before
+such a stage is scheduled, not during it. A TPMS lattice is an implicit surface
+realized by marching cubes, so it *produces* a mesh and inherits every honesty
+problem above; at 10⁵–10⁶ faces the boolean *is* the operation, which needs a
+mesh-native engine, which is a second implementation of what the Python core owns.
+Print infill is not this and already has a home: it is manufacturing metadata on
+the existing 3MF export path, and slicers own it.
+
+**Gates are commands here too.** All three Stage 12 suites join
+`.github/workflows/ci.yml` as their own lane on the pattern the Stage 11 lane
+established, and that check name joins `release.yml`'s prior-gate list. Rule 1 is
+the reason: three Tier 1 gates that only ever pass on a developer's machine are
+not gates yet. **So does the measurement lane**, and that correction is worth
+recording: an earlier draft added `stage12 measurements (pinned image)` to
+`ci.yml` and argued *in a comment* for leaving it out of the prior-gate list.
+`tests/stage7h::test_the_prior_gate_check_names_every_ci_job` asserts set
+equality between the two, so that argument turned a green gate red — and under
+rule 1 a documented deviation from an assertion is still a failing assertion,
+resolved by tightening rather than by prose. The lane is in the list. It takes a
+measurement rather than waiting on one, and a release that shipped constants
+nothing re-measured in the image is exactly what the list exists to stop.
+
+**Findings discipline (D5), satisfied before this block landed.** The adversarial
+pass against `MESH_INGEST.md` returned six confirmed findings — three blocking,
+three major — and the closures were then audited clause by clause against the code
+they cite rather than taken on the fix author's word. Four closed outright; the
+audit found residuals inside two of them and one document-wide sequencing
+inversion, and every one was closed by **tightening**. No gate clause was deleted
+or weakened: the count stands at 51 (G12A 20, G12B 13, G12C 18). The four
+substantive tightenings, recorded because each one is a trap a later implementer
+would otherwise fall into: the staged-filename formula was corrected to the
+expression the code actually evaluates, since the drafted one would have silently
+renamed every already-staged STEP artifact; the byte ceiling was extended to the
+**undeclared-file** path that `sync_import_state` drives over every file under the
+imports tree, which a declaration-resolved ceiling could never bound; the
+`mesh_units_conflict` code was kept in the closed vocabulary with its
+unreachability asserted **as a fact** rather than skipped or deleted; and six
+clauses that still reasoned from a retracted ordering in which `PHYSICS.md` was
+the predecessor were rewritten against the settled order — one of them would have
+instructed a future agent to revert the rename above and re-open a live refusal
+collision, and another would have had an implementer waiting on a tool-count
+repoint from a stage that lands three stages later. `MESH_INGEST.md` is promoted
+from DRAFT to normative by this amendment.
+
+**What that review was, stated so no later reader rounds it up.**
+`MESH_INGEST.md`'s own header named two conditions for normativity: an adversarial
+review on the `KINEMATICS.md` precedent, and this dated amendment. The review that
+actually ran was a six-finding adversarial pass plus an independent
+clause-by-clause closure audit against the repository — not the 40-agent, 31-finding
+pass `KINEMATICS.md` records. That is the evidence behind this promotion, and it is
+written here rather than in the spec so the promotion cannot be read as claiming
+more than it has. A further adversarial pass remains available and would land as
+tightenings under rule 1, never as waivers.
+
+**Numbering, unchanged from the Stage 11 block that settled it.** D4 option (a)
+holds: `MESH_INGEST.md` is document 14 and **Stage 12**, with the gate names
+G12A/G12B/G12C and the suites this block names. `docs/frontier-staging-proposal.md`
+§3.2's ready-to-paste block still labels mesh and scan ingest "Stage 11" because it
+predates that resolution; it is superseded by the text above and retained only as
+the drafting record.
+
 ## Mission-wide rules
 
 1. **Gates are commands.** Every criterion above maps to a CI job; the

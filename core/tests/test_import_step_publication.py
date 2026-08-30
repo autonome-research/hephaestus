@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 from hephaestus.core.executor.fingerprint import FingerprintBaseline
+from hephaestus.core.executor.imports import ImportPayload
 from hephaestus.core.executor.runner import BuildRequest, UnpublishedBuild, run_build
 from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.core.project_store.layout import ProjectLayout, open_store
@@ -84,7 +85,13 @@ def replace_import(layout: ProjectLayout, source: Path) -> None:
 class TestFreeze:
     def test_freezes_declared_import_bytes_and_refs(self, publisher: Publisher) -> None:
         frozen = publisher.freeze_inputs(PART)
-        assert frozen.imports == {"plate.step": PLATE.read_bytes()}
+        # Stage 12 amendment (``MESH_INGEST.md`` §1.1, §12 item 6a): the freeze
+        # threads declarations, so each frozen import is an ``ImportPayload``
+        # carrying the bytes with the declared kind and units beside them. STEP
+        # declares neither, so the payload is kind ``step`` with no units and
+        # the frozen BYTES are exactly what they were.
+        assert frozen.imports == {"plate.step": ImportPayload(PLATE.read_bytes())}
+        assert frozen.imports["plate.step"].data == PLATE.read_bytes()
         assert frozen.import_errors == {}
         assert frozen.import_refs["plate.step"].endswith(sha256_bytes(PLATE.read_bytes()))
         assert publisher.locks.held() == ()

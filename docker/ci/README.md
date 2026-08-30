@@ -103,6 +103,31 @@ The e2e half additionally needs a built sidecar and web bundle before it will
 start (`heph serve --web` refuses without both) — follow the `render goldens`
 job's step order in `.github/workflows/ci.yml`.
 
+## Re-taking the Stage 12 pinned-image measurements
+
+Four Stage 12 clauses (G12A.19, G12B.25, G12B.33, G12C.45) say their numbers are
+measured **in the pinned image**, and their constants are derived from an
+archived record rather than typed in (`MESH_INGEST.md` §Gates, "In the pinned
+image, defined once"). This is the image that record must come from. Two
+variables matter beyond the recipe above:
+
+```
+  -e HEPHAESTUS_CI_IMAGE_DIGEST=$(docker image inspect heph-ci-local --format '{{.Id}}')
+  -e HEPHAESTUS_CI_IMAGE_REF='heph-ci-local — local build of docker/ci/Dockerfile'
+```
+
+Then `uv run python scripts/stage12_pinned_measure.py --write` (or `--check`,
+which writes nothing and fails if the committed numbers no longer describe this
+image). Without `HEPHAESTUS_CI_IMAGE_DIGEST` the script **refuses**: a
+developer-host measurement may not be filed as an image one. The GHCR digest
+`ci.yml` pins is the other route and is what the CI lane uses; a local build of
+this **unchanged** Dockerfile is the route for a machine without
+`read:packages`, and the record carries the Dockerfile's own `FROM` digest so a
+base bump invalidates it.
+
+The container writes those records as **root** through the mount — see the
+hazard section above, and `chown` them back before committing.
+
 ## After any container run on a real worktree
 
 ```

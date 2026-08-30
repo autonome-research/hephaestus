@@ -1,0 +1,39 @@
+{
+  "ceiling_s": 120.0,
+  "disposition": "second branch: no repair= argument",
+  "fixture": "tessellate(Sphere(20)) raw, 2004 triangles, sewn, IsValid=False",
+  "outcomes": [
+    {
+      "face_count_after": 2004,
+      "face_count_before": 2004,
+      "fixer": "ShapeFix_Shape",
+      "reached_valid": false,
+      "seconds": 0.3135195570066571,
+      "volume_after_mm3": -33273.571202151834,
+      "volume_before_mm3": 33273.571202151834
+    },
+    {
+      "face_count_after": 2004,
+      "face_count_before": 2004,
+      "fixer": "ShapeFix_Solid",
+      "reached_valid": false,
+      "seconds": 0.24663345800945535,
+      "volume_after_mm3": -33273.571202151834,
+      "volume_before_mm3": 33273.571202151834
+    },
+    {
+      "face_count_after": 2004,
+      "face_count_before": 2004,
+      "fixer": "ShapeFix_Shell",
+      "reached_valid": false,
+      "seconds": 0.24260664501343854,
+      "volume_after_mm3": 33273.571202151834,
+      "volume_before_mm3": 33273.571202151834
+    }
+  ],
+  "provenance": {
+    "image_digest": "sha256:0bd0427bd17b617235a4f599de0b389ff7159e38dac738778a9e234304cdddd6",
+    "occt_version": "cadquery-ocp-novtk 7.9.3.1.1"
+  },
+  "spec": "MESH_INGEST.md \u00a74.5"
+}

@@ -249,12 +249,16 @@ def run_checks(
     the named refusal (with whatever partial facts arrived) under
     ``measured.unverifiable`` instead of an ``error``. Not a pass, and not a
     crash: the report says the measurement was cut short, not that it failed.
-    The two classes are ``compare_timeout`` (``COMPARE.md`` §5, an ``m.diff``)
-    and ``motion_timeout`` (``KINEMATICS.md`` §4, an ``m.sweep`` whose grid
-    was ceiling-killed — the partial per-sample facts ride the refusal).
+    The three classes are ``compare_timeout`` (``COMPARE.md`` §5, an
+    ``m.diff``), ``motion_timeout`` (``KINEMATICS.md`` §4, an ``m.sweep`` whose
+    grid was ceiling-killed — the partial per-sample facts ride the refusal) and
+    ``scan_timeout`` (``MESH_INGEST.md`` §7.3, an ``m.scan_diff`` whose distance
+    computation was ceiling-killed — the §3 quality record, both bboxes and
+    whichever direction completed ride the refusal).
     """
     from hephaestus.core.motion import MotionTimeout
     from hephaestus.core.project_compare import CompareTimeout
+    from hephaestus.core.scan_compare import ScanTimeout
 
     results: dict[str, CheckResult] = {}
     for name, predicate in checks.items():
@@ -263,7 +267,7 @@ def run_checks(
         try:
             passed = bool(predicate(measurement))
             measured = measurement.measured_json()
-        except (CompareTimeout, MotionTimeout) as exc:
+        except (CompareTimeout, MotionTimeout, ScanTimeout) as exc:
             passed = False
             measured = {"unverifiable": cast("JSONValue", exc.to_json())}
         except HephaestusError as exc:

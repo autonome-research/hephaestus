@@ -243,6 +243,7 @@ def lint_script(
     findings.extend(_missing_metadata_findings(facts))
     findings.extend(_unlabeled_compound_findings(module))
     findings.extend(_unreachable_geometry_findings(facts))
+    findings.extend(_mesh_derived_offset_findings(facts))
     if ledger_ids is not None:
         findings.extend(_unsourced_constant_findings(module, source, ledger_ids))
     if component_data:
@@ -279,6 +280,13 @@ class _Facts:
         self.geometry_roots: set[str] = set()
         self.consumed_names: set[str] = set()
         self.bindings: dict[str, _Binding] = {}
+        #: ``MESH_INGEST.md`` §4.3: names bound DIRECTLY by a single assignment
+        #: from a ``mesh_to_solid(...)`` call, and nothing else. One hop, no
+        #: propagation — the rule's whole documented limitation lives in this
+        #: dict being shallow, and a name rebound to anything else drops out.
+        self.mesh_derived_names: dict[str, tuple[int, int]] = {}
+        #: ``(call node, spelling)`` for every offset/shell/fillet-class call.
+        self.mesh_operation_calls: list[tuple[ast.Call, str]] = []
         self.has_geometry_assign = False
         self._collect_expressions(module)
         self._visit_body(module.body, in_function=False)
@@ -312,6 +320,18 @@ class _Facts:
                 elif node.func.id == "check":
                     for arg in node.args:
                         self.consumed_names |= _loaded_names(arg)
+                if node.func.id in MESH_DERIVED_OPERATIONS:
+                    self.mesh_operation_calls.append((node, node.func.id))
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in MESH_DERIVED_OPERATIONS
+                and isinstance(node.func.value, ast.Name)
+            ):
+                # ``socket.shell(...)`` reaches the same kernel call the free
+                # ``offset(socket, …)`` does; the rule must see both spellings
+                # or a reader could conclude one of them is sanctioned.
+                self.mesh_operation_calls.append((node, node.func.attr))
 
     # -- statement-level facts (module bindings + part.* assignments) ------
 
@@ -374,6 +394,21 @@ class _Facts:
     def _visit_assign(self, stmt: ast.Assign, *, in_function: bool) -> None:
         value_names = _loaded_names(stmt.value)
         seed = _has_geometry_call(stmt.value)
+        # MESH_INGEST.md §4.3, the one hop this rule reaches: a single Name
+        # target assigned the direct result of mesh_to_solid(...). Anything else
+        # assigned to that name — including a later rebinding — takes it back
+        # out, because the rule may not claim to have followed what it did not.
+        direct = (
+            isinstance(stmt.value, ast.Call)
+            and isinstance(stmt.value.func, ast.Name)
+            and stmt.value.func.id == "mesh_to_solid"
+        )
+        for target in stmt.targets:
+            if isinstance(target, ast.Name):
+                if direct:
+                    self.mesh_derived_names.setdefault(target.id, (stmt.lineno, stmt.col_offset))
+                else:
+                    self.mesh_derived_names.pop(target.id, None)
         for target in stmt.targets:
             self._assign_target(target, value_names, seed=seed, stmt=stmt, in_function=in_function)
         # PARAMS / CHECKS declarations (top level only, matching the executor)
@@ -577,6 +612,73 @@ def _unreachable_geometry_findings(facts: _Facts) -> list[LintFinding]:
                     name=name,
                 )
             )
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# MESH_INGEST.md §4.3 — the syntactic half of the mesh-derived split
+
+
+#: The build123d spellings that offset, hollow or blend a solid. Both the free
+#: functions and the method forms, because a script may write either.
+MESH_DERIVED_OPERATIONS: tuple[str, ...] = (
+    "chamfer",
+    "fillet",
+    "offset",
+    "offset_3d",
+    "shell",
+    "thicken",
+)
+
+
+def _mesh_derived_offset_findings(facts: _Facts) -> list[LintFinding]:
+    """``mesh_derived_offset``: an offset/shell/fillet whose operand is a scan.
+
+    **This rule is syntactic, and its reach is exactly one hop of single
+    assignment.** It sees ``socket = mesh_to_solid(scan, …)`` followed by
+    ``offset(socket, amount=2)`` and nothing subtler: put the solid in a list,
+    return it from a helper, rebind it through a second name, or pass it
+    through a boolean first, and this rule says nothing. That is stated here
+    rather than in a release note because a lint that overclaims its reach is
+    the same defect one level down from the one it is trying to catch.
+
+    The reach it does have is not the enforcement. The enforcement is the
+    ``BRepCheck_Analyzer`` gate in ``mesh_to_solid``, which withholds the object
+    that would poison the operation, and
+    :class:`hephaestus.geom.mesh_solid.MeshDerivedSolid`, which refuses the
+    methods build123d's own free functions dispatch to. This rule is a warning
+    on top of those, for the script a reader is looking at rather than the build
+    they are running (``MESH_INGEST.md`` §4.3).
+    """
+    derived = facts.mesh_derived_names
+    if not derived:
+        return []
+    findings: list[LintFinding] = []
+    for call, operation in facts.mesh_operation_calls:
+        operands: list[ast.expr] = [*call.args, *(keyword.value for keyword in call.keywords)]
+        if isinstance(call.func, ast.Attribute):
+            operands.append(call.func.value)
+        for argument in operands:
+            if isinstance(argument, ast.Name) and argument.id in derived:
+                findings.append(
+                    LintFinding(
+                        code="mesh_derived_offset",
+                        severity="warning",
+                        line=call.lineno,
+                        col=call.col_offset,
+                        message=(
+                            f"{operation}() operand {argument.id!r} traces by single "
+                            "assignment to a mesh_to_solid result. Offsetting a "
+                            "mesh-derived solid was measured returning a sealed, "
+                            "genus-0, plausible solid whose volume is five million "
+                            "times too small (MESH_INGEST.md §4.2). Section the scan "
+                            "and author geometry through the sections instead (§5.2). "
+                            "This rule is syntactic and defeatable by indirection — it "
+                            "is a warning, never a guarantee."
+                        ),
+                        name=argument.id,
+                    )
+                )
     return findings
 
 

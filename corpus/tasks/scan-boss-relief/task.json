@@ -1,0 +1,46 @@
+{
+  "id": "scan-boss-relief",
+  "prompt": "The project's `imports/boss.stl` is a scan of a boss on an existing assembly, captured in millimetres. Author the part `frame`: a rectangular relief frame that sits around that boss - 60 x 50 mm in plan, 20 mm tall, centred on the origin, with a rectangular opening through it that stands off the scanned boss by the project's `relief_mm` parameter on every side. Every interface number is already in `globals.py` - read them through `hc` instead of repeating them.\n\nThe opening must clear the scan by at least 1.5 mm and no scanned point may sit more than 4.0 mm from the frame: a frame that clears everything locates nothing. Measure both with `compare_to_scan(part=\"frame\", scan=\"boss.stl\", units=\"mm\")` and read `distance.scan_to_part_min_mm` and `distance.scan_to_part_max_mm`. Do NOT offset or thicken the scan itself - a mesh has no exact surfaces and the harness refuses those operations on mesh-derived geometry. Author the frame, then measure the gap.\n\nBuild the part and export it as STEP when the geometry is right.",
+  "budget_tool_calls": 15,
+  "required_checks": [
+    "scan_boss_relief"
+  ],
+  "export_requirements": [
+    {
+      "part": "frame",
+      "format": "step",
+      "layout": "as_built",
+      "min_bytes": 1024
+    }
+  ],
+  "render_requirements": [],
+  "scan_requirements": [
+    {
+      "part": "frame",
+      "scan": "boss.stl",
+      "units": "mm",
+      "kind": "clearance_min",
+      "min_mm": 1.5,
+      "align": "as_posed",
+      "note": "the opening clears the scanned boss on every side; the reference geometry measures 2.00 mm"
+    },
+    {
+      "part": "frame",
+      "scan": "boss.stl",
+      "units": "mm",
+      "kind": "deviation_max",
+      "max_mm": 4.0,
+      "align": "as_posed",
+      "note": "and locates it: no scanned point stands further off than this, so a frame that clears everything fails"
+    }
+  ],
+  "constraint_requirements": [],
+  "joint_requirements": [],
+  "pose_requirements": [],
+  "motion_check_requirements": [],
+  "protected_paths": [],
+  "notes": "Difficulty 2. Corpus v5 (2026-08-29, MESH_INGEST.md \u00a77.5 Stage 12C): the scan family's two-sided task - the same engine-path measurement as scan-socket-cuff, but with BOTH members of the scan_requirements vocabulary, because a clearance floor alone is passed by a frame that clears the world. The scan is SYNTHESIZED from an analytic solid (scripts/synthesize_scan_fixture.py: a tessellated 40 x 30 x 20 box), so the ground truth is exact: every one of the box's eight vertices sits 22.0 - 20.0 = 2.00 mm from the opening's x wall, so the reference measures min 2.00 mm against a 1.5 mm floor and max 2.00 mm against a 4.0 mm ceiling. The bars discriminate in both directions: relief_mm at its 1.5 lower bound still passes at 1.50 mm, relief_mm at its 4.0 upper bound measures 4.00 mm and fails the deviation ceiling. CHECKS keep the facts a distance cannot see - the 60 x 50 x 20 envelope, the 30080 mm^3 ring volume, sealed with genus 1 for the opening. NOTHING here is a clinical claim (MESH_INGEST.md \u00a711.3). Budget derivation (measured policy, VALIDATION.md \u00a77, 2026-08-25): no archived observe-mode journals exist for this task yet, so only the hand-count binds - record_requirements 1, create_part 1, write_part 2, build_part 2, compare_to_scan 2, inspect_part 1, run_checks 1, export_part 1 = 11 calls; ceil(1.3 x 11) = 15. Recalibrate against the observed passing max after the first archived sweep, per the measured-budget policy.",
+  "dfm_requirements": [],
+  "drawing_requirements": [],
+  "metadata_requirements": []
+}

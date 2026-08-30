@@ -1,0 +1,7 @@
+# scan-boss-relief bench task: an empty project carrying one scan.
+# `imports/boss.stl` is a SYNTHESIZED scan (scripts/synthesize_scan_fixture.py):
+# a tessellated 40 x 30 x 20 box, so both the clearance and the deviation the
+# acceptance measures have an analytic ground truth.
+[project]
+name = "scanbossrelief"
+description = "A relief frame authored around a scanned boss, clearing it on four sides"

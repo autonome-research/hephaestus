@@ -29,7 +29,11 @@ from hephaestus.core.executor.fingerprint import (
     descriptors_from_json,
     descriptors_to_json,
 )
-from hephaestus.core.executor.imports import ImportResolutionError, static_import_paths
+from hephaestus.core.executor.imports import (
+    ImportPayload,
+    ImportResolutionError,
+    static_import_declarations,
+)
 from hephaestus.core.executor.runner import UnpublishedBuild
 from hephaestus.core.hashing import consumed_hc_hash, toolchain_hash
 from hephaestus.core.project_store.artifact_kinds import (
@@ -92,6 +96,39 @@ def current_pointer(part: str) -> str:
     return CURRENT_POINTER_PREFIX + part
 
 
+def _mesh_hashes(build: UnpublishedBuild) -> dict[str, JSONValue]:
+    """``{staged key: mesh_canonical_hash}`` the worker reported, or ``{}``.
+
+    Keyed by (path, declared unit) rather than by path, because two units over
+    one file are two canonical geometries (``MESH_INGEST.md`` §1.5.1) and a
+    path-keyed record would report one of them as if it were both. Absent from
+    every build that imported no mesh, and from every record written before this
+    stage — an empty map is the honest reading of "this build imported none".
+    """
+    raw = build.worker_result.get("mesh_canonical_hashes")
+    if not isinstance(raw, dict):
+        return {}
+    return {str(key): value for key, value in cast("dict[str, JSONValue]", raw).items()}
+
+
+#: ``MESH_INGEST.md`` §4.3's closed two-member set, declared where the bundle is
+#: written so a third value cannot arrive by typo.
+GEOMETRY_SOURCES: Final[tuple[str, ...]] = ("authored", "mesh_derived")
+
+
+def _geometry_source(build: UnpublishedBuild) -> str:
+    """``"authored"`` or ``"mesh_derived"`` for this build (``MESH_INGEST.md`` §4.3).
+
+    Defaults to ``"authored"``, which is both the safe reading and the true one:
+    a worker result with no such key came from a build that never called
+    ``mesh_to_solid``. Importing a mesh and measuring against it is still
+    authored — the scan was measurement data, not geometry — so this flips only
+    where scan surface actually entered the part.
+    """
+    raw = build.worker_result.get("geometry_source")
+    return raw if isinstance(raw, str) and raw in GEOMETRY_SOURCES else "authored"
+
+
 @dataclass(frozen=True)
 class FrozenBuildInputs:
     """Immutable inputs captured under locks before geometry computation."""
@@ -105,8 +142,12 @@ class FrozenBuildInputs:
     manifest_params: Mapping[str, int | float]
     #: INGEST.md §1: the frozen bytes of every ``imports/`` file the script
     #: declares, keyed by the path as written. Frozen exactly like the script
-    #: text so a lost-response retry replays the original content.
-    imports: Mapping[str, bytes] = field(default_factory=dict[str, bytes])
+    #: text so a lost-response retry replays the original content. Since Stage
+    #: 12 the value is an :class:`ImportPayload` rather than bare bytes, because
+    #: the declared kind and unit have to reach the staging code — a declared
+    #: unit that stops at the AST is a declared unit the geometry never sees
+    #: (``MESH_INGEST.md`` §1.1).
+    imports: Mapping[str, ImportPayload] = field(default_factory=dict[str, "ImportPayload"])
     #: Declared imports the resolver refused, path -> named refusal. Carried
     #: rather than raised: the build reports it at the ``import_step``
     #: statement with the full §8 error record.
@@ -214,8 +255,8 @@ class Publisher:
 
     def _freeze_imports(
         self, script: str
-    ) -> tuple[dict[str, bytes], dict[str, str], dict[str, str]]:
-        """Read + register every ``import_step`` declaration of ``script``.
+    ) -> tuple[dict[str, ImportPayload], dict[str, str], dict[str, str]]:
+        """Read + register every import declaration of ``script``.
 
         The declarations are read statically from the script (INGEST.md §1), so
         the freeze covers exactly the files this build will use — no directory
@@ -223,18 +264,36 @@ class Publisher:
         raised: a missing or unreadable import must surface as the §8 build
         error at its own statement, with a frame and a built-through, not as an
         exception out of the freeze.
+
+        Declarations rather than path strings (``MESH_INGEST.md`` §1.1): the
+        kind resolves the §1.6 byte ceiling this file is read under, and the
+        declared unit rides along to staging, where §1.5 bakes it into the
+        canonical geometry. One file may be declared at two units, so the
+        payload's ``units`` is the sorted set of everything this script declared
+        for that path, and staging (``runner.stage_request_imports``) makes one
+        staged artifact per member.
         """
-        imports: dict[str, bytes] = {}
+        imports: dict[str, ImportPayload] = {}
         errors: dict[str, str] = {}
         refs: dict[str, str] = {}
-        for path in static_import_paths(script):
+        units: dict[str, set[str]] = {}
+        for declaration in static_import_declarations(script):
+            path = declaration.path
+            if declaration.units is not None:
+                units.setdefault(path, set()).add(declaration.units)
+            if path in errors or path in imports:
+                continue
             try:
-                snapshot = self.parts.read_import(path)
+                snapshot = self.parts.read_import(path, kind=declaration.kind)
             except ImportResolutionError as exc:
                 errors[path] = exc.message
                 continue
-            imports[path] = snapshot.data
+            imports[path] = ImportPayload(data=snapshot.data, kind=declaration.kind)
             refs[path] = snapshot.snapshot_ref
+        for path, payload in imports.items():
+            imports[path] = ImportPayload(
+                data=payload.data, kind=payload.kind, units=tuple(sorted(units.get(path, ())))
+            )
         return imports, errors, refs
 
     def sync_import_state(self) -> StaleReport | None:
@@ -478,6 +537,21 @@ class Publisher:
             # and tags has exited.
             "geometry_index": dict(build.geometry_index_json or {}),
             "consumed_hc": dict(build.consumed_hc),
+            # MESH_INGEST.md §1.4 / §12 item 15: the SECOND hash, recorded
+            # beside the first rather than in place of it.
+            # ``result.input_hashes.imports`` is the raw file bytes and stays
+            # the invalidation key; this is geometry identity, and it is what
+            # lets two builds of one part say "the file changed, the geometry
+            # did not" instead of leaving a reader to guess from a moved input
+            # hash. It is an explanatory fact and never an invalidation key —
+            # reversing that would let a normalizer decide what counts as a
+            # changed build, which is the authority INGEST.md §1 keeps in the
+            # raw bytes.
+            "mesh_canonical_hashes": _mesh_hashes(build),
+            # MESH_INGEST.md §4.3: surfaced, never blocking. A reviewer must SEE
+            # that a part's geometry came out of a scan; this spec adds no new
+            # never-green rule for it.
+            "geometry_source": _geometry_source(build),
             "audit_revision": self.projections.state().audit_revision,
         }
         bundle_blob = self._store.blobs.put(canonical_json(bundle).encode("utf-8"))

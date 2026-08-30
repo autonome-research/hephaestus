@@ -82,10 +82,11 @@ needs a verdict must decide what to do about it.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Final, Literal, TypeAlias, TypeVar
+from typing import Any, Final, Literal, NoReturn, TypeAlias, TypeVar, cast
 
+from hephaestus.core.errors import ValidationError
 from hephaestus.geom.measure import OVERLAP_EPS_MM3, interference
 from hephaestus.geom.metrics import AnyShape, bbox_mm, genus, is_sealed, shape_volume
 from hephaestus.geom.topology import Vec3
@@ -98,20 +99,35 @@ __all__ = [
     "MAX_FACE_SAMPLES",
     "MIN_FACE_SAMPLES",
     "MOMENT_TIE_REL",
+    "RIGID_EPS",
     "SAMPLES_PER_MM2",
+    "SCAN_ALIGN_MODES",
+    "SCAN_DIRECTION_PART_TO_SCAN",
+    "SCAN_DIRECTION_SCAN_TO_PART",
+    "SCAN_REFUSALS",
+    "SCAN_VERTEX_SAMPLE_MAX",
     "SKEW_EPS",
     "AlignMode",
     "Alignment",
     "CompareBooleanError",
+    "ScanAlignMode",
+    "ScanCompareError",
+    "ScanDistance",
+    "ScanProgress",
+    "ScanRefusalReason",
     "SolidDiff",
     "SurfaceDistance",
     "TopologyCensus",
     "TopologyDiff",
     "VolumeDiff",
     "principal_alignment",
+    "refuse_scan_principal",
+    "scan_distance",
+    "scan_iou",
     "solid_diff",
     "surface_distance",
     "topology_diff",
+    "validate_declared_transform",
     "volume_diff",
 ]
 
@@ -694,4 +710,443 @@ def solid_diff(a: AnyShape, b: AnyShape, *, align: AlignMode = "as_posed") -> So
         b_bbox_mm=bbox_mm(b),
         a_volume_mm3=shape_volume(a),
         b_volume_mm3=shape_volume(b),
+    )
+
+
+# --------------------------------------------------------------------------
+# §6 — scoring against a scan target
+#
+# A scan is not a solid, so this is NOT ``solid_diff`` with a mesh operand: it
+# is a different record type, reporting what a triangle soup can support and
+# refusing by name what it cannot. ``COMPARE.md`` §1's discipline transfers
+# wholesale and is not reimplemented here — sample counts ride the record,
+# thresholds stay in the caller's predicate, and the alignment mode is declared
+# on every number it affects.
+
+#: The scan comparison's own refusal vocabulary (``MESH_INGEST.md`` §10). A
+#: THIRD group, disjoint from ``MESH_REFUSALS`` (admission) and
+#: ``MESH_OPERATION_REFUSALS`` (conversion): a comparison that cannot be made is
+#: a different fact from a file that cannot be read, and a reader who greps a
+#: log for one must not land in the other.
+#:
+#: ``declared_transform_not_rigid`` is a **tightening**: §6.5 requires a
+#: declared transform to be refused when it is not rigid and does not spell the
+#: code, and an unnamed refusal in a document whose whole subject is named
+#: refusals would be the defect one level down.
+SCAN_REFUSALS: Final[tuple[str, ...]] = (
+    "scan_target_unsupported",
+    "scan_principal_unavailable",
+    "scan_iou_unavailable",
+    "scan_neighborhood_overflow",
+    "scan_timeout",
+    "scan_unmeasurable",
+    "declared_transform_not_rigid",
+)
+
+ScanRefusalReason = Literal[
+    "scan_target_unsupported",
+    "scan_principal_unavailable",
+    "scan_iou_unavailable",
+    "scan_neighborhood_overflow",
+    "scan_timeout",
+    "scan_unmeasurable",
+    "declared_transform_not_rigid",
+]
+
+#: ``COMPARE.md`` §1's alignment rule with its third declared mode (§6.5).
+#: ``principal`` is deliberately absent: it is refused, not defaulted away.
+ScanAlignMode: TypeAlias = Literal["as_posed", "declared"]
+SCAN_ALIGN_MODES: Final[tuple[str, ...]] = ("as_posed", "declared")
+
+#: Tolerance the declared transform's rotation block is checked at (§6.5): the
+#: same 1e-9 G8B already uses for record equality across processes.
+RIGID_EPS: Final[float] = 1e-9
+
+#: Ceiling on how many scan vertices direction A measures against the B-rep.
+#: Above it the sample is a deterministic even stride through canonical vertex
+#: order — no RNG, and ``ScanDistance.scan_samples`` reports the count, because
+#: a number computed from four points is not the same claim as one computed
+#: from four thousand (``compare.py`` sample-count rule, ``COMPARE.md`` §1).
+SCAN_VERTEX_SAMPLE_MAX: Final[int] = 20_000
+
+
+class ScanCompareError(ValidationError):
+    """A scan comparison was refused; ``reason`` is from :data:`SCAN_REFUSALS`.
+
+    Its own class rather than a widened :class:`CompareBooleanError` or a bare
+    ``ValueError`` for the reason the vocabulary is a third group: "this target
+    is not a scan target", "no IoU exists against a scan" and "the neighbourhood
+    overflowed" are facts a caller branches on, and a comparison that returned a
+    plausible number instead would be the failure this whole stage exists to
+    prevent.
+    """
+
+    def __init__(self, message: str, *, reason: ScanRefusalReason) -> None:
+        # Derived here, on :class:`~hephaestus.geom.mesh.MeshReadError`'s rule
+        # and for its reason: a raise site that hand-wrote its own code into its
+        # own prose could keep the prose and move ``reason=`` underneath it, and
+        # every message-level assertion downstream would stay green while the
+        # vocabulary drifted. The third repair pass found this class had the
+        # attribute without the derivation, so the comparison third of §10 was
+        # open drift while the admission third was closed.
+        super().__init__(f"{message} [{reason}]", kind="contract")
+        self.reason: ScanRefusalReason = reason
+
+
+def scan_iou(target: str = "scan") -> NoReturn:
+    """Always refuses ``scan_iou_unavailable`` (§6.4), citing why.
+
+    Not an oversight and not a TODO: ``volume_diff`` needs solids on both sides,
+    getting one from a scan costs a sew at 196-221 µs/tri plus two OCCT booleans
+    on a 10⁵-face solid, and the sewn solid's own ``BRepCheck_Analyzer`` verdict
+    is False for real scans — so the boolean's answer would be untrustworthy
+    even when it returned. The field is omitted and the refusal is named.
+    """
+    raise ScanCompareError(
+        f"no intersection-over-union exists against {target!r}. "
+        "volume_diff needs a solid on both sides; a scan yields one only through a "
+        "sew whose validity gate refuses most real scans, so the number would be "
+        "computed from an object nobody should trust (MESH_INGEST.md §6.4)",
+        reason="scan_iou_unavailable",
+    )
+
+
+def refuse_scan_principal(target: str) -> NoReturn:
+    """Always refuses ``scan_principal_unavailable`` (§6.5), with both reasons."""
+    raise ScanCompareError(
+        f"align='principal' is refused against {target!r}. "
+        "principal_alignment needs a shape with volume, which an unsewn scan shell "
+        "and a point cloud can never satisfy — and a limb scan is always PARTIAL, so "
+        "the principal axes of the sampled region are not the principal axes of the "
+        "object and the mode would be a silent lie even where it ran. Alignment is "
+        "'as_posed' or a declared rigid transform (MESH_INGEST.md §6.5)",
+        reason="scan_principal_unavailable",
+    )
+
+
+def validate_declared_transform(raw: Sequence[float] | None) -> tuple[float, ...]:
+    """A declared alignment as a validated row-major 4x4 (``MESH_INGEST.md`` §6.5).
+
+    Rigid or refused: the rotation block must be orthonormal to :data:`RIGID_EPS`
+    with determinant **+1** (a mirror is not a pose), and the last row must be
+    ``0 0 0 1``. There is no fitted registration anywhere in this stage — no ICP
+    exists in the pinned stack and none is added — so a transform is declared,
+    validated and echoed on the record, or it is refused by name.
+    """
+    if raw is None or len(tuple(raw)) != 16:
+        raise ScanCompareError(
+            "align='declared' requires a row-major 4x4 "
+            "transform as 16 numbers (MESH_INGEST.md §6.5)",
+            reason="declared_transform_not_rigid",
+        )
+    values = tuple(float(value) for value in raw)
+    if any(not math.isfinite(value) for value in values):
+        raise ScanCompareError(
+            "the declared transform carries a non-finite entry (MESH_INGEST.md §6.5)",
+            reason="declared_transform_not_rigid",
+        )
+    rows: list[Vec3] = [
+        (values[0], values[1], values[2]),
+        (values[4], values[5], values[6]),
+        (values[8], values[9], values[10]),
+    ]
+    for i in range(3):
+        for j in range(3):
+            expected = 1.0 if i == j else 0.0
+            if abs(_dot(rows[i], rows[j]) - expected) > RIGID_EPS:
+                raise ScanCompareError(
+                    "the declared transform's rotation "
+                    f"block is not orthonormal to {RIGID_EPS:g} (row {i} . row {j} = "
+                    f"{_dot(rows[i], rows[j])!r}) (MESH_INGEST.md §6.5)",
+                    reason="declared_transform_not_rigid",
+                )
+    det = _dot(rows[0], _cross(rows[1], rows[2]))
+    if abs(det - 1.0) > RIGID_EPS:
+        raise ScanCompareError(
+            f"determinant {det!r} is not +1 — a rigid "
+            "alignment may rotate a scan, never mirror or scale it "
+            "(MESH_INGEST.md §6.5)",
+            reason="declared_transform_not_rigid",
+        )
+    if (values[12], values[13], values[14], values[15]) != (0.0, 0.0, 0.0, 1.0):
+        raise ScanCompareError(
+            "the last row of a rigid 4x4 is 0 0 0 1 (MESH_INGEST.md §6.5)",
+            reason="declared_transform_not_rigid",
+        )
+    return values
+
+
+@dataclass(frozen=True)
+class ScanDistance:
+    """How far an authored part is from a scan, in both directions (§6.4).
+
+    A different record type from :class:`SolidDiff`, and the fields it LACKS are
+    the design:
+
+    * **no ``iou``** — see :func:`scan_iou`;
+    * **no ``chamfer_mm``** — ``SurfaceDistance.chamfer_mm`` is the mean of two
+      directed means, and here one of the two directions may be an upper bound.
+      Averaging an exact number with a bound produces a number with no defined
+      meaning, so the two directions are reported separately, always, and any
+      symmetric figure is the caller's to form from fields whose methods it can
+      read.
+
+    ``part_to_scan_mean_mm`` and ``part_to_scan_max_mm`` move together — they
+    are one measurement's mean and maximum, and a record carrying one without
+    the other would describe a computation that never ran — and
+    ``part_to_scan_upper_bound_mm`` is the complement of both. Never two
+    populated where one is exact and one a bound; never all three absent.
+
+    Two fields beyond the §6.4 code block, both named in §6.3's own prose:
+    ``part_to_scan_bias`` (``"exact"`` | ``"over"``) and
+    ``part_to_scan_refusal``, which carries ``scan_neighborhood_overflow`` when
+    the exact refinement was abandoned. The alternative was an abandonment
+    "named" only in a method string a reader has to know how to decode.
+    """
+
+    align: ScanAlignMode
+    declared_transform: tuple[float, ...] | None
+    scan_to_part_mean_mm: float
+    scan_to_part_max_mm: float
+    #: The CLOSEST any sampled scan vertex came to the part. Not in §6.4's field
+    #: list, and added because §7.5's own acceptance vocabulary is written
+    #: against it — "the socket wall clears the scan by >= 1.5 mm **at every
+    #: sampled scan vertex**" is a statement about the minimum, and a record
+    #: carrying only a mean and a maximum cannot express it. Direction A is
+    #: exact, so a minimum here is a measurement rather than a bound; direction
+    #: B deliberately gets no counterpart, because a minimum taken from a
+    #: ``vertex_nn_upper_bound`` would be the smallest of a set of over-estimates
+    #: and would read as a clearance nobody measured.
+    scan_to_part_min_mm: float
+    scan_samples: int
+    part_to_scan_mean_mm: float | None
+    part_to_scan_max_mm: float | None
+    part_to_scan_upper_bound_mm: float | None
+    part_to_scan_method: str
+    part_to_scan_bias: str
+    part_to_scan_refusal: str | None
+    part_samples: int
+    scan_canonical_hash: str
+    part_artifact_ref: str
+
+    def to_json(self) -> dict[str, Any]:
+        """The wire form: ``dataclasses.asdict`` with the tuple as a list."""
+        import dataclasses
+
+        raw = dataclasses.asdict(self)
+        transform = raw.get("declared_transform")
+        raw["declared_transform"] = None if transform is None else list(transform)
+        return raw
+
+
+def _scan_vertex_sample(vertices: Any, limit: int) -> Any:
+    """A deterministic sample of the scan's welded vertices (no RNG, ever).
+
+    Canonical vertex order is a documented function of the geometry (§1.5 step
+    6), so an even stride through it is reproducible in this process and the
+    next — which is what the Tier 2 clause binds.
+    """
+    import numpy as np
+
+    count = int(vertices.shape[0])
+    if count <= limit:
+        return vertices
+    step = int(np.ceil(count / limit))
+    return vertices[::step]
+
+
+def _apply_transform(points: Any, transform: tuple[float, ...] | None) -> Any:
+    """``points`` moved by a validated row-major 4x4 (identity when ``None``)."""
+    import numpy as np
+
+    if transform is None:
+        return points
+    matrix = np.asarray(transform, dtype=np.float64).reshape(4, 4)
+    return points @ matrix[:3, :3].T + matrix[:3, 3]
+
+
+#: What one completed direction looks like when it is handed to ``progress``
+#: below: the record's own field names, mapped to the values that direction
+#: measured. Deliberately the record's names and not a second vocabulary — a
+#: partial result a caller has to translate is a partial result a caller will
+#: translate wrongly.
+ScanProgress = Callable[[str, "Mapping[str, float | int | str]"], None]
+
+#: The direction names ``progress`` reports under. Closed, and the same two
+#: strings ``MESH_INGEST.md`` §6.2/§6.3 use and that the §7.3 refusal names in
+#: its ``lost`` tuple, so "completed" and "lost" partition one vocabulary.
+SCAN_DIRECTION_SCAN_TO_PART: Final[str] = "scan_to_part"
+SCAN_DIRECTION_PART_TO_SCAN: Final[str] = "part_to_scan"
+
+
+def scan_distance(
+    part: AnyShape,
+    scan_vertices: Any,
+    scan_faces: Any | None,
+    *,
+    align: ScanAlignMode = "as_posed",
+    declared_transform: Sequence[float] | None = None,
+    scan_canonical_hash: str = "",
+    part_artifact_ref: str = "",
+    candidate_max: int | None = None,
+    vertex_sample_max: int = SCAN_VERTEX_SAMPLE_MAX,
+    progress: ScanProgress | None = None,
+) -> ScanDistance:
+    """Both directed distances between an authored part and a scan (§6.2-§6.4).
+
+    Direction A (scan → part) is exact and free today: ``_point_distances``
+    already measures raw points against the true B-rep surface with
+    ``BRepExtrema_DistShapeShape`` at 0.05 ms/pt. Direction B (part → scan)
+    cannot use that path — measured at 54.6 ms/pt against a 4002-face target,
+    ~515 s for one direction of one small mesh — so it samples the part's faces
+    on the existing deterministic parameter grid and measures those samples
+    mesh-side (:func:`hephaestus.geom.mesh.point_mesh_distances`).
+
+    ``align="declared"`` moves the SCAN by the validated transform; the part
+    stays where the build put it, because the part is the thing under
+    authorship. ``align="principal"`` does not exist here at all — it is refused
+    by :func:`refuse_scan_principal` at the caller's boundary, by name.
+
+    ``progress``, when given, is called once per direction the moment that
+    direction finishes, with ``(direction name, its own record fields)``. It
+    exists because the §7.3 ceiling kills the process this runs in: direction A
+    is exact and cheap and direction B is the expensive one, so a kill during B
+    would otherwise throw away a measurement that had already been taken. A
+    callback keeps this function pure — it computes nothing extra and knows
+    nothing about pipes, processes or deadlines; the caller that owns the
+    deadline decides what a completed direction is worth. It is never called
+    with a partial direction, and a direction it reports is one the caller may
+    state as measured.
+    """
+    import numpy as np
+    from hephaestus.geom.mesh import point_mesh_distances
+
+    if align not in SCAN_ALIGN_MODES:
+        raise ScanCompareError(
+            f"scan alignment must be one of {', '.join(SCAN_ALIGN_MODES)}, got {align!r}",
+            reason="scan_target_unsupported",
+        )
+    transform = validate_declared_transform(declared_transform) if align == "declared" else None
+    if align == "as_posed" and declared_transform is not None:
+        raise ScanCompareError(
+            "a transform was supplied with align='as_posed', "
+            "which would apply a normalization the record does not declare "
+            "(MESH_INGEST.md §6.5)",
+            reason="declared_transform_not_rigid",
+        )
+
+    vertices = _apply_transform(np.asarray(scan_vertices, dtype=np.float64), transform)
+    faces = None if scan_faces is None else np.asarray(scan_faces, dtype=np.int64)
+
+    # §6.4/§10 ``scan_unmeasurable``, spent BEFORE either direction is — a
+    # comparison with nothing to sample on one side is refused, never averaged.
+    #
+    # This is the defect the third repair pass's verifier reproduced end to end
+    # through the product's own tool: a part authored as a bare ``Line`` has no
+    # faces, ``_surface_samples`` returned ``[]``, and the record came back with
+    # ``part_to_scan_upper_bound_mm = 0.0``, ``part_samples = 0`` and
+    # ``part_to_scan_method = "kdtree_bound_exact_triangle"`` — the name §6.3
+    # reserves for the EXACT route — with no refusal spent. §6.4 says the exact
+    # pair is ``None`` "exactly when the exact refinement was abandoned"; here
+    # nothing was abandoned, there was simply nothing to measure, and the
+    # record's own vocabulary has no way to say so. Worse, the §6.4 invariant
+    # (G12C.37) is *satisfied* by that record, so the clause that exists to
+    # police these three fields cannot see it, and a CHECKS predicate reading
+    # ``.part_to_scan_upper_bound_mm <= tol`` PASSES on a comparison that
+    # sampled nothing — the very "absence is not a zero" failure ``§10``
+    # consolidates this code for, arriving from the producer instead of from a
+    # missing field.
+    #
+    # A refusal rather than a fourth record state on purpose: §6.4's invariant
+    # is "never all three absent", so the record cannot represent "this
+    # direction had nothing to measure" without breaking the clause that makes
+    # its ``None``s mean something. The honest shape is the named refusal.
+    part_points = _surface_samples(part)
+    if not part_points:
+        raise ScanCompareError(
+            "the part has no faces to sample, so the part -> scan direction "
+            "measured nothing. A distance of 0.0 from zero samples is not a "
+            "measurement of coincidence — it is the absence of a measurement, and "
+            "reporting it beside the exact method's name would be a plausible "
+            "wrong number of exactly the kind this stage refuses. Give the part "
+            "geometry with surface (a Line, a Wire or an empty part has none) "
+            "(MESH_INGEST.md §6.4, §10)",
+            reason="scan_unmeasurable",
+        )
+    sampled = _scan_vertex_sample(vertices, vertex_sample_max)
+    points: list[Vec3] = [(float(x), float(y), float(z)) for x, y, z in sampled.tolist()]
+    if not points:
+        raise ScanCompareError(
+            "the scan carries no points, so the scan -> part direction measured "
+            "nothing. Admission refuses an empty payload by name (mesh_empty, "
+            "§1.7), so this is unreachable through a build today and is refused "
+            "here anyway: geom is a pure service any caller may hand arrays to, "
+            "and a mean over zero samples is an absent measurement, not a zero "
+            "(MESH_INGEST.md §6.4, §10)",
+            reason="scan_unmeasurable",
+        )
+    scan_to_part = _point_distances(points, part)
+    # No ``if scan_to_part else 0.0`` fallbacks here any more: the refusal above
+    # already made the empty case impossible, and a fallback that cannot fire is
+    # a fallback nobody re-reads before trusting.
+    direction_a: dict[str, float | int | str] = {
+        "align": align,
+        "scan_to_part_mean_mm": sum(scan_to_part) / len(scan_to_part),
+        "scan_to_part_max_mm": max(scan_to_part),
+        "scan_to_part_min_mm": min(scan_to_part),
+        "scan_samples": len(scan_to_part),
+    }
+    if progress is not None:
+        progress(SCAN_DIRECTION_SCAN_TO_PART, direction_a)
+
+    measured = point_mesh_distances(
+        vertices,
+        faces,
+        np.asarray(part_points, dtype=np.float64).reshape(-1, 3),
+        candidate_max=candidate_max,
+    )
+    values = measured.distances
+    if not values.size:
+        raise ScanCompareError(
+            f"the part -> scan direction returned no distances for {len(part_points)} "
+            "sampled points, so there is nothing to report in that direction. The "
+            "record has no state for a direction that did not run — its Nones mean "
+            "'the exact refinement was abandoned' — so this is a refusal rather "
+            "than a zero (MESH_INGEST.md §6.4, §10)",
+            reason="scan_unmeasurable",
+        )
+    exact = bool(measured.exact)
+    mean = float(values.mean())
+    largest = float(values.max())
+    if progress is not None:
+        direction_b: dict[str, float | int | str] = {
+            "part_to_scan_method": measured.method,
+            "part_to_scan_bias": "exact" if exact else "over",
+            "part_samples": len(part_points),
+        }
+        # The §6.4 invariant travels with the partial: an exact pair or a bound,
+        # never one beside the other, so a caller reading a killed comparison's
+        # completed half cannot read a bound as a measurement.
+        if exact:
+            direction_b["part_to_scan_mean_mm"] = mean
+            direction_b["part_to_scan_max_mm"] = largest
+        else:
+            direction_b["part_to_scan_upper_bound_mm"] = largest
+        progress(SCAN_DIRECTION_PART_TO_SCAN, direction_b)
+    return ScanDistance(
+        align=align,
+        declared_transform=transform,
+        scan_to_part_mean_mm=cast("float", direction_a["scan_to_part_mean_mm"]),
+        scan_to_part_max_mm=cast("float", direction_a["scan_to_part_max_mm"]),
+        scan_to_part_min_mm=cast("float", direction_a["scan_to_part_min_mm"]),
+        scan_samples=len(scan_to_part),
+        part_to_scan_mean_mm=mean if exact else None,
+        part_to_scan_max_mm=largest if exact else None,
+        part_to_scan_upper_bound_mm=None if exact else largest,
+        part_to_scan_method=measured.method,
+        part_to_scan_bias="exact" if exact else "over",
+        part_to_scan_refusal=measured.refusal,
+        part_samples=len(part_points),
+        scan_canonical_hash=scan_canonical_hash,
+        part_artifact_ref=part_artifact_ref,
     )

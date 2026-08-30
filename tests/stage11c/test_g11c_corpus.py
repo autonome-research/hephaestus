@@ -65,6 +65,13 @@ COMPONENT_PAIR: frozenset[str] = frozenset({"bearing-shaft", "motor-plate"})
 #: The public corpus after this stage: nineteen (v3) plus the component pair.
 CORPUS_SIZE_V4: int = 21
 
+#: What the corpus is TODAY. The v4 constant above is what Stage 11 added and is
+#: what this suite's clause is about; the live count moved again on 2026-08-29
+#: when MESH_INGEST.md §7.5 (Stage 12C, G12C clause 50) added the scan family.
+#: Both are kept: a clause that asserted only the live total would stop saying
+#: what this stage contributed.
+CORPUS_SIZE_NOW: int = 23
+
 
 def _mapping(value: Any) -> Mapping[str, Any]:
     assert isinstance(value, dict), f"expected a mapping record, got {value!r}"
@@ -349,15 +356,27 @@ def test_the_component_family_is_the_corpus_pair_and_the_vocabulary_is_closed() 
     a task it was baselined over — both silent, both exactly what clause 12
     exists to prevent. And ``CORPUS_FAMILIES`` is closed: G9C's mechanism family
     is deliberately NOT in it, because that split is G9C's gate text to amend.
+
+    Repointed 2026-08-29 (MESH_INGEST.md §7.5, Stage 12C / G12C clause 51),
+    which registers a SECOND family — the scan pair — under the same rule and
+    with its own baseline file. The vocabulary is still closed and is still
+    asserted as an exact mapping, so a third family added silently fails here;
+    what moved is the enumeration, not the clause. G9C's mechanism family is
+    still deliberately absent, for the reason above.
     """
     from hephaestus.bench.scoring import (
         COMPONENT_FAMILY_TASKS,
         CORPUS_FAMILIES,
         FAMILY_COMPONENT,
+        FAMILY_SCAN,
+        SCAN_FAMILY_TASKS,
     )
 
     assert set(COMPONENT_FAMILY_TASKS) == set(COMPONENT_PAIR)
-    assert dict(CORPUS_FAMILIES) == {FAMILY_COMPONENT: COMPONENT_FAMILY_TASKS}
+    assert dict(CORPUS_FAMILIES) == {
+        FAMILY_COMPONENT: COMPONENT_FAMILY_TASKS,
+        FAMILY_SCAN: SCAN_FAMILY_TASKS,
+    }
 
 
 @pytest.mark.parametrize("spec", ["prose", "seeded"])
@@ -783,6 +802,12 @@ def test_a_recorded_baseline_stops_the_outstanding_line(
     the family says exactly that and points at the recorded measurement — the
     same test that proves the warning fires proves it stops firing, or it is a
     banner rather than a report.
+
+    Scoped to THIS family's line on 2026-08-29 (MESH_INGEST.md §7.5, Stage 12C):
+    a second family now reports its own outstanding line in the same table, and
+    a bare "NOT MEASURED" not in out would have made this clause assert that no
+    OTHER family may be outstanding — which is not what it is about, and would
+    make every future family land as a failure here.
     """
     from hephaestus.bench.scoring import COMPONENT_BASELINE_FILENAME
 
@@ -792,7 +817,8 @@ def test_a_recorded_baseline_stops_the_outstanding_line(
     )
     out, path = _score_a_family_free_archive(tmp_path, capsys)
     assert path.is_file()
-    assert "NOT MEASURED" not in out
+    assert "component family: NOT MEASURED" not in out
+    assert "component family: not measured in this archive" in out
     assert "baseline already recorded in" in out
 
 
@@ -802,19 +828,26 @@ def test_a_recorded_baseline_stops_the_outstanding_line(
 
 def test_the_public_corpus_is_twenty_one_with_the_component_pair() -> None:
     prose = {task.id for task in load_tasks(specs=("prose",))}
-    assert len(prose) == CORPUS_SIZE_V4
+    assert len(prose) == CORPUS_SIZE_NOW
     assert prose >= COMPONENT_PAIR
+    assert CORPUS_SIZE_NOW - CORPUS_SIZE_V4 == 2, (
+        "the only movement since Stage 11 is the Stage 12C scan pair "
+        "(MESH_INGEST.md §7.5, G12C clause 50)"
+    )
     seeded = {task.id for task in load_tasks(specs=("seeded",))}
     assert {f"{task_id}@seeded" for task_id in COMPONENT_PAIR} <= seeded
-    assert len(seeded) == CORPUS_SIZE_V4
+    assert len(seeded) == CORPUS_SIZE_NOW
 
 
 @pytest.mark.parametrize(
     ("path", "needle"),
     [
-        ("tests/stage6/test_g6_corpus_v1.py", "CORPUS_SIZE = 21"),
+        (
+            "tests/stage6/test_g6_corpus_v1.py",
+            "clause 12 keeps the component family in its OWN split",
+        ),
         ("server/tests/test_bench_corpus.py", "CORPUS_V4_ADDITIONS"),
-        ("tests/stage9c/test_corpus_mechanisms.py", "assert len(prose) == 21"),
+        ("tests/stage9c/test_corpus_mechanisms.py", "PARTS_STORE.md Stage 11, G11C clause 13"),
     ],
 )
 def test_every_repointed_count_pin_cites_this_stage(path: str, needle: str) -> None:

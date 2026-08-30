@@ -28,6 +28,7 @@ from typing import Any, Final, cast
 from hephaestus.core.checks.engine import CheckSet
 from hephaestus.core.checks.facade import GeometrySource
 from hephaestus.core.executor.artifact_geometry import artifact_source
+from hephaestus.core.executor.imports import ImportPayload
 from hephaestus.core.executor.runner import BuildRequest, UnpublishedBuild, run_build
 from hephaestus.core.executor.sandbox.base import ExecBackend
 from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
@@ -364,7 +365,7 @@ class CadOpsState:
         part_overrides: Mapping[str, int | float | str],
         project_overrides: Mapping[str, int | float | str],
         baseline: object = None,
-        imports: Mapping[str, bytes] | None = None,
+        imports: Mapping[str, ImportPayload] | None = None,
         import_errors: Mapping[str, str] | None = None,
     ) -> UnpublishedBuild:
         request = BuildRequest(
@@ -374,9 +375,12 @@ class CadOpsState:
             part_overrides=dict(part_overrides),
             project_overrides=dict(project_overrides),
             origin="local",
-            # INGEST.md §1: the frozen import bytes travel with the request, so
-            # a retry replays the original content rather than whatever is on
-            # disk now.
+            # INGEST.md §1: the frozen import payloads travel with the
+            # request, so a retry replays the original content rather than
+            # whatever is on disk now. A payload rather than bare bytes since
+            # Stage 12 (``MESH_INGEST.md`` §1.1): the declared kind and unit
+            # have to reach the staging code, and a mapping to bytes carries
+            # neither.
             imports=dict(imports or {}),
             import_errors=dict(import_errors or {}),
         )

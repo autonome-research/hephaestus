@@ -268,6 +268,173 @@ jobs:
           uv run pytest
           tests/stage11a tests/stage11b tests/stage11c -q
 
+  # ----------------------------------------------------- stage gates 12A-12B --
+  # Gates G12A (admission, canonicalization, facts) and G12B (mesh -> B-rep,
+  # sections, the socket path) — MESH_INGEST.md §Gates. Mission rule 1 makes a
+  # gate a command, so both suites run on every PR here rather than on a
+  # developer's machine. 12C joins this lane with the machinery it gates; a
+  # lane naming a suite that does not exist is a red build, not a placeholder.
+  #
+  # Prerequisites, and why each one: bubblewrap plus unrestricted unprivileged
+  # user namespaces for G12A clause 3's sandbox-denial proof (the script may not
+  # open an imports/ path itself). No Mesa: nothing here renders. G12B's sphere
+  # and cylinder fixtures come out of render.tessellate, which is pure OCCT
+  # arithmetic over a shape and opens no GL context — and geom.mesh is forbidden
+  # from reaching the render package at all (G12A clause 17). No Node: no clause
+  # in either suite touches the bridge or the generated contract artifacts,
+  # because 12A and 12B add no tool — all five terms are script vocabulary, on
+  # the import_step precedent (§7.1). G12C moves the tool pin (53 -> 54 for
+  # compare_to_scan, §7.2) and its clauses run the tool through the real
+  # dispatcher, but that is a Python surface too: no Node and no browser is
+  # involved, and the generated TypeBox module is compared as TEXT against the
+  # committed artifact rather than executed. A prerequisite a lane does not need
+  # is noise, not safety.
+  #
+  # G12C additionally grades the scan corpus family's four reference solutions
+  # (two tasks x two independent implementations) through the real bench harness,
+  # which builds parts — so bubblewrap is load-bearing for this lane in a way it
+  # was not for 12A alone.
+  #
+  # G12A clause 19's performance budget is a CEILING whose constant is DERIVED
+  # from the pinned image's own archived measurement
+  # (tests/stage12a/evidence/pinned_measurements.json, taken by
+  # scripts/stage12_pinned_measure.py, which refuses to write outside a pinned
+  # image). Mission rule 4's re-measurement is therefore taken, not owed; the
+  # "stage12 measurements (pinned image)" lane below re-takes it with --check on
+  # every run, and this lane asserts the ceiling against it.
+  #
+  # G12B's sew goldens are (container image, OCCT version)-scoped (§8 Tier 3).
+  # This lane runs on the stock runner, where the image digest reads "unpinned"
+  # and the OCCT version comes from the lockfile's own wheel, so the committed
+  # pair matches. Regeneration is HEPHAESTUS_REBASELINE_SEW_GOLDENS-gated and is
+  # deliberately NOT set here: a golden that rewrites itself in CI can never
+  # fail. The timeout is 45 rather than 30 minutes because G12B clause 22
+  # reproduces the §4.2 offset finding, which is a ~31 s kernel call by nature —
+  # it is the measurement the whole stage turns on, and it is asserted rather
+  # than quoted.
+  # G12C clauses 45/46's round-trip constants (MESH_ROUNDTRIP_EPS_MM and
+  # MESH_TESSELLATION_VOLUME_BIAS) are DERIVED at import from
+  # tests/stage12c/evidence/pinned_measurements.json — the pinned image's own
+  # measurement of the loop — rather than transcribed beside a claim about where
+  # they came from, and no derived ceiling may exceed the value that stood
+  # before the image measured anything. The §6.6 fidelity window is not a
+  # measured constant at all: it is LINEAR_DEFLECTION read from tessellate.py,
+  # so a change to the pinned deflection moves the window with it. Mission rule
+  # 4's re-measurement is taken for all of these, exactly as it is for G12A.19
+  # and G12B.25/33 (this comment said the debt was owed until the third repair
+  # pass; pinning a sentence that is no longer true is worse than not pinning).
+  stages12:
+    name: stage gates 12A-12C
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: sandbox prerequisites
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: uv sync --dev
+      - run: uv run pytest tests/stage12a tests/stage12b tests/stage12c -q
+
+  # ------------------------------------ stage 12 measurements (pinned image) --
+  # The lane that RE-TAKES, in the image CI pulls by digest, the four Stage 12
+  # measurements whose clauses say "in the pinned image": G12A.19, G12B.25,
+  # G12B.33 and G12C.45. Those numbers are already recorded — the committed
+  # record is tests/stage12{a,b,c}/evidence/pinned_measurements.json, and the
+  # gate suites read it and refuse an unpinned one — so this lane is not a
+  # promise to measure later. It is the standing re-measurement that keeps the
+  # record true: `scripts/stage12_pinned_measure.py --check` measures afresh
+  # here and fails if the committed constants no longer bound this image's own
+  # numbers.
+  #
+  # It runs INSIDE the pinned image by digest, on the pattern the
+  # `render goldens (pinned image)` lane established, and exports
+  # HEPHAESTUS_CI_IMAGE_DIGEST so anything it records says which world it was
+  # recorded in (core/src/hephaestus/core/mesh_solid.py: image_digest()).
+  #
+  # What it runs, and what each one binds:
+  #   G12A.19  the parse + canonicalize + quality budget, whose ceiling
+  #            SCAN_BUDGET_S is set from the recorded image measurement;
+  #   G12B.25  the ShapeFix experiment, whose §4.5 disposition is asserted from
+  #            evidence carrying a pinned (image digest, OCCT version) stamp;
+  #   G12B.33  the Tier 3 two-process sew determinism binding — the CROSS-PROCESS
+  #            comparison only, which computes both sides inside this run;
+  #   G12C.45/46 the §6.6 round-trip constants.
+  #
+  # HEPHAESTUS_REBASELINE_SEW_GOLDENS is deliberately NOT set: a golden that
+  # rewrites itself in CI can never fail. The committed sew goldens carry
+  # image_digest "unpinned", so they are valid for the stock lane and NOT for
+  # this one — which is exactly what G12B.32 asserts should happen, and why the
+  # golden-comparison tests are not selected here. Moving them into the image is
+  # a re-baseline PR, not a silent regeneration.
+  #
+  # It IS in release.yml's prior-gate list, like every other ci.yml job. The
+  # earlier draft of this lane argued itself out of that list; tests/stage7h
+  # ::test_the_prior_gate_check_names_every_ci_job asserts set equality between
+  # ci.yml's published check names and that list, and went red the moment this
+  # job was added. Under mission rule 1 the resolution is a tightening, and the
+  # argument was wrong on its own terms besides: this lane takes a measurement
+  # rather than waiting on one, and a release that ships constants nothing
+  # re-measured in the image is exactly the release the list exists to stop.
+  stage12-measurements:
+    name: stage12 measurements (pinned image)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container:
+      image: ghcr.io/autonome-research/hephaestus-ci@sha256:94dd58592d531dc6f93a18bb6d0757d553ecea6db29b963c1af38a440d06ce00
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: >-
+        --security-opt seccomp=unconfined
+        --security-opt apparmor=unconfined
+        --security-opt systempaths=unconfined
+        --cap-add SYS_ADMIN
+    env:
+      CI: "true"
+      # The digest above, verbatim. Anything this lane records says so.
+      HEPHAESTUS_CI_IMAGE_DIGEST: "sha256:94dd58592d531dc6f93a18bb6d0757d553ecea6db29b963c1af38a440d06ce00"
+    steps:
+      - uses: actions/checkout@v4
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: uv sync --dev
+      # The committed record, re-measured against THIS image. --check writes
+      # nothing: it takes every measurement again and fails if the recorded
+      # numbers the constants are set from no longer hold here. A record that is
+      # never re-taken is a number nobody is accountable for.
+      - name: the recorded pinned-image measurements still hold
+        run: uv run python scripts/stage12_pinned_measure.py --check
+      # `-s` on the budget step is deliberate: the test prints the seconds it
+      # measured, and the number in this log is what a re-record PR quotes when
+      # the image moves. A gate that only says "under the ceiling" cannot set a
+      # constant from the image's own measurement.
+      # `-k budget` selects BOTH halves of clause 19: the enforcement (the run
+      # is under the ceiling) and the provenance (the ceiling is derived from
+      # the recorded image measurement). Selecting only the first would run the
+      # half that does not need this image.
+      - name: G12A.19 — parse + canonicalize + quality budget
+        run: uv run pytest tests/stage12a/test_g12a_boundary_cli_and_ceilings.py -k budget -q -s
+      - name: G12B.25 — the ShapeFix experiment
+        run: uv run pytest tests/stage12b/test_g12b_mesh_to_solid.py -k clause25 -q -s
+      # clause 33 only, and not its committed-golden companion: that golden
+      # records image_digest "unpinned" and is correctly invalid here.
+      - name: G12B.33 — two-process sew determinism
+        run: uv run pytest tests/stage12b/test_g12b_goldens_and_determinism.py -k "clause33 and not committed_golden" -q -s
+      - name: G12C.45/46 — round-trip identity and fidelity
+        run: uv run pytest tests/stage12c/test_g12c_roundtrip.py -q -s
+      - name: archive the measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage12-pinned-measurements
+          path: |
+            tests/stage12a/evidence/
+            tests/stage12b/evidence/
+            tests/stage12c/evidence/
+          if-no-files-found: warn
+
   # ------------------------------------------------------- server + bridge --
   server:
     name: server (shard ${{ matrix.shard }}/3)

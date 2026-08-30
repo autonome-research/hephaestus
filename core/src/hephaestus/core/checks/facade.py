@@ -32,7 +32,7 @@ EVALUATION, never by inspecting predicate bodies.
 from __future__ import annotations
 
 import importlib
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, cast, final, runtime_checkable
 
@@ -45,6 +45,8 @@ __all__ = [
     "ALIGN_MODES",
     "IMPORT_TARGET_PREFIX",
     "PART_TARGET_PREFIX",
+    "SCAN_ALIGN_MODES",
+    "SCAN_TARGET_PREFIX",
     "DiffFacts",
     "GeometrySource",
     "ImportResolver",
@@ -55,6 +57,8 @@ __all__ = [
     "PosedContextFactory",
     "PosedMeasurement",
     "PosedPlacement",
+    "ScanFacts",
+    "ScanTargetResolver",
     "SweepFacts",
     "SweepResolver",
     "default_kernel_ops",
@@ -72,8 +76,33 @@ PART_TARGET_PREFIX = "part:"
 #: ``m.diff`` target naming a file beneath the project's ``imports/``.
 IMPORT_TARGET_PREFIX = "import:"
 
+#: ``m.scan_diff`` target naming a SCAN beneath the project's ``imports/``
+#: (``MESH_INGEST.md`` §6.5, §7.3). A third prefix rather than a widening of
+#: ``import:``: the record it produces is a different type, and ``m.diff`` on
+#: this prefix is refused ``scan_target_unsupported`` by name.
+SCAN_TARGET_PREFIX = "scan:"
+
+#: The §6.5 alignment modes for a scan comparison. ``principal`` is absent on
+#: purpose — it is REFUSED, never defaulted away: ``principal_alignment`` needs a
+#: shape with volume, and a limb scan is always partial so its sampled principal
+#: axes are not the object's.
+SCAN_ALIGN_MODES: tuple[str, ...] = ("as_posed", "declared")
+
 #: Resolves an ``imports/``-relative path to a shape the bound ops understand.
 ImportResolver = Callable[[str], object]
+
+#: Resolves a ``scan:`` target to its ``ScanDistance`` record, evaluated against
+#: the run's staged canonical mesh. Injected like :data:`ImportResolver` and for
+#: the same reason: who may read ``imports/`` and under what confinement is a
+#: project question, not a measurement one. The signature is ``(part shape,
+#: path, align, declared transform) -> record`` — the shape is passed in because
+#: this facade already resolved the selector and the resolver must not resolve
+#: it a second time; a named refusal the resolver raises (``scan_timeout``,
+#: ``mesh_units_undeclared``, ``declared_transform_not_rigid``) is the
+#: predicate's outcome.
+ScanTargetResolver = Callable[
+    [object, str, str, "tuple[float, ...] | None"], Mapping[str, JSONValue]
+]
 
 #: Resolves a declared motion-check id to its §4 result record (a
 #: ``SweepResult.to_json`` mapping), evaluated against the run's frozen
@@ -244,6 +273,49 @@ def _number(raw: Mapping[str, JSONValue], key: str) -> float:
     return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else 0.0
 
 
+def _required_number(raw: Mapping[str, JSONValue], key: str, *, record: str) -> float:
+    """A field a predicate is entitled to read — or a named refusal, never 0.0.
+
+    ``MESH_INGEST.md`` §6.4, §10 (``scan_unmeasurable``). :func:`_number`
+    defaults an absent or non-numeric field to ``0.0``, and for a *required*
+    scan field that is the shape of the defect the bench grader just closed one
+    layer down (``bench/harness/_grade.py``: ``scan_measurement``): a predicate
+    written as ``m.scan_diff(…).scan_to_part_max_mm <= 1.5`` would **pass** on a
+    record that measured nothing at all, because ``0.0 <= 1.5``. Absence must
+    never read as success. The two directions of a threshold are exactly why one
+    of these fails safe and the other does not, and the grader's own lesson was
+    that the safe-failing branch is what hides the unsafe one — so the guard is
+    on the resolver rather than on each predicate's direction.
+
+    Latent today, and deliberately guarded anyway: ``ScanDistance.to_json`` is
+    ``dataclasses.asdict``, so these keys are always present on a record this
+    repository produces, and a comparison that refuses raises rather than
+    handing back a zeroed record. The defence is against the record shape
+    changing — a future partial record, a hand-built mapping in a test double, a
+    field renamed on one side of the seam — where the failure would otherwise be
+    a silent pass.
+
+    ``_number`` itself is left alone: it serves ``DiffFacts``, whose contract is
+    ``COMPARE.md`` §2 and Stage 8B's pinned surface, and widening a refusal into
+    another stage's gate text is not this stage's to do.
+    """
+    from hephaestus.geom.compare import ScanCompareError
+
+    value = raw.get(key)
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return float(value)
+    raise ScanCompareError(
+        f"{record} carries no numeric {key!r} "
+        f"(it is {value!r}), and an absent measurement is not a zero. A predicate "
+        "comparing it against a tolerance would read 'nothing was measured' as a "
+        "pass in one direction and a fail in the other, which is a verdict about "
+        "the record's shape rather than about the part. Read part_to_scan_* for "
+        "the fields that are legitimately absent, and their methods with them "
+        "(MESH_INGEST.md §6.4, §10)",
+        reason="scan_unmeasurable",
+    )
+
+
 def _count(raw: Mapping[str, JSONValue], key: str) -> int:
     value = raw.get(key)
     return int(value) if isinstance(value, int) and not isinstance(value, bool) else 0
@@ -327,6 +399,117 @@ class DiffFacts:
             b_volume_mm3=_number(raw, "b_volume_mm3"),
             a_bbox_mm=_triple(raw, "a_bbox_mm"),
             b_bbox_mm=_triple(raw, "b_bbox_mm"),
+            raw=dict(raw),
+        )
+
+
+# --------------------------------------------------------------------------
+# scan facts (MESH_INGEST.md §6.4: the CHECKS view of one ScanDistance)
+
+#: What :func:`_required_number` names in its refusal, so the message says which
+#: record was short a field rather than only which key was missing.
+_SCAN_RECORD = "this ScanDistance"
+
+
+@dataclass(frozen=True)
+class ScanFacts:
+    """One ``ScanDistance`` as a CHECKS predicate reads it (``MESH_INGEST.md`` §6.4).
+
+    Flattened on the :class:`DiffFacts` rule, so a socket check reads as
+    ``m.scan_diff("socket", "scan:limb-l.stl").scan_to_part_max_mm <= 1.5``.
+    What it deliberately does NOT have is the whole point of the record:
+
+    * **no ``iou``** — ``volume_diff`` needs a solid on both sides, and getting
+      one from a scan means a sew whose validity gate refuses most real scans;
+    * **no ``chamfer_mm``** — one of the two directions may be an upper bound,
+      and the mean of an exact number and a bound has no defined meaning.
+
+    Reading either raises ``scan_iou_unavailable`` / a named refusal rather than
+    ``AttributeError``, because a predicate author reaching for ``.iou`` has a
+    question this record can answer with a reason instead of a stack trace.
+
+    And the three ``scan_to_part_*`` fields are **required**: absent or
+    non-numeric, they refuse ``scan_unmeasurable`` (:func:`_required_number`)
+    rather than defaulting to ``0.0``, because a zero silently satisfies
+    ``<= tolerance`` and a predicate would report a pass for a record that
+    measured nothing. The ``part_to_scan_*`` fields are the opposite case by
+    design — ``None`` there is the record's own §6.4 statement that the
+    expensive direction did not resolve — and they keep the optional reader.
+
+    ``part_to_scan_method`` is part of every claim made from this record: an
+    exact ``kdtree_bound_exact_triangle`` figure and a ``vertex_nn_upper_bound``
+    are different measurements, and a predicate that compares a bound against a
+    threshold should say so on purpose.
+    """
+
+    align: str
+    declared_transform: tuple[float, ...] | None
+    scan_to_part_mean_mm: float
+    scan_to_part_max_mm: float
+    scan_to_part_min_mm: float
+    scan_samples: int
+    part_to_scan_mean_mm: float | None
+    part_to_scan_max_mm: float | None
+    part_to_scan_upper_bound_mm: float | None
+    part_to_scan_method: str
+    part_to_scan_bias: str
+    part_to_scan_refusal: str | None
+    part_samples: int
+    scan_canonical_hash: str
+    part_artifact_ref: str
+    quality: Mapping[str, JSONValue]
+    raw: Mapping[str, JSONValue]
+
+    def __getattr__(self, name: str) -> object:
+        """Name the refusal for the two fields this record will never carry."""
+        if name in ("iou", "chamfer_mm"):
+            from hephaestus.geom.compare import ScanCompareError
+
+            raise ScanCompareError(
+                f"a ScanDistance has no {name!r}. "
+                "An IoU needs a solid on both sides, which a scan yields only through "
+                "a sew whose validity gate refuses most real scans; a chamfer is the "
+                "mean of two directed means, and here one direction may be an upper "
+                "bound, so the average would have no defined meaning. Read "
+                "scan_to_part_* and part_to_scan_* separately, with their methods "
+                "(MESH_INGEST.md §6.4)",
+                reason="scan_iou_unavailable",
+            )
+        raise AttributeError(name)
+
+    @classmethod
+    def from_json(cls, raw: Mapping[str, JSONValue]) -> ScanFacts:
+        """Flatten a ``ScanDistance.to_json()`` mapping (plus its quality record)."""
+        transform_raw = raw.get("declared_transform")
+        transform: tuple[float, ...] | None = None
+        if isinstance(transform_raw, list):
+            entries = cast("list[JSONValue]", transform_raw)
+            transform = tuple(
+                float(cast("float", item))
+                for item in entries
+                if isinstance(item, int | float) and not isinstance(item, bool)
+            )
+        return cls(
+            align=str(raw.get("align", "as_posed")),
+            declared_transform=transform,
+            # Required, so absence is a named refusal and never a zero — see
+            # :func:`_required_number`. Direction A is exact and free (§6.2), so
+            # a ``ScanDistance`` that reached this facade has all three or is not
+            # a record at all.
+            scan_to_part_mean_mm=_required_number(raw, "scan_to_part_mean_mm", record=_SCAN_RECORD),
+            scan_to_part_max_mm=_required_number(raw, "scan_to_part_max_mm", record=_SCAN_RECORD),
+            scan_to_part_min_mm=_required_number(raw, "scan_to_part_min_mm", record=_SCAN_RECORD),
+            scan_samples=_count(raw, "scan_samples"),
+            part_to_scan_mean_mm=_opt_number(raw, "part_to_scan_mean_mm"),
+            part_to_scan_max_mm=_opt_number(raw, "part_to_scan_max_mm"),
+            part_to_scan_upper_bound_mm=_opt_number(raw, "part_to_scan_upper_bound_mm"),
+            part_to_scan_method=str(raw.get("part_to_scan_method", "")),
+            part_to_scan_bias=str(raw.get("part_to_scan_bias", "")),
+            part_to_scan_refusal=_opt_str_field(raw, "part_to_scan_refusal"),
+            part_samples=_count(raw, "part_samples"),
+            scan_canonical_hash=str(raw.get("scan_canonical_hash", "")),
+            part_artifact_ref=str(raw.get("part_artifact_ref", "")),
+            quality=_section(raw, "quality"),
             raw=dict(raw),
         )
 
@@ -437,6 +620,7 @@ class Measurement:
         ops: KernelOps | None = None,
         densities: Mapping[str, float] | None = None,
         imports: ImportResolver | None = None,
+        scan: ScanTargetResolver | None = None,
         at_pose: PosedContextFactory | None = None,
         sweep: SweepResolver | None = None,
     ) -> None:
@@ -445,6 +629,7 @@ class Measurement:
         self._ops: KernelOps = ops if ops is not None else default_kernel_ops()
         self._densities: dict[str, float] = dict(densities or {})
         self._imports = imports
+        self._scan = scan
         self._at_pose = at_pose
         self._sweep = sweep
         self._trace: list[MeasurementEntry] = []
@@ -599,6 +784,17 @@ class Measurement:
                     kind="contract",
                 )
             return self._imports(path)
+        if target.startswith(SCAN_TARGET_PREFIX):
+            from hephaestus.geom.compare import ScanCompareError
+
+            raise ScanCompareError(
+                f"{target!r} is a scan, and m.diff measures "
+                "solids. A SolidDiff promises an iou and a topology census, and neither "
+                "exists against a triangle soup. Use m.scan_diff, which returns the two "
+                "directed distances separately with their methods named "
+                "(MESH_INGEST.md §6.4, §6.5)",
+                reason="scan_target_unsupported",
+            )
         raise ValidationError(
             f"diff target {target!r} must be {PART_TARGET_PREFIX!r}<part> or "
             f"{IMPORT_TARGET_PREFIX!r}<path under imports/> (COMPARE.md §2)",
@@ -626,6 +822,63 @@ class Measurement:
         raw = self._ops.diff(shape_a, shape_b, align)
         facts = DiffFacts.from_json(raw)
         self._record("diff", (a, target, align), cast("JSONValue", dict(raw)))
+        return facts
+
+    def scan_diff(
+        self,
+        a: str,
+        target: str,
+        align: str = "as_posed",
+        declared_transform: Sequence[float] | None = None,
+    ) -> ScanFacts:
+        """Scan-distance facts between an addressed geometry and a ``scan:`` target.
+
+        ``MESH_INGEST.md`` §6/§7.3, and a **part-scope** surface only: the
+        cross-part ``checks/*.py`` facade is not handed the scan resolver, so
+        the call cannot be answered there and says so by name — the same
+        mechanism ``m.diff`` uses for an ``import:`` target it cannot resolve,
+        and the same one ``m.at_pose``/``m.sweep`` use in the other direction.
+
+        Facts, never a verdict, and never a clinical one: this is a geometric
+        distance at named samples. "The socket fits" is not something a
+        ``ScanDistance`` can say and no predicate over one may be presented as
+        evidence of it (§11.3).
+        """
+        if align not in SCAN_ALIGN_MODES:
+            raise ValidationError(
+                f"scan_diff align must be one of {', '.join(SCAN_ALIGN_MODES)}, got "
+                f"{align!r}. 'principal' is refused against a scan by name: "
+                "principal_alignment needs a shape with volume, and a limb scan is "
+                "always partial, so the sampled region's axes are not the object's "
+                "(scan_principal_unavailable, MESH_INGEST.md §6.5)",
+                kind="contract",
+            )
+        if not target.startswith(SCAN_TARGET_PREFIX):
+            raise ValidationError(
+                f"scan_diff target {target!r} must be {SCAN_TARGET_PREFIX!r}"
+                "<path under imports/> (MESH_INGEST.md §6.5)",
+                kind="contract",
+            )
+        path = target[len(SCAN_TARGET_PREFIX) :]
+        if not path:
+            raise ValidationError(
+                f"scan_diff target {target!r} names no imports/ file", kind="contract"
+            )
+        if self._scan is None:
+            raise ValidationError(
+                f"scan_diff target {target!r} cannot be resolved here: this measurement "
+                "is not bound to a project's staged scans — m.scan_diff is a part-scope "
+                "read surface and cross-part checks may not call it "
+                "(script_contract.md §6, MESH_INGEST.md §7.3)",
+                kind="contract",
+            )
+        transform = (
+            None if declared_transform is None else tuple(float(v) for v in declared_transform)
+        )
+        _, shape = self._resolve(a)
+        raw = self._scan(shape, path, align, transform)
+        facts = ScanFacts.from_json(raw)
+        self._record("scan_diff", (a, target, align), cast("JSONValue", dict(raw)))
         return facts
 
 
@@ -684,8 +937,15 @@ def part_measurement(
     ops: KernelOps | None = None,
     density: float | None = None,
     imports: ImportResolver | None = None,
+    scan: ScanTargetResolver | None = None,
 ) -> Measurement:
-    """Part-scoped facade: selectors resolve inside ``part`` only (§6 CHECKS)."""
+    """Part-scoped facade: selectors resolve inside ``part`` only (§6 CHECKS).
+
+    ``scan`` is the ``MESH_INGEST.md`` §7.3 scan resolver, and only this
+    constructor accepts it: :func:`project_measurement` deliberately has no such
+    parameter, which IS the scope enforcement — the mirror image of ``at_pose``
+    and ``sweep``, which only the project-scope constructor accepts.
+    """
     densities = {} if density is None else {part: density}
     return Measurement(
         sources={part: source},
@@ -693,6 +953,7 @@ def part_measurement(
         ops=ops,
         densities=densities,
         imports=imports,
+        scan=scan,
     )
 
 

@@ -1,0 +1,7 @@
+{
+  "golden": "sew_counts.json",
+  "image_digest": "unpinned",
+  "occt_version": "cadquery-ocp-novtk 7.9.3.1.1",
+  "records": "counts and the BRepCheck verdict, never sewn bytes",
+  "rule": "MESH_INGEST.md \u00a78 Tier 3: valid only for this (container image digest, OCCT version) pair. An OCCT bump is a re-baseline PR."
+}

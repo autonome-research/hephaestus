@@ -29,6 +29,7 @@ the packaged sidecar with schema-valid arguments and schema-valid results.
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -171,6 +172,16 @@ def _steps() -> list[Step]:
         (
             "compare_solids",
             lambda seen: {"part": "widget", "target": "part:widget", "align": "as_posed"},
+        ),
+        # The scan half of the same signal (MESH_INGEST.md §6/§7.2). The scan is
+        # seeded into imports/ operator-side by ``_seed_scan`` — the model has no
+        # tool that could add one, exactly as with a reference — and ``units`` is
+        # required because STL carries none (§1.3). The scan is a 30 x 10 x 5 box
+        # inside the widget, so every scanned corner sits exactly 0.5 mm from the
+        # widget's nearest face (see SCAN_CLEARANCE_MM).
+        (
+            "compare_to_scan",
+            lambda seen: {"part": "widget", "scan": SCAN_NAME, "units": "mm"},
         ),
         # -- declared constraints (ASSEMBLY.md §3) --------------------------
         # One part is enough to exercise the quartet end to end: the widget's
@@ -404,6 +415,17 @@ class Chain:
 REFERENCE_NAME = "datasheet.md"
 REFERENCE_TEXT = "# Widget datasheet\n\nOverall width 40.0 mm.\n"
 
+#: The operator-seeded scan the compare_to_scan step measures against.
+SCAN_NAME = "fixture.stl"
+
+#: Its hand-computed clearance to the widget. The widget is ``Box(44, 20, 6)``
+#: after the chain's own ``set_params`` (centred on the origin, so +/-22, +/-10,
+#: +/-3) and the scan is a 30 x 10 x 5 box (+/-15, +/-5, +/-2.5) inside it. Each
+#: of the scan's eight corners is 7 mm from the nearest x face, 5 mm from the
+#: nearest y face and **0.5 mm** from the nearest z face, so the minimum and the
+#: maximum are both 0.5 — one subtraction, checkable by eye.
+SCAN_CLEARANCE_MM = 0.5
+
 
 def _register_reference(project_root: Any) -> None:
     """Register a reference the way an operator does — before any session runs.
@@ -422,6 +444,50 @@ def _register_reference(project_root: Any) -> None:
         )
     finally:
         store.close()
+
+
+def _seed_scan(project_root: Any) -> None:
+    """Put a scan under ``imports/`` the way an operator does — before any session.
+
+    Deliberately not a tool call: MESH_INGEST.md gives the model no way to add an
+    import, so the chain below can only ever measure against this one. The
+    ``_register_reference`` rationale, applied to the other operator-supplied
+    input kind.
+    """
+    import numpy as np
+    import trimesh
+
+    half = np.array([15.0, 5.0, 2.5])
+    corners = (
+        np.array(
+            [
+                [-1.0, -1.0, -1.0],
+                [1.0, -1.0, -1.0],
+                [1.0, 1.0, -1.0],
+                [-1.0, 1.0, -1.0],
+                [-1.0, -1.0, 1.0],
+                [1.0, -1.0, 1.0],
+                [1.0, 1.0, 1.0],
+                [-1.0, 1.0, 1.0],
+            ]
+        )
+        * half
+    )
+    faces: Any = np.array(
+        [
+            [0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7],
+            [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5],
+            [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7],
+        ],
+        dtype=np.int64,
+    )  # fmt: skip
+    mesh: Any = trimesh.Trimesh(vertices=corners, faces=faces, process=False)
+    data: Any = mesh.export(file_type="stl")
+    imports = Path(project_root) / "imports"
+    imports.mkdir(parents=True, exist_ok=True)
+    (imports / SCAN_NAME).write_bytes(
+        data.encode("utf-8") if isinstance(data, str) else bytes(data)
+    )
 
 
 def _declare_feed_joint(project_root: Any) -> None:
@@ -461,6 +527,7 @@ def surface(tmp_path: Any, sidecar_dist: Any) -> Any:
     # project must start with none (VALIDATION.md §2).
     project = scaffold_project(tmp_path / "surface", seed_ledger=False)
     _register_reference(project)
+    _seed_scan(project)
     _declare_feed_joint(project)
     harness = G2Harness(project, sidecar_dist, snapshot=True, sandbox=True)
     try:
@@ -567,6 +634,16 @@ def test_every_generated_tool_flows_through_the_real_bridge(surface: G2Harness) 
     assert comparison["a"]["artifact_ref"] == build["artifact_ref"]
     assert comparison["diff"]["volume"]["iou"] == pytest.approx(1.0, abs=1e-9)
     assert comparison["diff"]["surface"]["max_deviation_mm"] == pytest.approx(0.0, abs=1e-9)
+    # -- the scan half: a different record type, with no iou and no chamfer
+    scan = cast("dict[str, Any]", seen["compare_to_scan"])
+    assert scan["scan"]["path"] == SCAN_NAME and scan["scan"]["units"] == "mm"
+    assert scan["scan"]["canonical_hash"] != scan["scan"]["sha256"]
+    assert scan["part"]["artifact_ref"] == build["artifact_ref"]
+    distance = cast("dict[str, Any]", scan["distance"])
+    assert distance["scan_to_part_min_mm"] == pytest.approx(SCAN_CLEARANCE_MM, abs=1e-9)
+    assert distance["scan_to_part_max_mm"] == pytest.approx(SCAN_CLEARANCE_MM, abs=1e-9)
+    assert distance["part_to_scan_method"] == "kdtree_bound_exact_triangle"
+    assert "iou" not in distance and "chamfer_mm" not in distance
     # -- constraints: declared, revised, evaluated against the built artifact
     declared = cast("dict[str, Any]", seen["declare_constraint"])
     assert declared["generation"] == 1 and declared["change"]["kind"] == "declare"

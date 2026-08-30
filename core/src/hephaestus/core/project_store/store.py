@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from hephaestus.core.errors import AddressingError, ConflictError, ValidationError
 from hephaestus.core.project_store.layout import ProjectLayout
@@ -31,6 +32,9 @@ from opstore import (
     sha256_bytes,
     sha256_canonical_json,
 )
+
+if TYPE_CHECKING:
+    from hephaestus.core.executor.imports import ImportKind
 
 __all__ = [
     "IMPORT_ARTIFACT_KIND",
@@ -232,18 +236,26 @@ class ProjectStore:
             return None
         return self._register(GLOBALS_NAME, path, path.read_bytes())
 
-    def read_import(self, path: str) -> ImportSnapshot:
+    def read_import(self, path: str, *, kind: ImportKind = "step") -> ImportSnapshot:
         """Read one ``imports/`` file under path confinement, registering its bytes.
 
         Resolution is the executor's ``read_import`` walk (no-follow/beneath,
         rechecked at read time): traversal, absolute paths and symlink escapes
         raise the named ``ImportResolutionError`` from
         :mod:`hephaestus.core.executor.imports` rather than reading anything.
+
+        ``kind`` is the declaration's kind and it resolves the ``MESH_INGEST.md``
+        §1.6 byte ceiling. This is the freeze path, so a declaration exists and
+        the ceiling comes from it: a file declared ``import_mesh`` is bounded as
+        a mesh whatever it is named. Without the ceiling here the file would be
+        in memory and in the blob store — the very next line — before any
+        refusal could fire.
         """
+        from hephaestus.core.executor.imports import max_bytes_for_kind
         from hephaestus.core.executor.imports import read_import as confined_read
         from hephaestus.core.project_store.artifact_kinds import record_artifact_kind
 
-        data = confined_read(self.layout.imports_dir, path)
+        data = confined_read(self.layout.imports_dir, path, max_bytes=max_bytes_for_kind(kind))
         content_hash = self._store.blobs.put(data)
         record_artifact_kind(self._store, IMPORT_ARTIFACT_KIND, content_hash)
         return ImportSnapshot(
@@ -259,14 +271,25 @@ class ProjectStore:
         Used by publication revalidation and staleness: a file that is gone,
         replaced by a symlink, or otherwise unreadable is "not the frozen
         bytes", which is all either caller needs to know.
+
+        This path has **no declaration** to read a kind from —
+        :meth:`ProjectStore.sync_import_state` drives it over every regular file
+        beneath ``imports/``, declared or not — so the ``MESH_INGEST.md`` §1.6
+        ceiling is resolved from the file extension instead. An undeclared 40 GB
+        scan dropped into ``imports/`` would otherwise be read whole into the
+        parent by the next staleness sync, which is the door a
+        declaration-driven ceiling cannot close. An over-ceiling file lands as
+        the ``None`` above: "not the frozen bytes" is already what a file this
+        function cannot read means, so no caller learns a new behaviour.
         """
-        from hephaestus.core.executor.imports import ImportResolutionError
+        from hephaestus.core.executor.imports import ImportResolutionError, max_bytes_for_path
         from hephaestus.core.executor.imports import read_import as confined_read
 
         try:
-            return sha256_bytes(confined_read(self.layout.imports_dir, path))
+            data = confined_read(self.layout.imports_dir, path, max_bytes=max_bytes_for_path(path))
         except ImportResolutionError:
             return None
+        return sha256_bytes(data)
 
     def list_imports(self) -> tuple[str, ...]:
         """Every regular file beneath ``imports/``, as posix-relative paths, sorted."""

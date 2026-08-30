@@ -95,7 +95,7 @@ def test_no_drift_between_declaration_and_tool_schema_md() -> None:
     assert decl.isdisjoint(excluded)
 
 
-def test_full_tool_surface_is_53_tools() -> None:
+def test_full_tool_surface_is_54_tools() -> None:
     # 27 Stage-2 tools, the Stage 2V requirement-ledger family, the Stage 6
     # manufacturing tools (run_dfm, generate_drawing, generate_doc), the
     # Stage 8A read-only reference pair (INGEST.md §2), the Stage 8B
@@ -105,15 +105,24 @@ def test_full_tool_surface_is_53_tools() -> None:
     # Stage 9B motion-check triplet (declare_motion_check /
     # update_motion_check / read_motion_checks, §4/§6), and the KINEMATICS.md
     # Stage 9C coupling triplet (declare_coupling / update_coupling /
-    # read_couplings, §5/§6) — declared additions, not drift.
-    assert len(tools_decl.tool_names()) == 53
-    assert len(set(tools_decl.tool_names())) == 53
+    # read_couplings, §5/§6), and the MESH_INGEST.md Stage 12C scan comparison
+    # tool (compare_to_scan, §7.2) — declared additions, not drift.
+    #
+    # 53 -> 54 by MESH_INGEST.md §7.2, the amendment manifest's `tool_schema.md`
+    # row: exactly ONE tool for the whole of Stage 12, because each tool costs
+    # five drift-tested generated artifacts and a per-profile decision, and mesh
+    # FACTS ride the build record and ``heph scan`` instead.
+    assert len(tools_decl.tool_names()) == 54
+    assert len(set(tools_decl.tool_names())) == 54
     assert {"record_requirements", "read_requirements", "update_requirement"} <= set(
         tools_decl.tool_names()
     )
     assert {"run_dfm", "generate_drawing", "generate_doc"} <= set(tools_decl.tool_names())
     assert {"list_references", "read_reference"} <= set(tools_decl.tool_names())
     assert "compare_solids" in tools_decl.tool_names()
+    # MESH_INGEST.md §6/§7.2: a different record type from SolidDiff, which is
+    # why it is a second tool rather than a widened first one.
+    assert "compare_to_scan" in tools_decl.tool_names()
     # ASSEMBLY.md §3: model-writable, because declaring a mate is cheap,
     # reversible and measured — unlike a reference, which is operator-only.
     assert {

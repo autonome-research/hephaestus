@@ -27,9 +27,35 @@ SPDX-License-Identifier: Apache-2.0
 > needs are gated at G11C. The four remaining stages are untouched and every
 > decision in §4 other than D3 still stands as recommendation, not ruling.
 
-**Date: 2026-08-28. Status: PROPOSAL for four of the five specs; superseded for
-`PARTS_STORE.md`, which was promoted on 2026-08-29 — see the note above. Nothing
-here is normative and nothing here amends anything.** Five normative
+> **2026-08-29 — mesh and scan ingest crossed the amendment boundary too, second
+> in the recommended order.** `MESH_INGEST.md` is now **normative** and
+> `mission_plan.md` carries a dated **Stage 12 — Mesh and scan ingest** block
+> citing it, with gate summaries for G12A/G12B/G12C (51 clauses: 20 / 13 / 18).
+> Three consequences for readers. **(a)** §3.2's ready-to-paste block is
+> superseded by the landed text and is retained only as the drafting record; its
+> `Stage 11` heading, its `G11A`–`G11C` gate names, its `tests/stage11*` suite
+> paths and its 2026-08-28 date are all stale, and the "tenth geom service"
+> ordinal D4 flagged is correct as written because `geom.mesh` is indeed the
+> tenth. **(b)** The landed block goes materially beyond §3.2 in ways a reader
+> must take from `mission_plan.md` rather than from here: the tool-surface pin
+> moves **53 → 54** at 12C and Stage 12 is the first of the five to move it; the
+> byte-ceiling refusal is renamed `mesh_import_too_large` **unilaterally**, so no
+> other document is obliged to rename anything; the `COMPARE.md` §4 replacement
+> is required to carry `PHYSICS.md`'s FEA-mesh exclusion forward verbatim,
+> because this stage rewrites that sentence first; and the clinical-claim
+> refusal, the lattice deferral with its rule 6 precondition, and the four
+> constants left unvalued under rule 4 are all recorded in the plan. **(c)** D5's
+> discipline was honoured — six confirmed findings closed by tightening and then
+> independently audited clause by clause, with the residuals found inside two
+> closures closed with them — but the review was **smaller than the
+> `KINEMATICS.md` precedent this document recommends**, and both the amendment
+> and the spec header say so rather than implying otherwise. The three remaining
+> stages (solver, CAM, physics) are untouched and every decision in §4 other than
+> D3 still stands as recommendation, not ruling.
+
+**Date: 2026-08-28. Status: PROPOSAL for three of the five specs; superseded for
+`PARTS_STORE.md` and `MESH_INGEST.md`, promoted on 2026-08-29 — see the notes
+above. Nothing here is normative and nothing here amends anything.** Five normative
 specifications have been drafted and revised
 against the codebase — `PHYSICS.md`, `SOLVER.md`, `MESH_INGEST.md`,
 `PARTS_STORE.md`, `CAM.md`. Each is written in the normative voice so review has
@@ -416,13 +442,24 @@ ordered.
 
 ### 3.2 Stage 11 — mesh and scan ingest
 
-> **The number in this heading is stale, and the collision is resolved against
-> it.** Stage 11 was taken by the component store on 2026-08-29. Mesh and scan
-> ingest is **Stage 12** under the D4 resolution recorded at §4; this block
-> predates that resolution and was left unrenumbered because renumbering a
-> capability's stage belongs to the amendment that opens it. Whoever opens it
-> renumbers the heading, the three gate names and the three suite paths in one
-> pass, and fixes the "tenth geom service" ordinal D4 flags.
+> **LANDED 2026-08-29 as Stage 12, and not in this form.** `mission_plan.md`
+> carries the authoritative block; this one is the drafting record and must not be
+> copied from. It differs in five ways. The stage and gate names (Stage 11 /
+> G11A–G11C → **Stage 12 / G12A–G12C**) and the suite paths (`tests/stage11*` →
+> `tests/stage12*`) were renumbered by the amendment that opened the stage,
+> as this note previously instructed. The date is stale (2026-08-28 →
+> **2026-08-29**). The clause counts are unchanged in total — 20 / 13 / 18, 51 —
+> but individual clauses were **tightened** by the adversarial pass and its audit
+> after this block was drafted, so the summaries below understate several of them:
+> notably the ceiling clause now binds the *undeclared*-file path as well as the
+> declared one, the eleventh admission refusal is asserted **unreachable** rather
+> than skipped, and the round-trip is two clauses (identity as a corruption check,
+> fidelity as the clause that actually binds the deflection) rather than one. And
+> the landed block carries obligations this one has no text for at all — the
+> 53 → 54 tool pin, the unilateral `mesh_import_too_large` rename, the FEA-mesh
+> exclusion the `COMPARE.md` §4 replacement must preserve, the clinical-claim
+> refusal, the lattice deferral, and the constants left unvalued under rule 4.
+> Read `mission_plan.md` for the text that binds.
 
 ```markdown
 ## Stage 11 — Mesh and scan ingest (amendment 2026-08-28, maintainer-directed)

@@ -13,6 +13,14 @@ dependencies = [
     "pygltflib>=1.16",
     "pyrender>=0.1.45",
     "reportlab>=4.2",
+    # MESH_INGEST.md §6.3 / §12 item 25, under mission rule 7. Direction B of a
+    # scan comparison needs a spatial index: BRepExtrema_DistShapeShape measured
+    # 54.6 ms/pt against a 4002-face target where a kd-tree query is 0.45 µs/pt,
+    # ~120,000x. scipy was ALREADY resolved in this environment as a pyrender
+    # requirement, so this pins what is installed rather than admitting a new
+    # wheel. `rtree` is deliberately NOT added, so trimesh.proximity.closest_point
+    # — which needs it — is not the mechanism.
+    "scipy>=1.14",
     "trimesh>=4.12",
 ]
 

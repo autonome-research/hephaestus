@@ -1,0 +1,16 @@
+{
+  "base_image": "ubuntu:24.04@sha256:353675e2a41babd526e2b837d7ec780c2a05bca0164f7ea5dbbd433d21d166fc",
+  "image_digest": "sha256:0bd0427bd17b617235a4f599de0b389ff7159e38dac738778a9e234304cdddd6",
+  "image_ref": "heph-ci-local:latest \u2014 local build of docker/ci/Dockerfile (the GHCR digest ci.yml pins is not pullable from this host: 403 without read:packages)",
+  "measurements": {
+    "analytic_volume_mm3": 33510.32163829113,
+    "roundtrip_part_to_scan_max_mm": 0.07076826826909934,
+    "roundtrip_part_to_scan_method": "kdtree_bound_exact_triangle",
+    "roundtrip_scan_to_part_max_mm": 9.368615827768021e-07,
+    "tessellated_volume_mm3": 33273.57171092243,
+    "tessellation_volume_bias": 0.007064985228257933
+  },
+  "occt_version": "cadquery-ocp-novtk 7.9.3.1.1",
+  "python": "3.13.11",
+  "spec": "MESH_INGEST.md \u00a7Gates G12C.45 \u2014 round-trip identity constants"
+}

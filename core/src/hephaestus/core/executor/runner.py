@@ -27,7 +27,12 @@ from hephaestus.core.executor.fingerprint import (
     compare,
     descriptors_from_json,
 )
-from hephaestus.core.executor.imports import ImportResolutionError, stage_import
+from hephaestus.core.executor.imports import (
+    ImportPayload,
+    ImportResolutionError,
+    stage_import,
+    staged_key,
+)
 from hephaestus.core.executor.sandbox.base import ExecBackend, Rlimits, SandboxSpec
 from hephaestus.core.executor.sandbox.bwrap import interpreter_ro_binds
 from hephaestus.core.hashing import (
@@ -112,8 +117,12 @@ class BuildRequest:
     #: INGEST.md §1: the FROZEN bytes of each declared ``imports/`` file, keyed
     #: by the path as written in the script. Bytes rather than paths so a
     #: lost-response retry replays the original content even if the file has
-    #: since been replaced — exactly as the frozen script text does.
-    imports: Mapping[str, bytes] = field(default_factory=dict[str, bytes])
+    #: since been replaced — exactly as the frozen script text does. Since
+    #: Stage 12 each value is an :class:`ImportPayload`, carrying the declared
+    #: kind and units beside the bytes (``MESH_INGEST.md`` §1.1): the staged
+    #: *form* differs per kind and the staged *identity* includes the unit, so
+    #: neither can stop at the AST.
+    imports: Mapping[str, ImportPayload] = field(default_factory=dict[str, "ImportPayload"])
     #: Declared imports the resolver refused (path -> named refusal). Surfaced
     #: as a build error at the ``import_step`` statement, not before it.
     import_errors: Mapping[str, str] = field(default_factory=dict[str, str])
@@ -175,8 +184,18 @@ def _require_dict(value: JSONValue, what: str) -> dict[str, JSONValue]:
 
 
 def import_hashes(request: BuildRequest) -> dict[str, str]:
-    """§8 ``input_hashes.imports``: ``{declared path: sha256}`` of the frozen bytes."""
-    return {path: sha256_bytes(data) for path, data in sorted(request.imports.items())}
+    """§8 ``input_hashes.imports``: ``{declared path: sha256}`` of the frozen bytes.
+
+    Byte-for-byte what it was before Stage 12: the RAW file bytes, keyed by the
+    declared path, with nothing normalized before hashing. ``MESH_INGEST.md``
+    §1.4 keeps that authority in the raw bytes deliberately — a re-exported scan
+    with a new banner comment is a NEW build, because the harness cannot know
+    the re-export is geometrically identical until it has parsed it, and the
+    freeze runs before the parse. The geometry-identity hash
+    (``mesh_canonical_hash``) is a second, separately named fact and never
+    substitutes for this one in freeze, revalidation or staleness.
+    """
+    return {path: sha256_bytes(payload.data) for path, payload in sorted(request.imports.items())}
 
 
 def stage_request_imports(
@@ -184,24 +203,59 @@ def stage_request_imports(
 ) -> tuple[dict[str, str], dict[str, str]]:
     """Convert every frozen import ONCE and stage it read-only for the worker.
 
-    Returns ``({declared path: staged filename}, {declared path: refusal})``.
-    Conversion happens here, in the parent, outside the sandbox: the worker
-    receives BRep in its own input area and never a project path (``INGEST.md``
-    §1). A payload OCCT cannot read is not raised — it joins ``import_errors``
-    so the build fails at the ``import_step`` statement that named it, with the
-    full §8 error record.
+    Returns ``({staged key: staged filename}, {staged key: refusal})``, where
+    the key is the declared path for STEP and path-plus-unit for a mesh
+    (:func:`~hephaestus.core.executor.imports.staged_key`). Conversion happens
+    here, in the parent, outside the sandbox: the worker receives BRep or a
+    canonical mesh blob in its own input area and never a project path
+    (``INGEST.md`` §1). A payload the reader cannot handle is not raised — it
+    joins ``import_errors`` so the build fails at the ``import_step`` /
+    ``import_mesh`` statement that named it, with the full §8 error record.
+
+    A mesh declared with no ``units=`` lands here as a payload with no declared
+    unit, and is refused ``mesh_units_undeclared`` at its statement. It is a
+    refusal and not a grammar error on purpose: the declaration is perfectly
+    readable, it is the *file* that cannot be admitted without one (§1.3).
     """
+    from hephaestus.geom.mesh import MESH_UNITS
+
     staged: dict[str, str] = {}
     errors: dict[str, str] = dict(request.import_errors)
-    for path, data in sorted(request.imports.items()):
+    for path, payload in sorted(request.imports.items()):
         if path in errors:
             continue
-        try:
-            file = stage_import(data, path=path, content_hash=sha256_bytes(data), out_dir=out_dir)
-        except ImportResolutionError as exc:
-            errors[path] = exc.message
-            continue
-        staged[path] = file.name
+        content_hash = sha256_bytes(payload.data)
+        declared: tuple[str | None, ...] = payload.units or (None,)
+        for unit in declared:
+            key = staged_key(path, unit)
+            if payload.kind != "step" and unit is None:
+                # Composed through ``ImportResolutionError`` rather than as a
+                # bare string so the §1.7 code lands in the message by the same
+                # derivation every other mesh refusal uses: one code, one place
+                # it comes from, and no message that can drift away from its
+                # ``reason=`` (G12A.2).
+                errors[key] = ImportResolutionError(
+                    f"import {path!r}: units= is required on a mesh import — STL, PLY, "
+                    "OBJ, OFF and XYZ carry no unit and the engine is millimetres "
+                    f"throughout. Declare one of {', '.join(MESH_UNITS)} "
+                    "(MESH_INGEST.md §1.3)",
+                    reason="mesh_units_undeclared",
+                    path=path,
+                ).message
+                continue
+            try:
+                file = stage_import(
+                    payload.data,
+                    path=path,
+                    content_hash=content_hash,
+                    out_dir=out_dir,
+                    kind=payload.kind,
+                    units=unit,
+                )
+            except ImportResolutionError as exc:
+                errors[key] = exc.message
+                continue
+            staged[key] = file.name
     return staged, errors
 
 

@@ -102,7 +102,10 @@ docs/       generated/site-only mkdocs content and assets; links to root docs.
   exact Pi/thread-phase versions in the pnpm lockfile, and the CI container
   image tag are recorded here at Stage S.
 - **Stage S accepted versions** (local spike evidence 2026-07-24, see
-  `spikes/REPORT.md`; CI-image tag pending first CI run): CPython 3.13.12
+  `spikes/REPORT.md`; the CI image landed 2026-08-28 and is consumed BY DIGEST
+  rather than by tag — `docker/ci/Dockerfile`, built and pushed by
+  `ci-image.yml`, referenced by digest in `ci.yml`, so there is no tag to
+  record and a digest is the stronger pin): CPython 3.13.12
   (uv 0.11.3); Node v25.2.1 + pnpm 10.6.5 (engines: pi ≥22.19.0, thread-phase
   ≥22.5.0); build123d 0.11.1; cadquery-ocp-novtk/proxy 7.9.3.1.1 (OCCT 7.9.3);
   fastmcp 3.4.4 + mcp 1.28.1 (protocol 2025-11-25);
@@ -180,6 +183,20 @@ docs/       generated/site-only mkdocs content and assets; links to root docs.
   Spike dispositions, binding on later stages:
   1. STEP hashing normalizes the `FILE_NAME` header timestamp
      (`spikes/cad_kernel/box_build.py::normalize_step`); STL is hashed raw.
+     **Stage 12A sharpens what that normalizer is for, because the distinction
+     is the design** (`MESH_INGEST.md` §1.4): the `FILE_NAME` normalizer is an
+     *export-determinism* device — it exists so two **exports** of one shape
+     compare equal. **Import** hashing normalizes nothing, deliberately, because
+     a build input's identity must be the file's identity. Meshes have the same
+     class of volatile header (an STL `solid` line, an OBJ banner, a PLY
+     `comment`), so the same problem appears — and the answer is not to
+     normalize the input hash but to carry a **second, separately named** hash:
+     `mesh_canonical_hash`, over the canonical blob, which is geometry identity
+     and never an invalidation key. Two builds whose input hashes differ but
+     whose canonical hashes agree can then say "the file changed, the geometry
+     did not" instead of guessing. Reversing that would let a normalizer decide
+     what counts as a changed build, which is exactly the authority
+     `INGEST.md` §1 keeps in the raw bytes.
   2. CI renderer: pyrender + surfaceless EGL pinned to Mesa llvmpipe via
      `EGL_DEVICE_ID` (`LIBGL_ALWAYS_SOFTWARE` alone is insufficient); the CI
      image must ship Mesa with the surfaceless EGL platform (osmesa not

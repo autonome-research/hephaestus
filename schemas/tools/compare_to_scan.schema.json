@@ -1,0 +1,256 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/compare_to_scan.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Scan-distance between a part and a scan: mesh under imports/ (both directions).",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "align": {
+        "default": "as_posed",
+        "enum": [
+          "as_posed",
+          "declared"
+        ],
+        "type": "string"
+      },
+      "declared_transform": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 16,
+            "minItems": 16,
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "part": {
+        "pattern": "^[a-z][a-z0-9_]{0,63}$",
+        "type": "string"
+      },
+      "scan": {
+        "type": "string"
+      },
+      "units": {
+        "enum": [
+          "mm",
+          "cm",
+          "m",
+          "in"
+        ],
+        "type": "string"
+      }
+    },
+    "required": [
+      "part",
+      "scan",
+      "units"
+    ],
+    "type": "object"
+  },
+  "result": {
+    "additionalProperties": true,
+    "properties": {
+      "align": {
+        "type": "string"
+      },
+      "distance": {
+        "additionalProperties": true,
+        "properties": {
+          "align": {
+            "enum": [
+              "as_posed",
+              "declared"
+            ],
+            "type": "string"
+          },
+          "declared_transform": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "part_artifact_ref": {
+            "type": "string"
+          },
+          "part_samples": {
+            "type": "integer"
+          },
+          "part_to_scan_bias": {
+            "enum": [
+              "exact",
+              "over"
+            ],
+            "type": "string"
+          },
+          "part_to_scan_max_mm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "part_to_scan_mean_mm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "part_to_scan_method": {
+            "enum": [
+              "kdtree_bound_exact_triangle",
+              "vertex_nn_upper_bound"
+            ],
+            "type": "string"
+          },
+          "part_to_scan_refusal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "part_to_scan_upper_bound_mm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scan_canonical_hash": {
+            "type": "string"
+          },
+          "scan_samples": {
+            "type": "integer"
+          },
+          "scan_to_part_max_mm": {
+            "type": "number"
+          },
+          "scan_to_part_mean_mm": {
+            "type": "number"
+          },
+          "scan_to_part_min_mm": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "align",
+          "scan_to_part_mean_mm",
+          "scan_to_part_max_mm",
+          "scan_to_part_min_mm",
+          "scan_samples",
+          "part_to_scan_method",
+          "part_samples"
+        ],
+        "type": "object"
+      },
+      "part": {
+        "additionalProperties": true,
+        "properties": {
+          "artifact_ref": {
+            "type": "string"
+          },
+          "kind": {
+            "const": "part"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "name"
+        ],
+        "type": "object"
+      },
+      "quality": {
+        "type": "object"
+      },
+      "resolved_artifact_refs": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "scan": {
+        "additionalProperties": true,
+        "properties": {
+          "canonical_hash": {
+            "type": "string"
+          },
+          "kind": {
+            "const": "scan"
+          },
+          "path": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "snapshot_ref": {
+            "type": "string"
+          },
+          "units": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "path",
+          "units",
+          "sha256",
+          "canonical_hash"
+        ],
+        "type": "object"
+      },
+      "status": {
+        "const": "ok"
+      }
+    },
+    "required": [
+      "status",
+      "align",
+      "part",
+      "scan",
+      "distance",
+      "quality"
+    ],
+    "type": "object"
+  },
+  "title": "compare_to_scan",
+  "x-hephaestus-tool": {
+    "idempotent": false,
+    "maxUtf8Fields": {},
+    "name": "compare_to_scan",
+    "profiles": [
+      "part",
+      "orchestrator"
+    ],
+    "sequential": false
+  }
+}

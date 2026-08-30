@@ -131,6 +131,7 @@ from opstore.types import JSONValue
 
 from .cad_ops import (
     AssemblyOps,
+    CadOpError,
     CadOps,
     DimensionFinding,
     DimensionFindingOps,
@@ -167,6 +168,7 @@ __all__ = [
     "ReviewerCaller",
     "ReviewerResponse",
     "ReviewerSessionRuntime",
+    "ScanEvidence",
     "SessionReviewer",
     "TerminalReport",
     "TerminationReviewService",
@@ -188,6 +190,7 @@ __all__ = [
     "open_dimension_findings",
     "posed_scene_renders",
     "run_review_ladder",
+    "scan_evidence",
     "strip_agent_checks",
 ]
 
@@ -378,6 +381,13 @@ class PartEvidence:
     renders: tuple[RenderRef, ...]
     internal_features: tuple[str, ...]
     source_artifact_ref: str | None = None
+    #: ``MESH_INGEST.md`` §4.3/§7.4: the closed two-member set
+    #: ``{"authored", "mesh_derived"}``, read from the published bundle. Every
+    #: build from Stage 12 on carries one, so "authored" here means authored and
+    #: never "this record predates the field". SURFACED, never blocking: the
+    #: reviewer must see that a part's geometry came out of a scan, and this
+    #: spec adds no new never-green rule for it.
+    geometry_source: str = "authored"
 
     @property
     def has_internal_features(self) -> bool:
@@ -392,6 +402,7 @@ class PartEvidence:
             "renders": [render.to_json() for render in self.renders],
             "internal_features": list(self.internal_features),
             "source_artifact_ref": self.source_artifact_ref,
+            "geometry_source": self.geometry_source,
         }
 
 
@@ -430,6 +441,49 @@ class CitedReference:
 
 
 @dataclass(frozen=True)
+class ScanEvidence:
+    """One part's scan facts for the reviewer (``MESH_INGEST.md`` §7.4).
+
+    Measured at review time by rule, exactly as the assembly and motion statuses
+    are, and for the same reason: whatever the run said it fixed, this is what
+    the delivered geometry does against the scan the script names. It is
+    deliberately NOT read from the agent's ``CHECKS`` — §5 excludes those, so a
+    reviewer that inherited an ``m.scan_diff`` result would inherit the
+    misreading with it.
+
+    ``quality`` is the §3 record — every defect measured and named, nothing
+    repaired — and ``distance`` is the §6.4 ``ScanDistance`` **with its method
+    fields intact**: an exact ``kdtree_bound_exact_triangle`` figure and a
+    ``vertex_nn_upper_bound`` are different measurements, and a reviewer reading
+    a number without its method would be reading a claim the record never made.
+    ``refusal`` carries a named refusal instead of a distance when one fired;
+    a scan that could not be measured is not a scan that matched.
+    """
+
+    part: str
+    path: str
+    units: str
+    canonical_hash: str
+    quality: Mapping[str, JSONValue]
+    distance: Mapping[str, JSONValue] | None = None
+    refusal: Mapping[str, JSONValue] | None = None
+
+    def to_json(self) -> dict[str, JSONValue]:
+        out: dict[str, JSONValue] = {
+            "part": self.part,
+            "path": self.path,
+            "units": self.units,
+            "canonical_hash": self.canonical_hash,
+            "quality": dict(self.quality),
+        }
+        if self.distance is not None:
+            out["distance"] = dict(self.distance)
+        if self.refusal is not None:
+            out["refusal"] = dict(self.refusal)
+        return out
+
+
+@dataclass(frozen=True)
 class ReviewContext:
     """The assembled §5 review context; refuses to exist carrying ``CHECKS``."""
 
@@ -464,6 +518,11 @@ class ReviewContext:
     #: ``KINEMATICS.md`` §6: posed-scene renders at each resolved declared pose
     #: and at each sweep's worst sample (the explicit-assignment form).
     posed_renders: tuple[PosedRenderRef, ...] = ()
+    #: ``MESH_INGEST.md`` §7.4: for every part whose script imports a mesh, the
+    #: §3 quality record and — where a comparison ran — the §6.4 ScanDistance
+    #: with its method fields intact. Empty means no part imports a scan, never
+    #: "the scans are fine".
+    scans: tuple[ScanEvidence, ...] = ()
 
     def __post_init__(self) -> None:
         self.assert_excludes_agent_checks()
@@ -501,6 +560,7 @@ class ReviewContext:
             "motion_checks": [result.to_json() for result in self.motion_checks],
             "motion_timeouts": [dict(timeout) for timeout in self.motion_timeouts],
             "posed_renders": [render.to_json() for render in self.posed_renders],
+            "scans": [scan.to_json() for scan in self.scans],
         }
 
     def prompt(self) -> str:
@@ -530,7 +590,19 @@ class ReviewContext:
             "'posed_renders' by artifact ref. Those too are already judged by "
             "rule (any non-success motion state blocks termination whatever "
             "anyone says about it): treat them as evidence about the "
-            "requirements you judge, not as findings to return. You have no "
+            "requirements you judge, not as findings to return. Where a part's "
+            "script imports a limb or object SCAN, 'scans' carries that scan's "
+            "measured quality record (every defect named, nothing repaired) and "
+            "the distance between the delivered part and the scan in BOTH "
+            "directions with the method that produced each — an exact "
+            "'kdtree_bound_exact_triangle' figure and a 'vertex_nn_upper_bound' "
+            "are different measurements and a bound is not a distance; each "
+            "part also carries 'geometry_source', which is 'mesh_derived' when "
+            "its geometry came out of a scan rather than being authored. Those "
+            "are FACTS for you to read, not verdicts and not blocking by rule. "
+            "A distance is never evidence of fit: rectification is clinical "
+            "judgement this harness cannot verify, so do not report a socket as "
+            "fitting a limb whatever the numbers say. You have no "
             "other tools and cannot change the project.\n\n"
             f"{json.dumps(self.to_json(), indent=2, sort_keys=True)}\n\n"
             "Return ONE JSON object and nothing else:\n"
@@ -656,6 +728,7 @@ def build_review_context(
         motion_checks=checks,
         motion_timeouts=timeouts,
         posed_renders=posed_scene_renders(cad, kinematics, checks),
+        scans=scan_evidence(cad, names),
     )
 
 
@@ -682,6 +755,105 @@ def assembly_status(cad: object) -> AssemblyStatus | None:
     if not evaluator.constraints.state().active:
         return None
     return evaluator.evaluate()
+
+
+def scan_evidence(cad: object, parts: Sequence[str]) -> tuple[ScanEvidence, ...]:
+    """The ``MESH_INGEST.md`` §7.4 scan facts for every part that imports a mesh.
+
+    By rule, from the scripts' own declarations: a part's ``import_mesh(path,
+    units=…)`` names both the file and the unit, and §1.3 forbids inferring
+    either, so a part that declares no mesh contributes nothing here and a
+    reviewer never sees a scan fact nobody asked for.
+
+    Measured now rather than replayed, on the :func:`assembly_status` rule — and
+    a refusal is CARRIED rather than dropped, because "the scan could not be
+    measured" is a fact a reviewer must have and a silently missing entry would
+    read as "no scan".
+
+    The argument is loose because the review layer is routinely driven by test
+    doubles: a seam that cannot compare scans degrades to "none declared", never
+    to an attribute error at termination.
+    """
+    from hephaestus.core.executor.imports import static_import_declarations
+
+    if not isinstance(cad, CadOps):
+        return ()
+    out: list[ScanEvidence] = []
+    for name in parts:
+        try:
+            script = cad.layout.part_path(name).read_text(encoding="utf-8")
+        except OSError:  # pragma: no cover - a listed part that vanished mid-review
+            continue
+        seen: set[tuple[str, str]] = set()
+        for declaration in static_import_declarations(script):
+            if declaration.kind != "mesh" or declaration.units is None:
+                continue
+            key = (declaration.path, declaration.units)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(_scan_evidence_for(cad, name, declaration.path, declaration.units))
+    return tuple(out)
+
+
+def _scan_evidence_for(cad: CadOps, part: str, path: str, units: str) -> ScanEvidence:
+    """One ``(part, scan)`` pair measured, or the named refusal that stopped it."""
+    from hephaestus.core.errors import HephaestusError
+    from hephaestus.core.scan_compare import ScanTimeout
+
+    try:
+        payload = cad.compare_to_scan(part, path, units=units)
+    except ScanTimeout as exc:  # pragma: no cover - fault-injected in the gate suite
+        refusal = exc.to_json()
+        return ScanEvidence(
+            part=part,
+            path=path,
+            units=units,
+            canonical_hash="",
+            quality={},
+            refusal=refusal,
+        )
+    except (HephaestusError, CadOpError) as exc:
+        return ScanEvidence(
+            part=part,
+            path=path,
+            units=units,
+            canonical_hash="",
+            quality={},
+            refusal={"reason": _refusal_code(exc), "message": _refusal_message(exc)},
+        )
+    scan = _mapping(payload.get("scan"))
+    distance = _mapping(payload.get("distance"))
+    return ScanEvidence(
+        part=part,
+        path=path,
+        units=units,
+        canonical_hash=str(scan.get("canonical_hash", "")),
+        quality=_mapping(payload.get("quality")),
+        # An empty section means the tool answered without one, which is a
+        # different fact from "the distance was zero" — the record says None.
+        distance=distance if distance else None,
+    )
+
+
+def _mapping(raw: object) -> Mapping[str, JSONValue]:
+    """One tool-payload section as a mapping (a missing one is empty, never None)."""
+    return cast("Mapping[str, JSONValue]", raw) if isinstance(raw, dict) else {}
+
+
+def _refusal_message(exc: Exception) -> str:
+    """A refusal's own message where it carries one, else the exception text."""
+    message = cast("object", getattr(exc, "message", None))
+    return message if isinstance(message, str) and message else str(exc)
+
+
+def _refusal_code(exc: Exception) -> str:
+    """The stable code of a refusal, whatever layer raised it."""
+    for attribute in ("reason", "code"):
+        value = getattr(exc, attribute, None)
+        if isinstance(value, str) and value:
+            return value
+    return type(exc).__name__
 
 
 def _assembly_ref(cad: object) -> str | None:
@@ -886,7 +1058,30 @@ def _part_evidence(cad: CadOps, name: str) -> PartEvidence:
         renders=renders,
         internal_features=internal,
         source_artifact_ref=source_ref,
+        geometry_source=_geometry_source(cad, name),
     )
+
+
+def _geometry_source(cad: CadOps, name: str) -> str:
+    """``MESH_INGEST.md`` §4.3: the published bundle's own closed-set value.
+
+    Read from what publication recorded, never re-derived from the script: a
+    build that ran ``mesh_to_solid`` and had it REFUSED is ``"authored"``,
+    because a refused conversion leaves no mesh geometry in the part, and a
+    reviewer told otherwise would be told the part contains scan surface it does
+    not. A build published before Stage 12 has no field at all, and the default
+    is the same string for exactly the reason §4.3 gives: an absent field would
+    make "no geometry_source" ambiguous between *authored* and *predates the
+    field*, and a reviewer cannot act on that difference.
+    """
+    try:
+        bundle = cad.current_bundle(name)
+    except Exception:  # pragma: no cover - a seam that cannot answer is "authored"
+        return "authored"
+    if bundle is None:
+        return "authored"
+    raw = bundle.get("geometry_source")
+    return raw if isinstance(raw, str) and raw else "authored"
 
 
 def _render_refs(

@@ -951,6 +951,9 @@ def _minimal_args(tool: str) -> dict[str, Any]:
         "measure": {"kind": "bbox", "a": "part", "part": "widget"},
         # COMPARE.md §2 — read-only, and equally unreachable without CadOps.
         "compare_solids": {"part": "widget", "target": "part:widget"},
+        # MESH_INGEST.md §7.2 — the scan half, same terms. ``units`` is required
+        # by the schema (§1.3: a scan carries none), so it is in the minimum.
+        "compare_to_scan": {"part": "widget", "scan": "limb.stl", "units": "mm"},
         # ASSEMBLY.md §3 — the constraint quartet needs the engine just as much.
         "declare_constraint": {
             "id": "c-fit",

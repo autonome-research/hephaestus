@@ -665,6 +665,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     cli_diff.add_subparsers(sub)
 
+    # Stage 12A ingest verb (heph scan): the facts of a mesh or point cloud
+    # under imports/, through the same admission and canonicalization a build
+    # uses (MESH_INGEST.md §7.3). Facts are not a tool — they ride the build
+    # record and this command — so nothing on the tool surface moves for it.
+    from hephaestus.core import cli_scan
+
+    cli_scan.add_subparsers(sub)
+
     # Stage 8C assembly verbs (heph assembly / heph assembly check): the
     # operator's view of the declared constraint set and its latest residuals
     # (ASSEMBLY.md §3). Evaluation loads the geometry kernel, so the module is

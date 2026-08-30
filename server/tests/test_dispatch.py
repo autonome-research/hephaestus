@@ -310,6 +310,11 @@ _ARGS: dict[str, dict[str, object]] = {
     # entry names widget on both sides (a cross-part target is scope_denied,
     # which tests/stage8b asserts on its own).
     "compare_solids": {"part": "widget", "target": "part:widget"},
+    # MESH_INGEST.md §6/§7.2: the scan half, on the same terms. ``units`` is in
+    # the matrix because it is REQUIRED — STL carries none and the engine is
+    # millimetres throughout (§1.3), so a matrix entry without it would assert
+    # availability for a call the schema refuses.
+    "compare_to_scan": {"part": "widget", "scan": "limb.stl", "units": "mm"},
     "generate_drawing": {"name": "widget", "kind": "dimensioned"},
     "generate_doc": {"name": "widget", "kind": "bom"},
     # ASSEMBLY.md §3: a constraint spans parts by nature, so its anchors are

@@ -1,0 +1,37 @@
+{
+  "id": "scan-socket-cuff",
+  "prompt": "The project's `imports/limb.stl` is a scan of a residual limb, captured in millimetres. Author the part `cuff` AGAINST that scan: a plain circular cuff, 70 mm tall (it runs past both ends of the 60 mm scan), centred on the origin with its axis along Z, whose bore is 27 mm in radius and whose wall is the project's `wall_mm` parameter thick. Every interface number is already in `globals.py` - read them through `hc` instead of repeating them.\n\nThe cuff must clear the scan by at least 1.5 mm at every scanned point: measure that with `compare_to_scan(part=\"cuff\", scan=\"limb.stl\", units=\"mm\")` and read `distance.scan_to_part_min_mm`, which is the closest any scanned point came to your geometry. Do NOT try to offset or thicken the scan itself - a mesh has no exact surfaces, the kernel's offset of a mesh-derived solid was measured returning a plausible-looking answer a million times too small, and the harness refuses it. Author the cuff, then measure the gap.\n\nBuild the part and export it as STEP when the geometry is right.",
+  "budget_tool_calls": 15,
+  "required_checks": [
+    "scan_socket_cuff"
+  ],
+  "export_requirements": [
+    {
+      "part": "cuff",
+      "format": "step",
+      "layout": "as_built",
+      "min_bytes": 1024
+    }
+  ],
+  "render_requirements": [],
+  "scan_requirements": [
+    {
+      "part": "cuff",
+      "scan": "limb.stl",
+      "units": "mm",
+      "kind": "clearance_min",
+      "min_mm": 1.5,
+      "align": "as_posed",
+      "note": "the cuff bore clears the scan at every sampled scanned point; the reference geometry measures 2.00 mm against a 1.5 mm bar"
+    }
+  ],
+  "constraint_requirements": [],
+  "joint_requirements": [],
+  "pose_requirements": [],
+  "motion_check_requirements": [],
+  "protected_paths": [],
+  "notes": "Difficulty 2. Corpus v5 (2026-08-29, MESH_INGEST.md \u00a77.5 Stage 12C): the scan family's clearance task - a cuff authored against a scan, with the fit measured as a fit through the engine's own compare_to_scan path and never from what the run says about itself. The scan is SYNTHESIZED from an analytic solid (scripts/synthesize_scan_fixture.py: a tessellated R25 x 60 cylinder), which is the only way the acceptance can have a ground truth: the tessellation's nodes lie ON the true cylinder, so the closest scanned point sits exactly 27.0 - 25.0 = 2.00 mm from the bore wall, against a 1.5 mm bar. The cuff is 70 mm tall rather than 60 for a measured reason: at the pinned deflections OCCT tessellates this cylinder with its vertices at the two RIMS only (z = +/-30), so a 40 mm cuff measures 10.198 mm - the distance to its own inner rim corner, a real number that is not the clearance the task is about. Running the cuff past both ends puts every scanned point beside the bore wall, where the 2.00 mm is what it says it is. The bar discriminates: a 26 mm bore measures 1.00 mm and fails, and so does any attempt to offset the mesh (which the harness refuses outright). CHECKS keep the single-part facts a distance cannot see - the 62 x 62 x 70 envelope, the 51019.46 mm^3 tube volume, sealed with genus 1 for the bore. NOTHING here is a clinical claim: MESH_INGEST.md \u00a711.3 - a distance is not a fit, rectification is clinical judgement the harness cannot verify, and this task grades geometry only. Budget derivation (measured policy, VALIDATION.md \u00a77, 2026-08-25): no archived observe-mode journals exist for this task yet, so only the hand-count binds - record_requirements 1, create_part 1, write_part 2, build_part 2, compare_to_scan 2, inspect_part 1, run_checks 1, export_part 1 = 11 calls; ceil(1.3 x 11) = 15. Recalibrate against the observed passing max after the first archived sweep, per the measured-budget policy.",
+  "dfm_requirements": [],
+  "drawing_requirements": [],
+  "metadata_requirements": []
+}

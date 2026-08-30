@@ -42,15 +42,30 @@ Mechanics (all rule-enforced):
   params/toolchain — a changed file is a changed input: current-pointer
   revalidation fails, staleness propagates, and a lost-response retry replays
   against the ORIGINAL bytes exactly as for scripts. Identical bytes ⇒
-  identical geometry (STEP parsing is deterministic for a pinned OCCT).
+  identical geometry, **scoped to STEP** (STEP parsing is deterministic for a
+  pinned OCCT). `MESH_INGEST.md` §8 gives the mesh counterpart, and it is
+  deliberately weaker in one place and stronger in another: identical bytes
+  *plus an identical declared unit* ⇒ an identical canonical blob and identical
+  facts, asserted across processes; but two exports of "the same scan" from
+  different software are **not** claimed to agree, and the harness reports the
+  two hashes rather than asserting sameness.
 - **Provenance honesty.** The source map attributes each imported solid to its
   `import_step` statement (binding scope). Imported faces have NO per-face
   creating statement — the same honesty rule as boolean results. `tag()` works
-  on imported topology by selector; §5.3 drift fingerprints apply across
-  re-imports and are the ONLY warning when a replaced file moves a tagged
-  face, so they are load-bearing here, not optional.
-- **Formats**: STEP (AP203/AP214 read) in 8A. IGES/BREP may follow; each is an
-  explicit contract amendment.
+  on imported **B-rep** topology by selector; §5.3 drift fingerprints apply
+  across re-imports and are the ONLY warning when a replaced file moves a tagged
+  face, so they are load-bearing here, not optional. Both sentences are scoped
+  to B-rep imports by `MESH_INGEST.md` §2.4: `tag()` on **mesh** topology is
+  refused `mesh_topology_not_taggable`, because triangle indices are an artifact
+  of the file's order — which canonicalization deliberately replaces — and there
+  is nothing stable for a fingerprint to describe.
+- **Formats**: STEP (AP203/AP214 read) in 8A, and it remains the only format
+  producing a **B-rep** import. IGES/BREP may follow; each is an explicit
+  contract amendment. Stage 12A adds two further import terms
+  (`MESH_INGEST.md` §1.1) producing **mesh assets** — a different kind, not a
+  further STEP-like format: a mesh has no exact topology, so almost every fact
+  the harness states about a solid becomes a different, weaker fact when it came
+  from triangles, and the two vocabularies deliberately share no field name.
 
 ## 2. Reference documents and images
 
@@ -84,9 +99,16 @@ They are **operator-supplied context**, not model-writable artifacts.
 ## 3. What deliberately does NOT change
 
 No new persistence machinery (imports and references ride opstore CAS).
-No script-side file access of any kind. No feature recognition. No new
-session profile. The engine-first rule holds: everything in §1 lives in
-core; §2's tool surface lives in the contract + server layers.
+No script-side file access of any kind. No feature recognition — and, from
+Stage 12A, the strictly stronger statement a mesh forces: **no surface
+reconstruction** (`MESH_INGEST.md` §4.4). No inference of a cylinder, plane or
+NURBS patch from triangles or points. That is not a policy the harness could
+relax at will: `GeomAPI_PointsToBSplineSurface` needs a rectangular grid,
+`BRepOffsetAPI_MakeFilling` fills from boundary curves, and no Poisson,
+ball-pivoting or ICP exists anywhere in the pinned stack. There is no machinery
+for it and this project adds none. No new session profile. The engine-first rule
+holds: everything in §1 lives in core; §2's tool surface lives in the contract +
+server layers.
 
 ## Gate G8A
 

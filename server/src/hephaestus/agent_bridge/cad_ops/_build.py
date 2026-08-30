@@ -306,6 +306,18 @@ class BuildOps(CadOpsState):
         """
         return self._publisher().current_result(name)
 
+    def current_bundle(self, name: str) -> Mapping[str, JSONValue] | None:
+        """The published *bundle* behind ``name``'s current pointer (lock-free).
+
+        The route to what publication recorded ABOUT a build rather than to the
+        §8 ``BuildResult`` inside it: ``MESH_INGEST.md`` §4.3's
+        ``geometry_source`` and §1.4's ``mesh_canonical_hashes`` live here, not
+        on the result, because putting them on the result would have been a
+        schema change across every record ever written for facts that are
+        explanatory rather than identifying.
+        """
+        return self._publisher().current_bundle(name)
+
     # -- inspect -----------------------------------------------------------
 
     def inspect_part(

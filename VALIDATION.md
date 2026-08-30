@@ -55,6 +55,40 @@ before the final build (already the ordering in `_grade.grade` —
 `restore_protected` precedes `_build_all`; pinned by a regression test) and
 scores any attempt to modify them (§8 spec-tampering rate).
 
+### Corpus families: `scan-*` (2026-08-29, `MESH_INGEST.md` §7.5)
+
+A **family** is a set of corpus tasks measuring a capability the historical
+baselines never covered. It is orthogonal to the prose/seeded split above: a
+family task ships in both variants and the two are still never averaged with
+each other. What the family adds is the second carve-out G9C states
+(`KINEMATICS.md:393-398`): **a family's runs are not part of the number the gate
+compares against 0.70.**
+
+The `scan-*` family (`scan-socket-cuff`, `scan-boss-relief`) is the Stage 12C
+addition, on exactly the terms Stage 11's component family took: **scan-prose
+and scan-seeded are each their own split, each baselined on its own first
+measurement with the reference model at ≥ 3 seeds, neither compared against nor
+averaged into the v1/v2 baselines.** The existing 0.70 prose bar keys on its own
+coverage constant and is **not diluted** — `split_name` carves these runs out
+before the aggregate is formed, so the dilution cannot arrive through the
+plumbing either. The baseline is recorded in `scan_baseline.json`, is never a
+gate input, and a first measurement thinner than three seeds per task is refused
+by name (`insufficient_scan_seeds`) rather than written. Re-baselining any
+combined bar is its own explicit future amendment.
+
+Acceptance uses the `scan_requirements` vocabulary in `task.json`, installed and
+evaluated **through the engine path** (`compare_to_scan`), never from what the
+run reports about itself. Every check is functional and carries a named
+tolerance: `clearance_min` reads `scan_to_part_min_mm`, `deviation_max` reads
+`scan_to_part_max_mm`, and the parser **refuses a requirement that omits what
+its check needs** — a `clearance_min` with no `min_mm` is a check that cannot
+fail, which is worse than no check. A fixture scan is **synthesized from an
+analytic solid** (`scripts/synthesize_scan_fixture.py`: tessellate → export →
+seed) so ground truth exists; a real scan has none, and a task graded against
+one could only ever compare two measurements. Nothing in this vocabulary is a
+clinical claim (`MESH_INGEST.md` §11.3): a clearance is a geometric distance at
+named samples, and no entry may be read as evidence that a socket *fits*.
+
 ### Acceptance checks are functional, never reproductive (2026-07-26)
 
 The corpus fell into the same self-referential trap this document describes for
@@ -295,6 +329,22 @@ turn with no pending tool call) triggers a reviewer child session that receives:
   worst sample (the explicit-assignment render form of `KINEMATICS.md` §6),
   each listed by artifact ref with the binding document that pins its source
   refs, generations and assignment,
+- for every part whose script **imports a mesh** (added 2026-08-29 with Stage
+  12C, per `MESH_INGEST.md` §7.4): that scan's `MeshQuality` record — every
+  defect measured and named, nothing repaired — and, where a comparison ran, the
+  `ScanDistance` **with its method fields intact**, because an exact
+  `kdtree_bound_exact_triangle` figure and a `vertex_nn_upper_bound` are
+  different measurements and a bound is not a distance. Every part additionally
+  carries `geometry_source` from the closed set `{"authored", "mesh_derived"}`.
+  Both are measured at review time by rule, from the delivered geometry, exactly
+  as the assembly and motion statuses are — never copied from the agent's
+  `CHECKS`, which this reviewer does not receive. A mesh-derived
+  `geometry_source` is **surfaced, not blocking**: it is a fact the reviewer must
+  see, and this stage adds no new never-green rule. A named refusal
+  (`scan_timeout`, `mesh_units_undeclared`) rides in place of the distance rather
+  than being dropped — a scan that could not be measured is not a scan that
+  matched — and no `ScanDistance` may be presented as evidence of *fit*
+  (`MESH_INGEST.md` §11.3),
 - **explicitly NOT** the agent's own `CHECKS` — so it cannot inherit the
   misreading.
 

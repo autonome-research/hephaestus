@@ -52,6 +52,7 @@ __all__ = [
     "LOST_TOPOLOGY",
     "LOST_VOLUME",
     "PART_TARGET_PREFIX",
+    "SCAN_TARGET_PREFIX",
     "CompareOperand",
     "CompareRefusal",
     "CompareRefusalReason",
@@ -71,6 +72,11 @@ PART_TARGET_PREFIX = "part:"
 
 #: Target naming a file beneath ``imports/``.
 IMPORT_TARGET_PREFIX = "import:"
+
+#: Target naming a SCAN beneath ``imports/`` (``MESH_INGEST.md`` §6.5). Named
+#: here only so this tool can refuse it by name: ``compare_solids`` does not
+#: measure scans and this module does not learn how.
+SCAN_TARGET_PREFIX = "scan:"
 
 #: Wall-clock ceiling for ONE ``SolidDiff`` computation, process-killed with no
 #: retry (``COMPARE.md`` §5). Comparison on pathological B-reps is unbounded in
@@ -109,8 +115,20 @@ CompareRefusalReason = Literal[
     "invalid_target",
     "missing_artifact",
     "no_solid_geometry",
+    "scan_target_unsupported",
     "unreadable_step",
 ]
+
+
+#: The reasons in this vocabulary that belong to ``MESH_INGEST.md`` §10 rather
+#: than to ``COMPARE.md``. Exactly one today, and it is listed rather than
+#: hard-coded at its raise site so that a second §10 code arriving here has one
+#: place to be added. Stage 8B's own six reasons are deliberately NOT in this
+#: set: their message text is a pinned Stage 8B surface, and widening a later
+#: stage's derivation over an earlier stage's contract is not this stage's to do
+#: (the :class:`~hephaestus.core.executor.imports.ImportResolutionError`
+#: precedent, which derives for the §1.7 reasons only).
+MESH_INGEST_REFUSAL_REASONS: Final[frozenset[str]] = frozenset({"scan_target_unsupported"})
 
 
 class CompareRefusal(ValidationError):
@@ -120,9 +138,17 @@ class CompareRefusal(ValidationError):
     :class:`~hephaestus.core.executor.imports.ImportResolutionError` identity and
     its own reason vocabulary, because "the file is missing" and "that path
     leaves the project" are different facts that INGEST.md §1 already names.
+
+    For a :data:`MESH_INGEST_REFUSAL_REASONS` code the ``[code]`` suffix is
+    derived here rather than written into the raise site's prose, on the
+    ``MeshReadError`` rule: a message that names its own code can keep saying one
+    thing while ``reason=`` says another, and every message-level assertion
+    downstream stays green while the vocabulary drifts.
     """
 
     def __init__(self, message: str, *, reason: CompareRefusalReason) -> None:
+        if reason in MESH_INGEST_REFUSAL_REASONS and f"[{reason}]" not in message:
+            message = f"{message} [{reason}]"
         super().__init__(message, kind="contract")
         self.reason: CompareRefusalReason = reason
 
@@ -290,6 +316,23 @@ class ProjectComparer:
                     f"target {target!r} names no imports/ file", reason="invalid_target"
                 )
             return self.import_operand(path)
+        if target.startswith(SCAN_TARGET_PREFIX):
+            # MESH_INGEST.md §6.5: compare_solids is UNCHANGED, and this is what
+            # "unchanged" costs — a scan target is refused here by name rather
+            # than widening SolidDiff to carry fields it cannot fill. A SolidDiff
+            # promises an ``iou`` and a topology census; against a triangle soup
+            # the first needs a solid nobody should trust (§6.4) and the second
+            # is 100% planar faces by construction (§2.2), so a record returning
+            # them as zeros or as discretization noise is worse than a refusal.
+            raise CompareRefusal(
+                f"{target!r} is a scan, and compare_solids "
+                "measures solids. A SolidDiff promises an iou and a topology census, "
+                "and neither exists against a mesh. Use compare_to_scan (tool) or "
+                "m.scan_diff (CHECKS), which return a ScanDistance that reports the "
+                "two directions separately with their methods named "
+                "(MESH_INGEST.md §6.4, §6.5)",
+                reason="scan_target_unsupported",
+            )
         raise CompareRefusal(
             f"target {target!r} must be {PART_TARGET_PREFIX!r}<part> or "
             f"{IMPORT_TARGET_PREFIX!r}<path under imports/> (COMPARE.md §2)",

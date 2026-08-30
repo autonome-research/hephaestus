@@ -150,6 +150,9 @@ CAD_TOOLS: frozenset[str] = frozenset(
         "measure",
         # COMPARE.md §2 — read-only, freely retryable, stores nothing.
         "compare_solids",
+        # MESH_INGEST.md §7.2 — the same terms against a scan target, and the
+        # one new tool of the whole stage.
+        "compare_to_scan",
         "run_checks",
         "record_requirements",
         "read_requirements",
@@ -532,6 +535,7 @@ class ToolDispatcher:
             "edit_project_check": self._edit_project_check,
             "measure": self._measure,
             "compare_solids": self._compare_solids,
+            "compare_to_scan": self._compare_to_scan,
             "run_checks": self._run_checks,
             "record_requirements": self._record_requirements,
             "read_requirements": self._read_requirements,
@@ -803,6 +807,19 @@ class ToolDispatcher:
             str(arguments["part"]),
             str(arguments["target"]),
             align=str(arguments.get("align", "as_posed")),
+        )
+
+    def _compare_to_scan(
+        self, _p: Principal, cad: CadOps, arguments: dict[str, Any], _inv: Invocation
+    ) -> dict[str, Any]:
+        raw = arguments.get("declared_transform")
+        transform = [float(cast("float", v)) for v in cast("list[Any]", raw)] if raw else None
+        return cad.compare_to_scan(
+            str(arguments["part"]),
+            str(arguments["scan"]),
+            units=str(arguments["units"]),
+            align=str(arguments.get("align", "as_posed")),
+            declared_transform=transform,
         )
 
     def _run_checks(

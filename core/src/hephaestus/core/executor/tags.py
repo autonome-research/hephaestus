@@ -93,6 +93,31 @@ class TagRegistry:
         """The injected ``tag`` callable (§5.3)."""
         if not isinstance(name, str) or not name:  # pyright: ignore[reportUnnecessaryIsInstance]
             raise ValidationError("tag(topology, name) requires a non-empty name", kind="contract")
+        from hephaestus.geom.mesh import MeshAsset, MeshTypeError, PointCloudAsset
+
+        if isinstance(topology, MeshAsset | PointCloudAsset):
+            # MESH_INGEST.md §2.4: mesh topology carries no identity. Triangle
+            # and vertex indices are an artifact of the file's triangle order,
+            # which canonicalization deliberately replaces; a re-export of the
+            # same scan produces a different one. And the §5.3 drift
+            # fingerprint compares centroid/normal/area descriptors of tagged
+            # faces — there is nothing stable to fingerprint, because every
+            # triangle is a discretization artifact. Refusing by name is
+            # cheaper than discovering it as a silently meaningless warning
+            # three stages later.
+            # ``MeshTypeError``, not a bare ``ValidationError``: G12A.15 binds
+            # this code by message substring, and until the third repair pass the
+            # code lived only in that prose with no ``reason=`` to disagree with
+            # — the drift the §1.7 derivation closed, still open for the §10
+            # type-and-topology pair. The suffix now derives from ``reason``.
+            raise MeshTypeError(
+                f"tag({name!r}) cannot address mesh "
+                "topology. Triangle and vertex indices are an artifact of the file's "
+                "order, which canonicalization replaces, so there is nothing stable "
+                "to name or to fingerprint. A script may address the asset as a "
+                "whole (MESH_INGEST.md §2.4)",
+                reason="mesh_topology_not_taggable",
+            )
         if not hasattr(topology, "wrapped"):
             raise ValidationError(
                 f"tag({name!r}): topology must be a build123d shape "

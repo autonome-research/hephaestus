@@ -26,7 +26,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Final, cast
 
 from hephaestus.agent_bridge.cad_ops import EXPORT_FORMATS, CadOpError, CadOps
 from hephaestus.core.errors import SandboxDeniedError
@@ -40,7 +40,15 @@ from ._exports import dxf_layer_extents, dxf_profile_count, pdf_text, validate_e
 from ._seed import apply_solution, open_cad, restore_protected, seed_project
 from ._tasks import BenchTask, DfmRequirement, ExportRequirement, MetadataRequirement
 
-__all__ = ["GradeReport", "grade", "grade_reference_solution"]
+__all__ = [
+    "SCAN_DIRECTION_BOUND_FIELD",
+    "SCAN_REASON_UNMEASURABLE",
+    "SCAN_REQUIREMENT_FIELDS",
+    "GradeReport",
+    "grade",
+    "grade_reference_solution",
+    "scan_measurement",
+]
 
 _LEASE_RETRY_ATTEMPTS = 18
 _LEASE_RETRY_DELAY_S = 5.0
@@ -71,6 +79,10 @@ class GradeReport:
     joints: tuple[Mapping[str, Any], ...] = ()
     poses: tuple[Mapping[str, Any], ...] = ()
     motion_checks: tuple[Mapping[str, Any], ...] = ()
+    #: ``MESH_INGEST.md`` §7.5 (Stage 12C): one record per scan requirement,
+    #: carrying the measured ``ScanDistance`` (or the named refusal) it was
+    #: judged on — the numbers, never a verdict of the run's own.
+    scans: tuple[Mapping[str, Any], ...] = ()
     tool_calls: int | None = None
     budget_tool_calls: int | None = None
     within_budget: bool = True
@@ -111,6 +123,7 @@ class GradeReport:
             "joints": [dict(j) for j in self.joints],
             "poses": [dict(p) for p in self.poses],
             "motion_checks": [dict(m) for m in self.motion_checks],
+            "scans": [dict(s) for s in self.scans],
             "tool_calls": self.tool_calls,
             "budget_tool_calls": self.budget_tool_calls,
             "within_budget": self.within_budget,
@@ -794,6 +807,139 @@ def _validate_motion(
     return joint_records, pose_records, check_records, reasons
 
 
+#: Which field of a ``ScanDistance`` each scan-requirement kind reads, and which
+#: direction that field belongs to (``MESH_INGEST.md`` §6.2-§6.4). Both of
+#: today's kinds read direction A, which is exact by construction — and the map
+#: exists so that the exactness guard below is written over the direction the
+#: requirement actually reads rather than over an assumption about which one
+#: that is. A kind added later that reads a part→scan field inherits the guard
+#: instead of quietly escaping it.
+SCAN_REQUIREMENT_FIELDS: Final[Mapping[str, tuple[str, str]]] = {
+    "clearance_min": ("scan_to_part_min_mm", "scan_to_part"),
+    "deviation_max": ("scan_to_part_max_mm", "scan_to_part"),
+}
+
+#: The field that, if present, says a direction came back as an UPPER BOUND
+#: rather than a measurement (§6.4: an exact field and a bound never coexist).
+#: Direction A has no such field because it has no bounded mode at all; the
+#: ``None`` is the statement of that, not an omission.
+SCAN_DIRECTION_BOUND_FIELD: Final[Mapping[str, str | None]] = {
+    "scan_to_part": None,
+    "part_to_scan": "part_to_scan_upper_bound_mm",
+}
+
+#: The ``MESH_INGEST.md`` §10 code this grader spends when a requirement's
+#: measurement is not there to read — as ONE name, because it is spent from two
+#: branches (the tool refused outright; the record carried no such field) and a
+#: code written twice is a code that can drift between the two. The tokens the
+#: run's reasons carry are composed from it rather than typed beside it, which
+#: is the same rule the refusal classes follow for their ``[code]`` suffix.
+SCAN_REASON_UNMEASURABLE: Final[str] = "scan_unmeasurable"
+
+
+def scan_measurement(
+    distance: Mapping[str, Any], kind: str
+) -> tuple[float | None, tuple[str, str] | None]:
+    """The figure a scan requirement reads — or the named reason it may not.
+
+    Returns ``(value, None)`` when the record carries a real, exact measurement
+    for this requirement's field, and ``(None, (token, detail))`` when it does
+    not. Two ways it does not, and they are different failures:
+
+    * **the field is absent.** An absent measurement is not a zero. Defaulting
+      it to ``0.0`` — which this function replaced — made a ``deviation_max``
+      requirement PASS on a record that measured nothing at all, since
+      ``0.0 > max_mm`` is False. Absence must never read as success; on this
+      stage's honesty axis it is the worst available failure mode, because the
+      grader would be reporting a pass it never earned.
+    * **the direction came back as a bound.** ``part_to_scan_upper_bound_mm``
+      beside a ``None`` exact field is the record saying "I could not measure
+      this, here is a ceiling on it" (§6.3, ``vertex_nn_upper_bound``). A bound
+      compared against a tolerance is not a measurement: it can only ever fail
+      safe in one direction, and reading it as one would let a pathological scan
+      buy a pass. That is the ``scan_method`` token, and it is implemented here
+      rather than only described.
+
+    A pure function over the record so both branches are testable without a
+    kernel: the grader is where a false pass would be least visible.
+    """
+    field, direction = SCAN_REQUIREMENT_FIELDS[kind]
+    bound_field = SCAN_DIRECTION_BOUND_FIELD[direction]
+    if bound_field is not None and distance.get(bound_field) is not None:
+        method = str(distance.get(f"{direction}_method", "unknown"))
+        return None, ("scan_method", f"{field}:{method}")
+    raw = distance.get(field)
+    if raw is None:
+        return None, (SCAN_REASON_UNMEASURABLE, f"missing:{field}")
+    return float(cast("float", raw)), None
+
+
+def _validate_scans(cad: CadOps, task: BenchTask) -> tuple[list[dict[str, Any]], list[str]]:
+    """Measure the task's scan requirements through the engine path (§7.5).
+
+    ``compare_to_scan`` — the tool itself, over the scan the task seeded into
+    ``imports/``, through the same confined read and the same §1.5
+    canonicalization a build would run. Nothing here reads what the run said
+    about its own fit, and nothing re-implements the distance: a grader with its
+    own copy of the measurement would be scoring two implementations against
+    each other.
+
+    Every judged state gets its own reason token, because they call for
+    different fixes: a clearance that is too small is a geometry problem, and a
+    scan that could not be measured at all is not a scan that matched.
+    ``scan_method`` fails a requirement whose direction came back as an upper
+    bound where an exact figure was required — a bound compared against a
+    tolerance is not a measurement (§6.4) — and it is a guard in
+    :func:`scan_measurement`, not a sentence in a docstring.
+    """
+    if not task.scans:
+        return [], []
+    records: list[dict[str, Any]] = []
+    reasons: list[str] = []
+    for requirement in task.scans:
+        record: dict[str, Any] = {"requirement": requirement.to_json()}
+        try:
+            payload = cad.compare_to_scan(
+                requirement.part,
+                requirement.scan,
+                units=requirement.units,
+                align=requirement.align,
+            )
+        except Exception as exc:
+            code = getattr(exc, "code", None) or type(exc).__name__
+            record["error"] = f"{type(exc).__name__}: {exc}"
+            records.append(record)
+            reasons.append(
+                f"{SCAN_REASON_UNMEASURABLE}:{requirement.part}:{requirement.scan}:{code}"
+            )
+            continue
+        distance = cast("Mapping[str, Any]", payload.get("distance", {}))
+        record["distance"] = dict(distance)
+        record["quality"] = dict(cast("Mapping[str, Any]", payload.get("quality", {})))
+        records.append(record)
+        measured, refusal = scan_measurement(distance, requirement.kind)
+        if refusal is not None:
+            token, detail = refusal
+            reasons.append(f"{token}:{requirement.part}:{requirement.scan}:{detail}")
+            continue
+        assert measured is not None
+        if requirement.kind == "clearance_min":
+            assert requirement.min_mm is not None  # from_json refuses one without it
+            if measured < requirement.min_mm:
+                reasons.append(
+                    f"scan_clearance:{requirement.part}:{requirement.scan}:"
+                    f"{measured:.4f}<{requirement.min_mm:.4f}"
+                )
+        else:
+            assert requirement.max_mm is not None
+            if measured > requirement.max_mm:
+                reasons.append(
+                    f"scan_deviation:{requirement.part}:{requirement.scan}:"
+                    f"{measured:.4f}>{requirement.max_mm:.4f}"
+                )
+    return records, reasons
+
+
 def _validate_constraints(cad: CadOps, task: BenchTask) -> tuple[list[dict[str, Any]], list[str]]:
     """Declare the task's constraints and evaluate them through the engine path.
 
@@ -946,6 +1092,7 @@ def grade(
     joints: list[dict[str, Any]] = []
     poses: list[dict[str, Any]] = []
     motion_checks: list[dict[str, Any]] = []
+    scans: list[dict[str, Any]] = []
     graded = False
     with open_cad(project_root) as cad:
         layout = cad.layout
@@ -1001,6 +1148,12 @@ def grade(
             constraint_records, constraint_reasons = _validate_constraints(cad, task)
             constraints = constraint_records
             reasons.extend(constraint_reasons)
+            # MESH_INGEST.md §7.5: measured last, because it is the most
+            # expensive acceptance in the list and the cheap structural ones
+            # should have already named anything wrong with the geometry.
+            scan_records, scan_reasons = _validate_scans(cad, task)
+            scans = scan_records
+            reasons.extend(scan_reasons)
     if graded:
         # Outside the ops object above on purpose: DFM predicates run on a probed
         # secure backend, which the grading ops object deliberately is not.
@@ -1027,6 +1180,7 @@ def grade(
         joints=tuple(joints),
         poses=tuple(poses),
         motion_checks=tuple(motion_checks),
+        scans=tuple(scans),
         tool_calls=tool_calls,
         budget_tool_calls=task.budget_tool_calls,
         within_budget=within_budget,

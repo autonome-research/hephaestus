@@ -260,6 +260,14 @@ def test_selector_names_equals_the_injected_set_minus_the_two_declared_exclusion
     A build123d upgrade cannot silently widen or narrow what the region may
     name, and a harness handle cannot creep back in — in either direction the
     equality fails here rather than in a generator someone publishes.
+
+    The handle list grew by the five ``MESH_INGEST.md`` names (§1.1 ``import_mesh``
+    / ``import_point_cloud`` at 12A; §4.3/§5.2/§5.3 ``mesh_to_solid`` /
+    ``section_polylines`` / ``loft_sections`` at 12B), which is exactly why the
+    equation above still holds: they are HANDLES, so ``SELECTOR_NAMES`` — the
+    thing this clause exists to pin — is byte-for-byte unchanged by that stage
+    (the manifest's ``script_contract.md`` §2 row says so, and G12B.29 asserts
+    the injected set is exactly the documented list).
     """
     from hephaestus.core.executor.namespace import (
         _DUNDERS,
@@ -285,7 +293,23 @@ def test_selector_names_equals_the_injected_set_minus_the_two_declared_exclusion
     )
     assert injected_names(namespace) - _DUNDERS - _HANDLES == SELECTOR_NAMES
     assert {"__builtins__", "__name__"} == _DUNDERS
-    assert {"p", "part", "tag", "hc", "check", "CHECKS", "import_step", "approx"} == _HANDLES
+    assert {
+        "p",
+        "part",
+        "tag",
+        "hc",
+        "check",
+        "CHECKS",
+        "import_step",
+        "approx",
+        # MESH_INGEST.md §1.1, §4.3, §5.2, §5.3 — added as handles precisely so
+        # the derived SELECTOR_NAMES set does not move.
+        "import_mesh",
+        "import_point_cloud",
+        "mesh_to_solid",
+        "section_polylines",
+        "loft_sections",
+    } == _HANDLES
 
 
 @pytest.mark.parametrize("name", ["GeomType", "SortBy", "Axis", "math", "Plane", "Compound"])

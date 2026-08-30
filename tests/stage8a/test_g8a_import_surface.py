@@ -291,6 +291,7 @@ def test_the_secure_sandbox_builds_an_import_without_reaching_the_project(
     geometry from ``plate.step`` had no mount through which it could have read
     ``plate.step``.
     """
+    from hephaestus.core.executor.imports import ImportPayload
     from hephaestus.core.executor.runner import (
         DEFAULT_RLIMITS,
         BuildRequest,
@@ -313,7 +314,16 @@ def test_the_secure_sandbox_builds_an_import_without_reaching_the_project(
     out_dir.mkdir()
 
     built = run_build(
-        BuildRequest(part="secure", script=PLAIN_SRC, imports={"plate.step": steps.plate}),
+        # Stage 12 amendment (``MESH_INGEST.md`` §1.1, §12 item 6a):
+        # ``BuildRequest.imports`` carries an ``ImportPayload`` per path rather
+        # than bare bytes, so the declared kind and unit reach the staging code.
+        # STEP declares neither, so this payload is the default kind with no
+        # units and the staged BRep is byte-for-byte what it was.
+        BuildRequest(
+            part="secure",
+            script=PLAIN_SRC,
+            imports={"plate.step": ImportPayload(steps.plate)},
+        ),
         backend=BwrapBackend(),
         out_dir=out_dir,
     )

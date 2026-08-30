@@ -1,0 +1,31 @@
+{
+  "cube": {
+    "analyzer_statuses": [],
+    "face_count": 12,
+    "is_valid": true,
+    "shell_count": 1,
+    "triangle_count": 12,
+    "vertex_count": 8
+  },
+  "sphere_canonical": {
+    "analyzer_statuses": [],
+    "face_count": 2002,
+    "is_valid": true,
+    "shell_count": 1,
+    "triangle_count": 2002,
+    "vertex_count": 1003
+  },
+  "sphere_raw": {
+    "analyzer_statuses": [
+      "face:BRepCheck_UnorientableShapex1",
+      "shell:invalid_unreportedx1",
+      "solid:invalid_unreportedx1",
+      "wire:BRepCheck_SelfIntersectingWirex1"
+    ],
+    "face_count": 2004,
+    "is_valid": false,
+    "shell_count": 1,
+    "triangle_count": 2004,
+    "vertex_count": 1003
+  }
+}

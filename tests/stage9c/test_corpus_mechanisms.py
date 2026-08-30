@@ -123,11 +123,14 @@ def test_the_corpus_count_pin_is_nineteen_with_the_mechanism_trio() -> None:
     # THIS clause pins is unchanged — the mechanism trio is still present, in
     # both spec variants — so only the total moved, and it is asserted as the
     # total rather than as "nineteen".
-    assert len(prose) == 21, "corpus v4 is twenty-one public tasks (PARTS_STORE.md Stage 11)"
+    # Repointed again 2026-08-29 (MESH_INGEST.md §7.5, Stage 12C / G12C clause
+    # 50): corpus v5 adds the scan family `scan-socket-cuff` and
+    # `scan-boss-relief`. What THIS clause pins is still unchanged.
+    assert len(prose) == 23, "corpus v5 is twenty-three public tasks (MESH_INGEST.md Stage 12)"
     assert prose >= MECHANISM_TRIO
     seeded = {task.id for task in load_tasks(specs=("seeded",))}
     assert {f"{task_id}@seeded" for task_id in MECHANISM_TRIO} <= seeded
-    assert len(seeded) == 21
+    assert len(seeded) == 23
 
 
 def _assert_hinge_acceptance(task: BenchTask, report: GradeReport) -> None:
