@@ -2759,8 +2759,8 @@ has no parts.
 this project — and on the prompt response, which §7A.6 already makes the
 authority for turn completion — the client invalidates
 `keys.project`, `keys.parts`, `keys.build(part)`, `keys.script(part)`,
-`keys.properties(part)`, `keys.checks(part)`, `keys.dfm(part)` and
-`keys.gitStatus()`.
+`keys.params(part)`, `keys.properties(part)`, `keys.checks(part)`,
+`keys.dfm(part)` and `keys.gitStatus()`.
 
 **TIGHTENING (binds §1).** The invalidation is a **refetch of the server
 projection**, never a client-side merge of tool results. A composer that patched

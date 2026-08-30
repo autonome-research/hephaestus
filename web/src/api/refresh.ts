@@ -41,15 +41,14 @@ import { keys } from "./queries";
  * The keys §7A.11 enumerates, resolved for one part.
  *
  * Exported as data so the test asserts the **list** rather than the effect of
- * calling it: §7A.11 names eight keys, and a key quietly dropped from an
+ * calling it: §7A.11 names nine keys, and a key quietly dropped from an
  * invalidation is a panel that quietly goes stale.
  *
  * `part === null` is the blank canvas — no part is selected, so the
  * part-scoped keys have no argument to resolve against. The three
  * project-scoped keys still fire, and they are the ones that matter in exactly
  * that case: `keys.parts()` is how a part the agent has just created appears in
- * the tree. `keys.params` is the ninth key: §10's sliders read a projection
- * §7A.11 did not name because the panel had not shipped.
+ * the tree.
  */
 export function refreshKeys(part: string | null): readonly (readonly unknown[])[] {
   const projectScoped: readonly (readonly unknown[])[] = [
@@ -79,7 +78,7 @@ export function refreshKeys(part: string | null): readonly (readonly unknown[])[
  * this function computed.
  *
  * Deliberately fire-and-forget: the caller has already rendered the turn, and a
- * composer that waited for eight refetches before re-enabling its textarea would
+ * composer that waited for nine refetches before re-enabling its textarea would
  * make the agent's own latency the operator's.
  */
 export function refreshAfterTurn(client: QueryClient, part: string | null): void {
