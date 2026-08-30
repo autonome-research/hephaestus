@@ -511,9 +511,44 @@ def test_a_pre_stage_archive_re_scores_to_the_byte_identical_artifact(archive: s
     from hephaestus.bench.scoring import score_directory
 
     directory = REPO / "bench" / "results" / archive
+    # EVIDENCE-BOUND, and it must say so rather than pass by luck. Several §8
+    # metrics (build_failures, build_recoveries, clarification_refusals) are
+    # derived from the PER-RUN directories beside `runs.jsonl`, and those are
+    # deliberately not committed — `git ls-files` finds one tracked file here
+    # against 74 on a machine that ran the sweep. Re-scoring without them
+    # yields zeros for exactly those fields, so this comparison can only ever
+    # hold where the complete archive exists. It passed locally and failed in
+    # CI for that reason alone (run 33274622760): the assertion was reading
+    # evidence CI never had. A skip here is a statement about the evidence,
+    # not about the claim; the guard below pins that the skip can fire for no
+    # other reason.
+    per_run = [child for child in directory.iterdir() if child.is_dir()]
+    if not per_run:
+        pytest.skip(
+            f"{archive} carries runs.jsonl without its per-run directories; "
+            "clause 12(b)'s byte comparison is asserted only where the complete "
+            "archive exists (see the CI scope note)"
+        )
     stored = (REPO / "bench" / "results" / f"{archive}.json").read_text(encoding="utf-8")
     rendered = json.dumps(score_directory(directory).to_json(), indent=2, sort_keys=True) + "\n"
     assert rendered == stored, f"re-scoring {archive} no longer reproduces its stored artifact"
+
+
+@pytest.mark.parametrize("archive", BYTE_STABLE_ARCHIVES)
+def test_the_byte_comparison_skips_only_for_a_missing_per_run_archive(archive: str) -> None:
+    """The skip above may mean one thing and one thing only.
+
+    A conditional skip is a hole in a gate unless its condition is itself
+    pinned: without this, "the archive is incomplete" could silently become
+    "any environment where the test is inconvenient". `runs.jsonl` is tracked
+    in every case, so its presence is what distinguishes an incomplete archive
+    from a missing one, and a missing one is a failure rather than a skip.
+    """
+    directory = REPO / "bench" / "results" / archive
+    assert directory.is_dir(), f"{archive} is absent entirely, which is not a skip condition"
+    assert (directory / "runs.jsonl").is_file(), (
+        f"{archive} has no runs.jsonl; the archive is broken rather than incomplete"
+    )
 
 
 def test_no_archive_in_the_repository_grows_a_family_row() -> None:

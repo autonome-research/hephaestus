@@ -1927,7 +1927,22 @@ where it is checked.
        still prints it for every split, because a printed table is not
        evidence. Both halves are now asserted rather than claimed: byte
        identity against those two checked-in artifacts, and, over *every*
-       archive in `bench/results`, that none grows a family row. Three archives
+       archive in `bench/results`, that none grows a family row.
+
+       **The byte half is EVIDENCE-BOUND, corrected 2026-08-30.** Several §8
+       metrics — `build_failures`, `build_recoveries`,
+       `clarification_refusals` — are derived from the PER-RUN directories
+       beside `runs.jsonl`, and those are deliberately not committed: one file
+       is tracked under `bench/results/gpt-5.6-sol/2026-08-03` against 74 on a
+       machine that ran the sweep. Re-scoring without them returns zeros for
+       exactly those fields, so the byte comparison holds only where the
+       complete archive exists and CANNOT hold on a bare checkout. It passed
+       locally and failed in CI for that reason alone (run 33274622760). The
+       covering test therefore skips with that named reason when the per-run
+       directories are absent, and a companion test pins that the skip can
+       fire for no other cause — a conditional skip is a hole in a gate unless
+       its condition is itself asserted. The clause's other half, and every
+       other clause of 12, run everywhere. Three archives
        there had already drifted from their stored artifacts before this stage
        (one `--date`-named directory, two written by a scorer older than the §8
        metric block); this stage neither caused nor repairs that, and the
