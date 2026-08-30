@@ -1,0 +1,35 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * LAYOUT ONLY for PARAMS sliders beside the script.
+ */
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-group);
+}
+
+.row {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-stack);
+  min-width: 0;
+}
+
+/* Server fields stay addressable for the e2e; they do not need a second visual
+   column. The slider is the control; `<Fact>` carries the projection. */
+.server,
+.hash {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+

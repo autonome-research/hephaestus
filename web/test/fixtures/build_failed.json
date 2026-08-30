@@ -1,0 +1,40 @@
+{
+  "status": "error",
+  "current": false,
+  "geometry_count": 0,
+  "geometries": [],
+  "artifact_ref": null,
+  "project_snapshot_ref": null,
+  "effective_params": {
+    "groove_count": 5
+  },
+  "metrics": null,
+  "checks": {},
+  "source_map_ref": null,
+  "warnings": [],
+  "error": {
+    "line": 46,
+    "col": 14,
+    "type": "ValueError",
+    "message": "Failed creating a fillet with radius of 6, try a smaller value",
+    "frame": [
+      "44 | tread_shelf = slotted_shelf - groove_cutter",
+      "45 |",
+      "> 46 | tread_shelf = fillet(...)"
+    ],
+    "built_through": {
+      "line": 44,
+      "statement": "tread_shelf = slotted_shelf - groove_cutter"
+    },
+    "last_good": {
+      "bodies": 1,
+      "solids": 1,
+      "size_mm": [250.0, 200.0, 18.0],
+      "volume_mm3": 868892.28,
+      "sealed": true,
+      "genus": 0
+    },
+    "last_good_artifact_ref": "artifact:build-checkpoint:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "hint": "inspect_part(name, artifact_ref=last_good_artifact_ref) renders this snapshot"
+  }
+}

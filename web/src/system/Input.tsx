@@ -133,8 +133,20 @@ export type SliderProps = FieldFrame & {
   readonly max: number;
   readonly step: number;
   readonly onChange: (value: number) => void;
+  /**
+   * Fires on range release (pointer/key up), not during drag. §10's PARAMS
+   * rebuild is "debounced 300 ms **on release**, not during drag"; explode
+   * still writes on every `onChange`.
+   */
+  readonly onRelease?: ((value: number) => void) | undefined;
   /** Digits the editable readout shows. Presentation, never a rounding of data. */
   readonly precision?: number | undefined;
+  /**
+   * §10 / G5.3: PARAMS sliders must **not** clamp. A typed out-of-bounds
+   * value is sent so the server can reject it. Explode (`0..1`) still clamps
+   * — that is a screen-space quantity, not a parameter.
+   */
+  readonly clamp?: boolean | undefined;
   readonly disabled?: boolean | undefined;
   readonly trailing?: ReactNode | undefined;
 } & DataAttributes;
@@ -143,23 +155,38 @@ export function Slider(props: SliderProps): React.JSX.Element {
   const {
     label,
     hideLabel,
+    invalid,
     className,
     value,
     min,
     max,
     step,
     onChange,
+    onRelease,
     precision = 2,
+    clamp = true,
     disabled,
     trailing,
   } = props;
   const id = useId();
+  const messageId = `${id}-message`;
 
-  /** Clamp on the way in: a typed number is user input, not a control position. */
-  const commit = (raw: string): void => {
+  const parse = (raw: string): number | null => {
     const next = Number(raw);
-    if (!Number.isFinite(next)) return;
-    onChange(Math.min(max, Math.max(min, next)));
+    if (!Number.isFinite(next)) return null;
+    return clamp === true ? Math.min(max, Math.max(min, next)) : next;
+  };
+
+  const commit = (raw: string): void => {
+    const next = parse(raw);
+    if (next === null) return;
+    onChange(next);
+  };
+
+  const release = (raw: string): void => {
+    const next = parse(raw);
+    if (next === null) return;
+    onRelease?.(next);
   };
 
   return (
@@ -179,27 +206,41 @@ export function Slider(props: SliderProps): React.JSX.Element {
         step={step}
         value={value}
         disabled={disabled === true}
+        aria-invalid={invalid !== undefined}
+        {...(invalid === undefined ? {} : { "aria-describedby": messageId })}
         onChange={(event) => {
           commit(event.target.value);
+        }}
+        onPointerUp={(event) => {
+          release(event.currentTarget.value);
+        }}
+        onKeyUp={(event) => {
+          release(event.currentTarget.value);
         }}
         {...dataProps(props)}
       />
       {/* §4.7: the readout is editable. A slider whose value cannot be typed is
-          not a parameter control. */}
+          not a parameter control. §10: the number input is how G5.3 types an
+          out-of-bounds value; min/max stay off it when `clamp` is false. */}
       <input
         type="number"
         className={cx(styles["readout"], roles["data"])}
         aria-label={label}
-        min={min}
-        max={max}
+        {...(clamp === true ? { min, max } : {})}
         step={step}
-        value={value.toFixed(precision)}
+        value={Number.isFinite(value) ? value.toFixed(precision) : ""}
         disabled={disabled === true}
         onChange={(event) => {
           commit(event.target.value);
+          release(event.target.value);
         }}
       />
       {trailing ?? null}
+      {invalid === undefined ? null : (
+        <p id={messageId} className={cx(styles["invalid"], roles["body"])}>
+          {invalid}
+        </p>
+      )}
     </div>
   );
 }

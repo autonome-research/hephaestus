@@ -1,0 +1,16 @@
+{
+  "status": "ok",
+  "state_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "params": [
+    {
+      "name": "groove_count",
+      "value": 5,
+      "default": 5,
+      "min": 2,
+      "max": 10,
+      "step": null,
+      "doc": "",
+      "scope": "part"
+    }
+  ]
+}

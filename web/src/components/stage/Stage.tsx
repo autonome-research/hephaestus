@@ -21,10 +21,9 @@
 // drawer's own `overflow: auto` takes the excess. Height is then identical
 // across tabs **by construction**, which is what §3.14's e2e asserts.
 //
-// Two of the three tabs are not built here and say so by name rather than
-// rendering an empty frame. §4.4's discipline is a general one: a state that
-// exists for a reason reads as designed; the same state with its content missing
-// reads as a bug.
+// Diff is still the named pending tab. Script / Timeline / Results are the
+// part views: Monaco + PARAMS, the last-good scrubber, and the existing
+// ResultsPanel (also still the inspector's first tab).
 
 import { useCallback, useEffect, useRef } from "react";
 import { copy } from "../../copy";
@@ -32,9 +31,11 @@ import { useWorkspace, workspaceStore } from "../../state/react";
 import { shellStore } from "../../state/shell";
 import { STAGE_TABS, type StageTab } from "../../state/workspace";
 import { Badge, EmptyState, TabBar, useShell } from "../../system";
+import { ResultsPanel } from "../inspector/ResultsPanel";
 import { useDirtyIndex } from "../rail/GitDirty";
-import { ScriptEditor } from "./ScriptEditor";
 import { Inspector } from "./Inspector";
+import { ScriptWorkspace } from "./ScriptWorkspace";
+import { Timeline } from "./Timeline";
 import { Viewport } from "./viewport/Viewport";
 import styles from "./Stage.module.css";
 
@@ -117,9 +118,15 @@ export function Stage(): React.JSX.Element {
 
         <div className={styles["content"]} role="tabpanel">
           {tab === "script" ? (
-            <ScriptEditor />
+            <ScriptWorkspace />
           ) : tab === "viewport" ? (
             <Viewport />
+          ) : tab === "timeline" ? (
+            <Timeline />
+          ) : tab === "results" ? (
+            <div data-stage-panel="results">
+              <ResultsPanel />
+            </div>
           ) : (
             <EmptyState
               icon="file"

@@ -137,12 +137,52 @@ export const copy = {
     tabs: {
       viewport: "Viewport",
       script: "Script",
+      timeline: "Timeline",
+      results: "Results",
       diff: "Diff",
     },
     diffPendingTitle: "Diff is not in this build",
     diffPending: "Per-part diff lands with the versions panel's compare action.",
     selectPartTitle: "No part selected",
     selectPart: "Select a part in the rail.",
+  },
+
+  /**
+   * Statement Timeline. Marks come from `GET /parts/{part}/build` only —
+   * last-good checkpoint, failed statement, or the current successful artifact.
+   */
+  timeline: {
+    heading: "Timeline",
+    tabsLabel: "Build timeline",
+    lastGood: "Last good",
+    failed: "Failed",
+    current: "Current",
+    noPartTitle: "No part selected",
+    noPart: "Select a part in the rail to rewind its last-good checkpoint.",
+    notBuiltTitle: "Not built",
+    notBuilt: "This part has no build, so there is no last-good checkpoint to rewind to.",
+    okTitle: "Build succeeded",
+    ok: "This build completed. The executor did not record a last-good checkpoint to rewind.",
+    noCheckpointTitle: "No last-good checkpoint",
+    noCheckpoint:
+      "This failed build named no last-good artifact, so there is nothing to rewind to.",
+    rewind: "Rewind to last good",
+    followFailed: "Show the failed build",
+    scrub: "Rewind the build",
+  },
+
+  /** §10: PARAMS sliders generated from `GET /parts/{part}/params`. */
+  params: {
+    heading: "PARAMS",
+    emptyTitle: "No parameters",
+    empty: "This part declares no PARAMS, so there are no sliders to show.",
+    noPartTitle: "No part selected",
+    noPart: "Select a part in the rail to edit its parameters.",
+    loading: "Loading parameters…",
+    conflict:
+      "The parameter state changed before this edit landed. The sliders now show the live values; edit again to retry.",
+    committing: "Applying parameter change…",
+    reset: "Reset to default",
   },
 
   /** §5. The viewport, its two overlays, and every named absence it can reach. */

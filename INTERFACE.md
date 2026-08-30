@@ -1471,7 +1471,7 @@ keeps `current`. Two axes, two words.
 
 `ProjectTree`, `GitDirty`, `VersionList`, `Viewport`, `ViewCube`, `GridReadout`,
 `ExplodeSlider`, `SectionControl`, `SelectionPopover`, `MeasureHUD`,
-`ScriptEditor`, `DiffView`, `ResultsPanel`, `PropertiesPanel`,
+`ScriptEditor`, `Timeline`, `DiffView`, `ResultsPanel`, `PropertiesPanel`,
 `ProvenancePanel`, `ChecksPanel`, `DfmPanel`, `ParamSliders`, `StreamPanel`,
 `ToolChip`, `ThoughtSection`, `EventImage`, `AskUserWidget`, `Composer`,
 `ConflictDialog`, `TagDialog`, `ArtifactPin`, `Fact`.
@@ -1559,7 +1559,7 @@ WorkspaceState {
   section_plane: string | null     // "[+-]AXIS@OFFSET"
   selection: {selection_id, kind, bundle_ref} | null
   measure: {a?, b?} | null
-  stage_tab: "viewport" | "script" | "diff"
+  stage_tab: "viewport" | "script" | "timeline" | "results" | "diff"
   inspector_tab: "results" | "properties" | "provenance" | "checks" | "dfm"
   focus: string | null
   session: string | null

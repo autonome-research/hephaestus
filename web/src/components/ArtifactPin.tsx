@@ -7,9 +7,9 @@
 // G5.5/G5.6 are exactly the case where a user must not be able to forget which
 // build they are looking at". Two behaviours discharge that:
 //
-// * **Never auto-advance.** The store's `observeCurrent` is a no-op while held;
-//   this component is the *only* place `hold` and `followCurrent` are called,
-//   and both are explicit user acts.
+// * **Never auto-advance.** The store's `observeCurrent` is a no-op while held.
+//   `hold` / `followCurrent` are explicit user acts: this pin, and the Timeline
+//   scrubber rewinding to `error.last_good_artifact_ref`.
 // * **Say what "Follow current" discards.** §4.5: the header offers it "as an
 //   explicit one-click action that states what it will discard". The selection
 //   and the measurement were taken against the held artifact; the copy says so

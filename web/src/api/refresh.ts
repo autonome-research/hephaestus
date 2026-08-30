@@ -44,11 +44,12 @@ import { keys } from "./queries";
  * calling it: §7A.11 names eight keys, and a key quietly dropped from an
  * invalidation is a panel that quietly goes stale.
  *
- * `part === null` is the blank canvas — no part is selected, so the five
+ * `part === null` is the blank canvas — no part is selected, so the
  * part-scoped keys have no argument to resolve against. The three
  * project-scoped keys still fire, and they are the ones that matter in exactly
  * that case: `keys.parts()` is how a part the agent has just created appears in
- * the tree.
+ * the tree. `keys.params` is the ninth key: §10's sliders read a projection
+ * §7A.11 did not name because the panel had not shipped.
  */
 export function refreshKeys(part: string | null): readonly (readonly unknown[])[] {
   const projectScoped: readonly (readonly unknown[])[] = [
@@ -61,6 +62,7 @@ export function refreshKeys(part: string | null): readonly (readonly unknown[])[
     ...projectScoped,
     keys.build(part),
     keys.script(part),
+    keys.params(part),
     keys.properties(part),
     keys.checks(part),
     keys.dfm(part),

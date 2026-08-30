@@ -58,9 +58,14 @@
 
 .slider {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--gap-inline);
   min-width: 0;
+}
+
+.slider .invalid {
+  flex: 1 0 100%;
 }
 
 .range {
