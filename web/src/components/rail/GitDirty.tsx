@@ -29,6 +29,14 @@
 // adjacent rail sections above ~1000px of void. `railGitAbsence` is that shared
 // cause, this panel prints it once for both sections, and `VersionList` renders
 // nothing while it holds.
+//
+// THE WRAPPING DEFECT THE G4 SCREENSHOTS STILL SHOW. Untracked rows under
+// `CHANGED PATHS OUTSIDE PARTS/` are often `.heph/blobs/sha256/<dir>/<64 hex>`.
+// Those are real git facts — §13.1 reports a dirty tree, never hides it — but
+// `.code { word-break: break-all }` plus a two-column body grid (the empty unit
+// cell wrapping onto the next row) turned each path into a multi-line ribbon
+// that ate the rail. The path stays on one line; `data-value` still carries
+// every byte the server sent.
 
 import { useGitStatus } from "../../api/queries";
 import { WorkspaceError } from "../../api/client";
@@ -109,8 +117,16 @@ export function DirtyMarker({ entry }: { readonly entry: GitDirtyEntry }): React
   );
 }
 
-export function GitDirtyPanel(): React.JSX.Element {
-  const index = useDirtyIndex();
+/**
+ * The panel body, given an already-read index.
+ *
+ * Split out so a long untracked path can be asserted as a DOM fragment without
+ * standing up `GET /git/status`. The fixture that produced the wrapping
+ * screenshot had four `.heph/blobs/sha256/…` rows; those paths are real git
+ * facts (§13.1 reports, never hides) and the job here is to keep them on one
+ * line rather than eating the rail.
+ */
+export function GitDirtyView({ index }: { readonly index: DirtyIndex }): React.JSX.Element {
   const absence = railGitAbsence(index);
 
   return (
@@ -150,11 +166,13 @@ export function GitDirtyPanel(): React.JSX.Element {
                     key: entry.path,
                     label: <DirtyMarker entry={entry} />,
                     value: (
-                      <Fact
-                        source="git.dirty[].path"
-                        value={entry.path}
-                        className={styles["path"]}
-                      />
+                      // The full path stays on `<Fact>` (`data-value`). The
+                      // wrapper is presentation: one line, ellipsis, the
+                      // complete path on hover. Shortening the *text* through
+                      // `formatRef` would hide bytes the server sent.
+                      <span className={styles["path"]} title={entry.path}>
+                        <Fact source="git.dirty[].path" value={entry.path} />
+                      </span>
                     ),
                     attrs: { "data-dirty": dirtySide(entry) },
                   }))}
@@ -166,4 +184,8 @@ export function GitDirtyPanel(): React.JSX.Element {
       </PanelBody>
     </Panel>
   );
+}
+
+export function GitDirtyPanel(): React.JSX.Element {
+  return <GitDirtyView index={useDirtyIndex()} />;
 }

@@ -12,7 +12,9 @@
 }
 
 .body {
-  grid-template-columns: max-content minmax(0, 1fr);
+  /* Keep §4.7's three DataTable tracks. A two-column override put the empty
+     unit cell on the next row and let long blob paths wrap into a ribbon. */
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
   padding: var(--space-2);
 }
 
@@ -47,6 +49,10 @@
 }
 
 .path {
-  composes: code from "../../system/type.module.css";
+  display: block;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: normal;
 }
