@@ -93,20 +93,29 @@ hephaestus/
 ├── core/                      Python: CAD executor, kernel, render, checks + opstore adapters
 ├── agent/                     TypeScript: Pi SDK runtime + thread-phase workflows
 ├── server/                    Python: MCP/HTTP API + Node agent bridge
-├── web/                       TypeScript: React + three.js client
+├── web/                       TypeScript: React + three.js client (optional contributor workspace; not the v0.1 product)
 ├── registries/                skills/, parts/, materials/, dfm/
 └── corpus/                    golden prompts + expected assertions
 ```
 
 ## Status
 
-Under active construction, engine-first. Stages S through 3 are complete with
+Public product is **headless v0.1.0** (git tag `v0.1.0-headless`). Engine-first:
+the `heph` CLI and MCP server are the product — no browser dependency. The tag
+exists on this repository; there is **no PyPI package** and no GitHub Release.
+Install from the tag ([Install](#install)). Stages S through 3 are complete with
 green gates (durability substrate, CAD engine, render service, agent runtime,
 MCP server); the validation ladder (Stage 2V) and manufacturing depth (Stage 6)
-follow, then a **headless v0.1 release** — wheel, `heph` CLI, MCP server and
-packaged agent sidecar, no browser dependency — before any web UI work begins
-(`mission_plan.md`, 2026-07-26 ordering amendment). Everything built so far is
-headless and deployable into any MCP client today.
+continue.
+
+`web/` is in-tree as an **optional contributor workspace** (React + three.js
+client). It is not the public v0.1 product. Contributors who are not changing
+the web client can skip it; [CONTRIBUTING.md](CONTRIBUTING.md) marks those
+steps optional.
+
+The 2026-07-26 `mission_plan.md` ordering amendment still holds as the *product*
+story: ship CLI + MCP before treating a browser UI as the product. The `web/`
+tree existing for contributors does not change that.
 
 Originally documented as: pre-implementation. `mission_plan.md` is the operative document: a
 staged droid mission in which every stage gates on machine-checkable evidence
@@ -119,3 +128,40 @@ platform. v0.1 agent/server script execution requires either native Linux
 bubblewrap isolation or a capability-tested Docker/Podman/OrbStack-compatible
 OCI backend (including on macOS); it fails closed when neither is available.
 No stage advances on human vibes.
+
+## Install
+
+Hephaestus is **not on PyPI**. `pip install hephaestus-cad` against the Python
+Package Index 404s. Install the `hephaestus-cad` aggregate from this repository
+at tag `v0.1.0-headless`.
+
+The repo root is a uv workspace, not a package. `hephaestus-cad` lives in
+`packaging/` and depends on four in-repo distributions (`hephaestus-core`,
+`hephaestus-server`, `hephaestus-contract`, `opstore`) that are also unpublished,
+so they must come from the same tag — not from the index.
+
+```console
+$ uv pip install \
+    "opstore @ git+https://github.com/autonome-research/hephaestus.git@v0.1.0-headless#subdirectory=opstore" \
+    "hephaestus-contract @ git+https://github.com/autonome-research/hephaestus.git@v0.1.0-headless#subdirectory=contract" \
+    "hephaestus-core @ git+https://github.com/autonome-research/hephaestus.git@v0.1.0-headless#subdirectory=core" \
+    "hephaestus-server @ git+https://github.com/autonome-research/hephaestus.git@v0.1.0-headless#subdirectory=server" \
+    "hephaestus-cad @ git+https://github.com/autonome-research/hephaestus.git@v0.1.0-headless#subdirectory=packaging"
+$ heph --version
+heph 0.1.0
+```
+
+```console
+$ pip install \
+    "opstore @ git+https://github.com/autonome-research/hephaestus.git@v0.1.0-headless#subdirectory=opstore" \
+    "hephaestus-contract @ git+https://github.com/autonome-research/hephaestus.git@v0.1.0-headless#subdirectory=contract" \
+    "hephaestus-core @ git+https://github.com/autonome-research/hephaestus.git@v0.1.0-headless#subdirectory=core" \
+    "hephaestus-server @ git+https://github.com/autonome-research/hephaestus.git@v0.1.0-headless#subdirectory=server" \
+    "hephaestus-cad @ git+https://github.com/autonome-research/hephaestus.git@v0.1.0-headless#subdirectory=packaging"
+$ heph --version
+heph 0.1.0
+```
+
+Python 3.11 through 3.14. Capability tiers (engine vs sandbox vs agent/Node)
+and the `bench` extra: [docs/install.md](docs/install.md). A checkout of the
+tag plus `uv sync` is the contributor path — [CONTRIBUTING.md](CONTRIBUTING.md).

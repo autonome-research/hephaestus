@@ -5,21 +5,47 @@ SPDX-License-Identifier: Apache-2.0
 
 # Install
 
-Hephaestus ships as one PyPI distribution, `hephaestus-cad`. The import package
-is `hephaestus` regardless (`repo_conventions.md`), and the CLI binary is
-`heph`.
+The public product is the **headless** `hephaestus-cad` aggregate: CLI `heph`,
+MCP server, packaged agent sidecar. The import package is `hephaestus`
+regardless (`repo_conventions.md`).
+
+**Not on PyPI.** Tag `v0.1.0-headless` exists on this repository; the name
+`hephaestus-cad` is not published to the Python Package Index, so
+`pip install hephaestus-cad` / `pipx install hephaestus-cad` /
+`uv tool install hephaestus-cad` against the index 404. Install from this
+GitHub repository at that tag.
+
+The repo root is a uv workspace (`hephaestus-workspace`, `package = false`),
+not an installable project. `hephaestus-cad` lives in `packaging/` and depends
+on four in-repo distributions that are also unpublished. Pull them from the
+same tag — otherwise the installer looks on PyPI and 404s.
 
 ```console
-$ pipx install hephaestus-cad
+$ uv pip install \
+    "opstore @ git+https://github.com/autonome-research/hephaestus.git@v0.1.0-headless#subdirectory=opstore" \
+    "hephaestus-contract @ git+https://github.com/autonome-research/hephaestus.git@v0.1.0-headless#subdirectory=contract" \
+    "hephaestus-core @ git+https://github.com/autonome-research/hephaestus.git@v0.1.0-headless#subdirectory=core" \
+    "hephaestus-server @ git+https://github.com/autonome-research/hephaestus.git@v0.1.0-headless#subdirectory=server" \
+    "hephaestus-cad @ git+https://github.com/autonome-research/hephaestus.git@v0.1.0-headless#subdirectory=packaging"
 $ heph --version
 heph 0.1.0
 ```
 
-`pipx` is the recommended path because `heph` is a tool, not a library you
-import into your own project: pipx gives it a private virtual environment and
-puts one binary on your `PATH`. `uv tool install hephaestus-cad` does the same
-thing. Plain `pip install hephaestus-cad` into an environment you manage works
-identically — nothing in Hephaestus inspects how it was installed.
+```console
+$ pip install \
+    "opstore @ git+https://github.com/autonome-research/hephaestus.git@v0.1.0-headless#subdirectory=opstore" \
+    "hephaestus-contract @ git+https://github.com/autonome-research/hephaestus.git@v0.1.0-headless#subdirectory=contract" \
+    "hephaestus-core @ git+https://github.com/autonome-research/hephaestus.git@v0.1.0-headless#subdirectory=core" \
+    "hephaestus-server @ git+https://github.com/autonome-research/hephaestus.git@v0.1.0-headless#subdirectory=server" \
+    "hephaestus-cad @ git+https://github.com/autonome-research/hephaestus.git@v0.1.0-headless#subdirectory=packaging"
+$ heph --version
+heph 0.1.0
+```
+
+`heph` is a tool, not a library you import into your own project. Prefer a
+venv (or `uv pip install` into one uv manages) so one binary lands on `PATH`.
+Nothing in Hephaestus inspects how it was installed. A clone of the tag plus
+`uv sync` is the contributor path — [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 Python 3.11 through 3.14 are supported.
 
@@ -37,19 +63,22 @@ version.
 | `opstore` | The durable op/WAL store the project store is built on (internal component, not a separate product) |
 
 The evaluation harness is deliberately **not** installed by default — it pulls
-dataset tooling no one modeling a bracket should have to download:
+dataset tooling no one modeling a bracket should have to download. Extra
+`bench` is the unpublished `hephaestus-bench` member (`bench/` on the same tag):
 
 ```console
-$ pipx install 'hephaestus-cad[bench]'    # adds `heph bench` and `heph bench cadgenbench`
+$ pip install \
+    "hephaestus-bench @ git+https://github.com/autonome-research/hephaestus.git@v0.1.0-headless#subdirectory=bench" \
+    "hephaestus-cad[bench] @ git+https://github.com/autonome-research/hephaestus.git@v0.1.0-headless#subdirectory=packaging"
 ```
 
-`heph bench` simply does not appear in `heph --help` without it. See
-[cli.md](cli.md).
+(Plus the four members above if they are not already installed.) `heph bench`
+simply does not appear in `heph --help` without it. See [cli.md](cli.md).
 
 ## What each capability requires
 
 Hephaestus has three capability tiers and they have genuinely different
-prerequisites. Installing the wheel gets you the first one everywhere.
+prerequisites. Installing the distribution gets you the first one everywhere.
 
 ### 1. The engine — everywhere, no Node
 
@@ -119,18 +148,18 @@ $ heph check --json               # inside a project: the engine path, no Node
 $ heph agent --project .          # the agent path: Node + packaged sidecar + a provider config
 ```
 
-If you want to confirm the wheel is using *its own* sidecar rather than
+If you want to confirm the install is using *its own* sidecar rather than
 something on your machine, ask for the resolution directly:
 
 ```console
 $ python -c "from hephaestus.agent_bridge.sidecar import resolve_sidecar; \
   r = resolve_sidecar(); print(r.source, r.root)"
-packaged /home/you/.local/pipx/venvs/hephaestus-cad/lib/python3.13/site-packages/hephaestus/agent_bridge/_sidecar
+packaged /home/you/.venv/lib/python3.13/site-packages/hephaestus/agent_bridge/_sidecar
 ```
 
-`source` is `packaged` for any installed wheel. It is `development` only in a
-checkout of this repository that has no packaged sidecar, and `override` only
-when you set `HEPHAESTUS_SIDECAR` yourself.
+`source` is `packaged` for any installed distribution. It is `development` only
+in a checkout of this repository that has no packaged sidecar, and `override`
+only when you set `HEPHAESTUS_SIDECAR` yourself.
 
 ## Environment variables
 
