@@ -29,6 +29,7 @@ import type {
   BuildDocument,
   ChecksDocument,
   DfmDocument,
+  ParamsDocument,
   PropertiesDocument,
   GitLogDocument,
   GitStatusDocument,
@@ -47,6 +48,7 @@ export const keys = {
   parts: () => ["parts"] as const,
   build: (part: string) => ["parts", part, "build"] as const,
   script: (part: string) => ["parts", part, "script"] as const,
+  params: (part: string) => ["parts", part, "params"] as const,
   properties: (part: string) => ["parts", part, "properties"] as const,
   checks: (part: string) => ["parts", part, "checks"] as const,
   dfm: (part: string) => ["parts", part, "dfm"] as const,
@@ -113,6 +115,16 @@ export function useBuild(
     queryKey: keys.build(part ?? ""),
     queryFn: () => apiJson<BuildDocument>(`/parts/${encodeURIComponent(part ?? "")}/build`),
     enabled: enabled && part !== null,
+    staleTime: PROJECT_STALE_MS,
+  });
+}
+
+/** `GET /parts/{part}/params` — the §10 slider projection. */
+export function useParams(part: string | null): UseQueryResult<ParamsDocument, Error> {
+  return useQuery({
+    queryKey: keys.params(part ?? ""),
+    queryFn: () => apiJson<ParamsDocument>(`/parts/${encodeURIComponent(part ?? "")}/params`),
+    enabled: part !== null,
     staleTime: PROJECT_STALE_MS,
   });
 }

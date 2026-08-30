@@ -141,7 +141,9 @@ _SECTION_PLANE: Final[re.Pattern[str]] = re.compile(r"^[+-][XYZ]@-?\d+(?:\.\d+)?
 #: against. They are *the client's own* navigation tokens; a value outside them
 #: is a client bug and is refused rather than normalized.
 _PIN_MODES: Final[frozenset[str]] = frozenset({"current", "pinned"})
-_STAGE_TABS: Final[frozenset[str]] = frozenset({"viewport", "script", "diff"})
+_STAGE_TABS: Final[frozenset[str]] = frozenset(
+    {"viewport", "script", "timeline", "results", "diff"}
+)
 #: Six, not five: §22.7's DECISION gives the Inspector an ``export`` tab. The
 #: envelope's tab tokens are *the client's own* navigation vocabulary, so this
 #: set tracks ``web/src/state/workspace.ts::INSPECTOR_TABS`` — a tab the client

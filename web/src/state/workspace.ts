@@ -38,7 +38,13 @@ const VIEW_GRAMMAR = /^az(-?\d+(?:\.\d+)?)_el(-?\d+(?:\.\d+)?)$/;
 export const CHANNEL_OVERLAYS = ["none", "section"] as const;
 export type ChannelOverlay = (typeof CHANNEL_OVERLAYS)[number];
 
-export const STAGE_TABS = ["viewport", "script", "diff"] as const;
+/**
+ * Stage tabs. `viewport` / `script` / `diff` are §4.5's original closed set.
+ * `timeline` and `results` are the part views issue #4 adds so Script /
+ * Timeline / Results are first-class switches on the same tablist. `results`
+ * here reuses `ResultsPanel`; the inspector Results tab stays.
+ */
+export const STAGE_TABS = ["viewport", "script", "timeline", "results", "diff"] as const;
 export type StageTab = (typeof STAGE_TABS)[number];
 
 /**

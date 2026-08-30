@@ -74,8 +74,94 @@ export interface BuildDocument {
   readonly checks?: Readonly<Record<string, unknown>>;
   readonly source_map_ref?: string | null;
   readonly warnings?: readonly BuildWarning[];
-  readonly error?: Readonly<Record<string, unknown>>;
+  readonly error?: BuildError | undefined;
   readonly critique?: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * `BuildResult.error` (`core/types.py::ErrorRecord`) — the incremental
+ * executor's failure object. The Timeline reads only these fields; it does not
+ * invent statement events the projection does not carry.
+ */
+export interface BuiltThrough {
+  readonly line: number;
+  readonly statement: string;
+}
+
+/** `error.last_good` — metrics of the last-good checkpoint geometry. */
+export interface LastGoodMetrics {
+  readonly bodies: number;
+  readonly solids: number;
+  readonly size_mm: readonly number[];
+  readonly volume_mm3: number;
+  readonly sealed: boolean;
+  readonly genus: number;
+}
+
+export interface BuildError {
+  readonly line: number;
+  readonly col: number;
+  readonly type: string;
+  readonly message: string;
+  readonly frame: readonly string[];
+  readonly built_through: BuiltThrough | null;
+  readonly last_good: LastGoodMetrics | null;
+  readonly last_good_artifact_ref: string | null;
+  readonly hint: string;
+}
+
+/**
+ * One row of `GET /api/v1/parts/{part}/params` — `params_projection`.
+ *
+ * Bounds, step, and the current value are the script's `PARAMS` as the server
+ * projected them. The sliders render these fields and invent neither names nor
+ * ranges (§10).
+ */
+export interface ParamRow {
+  readonly name: string;
+  readonly value: number;
+  readonly default: number;
+  readonly min: number;
+  readonly max: number;
+  readonly step: number | null;
+  readonly doc: string;
+  readonly scope: string;
+}
+
+/** `GET /api/v1/parts/{part}/params`. */
+export interface ParamsDocument {
+  readonly status: "ok";
+  readonly params: readonly ParamRow[];
+  readonly state_hash: string;
+}
+
+/** One `set_params` `rejected[]` entry (`cad_ops/_params.py`). */
+export interface ParamRejection {
+  readonly name: string;
+  readonly reason: string;
+  readonly value?: unknown;
+  readonly min?: number;
+  readonly max?: number;
+  readonly declared?: readonly string[];
+  readonly detail?: string;
+}
+
+/**
+ * `POST /api/v1/parts/{part}/params` — `set_params` verbatim.
+ *
+ * A stale `expected_state_hash` is a 200 with `conflict`, not a 4xx (§2.4,
+ * §10). `rejected[]` is all-or-nothing: if it is non-empty, nothing persisted.
+ */
+export interface SetParamsResult {
+  readonly effective: Readonly<Record<string, number>>;
+  readonly rejected: readonly ParamRejection[];
+  readonly stale_parts: readonly string[];
+  readonly state_hash: string;
+  readonly journal_ref?: string;
+  readonly conflict?: {
+    readonly current_state_hash: string;
+    readonly current_values: Readonly<Record<string, number>>;
+  };
 }
 
 /**

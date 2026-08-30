@@ -152,6 +152,14 @@ describe("URL serialization", () => {
     expect(decodeWorkspaceUrl(encodeWorkspaceUrl(DEFAULT_STATE)).measure).toBeNull();
   });
 
+  it("round-trips the Timeline and Results stage tabs", () => {
+    for (const tab of ["timeline", "results"] as const) {
+      const state: WorkspaceState = { ...DEFAULT_STATE, part: "tread", stage_tab: tab };
+      const back = decodeWorkspaceUrl(encodeWorkspaceUrl(state));
+      expect(back.stage_tab).toBe(tab);
+    }
+  });
+
   it("falls back closed on a value outside a closed vocabulary", () => {
     // A URL is user input. An unknown tab does not widen the vocabulary and
     // does not throw the workspace away; it lands on the default.
