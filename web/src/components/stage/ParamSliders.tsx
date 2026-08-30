@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { postBuild, postParams } from "../../api/params";
 import { keys, useParams } from "../../api/queries";
+import { refreshKeys } from "../../api/refresh";
 import { uuid7 } from "../../api/idempotency";
 import type { ParamRejection, ParamRow, ParamsDocument } from "../../api/types";
 import { copy } from "../../copy";
@@ -58,6 +59,20 @@ export function controlStep(row: ParamRow): number {
 
 export function isIntegerParam(row: ParamRow): boolean {
   return Number.isInteger(row.default);
+}
+
+/**
+ * Keys to refetch after a slider write.
+ *
+ * A rebuild is the same mutation surface as an agent turn: Results / Checks /
+ * DFM / properties go stale with the mesh. A conflict rebuilt nothing, so only
+ * the params projection is reread.
+ */
+export function keysAfterParamCommit(
+  part: string,
+  rebuilt: boolean,
+): readonly (readonly unknown[])[] {
+  return rebuilt ? refreshKeys(part) : [keys.params(part)];
 }
 
 function rejectionText(entry: ParamRejection): string {
@@ -176,7 +191,9 @@ export function ParamSliders(): React.JSX.Element {
             rejected: [],
             conflict: true,
           }));
-          void client.invalidateQueries({ queryKey: keys.params(part) });
+          for (const queryKey of keysAfterParamCommit(part, false)) {
+            void client.invalidateQueries({ queryKey });
+          }
           return;
         }
         if (result.rejected.length > 0) {
@@ -189,8 +206,9 @@ export function ParamSliders(): React.JSX.Element {
           return;
         }
         return postBuild(part, uuid7()).then(() => {
-          void client.invalidateQueries({ queryKey: keys.params(part) });
-          void client.invalidateQueries({ queryKey: keys.build(part) });
+          for (const queryKey of keysAfterParamCommit(part, true)) {
+            void client.invalidateQueries({ queryKey });
+          }
         });
       })
       .finally(() => {

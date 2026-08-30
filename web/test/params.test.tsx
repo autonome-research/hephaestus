@@ -9,10 +9,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactElement } from "react";
 
 import paramsJson from "./fixtures/params.json";
+import { keys } from "../src/api/queries";
+import { refreshKeys } from "../src/api/refresh";
 import type { ParamRejection, ParamsDocument } from "../src/api/types";
 import {
   controlStep,
   isIntegerParam,
+  keysAfterParamCommit,
   ParamSlidersView,
 } from "../src/components/stage/ParamSliders";
 import { Slider } from "../src/system";
@@ -103,5 +106,24 @@ describe("G5.3 — rejected[] is verbatim, and the primitive does not clamp", ()
     expect(number?.getAttribute("min")).toBeNull();
     expect(number?.getAttribute("max")).toBeNull();
     expect((number as HTMLInputElement | null)?.value).toBe("11.00");
+  });
+});
+
+describe("a slider write refreshes the inspector, not just params and build", () => {
+  it("a successful rebuild invalidates the refreshKeys set", () => {
+    // The two ad-hoc keys (params + build) would leave Results / Checks / DFM
+    // / properties showing the pre-rebuild projection.
+    expect(keysAfterParamCommit("tread", true)).toEqual(refreshKeys("tread"));
+    expect(keysAfterParamCommit("tread", true)).toEqual(
+      expect.arrayContaining([
+        keys.properties("tread"),
+        keys.checks("tread"),
+        keys.dfm("tread"),
+      ]),
+    );
+  });
+
+  it("a conflict invalidates only the params projection", () => {
+    expect(keysAfterParamCommit("tread", false)).toEqual([keys.params("tread")]);
   });
 });
