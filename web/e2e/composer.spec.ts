@@ -112,6 +112,8 @@ test.describe("§7A.12 case 1 — the blank canvas reaches the workspace", () =>
       "data-composer-model",
       "heph-fake-model",
     );
+    await expect(composer.locator("[data-context-disclose]")).toHaveCount(1);
+    await composer.locator("[data-context-disclose]").click();
     await expect(composer.locator("[data-context-add-view]")).toHaveCount(1);
 
     await composer
@@ -156,6 +158,10 @@ test.describe("§7A.12 case 2 — the context envelope", () => {
     await openSession(page, created.session_id);
     const composer = page.locator(`[data-composer][data-session-id="${created.session_id}"]`);
 
+    // Context chips and Add current view fold into disclose. Open it so
+    // the row is in the DOM; idle composer is prompt + Send/Cancel/disclose.
+    await composer.locator("[data-context-disclose]").click();
+
     // The part is in the route, so the part chip is in the row. §7A.10's DOM
     // contract: a chip carries `data-context-key` and its value, and NO
     // `data-source`, because no chip is a fact.
@@ -163,21 +169,29 @@ test.describe("§7A.12 case 2 — the context envelope", () => {
     await expect(partChip).toHaveAttribute("data-context-value", PART);
     await expect(composer.locator("[data-context-chips] [data-source]")).toHaveCount(0);
 
-    // Issue #13: a selected part projects the two §6.4 DFM controls, not a
-    // Plan toggle. The fixture starts `[dfm] auto_run = false`.
-    await expect(composer.locator("[data-composer-dfm]")).toHaveCount(1);
-    await expect(composer.locator("[data-dfm-auto-run]")).toHaveAttribute("data-dfm-auto-run", "false");
-    await expect(composer.locator("[data-dfm-auto-run-toggle]")).toHaveCount(1);
-    await expect(composer.locator("[data-dfm-run]")).toHaveCount(1);
+    // §6.4: the two DFM controls live on the inspector panel, not the
+    // composer. The fixture starts `[dfm] auto_run = false`.
+    await expect(composer.locator("[data-composer-dfm]")).toHaveCount(0);
+    await expect(composer.locator("[data-dfm-auto-run-toggle]")).toHaveCount(0);
+    await expect(composer.locator("[data-dfm-run]")).toHaveCount(0);
+    await page.locator('[data-inspector-tab="dfm"]').click();
+    const dfmPanel = page.locator('[data-inspector-panel="dfm"]');
+    await expect(dfmPanel.locator("[data-panel='dfm']")).toBeVisible();
+    await expect(dfmPanel.locator("[data-composer-dfm]")).toHaveCount(1);
+    await expect(dfmPanel.locator("[data-dfm-auto-run-toggle]")).toHaveAttribute(
+      "data-dfm-auto-run",
+      "false",
+    );
+    await expect(dfmPanel.locator("[data-dfm-run]")).toHaveCount(1);
 
     // Every member is opt-out (§7A.3).
     await partChip.locator('[data-context-drop="part"]').click();
     await expect(partChip).toHaveAttribute("data-context-dropped", "");
 
-    // Issue #13: Add current view un-drops the view and opens the advisory
-    // preview. The server must compose the camera token — a disclosure that
-    // said the agent would be told nothing would be the client/server
-    // emptiness predicates disagreeing.
+    // Add current view stays a real action on disclose; POST /context/preview
+    // must still compose the camera token — a disclosure that said the agent
+    // would be told nothing would be the client/server emptiness predicates
+    // disagreeing.
     await composer.locator("[data-context-add-view]").click();
     const viewChip = composer.locator('[data-context-key="view"]');
     await expect(viewChip).not.toHaveAttribute("data-context-dropped", "");
@@ -315,6 +329,8 @@ test.describe("§7A.12 case 6 — no agent runtime", () => {
 
     // Named absence: do not render a model picker that reads as a signed-in agent.
     await expect(composer.locator("[data-composer-model]")).toHaveCount(0);
+    await expect(composer.locator("[data-context-disclose]")).toHaveCount(1);
+    await composer.locator("[data-context-disclose]").click();
     await expect(composer.locator("[data-context-add-view]")).toHaveCount(1);
 
     // The serve still answers every read route: `agent_unavailable` is about

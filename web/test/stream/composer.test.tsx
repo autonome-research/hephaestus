@@ -16,6 +16,9 @@
 // `explode_t` (a parameter, never a displacement) and `hidden_labels` (the
 // toggles, never what is visible).
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -334,21 +337,32 @@ describe("the DOM contract", () => {
 
   it("puts no data-source on any context chip", () => {
     // §7A.10: "no chip carries a `data-source`, because no chip is a fact
-    // (§4.6)". The chips render §4.5 navigation state, which is the same
-    // exemption §1 grants the grid readout.
+    // (§4.6)". Chips fold into disclose, so idle markup has no chip row;
+    // the row template itself must still not mint a `data-source`.
     const html = markup();
-    const chipRow = /<ul[^>]*data-context-chips[^>]*>([\s\S]*?)<\/ul>/.exec(html);
-    expect(chipRow).not.toBeNull();
-    expect(chipRow?.[1] ?? "").not.toContain("data-source");
+    expect(html).not.toContain("data-context-chips");
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../../src/components/stream/Composer.tsx"),
+      "utf8",
+    );
+    const row = source.slice(
+      source.indexOf("function ContextChipRow"),
+      source.indexOf("export function NewSessionAction"),
+    );
+    expect(row).toContain("data-context-key");
+    expect(row).not.toContain("data-source");
   });
 
   it("keeps the existing composer selectors when chrome is present", () => {
     const html = markup({}, { providers: providersDocument() });
     expect(html).toContain("data-composer=\"\"");
     expect(html).toContain("data-composer-input");
-    expect(html).toContain("data-context-chips");
     expect(html).toContain("data-composer-send");
-    expect(html).toContain("data-context-add-view");
+    expect(html).toContain("data-context-disclose");
+    expect(html).toMatch(/<textarea[^>]*rows="1"/);
+    expect(html).not.toMatch(/<textarea[^>]*rows="3"/);
+    expect(html).not.toContain("data-context-chips");
+    expect(html).not.toContain("data-context-add-view");
   });
 });
 
@@ -388,7 +402,8 @@ describe("session chrome from GET /providers", () => {
     );
     expect(attribute(html, "data-disabled-reason")).toBe("agent_unavailable");
     expect(html).not.toContain("data-composer-model");
-    expect(html).toContain("data-context-add-view");
+    expect(html).toContain("data-context-disclose");
+    expect(html).not.toContain("data-context-add-view");
   });
 
   it("renders the declared model id as a projection, not a picker, when a runtime is attached", () => {
@@ -451,22 +466,24 @@ describe("session chrome from GET /providers", () => {
   });
 });
 
-describe("the DFM chip is the engine equivalent, not a per-message flag", () => {
-  it("shows the two §6.4 controls only when a part's DFM document is in hand", () => {
+describe("the idle composer does not host DFM chrome", () => {
+  it("still knows when the inspector may show the two §6.4 controls", () => {
     expect(showDfmChrome(false, "tread", true)).toBe("chip");
     expect(showDfmChrome(false, "tread", false)).toBe("hidden");
     expect(showDfmChrome(false, null, false)).toBe("absent");
     expect(showDfmChrome(true, "tread", true)).toBe("hidden");
   });
 
-  it("names the absence when no part is selected and does not fake DFM chrome", () => {
+  it("does not put auto_run or Run DFM on the idle composer", () => {
     const html = markup();
-    expect(html).toContain("data-composer-dfm-absent");
+    expect(html).not.toContain("data-composer-dfm");
+    expect(html).not.toContain("data-composer-dfm-absent");
     expect(html).not.toContain("data-dfm-auto-run-toggle");
     expect(html).not.toContain("data-dfm-run");
+    expect(html).toMatch(/<textarea[^>]*rows="1"/);
   });
 
-  it("hides DFM chrome on the agent_unavailable refusal", () => {
+  it("does not grow DFM chrome on the agent_unavailable refusal", () => {
     const html = markup({
       agentUnavailable: true,
       attach: {
@@ -478,7 +495,8 @@ describe("the DFM chip is the engine equivalent, not a per-message flag", () => 
     });
     expect(html).not.toContain("data-composer-dfm-absent");
     expect(html).not.toContain("data-dfm-auto-run-toggle");
-    expect(html).toContain("data-context-add-view");
+    expect(html).not.toContain("data-dfm-run");
+    expect(html).toContain("data-context-disclose");
   });
 });
 

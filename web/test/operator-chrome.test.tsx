@@ -16,7 +16,10 @@ import type { ReactElement } from "react";
 
 import { keys } from "../src/api/queries";
 import type { ProvidersDocument } from "../src/api/providers";
+import type { GitStatusDocument, ProjectDocument } from "../src/api/types";
+import { Header, headerBranch, headerHead } from "../src/components/Header";
 import { NewSessionAction } from "../src/components/stream/Composer";
+import { PROJECT_TREE_SECTIONS, ProjectSectionList } from "../src/components/rail/ProjectTree";
 import { ProvidersPanel } from "../src/components/ProvidersPanel";
 import { CHIP_REF_WIDTH, formatRef } from "../src/system";
 import { copy } from "../src/copy";
@@ -227,11 +230,101 @@ describe("artifact pin — chip width that fits the 1280 header", () => {
   });
 });
 
-describe("composer chrome — no unlabelled off toggles", () => {
+describe("composer chrome — talking surface, not a Plan/DFM toolbar", () => {
   it("does not render a bare effort off in the strip", () => {
     const composer = readFileSync(join(webSrc, "components/stream/Composer.tsx"), "utf8");
     expect(composer).not.toContain("data-composer-effort");
-    expect(composer).toContain("data-dfm-auto-run-toggle");
-    expect(composer).toContain("data-dfm-run");
+    expect(composer).not.toContain("data-dfm-auto-run-toggle");
+    expect(composer).not.toContain("data-dfm-run");
+    expect(composer).not.toContain("data-composer-dfm");
+    expect(composer).not.toMatch(/rows=\{3\}/);
+    expect(composer).toContain("promptRows");
+  });
+
+  it("defaults the idle prompt to one row so Send stays on-screen", () => {
+    const composer = readFileSync(join(webSrc, "components/stream/Composer.tsx"), "utf8");
+    expect(composer).toMatch(/promptFocused \|\| text\.trim\(\) !== "" \? 3 : 1/);
+    expect(composer).toContain("data-composer-send");
+    expect(composer).toContain("data-composer-cancel");
+    expect(composer).toContain("data-context-disclose");
+    expect(composer).toContain("data-context-add-view");
+    expect(composer.indexOf("data-context-add-view")).toBeGreaterThan(
+      composer.indexOf("data-context-disclose"),
+    );
+  });
+});
+
+describe("rail project sections — listed, empty-honest, collapsed", () => {
+  it("keeps the closed inventory and does not expand empty bodies by default", () => {
+    const markup = html(<ProjectSectionList open={new Set()} onToggle={() => undefined} />);
+    for (const id of PROJECT_TREE_SECTIONS) {
+      expect(markup).toContain(`data-tree-section="${id}"`);
+    }
+    expect(markup).not.toContain("data-tree-section-empty");
+    expect(PROJECT_TREE_SECTIONS).toEqual(["analyses", "docs", "globals", "imports", "materials"]);
+  });
+});
+
+describe("header git identity — no invented branch, no HEAD without a sha", () => {
+  const OID = "aabbccddeeff0011223344556677889900112233";
+
+  function projectDocument(): ProjectDocument {
+    return {
+      status: "ok",
+      root: "/tmp/p",
+      name: "fixture",
+      units: "mm",
+      parts: [],
+      serve_mode: true,
+    };
+  }
+
+  function gitDocument(over: Partial<GitStatusDocument> = {}): GitStatusDocument {
+    return {
+      status: "ok",
+      dirty: [],
+      clean: true,
+      head: OID,
+      branch: "main",
+      ...over,
+    };
+  }
+
+  function headerMarkup(git: GitStatusDocument | null): string {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(keys.project(), projectDocument());
+    if (git !== null) client.setQueryData(keys.gitStatus(), git);
+    return html(
+      <QueryClientProvider client={client}>
+        <Header />
+      </QueryClientProvider>,
+    );
+  }
+
+  it("treats porcelain (detached) as no branch and still shows an oid head", () => {
+    expect(headerBranch("(detached)")).toBeNull();
+    expect(headerBranch("main")).toBe("main");
+    expect(headerHead(OID)).toBe(OID);
+    expect(headerHead("HEAD")).toBeNull();
+    const markup = headerMarkup(gitDocument({ branch: "(detached)", head: OID }));
+    expect(markup).not.toContain('data-source="git.branch"');
+    expect(markup).not.toContain("(detached)");
+    expect(markup).toContain('data-source="git.head"');
+    expect(markup).toContain(`data-value="${OID}"`);
+    expect(markup).toContain(formatRef(OID, 8));
+  });
+
+  it("omits both fields when GET /git/status has not answered", () => {
+    const markup = headerMarkup(null);
+    expect(markup).not.toContain('data-source="git.branch"');
+    expect(markup).not.toContain('data-source="git.head"');
+    expect(markup).not.toContain(copy.header.head);
+  });
+
+  it("does not print the label HEAD when head is not an oid", () => {
+    const markup = headerMarkup(gitDocument({ branch: "(detached)", head: "HEAD" }));
+    expect(markup).not.toContain('data-source="git.branch"');
+    expect(markup).not.toContain('data-source="git.head"');
+    expect(markup).not.toContain(copy.header.head);
   });
 });

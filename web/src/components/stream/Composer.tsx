@@ -48,22 +48,20 @@
 // with its content missing reads as a bug. Silence is what produced a product
 // review finding that the workspace has no way to talk to an agent.
 //
-// **6. Session chrome stays a thin client** (issue #13). Model + effort are
-// a *projection* of `GET /providers` using the provider's own model ids —
+// **6. Session chrome stays a thin client** (issue #13). Model is a
+// *projection* of `GET /providers` using the provider's own model ids —
 // never house names, and never a picker. §7A.3's prompt body is `{text,
 // context?}`; inventing a Select that does not write would be hosted-chat
 // chrome over a field the route does not admit. There is no Plan mode in the
-// engine; `[dfm] auto_run` / `run_dfm` is the equivalent and stays two
-// controls (§6.4). Add current view is an explicit opt-in that opens
-// `POST /context/preview`. No runtime / no `providers.json` keeps the named
-// `agent_unavailable` absence.
+// engine. `[dfm] auto_run` / `run_dfm` stay two controls (§6.4) and live on
+// the inspector DFM panel, not here — the composer is for talking. Context
+// chips and Add current view fold into the disclose control. No runtime /
+// no `providers.json` keeps the named `agent_unavailable` absence.
 
 import { useCallback, useEffect, useMemo, useSyncExternalStore, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { WorkspaceError } from "../../api/client";
-import { writeDfmAutoRun, runDfm } from "../../api/dfm";
-import { uuid7 } from "../../api/idempotency";
-import { keys, useDfm, useProviders } from "../../api/queries";
+import { useProviders } from "../../api/queries";
 import { refreshAfterTurn } from "../../api/refresh";
 import { attachAgent, type AttachProjection, isAttachCause } from "../../api/attach";
 import {
@@ -77,12 +75,7 @@ import { copy } from "../../copy";
 import { Button, Chip, CHIP_REF_WIDTH, EmptyState, TextInput, formatRef } from "../../system";
 import { useWorkspaceState } from "../../state/react";
 import { labelsForPart, visibilityStore } from "../../state/visibility";
-import {
-  defaultModel,
-  modelsFrom,
-  showDfmChrome,
-  showModelChrome,
-} from "../../stream/composerChrome";
+import { defaultModel, modelsFrom, showModelChrome } from "../../stream/composerChrome";
 import { chipsFor, envelopeFor, type ContextChip } from "../../stream/composerContext";
 import type { ContextMember } from "../../api/sessions";
 import { Fact } from "../Fact";
@@ -152,6 +145,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   const [dropped, setDropped] = useState<ReadonlySet<ContextMember>>(() => new Set());
   const [added, setAdded] = useState<ReadonlySet<ContextMember>>(() => new Set());
   const [disclosed, setDisclosed] = useState(false);
+  const [promptFocused, setPromptFocused] = useState(false);
   const [preview, setPreview] = useState<ContextDocument | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [cancelNote, setCancelNote] = useState<string | null>(null);
@@ -165,57 +159,19 @@ export function Composer(props: ComposerProps): React.JSX.Element {
 
   // -- session chrome (issue #13) ----------------------------------------
   //
-  // Model + effort are a projection of `GET /providers`. They render only
-  // when a runtime is attached *and* that document named at least one model;
-  // a picker over an empty set — or a Select that wrote nothing — would read
+  // Model is a projection of `GET /providers`. It renders only when a
+  // runtime is attached *and* that document named at least one model; a
+  // picker over an empty set — or a Select that wrote nothing — would read
   // as a signed-in agent that is not there. The first declared model id is
-  // the identifier; effort stays the named `off` because the prompt route
-  // has no such member. DFM is the engine equivalent of a Plan/DFM chip:
-  // `[dfm] auto_run` and `run_dfm`, two controls, because collapsing them
-  // would imply a tool argument that does not exist (§6.4). There is no
-  // Plan mode to toggle.
+  // the identifier. Effort is not a prompt field and is not projected.
+  // DFM lives on the inspector panel (§6.4): two controls, never a composer
+  // Plan switch. Idle chrome here is the optional model chip + prompt +
+  // Send/Cancel/disclose.
   const providers = useProviders();
   const models = useMemo(() => modelsFrom(providers.data), [providers.data]);
   const modelChrome = showModelChrome(agentUnavailable, models);
   const selectedModel = defaultModel(models);
-
-  const dfm = useDfm(state.part);
-  const [dfmBusy, setDfmBusy] = useState<"auto_run" | "run" | null>(null);
-  const [dfmError, setDfmError] = useState<string | null>(null);
-
-  const toggleAutoRun = useCallback(() => {
-    if (dfm.data === undefined || dfmBusy !== null) return;
-    setDfmBusy("auto_run");
-    setDfmError(null);
-    void writeDfmAutoRun(!dfm.data.auto_run, uuid7())
-      .then(() => {
-        if (state.part !== null) {
-          void client.invalidateQueries({ queryKey: keys.dfm(state.part) });
-        }
-      })
-      .catch((cause: unknown) => {
-        setDfmError(cause instanceof WorkspaceError ? cause.message : copy.composer.dfmWriting);
-      })
-      .finally(() => {
-        setDfmBusy(null);
-      });
-  }, [client, dfm.data, dfmBusy, state.part]);
-
-  const runDfmNow = useCallback(() => {
-    if (state.part === null || dfmBusy !== null) return;
-    setDfmBusy("run");
-    setDfmError(null);
-    void runDfm(state.part, uuid7())
-      .then(() => {
-        refreshAfterTurn(client, state.part);
-      })
-      .catch((cause: unknown) => {
-        setDfmError(cause instanceof WorkspaceError ? cause.message : copy.composer.dfmRunning);
-      })
-      .finally(() => {
-        setDfmBusy(null);
-      });
-  }, [client, dfmBusy, state.part]);
+  const promptRows = promptFocused || text.trim() !== "" ? 3 : 1;
 
   const addCurrentView = useCallback(() => {
     setDropped((previous) => {
@@ -448,12 +404,25 @@ export function Composer(props: ComposerProps): React.JSX.Element {
         </div>
       ) : null}
 
-      {/* Session chrome: model projected from GET /providers (not a picker —
-          §7A.3's prompt body has no such field). Effort is not a prompt
-          field either, so a bare "off" is not rendered — it wrote nothing.
-          DFM stays the two labelled §6.4 controls. Add current view is an
-          explicit opt-in. */}
-      <div className={styles["chrome"]} data-composer-chrome="">
+      <TextInput
+        label={copy.composer.label}
+        hideLabel
+        multiline
+        rows={promptRows}
+        value={text}
+        onChange={setText}
+        onFocus={() => {
+          setPromptFocused(true);
+        }}
+        onBlur={() => {
+          setPromptFocused(false);
+        }}
+        placeholder={copy.composer.placeholder}
+        disabled={disabledReason !== null || post.phase === "sending"}
+        data-composer-input=""
+      />
+
+      <div className={styles["actions"]}>
         {modelChrome && selectedModel !== null ? (
           <Chip
             tone="code"
@@ -466,76 +435,6 @@ export function Composer(props: ComposerProps): React.JSX.Element {
             </Fact>
           </Chip>
         ) : null}
-
-        {showDfmChrome(agentUnavailable, state.part, dfm.data !== undefined) === "chip" &&
-        dfm.data !== undefined ? (
-          <div className={styles["dfm"]} data-composer-dfm="">
-            <Button
-              variant="toggle"
-              pressed={dfm.data.auto_run}
-              onClick={toggleAutoRun}
-              data-dfm-auto-run={String(dfm.data.auto_run)}
-              data-dfm-auto-run-toggle=""
-              {...(dfmBusy !== null
-                ? { disabled: true as const, reason: copy.composer.dfmWriting }
-                : {})}
-            >
-              {copy.composer.dfmAutoRun}
-            </Button>
-            <Button
-              variant="quiet"
-              onClick={runDfmNow}
-              data-dfm-run=""
-              {...(dfmBusy !== null
-                ? { disabled: true as const, reason: copy.composer.dfmRunning }
-                : {})}
-            >
-              {copy.composer.dfmRun}
-            </Button>
-          </div>
-        ) : showDfmChrome(agentUnavailable, state.part, dfm.data !== undefined) === "absent" ? (
-          <span className={styles["note"]} data-composer-dfm-absent="">
-            {copy.composer.dfmNoPart}
-          </span>
-        ) : null}
-
-        <Button variant="quiet" onClick={addCurrentView} data-context-add-view="">
-          {copy.composer.addCurrentView}
-        </Button>
-      </div>
-      {dfmError !== null ? (
-        <p className={styles["note"]} data-composer-dfm-error="">
-          {dfmError}
-        </p>
-      ) : null}
-
-      {/* §7A.3's chip row: the references this turn carries, every one
-          removable. The chips render §4.5 state — navigation, not fact — so
-          none goes through `<Fact>` and none carries a `data-source` (§7A.10). */}
-      <ul className={styles["chips"]} data-context-chips="" aria-label={copy.composer.contextHeading}>
-        {chips.map((chip) => (
-          <ContextChipRow
-            key={chip.key}
-            chip={chip}
-            dropped={dropped.has(chip.key)}
-            onToggle={toggleChip}
-          />
-        ))}
-      </ul>
-
-      <TextInput
-        label={copy.composer.label}
-        hideLabel
-        multiline
-        rows={3}
-        value={text}
-        onChange={setText}
-        placeholder={copy.composer.placeholder}
-        disabled={disabledReason !== null || post.phase === "sending"}
-        data-composer-input=""
-      />
-
-      <div className={styles["actions"]}>
         <Button
           variant="primary"
           type="submit"
@@ -605,6 +504,23 @@ export function Composer(props: ComposerProps): React.JSX.Element {
 
       {disclosed ? (
         <div className={styles["disclosure"]} data-context-preview="">
+          <ul
+            className={styles["chips"]}
+            data-context-chips=""
+            aria-label={copy.composer.contextHeading}
+          >
+            {chips.map((chip) => (
+              <ContextChipRow
+                key={chip.key}
+                chip={chip}
+                dropped={dropped.has(chip.key)}
+                onToggle={toggleChip}
+              />
+            ))}
+          </ul>
+          <Button variant="quiet" onClick={addCurrentView} data-context-add-view="">
+            {copy.composer.addCurrentView}
+          </Button>
           <p className={styles["note"]}>{copy.composer.discloseAdvisory}</p>
           {previewError !== null ? (
             <p className={styles["note"]} data-context-preview-error="">

@@ -17,10 +17,13 @@
 //   report descriptors 'rather than bare mask IDs', so the panel renders the
 //   descriptor and never the raw integer alone."
 //
-// THE TWO CONTROLS ARE NOT COLLAPSED, AND NEITHER IS BUILT HERE. §6.4 splits the
-// "DFM toggle" into (a) a **Run DFM** action (`POST /parts/{part}/dfm`) and (b) a
-// project-settings write (`POST /project/config/dfm`), because `[dfm] auto_run`
-// is a project setting and not a per-message flag. This panel is the read half.
+// THE TWO CONTROLS ARE NOT COLLAPSED. §6.4 splits the "DFM toggle" into (a) a
+// **Run DFM** action (`POST /parts/{part}/dfm`) and (b) a project-settings write
+// (`POST /project/config/dfm`), because `[dfm] auto_run` is a project setting
+// and not a per-message flag. Both actions live here — the composer is for
+// talking, and collapsing them into one switch would imply a tool argument
+// that does not exist. The field list still *reads* `auto_run` as a project
+// fact; the toggle *writes* it.
 //
 // §4.7's `Chip` CLAUSE, DISCHARGED. Line 225 used to render *"Automatic
 // evaluation after each build: off"* as a chip in the panel's ACTION CORNER,
@@ -38,8 +41,14 @@
 // are emitted: `data-dfm-resolved-from` carries the engine's word unrewritten,
 // and `data-dfm-source` carries §6.4's `current` / `preview` distinction over it.
 
+import { useCallback, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { WorkspaceError } from "../../api/client";
+import { writeDfmAutoRun, runDfm } from "../../api/dfm";
+import { uuid7 } from "../../api/idempotency";
+import { keys, useDfm, useProject } from "../../api/queries";
+import { refreshAfterTurn } from "../../api/refresh";
 import type { DfmDocument, DfmFinding, DfmRun, TopologyDescriptor } from "../../api/types";
-import { useDfm, useProject } from "../../api/queries";
 import { copy } from "../../copy";
 import {
   Button,
@@ -209,8 +218,59 @@ function Finding({
   );
 }
 
+/** The two §6.4 write actions — never collapsed into one switch. */
+export function DfmActions({
+  dfm,
+  onToggleAutoRun,
+  onRunDfm,
+  busy,
+  error,
+}: {
+  readonly dfm: DfmDocument;
+  readonly onToggleAutoRun?: (() => void) | undefined;
+  readonly onRunDfm?: (() => void) | undefined;
+  readonly busy?: "auto_run" | "run" | null | undefined;
+  readonly error?: string | null | undefined;
+}): React.JSX.Element {
+  return (
+    <div className={styles["dfmActions"]} data-composer-dfm="">
+      <Button
+        variant="toggle"
+        pressed={dfm.auto_run}
+        onClick={onToggleAutoRun}
+        data-dfm-auto-run={String(dfm.auto_run)}
+        data-dfm-auto-run-toggle=""
+        {...(busy !== null && busy !== undefined
+          ? { disabled: true as const, reason: copy.composer.dfmWriting }
+          : {})}
+      >
+        {copy.composer.dfmAutoRun}
+      </Button>
+      <Button
+        variant="quiet"
+        onClick={onRunDfm}
+        data-dfm-run=""
+        {...(busy !== null && busy !== undefined
+          ? { disabled: true as const, reason: copy.composer.dfmRunning }
+          : {})}
+      >
+        {copy.composer.dfmRun}
+      </Button>
+      {error !== null && error !== undefined ? (
+        <p className={styles["muted"]} data-composer-dfm-error="">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export interface DfmViewProps {
   readonly dfm: DfmDocument;
+  readonly onToggleAutoRun?: (() => void) | undefined;
+  readonly onRunDfm?: (() => void) | undefined;
+  readonly dfmBusy?: "auto_run" | "run" | null | undefined;
+  readonly dfmError?: string | null | undefined;
   /**
    * `capabilities.secure_executor` from `GET /project`.
    *
@@ -228,6 +288,10 @@ export function DfmView({
   dfm,
   secureExecutor,
   onResolveDescriptor,
+  onToggleAutoRun,
+  onRunDfm,
+  dfmBusy,
+  dfmError,
 }: DfmViewProps): React.JSX.Element {
   const run = dfm.last;
   const source = run === null ? null : dfmSource(run);
@@ -242,6 +306,13 @@ export function DfmView({
     >
       <PanelHeader title={copy.dfm.heading} level={3} />
       <PanelBody>
+        <DfmActions
+          dfm={dfm}
+          onToggleAutoRun={onToggleAutoRun}
+          onRunDfm={onRunDfm}
+          busy={dfmBusy}
+          error={dfmError}
+        />
         {run === null ? (
           <EmptyState
             icon={secureExecutor === false ? "alert" : "plane"}
@@ -402,6 +473,43 @@ export function DfmPanel({
   const part = useWorkspace((s) => s.part);
   const dfm = useDfm(part);
   const project = useProject();
+  const client = useQueryClient();
+  const [dfmBusy, setDfmBusy] = useState<"auto_run" | "run" | null>(null);
+  const [dfmError, setDfmError] = useState<string | null>(null);
+
+  const toggleAutoRun = useCallback(() => {
+    if (dfm.data === undefined || dfmBusy !== null) return;
+    setDfmBusy("auto_run");
+    setDfmError(null);
+    void writeDfmAutoRun(!dfm.data.auto_run, uuid7())
+      .then(() => {
+        if (part !== null) {
+          void client.invalidateQueries({ queryKey: keys.dfm(part) });
+        }
+      })
+      .catch((cause: unknown) => {
+        setDfmError(cause instanceof WorkspaceError ? cause.message : copy.composer.dfmWriting);
+      })
+      .finally(() => {
+        setDfmBusy(null);
+      });
+  }, [client, dfm.data, dfmBusy, part]);
+
+  const runDfmNow = useCallback(() => {
+    if (part === null || dfmBusy !== null) return;
+    setDfmBusy("run");
+    setDfmError(null);
+    void runDfm(part, uuid7())
+      .then(() => {
+        refreshAfterTurn(client, part);
+      })
+      .catch((cause: unknown) => {
+        setDfmError(cause instanceof WorkspaceError ? cause.message : copy.composer.dfmRunning);
+      })
+      .finally(() => {
+        setDfmBusy(null);
+      });
+  }, [client, dfmBusy, part]);
 
   if (part === null) {
     return <EmptyState icon="cube" title={copy.inspector.noPartTitle} body={copy.inspector.selectPart} />;
@@ -412,6 +520,10 @@ export function DfmPanel({
       dfm={dfm.data}
       secureExecutor={project.data?.capabilities?.secure_executor}
       onResolveDescriptor={onResolveDescriptor}
+      onToggleAutoRun={toggleAutoRun}
+      onRunDfm={runDfmNow}
+      dfmBusy={dfmBusy}
+      dfmError={dfmError}
     />
   );
 }

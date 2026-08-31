@@ -40,6 +40,8 @@ export type TextInputProps = FieldFrame & {
   readonly disabled?: boolean | undefined;
   readonly multiline?: boolean | undefined;
   readonly rows?: number | undefined;
+  readonly onFocus?: (() => void) | undefined;
+  readonly onBlur?: (() => void) | undefined;
   /**
    * The §23.3 password discipline, and it is three properties rather than one.
    *
@@ -68,6 +70,8 @@ export function TextInput(props: TextInputProps): React.JSX.Element {
     multiline,
     rows = 3,
     secret,
+    onFocus,
+    onBlur,
   } = props;
   const id = useId();
   const messageId = `${id}-message`;
@@ -94,6 +98,8 @@ export function TextInput(props: TextInputProps): React.JSX.Element {
         <textarea
           {...shared}
           rows={rows}
+          {...(onFocus === undefined ? {} : { onFocus })}
+          {...(onBlur === undefined ? {} : { onBlur })}
           onChange={(event) => {
             onChange(event.target.value);
           }}
