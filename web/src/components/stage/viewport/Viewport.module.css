@@ -39,6 +39,17 @@
   pointer-events: none;
 }
 
+/* Absence copy is chrome words, so it sits on a plate the way the readout
+   does. Painting `--ink-base` straight onto `--viewport-ground` is the
+   1.36:1 pairing §3.13.1 just failed for the triad letters. */
+.absencePlate {
+  padding: var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-card);
+  background: var(--surface-overlay);
+  box-shadow: var(--elev-popover);
+}
+
 /* §5.3: the live cut says, in words, that it is not an evidentiary render.
    Sits under the appearance cluster so the two plates do not share a corner. */
 .previewNote {

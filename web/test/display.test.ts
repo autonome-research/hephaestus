@@ -498,10 +498,17 @@ describe("readViewportPalette (§3.6, §3.11)", () => {
 });
 
 describe("the shipped modeling well is not the near-black void", () => {
-  const tokens = readFileSync(
-    join(dirname(fileURLToPath(import.meta.url)), "..", "src", "system", "tokens.css"),
+  const here = dirname(fileURLToPath(import.meta.url));
+  const tokensRaw = readFileSync(join(here, "..", "src", "system", "tokens.css"), "utf8");
+  const tokens = tokensRaw.replace(/\/\*[\s\S]*?\*\//g, "");
+  const triad = readFileSync(
+    join(here, "..", "src", "components", "stage", "viewport", "AxisTriad.module.css"),
     "utf8",
-  ).replace(/\/\*[\s\S]*?\*\//g, "");
+  );
+  const viewport = readFileSync(
+    join(here, "..", "src", "components", "stage", "viewport", "Viewport.module.css"),
+    "utf8",
+  );
 
   it("authors a light CAD ground and a dark part, grid on by default", () => {
     // Velvet: Fusion/Onshape-style well. Clear colour is `--p-slate-050`,
@@ -515,5 +522,18 @@ describe("the shipped modeling well is not the near-black void", () => {
     expect(tokens).toMatch(/--viewport-grid:\s*var\(--p-slate-400\)/);
     expect(tokens).toMatch(/--viewport-grid-axis:\s*var\(--p-slate-600\)/);
     expect(DEFAULT_APPEARANCE.grid).toBe(true);
+  });
+
+  it("spends well-edge ink on the triad and plates absence copy, not chrome ink", () => {
+    // CI: three SVG `<text>` samples at 1.36:1 (`--ink-base` on
+    // `--viewport-ground`). The triad has no plate by design; chrome
+    // `--ink-*` is for the dark surfaces.
+    expect(tokensRaw).toMatch(/@permit text\s+--viewport-edge\s*:\s*viewport-ground/);
+    expect(triad).toMatch(/stroke:\s*var\(--viewport-edge\)/);
+    expect(triad).toMatch(/color:\s*var\(--viewport-edge\)/);
+    expect(triad).toMatch(/fill:\s*var\(--viewport-edge\)/);
+    expect(triad).not.toMatch(/var\(--ink-base\)/);
+    expect(triad).not.toMatch(/var\(--ink-strong\)/);
+    expect(viewport).toMatch(/\.absencePlate[\s\S]*background:\s*var\(--surface-overlay\)/);
   });
 });

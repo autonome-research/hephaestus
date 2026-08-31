@@ -80,6 +80,7 @@
  * @permit text   --code-keyword        : app canvas
  * @permit part   --viewport-part       : viewport-ground
  * @permit part   --viewport-edge       : viewport-ground
+ * @permit text   --viewport-edge       : viewport-ground
  * @permit seam   --viewport-grid       : viewport-ground
  * @permit seam   --viewport-grid-axis  : viewport-ground
  * ---------------------------------------------------------------------------
@@ -104,6 +105,12 @@
  * highest-value CAD viewport affordance". On the light well the edge is the
  * darkest stroke in the frame so an edge reads as an edge and not as a
  * highlight on a pale facet.
+ *
+ * The same token is also `text` on the well, for the one chrome-layer word
+ * that sits on the ground without a plate: the axis triad's three letters
+ * (§3.11.6). Chrome `--ink-*` is authored for the dark surfaces and measures
+ * 1.36:1 on `--viewport-ground`. The triad keeps its "no plate" rule; it
+ * spends the well's own darkest mark so §3.13.1 holds.
  */
 
 :root {

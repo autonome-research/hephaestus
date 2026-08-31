@@ -270,6 +270,20 @@ describe("token-contrast (§3.9, §3.13.1, §3.14)", () => {
     expect(pale[0]).toContain("below the part floor of 4.5");
   });
 
+  it("holds the triad's well-edge letters to the text floor on the ground", async () => {
+    const table = "/* @permit text --viewport-edge : viewport-ground */";
+    const declare = (edge: string, ground = "#eef1f6"): string =>
+      `${table}\n:root { --p-a: ${edge}; --p-b: ${ground}; --viewport-edge: var(--p-a); --viewport-ground: var(--p-b); }`;
+
+    // `--p-graphite-950` on the modeling well — the pairing the triad spends.
+    expect(await css(declare("#080a0d"), TOKENS_PATH, "token-contrast")).toEqual([]);
+
+    // Chrome `--ink-base` on that same well: the 1.36:1 CI failure.
+    const chrome = await css(declare("#c9d1de"), TOKENS_PATH, "token-contrast");
+    expect(chrome).toHaveLength(1);
+    expect(chrome[0]).toContain("below the text floor of 4.5");
+  });
+
   it("refuses to pass vacuously when the table is empty", async () => {
     const found = await css(":root { --ink-base: #ffffff; }", TOKENS_PATH, "token-contrast");
     expect(found).toHaveLength(1);
