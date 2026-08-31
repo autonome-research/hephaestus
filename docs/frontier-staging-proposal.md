@@ -557,7 +557,8 @@ strictly ordered; **nothing is emitted before 13D.**
 
 - **13A — machining DFM packs and the tool registry, no CAM** (`CAM.md` §6, §3.5):
   `cnc_mill` and `cnc_router` DFM packs closing the documented hole that
-  `cnc_router` is `heph init`'s default `part.process` with no pack behind it; a
+  `cnc_router` is `heph init`'s default `part.process` with no pack behind it
+  (`cnc_router` shipped as issue #28; `cnc_mill` remains); a
   fifth registry kind `tools`; and declared machining blocks on the materials
   records. Gate G13A: `uv run pytest tests/stage13a -q` exits 0 per `CAM.md`
   "Gates" (10 clauses).

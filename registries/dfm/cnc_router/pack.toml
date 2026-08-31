@@ -1,0 +1,145 @@
+[pack]
+process = "cnc_router"
+name = "CNC routing (3-axis, sheet on the table)"
+version = "0.1.0"
+description = """
+Limits imposed by cutting sheet and plate with a spinning end mill from a
+single +Z spindle. The bit cannot turn a corner tighter than its own radius,
+a pocket deeper than a few diameters chatters at the declared chipload, a web
+thinner than about a millimetre moves, a bore much deeper than it is wide
+wanders, and a hole whose axis is not the spindle cannot be reached without
+flipping the sheet. All of that is measurable on the built solid.
+
+Defaults are a common 3 mm two-flute in Baltic birch / aluminium plate on a
+desktop router. Override them by publishing a fork of this pack with your own
+[params]; the rules read only the parameters they declare, so a re-tuned pack
+is a data change, not a code change.
+
+This pack does not declare kerf_mm: a router bit removes its full diameter,
+and cut-file kerf compensation is a laser/waterjet concern.
+"""
+
+[params.tool_diameter_mm]
+value = 3.0
+unit = "mm"
+description = "Smallest cutter the shop will put in the spindle (the bit the rules design to)."
+
+[params.min_internal_radius_mm]
+value = 1.5
+unit = "mm"
+description = "Tightest internal corner radius: half the tool diameter, unless the shop says otherwise."
+
+[params.max_depth_diameter_ratio]
+value = 4.0
+unit = "x diameter"
+description = "Deepest pocket as a multiple of the tool diameter before chatter at the declared chipload."
+
+[params.min_web_mm]
+value = 1.0
+unit = "mm"
+description = "Thinnest remaining wall that will not distort under the cut."
+
+[params.max_bore_aspect]
+value = 6.0
+unit = "x diameter"
+description = "Deepest bore as a multiple of its diameter before the bit wanders."
+
+[params.chipload_mm]
+value = 0.10
+unit = "mm/tooth"
+description = "Declared chipload the depth-to-diameter limit is characterised at."
+
+[params.feed_mm_min]
+value = 3600.0
+unit = "mm/min"
+description = "Declared feed the depth-to-diameter limit is characterised at (3 mm, 2 flute, ~18k rpm)."
+
+[params.thickness_tolerance_mm]
+value = 0.3
+unit = "mm"
+description = "Allowed difference between modelled and nominal stock thickness (plywood runs under size)."
+
+[params.approach_axis_tol_deg]
+value = 5.0
+unit = "deg"
+description = "How far a hole axis may lean from the +Z spindle and still count as reachable in one setup."
+
+[[rules]]
+id = "cnc_router.min_internal_radius_vs_tool"
+title = "Internal corners must not be tighter than the bit radius"
+severity = "error"
+predicate = "min_internal_radius_vs_tool.py"
+reads = ["tool_diameter_mm", "min_internal_radius_mm"]
+description = """
+Measures each concave corner round in the part. An end mill cannot produce a
+corner tighter than its own radius, so an internal round below the larger of
+the declared floor and half the tool diameter is cut as a larger radius than
+modelled — parts that depend on the corner for fit will not assemble.
+"""
+
+[[rules]]
+id = "cnc_router.pocket_depth_vs_tool_diameter"
+title = "Pockets must not be deeper than the bit can cut without chatter"
+severity = "error"
+predicate = "pocket_depth_vs_tool_diameter.py"
+reads = ["tool_diameter_mm", "max_depth_diameter_ratio", "chipload_mm", "feed_mm_min"]
+description = """
+Finds the deepest recessed +Z face (a pocket floor under the stock top) and
+compares its depth with the tool diameter times the declared ratio. Past that
+the flute is buried, chips stop clearing, and the cut chatters at the pack's
+declared chipload and feed. A warning the shop would ask before writing a
+program, made measurable — not a feeds-and-speeds model.
+"""
+
+[[rules]]
+id = "cnc_router.min_web_thickness"
+title = "Remaining walls must be thick enough not to move under the cut"
+severity = "error"
+predicate = "min_web_thickness.py"
+reads = ["min_web_mm"]
+description = """
+Finds each solid's thinnest wall by pairing anti-parallel planar faces that
+actually face each other, and compares it with the declared web floor. Reports
+the thinnest wall per solid — the one that governs — rather than every pair.
+"""
+
+[[rules]]
+id = "cnc_router.bore_aspect_ratio"
+title = "Bores must not be much deeper than they are wide"
+severity = "error"
+predicate = "bore_aspect_ratio.py"
+reads = ["max_bore_aspect"]
+description = """
+Measures every closed bore's depth (from the cylindrical face area) against
+its diameter. A hole several diameters deep wanders, packs chips, and is not
+the hole that was modelled.
+"""
+
+[[rules]]
+id = "cnc_router.single_axis_accessibility"
+title = "Features must be reachable from the +Z spindle in one setup"
+severity = "error"
+predicate = "single_axis_accessibility.py"
+reads = ["approach_axis_tol_deg"]
+description = """
+A desktop router holds the sheet on the table and approaches from +Z. A hole
+whose axis is not parallel to that spindle, or a downward-facing face that is
+not the stock sitting on the table, cannot be cut without flipping the part.
+This is a static predicate over one artifact — no stock body, no fixture, no
+sequence — written from planar_faces() and holes() only.
+"""
+
+[[rules]]
+id = "cnc_router.stock_thickness_match"
+title = "Modelled thickness must match a stock thickness the material carries"
+severity = "error"
+predicate = "stock_thickness_match.py"
+reads = ["thickness_tolerance_mm"]
+description = """
+Joins the part's measured thickness (its smallest bounding-box extent) to the
+materials-registry record its part.material_spec resolves to, and checks that
+the thickness is a stock size that material is actually sold in and that
+part.stock_form is a form it comes in. Silent when the part has not claimed a
+material yet — heph init's example plate is a 6 mm box with no spec, and a
+finding there would train the reader to ignore the rule.
+"""
