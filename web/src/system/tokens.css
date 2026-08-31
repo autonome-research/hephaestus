@@ -78,10 +78,10 @@
  * @permit text   --code-string         : app canvas
  * @permit text   --code-number         : app canvas
  * @permit text   --code-keyword        : app canvas
- * @permit part   --viewport-part       : canvas
- * @permit part   --viewport-edge       : canvas
- * @permit seam   --viewport-grid       : canvas
- * @permit seam   --viewport-grid-axis  : canvas
+ * @permit part   --viewport-part       : viewport-ground
+ * @permit part   --viewport-edge       : viewport-ground
+ * @permit seam   --viewport-grid       : viewport-ground
+ * @permit seam   --viewport-grid-axis  : viewport-ground
  * ---------------------------------------------------------------------------
  *
  * THE GRID IS A `seam`, AND THE CHOICE IS THE SAME ONE `--border` MAKES.
@@ -92,17 +92,18 @@
  * The grid carries no meaning a reader can lose: it is a reference rule, and
  * the number it reports is printed as text in the readout beside it. So it is
  * measured and recorded with no floor, exactly as the two border seams are.
- * `--viewport-grid` measures 1.43:1 and `--viewport-grid-axis` 1.99:1 against
- * `--surface-canvas`; the datum lines through the model origin are the louder
- * pair on purpose, because those two are the ones a reader counts from.
+ * `--viewport-grid` and `--viewport-grid-axis` are measured against the light
+ * modeling well (`--viewport-ground`), not against the dark chrome canvas.
+ * The datum lines through the model origin are the louder pair on purpose,
+ * because those two are the ones a reader counts from.
  *
  * `--viewport-edge` is `part` and not `seam`, and that is the opposite call for
  * the opposite reason. A silhouette is not a seam between two surfaces: it is
  * the shape of the object, which is the one thing §3.3's first principle says
  * outranks everything else on screen. §3.11.4 calls it "the single
- * highest-value CAD viewport affordance". It measures 17.51:1 and is the
- * brightest thing in the frame on purpose — brighter than the part's own lit
- * facets, so an edge reads as an edge and not as a highlight.
+ * highest-value CAD viewport affordance". On the light well the edge is the
+ * darkest stroke in the frame so an edge reads as an edge and not as a
+ * highlight on a pale facet.
  */
 
 :root {
@@ -160,10 +161,12 @@
   --p-sky-fill: #263544;
   --p-green-300: #9ad1a8;
 
-  /* The part, in the viewport. §3.11.2's floor is ≥ 4.5:1 against the ground,
-     measured in the browser; this value reaches 10.2:1 against
-     `--p-graphite-950` so the authored material has room above the floor. */
-  --p-part: #b8c2cf;
+  /* The part, in the viewport. Dark steel on the light modeling well so a
+     gusset reads as an object sitting on a grid, not a ghost in a black
+     studio. Same hue as `--p-graphite-500`; named so the part is a decision.
+     Token floor ≥ 4.5:1 against `--p-slate-050`; the browser measurement in
+     `design-system.spec.ts` is the sufficient check. */
+  --p-part: var(--p-graphite-500);
 
   /* Faces. Unchanged from the shipped file (§3.8: "Faces are unchanged"). */
   --p-font-ui:
@@ -263,18 +266,24 @@
   --code-number: var(--p-amber-400);
   --code-keyword: var(--p-blue-500);
 
-  /* ---- viewport (§3.11) --------------------------------------------------
+  /* ---- viewport (§3.11, Velvet well) -------------------------------------
      The client authors the material. These are the two ends of §3.11.2's
      floor, and they are tokens rather than literals in `engine.ts` so the
      ground the WebGL clear colour uses and the ground the CSS paints are the
      same decision recorded once.
 
+     THE WELL IS LIGHT. §3.5's draft said the viewport ground "must be darker
+     than the part"; a live operator review at 1280×800 found the opposite
+     defect — a light-gray solid lost on `#080a0d`. The well follows the
+     Fusion / Onshape / SolidWorks modeling grid (light ground, dark part,
+     visible rule) and does **not** flip the dark app chrome. `--surface-canvas`
+     stays the dark chrome-adjacent rung (NoToken's command block, the
+     section plate); `--viewport-ground` is the well alone.
+
      THE FIVE ARE ONE DECISION AND `viewport/display.ts` READS ALL OF THEM. No
-     new hue is spent: the part and the edge are the two existing inks at the
-     top of the ramp, and the two grid rungs are the two existing line rungs.
-     §3.9 says raw hue is a decision recorded once, and a viewport that
-     invented five colours for itself would be the ad-hoc spending that
-     section exists to stop.
+     new hue is spent: the well is the lightest existing slate, the part and
+     the edge are existing graphite rungs, and the two grid rungs are existing
+     slates. §3.9 says raw hue is a decision recorded once.
 
      Note the asymmetry the browser will show, because it is worth knowing
      before someone measures it and calls it a bug: `--viewport-ground` is the
@@ -284,11 +293,11 @@
      its token. The floors above are therefore the authored decision; the
      measurement that settles §3.11.2 is the browser one in
      `e2e/design-system.spec.ts`. */
-  --viewport-ground: var(--surface-canvas);
+  --viewport-ground: var(--p-slate-050);
   --viewport-part: var(--p-part);
-  --viewport-edge: var(--p-slate-050);
-  --viewport-grid: var(--p-line-lo);
-  --viewport-grid-axis: var(--p-line-mid);
+  --viewport-edge: var(--p-graphite-950);
+  --viewport-grid: var(--p-slate-400);
+  --viewport-grid-axis: var(--p-slate-600);
 
   /* ---- type: the palette side. The roles are in `type.module.css`. ------ */
   --font-ui: var(--p-font-ui);

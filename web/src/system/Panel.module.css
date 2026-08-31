@@ -18,9 +18,11 @@
 
 .header {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
   gap: var(--gap-inline);
+  min-width: 0;
   padding: var(--pad-panel-header);
   /* §3.9: every boundary between two named surfaces carries a 1px border. The
      shipped 1.068:1 rail/stage figure was a defect not because 1.068 is wrong
@@ -52,7 +54,8 @@
   display: flex;
   align-items: center;
   gap: var(--gap-stack);
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .body {

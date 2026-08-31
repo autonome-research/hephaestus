@@ -130,12 +130,11 @@ test("the viewport ground is a token and is distinct from every chrome surface (
   const viewport = page.locator('[data-testid="viewport"]');
   await expect(viewport).toHaveAttribute("data-glb-state", "ready", { timeout: 120_000 });
 
-  // §3.10 reserves the `canvas` rung of the surface ladder for the viewport and
-  // NOTHING ELSE, and §3.11.1 asks for "a viewport ground distinct from every
-  // chrome surface, on both `setClearColor` and `scene.background`". Both ends
-  // now read the same token, which is what makes the two agree by construction
-  // rather than by a copied literal — `engine.ts`:74 used to be
-  // `new Color("#0d0f12")`, and that value WAS the app's darkest chrome surface.
+  // The well is `--viewport-ground` (`--p-slate-050`), not `--surface-canvas`
+  // (that rung stays the dark chrome-adjacent fill). §3.11.1 asks for "a
+  // viewport ground distinct from every chrome surface, on both `setClearColor`
+  // and `scene.background`". Velvet overrode the draft "ground darker than the
+  // part" clause: the previous near-black void (`#080a0d`) hid a light solid.
   const surfaces = await page.evaluate(() => {
     const root = getComputedStyle(document.documentElement);
     const read = (name: string): string => root.getPropertyValue(name).trim();
@@ -148,7 +147,9 @@ test("the viewport ground is a token and is distinct from every chrome surface (
     };
   });
   expect(surfaces.ground, "--viewport-ground did not resolve").not.toBe("");
-  expect(surfaces.ground).toBe(surfaces.canvas);
+  expect(surfaces.ground.toLowerCase()).toBe("#eef1f6");
+  expect(surfaces.ground).not.toBe(surfaces.canvas);
+  expect(surfaces.canvas.toLowerCase()).toBe("#080a0d");
   expect(surfaces.chrome).not.toContain(surfaces.ground);
 
   // And the WebGL clear colour is that same value, sampled out of the drawing

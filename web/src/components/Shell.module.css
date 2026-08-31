@@ -74,7 +74,12 @@
 .rail {
   min-height: 0;
   min-width: 0;
-  overflow: auto;
+  /* Vertical scroll only. A nowrap header ("Model providers" + "Show
+     configuration") or an egress host/timestamp row used to expand
+     `scrollWidth` past `--rail-width` (measured 319 vs 279) and hide
+     Sign-in behind a horizontal bar at the rail floor. */
+  overflow-x: hidden;
+  overflow-y: auto;
   /* Content-sized children. A `flex: 1` versions panel (or a Panel grid
      `1fr` body that ate leftover height) left a dead band between the
      section list and Working tree. Extra space stays at the bottom of the
@@ -90,6 +95,10 @@
 
 .rail > * {
   flex: 0 0 auto;
+  /* Same class of leak as the stream chip (`min-width: auto` = min-content).
+     Without this, a nowrap Sign-in row sizes the panel to 319px inside a
+     280px rail. */
+  min-width: 0;
 }
 
 .stage {

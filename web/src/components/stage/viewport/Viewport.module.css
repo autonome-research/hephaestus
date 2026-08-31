@@ -7,10 +7,11 @@
  * positioned over it, so a screenshot of the canvas alone (which is what §5.4's
  * delta reads) contains no chrome.
  *
- * §3.10: `canvas` is the viewport's surface and NOTHING ELSE's. It is the one
- * rung of the ladder no chrome may spend, which is what makes §3.11's
- * "a viewport ground distinct from every chrome surface" true of the CSS as well
- * as of the WebGL clear colour.
+ * The well is `--viewport-ground` (the light modeling grid), not
+ * `--surface-canvas`. That chrome-adjacent rung stays dark for NoToken and
+ * the section plate; painting it here would put the operator back in the
+ * black void Velvet measured. §3.11's "a viewport ground distinct from every
+ * chrome surface" is true of this token as well as of the WebGL clear colour.
  */
 
 .viewport {
@@ -19,7 +20,7 @@
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  background: var(--surface-canvas);
+  background: var(--viewport-ground);
 }
 
 .canvas {

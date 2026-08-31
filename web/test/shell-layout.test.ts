@@ -70,6 +70,7 @@ describe("left rail — no dead band between the section list and Working tree",
   it("keeps every rail child content-sized", () => {
     const shell = css("components/Shell.module.css");
     expect(shell).toMatch(/\.rail\s*>\s*\*\s*\{[^}]*flex:\s*0 0 auto/);
+    expect(shell).toMatch(/\.rail\s*>\s*\*\s*\{[^}]*min-width:\s*0/);
     const tree = css("components/rail/ProjectTree.module.css");
     expect(tree).toMatch(/\.panel\s*\{[^}]*flex:\s*none/);
     expect(tree).toMatch(/\.panel\s*\{[^}]*align-content:\s*start/);

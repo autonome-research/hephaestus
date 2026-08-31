@@ -140,13 +140,36 @@ describe("empty-session create — one sentence, two actions, no tutorial", () =
 describe("rail providers — collapsed by default so Sign-in stays in the box", () => {
   const shell = css("components/Shell.module.css");
   const providersCss = css("components/ProvidersPanel.module.css");
+  const panel = css("system/Panel.module.css");
+  const tokens = css("system/tokens.css");
 
   it("keeps the rail a height-bounded scroll host", () => {
     expect(shell).toMatch(/\.rail\s*\{[^}]*min-height:\s*0/);
-    expect(shell).toMatch(/\.rail\s*\{[^}]*overflow:\s*auto/);
+    expect(shell).toMatch(/\.rail\s*\{[^}]*overflow-y:\s*auto/);
     expect(shell).toMatch(/\.body\s*\{[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)/);
     expect(providersCss).toMatch(/\.panel\s*\{[^}]*grid-template-rows:\s*auto auto/);
     expect(providersCss).toMatch(/\.panel\s*\{[^}]*flex:\s*none/);
+  });
+
+  it("fails if a rail descendant can force wider than --rail-width", () => {
+    // Measured on the live operator at 1280×800: nav._rail clientWidth 279
+    // vs scrollWidth 319. Sign-in sat at x 244–311, 31px past the 280px box,
+    // reachable only by a horizontal bar at the rail floor. The leak is the
+    // same class as the stream chip: a nowrap header pair (title + "Show
+    // configuration") or an egress host/timestamp on `max-content` tracks
+    // sets a flex child's min-content above `--rail-width`.
+    expect(tokens).toMatch(/--rail-width:\s*280px/);
+    expect(shell).toMatch(/\.rail\s*\{[^}]*overflow-x:\s*hidden/);
+    expect(shell).toMatch(/\.rail\s*>\s*\*\s*\{[^}]*min-width:\s*0/);
+    expect(panel).toMatch(/\.header\s*\{[^}]*flex-wrap:\s*wrap/);
+    expect(panel).toMatch(/\.header\s*\{[^}]*min-width:\s*0/);
+    expect(panel).toMatch(/\.actions\s*\{[^}]*min-width:\s*0/);
+    expect(panel).not.toMatch(/\.actions\s*\{[^}]*flex:\s*none/);
+    expect(providersCss).toMatch(/\.compactRow\s*\{[^}]*flex-wrap:\s*wrap/);
+    expect(providersCss).toMatch(/\.compactRow\s*\{[^}]*min-width:\s*0/);
+    expect(providersCss).toMatch(/\.body\s*\{[^}]*minmax\(0,\s*1fr\)/);
+    expect(providersCss).toMatch(/\.body\s*\{[^}]*overflow-x:\s*hidden/);
+    expect(providersCss).not.toMatch(/max-content/);
   });
 
   it("does not mount the configuration table or allowlist until expanded", () => {

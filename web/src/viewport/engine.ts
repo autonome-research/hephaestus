@@ -181,14 +181,14 @@ export class ViewportEngine {
     // view does: the picture is an instrument reading, not a beauty render.
     //
     // §3.11.7 says these are correct and asks for them "unchanged", and they
-    // ARE unchanged — but "unchanged" was written before ACES was in the chain,
-    // so the three intensities were checked against it rather than assumed. A
-    // facet square to the camera receives `(2.2·0.743 + 0.8·0.266 + 0.9)/π ≈
-    // 0.874` of albedo, which for `--viewport-part` is a linear radiance near
-    // 0.41-0.54 — the part of the ACES curve with the most slope, so facets
-    // separate. Nothing reaches the shoulder, so nothing clips to white, and an
-    // ambient-only facet still clears §3.11.2's floor on its own. Raising them
-    // for a brighter part would have flattened the shading instead.
+    // ARE unchanged — arrangement and intensities stay the instrument rig,
+    // not a beauty pass. A facet square to the camera receives
+    // `(2.2·0.743 + 0.8·0.266 + 0.9)/π ≈ 0.874` of albedo. On the light well
+    // the part is the dark object (`--p-graphite-500`); that fraction keeps
+    // facets separable without lifting a dark solid onto the ACES shoulder.
+    // An ambient-only facet still clears §3.11.2's floor against
+    // `--viewport-ground`. Raising the lights for a brighter part would
+    // flatten the shading instead.
     const key = new DirectionalLight(0xffffff, 2.2);
     key.position.set(1, 1.5, 2);
     const fill = new DirectionalLight(0xffffff, 0.8);
