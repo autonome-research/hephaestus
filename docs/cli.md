@@ -119,19 +119,20 @@ With no part name the document is `{status, project, parts}` — project-scope
 rows from `globals.py` / `hephaestus.toml` plus every part. `--json` is the
 machine form an agent should read.
 
-### `heph prompt` / `heph prompt set`
+### `heph prompt` / `heph prompt show` / `heph prompt set`
 
 Store or print the operator request text at `.heph/request.txt`. This is **not**
 a hosted chat and **not** a context envelope (`INTERFACE.md` §7A.3): no model
 runs, no session starts, and the file is not forwarded to `set_request_text`.
 It is a place an external agent can keep the original request so a later
-`heph lint --request FILE` can name the same words.
+`heph lint --request FILE` can name the same words. Bare `heph prompt` is
+`heph prompt show`.
 
 ```console
 $ heph prompt set --file request.txt
 stored 24 byte(s) -> .heph/request.txt
 
-$ heph prompt --json
+$ heph prompt show --json
 {"path":".heph/request.txt","status":"ok","text":"40 mm spacer, 6 mm plate\n"}
 ```
 
