@@ -1938,6 +1938,18 @@ the UI is a view `heph render` can reproduce; free orbit snapshots the nearest
 readout shows camera state and scale — a screen-space fact, never rendered
 through `<Fact>`.
 
+**Appearance cluster — operator chrome, bound to the pin.** A small control
+strip on the viewport drives the display authorship §3.11 already specified:
+wireframe, fit, ortho, grid, axis triad, material override. Defaults match the
+authored picture (shaded, orthographic, grid and triad on, material at
+`--viewport-part` with the ≥4.5:1 part-vs-ground floor). Fit re-applies
+`cameras.py`'s framing for the current named view. Wireframe hides the fill and
+keeps the silhouette. Ortho off is a perspective viewing aid; the named views
+and `heph render` remain orthographic. The cluster is **not** workspace state:
+§4.5 stays closed. It authors no material the engine did not already project.
+G4.5's thresholds are unchanged — the strip is fixed-size chrome and does not
+move on a visibility toggle.
+
 During a rebuild the viewport keeps the **last completed** artifact and the
 header shows `stale` with the ref it is showing. `architecture.md` §3 already
 guarantees a long build never blocks inspection; the UI's job is to express

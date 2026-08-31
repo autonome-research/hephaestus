@@ -58,9 +58,11 @@ const LABEL_REACH = 1.42;
 export interface AxisTriadProps {
   /** The live engine, or `null` before it exists / after it is disposed. */
   readonly engine: ViewportEngine | null;
+  /** §5.5's operator toggle. Default on — the authored picture. */
+  readonly visible?: boolean;
 }
 
-export function AxisTriad({ engine }: AxisTriadProps): React.JSX.Element {
+export function AxisTriad({ engine, visible = true }: AxisTriadProps): React.JSX.Element {
   const lines = useRef<Partial<Record<Axis, SVGLineElement | null>>>({});
   const labels = useRef<Partial<Record<Axis, SVGTextElement | null>>>({});
 
@@ -95,9 +97,11 @@ export function AxisTriad({ engine }: AxisTriadProps): React.JSX.Element {
     <svg
       className={styles["triad"]}
       data-axis-triad=""
+      {...(visible ? {} : { "data-axis-hidden": "" })}
       viewBox={`0 0 ${String(CENTRE * 2)} ${String(CENTRE * 2)}`}
       role="img"
       aria-label={copy.viewport.triad.label}
+      aria-hidden={!visible}
     >
       {AXES.map((axis) => (
         <line
