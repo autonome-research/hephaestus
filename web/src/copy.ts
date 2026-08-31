@@ -134,6 +134,20 @@ export const copy = {
     open: "Show the project rail",
     close: "Hide the project rail",
     partsHeading: "Parts",
+    /**
+     * Closed project-tree sections. Always listed, even when the engine has
+     * projected no rows. The names are the inventory; emptiness is a fact.
+     */
+    sections: {
+      analyses: "Analyses",
+      docs: "Docs",
+      globals: "Globals",
+      imports: "Imports",
+      materials: "Materials",
+    },
+    sectionEmptyTitle: "No facts",
+    sectionEmpty:
+      "The engine has not projected any items for this section. Nothing is being hidden, and no catalog is invented here.",
     /** §13.1: the rail shows the git axis; the header shows the artifact axis. */
     gitHeading: "Working tree",
     versionsHeading: "Versions",

@@ -15,11 +15,14 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_STATE,
+  INSPECTOR_TABS,
   PinAuthorityError,
   WorkspaceStore,
   clampExplode,
   decodeWorkspaceUrl,
+  effectiveInspectorTab,
   encodeWorkspaceUrl,
+  inspectorTabsFor,
   isView,
   sameState,
   type WorkspaceState,
@@ -163,6 +166,26 @@ describe("URL serialization", () => {
       const back = decodeWorkspaceUrl(encodeWorkspaceUrl(state));
       expect(back.stage_tab).toBe(tab);
     }
+  });
+
+  it("omits the inspector Results tab when the stage is already Results", () => {
+    expect(inspectorTabsFor("viewport")).toEqual(INSPECTOR_TABS);
+    expect(inspectorTabsFor("script")).toEqual(INSPECTOR_TABS);
+    expect(inspectorTabsFor("results")).toEqual([
+      "properties",
+      "provenance",
+      "checks",
+      "dfm",
+      "export",
+      "sourcing",
+    ]);
+    expect(inspectorTabsFor("results")).not.toContain("results");
+  });
+
+  it("does not mount inspector Results when the stage tab is Results", () => {
+    expect(effectiveInspectorTab("viewport", "results")).toBe("results");
+    expect(effectiveInspectorTab("results", "results")).toBe("properties");
+    expect(effectiveInspectorTab("results", "checks")).toBe("checks");
   });
 
   it("falls back closed on a value outside a closed vocabulary", () => {
