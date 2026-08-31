@@ -327,4 +327,20 @@ describe("header git identity — no invented branch, no HEAD without a sha", ()
     expect(markup).not.toContain('data-source="git.head"');
     expect(markup).not.toContain(copy.header.head);
   });
+
+  it("does not paint a decorative Token chip in the signed-in header", () => {
+    const markup = headerMarkup(gitDocument());
+    expect(markup).not.toContain("data-token-state");
+    const header = readFileSync(join(webSrc, "components/Header.tsx"), "utf8");
+    expect(header).not.toContain("data-token-state");
+    expect(header).not.toContain("copy.header.token");
+  });
+
+  it("keeps Export and BOM as two addressable header controls next to the pin", () => {
+    const markup = headerMarkup(gitDocument());
+    expect(markup).toContain("data-chrome-export");
+    expect(markup).toContain("data-chrome-bom");
+    expect(markup).toContain("data-part-chrome");
+    expect(markup).toContain("data-testid=\"artifact-pin\"");
+  });
 });

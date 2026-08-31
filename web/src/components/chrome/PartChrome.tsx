@@ -4,14 +4,16 @@
 // Part chrome — Export and BOM next to the on-screen pin (issue #12).
 //
 // §22.7 put export in an inspector tab and said the header gains nothing.
-// The operator session (issue #4 / #12) wants a simple control in chrome,
-// bound to the thing on screen, not only a buried tab. This cluster sits
-// beside the artifact pin. Both buttons still send the workspace pin; they
-// do not resolve "current" at click time.
+// Issue #12 amended that: two simple controls sit in chrome, bound to the
+// thing on screen, not only a buried tab. They stay two distinct, visible,
+// clickable buttons — icon-only so the pin dominates the 44px bar. There is
+// no overflow, menu, or extra click in front of them.
 //
-// Export opens a compact format+run dialog. BOM opens the sourcing inspector
-// (declared `process` / stock / material spec only — no vendor catalog).
-// The inspector Export tab stays for history, drawings, and documents.
+// Both buttons still send the workspace pin; they do not resolve "current"
+// at click time. Export opens a compact format+run dialog. BOM opens the
+// sourcing inspector (declared `process` / stock / material spec only — no
+// vendor catalog). The inspector Export tab stays for history, drawings, and
+// documents. There is no third egress surface.
 
 import { useState } from "react";
 import { copy } from "../../copy";
@@ -41,24 +43,23 @@ export function PartChrome(): React.JSX.Element {
       <Button
         variant="quiet"
         icon="download"
+        iconLabel={copy.chrome.exportTitle}
         data-chrome-export=""
         title={copy.chrome.exportTitle}
         onClick={() => {
           setOpen("export");
         }}
-      >
-        {copy.chrome.export}
-      </Button>
+      />
       <Button
         variant="quiet"
+        icon="file"
+        iconLabel={copy.chrome.bomTitle}
         data-chrome-bom=""
         title={copy.chrome.bomTitle}
         onClick={() => {
           setOpen("sourcing");
         }}
-      >
-        {copy.chrome.bom}
-      </Button>
+      />
 
       <Popover
         open={open === "export"}
