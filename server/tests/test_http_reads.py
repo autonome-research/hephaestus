@@ -14,6 +14,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from hephaestus.core.checks.report import project_check_report, report_json
@@ -117,7 +118,7 @@ def test_build_route_projects_executor_checkpoints(tmp_path: Path) -> None:
         assert web.post("/parts/widget/build", json={}, key=uuid7()).status_code == 200
         body = web.get("/parts/widget/build").json()
     assert body["status"] == "ok"
-    checkpoints = body["checkpoints"]
+    checkpoints = cast("list[dict[str, Any]]", body["checkpoints"])
     assert isinstance(checkpoints, list) and len(checkpoints) >= 1
     first = checkpoints[0]
     assert first["index"] == 0
@@ -143,10 +144,12 @@ def test_build_route_serves_last_failure_when_there_is_no_current(tmp_path: Path
         body = web.get("/parts/bracket/build").json()
     assert body["status"] == "error"
     assert body["current"] is False
-    assert len(body["checkpoints"]) >= 1
-    assert body["error"]["last_good_artifact_ref"]
-    last = body["checkpoints"][-1]
-    assert last["artifact_ref"] == body["error"]["last_good_artifact_ref"]
+    checkpoints = cast("list[dict[str, Any]]", body["checkpoints"])
+    assert len(checkpoints) >= 1
+    error = cast("dict[str, Any]", body["error"])
+    assert error["last_good_artifact_ref"]
+    last = checkpoints[-1]
+    assert last["artifact_ref"] == error["last_good_artifact_ref"]
 
 
 def test_build_route_prefers_current_over_a_later_failure(tmp_path: Path) -> None:
