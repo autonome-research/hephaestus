@@ -48,17 +48,16 @@ export const STAGE_TABS = ["viewport", "script", "timeline", "results", "diff"] 
 export type StageTab = (typeof STAGE_TABS)[number];
 
 /**
- * §4.2's panel inventory, plus §22.7's sixth tab.
+ * §4.2's panel inventory, plus §22.7's `export` tab and the sourcing tab
+ * issue #12 adds.
  *
- * §22.7's DECISION: "the Inspector gains a sixth tab, `export`. The header gains
- * nothing." The Inspector because §4.3's provenance spine puts the *pin* in the
- * header and everything the pin *implies* in the Inspector — Results,
- * Properties, Provenance, Checks and DFM are all statements about the pinned
- * artifact, and an export is another one; it inherits the pin without a second
- * control and sits beside the DFM panel whose process pack decides the kerf it
- * reports. Not the header, which is 44px of the most contested space in the app
- * and already renders the word "current" twice in two different closed
- * vocabularies (§4.1).
+ * §22.7 put export in the Inspector so it inherits the pin. That tab stays:
+ * history, drawings, documents, and the two-step download live there. Issue
+ * #12 adds a seventh tab, `sourcing`, for the BOM readout that is only the
+ * manufacturing fields the part already declares — and it also puts a simple
+ * Export + BOM control in header chrome next to the pin, so egress is not
+ * only a buried inspector tab. The chrome still sends
+ * `WorkspaceState.artifact_ref` verbatim (§22.5).
  */
 export const INSPECTOR_TABS = [
   "results",
@@ -67,6 +66,7 @@ export const INSPECTOR_TABS = [
   "checks",
   "dfm",
   "export",
+  "sourcing",
 ] as const;
 export type InspectorTab = (typeof INSPECTOR_TABS)[number];
 

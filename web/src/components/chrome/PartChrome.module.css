@@ -1,0 +1,40 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * LAYOUT ONLY, for the pin-adjacent Export / BOM chrome (INTERFACE.md §3.4).
+ * Type roles and tokens come from `system/`.
+ */
+
+.chrome {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-inline);
+  min-width: 0;
+}
+
+.subject {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--gap-inline);
+  min-width: 0;
+}
+
+.formats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-inline);
+  align-items: center;
+}
+
+.muted {
+  color: var(--ink-muted);
+}

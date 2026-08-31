@@ -60,6 +60,54 @@ export const copy = {
       "There is no artifact to hold: this part has no build whose artifact the workspace could pin.",
   },
 
+  /**
+   * Header chrome next to the pin (issue #12). Export and BOM are simple
+   * controls bound to the on-screen artifact, not only inspector tabs.
+   */
+  chrome: {
+    export: "Export",
+    exportTitle: "Export the pinned artifact",
+    bom: "BOM",
+    bomTitle: "Sourcing from this part's declared manufacturing fields",
+    more: "Drawings, documents, and export history",
+  },
+
+  /**
+   * BOM / sourcing inspector. Only manufacturing identity the part already
+   * declares — process, stock, material spec. No vendor catalog.
+   */
+  sourcing: {
+    heading: "Sourcing",
+    subjectHeading: "This artifact",
+    pin: "Pinned artifact",
+    noPin: "No artifact is pinned.",
+    boundTo: "Evaluated with artifact",
+    unbound: "No current build; these values were parsed from the script text.",
+    emptyTitle: "No sourcing fields declared",
+    empty:
+      "This part does not declare a process, stock form, blank size, or material spec, so there is nothing to source from.",
+    undeclared: "not declared",
+    undeclaredHeading: "Not declared",
+    undeclaredNote:
+      "Only manufacturing fields this part declares are used for sourcing. Nothing is looked up from a catalog.",
+    catalogNote:
+      "Sourcing is the process, stock, and material spec the part already declares. This workspace does not query a vendor catalog.",
+    sourceHeading: "Read from",
+    sourceLabel: "Source",
+    source: {
+      build_record:
+        "the build record — the values as the worker evaluated them, so a computed field reads like a literal one",
+      script_literals:
+        "the script's string literals — this part has no current build to read runtime values from, so a computed field cannot be reported",
+    },
+    fields: {
+      process: "process",
+      stock_form: "stock form",
+      blank_size: "blank size",
+      material_spec: "material spec",
+    },
+  },
+
   /** §4.5 `pin_mode`, and the §4.1 build-state chip. */
   pinMode: {
     current: "current",
@@ -355,6 +403,7 @@ export const copy = {
       checks: "Checks",
       dfm: "DFM",
       export: "Export",
+      sourcing: "Sourcing",
     },
     pending: "This panel is not part of this build of the workspace yet.",
     noPartTitle: "No part selected",

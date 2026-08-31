@@ -152,6 +152,11 @@ describe("URL serialization", () => {
     expect(decodeWorkspaceUrl(encodeWorkspaceUrl(DEFAULT_STATE)).measure).toBeNull();
   });
 
+  it("round-trips the sourcing inspector tab", () => {
+    const state: WorkspaceState = { ...DEFAULT_STATE, part: "tread", inspector_tab: "sourcing" };
+    expect(decodeWorkspaceUrl(encodeWorkspaceUrl(state)).inspector_tab).toBe("sourcing");
+  });
+
   it("round-trips the Timeline and Results stage tabs", () => {
     for (const tab of ["timeline", "results"] as const) {
       const state: WorkspaceState = { ...DEFAULT_STATE, part: "tread", stage_tab: tab };

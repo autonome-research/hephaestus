@@ -287,8 +287,15 @@ test("the panel's download is the bytes the route recorded, and carries no token
   // panel's back legitimately does not appear until its staleness expires.
   await openExportTab(page);
 
-  const before = (await api<ExportsDocument>(`/parts/${PART}/exports`)).exports
-    .length;
+  // History is oldest-first (`rowid`). A prior test in this file already
+  // committed a STEP, so `[data-export-download].last()` is that STEP until
+  // the panel's own invalidation paints the new row. Matching `.last()` to
+  // `exports[].outputs.find(.stl)` races those two clocks.
+  const beforeBlobs = new Set(
+    (await api<ExportsDocument>(`/parts/${PART}/exports`)).exports
+      .flatMap((entry) => entry.outputs)
+      .map((entry) => entry.blob),
+  );
   await page
     .locator("[data-panel='export'] button[data-export-format='stl']")
     .click();
@@ -296,26 +303,30 @@ test("the panel's download is the bytes the route recorded, and carries no token
 
   // The panel invalidates its own history on a committed export, so the row
   // arrives without a reload — §22.7's history is live, not a page the operator
-  // has to go and fetch.
-  const row = page
-    .locator("[data-panel='export'] [data-export-download]")
-    .last();
-  await expect(row).toBeVisible({ timeout: 120_000 });
+  // has to go and fetch. Wait for the *new* STL the route just recorded, then
+  // for that blob's Download button — not "any last button".
+  let output: ExportOutput | undefined;
   await expect
     .poll(
-      async () =>
-        (await api<ExportsDocument>(`/parts/${PART}/exports`)).exports.length,
+      async () => {
+        const listed = await api<ExportsDocument>(`/parts/${PART}/exports`);
+        output = listed.exports
+          .flatMap((entry) => entry.outputs)
+          .find(
+            (entry) =>
+              entry.filename.endsWith(".stl") && !beforeBlobs.has(entry.blob),
+          );
+        return output?.blob ?? null;
+      },
       { timeout: 120_000 },
     )
-    .toBeGreaterThan(before);
-
-  // What the server recorded, read back off the projection the panel renders.
-  const listed = await api<ExportsDocument>(`/parts/${PART}/exports`);
-  const output = listed.exports
-    .flatMap((entry) => entry.outputs)
-    .find((entry) => entry.filename.endsWith(".stl"));
+    .not.toBeNull();
   expect(output).toBeDefined();
   const recordedBlob = output?.blob ?? "";
+  const row = page.locator(
+    `[data-panel='export'] [data-export-download="${recordedBlob}"]`,
+  );
+  await expect(row).toBeVisible({ timeout: 120_000 });
   expect(await row.getAttribute("data-export-download")).toBe(recordedBlob);
 
   const requests: string[] = [];

@@ -110,7 +110,7 @@ export const EXPORT_BLOCKERS = ["no_part", "no_pin", "invalid_source"] as const;
 export type ExportBlocker = (typeof EXPORT_BLOCKERS)[number];
 
 /** The submission fields, from which the idempotency key is derived (§22.2). */
-interface Submission {
+export interface Submission {
   readonly subject: ExportSubject;
   readonly format: ExportFormat;
   readonly layout: ExportLayout;
@@ -192,7 +192,7 @@ function refusalKey(error: unknown): keyof typeof copy.export.refusals {
  */
 const SUBMISSION_KEYS = new Map<string, string>();
 
-function submissionKeyFor(submission: Submission): string {
+export function submissionKeyFor(submission: Submission): string {
   const id = signature(submission);
   const existing = SUBMISSION_KEYS.get(id);
   if (existing !== undefined) return existing;
@@ -668,13 +668,21 @@ function HistoryEntry({
 }
 
 /**
- * The panel, bound to the workspace pin.
+ * The pin-bound export actions. Shared by the inspector tab and the header
+ * chrome so both send the same `artifact_ref` and mint keys the same way.
  *
  * The history is invalidated on a committed export and at no other time: it is
  * the record of a retention obligation, and this client is the only thing that
  * can change it from here.
  */
-export function ExportPanel(): React.JSX.Element {
+export function useExportActions(): {
+  readonly part: string | null;
+  readonly pinned: string | null;
+  readonly pinMode: "current" | "pinned";
+  readonly history: ExportsDocument | undefined;
+  readonly onExport: (submission: Submission) => Promise<ExportResult>;
+  readonly onDownload: (output: ExportOutput) => Promise<void>;
+} {
   const part = useWorkspace((s) => s.part);
   const pinned = useWorkspace((s) => s.artifact_ref);
   const pinMode = useWorkspace((s) => s.pin_mode);
@@ -724,14 +732,20 @@ export function ExportPanel(): React.JSX.Element {
     [client, part],
   );
 
+  return { part, pinned, pinMode, history: history.data, onExport, onDownload: downloadExport };
+}
+
+/** The inspector tab, bound to the workspace pin. */
+export function ExportPanel(): React.JSX.Element {
+  const { part, pinned, pinMode, history, onExport, onDownload } = useExportActions();
   return (
     <ExportView
       part={part}
       pinned={pinned}
       pinMode={pinMode}
-      history={history.data}
+      history={history}
       onExport={onExport}
-      onDownload={downloadExport}
+      onDownload={onDownload}
     />
   );
 }
