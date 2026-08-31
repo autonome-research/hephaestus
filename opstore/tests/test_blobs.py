@@ -49,6 +49,32 @@ def test_blob_path_layout_and_no_temp_leftovers(blobs: BlobStore, store_root: Pa
     assert leftovers == []
 
 
+def _concurrent_put(blobs: BlobStore, payload: bytes) -> tuple[list[str], list[BaseException]]:
+    """Two threads, one payload, started together."""
+    failures: list[BaseException] = []
+    hashes: list[str] = []
+    lock = threading.Lock()
+    both_in = threading.Barrier(2, timeout=10)
+
+    def turn() -> None:
+        both_in.wait()
+        try:
+            blob_hash = blobs.put(payload)
+        except BaseException as exc:  # pragma: no cover - the regression itself
+            with lock:
+                failures.append(exc)
+            return
+        with lock:
+            hashes.append(blob_hash)
+
+    threads = [threading.Thread(target=turn) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+    return hashes, failures
+
+
 def test_concurrent_puts_of_the_same_bytes_do_not_raise(
     blobs: BlobStore, store_root: Path, db: Database
 ) -> None:
@@ -60,32 +86,12 @@ def test_concurrent_puts_of_the_same_bytes_do_not_raise(
     across processes, not across threads — and the second ``O_CREAT|O_EXCL``
     crashed ``test_two_concurrent_runs_each_read_their_own_request``.
     """
-    lock = threading.Lock()
     last_hash = ""
     for index in range(40):
         # Fresh bytes each pair so both threads still race on a missing file.
         # Repeating one payload would make iteration 2+ a no-op exists() check.
         payload = f"identical concurrent artifact {index}".encode()
-        failures: list[BaseException] = []
-        hashes: list[str] = []
-        both_in = threading.Barrier(2, timeout=10)
-
-        def turn(data: bytes = payload, gate: threading.Barrier = both_in) -> None:
-            gate.wait()
-            try:
-                blob_hash = blobs.put(data)
-            except BaseException as exc:  # pragma: no cover - the regression itself
-                with lock:
-                    failures.append(exc)
-                return
-            with lock:
-                hashes.append(blob_hash)
-
-        threads = [threading.Thread(target=turn) for _ in range(2)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join(timeout=30)
+        hashes, failures = _concurrent_put(blobs, payload)
         assert failures == [], repr(failures[0])
         assert len(hashes) == 2
         assert hashes[0] == hashes[1] == sha256_bytes(payload)
