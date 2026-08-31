@@ -163,6 +163,13 @@ test.describe("§7A.12 case 2 — the context envelope", () => {
     await expect(partChip).toHaveAttribute("data-context-value", PART);
     await expect(composer.locator("[data-context-chips] [data-source]")).toHaveCount(0);
 
+    // Issue #13: a selected part projects the two §6.4 DFM controls, not a
+    // Plan toggle. The fixture starts `[dfm] auto_run = false`.
+    await expect(composer.locator("[data-composer-dfm]")).toHaveCount(1);
+    await expect(composer.locator("[data-dfm-auto-run]")).toHaveAttribute("data-dfm-auto-run", "false");
+    await expect(composer.locator("[data-dfm-auto-run-toggle]")).toHaveCount(1);
+    await expect(composer.locator("[data-dfm-run]")).toHaveCount(1);
+
     // Every member is opt-out (§7A.3).
     await partChip.locator('[data-context-drop="part"]').click();
     await expect(partChip).toHaveAttribute("data-context-dropped", "");
