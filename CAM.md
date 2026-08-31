@@ -43,7 +43,7 @@ it — amending a document before its machinery exists is doc drift
 | `VALIDATION.md` §5 | The termination reviewer receives `ProgramStatus` (§5.9); a CAM check in any non-success state, and any `unresolvable` setup, is a **blocking finding by rule**, stamped from the engine's status and never solicited from the reviewer — the never-green invariant extended a third time, the same mechanism as the constraint rule (`VALIDATION.md:308-315`) and the motion rule (`:317-330`). | 14C |
 | `COMPARE.md` §1 | `solid_diff` gains no new function. The **amendment is a stated restriction**: for material-removal verification the `iou` field of `VolumeDiff` is not a legal threshold (§5.3), and §1's "thresholds do not live here" sentence gains the CAM-side owner. `COMPARE.md` §4's "no mesh-based comparison path" is unchanged and this spec adds none. | 14C |
 | `architecture.md` §3.6 (registries) | A **fifth registry kind**, `tools`, added to `BUNDLED_KINDS` / `RegistryKind` (`core/src/hephaestus/core/registry/_layout.py:38-41`), and a **sixth**, `posts`, for controller dialects (§7). Both are content-hash-pinned by the existing Merkle digest (`registry/_digest.py:53-71`) and the existing `[registries]` pin table (`registry/_pins.py:41-52`); neither adds a fetch, verify or pin mechanism. | 14A (`tools`), 14D (`posts`) |
-| `registries/dfm/registry.toml` | Two new packs, `cnc_mill` and `cnc_router` (§6), closing the documented hole that `cnc_router` is the default `part.process` written by `heph init` (`core/src/hephaestus/core/cli_init.py:64`) and is declared by two materials records while no pack exists for it (`core/tests/test_dfm_packs.py:178` asserts `not index.has("cnc_router")`). | 14A |
+| `registries/dfm/registry.toml` | Two new packs, `cnc_mill` and `cnc_router` (§6), closing the documented hole that `cnc_router` is the default `part.process` written by `heph init` (`core/src/hephaestus/core/cli_init.py:64`). **`cnc_router` shipped as issue #28** (existing DFM machinery, no CAM, no mill pack). `cnc_mill` remains 14A. | 14A |
 | `registries/materials/*.json` | `al-6061.json` and `plywood-baltic-birch.json` gain a **declared** machining block (§6.2). The prose in `al-6061.json`'s `notes` — "3 mm end mill => 1.5 mm minimum internal radius", "pockets deeper than about 4x the tool diameter chatter", "thin webs below roughly 1 mm distort" — stays as prose *and* becomes numbers a predicate reads. Contextual notes are never machine-checkable (`architecture.md:406-410`); that is exactly the defect this closes. | 14A |
 | `verification.md` "Performance budgets (Tier 1)" (`verification.md:210-218`) | One new budget, and an honest one: **`check_program` on the reference setup ≤ 120 s wall clock**, which is 4× the reference-shelf full-build budget and is the first budget in the mission that is not sub-30 s. §5.8 states why, and states plainly that if the reference setup cannot meet it the *gate is tightened by shrinking the reference setup*, never by raising the budget — budgets tighten, never loosen, by amendment (`verification.md:218`). The budget is paired with clause (G14C-12), which counts the collision check's OCCT booleans as a function of sample count, so the number bounds a curve rather than one fixture. | 14C |
 | `EXTERNAL_EVAL.md` | Unchanged. CAM produces no CADGenBench submission and no external score. | — |
@@ -1130,7 +1130,8 @@ unit and description, `[[rules]]` binding a stable `<process>.<name>` rule id,
 title, severity and a `reads` whitelist to one predicate file, with both load-time
 invariants enforced — unique well-formed rule ids, and every name in `reads`
 present in `[params]`, so "a predicate can therefore never read an undeclared
-number" (`core/src/hephaestus/core/registry/_dfm.py:14-20`).
+number" (`core/src/hephaestus/core/registry/_dfm.py:14-20`). Issue #28 shipped
+`cnc_router` on that machinery; `cnc_mill` is the remainder of this sub-stage.
 
 ### 6.1 Why this is first, and why it is not CAM
 
@@ -1153,7 +1154,9 @@ roughly 1 mm distort." Material notes are contextual registry content injected
 into agent context inside provenance delimiters — reference material, never
 machine-checkable (`architecture.md:406-410`). Meanwhile `cnc_router` is the
 default `part.process` `heph init` writes (`cli_init.py:64`) and appears across
-the corpus, with **no pack at all** (`core/tests/test_dfm_packs.py:178`).
+the corpus. Issue #28 shipped that pack on the existing DFM machinery
+(`core/tests/test_dfm_packs.py` asserts `index.has("cnc_router")`); `cnc_mill`
+is still unshipped.
 
 So: the harness already tells models it is machining aluminium on a router, and
 the only machining knowledge it carries is prose no gate can check. The packs
@@ -1548,9 +1551,10 @@ sub-stage.
    is asserted present.
 7. The materials machining block resolves and each pack parameter that reads it
    gets the declared number, not the prose.
-8. `not index.has("cnc_router")` at `core/tests/test_dfm_packs.py:178` is
-   **inverted with this stage cited**, and the `heph init` default process
-   (`cli_init.py:64`) now resolves to a real pack end to end.
+8. `index.has("cnc_router")` at `core/tests/test_dfm_packs.py` was inverted by
+   issue #28; this stage still owes the same inversion for `cnc_mill`, and the
+   `heph init` default process (`cli_init.py:64`) already resolves to a real
+   pack end to end.
 9. A registry predicate attempting file IO is denied by the sandbox (the G6
    registry-integrity clause, re-run for the new packs).
 10. Determinism: two processes, identical `DfmEvaluation` records including

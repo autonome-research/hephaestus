@@ -54,6 +54,8 @@ class TestScaffold:
         """
         target = tmp_path / "widgets"
         assert main(["init", str(target)]) == 0
+        example = (target / "parts" / "example.py").read_text(encoding="utf-8")
+        assert 'part.process = "cnc_router"' in example
         monkeypatch.chdir(target)
         assert main(["build", "example", "--unsafe-local-executor"]) == 0
         assert (target / ".heph").is_dir()  # the ignored build store appeared

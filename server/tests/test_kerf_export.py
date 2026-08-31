@@ -64,15 +64,18 @@ part.blank_size = "One 120 x 90 x 6 mm blank"
 
 @pytest.fixture
 def cut(tmp_path: Path) -> Iterator[Project]:
-    """A project with ``laser`` (a pack kerf) and ``router`` (none) built."""
+    """A project with ``laser`` (pack kerf), ``router`` (pack, no kerf), ``mill`` (no pack)."""
     project = make_project(tmp_path / "proj")
     parts = project.root / "parts"
     (parts / "laser.py").write_text(PLATE.format(process="laser_cut"), encoding="utf-8")
-    # ``cnc_router`` is a real process with no published rule pack: a legitimate
-    # design that simply declares no kerf, and the "nothing resolved" path.
+    # ``cnc_router`` has a DFM pack that does not declare kerf_mm: a router bit
+    # removes its full diameter, so this is the "pack exists, no kerf" path.
     (parts / "router.py").write_text(PLATE.format(process="cnc_router"), encoding="utf-8")
+    # ``cnc_mill`` is a real process with no published rule pack: a legitimate
+    # design that simply declares no kerf, and the "nothing resolved" path.
+    (parts / "mill.py").write_text(PLATE.format(process="cnc_mill"), encoding="utf-8")
     try:
-        for name in ("laser", "router"):
+        for name in ("laser", "router", "mill"):
             assert project.call("build_part", {"name": name})["status"] == "ok"
         yield project
     finally:
@@ -144,13 +147,30 @@ def test_an_explicit_kerf_overrides_the_pack(cut: Project, tmp_path: Path) -> No
 def test_a_process_with_no_pack_compensates_nothing_and_says_so(
     cut: Project, tmp_path: Path
 ) -> None:
+    result = _export(cut, name="mill")
+    assert result["kerf"] == {
+        "applied_mm": None,
+        "source": "none",
+        "process": "cnc_mill",
+        "note": "kerf_uncompensated",
+        "reason": "no_dfm_pack",
+    }
+    outer, hole = _outer_and_hole(_bytes(cut, result), tmp_path / "mill.dxf")
+    assert outer == (pytest.approx(60.0), pytest.approx(40.0))
+    assert hole[0] == pytest.approx(12.0, abs=0.01)
+
+
+def test_a_router_pack_without_kerf_compensates_nothing_and_says_so(
+    cut: Project, tmp_path: Path
+) -> None:
+    """The cnc_router pack is real (#28) and still must not invent a laser kerf."""
     result = _export(cut, name="router")
     assert result["kerf"] == {
         "applied_mm": None,
         "source": "none",
         "process": "cnc_router",
         "note": "kerf_uncompensated",
-        "reason": "no_dfm_pack",
+        "reason": "pack_declares_no_kerf",
     }
     outer, hole = _outer_and_hole(_bytes(cut, result), tmp_path / "router.dxf")
     assert outer == (pytest.approx(60.0), pytest.approx(40.0))

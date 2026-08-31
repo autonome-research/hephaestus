@@ -1,7 +1,7 @@
 [registry]
 name = "hephaestus-dfm"
 kind = "dfm"
-version = "0.1.0"
+version = "0.2.0"
 license = "Apache-2.0"
 description = """
 Design-for-manufacture rule packs, one per process. A pack declares the process
@@ -19,3 +19,7 @@ dir = "laser_cut"
 [[packs]]
 process = "fdm"
 dir = "fdm"
+
+[[packs]]
+process = "cnc_router"
+dir = "cnc_router"
