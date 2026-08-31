@@ -1019,13 +1019,11 @@ export const copy = {
     discloseFailed: "The preview could not be composed.",
 
     /**
-     * Session chrome (issue #13). Model and effort identifiers come from
+     * Session chrome (issue #13). Model identifiers come from
      * `GET /providers` — the text is the provider's own model id, not a
-     * house name. Effort is not a prompt field (§7A.3), so the chrome
-     * projects `off` rather than offering a picker. DFM is the engine
-     * equivalent of a Plan/DFM chip: the project `[dfm] auto_run` setting
-     * and `run_dfm`, kept as two controls because collapsing them would
-     * imply a tool argument that does not exist (INTERFACE.md §6.4).
+     * house name. Effort is not a prompt field (§7A.3) and is not
+     * projected. DFM copy below labels the two §6.4 inspector actions
+     * (`[dfm] auto_run` + `run_dfm`); the composer does not host them.
      */
     model: "Model",
     effort: "Effort",

@@ -25,23 +25,7 @@
   flex: 0 0 auto;
 }
 
-/* ---- session chrome (issue #13) ------------------------------------ */
-
-.chrome {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.dfm {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1);
-}
-
-/* ---- the context chip row (§7A.3) ---------------------------------- */
+/* ---- the context chip row (§7A.3), inside disclose ----------------- */
 
 .chips {
   margin: 0;

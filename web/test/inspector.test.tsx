@@ -595,6 +595,27 @@ describe("DfmView renders a run_dfm result (§6.4)", () => {
     );
   });
 
+  it("exposes auto_run and Run DFM as two separate actions, including with no run", () => {
+    const toggle = host.querySelector("[data-dfm-auto-run-toggle]");
+    const runControl = host.querySelector("[data-dfm-run]");
+    expect(host.querySelector("[data-composer-dfm]")).not.toBeNull();
+    expect(toggle).not.toBeNull();
+    expect(runControl).not.toBeNull();
+    expect(toggle).not.toBe(runControl);
+    expect(toggle?.getAttribute("data-dfm-auto-run")).toBe(String(dfm.auto_run));
+    expect(host.querySelector("[data-source='dfm.auto_run']")).not.toBeNull();
+
+    const absent = render(<DfmView dfm={dfmAbsent} secureExecutor />);
+    expect(absent.querySelector("[data-dfm-auto-run-toggle]")).not.toBeNull();
+    expect(absent.querySelector("[data-dfm-run]")).not.toBeNull();
+    expect(absent.querySelector("[data-dfm-auto-run-toggle]")).not.toBe(
+      absent.querySelector("[data-dfm-run]"),
+    );
+    expect(absent.querySelector("[data-dfm-auto-run-toggle]")?.getAttribute("data-dfm-auto-run")).toBe(
+      String(dfmAbsent.auto_run),
+    );
+  });
+
   it("renders a missing sandbox as an explanatory refusal, not as an empty list", () => {
     // §6.4: "`capability_not_available` (no sandbox) renders as an explicit
     // explanatory refusal card, never an empty list. Silence never reads as a

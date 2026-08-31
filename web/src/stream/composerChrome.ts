@@ -19,9 +19,9 @@
 //   inventing a house scale. A picker over them today would write nothing.
 // * **There is no Plan mode in the engine.** `[dfm] auto_run` / `run_dfm` is
 //   the manufacturability equivalent, and it is a *project setting* plus a
-//   tool — not a per-message flag (INTERFACE.md §6.4). The chrome therefore
-//   does not grow a Plan toggle that would imply a tool argument that does
-//   not exist.
+//   tool — not a per-message flag (INTERFACE.md §6.4). Those two controls
+//   live on the inspector DFM panel. The composer does not grow a Plan
+//   toggle that would imply a tool argument that does not exist.
 // * **No providers.json / no runtime is a named absence**, not a signed-in
 //   agent. `modelsFrom` returns nothing when the file does not exist, so the
 //   composer cannot render a picker of models nobody configured.
