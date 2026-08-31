@@ -5,13 +5,14 @@ SPDX-License-Identifier: Apache-2.0
 
 # Hephaestus documentation
 
-Install from a clone — [install.md](install.md). The CLI is the product.
-The operator UI (`heph serve --web`) is optional. MCP is optional.
+Install from a clone — [install.md](install.md). The CLI is the product:
+`heph part` / `script` / `params` / `prompt` / `build` need no browser and
+no MCP. The operator UI (`heph serve --web`) is optional. MCP is optional.
 
 | Page | What it covers |
 |---|---|
 | [install.md](install.md) | Clone, `uv sync --dev`, what each capability needs |
-| [cli.md](cli.md) | Every `heph` verb, with one worked example each |
+| [cli.md](cli.md) | Every `heph` verb — including `part` / `script` / `params` / `prompt` — with one worked example each |
 | [mcp.md](mcp.md) | Optional: a stock MCP client against `heph serve --mcp` |
 | [conventions.md](conventions.md) | Project layout, part scripts, `PARAMS` / `hc` / `CHECKS` |
 | [registry-pinning.md](registry-pinning.md) | Pinning skills/parts/materials/DFM registries |

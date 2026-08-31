@@ -8,18 +8,34 @@ SPDX-License-Identifier: Apache-2.0
 ## For agents
 
 You do not need the browser or MCP. After `uv sync --dev` in a clone, put
-`.venv/bin` on `PATH` (or call that `heph` by path):
+`.venv/bin` on `PATH` (or call that `heph` by path). Create, edit, inspect,
+and build a part with the authoring verbs:
 
 ```console
 $ heph init /tmp/gadget && cd /tmp/gadget
-$ heph build example
-$ heph lint parts/example.py
+$ heph part list
+$ heph part create spacer --template blank --json
+$ heph script show spacer --json
+$ heph script write spacer --file spacer.py --expected-hash sha256:… --json
+$ heph params spacer --json
+$ heph prompt set --file request.txt
+$ heph prompt show --json
+$ heph build spacer
+$ heph part show spacer --json
+$ heph lint parts/spacer.py --request .heph/request.txt
 $ heph check --json
-$ heph render example
+$ heph render spacer
 ```
 
-`--json` is on `build`, `check`, `lint`, and `render`. The rest of this page
-is the verb reference. Optional MCP: [mcp.md](mcp.md).
+`heph part create` is `create_part` (`base_hash=None`): an existing name is
+`{"part":"…","status":"already_exists"}` and exit 1; nothing is written. `heph
+script write` is `write_part`: CAS on `--expected-hash` (required; omitting it
+is usage, exit 2). Take that hash from the `content_hash` `heph part create`
+or `heph script show` just printed. A stale hash is a discriminated `conflict`
+(exit 1). `heph prompt` stores operator request text at `.heph/request.txt` —
+not a hosted chat and not a context envelope. `--json` is on `part`, `script`,
+`params`, `prompt`, `build`, `check`, `lint`, and `render`. The rest of this
+page is the verb reference. Optional MCP: [mcp.md](mcp.md).
 
 ---
 
@@ -90,6 +106,9 @@ primary	parts/primary.py	sha256:…
 $ heph part create spacer --template blank --json
 {"content_hash":"sha256:…","initial_script":"from build123d import *\n\n\nwith BuildPart() as part:\n    pass\n","path":"parts/spacer.py","replayed":false,"snapshot_ref":"artifact:part-snapshot:sha256:…","status":"ok"}
 
+$ heph part create spacer --json
+{"part":"spacer","status":"already_exists"}
+
 $ heph part show spacer --json
 {"current":false,"part":"spacer","status":"not_built"}
 ```
@@ -99,7 +118,7 @@ $ heph part show spacer --json
 | `list --json` | The `list_parts` projection — `{status, parts:[{name, path, content_hash, snapshot_ref}]}`. Same serializer as MCP `list_parts` and `GET /parts`. |
 | `create NAME --template {blank,sheet,solid,from_store}` | Seed `parts/<name>.py` from the `create_part` template table (default `blank`). |
 | `create NAME --file PATH` | Seed from a script file, or `--file -` for stdin. Replaces the template. |
-| `create … --json` | The `create_part` result (`path`, `initial_script`, `content_hash`, `snapshot_ref`). An existing name is `{status:"already_exists"}` and exit 1; nothing is written. |
+| `create … --json` | The `create_part` result (`path`, `initial_script`, `content_hash`, `snapshot_ref`). An existing name is `{"part":"…","status":"already_exists"}` and exit 1; nothing is written. |
 | `show NAME --json` | The last published `BuildResult` (the same document `heph build --json` emits), or the named absence `{status:"not_built"}`. Does not rebuild. |
 
 `--description` is accepted for `create_part` parity; the engine does not apply
@@ -116,12 +135,15 @@ $ heph script show spacer --json
 
 $ heph script write spacer --file spacer.py --expected-hash sha256:… --json
 {"applied":true,"content_hash":"sha256:…","path":"parts/spacer.py","replayed":false,"snapshot_ref":"artifact:part-snapshot:sha256:…"}
+
+$ heph script write spacer --file spacer.py --expected-hash sha256:stale --json
+{"applied":false,"conflict":{"attempted_snapshot_ref":"artifact:part-snapshot:sha256:…","base_snapshot_ref":"artifact:part-snapshot:sha256:…","current_hash":"sha256:…","current_script":"…","current_snapshot_ref":"artifact:part-snapshot:sha256:…"}}
 ```
 
 A stale `--expected-hash` is a discriminated `conflict` (exit 1) carrying the
 live hash and script, the same shape the `write_part` tool returns. `--file -`
 (or a piped stdin when `--file` is omitted) writes from stdin. `--expected-hash`
-is required; omitting it is usage (exit 2).
+is required; omitting it is usage (exit 2). There is no force overwrite.
 
 ### `heph params [PART]`
 
@@ -132,6 +154,9 @@ published build when one exists.
 ```console
 $ heph params primary --json
 {"params":[{"default":15.0,"doc":"","max":30.0,"min":6.0,"name":"post_inset","scope":"part","step":null,"value":15.0}],"part":"primary","status":"ok"}
+
+$ heph params --json
+{"parts":{"primary":[…],"bracket":[…]},"project":[…],"status":"ok"}
 ```
 
 With no part name the document is `{status, project, parts}` — project-scope
@@ -148,6 +173,9 @@ It is a place an external agent can keep the original request so a later
 `heph prompt show`.
 
 ```console
+$ heph prompt show --json
+{"path":".heph/request.txt","status":"empty","text":""}
+
 $ heph prompt set --file request.txt
 stored 24 byte(s) -> .heph/request.txt
 
@@ -156,8 +184,8 @@ $ heph prompt show --json
 ```
 
 `--file -` (or a piped stdin) sets from stdin. An unset request is
-`{status:"empty"}`, not an error. `heph lint` is unchanged: it still takes
-`--request FILE` explicitly.
+`{"path":".heph/request.txt","status":"empty","text":""}`, not an error.
+`heph lint` is unchanged: it still takes `--request FILE` explicitly.
 
 ### `heph build [PART]`
 
@@ -214,10 +242,12 @@ $ heph lint parts/bracket.py
 parts/bracket.py: clean
 ```
 
-`--requirements FILE` and `--request TEXT` turn on the requirement-ledger rules
-from `VALIDATION.md` §2: given the original request text, `lint` can flag an
-`unsourced_requirement` — a dimension in the script that nothing in the request
-asked for. That is the rule that catches a model inventing a spec.
+`--requirements FILE` and `--request FILE` turn on the requirement-ledger rules
+from `VALIDATION.md` §2: `--request` is a path to the original request text
+(the file `heph prompt` writes is `.heph/request.txt`). Given that text, `lint`
+can flag an `unsourced_requirement` — a dimension in the script that nothing
+in the request asked for. That is the rule that catches a model inventing a
+spec.
 
 ### `heph render PART`
 
