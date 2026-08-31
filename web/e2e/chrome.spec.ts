@@ -27,6 +27,8 @@ test("Export and BOM sit in header chrome, not only the inspector", async ({ pag
   await expect(page.locator("[data-part-chrome]")).toBeVisible();
   await expect(page.locator("[data-chrome-export]")).toBeVisible();
   await expect(page.locator("[data-chrome-bom]")).toBeVisible();
+  // Signed-in header: the token is the fragment / sessionStorage, not a chip.
+  await expect(page.locator("header [data-token-state]")).toHaveCount(0);
   // The inspector export tab still exists; chrome is in addition to it.
   await expect(page.locator('[data-inspector-tab="export"]')).toBeVisible();
   await expect(page.locator('[data-inspector-tab="sourcing"]')).toBeVisible();

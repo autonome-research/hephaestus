@@ -1,7 +1,13 @@
 // Copyright 2026 The Hephaestus Authors
 // SPDX-License-Identifier: Apache-2.0
 //
-// §4.1's HEADER: `identity → pin → Export/BOM chrome → build state → token`.
+// §4.1's HEADER: `identity → pin → Export/BOM chrome → build state`.
+//
+// The pin is the one dominant element. Export and BOM sit beside it as quiet
+// icon-only controls (issue #12) so they do not crowd the 44px bar. The real
+// workspace token is the URL fragment / sessionStorage (§2.2); the header
+// does not paint a decorative Token chip. Absence is the full-page NoToken
+// screen, not a header state.
 //
 // The two axes §13.1 insists must never blur are split across the shell on
 // purpose: **the header shows the artifact axis** (pin, build state) and **the
@@ -31,7 +37,7 @@ import type { ReactNode } from "react";
 import { useBuild, useGitStatus, useProject } from "../api/queries";
 import { copy } from "../copy";
 import { useWorkspace } from "../state/react";
-import { Chip, formatRef } from "../system";
+import { formatRef } from "../system";
 import { ArtifactPin } from "./ArtifactPin";
 import { BuildStateChip } from "./BuildStateChip";
 import { PartChrome } from "./chrome/PartChrome";
@@ -116,9 +122,6 @@ export function Header({ railToggle }: HeaderProps): React.JSX.Element {
 
       <div className={styles["right"]}>
         <BuildStateChip build={build.data} />
-        <Chip title={copy.header.token} data-token-state="present">
-          {copy.header.token}
-        </Chip>
       </div>
     </header>
   );
