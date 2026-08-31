@@ -58,6 +58,89 @@ already initialized — is refused with the named `init_target_not_empty` error
 (exit 1) and nothing is written. The project name is the target directory's
 name; with no argument the current (empty) directory is initialized.
 
+### `heph part list` / `heph part create` / `heph part show`
+
+The agent-shaped part verbs. Listing and showing compute nothing; creating
+writes through the same `create_part` store contract the tool surface uses
+(`base_hash=None`, refuse without mutation if the file exists).
+
+```console
+$ heph part list
+bracket	parts/bracket.py	sha256:…
+primary	parts/primary.py	sha256:…
+
+$ heph part create spacer --template blank --json
+{"content_hash":"sha256:…","initial_script":"from build123d import *\n\n\nwith BuildPart() as part:\n    pass\n","path":"parts/spacer.py","replayed":false,"snapshot_ref":"artifact:part-snapshot:sha256:…","status":"ok"}
+
+$ heph part show spacer --json
+{"current":false,"part":"spacer","status":"not_built"}
+```
+
+| Flag / form | Effect |
+|---|---|
+| `list --json` | The `list_parts` projection — `{status, parts:[{name, path, content_hash, snapshot_ref}]}`. Same serializer as MCP `list_parts` and `GET /parts`. |
+| `create NAME --template {blank,sheet,solid,from_store}` | Seed `parts/<name>.py` from the `create_part` template table (default `blank`). |
+| `create NAME --file PATH` | Seed from a script file, or `--file -` for stdin. Replaces the template. |
+| `create … --json` | The `create_part` result (`path`, `initial_script`, `content_hash`, `snapshot_ref`). An existing name is `{status:"already_exists"}` and exit 1; nothing is written. |
+| `show NAME --json` | The last published `BuildResult` (the same document `heph build --json` emits), or the named absence `{status:"not_built"}`. Does not rebuild. |
+
+`--description` is accepted for `create_part` parity; the engine does not apply
+it. There is no force-create.
+
+### `heph script show NAME` / `heph script write NAME`
+
+Read or replace a part script. Write is `write_part`: optimistic CAS on
+`--expected-hash`, no force overwrite.
+
+```console
+$ heph script show spacer --json
+{"content_hash":"sha256:…","line_count":5,"name":"spacer","path":"parts/spacer.py","script":"…","snapshot_ref":"artifact:part-snapshot:sha256:…","status":"ok"}
+
+$ heph script write spacer --file spacer.py --expected-hash sha256:… --json
+{"applied":true,"content_hash":"sha256:…","path":"parts/spacer.py","replayed":false,"snapshot_ref":"artifact:part-snapshot:sha256:…"}
+```
+
+A stale `--expected-hash` is a discriminated `conflict` (exit 1) carrying the
+live hash and script, the same shape the `write_part` tool returns. `--file -`
+(or a piped stdin when `--file` is omitted) writes from stdin. `--expected-hash`
+is required; omitting it is usage (exit 2).
+
+### `heph params [PART]`
+
+Show declared `PARAMS` and the last-build effective values. No sandbox and no
+geometry kernel: literals are read from the script, effective numbers from the
+published build when one exists.
+
+```console
+$ heph params primary --json
+{"params":[{"default":15.0,"doc":"","max":30.0,"min":6.0,"name":"post_inset","scope":"part","step":null,"value":15.0}],"part":"primary","status":"ok"}
+```
+
+With no part name the document is `{status, project, parts}` — project-scope
+rows from `globals.py` / `hephaestus.toml` plus every part. `--json` is the
+machine form an agent should read.
+
+### `heph prompt` / `heph prompt show` / `heph prompt set`
+
+Store or print the operator request text at `.heph/request.txt`. This is **not**
+a hosted chat and **not** a context envelope (`INTERFACE.md` §7A.3): no model
+runs, no session starts, and the file is not forwarded to `set_request_text`.
+It is a place an external agent can keep the original request so a later
+`heph lint --request FILE` can name the same words. Bare `heph prompt` is
+`heph prompt show`.
+
+```console
+$ heph prompt set --file request.txt
+stored 24 byte(s) -> .heph/request.txt
+
+$ heph prompt show --json
+{"path":".heph/request.txt","status":"ok","text":"40 mm spacer, 6 mm plate\n"}
+```
+
+`--file -` (or a piped stdin) sets from stdin. An unset request is
+`{status:"empty"}`, not an error. `heph lint` is unchanged: it still takes
+`--request FILE` explicitly.
+
 ### `heph build [PART]`
 
 Build a part and publish the result. With no argument, builds every part in the
