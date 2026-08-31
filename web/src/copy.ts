@@ -186,7 +186,7 @@ export const copy = {
     reset: "Reset to default",
   },
 
-  /** §5. The viewport, its two overlays, and every named absence it can reach. */
+  /** §5. The viewport, its overlays, and every named absence it can reach. */
   viewport: {
     label: "Geometry",
     /**
@@ -251,6 +251,41 @@ export const copy = {
     triad: {
       label: "Axis orientation",
       axis: { x: "X", y: "Y", z: "Z" },
+    },
+    /**
+     * Operator appearance cluster (§3.11, §5.5). Words, not icons: the sprite
+     * is closed at 18 ids and these controls are a scan, not a status.
+     */
+    appearance: {
+      label: "Viewport appearance",
+      wireframe: {
+        label: "Wireframe",
+        explain: "Hide the fill and keep the silhouette. Hidden solids still disappear with their outline.",
+      },
+      fit: {
+        label: "Fit",
+        explain:
+          "Frame the pinned artifact the way the renderer frames this named view. Orbit and zoom return to that framing.",
+        disabled: "No pinned artifact is on the canvas, so there is nothing to frame.",
+      },
+      ortho: {
+        label: "Ortho",
+        explain:
+          "Orthographic projection, matching the named views the renderer can reproduce. Off is a perspective viewing aid; Fit and the view cube stay the same camera.",
+      },
+      grid: {
+        label: "Grid",
+        explain: "Ground grid, spaced at the step the readout reports.",
+      },
+      triad: {
+        label: "Axes",
+        explain: "Axis triad in the same Z-up frame as the camera.",
+      },
+      material: {
+        label: "Material",
+        explain:
+          "Override every solid with the viewport part colour, at least 4.5:1 against the ground. Off restores the exporter's own material; it does not invent a new one.",
+      },
     },
     viewCube: {
       label: "Standard views",
