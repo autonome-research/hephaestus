@@ -504,14 +504,13 @@ describe("the shipped modeling well is not the near-black void", () => {
   ).replace(/\/\*[\s\S]*?\*\//g, "");
 
   it("authors a light CAD ground and a dark part, grid on by default", () => {
-    // Velvet: Fusion/Onshape-style well. Clear colour is `--p-slate-050`
-    // (#eef1f6), not the previous `--p-graphite-950` / `#080a0d` void.
+    // Velvet: Fusion/Onshape-style well. Clear colour is `--p-slate-050`,
+    // not the previous `--p-graphite-950` void. Hex values live in
+    // `tokens.css` and are checked there by `token-contrast`.
     expect(tokens).toMatch(/--viewport-ground:\s*var\(--p-slate-050\)/);
-    expect(tokens).toMatch(/--p-slate-050:\s*#eef1f6/);
     expect(tokens).not.toMatch(/--viewport-ground:\s*var\(--surface-canvas\)/);
     expect(tokens).toMatch(/--viewport-part:\s*var\(--p-part\)/);
     expect(tokens).toMatch(/--p-part:\s*var\(--p-graphite-500\)/);
-    expect(tokens).toMatch(/--p-graphite-500:\s*#30374a/);
     expect(tokens).toMatch(/--viewport-edge:\s*var\(--p-graphite-950\)/);
     expect(tokens).toMatch(/--viewport-grid:\s*var\(--p-slate-400\)/);
     expect(tokens).toMatch(/--viewport-grid-axis:\s*var\(--p-slate-600\)/);
