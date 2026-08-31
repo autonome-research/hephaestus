@@ -107,7 +107,7 @@ export function formatValue(value: unknown): string {
 /**
  * Visible width for the header pin and composer artifact chips. The full ref
  * stays on `title` / `data-value` / `data-context-value`. 34 glyphs still ate
- * the build-state chip and Token at 1280px.
+ * the build-state chip at 1280px.
  */
 export const CHIP_REF_WIDTH = 22;
 

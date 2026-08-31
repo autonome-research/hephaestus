@@ -42,7 +42,6 @@ export const copy = {
     head: "HEAD",
     pin: "Artifact pin",
     buildState: "Build",
-    token: "Token",
     followCurrent: "Follow current",
     /** §4.5: the action states what it will discard before it does it. */
     followCurrentExplain:

@@ -1371,7 +1371,7 @@ surface except the three the operator asked us to add.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│ HEADER  project · branch · HEAD  |  ARTIFACT PIN  |  build state | token  │
+│ HEADER  project · branch · HEAD | ARTIFACT PIN | Export/BOM | build state │
 ├────────────┬────────────────────────────────────┬────────────────────────┤
 │   RAIL     │              STAGE                 │        STREAM          │
 │   280px    │              1fr                   │        420px           │
@@ -1458,7 +1458,7 @@ construction**, which §3.14's e2e asserts.
 **Header layout.** The header grid is a symmetric three-up centring the artifact
 pin, so with a short project name roughly 450px of the left cell and 350px of
 the right are dead in a 44px bar. It becomes `auto 1fr auto`, left-aligned on
-one baseline, reading **identity → pin → build state → token**, with one
+one baseline, reading **identity → pin → icon-only Export/BOM → build state**, with one
 dominant element in the pin chip (the ref, in `.code`) and `ARTIFACT PIN`
 demoted to a title attribute. **Copy defect, fixed at the same time:**
 `copy.ts`:58 (`pin.current`) and :62 (`buildState.current`) are two different
