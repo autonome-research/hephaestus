@@ -12,10 +12,11 @@ one, and nothing here is a second implementation of a serializer that exists.
 Four projections are deliberately **not** here, because they are shared and this
 module is only the web side of a shared thing. Each lives below both callers:
 
-* ``open_project_projection`` / ``list_parts_projection`` —
-  :mod:`hephaestus.agent_bridge.project_projections`, because ``mcp/app.py``'s
-  verbs return the same bodies and the dependency may not point from the
-  headless surface into the web layer;
+* ``open_project_projection`` — :mod:`hephaestus.agent_bridge.project_projections`,
+  because ``mcp/app.py``'s verb returns the same body and the dependency may
+  not point from the headless surface into the web layer;
+* ``list_parts_projection`` — :mod:`hephaestus.core.project_store.listing`,
+  shared with ``heph part list --json`` and ``mcp/app.py``'s ``list_parts``;
 * ``page_text`` — :mod:`hephaestus.core.artifacts`, shared with the
   ``read_artifact`` tool under a different principal check;
 * ``report_json`` — :mod:`hephaestus.core.checks.report`, shared with
