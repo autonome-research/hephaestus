@@ -59,11 +59,13 @@ def format_program(payload: Mapping[str, Any], *, path: str) -> str:
     process = payload.get("process", "?")
     part = payload.get("part", "?")
     kerf = payload.get("kerf")
-    kerf_map = cast("Mapping[str, Any]", kerf) if isinstance(kerf, dict) else {}
+    kerf_map: Mapping[str, Any] = cast("Mapping[str, Any]", kerf) if isinstance(kerf, dict) else {}
     layers = payload.get("layers")
-    layer_map = cast("Mapping[str, Any]", layers) if isinstance(layers, dict) else {}
+    layer_map: Mapping[str, Any] = (
+        cast("Mapping[str, Any]", layers) if isinstance(layers, dict) else {}
+    )
     profiles = payload.get("profiles")
-    n_profiles = len(profiles) if isinstance(profiles, list) else 0
+    n_profiles = len(cast("list[object]", profiles)) if isinstance(profiles, list) else 0
     digest = payload.get("dxf_sha256", "")
     lines = [
         f"{part}: {process}",
@@ -89,7 +91,9 @@ def _cmd_emit(args: argparse.Namespace) -> int:
 
     name = cast("str", args.part)
     root = _project_root()
-    program = emit_part(name, project_root=root, explicit_kerf_mm=cast("float | None", args.kerf_mm))
+    program = emit_part(
+        name, project_root=root, explicit_kerf_mm=cast("float | None", args.kerf_mm)
+    )
     out = Path(cast("str", args.out)) if args.out else Path(f"{name}.dxf")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(program.dxf)

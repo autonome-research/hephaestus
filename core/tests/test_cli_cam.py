@@ -33,9 +33,7 @@ part.blank_size = "One 120 x 90 x 6 mm blank"
 def _init_part(tmp_path: Path, name: str, process: str) -> Path:
     target = tmp_path / "proj"
     assert heph(["init", str(target)]) == 0
-    (target / "parts" / f"{name}.py").write_text(
-        PLATE.format(process=process), encoding="utf-8"
-    )
+    (target / "parts" / f"{name}.py").write_text(PLATE.format(process=process), encoding="utf-8")
     return target
 
 
@@ -119,9 +117,7 @@ def test_cam_emit_explicit_kerf_overrides_the_pack(
     capsys.readouterr()
 
     out = target / "override.dxf"
-    code = heph(
-        ["cam", "emit", "plate", "--out", str(out), "--kerf-mm", "1.0", "--json"]
-    )
+    code = heph(["cam", "emit", "plate", "--out", str(out), "--kerf-mm", "1.0", "--json"])
     captured = capsys.readouterr()
     assert code == 0, captured.err
     payload = cast("dict[str, Any]", json.loads(captured.out))

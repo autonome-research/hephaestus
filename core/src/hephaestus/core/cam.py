@@ -32,13 +32,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
-from hephaestus.core.cutfile import CUT_LAYER, ENGRAVE_LAYER, SCORE_LAYER, Point
 from hephaestus.core.errors import AddressingError, HephaestusError, ValidationError
 from hephaestus.core.hashing import sha256_bytes
 from hephaestus.geom.kerf import KerfDecision, KerfRefusal, kerf_compensated_shape, resolve_kerf
 from hephaestus.geom.nesting import (
+    CUT_LAYER,
     DEFAULT_MARGIN_MM,
     DEFAULT_SPACING_MM,
+    ENGRAVE_LAYER,
+    SCORE_LAYER,
     Blank,
     NestedLayout,
     NestingRefusal,
@@ -86,7 +88,7 @@ class CutContour:
     layer: str
     ring: str
     profile: str
-    points: tuple[Point, ...]
+    points: tuple[tuple[float, float], ...]
     closed: bool = True
 
     def to_json(self) -> dict[str, JSONValue]:
@@ -113,9 +115,11 @@ class Cut2dProgram:
     source_artifact_ref: str | None = None
 
     def to_json(self) -> dict[str, JSONValue]:
-        layers: dict[str, int] = {}
+        layers: dict[str, JSONValue] = {}
         for contour in self.toolpath:
-            layers[contour.layer] = layers.get(contour.layer, 0) + 1
+            current = layers.get(contour.layer, 0)
+            assert isinstance(current, int)
+            layers[contour.layer] = current + 1
         return {
             "kind": "cut2d",
             "process": self.process,
@@ -319,7 +323,8 @@ def emit_part(
         if result is None or result.artifact_ref is None:
             raise CamRefusal(
                 "not_built",
-                f"part {name!r} has no current successful build to emit from; run 'heph build {name}'",
+                f"part {name!r} has no current successful build to emit from; "
+                f"run 'heph build {name}'",
                 data={"part": name},
             )
         process = (result.metadata.get("process") or "").strip()

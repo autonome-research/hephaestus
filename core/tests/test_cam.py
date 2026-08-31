@@ -145,6 +145,7 @@ def test_a_router_process_is_refused_by_name() -> None:
     assert ei.value.reason == "not_a_cut2d_process"
     assert ei.value.code == "cam_refused"
     candidates = ei.value.data["candidates"]
+    assert isinstance(candidates, list)
     assert candidates == list(CUT2D_PROCESSES)
     assert "cnc_router" not in candidates
 
