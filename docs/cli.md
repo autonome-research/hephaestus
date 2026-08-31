@@ -346,7 +346,9 @@ scan check socket against limb-l.stl  units mm  align as_posed
 unit, the engine is millimetres throughout, and inferring one from the bounding
 box would be a guess dressed as a measurement. The path is resolved under the
 project's `imports/` through the same confined read a build uses, so what you
-inspect is exactly what a build would admit, refusals included.
+inspect is exactly what a build would admit, refusals included. Admit the
+file first with `heph import add` (`--part` seeds the Stage 12 script);
+`heph scan` does not copy, drop, or reconstruct.
 
 The facts are facts about the **file**: nothing was repaired, no surface was
 reconstructed, and a defect the scanner left is reported rather than cleaned.
@@ -473,6 +475,7 @@ $ heph import add ~/Downloads/vendor_plate.step --json
 $ heph import add ~/Downloads/limb-l.stl --units mm --part socket
 copied limb-l.stl (mesh, units=mm) sha256:… -> imports/limb-l.stl
 created parts/socket.py
+scan-to-part: heph build socket; heph scan check socket limb-l.stl --units mm (Stage 12; no reconstruction)
 ```
 
 STEP (`.step` / `.stp`, AP203/AP214) takes no `--units`. STL, PLY, OBJ, OFF
@@ -483,6 +486,13 @@ escape). `--part NAME` writes `part.geometry = import_step("copied-name")` for
 STEP, or `import_mesh` plus `mesh_to_solid` with the declared unit for a mesh,
 and refuses `already_exists` without force if the part is already there.
 `--json` on `add` emits `{name, kind: step|mesh|points, sha256, path, units?}`.
+
+Scan-to-part is this verb plus Stage 12: `heph import add scan.stl --units mm
+--part socket`, then `heph build socket`, then `heph scan` / `heph scan check
+socket scan.stl --units mm`. A point cloud with `--part` is
+`point_cloud_has_no_solid`. `mesh_to_solid` may refuse `mesh_solid_invalid` —
+most real scans do (`MESH_INGEST.md` §4.3). Poisson, ICP, feature recognition,
+and viewport STL drop are not in this path.
 
 ### `heph export {list,unpin}`
 

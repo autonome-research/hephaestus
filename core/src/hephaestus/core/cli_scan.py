@@ -35,6 +35,11 @@ at 12A because it needed nothing but admission and canonicalization, and a facts
 view that waited for scoring it does not use would have been useless for the
 whole of 12A and 12B.
 
+The file must already live under ``imports/``. Admit it with
+``heph import add FILE --units …`` (and ``--part NAME`` to seed the Stage 12
+``import_mesh`` + ``mesh_to_solid`` script). This verb does not copy, drop,
+or reconstruct.
+
 ```
 heph scan check socket limb-l.stl --units mm --json
 ```
@@ -293,7 +298,11 @@ def add_subparsers(
     from hephaestus.core.checks.facade import SCAN_ALIGN_MODES
     from hephaestus.geom.mesh import MESH_UNITS
 
-    scan = sub.add_parser("scan", help="print the facts of a mesh or point cloud under imports/")
+    scan = sub.add_parser(
+        "scan",
+        help="print the facts of a mesh or point cloud already under imports/ "
+        "(admit with heph import add; no reconstruction)",
+    )
     scan.add_argument(
         "path",
         help="path under imports/ (the same confined read a build uses), "
