@@ -14,11 +14,12 @@ $ cp -r corpus/public_fixtures/assembly /tmp/demo && cd /tmp/demo
 ```
 
 `heph` is engine-first: it talks to the CAD engine directly and starts no
-server. Verbs are grouped below by what they need, not alphabetically, because
-what they need is the thing that surprises people.
+server. From a clone, prefix every command with `uv run` (`uv run heph
+--version`). Verbs are grouped below by what they need, not alphabetically,
+because what they need is the thing that surprises people.
 
 ```console
-$ heph --version
+$ uv run heph --version
 heph 0.1.0
 ```
 
@@ -447,9 +448,10 @@ stderr, always.
 
 ### `heph serve --web`
 
-Serve the **web workspace API** (`INTERFACE.md` §2) on loopback. Orthogonal to
-`--mcp`: neither flag requires the other, and both force the same serve-mode
-executor policy, so the web never has an unsandboxed path either.
+Serve the **operator workspace** (`INTERFACE.md` §2) on loopback — optional
+chrome, not the agent core. Orthogonal to `--mcp`: neither flag requires the
+other, and both force the same serve-mode executor policy, so the web never
+has an unsandboxed path either. MCP is not required to use this workspace.
 
 ```console
 $ heph serve --web                                  # 127.0.0.1:8760
@@ -490,9 +492,8 @@ is a local instrument, not a deployment.
 
 ## Evaluation verbs — the `bench` extra only
 
-These appear only when `hephaestus-bench` is installed
-(`pipx install 'hephaestus-cad[bench]'`). They are how the numbers in
-[leaderboard.md](leaderboard.md) are produced.
+These appear when `hephaestus-bench` is installed. `uv sync --dev` includes
+it. They are how the numbers in [leaderboard.md](leaderboard.md) are produced.
 
 ### `heph bench run`
 
