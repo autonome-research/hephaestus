@@ -20,8 +20,9 @@ heph 0.1.0
 
 ## What each capability needs
 
-- **Engine verbs** (`heph build`, `check`, `lint`, `render`, and the rest of
-  the CAD CLI) — any Python 3.11–3.14. No Node, no browser, no network.
+- **Engine verbs** (`heph init`, `part`, `script`, `params`, `prompt`,
+  `build`, `check`, `lint`, `render`, and the rest of the CAD CLI) — any
+  Python 3.11–3.14. No Node, no browser, no network.
 - **Sandboxed script execution** — Linux x86_64 with bubblewrap (≥ 0.11).
   Part scripts run in a probed OS sandbox. Anywhere the probe fails, `heph
   build` exits non-zero (`sandbox_unavailable`); it never silently downgrades.

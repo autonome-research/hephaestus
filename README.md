@@ -43,14 +43,23 @@ After `uv sync --dev`, put the clone's `.venv/bin` on `PATH` (or call that
 
 ```console
 $ heph init /tmp/gadget && cd /tmp/gadget
-$ heph build example
-$ heph lint parts/example.py
+$ heph part create spacer --template blank --json
+$ heph script write spacer --file spacer.py --expected-hash sha256:… --json
+$ heph params spacer --json
+$ heph prompt set --file request.txt
+$ heph build spacer
+$ heph part show spacer --json
+$ heph lint parts/spacer.py --request .heph/request.txt
 $ heph check --json
-$ heph render example
+$ heph render spacer
 ```
 
-`heph init` writes a small project that builds with nothing edited. Full verb
-list: [docs/cli.md](docs/cli.md). MCP is optional: [docs/mcp.md](docs/mcp.md).
+`heph init` writes a small project that builds with nothing edited. Create and
+write are `create_part` / `write_part` (CAS: `--expected-hash` is the
+`content_hash` from create/show; an existing name is `already_exists`).
+`heph prompt` stores request text at `.heph/request.txt` — not a hosted chat.
+Full verb list: [docs/cli.md](docs/cli.md). MCP is optional:
+[docs/mcp.md](docs/mcp.md).
 
 ## More
 
