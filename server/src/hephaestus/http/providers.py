@@ -794,7 +794,7 @@ def provider_specs_of(file: ProvidersFile) -> list[dict[str, Any]]:
     """The declared specs, normalized for display. **No credential material.**"""
     rows: list[dict[str, Any]] = []
     for spec in file.providers:
-        models = []
+        models: list[dict[str, Any]] = []
         for model in _dicts(spec.get("models")):
             entry: dict[str, Any] = {
                 "id": str(model.get("id", "")),
