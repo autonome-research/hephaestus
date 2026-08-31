@@ -168,6 +168,17 @@ describe("rail providers — collapsed by default so Sign-in stays in the box", 
     expect(markup).toContain("data-providers-details");
   });
 
+  it("keeps acknowledged egress hosts in the compact DOM (G10C)", () => {
+    const markup = providersMarkup(
+      providersDocument({
+        egress_acknowledged: [{ host: "models.example", at: "1700000000" }],
+      }),
+    );
+    expect(markup).toContain("data-providers-collapsed");
+    expect(markup).toContain('data-egress-host="models.example"');
+    expect(markup).not.toContain(copy.providers.egressNote);
+  });
+
   it("keeps the zero-config empty action when there is no provider row", () => {
     const markup = providersMarkup(providersDocument({ providers: [], attach: {
       attached: false,

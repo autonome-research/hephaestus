@@ -255,22 +255,25 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
                 ) : null}
               </PanelSection>
             )}
-
-            {document_.egress_acknowledged.length === 0 ? null : (
-              <PanelSection eyebrow={copy.providers.egressHosts}>
-                <PanelNote>{copy.providers.egressNote}</PanelNote>
-                <DataTable
-                  rows={document_.egress_acknowledged.map((row) => ({
-                    key: row.host,
-                    label: <Fact mono source="providers.egress_acknowledged.host" value={row.host} />,
-                    value: <Fact source="providers.egress_acknowledged.at" value={row.at} />,
-                    attrs: { "data-egress-host": row.host },
-                  }))}
-                />
-              </PanelSection>
-            )}
           </>
         ) : null}
+
+        {/* §23.13 / G10C: egress acknowledgements are on disk AND on screen,
+            permanently. Compact may hide the configuration table; it may not
+            unmount this list. The long note waits for details. */}
+        {document_.egress_acknowledged.length === 0 ? null : (
+          <PanelSection eyebrow={copy.providers.egressHosts}>
+            {detailsOpen ? <PanelNote>{copy.providers.egressNote}</PanelNote> : null}
+            <DataTable
+              rows={document_.egress_acknowledged.map((row) => ({
+                key: row.host,
+                label: <Fact mono source="providers.egress_acknowledged.host" value={row.host} />,
+                value: <Fact source="providers.egress_acknowledged.at" value={row.at} />,
+                attrs: { "data-egress-host": row.host },
+              }))}
+            />
+          </PanelSection>
+        )}
 
         {rows.length === 0 ? (
           <div data-providers-empty>
