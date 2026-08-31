@@ -144,13 +144,13 @@ _PIN_MODES: Final[frozenset[str]] = frozenset({"current", "pinned"})
 _STAGE_TABS: Final[frozenset[str]] = frozenset(
     {"viewport", "script", "timeline", "results", "diff"}
 )
-#: Six, not five: §22.7's DECISION gives the Inspector an ``export`` tab. The
-#: envelope's tab tokens are *the client's own* navigation vocabulary, so this
-#: set tracks ``web/src/state/workspace.ts::INSPECTOR_TABS`` — a tab the client
-#: can open and this route refuses would be a composer that stops working when
-#: the operator changes panel.
+#: Tracks ``web/src/state/workspace.ts::INSPECTOR_TABS``. §22.7 added
+#: ``export``; issue #12 added ``sourcing`` (BOM from declared manufacturing
+#: fields). The envelope's tab tokens are *the client's own* navigation
+#: vocabulary — a tab the client can open and this route refuses would be a
+#: composer that stops working when the operator changes panel.
 _INSPECTOR_TABS: Final[frozenset[str]] = frozenset(
-    {"results", "properties", "provenance", "checks", "dfm", "export"}
+    {"results", "properties", "provenance", "checks", "dfm", "export", "sourcing"}
 )
 
 #: The marker a shortened block carries **in its own text**. The model cannot
@@ -178,7 +178,12 @@ class ContextEnvelope:
 
     @property
     def is_empty(self) -> bool:
-        """§7A.3: "an empty or absent envelope is not an error"."""
+        """§7A.3: "an empty or absent envelope is not an error".
+
+        ``view`` names a reference once the operator adds it (issue #13).
+        Navigation tabs alone are still the blank canvas; a camera token
+        that the operator explicitly sent is not.
+        """
         return (
             self.part is None
             and self.artifact_ref is None
@@ -186,6 +191,7 @@ class ContextEnvelope:
             and not self.hidden_labels
             and self.section_plane is None
             and self.focus is None
+            and self.view is None
         )
 
 

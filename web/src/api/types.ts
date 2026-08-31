@@ -50,6 +50,24 @@ export interface BuildWarning {
 }
 
 /**
+ * One incremental-executor checkpoint (`core/types.py::StatementCheckpoint`).
+ *
+ * `GET /parts/{part}/build` projects the worker's per-statement list. A
+ * Timeline mark invented from the script text would be a client-side event
+ * the engine did not name. `artifact_ref` is set only when publication
+ * minted a last-good blob for that stop.
+ */
+export interface StatementCheckpoint {
+  readonly index: number;
+  readonly line: number;
+  readonly statement: string;
+  readonly span: readonly number[];
+  readonly bound: readonly string[];
+  readonly shapes: readonly string[];
+  readonly artifact_ref: string | null;
+}
+
+/**
  * `GET /api/v1/parts/{part}/build` — the §2.3 BuildResult projection.
  *
  * `geometry_count` is an **explicit server field** (§6.1's TIGHTENING binding
@@ -74,6 +92,7 @@ export interface BuildDocument {
   readonly checks?: Readonly<Record<string, unknown>>;
   readonly source_map_ref?: string | null;
   readonly warnings?: readonly BuildWarning[];
+  readonly checkpoints?: readonly StatementCheckpoint[];
   readonly error?: BuildError | undefined;
   readonly critique?: Readonly<Record<string, unknown>>;
 }
@@ -307,6 +326,23 @@ export type MetadataField =
   | "finish"
   | "assembly_method"
   | "joint";
+
+/**
+ * Manufacturing identity a BOM/sourcing inspector may render.
+ *
+ * Closed subset of `MetadataField`. There is no `conform_to` field on the
+ * `part.*` surface (`script_contract.md` §5.2); stock is `stock_form` +
+ * `blank_size`, process is `process`, and the material class the part
+ * declares is `material_spec`. The client does not invent a tenth name, and
+ * it does not look any of these up in a vendor catalog.
+ */
+export const SOURCING_FIELDS = [
+  "process",
+  "stock_form",
+  "blank_size",
+  "material_spec",
+] as const satisfies readonly MetadataField[];
+export type SourcingField = (typeof SOURCING_FIELDS)[number];
 
 /** Which read answered a properties projection. Closed (`http/projections.py`). */
 export type PropertySource = "build_record" | "script_literals";

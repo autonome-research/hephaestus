@@ -25,6 +25,10 @@ import type { ReactElement } from "react";
 
 import type { GitDirtyEntry } from "../src/api/types";
 import { GitDirtyView, dirtySide, type DirtyIndex } from "../src/components/rail/GitDirty";
+import {
+  PROJECT_TREE_SECTIONS,
+  ProjectSectionList,
+} from "../src/components/rail/ProjectTree";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pathCss = readFileSync(
@@ -88,5 +92,30 @@ describe("GitDirty.module.css — the wrapping the screenshot named", () => {
     expect(pathCss).toMatch(/\.path\s*\{[^}]*text-overflow:\s*ellipsis/);
     expect(pathCss).toMatch(/\.path\s*\{[^}]*white-space:\s*nowrap/);
     expect(pathCss).not.toMatch(/word-break:\s*break-all/);
+  });
+});
+
+describe("project tree sections — closed list, empty-honest", () => {
+  it("lists the closed inventory even when every section is empty", () => {
+    const host = render(<ProjectSectionList open={new Set()} onToggle={() => undefined} />);
+    const rows = [...host.querySelectorAll('[data-tree-row="section"]')];
+    expect(rows.map((node) => node.getAttribute("data-tree-section"))).toEqual([
+      ...PROJECT_TREE_SECTIONS,
+    ]);
+    for (const row of rows) {
+      expect(row.getAttribute("aria-expanded")).toBe("false");
+    }
+    expect(host.querySelector("[data-tree-section-empty]")).toBeNull();
+    expect(host.querySelector("[data-source]")).toBeNull();
+  });
+
+  it("does not invent a catalog when a section is opened", () => {
+    const host = render(
+      <ProjectSectionList open={new Set(["materials"])} onToggle={() => undefined} />,
+    );
+    const empty = host.querySelector('[data-tree-section-empty="materials"]');
+    expect(empty).not.toBeNull();
+    expect(empty?.querySelector("[data-source]")).toBeNull();
+    expect(host.querySelectorAll("[data-tree-section-empty]")).toHaveLength(1);
   });
 });

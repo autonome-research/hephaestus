@@ -23,13 +23,14 @@
 //
 // Diff is still the named pending tab. Script / Timeline / Results are the
 // part views: Monaco + PARAMS, the last-good scrubber, and the existing
-// ResultsPanel (also still the inspector's first tab).
+// ResultsPanel. When the stage tab is Results the inspector omits that
+// panel so the geometry list and metrics are not drawn twice.
 
 import { useCallback, useEffect, useRef } from "react";
 import { copy } from "../../copy";
 import { useWorkspace, workspaceStore } from "../../state/react";
 import { shellStore } from "../../state/shell";
-import { STAGE_TABS, type StageTab } from "../../state/workspace";
+import { effectiveInspectorTab, STAGE_TABS, type StageTab } from "../../state/workspace";
 import { Badge, EmptyState, TabBar, useShell } from "../../system";
 import { ResultsPanel } from "../inspector/ResultsPanel";
 import { useDirtyIndex } from "../rail/GitDirty";
@@ -41,6 +42,7 @@ import styles from "./Stage.module.css";
 
 export function Stage(): React.JSX.Element {
   const tab = useWorkspace((s) => s.stage_tab);
+  const inspectorTab = useWorkspace((s) => s.inspector_tab);
   const part = useWorkspace((s) => s.part);
   const dirty = useDirtyIndex();
   const shell = useShell();
@@ -99,7 +101,12 @@ export function Stage(): React.JSX.Element {
           label={copy.stage.tabsLabel}
           selected={tab}
           onSelect={(next: StageTab) => {
-            workspaceStore.update({ stage_tab: next });
+            const nextInspector = effectiveInspectorTab(next, inspectorTab);
+            workspaceStore.update(
+              nextInspector === inspectorTab
+                ? { stage_tab: next }
+                : { stage_tab: next, inspector_tab: nextInspector },
+            );
           }}
           tabs={STAGE_TABS.map((name) => ({
             id: name,

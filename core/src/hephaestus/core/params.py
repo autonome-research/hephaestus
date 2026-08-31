@@ -10,6 +10,7 @@ effective mapping is returned, or nothing is applied.
 
 from __future__ import annotations
 
+import ast
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -209,3 +210,107 @@ def merge_overrides(
 def params_declaration_json(params: Mapping[str, Param]) -> dict[str, JSONValue]:
     """Canonical JSON form of a full ``PARAMS`` declaration (name-sorted)."""
     return {name: params[name].to_json() for name in sorted(params)}
+
+
+def _number_const(node: ast.expr) -> int | float | None:
+    """A finite numeric ``Constant``, or ``None`` if the node is not one."""
+    if not isinstance(node, ast.Constant):
+        return None
+    value = node.value
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    if not math.isfinite(value):
+        return None
+    return value
+
+
+def _str_const(node: ast.expr | None) -> str | None:
+    if node is None or not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+        return None
+    return node.value
+
+
+def _param_from_call(node: ast.expr) -> Param | None:
+    """Rebuild a ``Param`` from a literal ``Param(...)`` AST call, or ``None``."""
+    if not isinstance(node, ast.Call):
+        return None
+    func = node.func
+    if not isinstance(func, ast.Name) or func.id != "Param":
+        return None
+    values: dict[str, object] = {}
+    if node.args:
+        default = _number_const(node.args[0])
+        if default is None or len(node.args) > 1:
+            return None
+        values["default"] = default
+    for keyword in node.keywords:
+        if keyword.arg is None:
+            return None
+        if keyword.arg in {"default", "min", "max", "step"}:
+            number = _number_const(keyword.value)
+            if number is None:
+                return None
+            values[keyword.arg] = number
+        elif keyword.arg == "doc":
+            doc = _str_const(keyword.value)
+            if doc is None:
+                return None
+            values["doc"] = doc
+        else:
+            return None
+    default = values.get("default")
+    minimum = values.get("min")
+    maximum = values.get("max")
+    if (
+        not isinstance(default, int | float)
+        or not isinstance(minimum, int | float)
+        or not isinstance(maximum, int | float)
+    ):
+        return None
+    raw_step = values.get("step")
+    step: int | float | None = (
+        None if isinstance(raw_step, bool) or not isinstance(raw_step, int | float) else raw_step
+    )
+    raw_doc = values.get("doc", "")
+    doc = raw_doc if isinstance(raw_doc, str) else ""
+    try:
+        return Param(default=default, min=minimum, max=maximum, doc=doc, step=step)
+    except ValidationError:
+        return None
+
+
+def static_params(source: str) -> tuple[dict[str, Param], tuple[str, ...]]:
+    """Read a ``PARAMS = {...}`` assignment without executing the script.
+
+    Returns ``(literal declarations, key names in source order)``. A key whose
+    value is not a fully-literal ``Param(...)`` is listed in the names but
+    omitted from the declaration map — the CLI can still name it, and a last
+    published build can still supply its effective value. A syntax error or a
+    missing ``PARAMS`` yields empty results; that is a named absence, not a
+    guess.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return {}, ()
+    names: list[str] = []
+    declarations: dict[str, Param] = {}
+    for stmt in tree.body:
+        if not isinstance(stmt, ast.Assign):
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == PARAMS_NAME for target in stmt.targets
+        ):
+            continue
+        mapping = stmt.value
+        if not isinstance(mapping, ast.Dict):
+            continue
+        for key_node, value_node in zip(mapping.keys, mapping.values, strict=False):
+            name = _str_const(key_node)
+            if name is None or not name:
+                continue
+            names.append(name)
+            param = _param_from_call(value_node)
+            if param is not None:
+                declarations[name] = param
+    return declarations, tuple(names)

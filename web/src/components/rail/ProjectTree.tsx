@@ -27,7 +27,14 @@
 // projection and from nothing else — a part can be clean and unbuilt, or dirty
 // and current, and this tree shows the two axes side by side without joining
 // them.
+//
+// Below the parts list sit five closed sections (Analyses / Docs / Globals /
+// Imports / Materials). They are listed even when empty. The engine has no
+// HTTP projection for those inventories, so an expanded section is an
+// empty-honest absence — not a catalog invented here. Git dirty stays in
+// `GitDirty` (§13.1); this tree does not hide `.heph/` rows.
 
+import { useState } from "react";
 import { useBuild, useParts } from "../../api/queries";
 import { copy } from "../../copy";
 import type { PartSummary } from "../../api/types";
@@ -46,10 +53,35 @@ import { Fact } from "../Fact";
 import { DirtyMarker, useDirtyIndex, type DirtyIndex } from "./GitDirty";
 import styles from "./ProjectTree.module.css";
 
+/**
+ * Closed project-tree sections. Always listed, even when empty: the engine
+ * has no HTTP projection for analyses / docs / globals / imports / materials
+ * today, so an expanded section is an empty-honest absence — not a catalog
+ * invented from a registry or a walk of the project root.
+ */
+export const PROJECT_TREE_SECTIONS = [
+  "analyses",
+  "docs",
+  "globals",
+  "imports",
+  "materials",
+] as const;
+export type ProjectTreeSection = (typeof PROJECT_TREE_SECTIONS)[number];
+
 export function ProjectTree(): React.JSX.Element {
   const parts = useParts();
   const dirty = useDirtyIndex();
   const selected = useWorkspace((s) => s.part);
+  const [open, setOpen] = useState<ReadonlySet<ProjectTreeSection>>(() => new Set());
+
+  const toggle = (id: ProjectTreeSection): void => {
+    setOpen((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   return (
     <Panel className={styles["panel"]} label={copy.rail.partsHeading}>
@@ -96,8 +128,60 @@ export function ProjectTree(): React.JSX.Element {
             ))}
           </Tree>
         )}
+        <ProjectSectionList open={open} onToggle={toggle} />
       </PanelBody>
     </Panel>
+  );
+}
+
+/**
+ * The five closed sections, as a tree. Split out so a test can assert the
+ * inventory and the empty-honest expanded body without standing up `GET /parts`.
+ */
+export function ProjectSectionList({
+  open,
+  onToggle,
+}: {
+  readonly open: ReadonlySet<ProjectTreeSection>;
+  readonly onToggle: (id: ProjectTreeSection) => void;
+}): React.JSX.Element {
+  return (
+    <Tree label={copy.rail.title}>
+      {PROJECT_TREE_SECTIONS.map((id) => {
+        const expanded = open.has(id);
+        return (
+          <TreeRow
+            key={id}
+            depth={0}
+            selected={false}
+            expanded={expanded}
+            onSelect={() => {
+              onToggle(id);
+            }}
+            onToggle={() => {
+              onToggle(id);
+            }}
+            data-tree-row="section"
+            data-tree-section={id}
+            label={copy.rail.sections[id]}
+          >
+            {expanded ? (
+              <TreeGroup>
+                <li role="none">
+                  <EmptyState
+                    icon="file"
+                    density="inline"
+                    title={copy.rail.sectionEmptyTitle}
+                    body={copy.rail.sectionEmpty}
+                    data-tree-section-empty={id}
+                  />
+                </li>
+              </TreeGroup>
+            ) : null}
+          </TreeRow>
+        );
+      })}
+    </Tree>
   );
 }
 

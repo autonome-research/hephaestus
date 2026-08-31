@@ -24,7 +24,14 @@
 // carries `meshes` alone. Reading the association is the same fact from the
 // party that actually built the tree.
 
-import { Box3, Vector3, type Object3D, type OrthographicCamera, type Plane } from "three";
+import {
+  Box3,
+  Vector3,
+  type Object3D,
+  type OrthographicCamera,
+  type PerspectiveCamera,
+  type Plane,
+} from "three";
 import type { GLTF } from "three/addons/loaders/GLTFLoader.js";
 import { eyeDirection, upHint, viewAngles } from "./cameras";
 import { explodeTranslation, type Displacement } from "./explode";
@@ -254,6 +261,39 @@ export function applyFraming(camera: OrthographicCamera, framing: Framing): void
   camera.bottom = -framing.halfHeight;
   camera.near = framing.near;
   camera.far = framing.far;
+  camera.lookAt(framing.target[0], framing.target[1], framing.target[2]);
+  camera.updateProjectionMatrix();
+  camera.updateMatrixWorld(true);
+}
+
+/**
+ * Vertical FOV that matches an orthographic `halfHeight` at `distance`.
+ *
+ * The named views and `heph render` stay orthographic. Perspective is a
+ * viewing aid that keeps the same eye, target and vertical extent so Fit and
+ * the view cube still mean one camera. Returns 0 when the pair is not a
+ * positive finite framing — there is no sensible FOV for an unframed camera
+ * and none is invented.
+ */
+export function perspectiveFovDeg(halfHeight: number, distance: number): number {
+  if (!Number.isFinite(halfHeight) || !Number.isFinite(distance)) return 0;
+  if (halfHeight <= 0 || distance <= 0) return 0;
+  return (2 * Math.atan(halfHeight / distance) * 180) / Math.PI;
+}
+
+/** Point a perspective camera at the same framing `applyFraming` uses. */
+export function applyPerspectiveFraming(camera: PerspectiveCamera, framing: Framing): void {
+  camera.position.set(framing.eye[0], framing.eye[1], framing.eye[2]);
+  camera.up.set(framing.up[0], framing.up[1], framing.up[2]);
+  camera.near = framing.near;
+  camera.far = framing.far;
+  const distance = Math.hypot(
+    framing.eye[0] - framing.target[0],
+    framing.eye[1] - framing.target[1],
+    framing.eye[2] - framing.target[2],
+  );
+  camera.fov = perspectiveFovDeg(framing.halfHeight, distance);
+  camera.aspect = framing.halfHeight > 0 ? framing.halfWidth / framing.halfHeight : 1;
   camera.lookAt(framing.target[0], framing.target[1], framing.target[2]);
   camera.updateProjectionMatrix();
   camera.updateMatrixWorld(true);

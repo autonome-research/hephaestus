@@ -13,14 +13,17 @@ duplicated. It lives here, above both, and both import it.
 
 This module deliberately holds only projections that are shared *across
 transports*. A projection with one caller belongs next to that caller.
+``list_parts_projection`` is re-exported from
+:mod:`hephaestus.core.project_store.listing` so ``heph part list`` can emit
+the same body without importing the server package.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Final
 
 from hephaestus.core.project_store.layout import ProjectLayout
+from hephaestus.core.project_store.listing import list_parts_projection
 from hephaestus.core.project_store.store import ProjectStore
 
 __all__ = [
@@ -74,24 +77,3 @@ def open_project_projection(
             key: bool(capabilities.get(key, False)) for key in CAPABILITY_KEYS
         }
     return payload
-
-
-def list_parts_projection(root: Path, project_store: ProjectStore) -> dict[str, Any]:
-    """The ``list_parts`` body: ``[{name, path, content_hash, snapshot_ref}]``.
-
-    ``path`` is relative to the project root — a client API never learns an
-    absolute filesystem path it could try to hand back (§2.3: no route takes a
-    raw filesystem path).
-    """
-    parts: list[dict[str, Any]] = []
-    for name in project_store.list_parts():
-        snapshot = project_store.read_part(name)
-        parts.append(
-            {
-                "name": name,
-                "path": str(snapshot.path.relative_to(root)),
-                "content_hash": snapshot.content_hash,
-                "snapshot_ref": snapshot.snapshot_ref,
-            }
-        )
-    return {"status": "ok", "parts": parts}

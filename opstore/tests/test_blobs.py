@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
@@ -46,6 +47,65 @@ def test_blob_path_layout_and_no_temp_leftovers(blobs: BlobStore, store_root: Pa
     assert expected.read_bytes() == b"payload"
     leftovers = [p for p in expected.parent.iterdir() if p.name.startswith(".")]
     assert leftovers == []
+
+
+def _concurrent_put(blobs: BlobStore, payload: bytes) -> tuple[list[str], list[BaseException]]:
+    """Two threads, one payload, started together."""
+    failures: list[BaseException] = []
+    hashes: list[str] = []
+    lock = threading.Lock()
+    both_in = threading.Barrier(2, timeout=10)
+
+    def turn() -> None:
+        both_in.wait()
+        try:
+            blob_hash = blobs.put(payload)
+        except BaseException as exc:  # pragma: no cover - the regression itself
+            with lock:
+                failures.append(exc)
+            return
+        with lock:
+            hashes.append(blob_hash)
+
+    threads = [threading.Thread(target=turn) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+    return hashes, failures
+
+
+def test_concurrent_puts_of_the_same_bytes_do_not_raise(
+    blobs: BlobStore, store_root: Path, db: Database
+) -> None:
+    """Two threads putting the same hash must both return, not FileExistsError.
+
+    ``Publisher.freeze_inputs`` releases the part lock before geometry runs, so
+    two sessions may build the same part at once and both ``put`` the same
+    artifact bytes. The temp file used to be ``.{digest}.{pid}.tmp`` — unique
+    across processes, not across threads — and the second ``O_CREAT|O_EXCL``
+    crashed ``test_two_concurrent_runs_each_read_their_own_request``.
+    """
+    last_hash = ""
+    for index in range(40):
+        # Fresh bytes each pair so both threads still race on a missing file.
+        # Repeating one payload would make iteration 2+ a no-op exists() check.
+        payload = f"identical concurrent artifact {index}".encode()
+        hashes, failures = _concurrent_put(blobs, payload)
+        assert failures == [], repr(failures[0])
+        assert len(hashes) == 2
+        assert hashes[0] == hashes[1] == sha256_bytes(payload)
+        last_hash = hashes[0]
+
+    digest = hex_of(last_hash)
+    final = store_root / "blobs" / "sha256" / digest[:2] / digest
+    assert final.is_file()
+    leftovers = [
+        p for p in (store_root / "blobs").rglob("*") if p.is_file() and p.name.startswith(".")
+    ]
+    assert leftovers == []
+    rows = db.conn.execute("SELECT hash FROM blobs WHERE hash = ?", (last_hash,)).fetchall()
+    assert len(rows) == 1
 
 
 def test_dedup_single_file_single_row(

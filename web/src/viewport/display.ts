@@ -449,3 +449,58 @@ export function buildGroundGrid(spec: GroundGridSpec, palette: ViewportPalette):
     },
   };
 }
+
+/**
+ * The two display flags that mutate the loaded meshes. Grid, triad and ortho
+ * live on the engine / the DOM — they are not a material decision.
+ *
+ * `materialOverride` on means every mesh wears the one authored material at
+ * `--viewport-part` (the ≥4.5:1 floor). Off restores the exporter's own
+ * material, which is a selection ID, not a colour. There is no third material.
+ *
+ * `wireframe` on hides the fill and keeps the silhouette. The edges are
+ * children of the mesh (§3.11.4), so hiding the *material* rather than the
+ * *node* is what leaves the outline standing. A hidden solid (§5.4) still
+ * hides both, because that is hierarchical visibility on the node.
+ */
+export interface DisplayAppearance {
+  readonly wireframe: boolean;
+  readonly materialOverride: boolean;
+}
+
+/** Collect meshes first: `traverse` walks `children` live. */
+function meshesOf(root: Object3D): Mesh[] {
+  const meshes: Mesh[] = [];
+  root.traverse((object: Object3D) => {
+    const mesh = object as Mesh;
+    if (mesh.isMesh === true) meshes.push(mesh);
+  });
+  return meshes;
+}
+
+/**
+ * Apply the operator's material / wireframe flags to an already-authored tree.
+ *
+ * Idempotent and order-independent with `authorDisplay`: a mesh that was never
+ * authored has no `SOURCE_MATERIAL_KEY` and is left alone, so a call before
+ * load is a no-op rather than a guess.
+ */
+export function applyAppearance(
+  root: Object3D,
+  authored: MeshStandardMaterial,
+  appearance: DisplayAppearance,
+): void {
+  const meshes = meshesOf(root);
+  for (const mesh of meshes) {
+    const source = mesh.userData[SOURCE_MATERIAL_KEY];
+    if (source === undefined) continue;
+    mesh.material = appearance.materialOverride ? authored : source;
+  }
+  // The authored material is shared. One write covers every overridden mesh.
+  authored.visible = appearance.materialOverride && !appearance.wireframe;
+  for (const mesh of meshes) {
+    const source = mesh.userData[SOURCE_MATERIAL_KEY] as MeshStandardMaterial | undefined;
+    if (source === undefined || source === authored) continue;
+    source.visible = !appearance.materialOverride && !appearance.wireframe;
+  }
+}

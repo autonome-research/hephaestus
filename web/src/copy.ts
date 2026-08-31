@@ -60,6 +60,54 @@ export const copy = {
       "There is no artifact to hold: this part has no build whose artifact the workspace could pin.",
   },
 
+  /**
+   * Header chrome next to the pin (issue #12). Export and BOM are simple
+   * controls bound to the on-screen artifact, not only inspector tabs.
+   */
+  chrome: {
+    export: "Export",
+    exportTitle: "Export the pinned artifact",
+    bom: "BOM",
+    bomTitle: "Sourcing from this part's declared manufacturing fields",
+    more: "Drawings, documents, and export history",
+  },
+
+  /**
+   * BOM / sourcing inspector. Only manufacturing identity the part already
+   * declares — process, stock, material spec. No vendor catalog.
+   */
+  sourcing: {
+    heading: "Sourcing",
+    subjectHeading: "This artifact",
+    pin: "Pinned artifact",
+    noPin: "No artifact is pinned.",
+    boundTo: "Evaluated with artifact",
+    unbound: "No current build; these values were parsed from the script text.",
+    emptyTitle: "No sourcing fields declared",
+    empty:
+      "This part does not declare a process, stock form, blank size, or material spec, so there is nothing to source from.",
+    undeclared: "not declared",
+    undeclaredHeading: "Not declared",
+    undeclaredNote:
+      "Only manufacturing fields this part declares are used for sourcing. Nothing is looked up from a catalog.",
+    catalogNote:
+      "Sourcing is the process, stock, and material spec the part already declares. This workspace does not query a vendor catalog.",
+    sourceHeading: "Read from",
+    sourceLabel: "Source",
+    source: {
+      build_record:
+        "the build record — the values as the worker evaluated them, so a computed field reads like a literal one",
+      script_literals:
+        "the script's string literals — this part has no current build to read runtime values from, so a computed field cannot be reported",
+    },
+    fields: {
+      process: "process",
+      stock_form: "stock form",
+      blank_size: "blank size",
+      material_spec: "material spec",
+    },
+  },
+
   /** §4.5 `pin_mode`, and the §4.1 build-state chip. */
   pinMode: {
     current: "current",
@@ -86,6 +134,20 @@ export const copy = {
     open: "Show the project rail",
     close: "Hide the project rail",
     partsHeading: "Parts",
+    /**
+     * Closed project-tree sections. Always listed, even when the engine has
+     * projected no rows. The names are the inventory; emptiness is a fact.
+     */
+    sections: {
+      analyses: "Analyses",
+      docs: "Docs",
+      globals: "Globals",
+      imports: "Imports",
+      materials: "Materials",
+    },
+    sectionEmptyTitle: "No facts",
+    sectionEmpty:
+      "The engine has not projected any items for this section. Nothing is being hidden, and no catalog is invented here.",
     /** §13.1: the rail shows the git axis; the header shows the artifact axis. */
     gitHeading: "Working tree",
     versionsHeading: "Versions",
@@ -149,11 +211,12 @@ export const copy = {
 
   /**
    * Statement Timeline. Marks come from `GET /parts/{part}/build` only —
-   * last-good checkpoint, failed statement, or the current successful artifact.
+   * projected `checkpoints[]`, last-good, failed, or the current artifact.
    */
   timeline: {
     heading: "Timeline",
     tabsLabel: "Build timeline",
+    statement: "Statement",
     lastGood: "Last good",
     failed: "Failed",
     current: "Current",
@@ -185,7 +248,7 @@ export const copy = {
     reset: "Reset to default",
   },
 
-  /** §5. The viewport, its two overlays, and every named absence it can reach. */
+  /** §5. The viewport, its overlays, and every named absence it can reach. */
   viewport: {
     label: "Geometry",
     /**
@@ -250,6 +313,41 @@ export const copy = {
     triad: {
       label: "Axis orientation",
       axis: { x: "X", y: "Y", z: "Z" },
+    },
+    /**
+     * Operator appearance cluster (§3.11, §5.5). Words, not icons: the sprite
+     * is closed at 18 ids and these controls are a scan, not a status.
+     */
+    appearance: {
+      label: "Viewport appearance",
+      wireframe: {
+        label: "Wireframe",
+        explain: "Hide the fill and keep the silhouette. Hidden solids still disappear with their outline.",
+      },
+      fit: {
+        label: "Fit",
+        explain:
+          "Frame the pinned artifact the way the renderer frames this named view. Orbit and zoom return to that framing.",
+        disabled: "No pinned artifact is on the canvas, so there is nothing to frame.",
+      },
+      ortho: {
+        label: "Ortho",
+        explain:
+          "Orthographic projection, matching the named views the renderer can reproduce. Off is a perspective viewing aid; Fit and the view cube stay the same camera.",
+      },
+      grid: {
+        label: "Grid",
+        explain: "Ground grid, spaced at the step the readout reports.",
+      },
+      triad: {
+        label: "Axes",
+        explain: "Axis triad in the same Z-up frame as the camera.",
+      },
+      material: {
+        label: "Material",
+        explain:
+          "Override every solid with the viewport part colour, at least 4.5:1 against the ground. Off restores the exporter's own material; it does not invent a new one.",
+      },
     },
     viewCube: {
       label: "Standard views",
@@ -319,6 +417,7 @@ export const copy = {
       checks: "Checks",
       dfm: "DFM",
       export: "Export",
+      sourcing: "Sourcing",
     },
     pending: "This panel is not part of this build of the workspace yet.",
     noPartTitle: "No part selected",
@@ -914,6 +1013,28 @@ export const copy = {
       "This is longer than one context block may be, so it was cut. The agent is told that it was cut.",
     discloseEmpty: "Nothing. The agent is told only what you type.",
     discloseFailed: "The preview could not be composed.",
+
+    /**
+     * Session chrome (issue #13). Model and effort identifiers come from
+     * `GET /providers` — the text is the provider's own model id, not a
+     * house name. Effort is not a prompt field (§7A.3), so the chrome
+     * projects `off` rather than offering a picker. DFM is the engine
+     * equivalent of a Plan/DFM chip: the project `[dfm] auto_run` setting
+     * and `run_dfm`, kept as two controls because collapsing them would
+     * imply a tool argument that does not exist (INTERFACE.md §6.4).
+     */
+    model: "Model",
+    effort: "Effort",
+    effortOff: "off",
+    noModels: "No models are declared in the provider configuration.",
+    addCurrentView: "Add current view",
+    addCurrentViewWhy:
+      "Include this page's view and selection in the context the agent is told. The preview below is advisory — the message is composed again when it is sent.",
+    dfmAutoRun: "DFM auto-run",
+    dfmRun: "Run DFM",
+    dfmNoPart: "No part is selected, so design-for-manufacture has nothing to evaluate.",
+    dfmWriting: "Writing the project setting…",
+    dfmRunning: "Running DFM…",
 
     /**
      * §7A.2's create affordances. Two, both explicit, and the profile is shown

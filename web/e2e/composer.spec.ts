@@ -107,6 +107,12 @@ test.describe("§7A.12 case 1 — the blank canvas reaches the workspace", () =>
     await expect(composer).toHaveAttribute("data-composer-state", "idle");
     await expect(composer).toHaveAttribute("data-disabled-reason", "null");
     await expect(composer).toHaveAttribute("data-profile", "orchestrator");
+    // Issue #13: model id is the provider's own, never a house name.
+    await expect(composer.locator("[data-composer-model]")).toHaveAttribute(
+      "data-composer-model",
+      "heph-fake-model",
+    );
+    await expect(composer.locator("[data-context-add-view]")).toHaveCount(1);
 
     await composer
       .locator("[data-composer-input]")
@@ -157,9 +163,26 @@ test.describe("§7A.12 case 2 — the context envelope", () => {
     await expect(partChip).toHaveAttribute("data-context-value", PART);
     await expect(composer.locator("[data-context-chips] [data-source]")).toHaveCount(0);
 
+    // Issue #13: a selected part projects the two §6.4 DFM controls, not a
+    // Plan toggle. The fixture starts `[dfm] auto_run = false`.
+    await expect(composer.locator("[data-composer-dfm]")).toHaveCount(1);
+    await expect(composer.locator("[data-dfm-auto-run]")).toHaveAttribute("data-dfm-auto-run", "false");
+    await expect(composer.locator("[data-dfm-auto-run-toggle]")).toHaveCount(1);
+    await expect(composer.locator("[data-dfm-run]")).toHaveCount(1);
+
     // Every member is opt-out (§7A.3).
     await partChip.locator('[data-context-drop="part"]').click();
     await expect(partChip).toHaveAttribute("data-context-dropped", "");
+
+    // Issue #13: Add current view un-drops the view and opens the advisory
+    // preview. The server must compose the camera token — a disclosure that
+    // said the agent would be told nothing would be the client/server
+    // emptiness predicates disagreeing.
+    await composer.locator("[data-context-add-view]").click();
+    const viewChip = composer.locator('[data-context-key="view"]');
+    await expect(viewChip).not.toHaveAttribute("data-context-dropped", "");
+    await expect(composer.locator("[data-context-preview]")).toBeVisible();
+    await expect(composer.locator("[data-context-block]")).toContainText("camera view:");
   });
 
   test("the disclosure renders the server's block, and says it is advisory", async ({ page }) => {
@@ -289,6 +312,10 @@ test.describe("§7A.12 case 6 — no agent runtime", () => {
     // but a text editor".
     const path = await composer.locator("[data-attach-path]").getAttribute("data-attach-path");
     expect(path).toMatch(/providers\.json$/);
+
+    // Named absence: do not render a model picker that reads as a signed-in agent.
+    await expect(composer.locator("[data-composer-model]")).toHaveCount(0);
+    await expect(composer.locator("[data-context-add-view]")).toHaveCount(1);
 
     // The serve still answers every read route: `agent_unavailable` is about
     // sessions, not about the project.

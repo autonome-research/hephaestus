@@ -201,6 +201,13 @@
         "type": "string"
       },
       "description": "\u00a75.2 manufacturing metadata as the worker evaluated it (runtime truth; empty for pre-2026-08-03 records)."
+    },
+    "checkpoints": {
+      "type": "array",
+      "description": "Incremental-executor per-statement checkpoints (architecture \u00a73.1). Absent from records written before the HTTP Timeline projection.",
+      "items": {
+        "$ref": "#/$defs/statementCheckpoint"
+      }
     }
   },
   "$defs": {
@@ -358,6 +365,63 @@
         },
         "hint": {
           "type": "string"
+        }
+      }
+    },
+    "statementCheckpoint": {
+      "type": "object",
+      "required": [
+        "index",
+        "line",
+        "statement",
+        "span",
+        "bound",
+        "shapes",
+        "artifact_ref"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "statement": {
+          "type": "string"
+        },
+        "span": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "minItems": 4,
+          "maxItems": 4
+        },
+        "bound": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "shapes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "artifact_ref": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/artifactRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },

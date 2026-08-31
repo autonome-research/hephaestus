@@ -42,23 +42,23 @@ export type ChannelOverlay = (typeof CHANNEL_OVERLAYS)[number];
  * Stage tabs. `viewport` / `script` / `diff` are §4.5's original closed set.
  * `timeline` and `results` are the part views issue #4 adds so Script /
  * Timeline / Results are first-class switches on the same tablist. `results`
- * here reuses `ResultsPanel`; the inspector Results tab stays.
+ * here reuses `ResultsPanel`. When this tab is selected the inspector does
+ * not also mount Results — that was the duplicate list/metrics after #6.
  */
 export const STAGE_TABS = ["viewport", "script", "timeline", "results", "diff"] as const;
 export type StageTab = (typeof STAGE_TABS)[number];
 
 /**
- * §4.2's panel inventory, plus §22.7's sixth tab.
+ * §4.2's panel inventory, plus §22.7's `export` tab and the sourcing tab
+ * issue #12 adds.
  *
- * §22.7's DECISION: "the Inspector gains a sixth tab, `export`. The header gains
- * nothing." The Inspector because §4.3's provenance spine puts the *pin* in the
- * header and everything the pin *implies* in the Inspector — Results,
- * Properties, Provenance, Checks and DFM are all statements about the pinned
- * artifact, and an export is another one; it inherits the pin without a second
- * control and sits beside the DFM panel whose process pack decides the kerf it
- * reports. Not the header, which is 44px of the most contested space in the app
- * and already renders the word "current" twice in two different closed
- * vocabularies (§4.1).
+ * §22.7 put export in the Inspector so it inherits the pin. That tab stays:
+ * history, drawings, documents, and the two-step download live there. Issue
+ * #12 adds a seventh tab, `sourcing`, for the BOM readout that is only the
+ * manufacturing fields the part already declares — and it also puts a simple
+ * Export + BOM control in header chrome next to the pin, so egress is not
+ * only a buried inspector tab. The chrome still sends
+ * `WorkspaceState.artifact_ref` verbatim (§22.5).
  */
 export const INSPECTOR_TABS = [
   "results",
@@ -67,8 +67,31 @@ export const INSPECTOR_TABS = [
   "checks",
   "dfm",
   "export",
+  "sourcing",
 ] as const;
 export type InspectorTab = (typeof INSPECTOR_TABS)[number];
+
+/**
+ * Inspector tabs the drawer may show for a given stage tab.
+ *
+ * When the stage is already Results, the Results inspector tab is omitted so
+ * the same `ResultsPanel` is not mounted twice. Every other inspector tab
+ * stays; the e2e still addresses them with `[data-inspector-tab]`.
+ */
+export function inspectorTabsFor(stage: StageTab): readonly InspectorTab[] {
+  return stage === "results" ? INSPECTOR_TABS.filter((tab) => tab !== "results") : INSPECTOR_TABS;
+}
+
+/**
+ * The inspector panel that actually mounts.
+ *
+ * A URL that carries `tab=results&itab=results` (the defaults stacked) must
+ * not render two geometry lists. Properties is the next tab in the closed
+ * inventory and is already a statement about the pinned artifact.
+ */
+export function effectiveInspectorTab(stage: StageTab, tab: InspectorTab): InspectorTab {
+  return stage === "results" && tab === "results" ? "properties" : tab;
+}
 
 export const PIN_MODES = ["current", "pinned"] as const;
 export type PinMode = (typeof PIN_MODES)[number];

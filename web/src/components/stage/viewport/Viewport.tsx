@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // The viewport (INTERFACE.md §5), and the whole of the client's share of
-// rendering: a three.js canvas over the **pinned** artifact's GLB, four overlay
-// controls, and one server-rendered plate layer.
+// rendering: a three.js canvas over the **pinned** artifact's GLB, the overlay
+// controls (view cube, appearance cluster, explode, section), and one
+// server-rendered plate layer.
 //
 // The component is a *driver*. `viewport/engine.ts` owns the renderer, the scene
 // and the camera; every workspace field this viewport reads gets exactly one
@@ -39,6 +40,8 @@ import { useGlb } from "../../../viewport/useGlb";
 import { labelsForPart, visibilityStore } from "../../../state/visibility";
 import { Badge, Chip, EmptyState, type IconId } from "../../../system";
 import type { SolidIndex } from "../../../viewport/scene";
+import { appearanceStore } from "../../../state/appearance";
+import { AppearanceControls } from "./AppearanceControls";
 import { AxisTriad } from "./AxisTriad";
 import { ExplodeSlider } from "./ExplodeSlider";
 import { GridReadout } from "./GridReadout";
@@ -77,6 +80,11 @@ export function Viewport(): React.JSX.Element {
     visibilityStore.getSnapshot,
   );
   const hidden = useMemo(() => new Set(labelsForPart(hiddenKeys, part)), [hiddenKeys, part]);
+  const appearance = useSyncExternalStore(
+    appearanceStore.subscribe,
+    appearanceStore.getSnapshot,
+    appearanceStore.getSnapshot,
+  );
   const glb = useGlb(artifactRef);
 
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -113,6 +121,17 @@ export function Viewport(): React.JSX.Element {
     framedRef.current = null;
     workspaceStore.update({ view: viewName });
   }, []);
+
+  const onFit = useCallback((): void => {
+    const live = engineRef.current;
+    if (live === null) return;
+    // Fit is an explicit re-frame of the *current* named view, including after
+    // an orbit: `framedRef` would otherwise skip `frame()` for the same key.
+    live.frame(view, explodeT > 0);
+    framedRef.current = framingKey;
+    setScale(live.scale());
+    setStep(live.gridStep());
+  }, [view, explodeT, framingKey]);
 
   // -- the engine: one per canvas, for the canvas's life --------------------
   useEffect(() => {
@@ -232,6 +251,22 @@ export function Viewport(): React.JSX.Element {
     engineRef.current?.setHidden(hidden);
   }, [hidden, engineReady]);
 
+  // -- appearance: the operator cluster (§3.11, §5.5) -----------------------
+  useEffect(() => {
+    engineRef.current?.setAppearance({
+      wireframe: appearance.wireframe,
+      materialOverride: appearance.materialOverride,
+    });
+  }, [appearance.wireframe, appearance.materialOverride, engineReady]);
+
+  useEffect(() => {
+    engineRef.current?.setGridVisible(appearance.grid);
+  }, [appearance.grid, engineReady]);
+
+  useEffect(() => {
+    engineRef.current?.setOrtho(appearance.ortho);
+  }, [appearance.ortho, engineReady]);
+
   // -- section: the live clipping preview (§5.3) ----------------------------
   const plane = useMemo(
     () => (sectionPlane === null ? null : parseSectionPlane(sectionPlane)),
@@ -323,13 +358,16 @@ export function Viewport(): React.JSX.Element {
           overlay that never changes size, because a Playwright element
           screenshot composites what is painted over the canvas and G4.5's
           control region is exactly that frame (see `GridReadout`'s header). */}
-      <AxisTriad engine={engine} />
+      <AxisTriad engine={engine} visible={appearance.triad} />
       {/* The grid step is a fact about a grid, so it is reported only while
           there is one. Derived at render rather than cleared from the load
           effect: an effect that calls `setState` in its own body is the
           cascading render `react-hooks/set-state-in-effect` refuses, and the
-          answer is a pure function of state we already hold. */}
-      <GridReadout scale={scale} step={displayedRef === null ? 0 : step} />
+          answer is a pure function of state we already hold. Off is the same
+          as "no framing": the readout must not describe a grid the operator
+          has hidden. */}
+      <GridReadout scale={scale} step={displayedRef === null || !appearance.grid ? 0 : step} />
+      <AppearanceControls canFit={displayedRef !== null && state === "ready"} onFit={onFit} />
       <div className={styles["controls"]}>
         <ExplodeSlider />
         {/* The bounds belong to the *loaded* GLB: while none is loaded the

@@ -1,7 +1,7 @@
 // Copyright 2026 The Hephaestus Authors
 // SPDX-License-Identifier: Apache-2.0
 //
-// §4.1's HEADER: `identity → pin → build state → token`.
+// §4.1's HEADER: `identity → pin → Export/BOM chrome → build state → token`.
 //
 // The two axes §13.1 insists must never blur are split across the shell on
 // purpose: **the header shows the artifact axis** (pin, build state) and **the
@@ -29,6 +29,7 @@ import { useWorkspace } from "../state/react";
 import { Chip, formatRef } from "../system";
 import { ArtifactPin } from "./ArtifactPin";
 import { BuildStateChip } from "./BuildStateChip";
+import { PartChrome } from "./chrome/PartChrome";
 import { Fact } from "./Fact";
 import styles from "./Header.module.css";
 
@@ -77,7 +78,10 @@ export function Header({ railToggle }: HeaderProps): React.JSX.Element {
         )}
       </div>
 
-      <ArtifactPin currentRef={build.data?.artifact_ref ?? null} />
+      <div className={styles["subject"]}>
+        <ArtifactPin currentRef={build.data?.artifact_ref ?? null} />
+        <PartChrome />
+      </div>
 
       <div className={styles["right"]}>
         <BuildStateChip build={build.data} />

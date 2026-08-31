@@ -17,8 +17,8 @@
   padding: 0;
   list-style: none;
   display: flex;
-  justify-content: space-between;
-  gap: var(--gap-inline);
+  flex-direction: column;
+  gap: var(--gap-stack);
 }
 
 .mark {
