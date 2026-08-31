@@ -27,7 +27,7 @@ myproject/
   checks/
     fit.py            cross-part checks (any part addressable)
   references/         operator-supplied datasheets/photos (heph reference add)
-  imports/            STEP files a script may import_step(...)
+  imports/            STEP/mesh/points admitted by heph import add
   .heph/              build store, artifacts, session state — gitignore this
 ```
 
