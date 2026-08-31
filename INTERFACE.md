@@ -1490,7 +1490,9 @@ built, not entries in this inventory. Adding one is not §18 work; adding a
 **panel** still is.
 
 **Three panels join the inventory under Stage 10, and are marked as such.**
-`ExportPanel` (§22.7) is **Stage 10A**; `ProvidersPanel` + `SignInDialog`
+`ExportPanel` (§22.7) is **Stage 10A**; `SourcingPanel` (issue #12) reads
+declared manufacturing identity from the existing properties route;
+`ProvidersPanel` + `SignInDialog`
 (§23.8) are **Stage 10B**, with the panel's discovery affordance **Stage 10C**
 (§23.5). They are **not** Stage 4/5 work and do not become so by appearing here. They are
 listed because a closed list that silently acquires members is not closed, and
@@ -4280,6 +4282,15 @@ beside the DFM panel whose process pack decides the kerf it will report. WHY not
 the header: the header is 44px of the most contested space in the app and already
 renders the word "current" twice in two different closed vocabularies (§4.1) —
 adding a third element there is how that defect happened.
+
+**AMENDED (issue #12).** The inspector tab stays — history, drawings, documents,
+and the two-step download live there, and every `data-export-*` selector is
+unchanged. The operator session also puts a simple **Export** and **BOM**
+control in header chrome next to the pin, so egress is not only a buried tab.
+Both still send `WorkspaceState.artifact_ref` verbatim (§22.5). BOM/sourcing
+reads only manufacturing fields the part already declares (`process`,
+`stock_form`, `blank_size`, `material_spec`); there is no `conform_to` on the
+`part.*` surface and no live vendor catalog.
 
 **TIGHTENING.** `ExportPanel` is the only Inspector tab containing a control that
 writes, so it renders its **subject before its controls**: the pinned ref, its

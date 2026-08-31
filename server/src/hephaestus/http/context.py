@@ -144,13 +144,13 @@ _PIN_MODES: Final[frozenset[str]] = frozenset({"current", "pinned"})
 _STAGE_TABS: Final[frozenset[str]] = frozenset(
     {"viewport", "script", "timeline", "results", "diff"}
 )
-#: Six, not five: §22.7's DECISION gives the Inspector an ``export`` tab. The
-#: envelope's tab tokens are *the client's own* navigation vocabulary, so this
-#: set tracks ``web/src/state/workspace.ts::INSPECTOR_TABS`` — a tab the client
-#: can open and this route refuses would be a composer that stops working when
-#: the operator changes panel.
+#: Tracks ``web/src/state/workspace.ts::INSPECTOR_TABS``. §22.7 added
+#: ``export``; issue #12 added ``sourcing`` (BOM from declared manufacturing
+#: fields). The envelope's tab tokens are *the client's own* navigation
+#: vocabulary — a tab the client can open and this route refuses would be a
+#: composer that stops working when the operator changes panel.
 _INSPECTOR_TABS: Final[frozenset[str]] = frozenset(
-    {"results", "properties", "provenance", "checks", "dfm", "export"}
+    {"results", "properties", "provenance", "checks", "dfm", "export", "sourcing"}
 )
 
 #: The marker a shortened block carries **in its own text**. The model cannot

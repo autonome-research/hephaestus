@@ -308,6 +308,23 @@ export type MetadataField =
   | "assembly_method"
   | "joint";
 
+/**
+ * Manufacturing identity a BOM/sourcing inspector may render.
+ *
+ * Closed subset of `MetadataField`. There is no `conform_to` field on the
+ * `part.*` surface (`script_contract.md` §5.2); stock is `stock_form` +
+ * `blank_size`, process is `process`, and the material class the part
+ * declares is `material_spec`. The client does not invent a tenth name, and
+ * it does not look any of these up in a vendor catalog.
+ */
+export const SOURCING_FIELDS = [
+  "process",
+  "stock_form",
+  "blank_size",
+  "material_spec",
+] as const satisfies readonly MetadataField[];
+export type SourcingField = (typeof SOURCING_FIELDS)[number];
+
 /** Which read answered a properties projection. Closed (`http/projections.py`). */
 export type PropertySource = "build_record" | "script_literals";
 

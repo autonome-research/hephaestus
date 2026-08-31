@@ -1,22 +1,24 @@
 // Copyright 2026 The Hephaestus Authors
 // SPDX-License-Identifier: Apache-2.0
 //
-// The INSPECTOR drawer (INTERFACE.md §4.1) — the six tabs of §4.2's panel
-// inventory, as a bottom drawer of the Stage rather than a third column.
+// The INSPECTOR drawer (INTERFACE.md §4.1) — the closed inspector tabs, as a
+// bottom drawer of the Stage rather than a third column.
 //
 // §4.1: "INSPECTOR is a bottom drawer of the Stage rather than a third column:
 // its content is *about the thing in the Stage*, and losing that spatial
 // relation costs more than the vertical pixels."
 //
 // The tab is workspace state (`inspector_tab`, §4.5), so the drawer's selection
-// is in the URL and survives a reload like everything else. All six panels of
-// the closed inventory are mounted; each is a projection of one read route and
-// owns its own named absences (§6.1–§6.4, §4.4).
+// is in the URL and survives a reload like everything else. Each panel is a
+// projection of one read route and owns its own named absences (§6.1–§6.4,
+// §4.4). Sourcing reads the same properties route as Properties, filtered to
+// the declared manufacturing-identity fields.
 //
 // The sixth is §22.7's `export`, and it is the only one containing a control that
-// WRITES. It is here rather than in the header because §4.3's provenance spine
-// puts the pin in the header and everything the pin implies in the Inspector, so
-// the export tab inherits the pin without a second control.
+// WRITES. Issue #12 also puts a compact Export control in header chrome, bound
+// to the same pin; this tab keeps history, drawings, and documents.
+//
+// The seventh is sourcing: BOM from declared manufacturing fields only.
 //
 // §4.1(c): the drawer's HEIGHT is not this component's any more — the Stage owns
 // it as an explicit grid row, and `.content { overflow: auto }` takes the excess.
@@ -43,6 +45,7 @@ import { ExportPanel } from "../inspector/ExportPanel";
 import { PropertiesPanel } from "../inspector/PropertiesPanel";
 import { ProvenancePanel } from "../inspector/ProvenancePanel";
 import { ResultsPanel } from "../inspector/ResultsPanel";
+import { SourcingPanel } from "../inspector/SourcingPanel";
 import styles from "./Inspector.module.css";
 
 export function Inspector(): React.JSX.Element {
@@ -71,6 +74,8 @@ export function Inspector(): React.JSX.Element {
           <ProvenancePanel intent={intent} />
         ) : tab === "export" ? (
           <ExportPanel />
+        ) : tab === "sourcing" ? (
+          <SourcingPanel />
         ) : (
           <DfmPanel
             onResolveDescriptor={(next) => {

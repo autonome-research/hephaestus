@@ -45,15 +45,17 @@ import provenanceUnattributedJson from "./fixtures/provenance_unattributed.json"
 import { visibilityKey } from "../src/state/visibility";
 import { ResultsView } from "../src/components/inspector/ResultsPanel";
 import { PropertiesView } from "../src/components/inspector/PropertiesPanel";
+import { SourcingView } from "../src/components/inspector/SourcingPanel";
 import { ChecksView } from "../src/components/inspector/ChecksPanel";
 import { DfmView } from "../src/components/inspector/DfmPanel";
 import { ProvenanceView } from "../src/components/inspector/ProvenancePanel";
-import type {
-  BuildDocument,
-  ChecksDocument,
-  DfmDocument,
-  PropertiesDocument,
-  ResolvedSelection,
+import {
+  SOURCING_FIELDS,
+  type BuildDocument,
+  type ChecksDocument,
+  type DfmDocument,
+  type PropertiesDocument,
+  type ResolvedSelection,
 } from "../src/api/types";
 
 // The fixtures are JSON, so they arrive structurally typed. Each is asserted
@@ -104,6 +106,7 @@ describe("the §1 attribution discipline holds in every panel", () => {
   const panels: Record<string, ReactElement> = {
     results: <ResultsView part="panel" build={build} hidden={new Set()} />,
     properties: <PropertiesView properties={properties} />,
+    sourcing: <SourcingView properties={properties} pinned={build.artifact_ref ?? null} />,
     checks: <ChecksView checks={checks} />,
     dfm: <DfmView dfm={dfm} secureExecutor />,
     provenance: <ProvenanceView pinned={build.artifact_ref ?? null} resolved={tagged} />,
@@ -300,6 +303,63 @@ describe("PropertiesView renders the part.* metadata (§6.2)", () => {
       .toBe("script_literals");
     // The two reads mean different things, so they must not read identically.
     expect(weak.textContent).not.toBe(host.textContent);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sourcing — declared manufacturing identity only (issue #12)
+// ---------------------------------------------------------------------------
+
+describe("SourcingView reads only declared process / stock / material spec", () => {
+  const pin = properties.build_artifact_ref;
+  const host = render(<SourcingView properties={properties} pinned={pin} />);
+  const declaredSourcing = SOURCING_FIELDS.filter((field) => field in properties.properties);
+
+  it("marks exactly the declared sourcing fields with data-field", () => {
+    expect(new Set(attributes(host, "[data-field]", "data-field"))).toEqual(new Set(declaredSourcing));
+  });
+
+  it("does not render description, finish, or other non-sourcing part.* names as fields", () => {
+    const fields = new Set(attributes(host, "[data-field]", "data-field"));
+    expect(fields.has("description")).toBe(false);
+    expect(fields.has("finish")).toBe(false);
+    expect(fields.has("joint")).toBe(false);
+    expect(fields.has("assembly_method")).toBe(false);
+    expect(fields.has("general_tolerance")).toBe(false);
+  });
+
+  it("renders each declared sourcing value under its own dotted path", () => {
+    for (const field of declaredSourcing) {
+      expect(value(host, `properties.${field}`)).toBe(properties.properties[field]);
+    }
+  });
+
+  it("binds the readout to the workspace pin and the properties artifact", () => {
+    expect(value(host, "workspace.artifact_ref")).toBe(pin ?? "");
+    expect(value(host, "properties.build_artifact_ref")).toBe(properties.build_artifact_ref ?? "");
+  });
+
+  it("says there is no catalog, as an attribute rather than as wording", () => {
+    expect(host.querySelector("[data-sourcing-catalog='none']")).not.toBeNull();
+  });
+
+  it("shows undeclared sourcing fields as a visible absence, outside data-field", () => {
+    const thin: PropertiesDocument = {
+      ...properties,
+      properties: { process: "laser_cut" },
+    };
+    const sparse = render(<SourcingView properties={thin} pinned={pin} />);
+    expect(attributes(sparse, "[data-field]", "data-field")).toEqual(["process"]);
+    expect(new Set(attributes(sparse, "[data-undeclared-field]", "data-undeclared-field"))).toEqual(
+      new Set(SOURCING_FIELDS.filter((field) => field !== "process")),
+    );
+  });
+
+  it("is empty-honest when none of the sourcing fields are declared", () => {
+    const none: PropertiesDocument = { ...properties, properties: { description: "a vent" } };
+    const empty = render(<SourcingView properties={none} pinned={null} />);
+    expect(empty.querySelector("[data-field]")).toBeNull();
+    expect(empty.querySelector("[data-source='workspace.artifact_ref']")).toBeNull();
   });
 });
 

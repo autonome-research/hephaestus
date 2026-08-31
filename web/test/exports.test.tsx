@@ -322,9 +322,10 @@ function panel(
 }
 
 describe("§22.7 — the export panel", () => {
-  it("is the Inspector's sixth tab", () => {
+  it("is an Inspector tab, and sourcing sits beside it", () => {
     expect([...INSPECTOR_TABS]).toContain("export");
-    expect(INSPECTOR_TABS).toHaveLength(6);
+    expect([...INSPECTOR_TABS]).toContain("sourcing");
+    expect(INSPECTOR_TABS).toHaveLength(7);
   });
 
   it("renders its subject above every format button", () => {
