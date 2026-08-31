@@ -5,6 +5,24 @@ SPDX-License-Identifier: Apache-2.0
 
 # The `heph` CLI
 
+## For agents
+
+You do not need the browser or MCP. After `uv sync --dev` in a clone, put
+`.venv/bin` on `PATH` (or call that `heph` by path):
+
+```console
+$ heph init /tmp/gadget && cd /tmp/gadget
+$ heph build example
+$ heph lint parts/example.py
+$ heph check --json
+$ heph render example
+```
+
+`--json` is on `build`, `check`, `lint`, and `render`. The rest of this page
+is the verb reference. Optional MCP: [mcp.md](mcp.md).
+
+---
+
 Every verb, with one worked example each. The transcripts below were produced
 against `corpus/public_fixtures/assembly` — the public clean-room fixture that
 ships with the repository — so you can reproduce all of them:
