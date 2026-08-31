@@ -200,7 +200,11 @@ export const copy = {
       viewport: "Viewport",
       script: "Script",
       timeline: "Timeline",
-      results: "Results",
+      /* Inspector tab stays "Results" (§4.1, §6). This stage tab mounts the
+         same ResultsPanel (heading: Geometry). Two visible tabs with the same
+         word is the operator confusion #17's hide-when-stage-is-Results path
+         does not cover: Viewport + inspector Results still showed both labels. */
+      results: "Geometry",
       diff: "Diff",
     },
     diffPendingTitle: "Diff is not in this build",
@@ -1054,6 +1058,15 @@ export const copy = {
     blankCanvas:
       "There is no part yet. Parts are made by asking an agent for one — it calls `create_part` and writes the script. Start a session and describe what you want.",
     blankCanvasAction: "Start a session",
+    /**
+     * Empty *session* copy when the project already has parts. The blank-canvas
+     * sentence above is a lie on that path — a selected part and `part shelf`
+     * context chips with "There is no part yet" is the defect.
+     */
+    noSessionSelectedPart: (part: string): string =>
+      `There is no session yet. ${part} is selected — start a session about it, or a project-wide session.`,
+    noSessionHasParts:
+      "There is no session yet. This project already has parts. Start a session to work on one, or a project-wide session.",
     /** §15.30: a new *project* is out of reach from here, and is refused by name. */
     noProject:
       "A new project is `heph init` at a terminal. This server opens a project that already exists.",

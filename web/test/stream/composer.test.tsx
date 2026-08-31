@@ -36,6 +36,7 @@ import {
 } from "../../src/stream/composerChrome";
 import { CHIP_ORDER, chipsFor, envelopeFor } from "../../src/stream/composerContext";
 import { DEFAULT_STATE, type WorkspaceState } from "../../src/state/workspace";
+import { formatRef } from "../../src/system";
 
 const NOTHING: ReadonlySet<ContextMember> = new Set();
 
@@ -475,5 +476,17 @@ describe("the DFM chip is the engine equivalent, not a per-message flag", () => 
     expect(html).not.toContain("data-composer-dfm-absent");
     expect(html).not.toContain("data-dfm-auto-run-toggle");
     expect(html).toContain("data-context-add-view");
+  });
+});
+
+describe("context chips do not force a 2400px stream", () => {
+  it("keeps the full artifact ref on the chip and shortens only the glyphs", () => {
+    const ref =
+      "artifact:build:sha256:83f4822a7943a7baf11b29d15c8af23c341fb4c0bfff352ac44a3f67d4bac82b";
+    const chips = chipsFor(stateWith({ part: "shelf", artifact_ref: ref }), []);
+    const artifact = chips.find((chip) => chip.key === "artifact_ref");
+    expect(artifact?.value).toBe(ref);
+    expect(formatRef(ref)).not.toBe(ref);
+    expect(formatRef(ref).length).toBeLessThanOrEqual(34);
   });
 });

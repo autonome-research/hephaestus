@@ -9,6 +9,8 @@
 
 .panel {
   flex: none;
+  align-content: start;
+  grid-template-rows: auto auto;
 }
 
 /* The rail's panels are narrow; the three-column grid a `PanelBody` declares for

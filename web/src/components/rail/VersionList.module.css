@@ -6,7 +6,9 @@
  */
 
 .panel {
-  flex: 1 1 auto;
+  flex: none;
+  align-content: start;
+  grid-template-rows: auto auto;
   min-height: 0;
   border-top: 1px solid var(--border);
 }

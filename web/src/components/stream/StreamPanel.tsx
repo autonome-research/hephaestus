@@ -57,9 +57,11 @@ import {
   type SessionRow,
   type SessionsDocument,
 } from "../../api/sessions";
+import { useParts } from "../../api/queries";
 import { copy } from "../../copy";
 import { Badge, EmptyState, type BadgeStatus } from "../../system";
 import { useWorkspace, workspaceStore } from "../../state/react";
+import { sessionEmptyBody, sessionEmptyKind } from "../../stream/sessionEmpty";
 import { useStream } from "../../stream/useStream";
 import { Composer, NewSessionAction } from "./Composer";
 import { SessionTabs } from "./SessionTabs";
@@ -91,6 +93,8 @@ const STREAM_STATUS: Readonly<Record<string, BadgeStatus>> = {
 export function StreamPanel(): React.JSX.Element {
   const selected = useWorkspace((s) => s.session);
   const part = useWorkspace((s) => s.part);
+  const parts = useParts();
+  const partCount = parts.data?.parts.length;
   const client = useQueryClient();
   const sessions = useQuery<SessionsDocument, Error>({
     queryKey: ["sessions"],
@@ -231,7 +235,8 @@ export function StreamPanel(): React.JSX.Element {
         <EmptyState
           icon="info"
           title={copy.stream.noSessionsTitle}
-          body={copy.composer.blankCanvas}
+          body={sessionEmptyBody(partCount, part)}
+          data-session-empty={sessionEmptyKind(partCount)}
           action={
             <NewSessionAction
               profiles={profiles}

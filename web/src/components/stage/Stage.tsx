@@ -23,8 +23,9 @@
 //
 // Diff is still the named pending tab. Script / Timeline / Results are the
 // part views: Monaco + PARAMS, the last-good scrubber, and the existing
-// ResultsPanel. When the stage tab is Results the inspector omits that
-// panel so the geometry list and metrics are not drawn twice.
+// ResultsPanel (stage label: Geometry). When the stage tab is Results the
+// inspector omits that panel so the geometry list and metrics are not drawn
+// twice. The inspector tab is still named Results (§4.1, §6).
 
 import { useCallback, useEffect, useRef } from "react";
 import { copy } from "../../copy";
