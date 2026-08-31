@@ -73,6 +73,7 @@ __all__ = [
     "staged_paths",
     "static_import_declarations",
     "static_import_paths",
+    "validate_import_path",
 ]
 
 #: Project-root directory holding importable STEP files (``INGEST.md`` §1).
@@ -522,6 +523,11 @@ def _validate_relative(path: str) -> PurePosixPath:
             path=path,
         )
     return candidate
+
+
+def validate_import_path(path: str) -> PurePosixPath:
+    """Public name for :func:`_validate_relative` — project ingress uses the same walk."""
+    return _validate_relative(path)
 
 
 def read_import(imports_dir: Path, path: str, *, max_bytes: int | None) -> bytes:

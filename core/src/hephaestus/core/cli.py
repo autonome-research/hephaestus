@@ -26,6 +26,10 @@
   is the ``VALIDATION.md`` §5 reviewer's job, not lint's.
 - ``heph reference add|list|remove`` registers operator-supplied reference
   documents and images (``INGEST.md`` §2); see ``hephaestus.core.cli_references``.
+- ``heph import add|list`` admits a vendor STEP or scan into ``imports/``
+  (path-confined copy, optional ``create_part`` seed). The kernel already
+  imports; this is project ingress. Browser import stays deferred
+  (``INTERFACE.md`` §15.37); see ``hephaestus.core.cli_import``.
 - ``heph assembly [--json]`` / ``heph assembly check`` show and re-evaluate the
   project's declared cross-part constraints (``ASSEMBLY.md`` §3); see
   ``hephaestus.core.cli_assembly``.
@@ -674,6 +678,14 @@ def build_parser() -> argparse.ArgumentParser:
     from hephaestus.core import cli_references
 
     cli_references.add_subparsers(sub)
+
+    # Project ingress (heph import add/list): the geometry counterpart of
+    # heph reference add. Kernel import already exists (import_step /
+    # import_mesh); this verb copies a vendor file into imports/ so a script
+    # can name it. Browser import stays deferred (INTERFACE.md §15.37).
+    from hephaestus.core import cli_import
+
+    cli_import.add_subparsers(sub)
 
     # Stage 8B comparison verb (heph diff): the operator's view of exactly the
     # facts the compare_solids tool returns (COMPARE.md §2).

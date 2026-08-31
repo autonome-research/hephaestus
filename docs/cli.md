@@ -455,6 +455,35 @@ project's `references/` directory and registers it under `--name` (default: the
 filename). The original is untouched and the project stays self-contained.
 `remove` deregisters and deletes the copy. `--json` emits the registry entry.
 
+### `heph import {add,list}`
+
+Admit a vendor STEP or a scan into the project's `imports/` so a part script
+can name it (`import_step` / `import_mesh`). This is project ingress, not a
+second geometry kernel: the file is copied, content-hashed, and optionally
+used to seed `parts/<name>.py` through the same `create_part` contract as
+`heph part create`. Browser import stays deferred (`INTERFACE.md` §15.37).
+
+```console
+$ heph import list
+no imports
+
+$ heph import add ~/Downloads/vendor_plate.step --json
+{"kind":"step","name":"vendor_plate.step","path":"imports/vendor_plate.step","sha256":"sha256:…"}
+
+$ heph import add ~/Downloads/limb-l.stl --units mm --part socket
+copied limb-l.stl (mesh, units=mm) sha256:… -> imports/limb-l.stl
+created parts/socket.py
+```
+
+STEP (`.step` / `.stp`, AP203/AP214) takes no `--units`. STL, PLY, OBJ, OFF
+and XYZ **require** `--units {mm,cm,m,in}` — those formats carry none, and a
+unit is never inferred. An unknown suffix is a named refusal. The original
+file is untouched; the copy under `imports/` is a regular file (no symlink
+escape). `--part NAME` writes `part.geometry = import_step("copied-name")` for
+STEP, or `import_mesh` plus `mesh_to_solid` with the declared unit for a mesh,
+and refuses `already_exists` without force if the part is already there.
+`--json` on `add` emits `{name, kind: step|mesh|points, sha256, path, units?}`.
+
 ### `heph export {list,unpin}`
 
 Show what this project has exported and release an exported file's retention
