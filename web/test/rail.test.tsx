@@ -19,16 +19,24 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, afterEach } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { createRoot, type Root } from "react-dom/client";
+import { act } from "react";
 import type { ReactElement } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import type { GitDirtyEntry } from "../src/api/types";
+import type { GitDirtyEntry, GitStatusDocument, PartsDocument } from "../src/api/types";
+import { keys } from "../src/api/queries";
 import { GitDirtyView, dirtySide, type DirtyIndex } from "../src/components/rail/GitDirty";
 import {
   PROJECT_TREE_SECTIONS,
   ProjectSectionList,
+  ProjectTree,
 } from "../src/components/rail/ProjectTree";
+import { Tree, TreeRow } from "../src/system";
+import { DEFAULT_STATE } from "../src/state/workspace";
+import { workspaceStore } from "../src/state/react";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pathCss = readFileSync(
@@ -117,5 +125,126 @@ describe("project tree sections — closed list, empty-honest", () => {
     expect(empty).not.toBeNull();
     expect(empty?.querySelector("[data-source]")).toBeNull();
     expect(host.querySelectorAll("[data-tree-section-empty]")).toHaveLength(1);
+  });
+});
+
+describe("part row click selects the part", () => {
+  let host: HTMLElement | undefined;
+  let root: Root | undefined;
+
+  afterEach(() => {
+    act(() => {
+      root?.unmount();
+    });
+    host?.remove();
+    host = undefined;
+    root = undefined;
+    workspaceStore.reset(DEFAULT_STATE);
+  });
+
+  async function mount(element: ReactElement): Promise<HTMLElement> {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root?.render(element);
+    });
+    return host;
+  }
+
+  function rowOf(container: HTMLElement, part: string): HTMLElement {
+    const item = container.querySelector(`[data-tree-row="part"][data-part="${part}"]`);
+    const row = item?.querySelector(":scope > div");
+    if (!(row instanceof HTMLElement)) throw new Error(`no row for ${part}`);
+    return row;
+  }
+
+  it("fires onSelect when a collapsed row is clicked", async () => {
+    const seen: string[] = [];
+    const container = await mount(
+      <Tree label="parts">
+        <TreeRow
+          depth={0}
+          selected={false}
+          expanded={false}
+          onSelect={() => {
+            seen.push("shelf");
+          }}
+          onToggle={() => {
+            seen.push("toggle");
+          }}
+          data-tree-row="part"
+          data-part="shelf"
+          label="shelf"
+        />
+      </Tree>,
+    );
+    await act(async () => {
+      rowOf(container, "shelf").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(seen).toEqual(["shelf"]);
+  });
+
+  it("selects on pointerdown so a focus remount cannot eat the click", async () => {
+    const seen: string[] = [];
+    const container = await mount(
+      <Tree label="parts">
+        <TreeRow
+          depth={0}
+          selected={false}
+          expanded={false}
+          onSelect={() => {
+            seen.push("shelf");
+          }}
+          data-tree-row="part"
+          data-part="shelf"
+          label="shelf"
+        />
+      </Tree>,
+    );
+    await act(async () => {
+      rowOf(container, "shelf").dispatchEvent(
+        new MouseEvent("pointerdown", { bubbles: true, button: 0 }),
+      );
+    });
+    expect(seen).toEqual(["shelf"]);
+  });
+
+  it("selects another part from the project tree without a hash edit", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const parts: PartsDocument = {
+      status: "ok",
+      parts: ["gusset", "shelf", "wall_plane"].map((name) => ({
+        name,
+        path: `parts/${name}.py`,
+        content_hash: "sha256:x",
+        snapshot_ref: `artifact:part-snapshot:sha256:${name}`,
+      })),
+    };
+    const git: GitStatusDocument = {
+      status: "ok",
+      dirty: [],
+      clean: true,
+      head: "abc",
+      branch: "main",
+    };
+    client.setQueryData(keys.parts(), parts);
+    client.setQueryData(keys.gitStatus(), git);
+    workspaceStore.reset({ ...DEFAULT_STATE, part: "gusset" });
+
+    const container = await mount(
+      <QueryClientProvider client={client}>
+        <ProjectTree />
+      </QueryClientProvider>,
+    );
+    expect(container.querySelector('[data-part="shelf"]')?.getAttribute("aria-selected")).toBe(
+      "false",
+    );
+    await act(async () => {
+      rowOf(container, "shelf").dispatchEvent(
+        new MouseEvent("pointerdown", { bubbles: true, button: 0 }),
+      );
+    });
+    expect(workspaceStore.getSnapshot().part).toBe("shelf");
   });
 });

@@ -117,6 +117,15 @@ export type TreeRowProps = {
 export function TreeRow(props: TreeRowProps): React.JSX.Element {
   const { depth, selected, expanded, onSelect, onToggle, label, trailing, children, className } =
     props;
+  /**
+   * Pointerdown already selected; ignore the click that follows so a
+   * non-idempotent `onSelect` (section expand) does not toggle twice.
+   * A test that only dispatches `click` still selects — `armed` stays false.
+   */
+  const armed = useRef(false);
+  const select = (): void => {
+    onSelect?.();
+  };
   return (
     <li
       className={cx(styles["node"], className)}
@@ -129,13 +138,31 @@ export function TreeRow(props: TreeRowProps): React.JSX.Element {
         if (event.key !== "Enter" && event.key !== " ") return;
         if (event.currentTarget !== event.target) return;
         event.preventDefault();
-        onSelect?.();
+        select();
       }}
     >
+      {/*
+        Selection lives on the row, not the `li`. Nested geometry rows sit in
+        a `role="group"` *beside* this div, so a click on a child does not
+        bubble through it. Pointerdown selects immediately so a mousedown that
+        focuses an unselected `tabIndex={-1}` treeitem cannot remount the row
+        before mouseup and drop the click.
+      */}
       <div
         className={cx(styles["row"], roles["label"])}
         style={{ paddingLeft: `calc(var(--space-2) + ${String(depth)} * var(--space-4))` }}
-        onClick={onSelect}
+        onPointerDown={(event) => {
+          if (event.button !== 0) return;
+          armed.current = true;
+          select();
+        }}
+        onClick={() => {
+          if (armed.current) {
+            armed.current = false;
+            return;
+          }
+          select();
+        }}
       >
         {expanded === undefined ? (
           <span className={styles["spacer"]} aria-hidden="true" />
@@ -144,8 +171,18 @@ export function TreeRow(props: TreeRowProps): React.JSX.Element {
             className={styles["twisty"]}
             data-tree-toggle=""
             aria-hidden="true"
+            onPointerDown={(event) => {
+              event.stopPropagation();
+              if (event.button !== 0) return;
+              armed.current = true;
+              onToggle?.();
+            }}
             onClick={(event) => {
               event.stopPropagation();
+              if (armed.current) {
+                armed.current = false;
+                return;
+              }
               onToggle?.();
             }}
           >

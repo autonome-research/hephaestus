@@ -74,7 +74,7 @@ import {
   type ProfileCapability,
 } from "../../api/sessions";
 import { copy } from "../../copy";
-import { Button, Chip, EmptyState, TextInput } from "../../system";
+import { Button, Chip, EmptyState, TextInput, formatRef } from "../../system";
 import { useWorkspaceState } from "../../state/react";
 import { labelsForPart, visibilityStore } from "../../state/visibility";
 import {
@@ -658,7 +658,9 @@ function ContextChipRow(props: {
     >
       <Chip tone="label">{label}</Chip>
       <Chip tone="code">
-        {chip.count !== null ? copy.composer.hiddenCount(chip.count) : (chip.value ?? "")}
+        {chip.count !== null
+          ? copy.composer.hiddenCount(chip.count)
+          : formatRef(chip.value ?? "")}
       </Chip>
       <Button
         variant="quiet"

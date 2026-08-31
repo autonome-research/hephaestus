@@ -17,6 +17,7 @@ import {
   DEFAULT_STATE,
   INSPECTOR_TABS,
   PinAuthorityError,
+  STAGE_TABS,
   WorkspaceStore,
   clampExplode,
   decodeWorkspaceUrl,
@@ -27,6 +28,7 @@ import {
   sameState,
   type WorkspaceState,
 } from "../src/state/workspace";
+import { copy } from "../src/copy";
 
 const A = "artifact:build:sha256:" + "a".repeat(64);
 const B = "artifact:build:sha256:" + "b".repeat(64);
@@ -186,6 +188,23 @@ describe("URL serialization", () => {
     expect(effectiveInspectorTab("viewport", "results")).toBe("results");
     expect(effectiveInspectorTab("results", "results")).toBe("properties");
     expect(effectiveInspectorTab("results", "checks")).toBe("checks");
+  });
+
+  it("does not show two tabs labelled Results at once", () => {
+    // Inspector keeps "Results" (§4.1, §6). The stage tab that mounts the
+    // same panel is labelled Geometry so Viewport + inspector Results is not
+    // two tabs with the same word. #17's omit path still hides the inspector
+    // tab when the stage *is* Results.
+    expect(copy.inspector.tabs.results).toBe("Results");
+    expect(copy.stage.tabs.results).not.toBe(copy.inspector.tabs.results);
+    const viewportLabels = [
+      ...STAGE_TABS.map((tab) => copy.stage.tabs[tab]),
+      ...inspectorTabsFor("viewport").map((tab) => copy.inspector.tabs[tab]),
+    ];
+    expect(viewportLabels.filter((label) => label === "Results")).toHaveLength(1);
+    expect(inspectorTabsFor("results").map((tab) => copy.inspector.tabs[tab])).not.toContain(
+      "Results",
+    );
   });
 
   it("falls back closed on a value outside a closed vocabulary", () => {

@@ -27,6 +27,8 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  width: 100%;
+  min-width: 0;
   overflow: hidden;
   background: var(--surface-app);
 }
@@ -34,6 +36,7 @@
 .shell > header {
   flex: none;
   height: var(--header-height);
+  min-width: 0;
 }
 
 .body {
@@ -42,6 +45,12 @@
   grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--stream-width);
   flex: 1 1 auto;
   min-height: 0;
+  /* Flex item default `min-width: auto` is the grid's min-content. A nowrap
+     composer chip (a full artifact ref) or a wide header then forces the
+     three-column shell past 1280px and the document scrolls sideways — the
+     ~2400px desk the operator-UI review measured. `min-width: 0` lets the
+     columns honour the template; chips wrap/ellipsis inside 420px. */
+  min-width: 0;
 }
 
 /* §4.1: "below 1280px the Stream collapses to a docked strip". The strip is
@@ -60,7 +69,12 @@
 
 .rail {
   min-height: 0;
+  min-width: 0;
   overflow: auto;
+  /* Content-sized children. A `flex: 1` versions panel (or a Panel grid
+     `1fr` body that ate leftover height) left a dead band between the
+     section list and Working tree. Extra space stays at the bottom of the
+     rail; the whole rail scrolls. */
   /* §3.9: every boundary between two named surfaces carries a 1px border. The
      shipped 1.068:1 rail/stage figure was a defect because the seam was a
      hairline of `--line-1` and the ladder had two rungs in play at once. */
@@ -68,6 +82,10 @@
   background: var(--surface-panel);
   display: flex;
   flex-direction: column;
+}
+
+.rail > * {
+  flex: 0 0 auto;
 }
 
 .stage {
@@ -79,6 +97,8 @@
 
 .stream {
   min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   border-left: 1px solid var(--border);

@@ -8,6 +8,8 @@
 
 .panel {
   flex: none;
+  align-content: start;
+  grid-template-rows: auto auto;
   border-top: 1px solid var(--border);
 }
 

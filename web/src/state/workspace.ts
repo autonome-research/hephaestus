@@ -42,8 +42,11 @@ export type ChannelOverlay = (typeof CHANNEL_OVERLAYS)[number];
  * Stage tabs. `viewport` / `script` / `diff` are §4.5's original closed set.
  * `timeline` and `results` are the part views issue #4 adds so Script /
  * Timeline / Results are first-class switches on the same tablist. `results`
- * here reuses `ResultsPanel`. When this tab is selected the inspector does
- * not also mount Results — that was the duplicate list/metrics after #6.
+ * here reuses `ResultsPanel` and is labelled **Geometry** in the stage
+ * tablist (`copy.stage.tabs.results`). The inspector tab stays **Results**
+ * (§4.1, §6). When this tab is selected the inspector does not also mount
+ * Results — that was the duplicate *panel* after #6. The stage label change
+ * is the duplicate *word* Viewport + inspector Results still showed.
  */
 export const STAGE_TABS = ["viewport", "script", "timeline", "results", "diff"] as const;
 export type StageTab = (typeof STAGE_TABS)[number];
