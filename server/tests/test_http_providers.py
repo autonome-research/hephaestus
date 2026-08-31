@@ -111,6 +111,38 @@ def test_a_serve_with_no_providers_json_still_reads_and_writes_one(ws: Workspace
     assert _config_path(ws).exists()
 
 
+def test_get_providers_projects_model_ids_and_reasoning_without_house_names(
+    ws: Workspace,
+) -> None:
+    """The composer maps model + effort from this document (issue #13).
+
+    Identifiers are the spec's own ``models[].id``. ``reasoning`` is projected
+    only when the spec declared it — absence is the named "no thinking
+    levels", not a defaulted house effort scale.
+    """
+    with_reasoning = {
+        **_FAKE_SPEC,
+        "models": [
+            {
+                "id": "heph-fake-model",
+                "name": "Heph Fake",
+                "contextWindow": 128000,
+                "maxTokens": 4096,
+                "reasoning": True,
+            }
+        ],
+    }
+    written = _write_specs(ws, [with_reasoning])
+    assert written.status_code == 200, written.text
+    models = ws.get("/providers").json()["providers"][0]["models"]
+    assert models == [{"id": "heph-fake-model", "name": "Heph Fake", "reasoning": True}]
+
+    _write_specs(ws, [_FAKE_SPEC])
+    plain = ws.get("/providers").json()["providers"][0]["models"]
+    assert plain == [{"id": "heph-fake-model", "name": "Heph Fake"}]
+    assert "reasoning" not in plain[0]
+
+
 def test_the_written_file_is_0600_created_private(ws: Workspace) -> None:
     """§23.2: ``write_private``, created private, never ``chmod``'ed after.
 

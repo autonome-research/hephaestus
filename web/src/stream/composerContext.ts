@@ -126,11 +126,15 @@ export function chipsFor(state: WorkspaceState, hiddenLabels: readonly string[])
  * so an envelope carrying only navigation tokens is collapsed here rather than
  * sent for the server to collapse. (The server collapses it too; agreeing costs
  * one condition and means the wire shows what the model gets.)
+ *
+ * `added` is the explicit "Add current view" set (issue #13). `view` alone
+ * never names a reference; once the operator adds it, it does.
  */
 export function envelopeFor(
   state: WorkspaceState,
   hiddenLabels: readonly string[],
   dropped: ReadonlySet<ContextMember>,
+  added: ReadonlySet<ContextMember> = new Set(),
 ): ContextEnvelope | null {
   const kept = (key: ContextMember): boolean => !dropped.has(key);
   const envelope: {
@@ -172,12 +176,17 @@ export function envelopeFor(
   }
   if (kept("focus") && state.focus !== null) envelope.focus = state.focus;
 
+  // `view` is always present as navigation, but it does not *name* a
+  // reference on its own — a workspace with only a camera token is still
+  // the blank canvas. An explicit "Add current view" (issue #13) is the
+  // operator saying the view *is* the reference, so it counts then.
   const namesAReference =
     envelope.part !== undefined ||
     envelope.artifact_ref !== undefined ||
     envelope.selection !== undefined ||
     envelope.hidden_labels !== undefined ||
     envelope.section_plane !== undefined ||
-    envelope.focus !== undefined;
+    envelope.focus !== undefined ||
+    (added.has("view") && envelope.view !== undefined);
   return namesAReference ? envelope : null;
 }
