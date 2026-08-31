@@ -158,6 +158,10 @@ class TestNeverCurrent:
         outcome = publisher.publish_build(failed, op_id="pub-failed")
         assert outcome.kind == "failed"
         assert outcome.result.current is False
+        recorded = publisher.last_failure_result("widget")
+        assert recorded is not None
+        assert recorded.status == "failed"
+        assert recorded.artifact_ref is None
         # Checkpoint evidence blobs are published...
         assert len(outcome.evidence_refs) == 1
         checkpoint_ref = outcome.evidence_refs[0]

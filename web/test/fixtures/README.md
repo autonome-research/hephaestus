@@ -48,6 +48,12 @@ assert that the client is self-consistent, which is not the property under test.
 | `dfm.json` | `GET /api/v1/parts/panel/dfm`, after a run against the current artifact |
 | `dfm_preview.json` | the same, after a run resolved through an explicit `artifact_ref` |
 
+**`build_failed.json`** is the Timeline's failed-build document. It is assembled
+around the §8 error shape (line/col/type/frame/built_through/last_good) plus
+the worker `checkpoints[]` `GET /parts/{part}/build` now projects. The
+checkpoint refs are illustrative (a last-good `build-checkpoint` hash); the
+fields and the last-good join are what the marks helper asserts.
+
 ## The three fixtures that are not pure route output
 
 Each says so here rather than passing quietly as a recording.

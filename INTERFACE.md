@@ -352,7 +352,7 @@ cheapest way to keep it from calcifying into one.
 | `GET /project` | `{root, name, units, parts[], serve_mode, capabilities}` — the `open_project` projection, same serializer as `mcp/app.py` |
 | `GET /parts` | `[{name, path, content_hash, snapshot_ref}]` — `list_parts` projection. **Same serializer** as `heph part list --json` (`hephaestus.core.project_store.listing`). |
 | `GET /parts/{part}/script?offset_line&limit_lines` | `read_part` result verbatim, `_PAGING_FIELDS` intact. CLI counterpart: `heph script show --json`. |
-| `GET /parts/{part}/build` | `BuildResult` projection: `{status, current, artifact_ref, project_snapshot_ref, effective_params, geometry_count, geometries[], metrics, checks, source_map_ref, warnings, error?, critique?}`. CLI counterpart: `heph part show --json` emits the engine `BuildResult` (same document `heph build --json` writes) or `{status:"not_built"}`. |
+| `GET /parts/{part}/build` | `BuildResult` projection: `{status, current, artifact_ref, project_snapshot_ref, effective_params, geometry_count, geometries[], metrics, checks, source_map_ref, warnings, checkpoints[], error?, critique?}`. CLI counterpart: `heph part show --json` emits the engine `BuildResult` (same document `heph build --json` writes) or `{status:"not_built"}`. |
 | `GET /parts/{part}/properties` | the enumerated `part.*` metadata projection (§6.2) |
 | `GET /parts/{part}/checks` | the shared `heph check --json` serializer (§6.3) |
 | `GET /parts/{part}/params` | `PARAMS` declarations `{name, value, default, min, max, step, scope}` + `state_hash`. CLI counterpart: `heph params [PART] --json` (script literals + last-build effective values; no sandbox, no `state_hash` — it does not write `set_params`). |

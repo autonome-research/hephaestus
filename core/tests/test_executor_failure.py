@@ -112,6 +112,17 @@ class TestFilletFailureRecord:
         checkpoints = failed.worker_result["checkpoints"]
         assert isinstance(checkpoints, list)
         assert len(checkpoints) == 4  # statements before the failing fillet
+        persisted = failed.result.checkpoints
+        assert len(persisted) == 4
+        last_good = error_of(failed).last_good_artifact_ref
+        assert last_good is not None
+        # The last completed statement is the rewindable last-good stop.
+        assert persisted[-1].artifact_ref == last_good
+        assert all(stop.artifact_ref is None for stop in persisted[:-1])
+        built_through = error_of(failed).built_through
+        assert built_through is not None
+        assert persisted[-1].line == built_through.line
+        assert persisted[-1].statement
 
 
 class TestNamespaceDenialBuildError:

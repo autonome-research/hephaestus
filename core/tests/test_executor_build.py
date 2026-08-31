@@ -119,6 +119,11 @@ class TestGoldenBuild:
             for name in bound:
                 by_bound.setdefault(str(name), []).append(str(index))
         assert "base" in by_bound and "slotted" in by_bound and "posts" in by_bound
+        # The §8 record carries the same stops the worker recorded — this is
+        # the projection GET /parts/{part}/build reads, not a second list.
+        assert [c.index for c in golden.result.checkpoints] == list(range(STATEMENT_COUNT))
+        assert all(c.artifact_ref is None for c in golden.result.checkpoints)
+        assert golden.result.checkpoints[0].statement.startswith("PARAMS")
 
     def test_checkpoint_spans_are_exact(self, golden: UnpublishedBuild) -> None:
         checkpoints_raw = golden.worker_result["checkpoints"]

@@ -3,30 +3,60 @@
 //
 // Timeline marks from `GET /parts/{part}/build` (INTERFACE.md §0.1).
 //
-// The incremental executor records per-statement checkpoints **inside the
-// worker**. Those checkpoints are not a field on the HTTP BuildResult
-// projection. What the projection *does* carry, when a build failed, is
-// `error.built_through`, `error.last_good`, and `error.last_good_artifact_ref`.
-// This module emits only those positions. A mark invented from the script's
-// statements, or from a recount of `geometries`, would be a client-side
-// timeline the engine did not project.
+// After the engine persisted worker per-statement `checkpoints` on the §8
+// record, this helper projects those stops and the positions the error
+// object already named (last-good / failed / current). A mark invented
+// from the script's statements, or from a recount of `geometries`, would
+// be a client-side timeline the engine did not project.
 
-import type { BuildDocument } from "../../api/types";
+import type { BuildDocument, StatementCheckpoint } from "../../api/types";
 
-/** The three positions the build projection can name. Closed. */
-export const TIMELINE_KINDS = ["last_good", "failed", "current"] as const;
+/** Closed. `statement` is a projected executor checkpoint. */
+export const TIMELINE_KINDS = ["statement", "last_good", "failed", "current"] as const;
 export type TimelineKind = (typeof TIMELINE_KINDS)[number];
 
 export interface TimelineMark {
   readonly kind: TimelineKind;
   /** The artifact this mark rewinds to, or `null` when the engine named none. */
   readonly artifact_ref: string | null;
+  readonly index?: number;
+  readonly line?: number;
+  readonly statement?: string;
+  readonly bound?: readonly string[];
+  readonly shapes?: readonly string[];
+}
+
+function rewindable(mark: TimelineMark): boolean {
+  return mark.kind === "last_good" || mark.kind === "failed" || mark.kind === "current";
+}
+
+/** The stops the scrubber may pin: last-good / failed / current only. */
+export function rewindMarks(marks: readonly TimelineMark[]): readonly TimelineMark[] {
+  return marks.filter(rewindable);
+}
+
+function markFromCheckpoint(
+  checkpoint: StatementCheckpoint,
+  lastGood: string | null,
+): TimelineMark {
+  const ref = checkpoint.artifact_ref;
+  const kind = lastGood !== null && ref === lastGood ? "last_good" : "statement";
+  return {
+    kind,
+    artifact_ref: ref,
+    index: checkpoint.index,
+    line: checkpoint.line,
+    statement: checkpoint.statement,
+    bound: checkpoint.bound,
+    shapes: checkpoint.shapes,
+  };
 }
 
 /**
- * The scrubber's stops, in order: last-good (if the error named a checkpoint),
- * then the failed statement, or — on a successful build — the current artifact
- * alone.
+ * The Timeline's stops, in order: every projected checkpoint, then the
+ * failed statement or the current artifact. A checkpoint whose
+ * `artifact_ref` is the error's last-good ref is the last-good stop —
+ * the engine named that join, not the client.
  *
  * `not_built` has no marks: silence is a named absence in the panel, not an
  * empty scrubber that looks like "rewound to the start".
@@ -35,7 +65,10 @@ export function marksFromBuild(build: BuildDocument): readonly TimelineMark[] {
   if (build.status === "not_built") return [];
   const marks: TimelineMark[] = [];
   const lastGood = build.error?.last_good_artifact_ref ?? null;
-  if (lastGood !== null) {
+  for (const checkpoint of build.checkpoints ?? []) {
+    marks.push(markFromCheckpoint(checkpoint, lastGood));
+  }
+  if (lastGood !== null && !marks.some((mark) => mark.kind === "last_good")) {
     marks.push({ kind: "last_good", artifact_ref: lastGood });
   }
   if (build.status === "error") {
@@ -47,7 +80,7 @@ export function marksFromBuild(build: BuildDocument): readonly TimelineMark[] {
 }
 
 /**
- * Which mark the pin is on.
+ * Which rewindable mark the pin is on.
  *
  * Holding the last-good ref selects that mark. Any other pin — including
  * `null` after a failed build with no current artifact — selects the
@@ -58,20 +91,22 @@ export function kindForPin(
   marks: readonly TimelineMark[],
   pin: string | null,
 ): TimelineKind | null {
-  if (marks.length === 0) return null;
-  const lastGood = marks.find((mark) => mark.kind === "last_good");
+  const rewindableMarks = rewindMarks(marks);
+  if (rewindableMarks.length === 0) return null;
+  const lastGood = rewindableMarks.find((mark) => mark.kind === "last_good");
   if (lastGood !== undefined && pin !== null && pin === lastGood.artifact_ref) {
     return "last_good";
   }
-  const rest = marks.find((mark) => mark.kind !== "last_good");
+  const rest = rewindableMarks.find((mark) => mark.kind !== "last_good");
   return rest?.kind ?? lastGood?.kind ?? null;
 }
 
 /** The index the scrubber sits on for a pin. `0` when there is nothing to match. */
 export function indexForPin(marks: readonly TimelineMark[], pin: string | null): number {
+  const rewindableMarks = rewindMarks(marks);
   const kind = kindForPin(marks, pin);
   if (kind === null) return 0;
-  const index = marks.findIndex((mark) => mark.kind === kind);
+  const index = rewindableMarks.findIndex((mark) => mark.kind === kind);
   return index === -1 ? 0 : index;
 }
 
@@ -82,15 +117,16 @@ export type TimelineAction =
 /**
  * What a scrubber index does to the pin.
  *
- * Last-good with a ref is `hold` — rewind. Every other mark follows current,
- * including a failed build whose `artifact_ref` is null.
+ * Last-good with a ref is `hold` — rewind. Every other rewindable mark
+ * follows current, including a failed build whose `artifact_ref` is null.
+ * The index is over `rewindMarks`, not the full projected list.
  */
 export function actionForIndex(
   marks: readonly TimelineMark[],
   index: number,
   currentRef: string | null,
 ): TimelineAction | null {
-  const mark = marks[index];
+  const mark = rewindMarks(marks)[index];
   if (mark === undefined) return null;
   if (mark.kind === "last_good" && mark.artifact_ref !== null) {
     return { action: "hold", ref: mark.artifact_ref };

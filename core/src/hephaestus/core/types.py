@@ -2,10 +2,11 @@
 
 Mirrors ``script_contract.md`` §8 exactly — every field of the build-result
 record, including the full ``error`` object with ``built_through``,
-``last_good``, ``last_good_artifact_ref`` and ``hint`` — plus the CheckReport
-shape from ``architecture.md`` §3.4 (check-set generation, immutable bundle
-ref, per-file hashes, geometry ``project_snapshot_ref``, per-check
-pass + measured).
+``last_good``, ``last_good_artifact_ref`` and ``hint``, plus the incremental
+executor's per-statement ``checkpoints`` (architecture §3.1) — and the
+CheckReport shape from ``architecture.md`` §3.4 (check-set generation,
+immutable bundle ref, per-file hashes, geometry ``project_snapshot_ref``,
+per-check pass + measured).
 
 Every record serializes with ``to_json()`` (a JSON-ready dict) and rebuilds
 with ``from_json()``. The committed JSON Schema at
@@ -72,6 +73,16 @@ def _str_map(data: Mapping[str, JSONValue], key: str) -> dict[str, str]:
             raise ValidationError(f"field {key}[{name!r}]: expected str", kind="contract")
         out[name] = value
     return out
+
+
+def _str_tuple(data: Mapping[str, JSONValue], key: str) -> tuple[str, ...]:
+    raw = cast("list[JSONValue]", _req(data, key, list))
+    out: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            raise ValidationError(f"field {key!r}: expected list of str", kind="contract")
+        out.append(item)
+    return tuple(out)
 
 
 @dataclass(frozen=True)
@@ -278,6 +289,56 @@ class BuiltThrough:
 
 
 @dataclass(frozen=True)
+class StatementCheckpoint:
+    """One incremental-executor per-statement checkpoint (architecture §3.1).
+
+    The worker records these after every top-level statement that completed:
+    index, source span, names bound, and shape-binding names. ``statement`` is
+    the verbatim source slice so a Timeline (or a repair loop) can name the
+    stop without slicing the script itself. ``artifact_ref`` is set only when
+    publication minted a blob for that stop — today that is the last-good
+    checkpoint of a failed build, never an invented per-statement BRep.
+    """
+
+    index: int
+    line: int
+    statement: str
+    span: tuple[int, int, int, int]
+    bound: tuple[str, ...]
+    shapes: tuple[str, ...]
+    artifact_ref: str | None = None
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "index": self.index,
+            "line": self.line,
+            "statement": self.statement,
+            "span": list(self.span),
+            "bound": list(self.bound),
+            "shapes": list(self.shapes),
+            "artifact_ref": self.artifact_ref,
+        }
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, JSONValue]) -> StatementCheckpoint:
+        span_raw = cast("list[JSONValue]", _req(data, "span", list))
+        if len(span_raw) != 4 or not all(
+            isinstance(item, int) and not isinstance(item, bool) for item in span_raw
+        ):
+            raise ValidationError("field 'span': expected four integers", kind="contract")
+        span = cast("tuple[int, int, int, int]", tuple(span_raw))
+        return cls(
+            index=_req(data, "index", int),
+            line=_req(data, "line", int),
+            statement=_req(data, "statement", str),
+            span=span,
+            bound=_str_tuple(data, "bound"),
+            shapes=_str_tuple(data, "shapes"),
+            artifact_ref=_opt_str(data, "artifact_ref"),
+        )
+
+
+@dataclass(frozen=True)
 class LastGood:
     """§8 ``error.last_good``: metrics of the last-good checkpoint geometry."""
 
@@ -395,6 +456,11 @@ class BuildResult:
     #: downstream reader into literal-only static script parsing — the
     #: nest-gusset "missing" blank_size the model had in fact written).
     metadata: Mapping[str, str] = field(default_factory=dict[str, str])
+    #: Incremental-executor per-statement checkpoints. Empty on records written
+    #: before this field existed — the worker always recorded them; the §8
+    #: record used to drop them, which left ``GET /parts/{part}/build`` unable
+    #: to name the stops the Timeline is a projection of.
+    checkpoints: tuple[StatementCheckpoint, ...] = ()
 
     def __post_init__(self) -> None:
         if self.status not in ("ok", "failed"):
@@ -423,6 +489,7 @@ class BuildResult:
             "warnings": [warning.to_json() for warning in self.warnings],
             "error": None if self.error is None else self.error.to_json(),
             "metadata": dict(self.metadata),
+            "checkpoints": [checkpoint.to_json() for checkpoint in self.checkpoints],
         }
 
     @classmethod
@@ -487,6 +554,9 @@ class BuildResult:
             error=error,
             # Absent from pre-2026-08-03 records; {} is the honest reading.
             metadata=_str_map(data, "metadata") if "metadata" in data else {},
+            # Absent from records written before the HTTP Timeline projection;
+            # () is the honest reading of "this build named no statement stops".
+            checkpoints=_checkpoints(data) if "checkpoints" in data else (),
         )
 
     def __eq__(self, other: object) -> bool:
@@ -571,6 +641,16 @@ class CheckReport:
         return hash((self.part, self.check_set_generation, self.check_bundle_ref))
 
 
+def _checkpoints(data: Mapping[str, JSONValue]) -> tuple[StatementCheckpoint, ...]:
+    raw = cast("list[JSONValue]", _req(data, "checkpoints", list))
+    out: list[StatementCheckpoint] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ValidationError("checkpoints: expected list of objects", kind="contract")
+        out.append(StatementCheckpoint.from_json(cast("dict[str, JSONValue]", item)))
+    return tuple(out)
+
+
 __all__: Sequence[str] = (
     "AuditHashes",
     "BuildResult",
@@ -583,5 +663,6 @@ __all__: Sequence[str] = (
     "InputHashes",
     "LastGood",
     "Metrics",
+    "StatementCheckpoint",
     "Warning",
 )
