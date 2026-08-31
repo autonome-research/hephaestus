@@ -10,11 +10,6 @@ Hephaestus is open-source parametric CAD. You write
 and renders them. The web UI is optional operator chrome. An Autonome Research
 project, licensed Apache-2.0.
 
-![The Hephaestus operator UI on the public workspace fixture: parts tree with tread expanded, Script tab with a groove_count PARAMS slider, and Results listing the built solids. The agent rail shows no runtime attached.](docs/images/operator-ui.png)
-
-The operator UI (`heph serve --web`) on the public workspace fixture. No agent
-runtime is attached; agents drive this project through the CLI.
-
 ## Install
 
 Not on PyPI. There is no GitHub Release.
