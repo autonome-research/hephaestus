@@ -159,9 +159,7 @@ def test_add_part_refuses_an_existing_name_without_copying(
     source = tmp_path / "box.step"
     box_step(source)
 
-    assert (
-        run(root, monkeypatch, "import", "add", str(source), "--part", "plate", "--json") == 1
-    )
+    assert run(root, monkeypatch, "import", "add", str(source), "--part", "plate", "--json") == 1
     reported = cast("dict[str, JSONValue]", json.loads(capsys.readouterr().out))
     assert reported == {"part": "plate", "status": "already_exists"}
     assert (root / "parts" / "plate.py").read_text(encoding="utf-8") == existing

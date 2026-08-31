@@ -157,28 +157,28 @@ def write_import_copy(imports_dir: Path, path: str, data: bytes) -> Path:
     project. The destination is always a regular file — never a symlink — so
     a later ``import_step`` cannot escape through a link this verb planted.
     """
-    relative = validate_import_path(path)
+    try:
+        relative = validate_import_path(path)
+    except ImportResolutionError as exc:
+        raise ImportIngressError(exc.message, reason=exc.reason) from exc
     if imports_dir.exists() and (imports_dir.is_symlink() or not imports_dir.is_dir()):
-        raise ImportResolutionError(
+        raise ImportIngressError(
             f"{IMPORTS_DIRNAME}/ is not a real directory; refusing to write {path!r}",
             reason="path_confinement",
-            path=path,
         )
     imports_dir.mkdir(parents=True, exist_ok=True)
     if imports_dir.is_symlink():
-        raise ImportResolutionError(
+        raise ImportIngressError(
             f"{IMPORTS_DIRNAME}/ resolved through a symlink; refusing to write {path!r}",
             reason="path_confinement",
-            path=path,
         )
     dir_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
     try:
         root_fd = os.open(imports_dir, dir_flags)
     except OSError as exc:
-        raise ImportResolutionError(
+        raise ImportIngressError(
             f"{IMPORTS_DIRNAME}/ is not a writable directory ({exc.strerror})",
             reason="path_confinement",
-            path=path,
         ) from exc
     opened: list[int] = [root_fd]
     fd = root_fd
@@ -189,21 +189,19 @@ def write_import_copy(imports_dir: Path, path: str, data: bytes) -> Path:
             except FileExistsError:
                 pass
             except OSError as exc:
-                raise ImportResolutionError(
+                raise ImportIngressError(
                     f"import {path!r}: cannot create directory {component!r} "
                     f"beneath {IMPORTS_DIRNAME}/ ({exc.strerror})",
                     reason="path_confinement",
-                    path=path,
                 ) from exc
             try:
                 nxt = os.open(component, dir_flags | os.O_NOFOLLOW, dir_fd=fd)
             except OSError as exc:
-                raise ImportResolutionError(
+                raise ImportIngressError(
                     f"import {path!r}: path component {component!r} is not a real "
                     f"directory beneath {IMPORTS_DIRNAME}/ ({exc.strerror}); "
                     "symlinks are never followed",
                     reason="path_confinement",
-                    path=path,
                 ) from exc
             opened.append(nxt)
             fd = nxt
@@ -212,27 +210,24 @@ def write_import_copy(imports_dir: Path, path: str, data: bytes) -> Path:
         try:
             handle = os.open(leaf, flags, 0o644, dir_fd=fd)
         except OSError as exc:
-            raise ImportResolutionError(
+            raise ImportIngressError(
                 f"import {path!r} cannot be written beneath {IMPORTS_DIRNAME}/ "
                 f"({exc.strerror}); symlinks are never followed",
                 reason="path_confinement",
-                path=path,
             ) from exc
         try:
             info = os.fstat(handle)
             if not stat_module.S_ISREG(info.st_mode):
-                raise ImportResolutionError(
+                raise ImportIngressError(
                     f"import {path!r} is not a regular file",
                     reason="path_confinement",
-                    path=path,
                 )
             with os.fdopen(os.dup(handle), "wb") as stream:
                 stream.write(data)
         except OSError as exc:
-            raise ImportResolutionError(
+            raise ImportIngressError(
                 f"import {path!r} could not be written ({exc.strerror})",
                 reason="unreadable_import",
-                path=path,
             ) from exc
         finally:
             os.close(handle)
@@ -265,9 +260,7 @@ def _iter_import_relpaths(imports_dir: Path) -> tuple[str, ...]:
     return tuple(found)
 
 
-def _record(
-    name: str, *, kind: ImportKind, digest: str, units: str | None
-) -> dict[str, JSONValue]:
+def _record(name: str, *, kind: ImportKind, digest: str, units: str | None) -> dict[str, JSONValue]:
     out: dict[str, JSONValue] = {
         "kind": kind,
         "name": name,
@@ -300,9 +293,7 @@ def _cmd_add(args: argparse.Namespace) -> int:
     part_name = cast("str | None", args.part)
     if part_name is not None and not _PART_NAME_RE.match(part_name):
         raise _UsageError(f"invalid part name {part_name!r}")
-    script = (
-        None if part_name is None else seed_part_script(dest_name, kind=kind, units=units)
-    )
+    script = None if part_name is None else seed_part_script(dest_name, kind=kind, units=units)
 
     layout = load_project(find_project_root(Path.cwd()))
     if part_name is not None and layout.part_path(part_name).is_file():
@@ -321,10 +312,10 @@ def _cmd_add(args: argparse.Namespace) -> int:
     record = _record(dest_name, kind=kind, digest=digest, units=units)
 
     if part_name is not None and script is not None:
-        store = open_store(layout)
+        opstore = open_store(layout)
         try:
             try:
-                store.write_part(
+                ProjectStore(layout, opstore).write_part(
                     part_name,
                     script,
                     base_hash=None,
@@ -341,15 +332,13 @@ def _cmd_add(args: argparse.Namespace) -> int:
                     )
                 return 1
         finally:
-            store.close()
+            opstore.close()
 
     if bool(args.json):
         print(json.dumps(record, sort_keys=True))
     else:
         extra = "" if units is None else f", units={units}"
-        print(
-            f"copied {dest_name} ({kind}{extra}) {digest} -> {IMPORTS_DIRNAME}/{dest_name}"
-        )
+        print(f"copied {dest_name} ({kind}{extra}) {digest} -> {IMPORTS_DIRNAME}/{dest_name}")
         if part_name is not None:
             print(f"created parts/{part_name}.py")
     return 0
