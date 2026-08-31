@@ -422,7 +422,7 @@ threat model (§7) rather than hand-waved.
   them, instancing returns a placed `Compound`.
 - **materials/** — JSON/TOML records: density, sheet thicknesses, cost hints,
   finish notes; `search_materials` queries them.
-- **dfm/** — per-process rule packs (laser_cut, cnc_router, fdm): predicates
+- **dfm/** — per-process rule packs (laser_cut, cnc_router, fdm, waterjet): predicates
   over geometry + material (min feature size, kerf, min internal radius, wall
   thickness) that the checks engine can run when the part declares that
   process. Powers the DFM mode.

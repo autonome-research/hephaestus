@@ -188,7 +188,7 @@ def test_a_part_without_a_process_is_refused_rather_than_guessed(unsandboxed: Ca
 def test_an_unknown_process_override_lists_the_packs_that_exist(unsandboxed: CadOps) -> None:
     _build(unsandboxed, "block")
     with pytest.raises(RegistryError) as unknown:
-        unsandboxed.run_dfm("block", process="waterjet")
+        unsandboxed.run_dfm("block", process="plasma")
     assert unknown.value.reason == "unknown_dfm_pack"
 
 

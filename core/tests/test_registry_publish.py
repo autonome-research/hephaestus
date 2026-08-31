@@ -342,4 +342,5 @@ def test_every_bundled_registry_publishes(kind: str) -> None:
 
 def test_the_bundled_dfm_registry_publishes_the_shipped_packs_and_all_rules() -> None:
     record = publish_registry(REGISTRIES / "dfm")
-    assert record.counts == {"packs": 3, "rules": 12}
+    # laser_cut (3) + fdm (3) + cnc_router (6) + waterjet (3).
+    assert record.counts == {"packs": 4, "rules": 15}

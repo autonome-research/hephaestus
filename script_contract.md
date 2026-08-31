@@ -215,7 +215,7 @@ grades for "missing" metadata they had reasonably believed they wrote.
 Per-feature metadata goes through `part.feature(name).<field>` (§5.3).
 
 `part.process` values that match a DFM registry pack (`laser_cut`,
-`cnc_router`, `fdm`, …) make that pack's rules runnable against the part.
+`cnc_router`, `fdm`, `waterjet`, …) make that pack's rules runnable against the part.
 
 ### 5.3 Topology tags and per-feature metadata
 

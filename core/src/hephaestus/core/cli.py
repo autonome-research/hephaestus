@@ -35,6 +35,10 @@
 - ``heph motion [--json]`` / ``heph motion check [IDS]`` show and re-evaluate
   the declared motion checks with their §4 sweep results (``KINEMATICS.md``
   §6, Stage 9B); see ``hephaestus.core.cli_motion``.
+- ``heph cam emit <part> [--out FILE] [--kerf-mm N] [--json]`` emits a
+  laser/waterjet cut-file (ordered toolpath + DXF) from the part's current
+  build, using the in-tree flat-pattern and kerf path. Not an export and not
+  Stage 14 milling CAM; see ``hephaestus.core.cli_cam``.
 - ``heph export list [PART]`` / ``heph export unpin BLOB`` show the committed
   exports with their GC-root pins and drop one of those pins (``INTERFACE.md``
   §19.40, §22.6 — the verbs the workspace's "unpin it from the command line"
@@ -710,6 +714,13 @@ def build_parser() -> argparse.ArgumentParser:
     from hephaestus.core import cli_motion
 
     cli_motion.add_subparsers(sub)
+
+    # 2D CAM emit (heph cam emit): laser_cut / waterjet toolpath + DXF from a
+    # published build. Reuses geom.kerf + geom.nesting; loads the kernel only
+    # when the verb runs, like the assembly and motion verbs.
+    from hephaestus.core import cli_cam
+
+    cli_cam.add_subparsers(sub)
 
     # Stage 2 agent verb (heph agent) ships with the server package; the engine
     # CLI stays Node-free and fully functional when it is not installed.
