@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import sys
 import threading
+import traceback
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
@@ -108,7 +109,9 @@ def test_two_concurrent_runs_each_read_their_own_request(project: Project) -> No
             t.start()
         for t in threads:
             t.join(timeout=180)
-        assert errors == [], f"a concurrent turn crashed: {errors[0]!r}"
+        assert errors == [], f"a concurrent turn crashed: {errors[0]!r}\n" + "".join(
+            traceback.format_exception(errors[0])
+        )
 
         assert seen["a"] == [40.0], "session A's critique read session B's request"
         assert seen["b"] == [77.0], "session B's critique read session A's request"

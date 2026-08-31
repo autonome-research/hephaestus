@@ -44,6 +44,7 @@ import {
   DirectionalLight,
   Group,
   OrthographicCamera,
+  PerspectiveCamera,
   Plane,
   SRGBColorSpace,
   Scene,
@@ -56,12 +57,14 @@ import { GLTFLoader, type GLTF } from "three/addons/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { nameForDirection } from "./cameras";
 import {
+  applyAppearance,
   authorDisplay,
   buildGroundGrid,
   gridStep,
   groundGridSpec,
   readViewportPalette,
   type AuthoredDisplay,
+  type DisplayAppearance,
   type GroundGrid,
   type ViewportPalette,
 } from "./display";
@@ -70,6 +73,7 @@ import {
   applyClipping,
   applyExplode,
   applyFraming,
+  applyPerspectiveFraming,
   applyVisibility,
   boundsAt,
   framingFor,
@@ -96,7 +100,9 @@ export class ViewportEngine {
   readonly canvas: HTMLCanvasElement;
   private readonly renderer: WebGLRenderer;
   private readonly scene: Scene;
-  private readonly camera: OrthographicCamera;
+  private readonly orthoCamera: OrthographicCamera;
+  private readonly perspCamera: PerspectiveCamera;
+  private camera: OrthographicCamera | PerspectiveCamera;
   private readonly controls: OrbitControls;
   private readonly root = new Group();
   /**
@@ -113,6 +119,8 @@ export class ViewportEngine {
 
   private readonly frameListeners = new Set<() => void>();
   private display: AuthoredDisplay | null = null;
+  private appearance: DisplayAppearance = { wireframe: false, materialOverride: true };
+  private ortho = true;
   private grid: GroundGrid | null = null;
   private step = 0;
   private index: SolidIndex | null = null;
@@ -161,10 +169,13 @@ export class ViewportEngine {
     this.scene.add(this.root);
     this.scene.add(this.gridRoot);
 
-    this.camera = new OrthographicCamera(-1, 1, 1, -1, 0.1, 1000);
+    this.orthoCamera = new OrthographicCamera(-1, 1, 1, -1, 0.1, 1000);
+    this.perspCamera = new PerspectiveCamera(35, 1, 0.1, 1000);
+    this.camera = this.orthoCamera;
     // Z-up, matching `cameras.py`'s frame. three.js defaults to Y-up, and a
     // viewport in the other convention would show every named view rotated.
-    this.camera.up.set(0, 0, 1);
+    this.orthoCamera.up.set(0, 0, 1);
+    this.perspCamera.up.set(0, 0, 1);
 
     // Lights ride with the camera so shading does not change meaning when the
     // view does: the picture is an instrument reading, not a beauty render.
@@ -200,6 +211,7 @@ export class ViewportEngine {
     // loader's `associations` map, which only ever names nodes the loader made.
     // Authoring first proves the join is unaffected by what we add.
     this.display = authorDisplay(gltf.scene, this.palette);
+    applyAppearance(gltf.scene, this.display.material, this.appearance);
     this.root.add(gltf.scene);
     this.index = indexSolidNodes(gltf, geometry);
     this.bounds = boundsAt(this.index, 0);
@@ -258,9 +270,7 @@ export class ViewportEngine {
     const framing = framingFor(bounds, view, this.aspect());
     if (framing === null) return;
     this.framing = framing;
-    applyFraming(this.camera, framing);
-    this.camera.zoom = 1;
-    this.camera.updateProjectionMatrix();
+    this.applyCurrentFraming(framing);
     this.controls.target.set(framing.target[0], framing.target[1], framing.target[2]);
     this.controls.update();
     // §3.11.5's grid is stepped off the span this framing just fixed — the same
@@ -294,6 +304,76 @@ export class ViewportEngine {
     this.render();
   }
 
+  /**
+   * Operator appearance flags that mutate the loaded meshes (§3.11).
+   *
+   * Grid visibility and the camera projection are the other half and have
+   * their own setters — they are not a material decision.
+   */
+  setAppearance(appearance: DisplayAppearance): void {
+    this.appearance = appearance;
+    const display = this.display;
+    if (display === null) return;
+    applyAppearance(this.root, display.material, appearance);
+    this.render();
+  }
+
+  /**
+   * Show or hide §3.11.5's ground grid. The step is unchanged: hiding the
+   * lines does not invent a different spacing, and the readout reports 0 when
+   * the caller has turned the grid off.
+   */
+  setGridVisible(visible: boolean): void {
+    this.gridRoot.visible = visible;
+    this.render();
+  }
+
+  /**
+   * Orthographic (the `cameras.py` projection) or a perspective viewing aid
+   * that keeps the same eye, target and vertical extent.
+   *
+   * Default is ortho. Named views and `heph render` stay orthographic; this
+   * flag only changes how the working canvas projects them.
+   */
+  setOrtho(ortho: boolean): void {
+    if (ortho === this.ortho) return;
+    this.ortho = ortho;
+    const previous = this.camera;
+    const next = ortho ? this.orthoCamera : this.perspCamera;
+    next.position.copy(previous.position);
+    next.up.copy(previous.up);
+    next.near = previous.near;
+    next.far = previous.far;
+    next.lookAt(this.controls.target);
+    for (const child of [...previous.children]) next.add(child);
+    this.scene.remove(previous);
+    this.scene.add(next);
+    this.camera = next;
+    this.controls.object = next;
+    // Keep the current pose. Fit is the action that snaps back to the named
+    // view; toggling the projection must not steal an orbit.
+    const distance = Math.max(next.position.distanceTo(this.controls.target), 1e-6);
+    const aspect = this.aspect();
+    const halfHeight =
+      previous === this.orthoCamera
+        ? this.orthoCamera.top / this.orthoCamera.zoom
+        : Math.tan((this.perspCamera.fov * Math.PI) / 360) * distance;
+    if (ortho) {
+      this.orthoCamera.top = halfHeight;
+      this.orthoCamera.bottom = -halfHeight;
+      this.orthoCamera.left = -halfHeight * aspect;
+      this.orthoCamera.right = halfHeight * aspect;
+      this.orthoCamera.zoom = 1;
+      this.orthoCamera.updateProjectionMatrix();
+    } else {
+      this.perspCamera.fov = (2 * Math.atan(halfHeight / distance) * 180) / Math.PI;
+      this.perspCamera.aspect = aspect;
+      this.perspCamera.updateProjectionMatrix();
+    }
+    this.controls.update();
+    this.render();
+  }
+
   /** §5.3's live preview: `null` clears every clipping plane. */
   setSection(plane: SectionPlaneSpec | null): void {
     if (plane === null) {
@@ -316,16 +396,26 @@ export class ViewportEngine {
       // Keep the vertical extent and re-fit the horizontal one, so a resize
       // changes how much is visible and never how large a millimetre is.
       const halfWidth = framing.halfHeight * this.aspect();
-      this.camera.left = -halfWidth;
-      this.camera.right = halfWidth;
-      this.camera.updateProjectionMatrix();
+      if (this.camera === this.orthoCamera) {
+        this.orthoCamera.left = -halfWidth;
+        this.orthoCamera.right = halfWidth;
+        this.orthoCamera.updateProjectionMatrix();
+      } else {
+        this.perspCamera.aspect = this.aspect();
+        this.perspCamera.updateProjectionMatrix();
+      }
     }
     this.render();
   }
 
   /** The camera's current half-height in model units — the grid readout's scale. */
   scale(): number {
-    return this.camera.top / this.camera.zoom;
+    if (this.camera === this.orthoCamera) {
+      return this.orthoCamera.top / this.orthoCamera.zoom;
+    }
+    const distance = this.perspCamera.position.distanceTo(this.controls.target);
+    const halfAngle = (this.perspCamera.fov * Math.PI) / 360;
+    return Math.tan(halfAngle) * distance;
   }
 
   /**
@@ -399,6 +489,17 @@ export class ViewportEngine {
   private aspect(): number {
     const size = this.renderer.getSize(new Vector2());
     return size.y > 0 ? size.x / size.y : 1;
+  }
+
+  /** Apply the last named-view framing to whichever camera is live. */
+  private applyCurrentFraming(framing: Framing): void {
+    if (this.camera === this.orthoCamera) {
+      applyFraming(this.orthoCamera, framing);
+      this.orthoCamera.zoom = 1;
+      this.orthoCamera.updateProjectionMatrix();
+    } else {
+      applyPerspectiveFraming(this.perspCamera, framing);
+    }
   }
 
   private clearRoot(): void {

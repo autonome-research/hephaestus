@@ -71,9 +71,14 @@ Runs a part script in a sandboxed subprocess with the injected namespace from
 
 - **Statement-level execution.** The script is split into top-level statements
   via `ast`. Statements execute sequentially; after each one the executor
-  records a checkpoint: statement index, source span, names bound, and — for
-  names bound to build123d shapes — a metrics snapshot (solid count, bbox,
-  volume, face count, `sealed` = is-manifold, `genus`).
+  records a checkpoint: statement index, source span, names bound, the
+  verbatim statement text, and — for names bound to build123d shapes — a
+  metrics snapshot (solid count, bbox, volume, face count, `sealed` =
+  is-manifold, `genus`). Those checkpoints persist on the §8 `BuildResult`
+  and are projected by `GET /parts/{part}/build` as `checkpoints[]`. Metrics
+  and per-statement BRep writes stay lazy (mission rule 4): a checkpoint
+  carries an `artifact_ref` only when publication minted a last-good blob
+  for that stop.
 - **Failure semantics.** On exception, the build result MUST include: the
   failing line and column, exception type, a source frame (±2 lines), the last
   successfully executed statement, the last-good metrics snapshot, and a

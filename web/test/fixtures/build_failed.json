@@ -12,6 +12,26 @@
   "checks": {},
   "source_map_ref": null,
   "warnings": [],
+  "checkpoints": [
+    {
+      "index": 0,
+      "line": 1,
+      "statement": "PARAMS = {\n    \"groove_count\": Param(5, min=2, max=10),\n}",
+      "span": [1, 0, 3, 1],
+      "bound": ["PARAMS"],
+      "shapes": [],
+      "artifact_ref": null
+    },
+    {
+      "index": 1,
+      "line": 44,
+      "statement": "tread_shelf = slotted_shelf - groove_cutter",
+      "span": [44, 0, 44, 48],
+      "bound": ["tread_shelf"],
+      "shapes": ["tread_shelf"],
+      "artifact_ref": "artifact:build-checkpoint:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
   "error": {
     "line": 46,
     "col": 14,

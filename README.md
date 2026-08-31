@@ -8,8 +8,8 @@ SPDX-License-Identifier: Apache-2.0
 **An open agentic CAD harness.** Hephaestus pairs a language model with a real
 parametric solid-modeling kernel (build123d / OpenCascade), a grounded
 visual-feedback loop, and a persistent geometric verification layer, so that an
-agent can design, inspect, iterate on, and export manufacturable parts — from a
-terminal, from any MCP client, or from a web workspace.
+agent can design, inspect, iterate on, and export manufacturable parts from a
+terminal. The web UI is optional operator chrome. MCP is optional.
 
 Hephaestus is an Autonome Research Labs project, licensed Apache-2.0.
 
@@ -28,16 +28,17 @@ Hephaestus inverts each of those decisions:
 | Axis | Closed products | Hephaestus |
 |---|---|---|
 | Model | Locked to a house model | API and local-model endpoints compatibility-tested through the pinned Pi runtime; the benchmark corpus measures which are good at CAD |
-| Surface | Browser-only webapp | Engine-first: CLI and MCP server are the product; the web UI is a client |
+| Surface | Browser-only webapp | Engine-first: the CLI is the agent core; the web UI is optional operator chrome (`heph serve --web`); MCP is optional |
 | Versioning | Opaque `v1*` badge | Plain files in git; branches, PRs, blame, CI |
 | Verification | Transient, in-loop only | Persistent geometric spec tests re-run on every build |
 | Skills / parts / materials | Closed catalogs | Open, versioned, community-contributed registries |
 | Provenance | Implicit | Source maps: every solid and face traceable to the statement that made it |
 
-The load-bearing consequence of "engine-first": because the core loop is
-exposed over MCP, *any* agent environment — Claude Code, a droid fleet, a CI
-pipeline — gains CAD capability without touching a browser. The web UI is one
-client among several, not the product.
+The load-bearing consequence of "engine-first": the agent core is the CLI and
+the headless engine. A CI pipeline, a local shell, or any agent that can run
+`heph` gains CAD capability without a browser and without MCP. The web UI is
+optional operator chrome — one way to look at a project — not the product.
+`heph serve --mcp` is there if you want it; nothing requires it.
 
 ## What already works about the approach
 
@@ -93,7 +94,7 @@ hephaestus/
 ├── core/                      Python: CAD executor, kernel, render, checks + opstore adapters
 ├── agent/                     TypeScript: Pi SDK runtime + thread-phase workflows
 ├── server/                    Python: MCP/HTTP API + Node agent bridge
-├── web/                       TypeScript: React + three.js client
+├── web/                       TypeScript: React + three.js operator chrome (`heph serve --web`)
 ├── registries/                skills/, parts/, materials/, dfm/
 └── corpus/                    golden prompts + expected assertions
 ```
@@ -103,10 +104,16 @@ hephaestus/
 Under active construction, engine-first. Stages S through 3 are complete with
 green gates (durability substrate, CAD engine, render service, agent runtime,
 MCP server); the validation ladder (Stage 2V) and manufacturing depth (Stage 6)
-follow, then a **headless v0.1 release** — wheel, `heph` CLI, MCP server and
-packaged agent sidecar, no browser dependency — before any web UI work begins
-(`mission_plan.md`, 2026-07-26 ordering amendment). Everything built so far is
-headless and deployable into any MCP client today.
+continue.
+
+Public v0.1 is the **engine-first CLI**: `heph` is the agent core. `web/` exists
+on `main` as optional operator chrome — `heph serve --web` is the operator
+workspace. MCP (`heph serve --mcp`) is optional and not required to use the
+engine.
+
+There is **no PyPI package** and **no GitHub Release**. Tag `v0.1.0-headless`
+is a historical headless cut; it has no `web/` and is not an install path.
+Install from a clone of this repository ([Install](#install)).
 
 Originally documented as: pre-implementation. `mission_plan.md` is the operative document: a
 staged droid mission in which every stage gates on machine-checkable evidence
@@ -115,7 +122,29 @@ Playwright/computer-use screenshot assertions, and benchmark success rates).
 The agent layer embeds Pi for individual sessions and uses thread-phase only
 for deterministic multi-session workflows; the Python CAD engine remains
 independent. The Python CAD CLI works without Node on every supported Python
-platform. v0.1 agent/server script execution requires either native Linux
-bubblewrap isolation or a capability-tested Docker/Podman/OrbStack-compatible
-OCI backend (including on macOS); it fails closed when neither is available.
+platform. In v0.1, script execution is supported on Linux x86_64 with probed
+bubblewrap isolation. On macOS, script execution refuses by design; a
+capability-tested Docker/Podman/OrbStack-compatible OCI backend is post-v0.1.
+Everything that does not execute part scripts (`heph lint`, schema/contract
+reads, `heph --version`) works on macOS today. Script execution fails closed
+anywhere else.
 No stage advances on human vibes.
+
+## Install
+
+Hephaestus is **not on PyPI**. There is no GitHub Release. `pip install
+hephaestus-cad` 404s. Do not install from a `git+…#subdirectory=…` URL — the
+agent sidecar is gitignored build output, and `server/hatch_build.py` refuses a
+non-editable `hephaestus-server` wheel without it.
+
+Install from a clone:
+
+```console
+$ git clone https://github.com/autonome-research/hephaestus && cd hephaestus
+$ uv sync --dev
+$ uv run heph --version
+```
+
+Python 3.11 through 3.14. Capability tiers (engine vs sandbox vs agent/Node)
+and the optional operator workspace: [docs/install.md](docs/install.md).
+Contributor checks: [CONTRIBUTING.md](CONTRIBUTING.md).

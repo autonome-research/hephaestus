@@ -350,12 +350,12 @@ cheapest way to keep it from calcifying into one.
 | Route | Returns |
 |---|---|
 | `GET /project` | `{root, name, units, parts[], serve_mode, capabilities}` — the `open_project` projection, same serializer as `mcp/app.py` |
-| `GET /parts` | `[{name, path, content_hash, snapshot_ref}]` — `list_parts` projection |
-| `GET /parts/{part}/script?offset_line&limit_lines` | `read_part` result verbatim, `_PAGING_FIELDS` intact |
-| `GET /parts/{part}/build` | `BuildResult` projection: `{status, current, artifact_ref, project_snapshot_ref, effective_params, geometry_count, geometries[], metrics, checks, source_map_ref, warnings, error?, critique?}` |
+| `GET /parts` | `[{name, path, content_hash, snapshot_ref}]` — `list_parts` projection. **Same serializer** as `heph part list --json` (`hephaestus.core.project_store.listing`). |
+| `GET /parts/{part}/script?offset_line&limit_lines` | `read_part` result verbatim, `_PAGING_FIELDS` intact. CLI counterpart: `heph script show --json`. |
+| `GET /parts/{part}/build` | `BuildResult` projection: `{status, current, artifact_ref, project_snapshot_ref, effective_params, geometry_count, geometries[], metrics, checks, source_map_ref, warnings, checkpoints[], error?, critique?}`. CLI counterpart: `heph part show --json` emits the engine `BuildResult` (same document `heph build --json` writes) or `{status:"not_built"}`. |
 | `GET /parts/{part}/properties` | the enumerated `part.*` metadata projection (§6.2) |
 | `GET /parts/{part}/checks` | the shared `heph check --json` serializer (§6.3) |
-| `GET /parts/{part}/params` | `PARAMS` declarations `{name, value, default, min, max, step, scope}` + `state_hash` |
+| `GET /parts/{part}/params` | `PARAMS` declarations `{name, value, default, min, max, step, scope}` + `state_hash`. CLI counterpart: `heph params [PART] --json` (script literals + last-build effective values; no sandbox, no `state_hash` — it does not write `set_params`). |
 | `GET /parts/{part}/dfm` | last `run_dfm` projection + `{auto_run, resolved_from}` |
 | `GET /checks` | project-wide `heph check --json` parity body |
 
@@ -1940,6 +1940,18 @@ the UI is a view `heph render` can reproduce; free orbit snapshots the nearest
 readout shows camera state and scale — a screen-space fact, never rendered
 through `<Fact>`.
 
+**Appearance cluster — operator chrome, bound to the pin.** A small control
+strip on the viewport drives the display authorship §3.11 already specified:
+wireframe, fit, ortho, grid, axis triad, material override. Defaults match the
+authored picture (shaded, orthographic, grid and triad on, material at
+`--viewport-part` with the ≥4.5:1 part-vs-ground floor). Fit re-applies
+`cameras.py`'s framing for the current named view. Wireframe hides the fill and
+keeps the silhouette. Ortho off is a perspective viewing aid; the named views
+and `heph render` remain orthographic. The cluster is **not** workspace state:
+§4.5 stays closed. It authors no material the engine did not already project.
+G4.5's thresholds are unchanged — the strip is fixed-size chrome and does not
+move on a visibility toggle.
+
 During a rebuild the viewport keeps the **last completed** artifact and the
 header shows `stale` with the ref it is showing. `architecture.md` §3 already
 guarantees a long build never blocks inspection; the UI's job is to express
@@ -2393,6 +2405,13 @@ a removable chip row above the textarea, so the operator sees the references
 before sending and can drop any of them. The chips render §4.5 state, which is
 navigation, not fact — the same exemption §1 grants the grid readout — so no
 chip goes through `<Fact>` and none carries a `data-source`.
+
+**The CLI does not compose this envelope.** `heph prompt` / `heph prompt set`
+store operator request text at `.heph/request.txt` and start no run, call no
+tool, and do not pass the file to `set_request_text`. Headless agents author
+parts with `heph part create` / `heph script write` and build with `heph build`;
+they do not get a second prompt path that would have to invent context the
+terminal does not have. There is no hosted chat on `heph`.
 
 **NEW WORK (§19.19) — `server/http/context.py::compose_context`.** It reads
 **only** through the existing projections — the serializers behind

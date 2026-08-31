@@ -6,9 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 # MCP client configuration
 
 `heph serve --mcp` exposes the whole Hephaestus tool surface over the Model
-Context Protocol. This is the load-bearing consequence of the engine-first
-design: any MCP-capable agent environment gains CAD capability without touching
-a browser, and without Hephaestus knowing which environment it is.
+Context Protocol. MCP is **optional**. The agent core is the CLI; you do not
+need an MCP client to use Hephaestus. This page is for operators who want one.
 
 The server speaks two transports from one app — **stdio** for a client that
 launches the process itself, and **streamable HTTP** at `/mcp` for a client that
@@ -16,11 +15,12 @@ connects to one already running. Same tools, same dispatch, same idempotency.
 
 ## Prerequisites
 
-`heph` must be on the `PATH` of the process that launches it. If you installed
-with `pipx`, it is. If you installed into a virtualenv you activate by hand,
-give the client the absolute path to the binary instead of the bare name — an
-MCP client launches your server from its own environment, not from your shell,
-and "works in my terminal" is the single most common failure here.
+`heph` must be on the `PATH` of the process that launches it. From a clone
+(`uv sync --dev`), that is the environment's `heph` — give the client
+`uv` with args `run heph serve --mcp`, or the absolute path to
+`.venv/bin/heph`. An MCP client launches your server from its own environment,
+not from your shell, and "works in my terminal" is the single most common
+failure here.
 
 Nothing else is required for the tool surface itself. Building parts through
 those tools requires the secure executor ([install.md](install.md)); serve mode
@@ -30,8 +30,11 @@ never falls back to the unsafe one.
 
 ### Claude Code
 
+From a clone, pass the venv binary so the client does not have to share your
+shell `PATH`:
+
 ```console
-$ claude mcp add hephaestus -- heph serve --mcp
+$ claude mcp add hephaestus -- /path/to/hephaestus/.venv/bin/heph serve --mcp
 ```
 
 ### Claude Desktop
@@ -43,7 +46,7 @@ $ claude mcp add hephaestus -- heph serve --mcp
 {
   "mcpServers": {
     "hephaestus": {
-      "command": "heph",
+      "command": "/path/to/hephaestus/.venv/bin/heph",
       "args": ["serve", "--mcp"]
     }
   }
@@ -57,7 +60,7 @@ $ claude mcp add hephaestus -- heph serve --mcp
   "servers": {
     "hephaestus": {
       "type": "stdio",
-      "command": "heph",
+      "command": "/path/to/hephaestus/.venv/bin/heph",
       "args": ["serve", "--mcp"]
     }
   }

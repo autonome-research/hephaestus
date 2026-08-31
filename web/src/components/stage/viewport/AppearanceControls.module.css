@@ -1,0 +1,27 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Operator appearance cluster. Layout only — buttons are the system primitive.
+ *
+ * Top-left, opposite the view cube, so the two orientation surfaces do not
+ * share a corner. Fixed size: wrapping is allowed but the cluster does not
+ * grow when a solid is hidden, which is the G4.5 constraint GridReadout
+ * already documents.
+ */
+
+.cluster {
+  position: absolute;
+  top: var(--space-3);
+  left: var(--space-3);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px; /* one-off: a control cluster is tighter than --gap-stack */
+  max-width: 22rem;
+  padding: var(--space-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-card);
+  background: var(--surface-overlay);
+  box-shadow: var(--elev-popover);
+}

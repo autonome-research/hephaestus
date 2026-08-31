@@ -15,37 +15,53 @@ contribution unmergeable no matter how good it is.
 
 ## Getting set up
 
+Public v0.1 is the engine-first CLI (`heph`). `web/` exists on `main`;
+`heph serve --web` is the optional operator workspace. MCP is optional and not
+required.
+
 ```console
 $ git clone https://github.com/autonome-research/hephaestus && cd hephaestus
-$ uv sync --dev                              # Python workspace
+$ uv sync --dev                              # Python workspace — this is the install
+$ uv run heph --version
+```
+
+The TypeScript agent and the web operator chrome are separate packages with
+separate lockfiles, not members of one root workspace (`repo_conventions.md`,
+"Stage 4 `web/` accepted versions"). Install them when you are changing those
+trees or running their checks. Running the engine tests needs bubblewrap on
+Linux x86_64 — see [docs/install.md](docs/install.md) for what each capability
+requires and what fails closed without it.
+
+```console
 $ pnpm --dir agent install --frozen-lockfile # the TypeScript agent
-$ pnpm --dir web install --frozen-lockfile   # the web workspace client
 ```
 
 Python is driven with `uv run …`; the two Node packages with
-`pnpm --dir agent …` and `pnpm --dir web …`. They are separate packages with
-separate lockfiles, not members of one root workspace (`repo_conventions.md`,
-"Stage 4 `web/` accepted versions").
-Running the engine tests needs bubblewrap on Linux x86_64 — see
-[docs/install.md](docs/install.md) for what each capability requires and what
-fails closed without it.
+`pnpm --dir agent …` and `pnpm --dir web …`.
 
-Gate G4's browser suite has two extra prerequisites, both once per machine:
-
-```console
-$ pnpm --dir web exec playwright install chromium
-$ pnpm --dir web build     # `heph serve --web` serves web/dist at /
-$ pnpm --dir web test:e2e  # the Gate G4 command; see web/e2e/README.md
-```
+Default local checks (engine / CLI; no `web/` required):
 
 ```console
 $ uv run ruff check . && uv run ruff format --check .
 $ uv run pyright opstore core server
 $ uv run pytest -m "not slow"                # add -m slow for the wheel lanes
 $ pnpm --dir agent typecheck && pnpm --dir agent test
-$ pnpm --dir web typecheck && pnpm --dir web lint && pnpm --dir web test
 $ uv run python scripts/docs_check.py        # links, paths, and §refs
 $ uv run python scripts/license_headers.py --check
+```
+
+### Optional: operator workspace (`heph serve --web`)
+
+`web/` is in-tree on `main`. It is optional operator chrome, not the agent
+core. Install and test it when you are changing that tree, running Gate G4, or
+serving the workspace client (`heph serve --web` serves `web/dist` at `/`).
+
+```console
+$ pnpm --dir web install --frozen-lockfile   # the web workspace client
+$ pnpm --dir web exec playwright install chromium
+$ pnpm --dir web build     # `heph serve --web` serves web/dist at /
+$ pnpm --dir web typecheck && pnpm --dir web lint && pnpm --dir web test
+$ pnpm --dir web test:e2e  # the Gate G4 command; see web/e2e/README.md
 ```
 
 ## The clean-room boundary
