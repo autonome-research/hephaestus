@@ -105,6 +105,13 @@ export function formatValue(value: unknown): string {
 }
 
 /**
+ * Visible width for the header pin and composer artifact chips. The full ref
+ * stays on `title` / `data-value` / `data-context-value`. 34 glyphs still ate
+ * the build-state chip and Token at 1280px.
+ */
+export const CHIP_REF_WIDTH = 22;
+
+/**
  * A content-addressed ref, shortened for a chip while staying identifiable.
  *
  * Head and tail, never a bare `.slice(-10)`: `ScriptEditor`'s status bar shipped

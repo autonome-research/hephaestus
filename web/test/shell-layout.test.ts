@@ -52,6 +52,11 @@ describe("shell layout — usable at 1280px, not a 2400px desk", () => {
     expect(formatRef(ref).length).toBeLessThanOrEqual(34);
     const composer = readFileSync(join(webSrc, "components/stream/Composer.tsx"), "utf8");
     expect(composer).toMatch(/formatRef\(chip\.value/);
+    expect(composer).toMatch(/CHIP_REF_WIDTH/);
+  });
+
+  it("gives the body one definite row so an 800px shell cannot grow", () => {
+    expect(shell).toMatch(/\.body\s*\{[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)/);
   });
 });
 

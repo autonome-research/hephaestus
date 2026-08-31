@@ -108,6 +108,10 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
   const [dialogFor, setDialogFor] = useState<string | null>(null);
   const [refusal, setRefusal] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Collapsed by default: the full configuration table + discovery explainer
+  // put Sign-in buttons at ~3000px in the rail. Compact keeps the actions
+  // inside the rail box; details stay one click away.
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const document_: ProvidersDocument | null = query.data ?? null;
 
   const reload = async (): Promise<void> => {
@@ -149,9 +153,13 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
     // was refused, and the two do not render the same.
     const note = query.error === null ? copy.absent.loading : refusalText(query.error);
     return (
-      <Panel label={copy.providers.title}>
+      <Panel
+        label={copy.providers.title}
+        className={styles["panel"]}
+        data-providers-collapsed=""
+      >
         <PanelHeader title={copy.providers.title} eyebrow={copy.providers.eyebrow} />
-        <PanelBody>
+        <PanelBody className={styles["body"]}>
           <PanelNote>{refusal ?? note}</PanelNote>
         </PanelBody>
       </Panel>
@@ -162,84 +170,107 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
   const dialogRow = rows.find((row) => row.id === dialogFor) ?? null;
 
   return (
-    <Panel label={copy.providers.title}>
-      <PanelHeader title={copy.providers.title} eyebrow={copy.providers.eyebrow} />
-      <PanelBody>
-        {/* §23.2: the file, its mode, and — when it is not ours — a sentence
-            saying we report the mode rather than change it. */}
-        <DataTable
-          rows={[
-            {
-              key: "config",
-              label: copy.providers.configPath,
-              value: <Fact mono source="providers.config_path" value={document_.config_path} />,
-            },
-            {
-              key: "mode",
-              label: copy.providers.fileMode,
-              value: (
-                <Fact source="providers.file_mode" value={document_.file_mode} />
-              ),
-              ...(document_.config_exists && !document_.file_mode_private
-                ? { note: copy.providers.fileModeOpen }
-                : {}),
-            },
-            {
-              key: "allowlist",
-              label: copy.providers.allowlist,
-              value:
-                document_.credential_allowlist.length === 0 ? (
-                  copy.providers.noneRecorded
-                ) : (
-                  <>
-                    {document_.credential_allowlist.map((name) => (
-                      <Chip key={name} tone="code">
-                        {name}
-                      </Chip>
-                    ))}
-                  </>
-                ),
-              note: copy.providers.allowlistNote,
-            },
-          ]}
-        />
-
-        {document_.auth_source === null ? null : (
-          <PanelSection eyebrow={copy.providers.authSource}>
-<Fact mono source="providers.auth_source" value={document_.auth_source} />
-            {document_.auth_source_linked ? (
-              <div data-auth-linked>
-                <PanelNote>{copy.providers.authSourceLinked}</PanelNote>
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    act(async () => {
-                      await unlinkAuthSource();
-                      await reload();
-                    });
-                  }}
-                  data-auth-unlink
-                >
-                  {copy.providers.unlink}
-                </Button>
-              </div>
-            ) : null}
-          </PanelSection>
-        )}
-
-        {document_.egress_acknowledged.length === 0 ? null : (
-          <PanelSection eyebrow={copy.providers.egressHosts}>
-            <PanelNote>{copy.providers.egressNote}</PanelNote>
+    <Panel
+      label={copy.providers.title}
+      className={styles["panel"]}
+      {...(detailsOpen ? { "data-providers-expanded": "" } : { "data-providers-collapsed": "" })}
+    >
+      <PanelHeader
+        title={copy.providers.title}
+        eyebrow={copy.providers.eyebrow}
+        actions={
+          <Button
+            variant="quiet"
+            pressed={detailsOpen}
+            onClick={() => {
+              setDetailsOpen((open) => !open);
+            }}
+            data-providers-details=""
+          >
+            {detailsOpen ? copy.providers.detailsHide : copy.providers.detailsShow}
+          </Button>
+        }
+      />
+      <PanelBody className={styles["body"]}>
+        {detailsOpen ? (
+          <>
+            {/* §23.2: the file, its mode, and — when it is not ours — a sentence
+                saying we report the mode rather than change it. */}
             <DataTable
-              rows={document_.egress_acknowledged.map((row) => ({
-                key: row.host,
-                label: <Fact mono source="providers.egress_acknowledged.host" value={row.host} />,
-                value: <Fact source="providers.egress_acknowledged.at" value={row.at} />,
-                attrs: { "data-egress-host": row.host },
-              }))}
+              rows={[
+                {
+                  key: "config",
+                  label: copy.providers.configPath,
+                  value: <Fact mono source="providers.config_path" value={document_.config_path} />,
+                },
+                {
+                  key: "mode",
+                  label: copy.providers.fileMode,
+                  value: (
+                    <Fact source="providers.file_mode" value={document_.file_mode} />
+                  ),
+                  ...(document_.config_exists && !document_.file_mode_private
+                    ? { note: copy.providers.fileModeOpen }
+                    : {}),
+                },
+                {
+                  key: "allowlist",
+                  label: copy.providers.allowlist,
+                  value:
+                    document_.credential_allowlist.length === 0 ? (
+                      copy.providers.noneRecorded
+                    ) : (
+                      <>
+                        {document_.credential_allowlist.map((name) => (
+                          <Chip key={name} tone="code">
+                            {name}
+                          </Chip>
+                        ))}
+                      </>
+                    ),
+                  note: copy.providers.allowlistNote,
+                },
+              ]}
             />
-          </PanelSection>
-        )}
+
+            {document_.auth_source === null ? null : (
+              <PanelSection eyebrow={copy.providers.authSource}>
+                <Fact mono source="providers.auth_source" value={document_.auth_source} />
+                {document_.auth_source_linked ? (
+                  <div data-auth-linked>
+                    <PanelNote>{copy.providers.authSourceLinked}</PanelNote>
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        act(async () => {
+                          await unlinkAuthSource();
+                          await reload();
+                        });
+                      }}
+                      data-auth-unlink
+                    >
+                      {copy.providers.unlink}
+                    </Button>
+                  </div>
+                ) : null}
+              </PanelSection>
+            )}
+
+            {document_.egress_acknowledged.length === 0 ? null : (
+              <PanelSection eyebrow={copy.providers.egressHosts}>
+                <PanelNote>{copy.providers.egressNote}</PanelNote>
+                <DataTable
+                  rows={document_.egress_acknowledged.map((row) => ({
+                    key: row.host,
+                    label: <Fact mono source="providers.egress_acknowledged.host" value={row.host} />,
+                    value: <Fact source="providers.egress_acknowledged.at" value={row.at} />,
+                    attrs: { "data-egress-host": row.host },
+                  }))}
+                />
+              </PanelSection>
+            )}
+          </>
+        ) : null}
 
         {rows.length === 0 ? (
           <div data-providers-empty>
@@ -247,6 +278,7 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
               icon="info"
               title={copy.providers.emptyTitle}
               body={copy.providers.emptyBody}
+              density="inline"
             />
           </div>
         ) : (
@@ -256,6 +288,7 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
                 key={row.id}
                 row={row}
                 busy={busy}
+                compact={!detailsOpen}
                 onSignIn={() => {
                   setDialogFor(row.id);
                 }}
@@ -290,6 +323,7 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
         <DiscoverySection
           offers={offers}
           busy={busy}
+          compact={!detailsOpen}
           onDiscover={() => {
             // THE ONLY call site. Never on mount, never on a timer, never as a
             // side effect of another action (§15.41, §23.5).
@@ -330,13 +364,50 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
 interface ProviderRowViewProps {
   readonly row: ProviderRow;
   readonly busy: boolean;
+  readonly compact: boolean;
   readonly onSignIn: () => void;
   readonly onSignOut: () => void;
 }
 
 function ProviderRowView(props: ProviderRowViewProps): React.JSX.Element {
-  const { row, busy, onSignIn, onSignOut } = props;
+  const { row, busy, compact, onSignIn, onSignOut } = props;
   const signedIn = row.source !== "none";
+  const actions = (
+    <div className={styles["actions"]}>
+      <Button
+        variant={signedIn ? "secondary" : "primary"}
+        onClick={onSignIn}
+        data-provider-signin={row.id}
+      >
+        {signedIn ? copy.providers.rotate : copy.providers.signIn}
+      </Button>
+      {signedIn ? (
+        busy ? (
+          <Button variant="quiet" disabled reason={copy.providers.dialog.waiting}>
+            {copy.providers.signOut}
+          </Button>
+        ) : (
+          <Button variant="quiet" onClick={onSignOut} data-provider-signout={row.id}>
+            {copy.providers.signOut}
+          </Button>
+        )
+      ) : null}
+    </div>
+  );
+  if (compact) {
+    return (
+      <div
+        className={styles["compactRow"]}
+        data-provider={row.id}
+        data-provider-source={row.source}
+        data-provider-health={row.health}
+        data-provider-available={row.available === null ? "unknown" : String(row.available)}
+      >
+        <Chip tone="code">{row.id}</Chip>
+        {actions}
+      </div>
+    );
+  }
   return (
     <div
       className={styles["row"]}
@@ -392,26 +463,7 @@ function ProviderRowView(props: ProviderRowViewProps): React.JSX.Element {
               ]),
         ]}
       />
-      <div className={styles["actions"]}>
-        <Button
-          variant={signedIn ? "secondary" : "primary"}
-          onClick={onSignIn}
-          data-provider-signin={row.id}
-        >
-          {signedIn ? copy.providers.rotate : copy.providers.signIn}
-        </Button>
-        {signedIn ? (
-          busy ? (
-            <Button variant="quiet" disabled reason={copy.providers.dialog.waiting}>
-              {copy.providers.signOut}
-            </Button>
-          ) : (
-            <Button variant="quiet" onClick={onSignOut} data-provider-signout={row.id}>
-              {copy.providers.signOut}
-            </Button>
-          )
-        ) : null}
-      </div>
+      {actions}
     </div>
   );
 }
@@ -419,15 +471,16 @@ function ProviderRowView(props: ProviderRowViewProps): React.JSX.Element {
 interface DiscoverySectionProps {
   readonly offers: readonly DiscoveryOffer[] | null;
   readonly busy: boolean;
+  readonly compact: boolean;
   readonly onDiscover: () => void;
   readonly onAdopt: (offer: DiscoveryOffer) => void;
 }
 
 function DiscoverySection(props: DiscoverySectionProps): React.JSX.Element {
-  const { offers, busy, onDiscover, onAdopt } = props;
+  const { offers, busy, compact, onDiscover, onAdopt } = props;
   return (
     <PanelSection eyebrow={copy.providers.discover.title}>
-      <PanelNote>{copy.providers.discover.note}</PanelNote>
+      {compact ? null : <PanelNote>{copy.providers.discover.note}</PanelNote>}
       {busy ? (
         <Button variant="secondary" disabled reason={copy.providers.dialog.waiting}>
           {copy.providers.discover.action}

@@ -1029,6 +1029,11 @@ export const copy = {
      */
     model: "Model",
     effort: "Effort",
+    /**
+     * Effort is not a prompt field (§7A.3). The composer used to project a
+     * bare "off" next to the model id; that control wrote nothing and read
+     * as an unlabelled toggle. The word stays here for the decision module.
+     */
     effortOff: "off",
     noModels: "No models are declared in the provider configuration.",
     addCurrentView: "Add current view",
@@ -1090,6 +1095,13 @@ export const copy = {
   providers: {
     title: "Model providers",
     eyebrow: "Sign in",
+    /**
+     * The rail at 800px cannot host the full configuration table, allowlist
+     * note, and discovery explainer at once — those put Sign-in at ~3000px.
+     * Details stay one click away; the compact row keeps the actions.
+     */
+    detailsShow: "Show configuration",
+    detailsHide: "Hide configuration",
     /** §23.0: the empty state is an action, not a green checkmark. */
     emptyTitle: "No model provider yet",
     emptyBody:

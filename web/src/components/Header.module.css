@@ -66,6 +66,7 @@
   align-items: center;
   gap: var(--gap-inline);
   min-width: 0;
+  overflow: hidden;
   justify-self: start;
 }
 
