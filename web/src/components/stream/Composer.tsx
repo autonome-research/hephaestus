@@ -74,7 +74,7 @@ import {
   type ProfileCapability,
 } from "../../api/sessions";
 import { copy } from "../../copy";
-import { Button, Chip, EmptyState, TextInput, formatRef } from "../../system";
+import { Button, Chip, CHIP_REF_WIDTH, EmptyState, TextInput, formatRef } from "../../system";
 import { useWorkspaceState } from "../../state/react";
 import { labelsForPart, visibilityStore } from "../../state/visibility";
 import {
@@ -448,41 +448,33 @@ export function Composer(props: ComposerProps): React.JSX.Element {
         </div>
       ) : null}
 
-      {/* Session chrome: model + effort projected from GET /providers (not
-          a picker — §7A.3's prompt body has no such field), DFM as the
-          engine equivalent of a Plan/DFM chip, and Add current view.
-          Existing `data-*` selectors on the form and the chip row are
-          unchanged. */}
+      {/* Session chrome: model projected from GET /providers (not a picker —
+          §7A.3's prompt body has no such field). Effort is not a prompt
+          field either, so a bare "off" is not rendered — it wrote nothing.
+          DFM stays the two labelled §6.4 controls. Add current view is an
+          explicit opt-in. */}
       <div className={styles["chrome"]} data-composer-chrome="">
         {modelChrome && selectedModel !== null ? (
-          <>
-            <Chip
-              tone="code"
-              data-composer-model={selectedModel.id}
-              data-composer-provider={selectedModel.providerId}
-            >
-              <Fact mono source="providers.models.id" value={selectedModel.id}>
-                {selectedModel.id}
-              </Fact>
-            </Chip>
-            <span className={styles["note"]} data-composer-effort="off" data-composer-effort-absent="">
-              {copy.composer.effortOff}
-            </span>
-          </>
+          <Chip
+            tone="code"
+            title={copy.composer.model}
+            data-composer-model={selectedModel.id}
+            data-composer-provider={selectedModel.providerId}
+          >
+            <Fact mono source="providers.models.id" value={selectedModel.id}>
+              {selectedModel.id}
+            </Fact>
+          </Chip>
         ) : null}
 
         {showDfmChrome(agentUnavailable, state.part, dfm.data !== undefined) === "chip" &&
         dfm.data !== undefined ? (
           <div className={styles["dfm"]} data-composer-dfm="">
-            <Chip data-dfm-auto-run={String(dfm.data.auto_run)}>
-              <Fact source="dfm.auto_run" value={dfm.data.auto_run}>
-                {dfm.data.auto_run ? copy.dfm.autoRunOn : copy.dfm.autoRunOff}
-              </Fact>
-            </Chip>
             <Button
               variant="toggle"
               pressed={dfm.data.auto_run}
               onClick={toggleAutoRun}
+              data-dfm-auto-run={String(dfm.data.auto_run)}
               data-dfm-auto-run-toggle=""
               {...(dfmBusy !== null
                 ? { disabled: true as const, reason: copy.composer.dfmWriting }
@@ -657,10 +649,10 @@ function ContextChipRow(props: {
       {...(dropped ? { "data-context-dropped": "" } : {})}
     >
       <Chip tone="label">{label}</Chip>
-      <Chip tone="code">
+      <Chip tone="code" title={chip.value ?? undefined}>
         {chip.count !== null
           ? copy.composer.hiddenCount(chip.count)
-          : formatRef(chip.value ?? "")}
+          : formatRef(chip.value ?? "", CHIP_REF_WIDTH)}
       </Chip>
       <Button
         variant="quiet"
@@ -705,52 +697,39 @@ export function NewSessionAction(props: {
   return (
     <div className={styles["create"]} data-session-create="">
       {orchestrator !== undefined ? (
-        <>
-          <Button
-            variant="primary"
-            onClick={() => {
-              onCreate("orchestrator", null);
-            }}
-            data-create-profile="orchestrator"
-            {...(pending ? { disabled: true as const, reason: copy.composer.sending } : {})}
-          >
-            {copy.composer.createOrchestrator}
-          </Button>
-          <p className={styles["note"]} data-profile-what="orchestrator">
-            {copy.composer.profileWhat(
-              orchestrator.profile,
-              orchestrator.can_delegate,
-              orchestrator.part_scoped,
-            )}
-          </p>
-        </>
+        <Button
+          variant="primary"
+          title={copy.composer.profileWhat(
+            orchestrator.profile,
+            orchestrator.can_delegate,
+            orchestrator.part_scoped,
+          )}
+          onClick={() => {
+            onCreate("orchestrator", null);
+          }}
+          data-create-profile="orchestrator"
+          {...(pending ? { disabled: true as const, reason: copy.composer.sending } : {})}
+        >
+          {copy.composer.createOrchestrator}
+        </Button>
       ) : null}
       {partProfile !== undefined && part !== null ? (
-        <>
-          <Button
-            variant="secondary"
-            onClick={() => {
-              onCreate("part", part);
-            }}
-            data-create-profile="part"
-            {...(pending ? { disabled: true as const, reason: copy.composer.sending } : {})}
-          >
-            {copy.composer.createPart(part)}
-          </Button>
-          <p className={styles["note"]} data-profile-what="part">
-            {copy.composer.profileWhat(
-              partProfile.profile,
-              partProfile.can_delegate,
-              partProfile.part_scoped,
-            )}
-          </p>
-        </>
+        <Button
+          variant="secondary"
+          title={copy.composer.profileWhat(
+            partProfile.profile,
+            partProfile.can_delegate,
+            partProfile.part_scoped,
+          )}
+          onClick={() => {
+            onCreate("part", part);
+          }}
+          data-create-profile="part"
+          {...(pending ? { disabled: true as const, reason: copy.composer.sending } : {})}
+        >
+          {copy.composer.createPart(part)}
+        </Button>
       ) : null}
-      {/* §7A.2: at-least-once is the stated consequence and the UI carries it.
-          There is no route that closes a session and none is invented. */}
-      <p className={styles["note"]} data-orphan-note="">
-        {copy.composer.orphanNote}
-      </p>
     </div>
   );
 }

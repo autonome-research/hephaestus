@@ -10,10 +10,19 @@
  * icon and a word like every other status in the workspace.
  */
 
+/*
+ * Three rows, composer pinned. An `auto auto auto 1fr` template with the
+ * composer as an `auto` sibling of the empty state let the send row fall
+ * below an 800px stream: nothing shrank, and the column was not a scroll
+ * host. Header / scrollable main / composer is the §4.1 peer-column claim
+ * cashed out at 1280×800.
+ */
 .panel {
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   min-height: 0;
+  height: 100%;
+  overflow: hidden;
 }
 
 .header {
@@ -113,6 +122,13 @@
 }
 
 .scroll {
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Empty state, tabs, transcript — the region that yields height to the
+   pinned composer. `min-height: 0` is what lets this track shrink at 800px. */
+.main {
   min-height: 0;
   overflow: auto;
 }

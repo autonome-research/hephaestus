@@ -443,8 +443,11 @@ describe("session chrome from GET /providers", () => {
         }),
       },
     );
-    expect(html).toContain("data-composer-effort-absent");
-    expect(attribute(html, "data-composer-effort")).toBe("off");
+    // Effort is not a prompt field. The strip used to project a bare "off"
+    // with no accessible name; that control is gone. The decision module
+    // still records the closed vocabulary for a later route.
+    expect(html).not.toContain("data-composer-effort");
+    expect(html).not.toContain("data-composer-effort-absent");
   });
 });
 
@@ -487,6 +490,6 @@ describe("context chips do not force a 2400px stream", () => {
     const artifact = chips.find((chip) => chip.key === "artifact_ref");
     expect(artifact?.value).toBe(ref);
     expect(formatRef(ref)).not.toBe(ref);
-    expect(formatRef(ref).length).toBeLessThanOrEqual(34);
+    expect(formatRef(ref, 22).length).toBeLessThanOrEqual(22);
   });
 });

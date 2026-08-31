@@ -43,6 +43,10 @@
   position: relative;
   display: grid;
   grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--stream-width);
+  /* One definite row. An implicit `auto` row sizes to min-content and the
+     shell (`overflow: hidden`) then clips the send row and the rail's
+     sign-in controls — the 1280×800 measurement. */
+  grid-template-rows: minmax(0, 1fr);
   flex: 1 1 auto;
   min-height: 0;
   /* Flex item default `min-width: auto` is the grid's min-content. A nowrap
@@ -98,7 +102,7 @@
 .stream {
   min-height: 0;
   min-width: 0;
-  overflow-x: hidden;
+  overflow: hidden;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   border-left: 1px solid var(--border);

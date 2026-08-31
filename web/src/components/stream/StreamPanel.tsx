@@ -220,70 +220,72 @@ export function StreamPanel(): React.JSX.Element {
           which is where the operator's next act lives and where §7A.8 puts the
           cause, the path and the one action that can change it. Rendering it
           twice would say the same refusal in two places with two shapes. */}
-      {!unavailable && sessions.error !== null ? (
-        <EmptyState
-          icon="alert"
-          title={copy.errors.title}
-          body={sessions.error.message}
-          data-refusal-reason={refusal !== null ? refusal.reason : "transport_error"}
-        />
-      ) : !unavailable && rows.length === 0 && sessions.isFetched ? (
-        // §7A.2's entry point. The action creates an orchestrator session and
-        // focuses the composer, and the copy names `create_part` as the
-        // mechanism — a blank canvas the operator has to guess is filled by
-        // talking is the same defect as a composer that is not there.
-        <EmptyState
-          icon="info"
-          title={copy.stream.noSessionsTitle}
-          body={sessionEmptyBody(partCount, part)}
-          data-session-empty={sessionEmptyKind(partCount)}
-          action={
-            <NewSessionAction
-              profiles={profiles}
-              part={part}
-              pending={creating}
-              onCreate={create}
-            />
-          }
-        />
-      ) : !unavailable ? (
-        <SessionTabs
-          tabs={tabs}
-          sessions={rows}
-          selected={selected}
-          bounded={stream.threadBounded}
-          onSelect={(sessionId) => {
-            workspaceStore.update({ session: sessionId });
-          }}
-        />
-      ) : null}
+      <div className={styles["main"]} data-stream-main="">
+        {!unavailable && sessions.error !== null ? (
+          <EmptyState
+            icon="alert"
+            title={copy.errors.title}
+            body={sessions.error.message}
+            data-refusal-reason={refusal !== null ? refusal.reason : "transport_error"}
+          />
+        ) : !unavailable && rows.length === 0 && sessions.isFetched ? (
+          // §7A.2's entry point. One honest sentence plus the two create
+          // actions — a three-paragraph tutorial under the buttons pushed
+          // the pinned composer off an 800px stream.
+          <EmptyState
+            icon="info"
+            title={copy.stream.noSessionsTitle}
+            body={sessionEmptyBody(partCount, part)}
+            density="inline"
+            data-session-empty={sessionEmptyKind(partCount)}
+            action={
+              <NewSessionAction
+                profiles={profiles}
+                part={part}
+                pending={creating}
+                onCreate={create}
+              />
+            }
+          />
+        ) : !unavailable ? (
+          <SessionTabs
+            tabs={tabs}
+            sessions={rows}
+            selected={selected}
+            bounded={stream.threadBounded}
+            onSelect={(sessionId) => {
+              workspaceStore.update({ session: sessionId });
+            }}
+          />
+        ) : null}
 
-      {createError !== null ? (
-        <p className={styles["note"]} data-create-error="">
-          {createError}
-        </p>
-      ) : null}
+        {createError !== null ? (
+          <p className={styles["note"]} data-create-error="">
+            {createError}
+          </p>
+        ) : null}
 
-      {selected !== null && !unavailable ? (
-        <>
-          <div className={styles["historyBar"]} data-history-state={stream.history.state}>
-            <span data-history-pages={stream.history.pages}>
-              {stream.history.state === "loading" && stream.history.pages === 0
-                ? copy.stream.historyLoading
-                : copy.stream.historyPages(stream.history.pages)}
-            </span>
-            {stream.history.state === "truncated" ? (
-              <span className={styles["note"]}>{copy.stream.historyTruncated}</span>
-            ) : null}
-            {stream.history.state === "failed" ? (
-              <span className={styles["note"]}>{copy.stream.historyFailed}</span>
-            ) : null}
-          </div>
-          <div className={styles["scroll"]}>
-            <Transcript rows={stream.rows} />
-          </div>
-        </>
-      ) : null}
+        {selected !== null && !unavailable ? (
+          <>
+            <div className={styles["historyBar"]} data-history-state={stream.history.state}>
+              <span data-history-pages={stream.history.pages}>
+                {stream.history.state === "loading" && stream.history.pages === 0
+                  ? copy.stream.historyLoading
+                  : copy.stream.historyPages(stream.history.pages)}
+              </span>
+              {stream.history.state === "truncated" ? (
+                <span className={styles["note"]}>{copy.stream.historyTruncated}</span>
+              ) : null}
+              {stream.history.state === "failed" ? (
+                <span className={styles["note"]}>{copy.stream.historyFailed}</span>
+              ) : null}
+            </div>
+            <div className={styles["scroll"]}>
+              <Transcript rows={stream.rows} />
+            </div>
+          </>
+        ) : null}
+      </div>
 
       {/* §7A.1: the composer is the LAST CHILD of the STREAM column, one per
           session tab, and it renders in every state — including the two where

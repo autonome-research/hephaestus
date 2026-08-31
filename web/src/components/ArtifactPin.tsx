@@ -25,7 +25,7 @@
 
 import { copy } from "../copy";
 import { workspaceStore, useWorkspace } from "../state/react";
-import { Button, formatRef } from "../system";
+import { Button, CHIP_REF_WIDTH, formatRef } from "../system";
 import { Fact } from "./Fact";
 import styles from "./ArtifactPin.module.css";
 
@@ -44,13 +44,19 @@ export function ArtifactPin({ currentRef }: ArtifactPinProps): React.JSX.Element
       className={styles["pin"]}
       data-pin-mode={mode}
       data-testid="artifact-pin"
-      title={held ? copy.header.pinnedBanner : copy.header.unpinned}
+      title={
+        ref === null
+          ? held
+            ? copy.header.pinnedBanner
+            : copy.header.unpinned
+          : `${ref}. ${held ? copy.header.pinnedBanner : copy.header.unpinned}`
+      }
     >
       {ref === null ? (
         <span className={styles["absent"]}>{copy.absent.unavailable}</span>
       ) : (
         <Fact source="build.artifact_ref" value={ref} className={styles["ref"]}>
-          {formatRef(ref)}
+          {formatRef(ref, CHIP_REF_WIDTH)}
         </Fact>
       )}
       <span className={styles["mode"]}>{copy.pinMode[mode]}</span>

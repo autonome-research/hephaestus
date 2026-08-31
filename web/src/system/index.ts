@@ -61,6 +61,7 @@ export { BREAKPOINT_RAIL, BREAKPOINT_STREAM, bandFor } from "./useBreakpoint";
 export type { Band, ShellState } from "./useBreakpoint";
 
 export {
+  CHIP_REF_WIDTH,
   formatBytes,
   formatNumber,
   formatRef,
