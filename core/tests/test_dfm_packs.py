@@ -101,6 +101,29 @@ def fdm_fixture() -> bytes:
     return _brep(tray + Pos(40, 0, 0) * flare)
 
 
+def router_fixture() -> bytes:
+    """A 20 mm panel: not plywood stock, a 16 mm pocket, 0.5 mm web, 0.3 mm
+    corners, a 1.5 mm through-bore, and a side hole the +Z spindle cannot reach.
+
+    Six known violations, one per cnc_router rule.
+    """
+    from build123d import Align, Axis, Box, Cylinder, Pos, Rot, fillet
+
+    bottom = (Align.CENTER, Align.CENTER, Align.MIN)
+    body = Box(80, 50, 20, align=bottom)
+    body = body - Pos(0, 12.5, 4) * Box(24, 24, 30, align=bottom)
+    corners = [
+        edge
+        for edge in body.edges().filter_by(Axis.Z)
+        if abs(abs(edge.center().X) - 12.0) < 0.2 and 0.0 < edge.center().Y < 25.0
+    ]
+    assert len(corners) == 4, "fixture must have four concave pocket corners"
+    body = fillet(corners, 0.3)
+    body = body - Pos(-25, 0, 0) * Cylinder(0.75, 50)
+    body = body - Pos(0, -15, 10) * Rot(0.0, 90.0, 0.0) * Cylinder(3.0, 120)
+    return _brep(body)
+
+
 def materials_index() -> MaterialsIndex:
     return MaterialsIndex(load_registry(REGISTRIES / "materials"))
 
@@ -119,6 +142,10 @@ def laser_pack() -> DfmPack:
 
 def fdm_pack() -> DfmPack:
     return DfmIndex(load_registry(DFM_ROOT)).get("fdm")
+
+
+def router_pack() -> DfmPack:
+    return DfmIndex(load_registry(DFM_ROOT)).get("cnc_router")
 
 
 def _run_in_process(
@@ -169,17 +196,20 @@ def _run_in_process(
 # -- the pack format --------------------------------------------------------
 
 
-def test_the_bundled_dfm_registry_loads_with_both_packs() -> None:
+def test_the_bundled_dfm_registry_loads_with_the_shipped_packs() -> None:
     registry = load_registry(DFM_ROOT)
     assert registry.kind == "dfm"
     assert registry.manifest.license
     index = DfmIndex(registry)
-    assert index.processes() == ("fdm", "laser_cut")
-    assert index.has("laser_cut") and not index.has("cnc_router")
+    assert index.processes() == ("cnc_router", "fdm", "laser_cut")
+    # Issue #28 inverted the cnc_router hole: heph init's default process is
+    # cnc_router, so the bundled registry must carry that pack. cnc_mill is
+    # still unshipped (CAM.md §6 / parent #14).
+    assert index.has("laser_cut") and index.has("cnc_router") and not index.has("cnc_mill")
 
 
 def test_every_rule_declares_an_id_a_title_a_severity_and_its_parameters() -> None:
-    for pack in (laser_pack(), fdm_pack()):
+    for pack in (laser_pack(), fdm_pack(), router_pack()):
         assert pack.rule_ids() == tuple(dict.fromkeys(pack.rule_ids())), "ids must be unique"
         for rule in pack.rules:
             assert rule.rule_id.startswith(f"{pack.process}.")
@@ -203,6 +233,17 @@ def test_the_shipped_packs_cover_the_stage6_rules() -> None:
         "fdm.overhang_angle",
         "fdm.min_hole_diameter",
     )
+    assert router_pack().rule_ids() == (
+        "cnc_router.min_internal_radius_vs_tool",
+        "cnc_router.pocket_depth_vs_tool_diameter",
+        "cnc_router.min_web_thickness",
+        "cnc_router.bore_aspect_ratio",
+        "cnc_router.single_axis_accessibility",
+        "cnc_router.stock_thickness_match",
+    )
+    assert "kerf_mm" not in router_pack().params, (
+        "a router bit removes its full diameter; cut-file kerf is a laser concern"
+    )
 
 
 def test_an_unknown_process_or_rule_lists_the_candidates() -> None:
@@ -211,6 +252,7 @@ def test_an_unknown_process_or_rule_lists_the_candidates() -> None:
         index.get("waterjet")
     assert unknown_process.value.reason == "unknown_dfm_pack"
     assert "laser_cut" in unknown_process.value.message
+    assert "cnc_router" in unknown_process.value.message
     with pytest.raises(RegistryError) as unknown_rule:
         laser_pack().rule("laser_cut.nope")
     assert unknown_rule.value.reason == "unknown_dfm_rule"
@@ -306,9 +348,9 @@ def test_material_spec_resolves_to_the_registry_record_a_rule_measures_against(
 def test_the_dfm_registry_resolves_through_the_project_registry_set(tmp_path: Path) -> None:
     (tmp_path / "hephaestus.toml").write_text('name = "proj"\n', encoding="utf-8")
     registries = RegistrySet.open(tmp_path)
-    assert registries.dfm.processes() == ("fdm", "laser_cut")
+    assert registries.dfm.processes() == ("cnc_router", "fdm", "laser_cut")
     listing = registries.dfm.listing()
-    assert [entry["process"] for entry in listing] == ["fdm", "laser_cut"]
+    assert [entry["process"] for entry in listing] == ["cnc_router", "fdm", "laser_cut"]
     assert all(entry["registry_digest"] for entry in listing)
 
 
@@ -373,6 +415,73 @@ def test_every_fdm_rule_fires_on_the_fdm_fixture(tmp_path: Path) -> None:
 
     hole = outcomes["fdm.min_hole_diameter"].findings[0]
     assert hole.suggested_bound == pytest.approx(2.0)
+
+
+def test_every_router_rule_fires_on_the_router_fixture(tmp_path: Path) -> None:
+    outcomes = _run_in_process(
+        router_pack(),
+        router_fixture(),
+        tmp_path,
+        part="panel",
+        metadata={"material_spec": "6 mm Baltic birch plywood", "stock_form": "sheet"},
+        material=plywood_record(),
+    )
+    assert set(outcomes) == set(router_pack().rule_ids())
+    assert all(outcome.status == "violations" for outcome in outcomes.values()), {
+        rule_id: (outcome.status, outcome.error) for rule_id, outcome in outcomes.items()
+    }
+
+    corner = outcomes["cnc_router.min_internal_radius_vs_tool"].findings[0]
+    assert corner.severity == "error"
+    assert corner.suggested_bound == pytest.approx(1.5)
+    assert "0.300 mm" in corner.message
+
+    pocket = outcomes["cnc_router.pocket_depth_vs_tool_diameter"].findings[0]
+    assert pocket.suggested_bound == pytest.approx(12.0)
+    assert "chipload" in pocket.message
+    measured = pocket.measured
+    assert isinstance(measured, dict)
+    assert measured["feed_mm_min"] == pytest.approx(3600.0)
+    assert measured["chipload_mm"] == pytest.approx(0.10)
+
+    web = outcomes["cnc_router.min_web_thickness"].findings[0]
+    assert web.suggested_bound == pytest.approx(1.0)
+    assert len(web.topology) == 2, "a web names both of its faces"
+
+    bore = outcomes["cnc_router.bore_aspect_ratio"].findings[0]
+    assert bore.suggested_bound == pytest.approx(6.0)
+
+    access = outcomes["cnc_router.single_axis_accessibility"].findings[0]
+    assert "spindle" in access.message
+    assert access.topology[0].kind == "face"
+
+    stock = outcomes["cnc_router.stock_thickness_match"].findings[0]
+    assert stock.suggested_bound == pytest.approx(18.0)
+    assert "20.000" in stock.message and "Baltic birch" in stock.message
+
+
+def test_the_heph_init_default_process_is_the_router_pack_and_a_clean_plate_passes(
+    tmp_path: Path,
+) -> None:
+    """heph init writes part.process = cnc_router; that string now loads a pack.
+
+    The scaffolded example is a 40 x 20 x 6 mm box with no material_spec. Every
+    rule must run clean against that geometry so the default process is not a
+    lie and the first DFM run on a new project is not a wall of findings.
+    """
+    from build123d import Box
+    from hephaestus.core.cli_init import EXAMPLE_PART
+
+    assert 'part.process = "cnc_router"' in EXAMPLE_PART
+    pack = router_pack()
+    assert pack.process == "cnc_router"
+    outcomes = _run_in_process(pack, _brep(Box(40.0, 20.0, 6.0)), tmp_path, part="example")
+    assert set(outcomes) == set(pack.rule_ids())
+    assert all(outcome.status == "ok" for outcome in outcomes.values()), {
+        rule_id: (outcome.status, outcome.error, [f.message for f in outcome.findings])
+        for rule_id, outcome in outcomes.items()
+    }
+    assert all(not outcome.findings for outcome in outcomes.values())
 
 
 def test_a_clean_part_produces_no_findings(tmp_path: Path) -> None:
@@ -584,6 +693,29 @@ def test_the_fdm_pack_runs_under_the_secure_sandbox(tmp_path: Path) -> None:
     counts = evaluation.severity_counts()
     assert counts.get("error", 0) >= 2 and counts.get("warning", 0) >= 1
     assert evaluation.to_json()["source_artifact_ref"] == "artifact:build:sha256:tray"
+
+
+@requires_bwrap
+def test_the_router_pack_runs_under_the_secure_sandbox(tmp_path: Path) -> None:
+    request = DfmRequest(
+        part="panel",
+        process="cnc_router",
+        brep=router_fixture(),
+        source_artifact_ref="artifact:build:sha256:panel",
+        metadata={"material_spec": "6 mm Baltic birch plywood", "stock_form": "sheet"},
+        material=plywood_record(),
+    )
+    evaluation = evaluate_pack(
+        request, router_pack(), backend=BwrapBackend(), scratch_root=tmp_path
+    )
+    assert evaluation.process == "cnc_router"
+    assert evaluation.source_artifact_ref == "artifact:build:sha256:panel"
+    assert evaluation.registry_digest.startswith("sha256:")
+    assert not evaluation.errored_rules()
+    assert {finding.rule_id for finding in evaluation.findings} == set(router_pack().rule_ids())
+    for finding in evaluation.findings:
+        assert finding.source_artifact_ref == request.source_artifact_ref
+        assert finding.topology, "every finding points at topology"
 
 
 @requires_bwrap
