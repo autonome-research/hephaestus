@@ -9,6 +9,7 @@ it. Confinement matches Stage 8A/12A: destination is a regular file beneath
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, cast
 
@@ -135,6 +136,38 @@ def test_add_refuses_traversal_and_symlink_escape(
     assert dest.read_bytes() == payload
     assert link.is_symlink()
     assert source.read_bytes() == payload
+
+
+def test_add_does_not_write_through_a_planted_hardlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dest hardlink is a regular file; O_TRUNC would clobber the outside inode.
+
+    Rename replaces the imports/ directory entry. The outside name keeps its
+    bytes whether add succeeds or refuses.
+    """
+    root = project(tmp_path / "proj")
+    source = tmp_path / "vendor.step"
+    payload = box_step(source)
+
+    outside = tmp_path / "outside" / "secret.step"
+    outside.parent.mkdir()
+    original = b"OUTSIDE-ORIGINAL-BYTES\n"
+    outside.write_bytes(original)
+    (root / "imports").mkdir()
+    planted = root / "imports" / "planted.step"
+    os.link(outside, planted)
+    assert planted.stat().st_ino == outside.stat().st_ino
+
+    rc = run(root, monkeypatch, "import", "add", str(source), "--name", "planted.step")
+
+    assert rc in (0, 1)
+    assert outside.read_bytes() == original
+    if rc == 0:
+        dest = root / "imports" / "planted.step"
+        assert dest.is_file() and not dest.is_symlink()
+        assert dest.read_bytes() == payload
+        assert dest.stat().st_ino != outside.stat().st_ino
 
 
 def test_add_refuses_mesh_without_units(

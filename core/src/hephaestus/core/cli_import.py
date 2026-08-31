@@ -21,6 +21,7 @@ answer was no, 2 usage.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -154,8 +155,14 @@ def write_import_copy(imports_dir: Path, path: str, data: bytes) -> Path:
 
     One directory descriptor per component, ``O_NOFOLLOW``: a symlink (leaf or
     parent) fails the walk rather than redirecting the write outside the
-    project. The destination is always a regular file — never a symlink — so
-    a later ``import_step`` cannot escape through a link this verb planted.
+    project. The payload is written to an exclusive temp inode in the dest
+    parent and ``rename``d onto the dest name — never ``O_TRUNC`` of an
+    existing dest. A planted hardlink is a regular file; truncating it would
+    write through the inode to a file outside the project. Rename replaces
+    the directory entry; the outside name keeps its bytes.
+
+    A dest that is already a symlink is still refused (``O_NOFOLLOW``), so
+    this verb never plants or follows an escape hatch.
     """
     try:
         relative = validate_import_path(path)
@@ -182,6 +189,8 @@ def write_import_copy(imports_dir: Path, path: str, data: bytes) -> Path:
         ) from exc
     opened: list[int] = [root_fd]
     fd = root_fd
+    tmp_name: str | None = None
+    handle: int | None = None
     try:
         for component in relative.parts[:-1]:
             try:
@@ -206,20 +215,25 @@ def write_import_copy(imports_dir: Path, path: str, data: bytes) -> Path:
             opened.append(nxt)
             fd = nxt
         leaf = relative.parts[-1]
-        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC
-        try:
-            handle = os.open(leaf, flags, 0o644, dir_fd=fd)
-        except OSError as exc:
+        tmp_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+        for _ in range(8):
+            candidate = f".heph-import-{uuid.uuid4().hex}.tmp"
+            try:
+                handle = os.open(candidate, tmp_flags, 0o644, dir_fd=fd)
+            except FileExistsError:
+                continue
+            tmp_name = candidate
+            break
+        if handle is None or tmp_name is None:
             raise ImportIngressError(
-                f"import {path!r} cannot be written beneath {IMPORTS_DIRNAME}/ "
-                f"({exc.strerror}); symlinks are never followed",
+                f"import {path!r} could not create an exclusive temp under {IMPORTS_DIRNAME}/",
                 reason="path_confinement",
-            ) from exc
+            )
         try:
             info = os.fstat(handle)
             if not stat_module.S_ISREG(info.st_mode):
                 raise ImportIngressError(
-                    f"import {path!r} is not a regular file",
+                    f"import {path!r} temp is not a regular file",
                     reason="path_confinement",
                 )
             with os.fdopen(os.dup(handle), "wb") as stream:
@@ -231,9 +245,45 @@ def write_import_copy(imports_dir: Path, path: str, data: bytes) -> Path:
             ) from exc
         finally:
             os.close(handle)
+            handle = None
+        try:
+            dest_info = os.stat(leaf, dir_fd=fd, follow_symlinks=False)
+        except FileNotFoundError:
+            dest_info = None
+        except OSError as exc:
+            raise ImportIngressError(
+                f"import {path!r} cannot be replaced beneath {IMPORTS_DIRNAME}/ "
+                f"({exc.strerror}); symlinks are never followed",
+                reason="path_confinement",
+            ) from exc
+        if dest_info is not None and stat_module.S_ISLNK(dest_info.st_mode):
+            raise ImportIngressError(
+                f"import {path!r} is not a regular file beneath {IMPORTS_DIRNAME}/ "
+                "(symlinks are never followed)",
+                reason="path_confinement",
+            )
+        if dest_info is not None and not stat_module.S_ISREG(dest_info.st_mode):
+            raise ImportIngressError(
+                f"import {path!r} is not a regular file",
+                reason="path_confinement",
+            )
+        try:
+            os.replace(tmp_name, leaf, src_dir_fd=fd, dst_dir_fd=fd)
+        except OSError as exc:
+            raise ImportIngressError(
+                f"import {path!r} cannot be written beneath {IMPORTS_DIRNAME}/ "
+                f"({exc.strerror}); symlinks are never followed",
+                reason="path_confinement",
+            ) from exc
+        tmp_name = None
     finally:
-        for handle in reversed(opened):
+        if handle is not None:
             os.close(handle)
+        if tmp_name is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_name, dir_fd=fd)
+        for opened_fd in reversed(opened):
+            os.close(opened_fd)
     return Path(imports_dir, *relative.parts)
 
 
