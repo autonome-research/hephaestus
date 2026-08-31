@@ -107,6 +107,12 @@ test.describe("§7A.12 case 1 — the blank canvas reaches the workspace", () =>
     await expect(composer).toHaveAttribute("data-composer-state", "idle");
     await expect(composer).toHaveAttribute("data-disabled-reason", "null");
     await expect(composer).toHaveAttribute("data-profile", "orchestrator");
+    // Issue #13: model id is the provider's own, never a house name.
+    await expect(composer.locator("[data-composer-model]")).toHaveAttribute(
+      "data-composer-model",
+      "heph-fake-model",
+    );
+    await expect(composer.locator("[data-context-add-view]")).toHaveCount(1);
 
     await composer
       .locator("[data-composer-input]")
@@ -160,6 +166,12 @@ test.describe("§7A.12 case 2 — the context envelope", () => {
     // Every member is opt-out (§7A.3).
     await partChip.locator('[data-context-drop="part"]').click();
     await expect(partChip).toHaveAttribute("data-context-dropped", "");
+
+    // Issue #13: Add current view un-drops the view and opens the advisory preview.
+    await composer.locator("[data-context-add-view]").click();
+    const viewChip = composer.locator('[data-context-key="view"]');
+    await expect(viewChip).not.toHaveAttribute("data-context-dropped", "");
+    await expect(composer.locator("[data-context-preview]")).toBeVisible();
   });
 
   test("the disclosure renders the server's block, and says it is advisory", async ({ page }) => {
@@ -289,6 +301,10 @@ test.describe("§7A.12 case 6 — no agent runtime", () => {
     // but a text editor".
     const path = await composer.locator("[data-attach-path]").getAttribute("data-attach-path");
     expect(path).toMatch(/providers\.json$/);
+
+    // Named absence: do not render a model picker that reads as a signed-in agent.
+    await expect(composer.locator("[data-composer-model]")).toHaveCount(0);
+    await expect(composer.locator("[data-context-add-view]")).toHaveCount(1);
 
     // The serve still answers every read route: `agent_unavailable` is about
     // sessions, not about the project.

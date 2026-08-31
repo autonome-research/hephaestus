@@ -916,6 +916,28 @@ export const copy = {
     discloseFailed: "The preview could not be composed.",
 
     /**
+     * Session chrome (issue #13). Model and effort identifiers come from
+     * `GET /providers` — the option text is the provider's own model id, not
+     * a house name. Effort is offered only when that model declared
+     * `reasoning`. DFM is the engine equivalent of a Plan/DFM chip: the
+     * project `[dfm] auto_run` setting and `run_dfm`, kept as two controls
+     * because collapsing them would imply a tool argument that does not exist
+     * (INTERFACE.md §6.4).
+     */
+    model: "Model",
+    effort: "Effort",
+    effortOff: "off",
+    noModels: "No models are declared in the provider configuration.",
+    addCurrentView: "Add current view",
+    addCurrentViewWhy:
+      "Include this page's view and selection in the context the agent is told. The preview below is advisory — the message is composed again when it is sent.",
+    dfmAutoRun: "DFM auto-run",
+    dfmRun: "Run DFM",
+    dfmNoPart: "No part is selected, so design-for-manufacture has nothing to evaluate.",
+    dfmWriting: "Writing the project setting…",
+    dfmRunning: "Running DFM…",
+
+    /**
      * §7A.2's create affordances. Two, both explicit, and the profile is shown
      * before it is used — "a user who does not know their session cannot
      * delegate reads `scope_denied` as a broken product".

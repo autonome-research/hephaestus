@@ -47,10 +47,20 @@
 // surface: a state that exists for a reason reads as designed; the same state
 // with its content missing reads as a bug. Silence is what produced a product
 // review finding that the workspace has no way to talk to an agent.
+//
+// **6. Session chrome stays a thin client** (issue #13). Model + effort are
+// mapped from `GET /providers` using the provider's own model ids — never
+// house names. There is no Plan mode in the engine; `[dfm] auto_run` /
+// `run_dfm` is the equivalent and stays two controls (§6.4). Add current view
+// is an explicit opt-in that opens `POST /context/preview`. No runtime / no
+// `providers.json` keeps the named `agent_unavailable` absence.
 
 import { useCallback, useEffect, useMemo, useSyncExternalStore, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { WorkspaceError } from "../../api/client";
+import { writeDfmAutoRun, runDfm } from "../../api/dfm";
+import { uuid7 } from "../../api/idempotency";
+import { keys, useDfm, useProviders } from "../../api/queries";
 import { refreshAfterTurn } from "../../api/refresh";
 import { attachAgent, type AttachProjection, isAttachCause } from "../../api/attach";
 import {
@@ -61,11 +71,22 @@ import {
   type ProfileCapability,
 } from "../../api/sessions";
 import { copy } from "../../copy";
-import { Button, Chip, EmptyState, TextInput } from "../../system";
+import { Button, Chip, EmptyState, Select, TextInput } from "../../system";
 import { useWorkspaceState } from "../../state/react";
 import { labelsForPart, visibilityStore } from "../../state/visibility";
+import {
+  defaultModel,
+  effortOptionsFor,
+  isEffortLevel,
+  modelKey,
+  modelsFrom,
+  showDfmChrome,
+  showModelChrome,
+  type EffortLevel,
+} from "../../stream/composerChrome";
 import { chipsFor, envelopeFor, type ContextChip } from "../../stream/composerContext";
 import type { ContextMember } from "../../api/sessions";
+import { Fact } from "../Fact";
 import styles from "./Composer.module.css";
 
 /** §7A.10's closed `data-composer-state` vocabulary. */
@@ -130,6 +151,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   const [text, setText] = useState("");
   const [post, setPost] = useState<Post>({ phase: "idle" });
   const [dropped, setDropped] = useState<ReadonlySet<ContextMember>>(() => new Set());
+  const [added, setAdded] = useState<ReadonlySet<ContextMember>>(() => new Set());
   const [disclosed, setDisclosed] = useState(false);
   const [preview, setPreview] = useState<ContextDocument | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -138,9 +160,84 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   const [attachError, setAttachError] = useState<string | null>(null);
   const chips = useMemo(() => chipsFor(state, hiddenLabels), [state, hiddenLabels]);
   const envelope = useMemo(
-    () => envelopeFor(state, hiddenLabels, dropped),
-    [state, hiddenLabels, dropped],
+    () => envelopeFor(state, hiddenLabels, dropped, added),
+    [state, hiddenLabels, dropped, added],
   );
+
+  // -- session chrome (issue #13) ----------------------------------------
+  //
+  // Model + effort are a projection of `GET /providers`. They render only
+  // when a runtime is attached *and* that document named at least one model;
+  // an empty picker would read as a signed-in agent that is not there.
+  // DFM is the engine equivalent of a Plan/DFM chip: `[dfm] auto_run` and
+  // `run_dfm`, two controls, because collapsing them would imply a tool
+  // argument that does not exist (§6.4). There is no Plan mode to toggle.
+  const providers = useProviders();
+  const models = useMemo(() => modelsFrom(providers.data), [providers.data]);
+  const modelChrome = showModelChrome(agentUnavailable, models);
+  const [modelChoice, setModelChoice] = useState("");
+  const [effortChoice, setEffortChoice] = useState<EffortLevel>("off");
+  // Derived, not synced in an effect: a missing or stale choice falls back to
+  // the first declared model / `off`. The picker writes the choice; the
+  // document decides whether that choice still exists.
+  const selectedModel = models.find((row) => modelKey(row) === modelChoice) ?? defaultModel(models);
+  const resolvedChoice = selectedModel === null ? "" : modelKey(selectedModel);
+  const effortOptions = effortOptionsFor(selectedModel);
+  const effort = effortOptions.includes(effortChoice) ? effortChoice : "off";
+
+  const dfm = useDfm(state.part);
+  const [dfmBusy, setDfmBusy] = useState<"auto_run" | "run" | null>(null);
+  const [dfmError, setDfmError] = useState<string | null>(null);
+
+  const toggleAutoRun = useCallback(() => {
+    if (dfm.data === undefined || dfmBusy !== null) return;
+    setDfmBusy("auto_run");
+    setDfmError(null);
+    void writeDfmAutoRun(!dfm.data.auto_run, uuid7())
+      .then(() => {
+        if (state.part !== null) {
+          void client.invalidateQueries({ queryKey: keys.dfm(state.part) });
+        }
+      })
+      .catch((cause: unknown) => {
+        setDfmError(cause instanceof WorkspaceError ? cause.message : copy.composer.dfmWriting);
+      })
+      .finally(() => {
+        setDfmBusy(null);
+      });
+  }, [client, dfm.data, dfmBusy, state.part]);
+
+  const runDfmNow = useCallback(() => {
+    if (state.part === null || dfmBusy !== null) return;
+    setDfmBusy("run");
+    setDfmError(null);
+    void runDfm(state.part, uuid7())
+      .then(() => {
+        refreshAfterTurn(client, state.part);
+      })
+      .catch((cause: unknown) => {
+        setDfmError(cause instanceof WorkspaceError ? cause.message : copy.composer.dfmRunning);
+      })
+      .finally(() => {
+        setDfmBusy(null);
+      });
+  }, [client, dfmBusy, state.part]);
+
+  const addCurrentView = useCallback(() => {
+    setDropped((previous) => {
+      const next = new Set(previous);
+      next.delete("view");
+      if (state.selection !== null) next.delete("selection");
+      return next;
+    });
+    setAdded((previous) => {
+      const next = new Set(previous);
+      next.add("view");
+      if (state.selection !== null) next.add("selection");
+      return next;
+    });
+    setDisclosed(true);
+  }, [state.selection]);
 
   // -- the two closed vocabularies (§7A.10) -------------------------------
   //
@@ -355,6 +452,86 @@ export function Composer(props: ComposerProps): React.JSX.Element {
             </p>
           ) : null}
         </div>
+      ) : null}
+
+      {/* Session chrome: model + effort from GET /providers, DFM as the
+          engine equivalent of a Plan/DFM chip, and Add current view. Existing
+          `data-*` selectors on the form and the chip row are unchanged. */}
+      <div className={styles["chrome"]} data-composer-chrome="">
+        {modelChrome && selectedModel !== null ? (
+          <>
+            <Select
+              label={copy.composer.model}
+              hideLabel
+              value={resolvedChoice}
+              options={models.map((row) => modelKey(row))}
+              onChange={setModelChoice}
+              data-composer-model={selectedModel.id}
+              data-composer-provider={selectedModel.providerId}
+            />
+            {selectedModel.reasoning ? (
+              <Select
+                label={copy.composer.effort}
+                hideLabel
+                value={effort}
+                options={[...effortOptions]}
+                onChange={(value) => {
+                  if (isEffortLevel(value)) setEffortChoice(value);
+                }}
+                data-composer-effort={effort}
+              />
+            ) : (
+              <span className={styles["note"]} data-composer-effort="off" data-composer-effort-absent="">
+                {copy.composer.effortOff}
+              </span>
+            )}
+          </>
+        ) : null}
+
+        {showDfmChrome(agentUnavailable, state.part, dfm.data !== undefined) === "chip" &&
+        dfm.data !== undefined ? (
+          <div className={styles["dfm"]} data-composer-dfm="">
+            <Chip data-dfm-auto-run={String(dfm.data.auto_run)}>
+              <Fact source="dfm.auto_run" value={dfm.data.auto_run}>
+                {dfm.data.auto_run ? copy.dfm.autoRunOn : copy.dfm.autoRunOff}
+              </Fact>
+            </Chip>
+            <Button
+              variant="toggle"
+              pressed={dfm.data.auto_run}
+              onClick={toggleAutoRun}
+              data-dfm-auto-run-toggle=""
+              {...(dfmBusy !== null
+                ? { disabled: true as const, reason: copy.composer.dfmWriting }
+                : {})}
+            >
+              {copy.composer.dfmAutoRun}
+            </Button>
+            <Button
+              variant="quiet"
+              onClick={runDfmNow}
+              data-dfm-run=""
+              {...(dfmBusy !== null
+                ? { disabled: true as const, reason: copy.composer.dfmRunning }
+                : {})}
+            >
+              {copy.composer.dfmRun}
+            </Button>
+          </div>
+        ) : showDfmChrome(agentUnavailable, state.part, dfm.data !== undefined) === "absent" ? (
+          <span className={styles["note"]} data-composer-dfm-absent="">
+            {copy.composer.dfmNoPart}
+          </span>
+        ) : null}
+
+        <Button variant="quiet" onClick={addCurrentView} data-context-add-view="">
+          {copy.composer.addCurrentView}
+        </Button>
+      </div>
+      {dfmError !== null ? (
+        <p className={styles["note"]} data-composer-dfm-error="">
+          {dfmError}
+        </p>
       ) : null}
 
       {/* §7A.3's chip row: the references this turn carries, every one

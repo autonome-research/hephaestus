@@ -74,6 +74,12 @@ export type DiscoveryKind = (typeof DISCOVERY_KINDS)[number];
 export interface ProviderModel {
   readonly id: string;
   readonly name: string;
+  /**
+   * Present only when the spec declared `reasoning: true`. Absence is the
+   * named "this model has no thinking levels" — the composer does not invent
+   * an effort picker for it.
+   */
+  readonly reasoning?: boolean;
 }
 
 /**

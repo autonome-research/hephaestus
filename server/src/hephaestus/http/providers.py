@@ -794,10 +794,18 @@ def provider_specs_of(file: ProvidersFile) -> list[dict[str, Any]]:
     """The declared specs, normalized for display. **No credential material.**"""
     rows: list[dict[str, Any]] = []
     for spec in file.providers:
-        models = [
-            {"id": str(model.get("id", "")), "name": str(model.get("name", model.get("id", "")))}
-            for model in _dicts(spec.get("models"))
-        ]
+        models = []
+        for model in _dicts(spec.get("models")):
+            entry: dict[str, Any] = {
+                "id": str(model.get("id", "")),
+                "name": str(model.get("name", model.get("id", ""))),
+            }
+            # Projected only when the spec declared it. Absence is the named
+            # "this model has no thinking levels" — the composer maps effort
+            # from this field and must not invent one.
+            if model.get("reasoning") is True:
+                entry["reasoning"] = True
+            models.append(entry)
         row: dict[str, Any] = {
             "id": str(spec.get("id", "")),
             "kind": str(spec.get("kind", "")),

@@ -21,8 +21,19 @@ import { describe, expect, it } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Composer, COMPOSER_STATES, DISABLED_REASONS } from "../../src/components/stream/Composer";
 import { CONTEXT_MEMBERS, type ContextMember } from "../../src/api/sessions";
+import type { ProvidersDocument } from "../../src/api/providers";
+import type { DfmDocument } from "../../src/api/types";
 import { refreshKeys } from "../../src/api/refresh";
 import { keys } from "../../src/api/queries";
+import {
+  EFFORT_LEVELS,
+  defaultModel,
+  effortOptionsFor,
+  modelKey,
+  modelsFrom,
+  showDfmChrome,
+  showModelChrome,
+} from "../../src/stream/composerChrome";
 import { CHIP_ORDER, chipsFor, envelopeFor } from "../../src/stream/composerContext";
 import { DEFAULT_STATE, type WorkspaceState } from "../../src/state/workspace";
 
@@ -32,9 +43,50 @@ function stateWith(patch: Partial<WorkspaceState>): WorkspaceState {
   return { ...DEFAULT_STATE, ...patch };
 }
 
+function providersDocument(overrides: Partial<ProvidersDocument> = {}): ProvidersDocument {
+  return {
+    status: "ok",
+    config_path: "/tmp/p/.heph/providers.json",
+    config_exists: true,
+    config_malformed: false,
+    file_mode: "0600",
+    file_mode_private: true,
+    credential_allowlist: [],
+    auth_source: null,
+    auth_source_linked: false,
+    egress_acknowledged: [],
+    adopted_sources: [],
+    credential_sources: [],
+    attach: { attached: true, config_path: "/tmp/p/.heph/providers.json", generation: 1 },
+    providers: [
+      {
+        id: "heph-fake",
+        kind: "openai_compatible",
+        name: "Fake",
+        models: [{ id: "heph-fake-model", name: "Heph Fake Model" }],
+        source: "project",
+        health: "accepted",
+        last_observed_at: null,
+        available: true,
+        unavailable_reason: null,
+      },
+    ],
+    ...overrides,
+  };
+}
+
 /** The composer inside a query client, as `StreamPanel` mounts it. */
-function markup(props: Partial<React.ComponentProps<typeof Composer>> = {}): string {
+function markup(
+  props: Partial<React.ComponentProps<typeof Composer>> = {},
+  seeded: { providers?: ProvidersDocument; dfm?: DfmDocument } = {},
+): string {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  if (seeded.providers !== undefined) {
+    client.setQueryData(keys.providers(), seeded.providers);
+  }
+  if (seeded.dfm !== undefined) {
+    client.setQueryData(keys.dfm(seeded.dfm.part), seeded.dfm);
+  }
   return renderToStaticMarkup(
     <QueryClientProvider client={client}>
       <Composer
@@ -150,6 +202,18 @@ describe("the context envelope", () => {
   it("drops the whole envelope when every reference is dropped", () => {
     const dropped: ReadonlySet<ContextMember> = new Set(["part"]);
     expect(envelopeFor(stateWith({ part: "tread" }), [], dropped)).toBeNull();
+  });
+
+  it("lets an explicit Add current view make the view a reference", () => {
+    // Navigation tokens alone are still the blank canvas. Adding the view
+    // is the operator saying the camera token *is* the reference.
+    const added: ReadonlySet<ContextMember> = new Set(["view"]);
+    const envelope = envelopeFor(DEFAULT_STATE, [], NOTHING, added);
+    expect(envelope).not.toBeNull();
+    expect(envelope?.view).toBe(DEFAULT_STATE.view);
+    for (const key of Object.keys(envelope ?? {})) {
+      expect(CONTEXT_MEMBERS as readonly string[]).toContain(key);
+    }
   });
 });
 
@@ -275,5 +339,138 @@ describe("the DOM contract", () => {
     const chipRow = /<ul[^>]*data-context-chips[^>]*>([\s\S]*?)<\/ul>/.exec(html);
     expect(chipRow).not.toBeNull();
     expect(chipRow?.[1] ?? "").not.toContain("data-source");
+  });
+
+  it("keeps the existing composer selectors when chrome is present", () => {
+    const html = markup({}, { providers: providersDocument() });
+    expect(html).toContain("data-composer=\"\"");
+    expect(html).toContain("data-composer-input");
+    expect(html).toContain("data-context-chips");
+    expect(html).toContain("data-composer-send");
+    expect(html).toContain("data-context-add-view");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// issue #13 — session chrome, still a thin client
+// ---------------------------------------------------------------------------
+
+describe("session chrome from GET /providers", () => {
+  it("uses the provider's own model id as the identifier, never a house name", () => {
+    const document = providersDocument();
+    const models = modelsFrom(document);
+    expect(models).toHaveLength(1);
+    expect(models[0]?.id).toBe("heph-fake-model");
+    expect(modelKey(models[0]!)).toBe("heph-fake/heph-fake-model");
+    expect(modelKey(models[0]!)).not.toMatch(/smith|arche|composer-1/i);
+  });
+
+  it("names no models when the configuration file does not exist", () => {
+    expect(modelsFrom(providersDocument({ config_exists: false, providers: [] }))).toEqual([]);
+    expect(showModelChrome(false, [])).toBe(false);
+  });
+
+  it("hides the model picker when the runtime is missing", () => {
+    const models = modelsFrom(providersDocument());
+    expect(showModelChrome(true, models)).toBe(false);
+    const html = markup(
+      {
+        agentUnavailable: true,
+        attach: {
+          attached: false,
+          config_path: "/tmp/p/.heph/providers.json",
+          generation: 1,
+          cause: "no_provider_config",
+        },
+      },
+      { providers: providersDocument() },
+    );
+    expect(attribute(html, "data-disabled-reason")).toBe("agent_unavailable");
+    expect(html).not.toContain("data-composer-model");
+    expect(html).toContain("data-context-add-view");
+  });
+
+  it("renders the declared model id on the picker when a runtime is attached", () => {
+    const html = markup({}, { providers: providersDocument() });
+    expect(attribute(html, "data-composer-model")).toBe("heph-fake-model");
+    expect(attribute(html, "data-composer-provider")).toBe("heph-fake");
+  });
+
+  it("offers effort levels only when the selected model declared reasoning", () => {
+    const plain = defaultModel(modelsFrom(providersDocument()));
+    expect(effortOptionsFor(plain)).toEqual(["off"]);
+    const reasoning = defaultModel(
+      modelsFrom(
+        providersDocument({
+          providers: [
+            {
+              id: "heph-fake",
+              kind: "openai_compatible",
+              name: "Fake",
+              models: [{ id: "reasoner", name: "reasoner", reasoning: true }],
+              source: "project",
+              health: "accepted",
+              last_observed_at: null,
+              available: true,
+              unavailable_reason: null,
+            },
+          ],
+        }),
+      ),
+    );
+    expect(effortOptionsFor(reasoning)).toEqual(EFFORT_LEVELS);
+    const html = markup(
+      {},
+      {
+        providers: providersDocument({
+          providers: [
+            {
+              id: "heph-fake",
+              kind: "openai_compatible",
+              name: "Fake",
+              models: [{ id: "heph-fake-model", name: "Heph Fake Model" }],
+              source: "project",
+              health: "accepted",
+              last_observed_at: null,
+              available: true,
+              unavailable_reason: null,
+            },
+          ],
+        }),
+      },
+    );
+    expect(html).toContain("data-composer-effort-absent");
+    expect(attribute(html, "data-composer-effort")).toBe("off");
+  });
+});
+
+describe("the DFM chip is the engine equivalent, not a per-message flag", () => {
+  it("shows the two §6.4 controls only when a part's DFM document is in hand", () => {
+    expect(showDfmChrome(false, "tread", true)).toBe("chip");
+    expect(showDfmChrome(false, "tread", false)).toBe("hidden");
+    expect(showDfmChrome(false, null, false)).toBe("absent");
+    expect(showDfmChrome(true, "tread", true)).toBe("hidden");
+  });
+
+  it("names the absence when no part is selected and does not fake DFM chrome", () => {
+    const html = markup();
+    expect(html).toContain("data-composer-dfm-absent");
+    expect(html).not.toContain("data-dfm-auto-run-toggle");
+    expect(html).not.toContain("data-dfm-run");
+  });
+
+  it("hides DFM chrome on the agent_unavailable refusal", () => {
+    const html = markup({
+      agentUnavailable: true,
+      attach: {
+        attached: false,
+        config_path: "/tmp/p/.heph/providers.json",
+        generation: 1,
+        cause: "no_provider_config",
+      },
+    });
+    expect(html).not.toContain("data-composer-dfm-absent");
+    expect(html).not.toContain("data-dfm-auto-run-toggle");
+    expect(html).toContain("data-context-add-view");
   });
 });
