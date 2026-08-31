@@ -148,6 +148,10 @@ def router_pack() -> DfmPack:
     return DfmIndex(load_registry(DFM_ROOT)).get("cnc_router")
 
 
+def waterjet_pack() -> DfmPack:
+    return DfmIndex(load_registry(DFM_ROOT)).get("waterjet")
+
+
 def _run_in_process(
     pack: DfmPack,
     brep: bytes,
@@ -201,15 +205,21 @@ def test_the_bundled_dfm_registry_loads_with_the_shipped_packs() -> None:
     assert registry.kind == "dfm"
     assert registry.manifest.license
     index = DfmIndex(registry)
-    assert index.processes() == ("cnc_router", "fdm", "laser_cut")
+    assert index.processes() == ("cnc_router", "fdm", "laser_cut", "waterjet")
     # Issue #28 inverted the cnc_router hole: heph init's default process is
-    # cnc_router, so the bundled registry must carry that pack. cnc_mill is
+    # cnc_router, so the bundled registry must carry that pack. Issue #30 adds
+    # waterjet as the 2D-cut sibling of laser_cut (named kerf_mm). cnc_mill is
     # still unshipped (CAM.md §6 / parent #14).
-    assert index.has("laser_cut") and index.has("cnc_router") and not index.has("cnc_mill")
+    assert (
+        index.has("laser_cut")
+        and index.has("cnc_router")
+        and index.has("waterjet")
+        and not index.has("cnc_mill")
+    )
 
 
 def test_every_rule_declares_an_id_a_title_a_severity_and_its_parameters() -> None:
-    for pack in (laser_pack(), fdm_pack(), router_pack()):
+    for pack in (laser_pack(), fdm_pack(), router_pack(), waterjet_pack()):
         assert pack.rule_ids() == tuple(dict.fromkeys(pack.rule_ids())), "ids must be unique"
         for rule in pack.rules:
             assert rule.rule_id.startswith(f"{pack.process}.")
@@ -242,14 +252,22 @@ def test_the_shipped_packs_cover_the_stage6_rules() -> None:
         "cnc_router.stock_thickness_match",
     )
     assert "kerf_mm" not in router_pack().params, (
-        "a router bit removes its full diameter; cut-file kerf is a laser concern"
+        "a router bit removes its full diameter; cut-file kerf is a laser/waterjet concern"
+    )
+    assert waterjet_pack().rule_ids() == (
+        "waterjet.min_feature_vs_kerf",
+        "waterjet.min_internal_radius",
+        "waterjet.sheet_thickness_match",
+    )
+    assert "kerf_mm" in waterjet_pack().params, (
+        "waterjet is a 2D cut process; heph cam emit reads this pack's kerf_mm"
     )
 
 
 def test_an_unknown_process_or_rule_lists_the_candidates() -> None:
     index = DfmIndex(load_registry(DFM_ROOT))
     with pytest.raises(RegistryError) as unknown_process:
-        index.get("waterjet")
+        index.get("plasma")
     assert unknown_process.value.reason == "unknown_dfm_pack"
     assert "laser_cut" in unknown_process.value.message
     assert "cnc_router" in unknown_process.value.message
@@ -348,9 +366,9 @@ def test_material_spec_resolves_to_the_registry_record_a_rule_measures_against(
 def test_the_dfm_registry_resolves_through_the_project_registry_set(tmp_path: Path) -> None:
     (tmp_path / "hephaestus.toml").write_text('name = "proj"\n', encoding="utf-8")
     registries = RegistrySet.open(tmp_path)
-    assert registries.dfm.processes() == ("cnc_router", "fdm", "laser_cut")
+    assert registries.dfm.processes() == ("cnc_router", "fdm", "laser_cut", "waterjet")
     listing = registries.dfm.listing()
-    assert [entry["process"] for entry in listing] == ["cnc_router", "fdm", "laser_cut"]
+    assert [entry["process"] for entry in listing] == ["cnc_router", "fdm", "laser_cut", "waterjet"]
     assert all(entry["registry_digest"] for entry in listing)
 
 
@@ -383,6 +401,28 @@ def test_every_laser_rule_fires_on_the_laser_fixture(tmp_path: Path) -> None:
     stock = outcomes["laser_cut.sheet_thickness_match"].findings[0]
     assert stock.suggested_bound == pytest.approx(6.0)
     assert "5.500" in stock.message and "Baltic birch" in stock.message
+
+
+def test_every_waterjet_rule_fires_on_the_laser_fixture(tmp_path: Path) -> None:
+    """The same 5.5 mm bored panel violates every waterjet rule; the kerf is wider."""
+    outcomes = _run_in_process(
+        waterjet_pack(),
+        laser_fixture(),
+        tmp_path,
+        part="panel",
+        metadata={"material_spec": "6 mm Baltic birch plywood", "stock_form": "sheet"},
+        material=plywood_record(),
+    )
+    assert set(outcomes) == set(waterjet_pack().rule_ids())
+    assert all(outcome.status == "violations" for outcome in outcomes.values()), {
+        rule_id: (outcome.status, outcome.error) for rule_id, outcome in outcomes.items()
+    }
+    bore = outcomes["waterjet.min_feature_vs_kerf"].findings[0]
+    assert bore.suggested_bound == pytest.approx(2.4)
+    corner = outcomes["waterjet.min_internal_radius"].findings[0]
+    assert corner.suggested_bound == pytest.approx(0.8)
+    stock = outcomes["waterjet.sheet_thickness_match"].findings[0]
+    assert stock.suggested_bound == pytest.approx(6.0)
 
 
 def test_the_sheet_thickness_rule_reports_an_unresolved_material(tmp_path: Path) -> None:

@@ -163,7 +163,7 @@ Manufacturing metadata is a set of optional string fields — `part.description`
 `material_spec`, `process`, `stock_form`, `blank_size`, `general_tolerance`,
 `finish`, `assembly_method`, `joint`. They are free text with one exception that
 matters: a `part.process` matching a DFM registry pack (`laser_cut`,
-`cnc_router`, `fdm`, …) makes that pack's rules runnable against the part.
+`cnc_router`, `fdm`, `waterjet`, …) makes that pack's rules runnable against the part.
 
 ### Tags — naming topology so you can measure it
 

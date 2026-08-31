@@ -408,6 +408,22 @@ Sweep verdicts are the closed `KINEMATICS.md` §4 vocabulary —
 continuous guarantee. `--json` emits `MotionStatus` plus the per-check
 results.
 
+### `heph cam emit`
+
+Emit a laser-cut / waterjet cut-file from a part's current build: kerf-
+compensated flat patterns as an ordered toolpath plus a DXF. This is **not**
+`export_part` and not Stage 14 milling CAM. Kerf comes from `--kerf-mm` or
+from the process DFM pack's `kerf_mm` (`laser_cut` 0.2 mm, `waterjet` 0.8 mm);
+a default is never invented.
+
+```console
+$ heph cam emit plate --out plate.dxf --json
+```
+
+`--json` is the machine record (kerf source, contours, DXF hash). The DXF
+is always written. A part whose `part.process` is not `laser_cut` or
+`waterjet` is refused by name.
+
 ### `heph registry {list,publish,pin,update,verify}`
 
 See [registry-pinning.md](registry-pinning.md) — it is a topic, not a flag list.

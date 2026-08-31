@@ -1,0 +1,84 @@
+[pack]
+process = "waterjet"
+name = "Abrasive waterjet (sheet)"
+version = "0.1.0"
+description = """
+Limits imposed by cutting flat stock with an abrasive jet of finite width.
+The jet removes a kerf of material and cannot turn a corner tighter than its
+own radius, so the smallest hole, the tightest internal corner, and the sheet
+thickness the design assumes are all checkable against the machine and the
+stock the materials registry actually carries.
+
+Defaults are a common abrasive waterjet on plate (aluminium, steel, thicker
+sheet goods). The kerf is wider than a CO2 laser — that is the whole point of
+a separate pack. Override the numbers by publishing a fork with your own
+[params]; the rules read only the parameters they declare, so a re-tuned pack
+is a data change, not a code change.
+
+2D CAM emission (heph cam emit) reads kerf_mm from this pack the same way it
+reads the laser_cut pack: a named parameter, never an invented default.
+"""
+
+[params.kerf_mm]
+value = 0.8
+unit = "mm"
+description = "Width of material the abrasive jet removes on a straight cut."
+
+[params.min_feature_kerf_multiple]
+value = 3.0
+unit = "x kerf"
+description = "Smallest cut feature expressed as a multiple of the kerf."
+
+[params.min_feature_mm]
+value = 1.5
+unit = "mm"
+description = "Absolute floor on a cut feature, whatever the kerf allows."
+
+[params.min_internal_radius_mm]
+value = 0.8
+unit = "mm"
+description = "Tightest internal corner radius the jet can produce cleanly."
+
+[params.thickness_tolerance_mm]
+value = 0.2
+unit = "mm"
+description = "Allowed difference between modelled and nominal stock thickness."
+
+[[rules]]
+id = "waterjet.min_feature_vs_kerf"
+title = "Cut features must be wider than the jet can produce"
+severity = "error"
+predicate = "min_feature_vs_kerf.py"
+reads = ["kerf_mm", "min_feature_kerf_multiple", "min_feature_mm"]
+description = """
+Measures every closed bore in the part and compares its diameter with the
+smallest feature the jet can cut: the larger of the absolute floor and the
+kerf multiple. A bore below that either does not cut at all or closes up as
+the jet wanders.
+"""
+
+[[rules]]
+id = "waterjet.min_internal_radius"
+title = "Internal corners must not be tighter than the jet radius"
+severity = "error"
+predicate = "min_internal_radius.py"
+reads = ["min_internal_radius_mm", "kerf_mm"]
+description = """
+Measures each concave corner round in the part. The jet cannot produce a
+corner tighter than its own radius, so an internal round below the limit is
+cut as a larger radius than modelled — parts that depend on the corner for fit
+will not assemble.
+"""
+
+[[rules]]
+id = "waterjet.sheet_thickness_match"
+title = "Modelled sheet thickness must match a stock thickness the material carries"
+severity = "error"
+predicate = "sheet_thickness_match.py"
+reads = ["thickness_tolerance_mm"]
+description = """
+Joins the part's measured sheet thickness (its smallest bounding-box extent) to
+the materials-registry record its part.material_spec resolves to, and checks
+that the thickness is a stock size that material is actually sold in and that
+part.stock_form is a form it comes in.
+"""
