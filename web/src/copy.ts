@@ -149,11 +149,12 @@ export const copy = {
 
   /**
    * Statement Timeline. Marks come from `GET /parts/{part}/build` only —
-   * last-good checkpoint, failed statement, or the current successful artifact.
+   * projected `checkpoints[]`, last-good, failed, or the current artifact.
    */
   timeline: {
     heading: "Timeline",
     tabsLabel: "Build timeline",
+    statement: "Statement",
     lastGood: "Last good",
     failed: "Failed",
     current: "Current",

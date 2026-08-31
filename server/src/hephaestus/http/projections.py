@@ -72,12 +72,26 @@ def build_projection(result: BuildResult | None) -> dict[str, Any]:
     part of the persisted ``BuildResult``, so a read of the current build has none
     to report and says so by omission rather than by inventing an empty one.
 
-    A part with no current build is ``status="not_built"`` — a named absence, not
-    a 404 and not an empty success. Silence never reads as a pass (§6.3's rule,
-    applied to the build axis).
+    ``checkpoints`` is the incremental executor's per-statement list, persisted
+    on the §8 record. The Timeline reads this field and does not invent stops
+    from the script text. A record written before the field existed projects
+    ``[]`` — a named empty list, not an omitted key, so the client can tell
+    "this build named no stops" from "the projection forgot to say".
+
+    A part with no current build *and* no last-failure record is
+    ``status="not_built"`` — a named absence, not a 404 and not an empty
+    success. Silence never reads as a pass (§6.3's rule, applied to the build
+    axis). The route prefers the current successful record when both exist
+    (G4.2's ``geometry_count`` is a fact about the current build).
     """
     if result is None:
-        return {"status": "not_built", "current": False, "geometry_count": 0, "geometries": []}
+        return {
+            "status": "not_built",
+            "current": False,
+            "geometry_count": 0,
+            "geometries": [],
+            "checkpoints": [],
+        }
     payload: dict[str, Any] = {
         "status": "ok" if result.status == "ok" else "error",
         "current": result.current,
@@ -90,6 +104,7 @@ def build_projection(result: BuildResult | None) -> dict[str, Any]:
         "checks": {name: check.to_json() for name, check in result.checks.items()},
         "source_map_ref": result.source_map_ref,
         "warnings": [warning.to_json() for warning in result.warnings],
+        "checkpoints": [checkpoint.to_json() for checkpoint in result.checkpoints],
     }
     if result.error is not None:
         payload["error"] = result.error.to_json()

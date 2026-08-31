@@ -453,6 +453,14 @@ record:
   "source_map_ref": "artifact:source-map:sha256:…",
   "metadata": { "description": "…", "blank_size": "210.0 x 125.0 x 6 mm", … },
   "warnings": [ {"kind": "tag_descriptor_changed", "tag": "tread_top", "detail": "…"} ],
+  "checkpoints": [
+    {"index": 0, "line": 1, "statement": "PARAMS = {…}",
+     "span": [1, 0, 4, 1], "bound": ["PARAMS"], "shapes": [],
+     "artifact_ref": null},
+    {"index": 3, "line": 44, "statement": "tread_shelf = slotted_shelf - groove_cutter",
+     "span": [44, 0, 44, 48], "bound": ["tread_shelf"], "shapes": ["tread_shelf"],
+     "artifact_ref": "artifact:build-checkpoint:sha256:…"}
+  ],
   "error": null | {
       "line": 46, "col": 14, "type": "ValueError",
       "message": "Failed creating a fillet with radius of 6, try a smaller value or use max_fillet() to find the largest valid fillet radius",
@@ -481,7 +489,12 @@ available as evidence but MUST NOT clear stale markers or replace the prior
 successful current artifact. A trusted invocation id freezes these inputs so a
 lost-response retry returns the original result rather than rebuilding newer
 state. `artifact_ref`, `source_map_ref`, and `last_good_artifact_ref` are opaque
-project-scoped capabilities, never mutable filesystem paths.
+project-scoped capabilities, never mutable filesystem paths. `checkpoints` is
+the incremental executor's per-statement list (architecture §3.1): every
+top-level statement that completed, in order, with its source span and the
+names it bound. A checkpoint's `artifact_ref` is set only when publication
+minted a last-good blob for that stop; intermediate stops carry `null`.
+Records written before this field existed read back as an empty list.
 
 The failed-build text rendering MUST carry the same fields as the captured
 Smith error (line/col, type, source frame, built-through statement, last-good

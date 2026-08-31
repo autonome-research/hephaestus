@@ -20,6 +20,7 @@ from hephaestus.core.types import (
     InputHashes,
     LastGood,
     Metrics,
+    StatementCheckpoint,
     Warning,
 )
 from jsonschema import Draft202012Validator
@@ -141,6 +142,17 @@ def failed_result() -> BuildResult:
             last_good_artifact_ref=_REF_CHECKPOINT,
             hint="inspect_part(name, artifact_ref=last_good_artifact_ref) renders this snapshot",
         ),
+        checkpoints=(
+            StatementCheckpoint(
+                index=0,
+                line=44,
+                statement="tread_shelf = slotted_shelf - groove_cutter",
+                span=(44, 0, 44, 48),
+                bound=("tread_shelf",),
+                shapes=("tread_shelf",),
+                artifact_ref=_REF_CHECKPOINT,
+            ),
+        ),
     )
 
 
@@ -228,6 +240,9 @@ class TestRoundTrip:
         assert error.last_good.volume_mm3 == pytest.approx(868892.28, abs=1e-6)
         assert error.last_good_artifact_ref == _REF_CHECKPOINT
         assert error.hint.startswith("inspect_part")
+        assert len(rebuilt.checkpoints) == 1
+        assert rebuilt.checkpoints[0].artifact_ref == _REF_CHECKPOINT
+        assert rebuilt.checkpoints[0].statement.startswith("tread_shelf")
 
     def test_round_trip_through_json_text(self) -> None:
         original = failed_result()
@@ -274,6 +289,38 @@ class TestRoundTrip:
         data["status"] = "partial"
         with pytest.raises(ValidationError):
             BuildResult.from_json(data)
+
+    def test_absent_checkpoints_read_as_empty(self) -> None:
+        data = ok_result().to_json()
+        del data["checkpoints"]
+        rebuilt = BuildResult.from_json(data)
+        assert rebuilt.checkpoints == ()
+
+
+class TestStatementCheckpoint:
+    def test_round_trip(self) -> None:
+        checkpoint = StatementCheckpoint(
+            index=3,
+            line=44,
+            statement="tread_shelf = slotted_shelf - groove_cutter",
+            span=(44, 0, 44, 48),
+            bound=("tread_shelf",),
+            shapes=("tread_shelf",),
+            artifact_ref=_REF_CHECKPOINT,
+        )
+        assert StatementCheckpoint.from_json(checkpoint.to_json()) == checkpoint
+
+    def test_null_artifact_ref_round_trips(self) -> None:
+        checkpoint = StatementCheckpoint(
+            index=0,
+            line=1,
+            statement="x = 1",
+            span=(1, 0, 1, 5),
+            bound=("x",),
+            shapes=(),
+        )
+        rebuilt = StatementCheckpoint.from_json(checkpoint.to_json())
+        assert rebuilt.artifact_ref is None
 
 
 class TestInvariants:

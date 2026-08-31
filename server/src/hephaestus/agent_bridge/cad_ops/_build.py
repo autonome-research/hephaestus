@@ -306,6 +306,16 @@ class BuildOps(CadOpsState):
         """
         return self._publisher().current_result(name)
 
+    def last_failure_build(self, name: str) -> BuildResult | None:
+        """The most-recent published *failed* build of ``name`` (lock-free).
+
+        ``GET /parts/{part}/build`` reads this when there is no current
+        successful build, so a first-fail part projects its checkpoints and
+        last-good instead of a ``not_built`` silence. A later success still
+        wins: this is never preferred over :meth:`current_build`.
+        """
+        return self._publisher().last_failure_result(name)
+
     def current_bundle(self, name: str) -> Mapping[str, JSONValue] | None:
         """The published *bundle* behind ``name``'s current pointer (lock-free).
 

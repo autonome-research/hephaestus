@@ -1,10 +1,11 @@
 """The sandboxed build worker: one JSON job on stdin -> one JSON result on stdout.
 
 Executes a part script statement by statement under the §2 injected
-namespace, checkpointing after every statement (index, span, bound names;
-shape refs are held eagerly, metrics are computed lazily — for the last-good
-snapshot on failure and for the final compound on success, per mission
-rule 4). On failure it emits the complete §8 error record (line/col, type,
+namespace, checkpointing after every statement (index, line, verbatim
+statement text, span, bound names; shape refs are held eagerly, metrics
+are computed lazily — for the last-good snapshot on failure and for the
+final compound on success, per mission rule 4). On failure it emits the
+complete §8 error record (line/col, type,
 message, ±2-line frame with a ``"> "`` marker, ``built_through``,
 ``last_good`` metrics) and writes the last-good BRep under the out dir; on
 success it writes the final compound BRep plus geometry index, source map,
@@ -489,6 +490,8 @@ def execute_job(job: Mapping[str, JSONValue]) -> dict[str, JSONValue]:
         last_good.update(statement, bound_shapes)
         checkpoint: dict[str, JSONValue] = {
             "index": statement.index,
+            "line": statement.lineno,
+            "statement": statement.text,
             "span": list(statement.span),
             "bound": list(bound),
             "shapes": list(shape_names),

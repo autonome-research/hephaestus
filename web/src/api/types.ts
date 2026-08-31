@@ -50,6 +50,24 @@ export interface BuildWarning {
 }
 
 /**
+ * One incremental-executor checkpoint (`core/types.py::StatementCheckpoint`).
+ *
+ * `GET /parts/{part}/build` projects the worker's per-statement list. A
+ * Timeline mark invented from the script text would be a client-side event
+ * the engine did not name. `artifact_ref` is set only when publication
+ * minted a last-good blob for that stop.
+ */
+export interface StatementCheckpoint {
+  readonly index: number;
+  readonly line: number;
+  readonly statement: string;
+  readonly span: readonly number[];
+  readonly bound: readonly string[];
+  readonly shapes: readonly string[];
+  readonly artifact_ref: string | null;
+}
+
+/**
  * `GET /api/v1/parts/{part}/build` — the §2.3 BuildResult projection.
  *
  * `geometry_count` is an **explicit server field** (§6.1's TIGHTENING binding
@@ -74,6 +92,7 @@ export interface BuildDocument {
   readonly checks?: Readonly<Record<string, unknown>>;
   readonly source_map_ref?: string | null;
   readonly warnings?: readonly BuildWarning[];
+  readonly checkpoints?: readonly StatementCheckpoint[];
   readonly error?: BuildError | undefined;
   readonly critique?: Readonly<Record<string, unknown>>;
 }
