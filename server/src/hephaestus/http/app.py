@@ -54,6 +54,7 @@ from hephaestus.agent_bridge.supervisor import SupervisorError
 from hephaestus.contract import toolgen
 from hephaestus.contract.tools_decl import READ_ARTIFACT_PAGE_MAX, TOOLS_BY_NAME
 from hephaestus.core.checks.report import project_check_report
+from hephaestus.core.types import BuildResult
 from hephaestus.mcp.validate import SchemaError, normalize_arguments
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -598,7 +599,14 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
 
     async def get_build(request: Request) -> Response:
         part = _part(request)
-        result = await asyncio.to_thread(runtime.cad.current_build, part)
+
+        def _read() -> BuildResult | None:
+            current = runtime.cad.current_build(part)
+            if current is not None:
+                return current
+            return runtime.cad.last_failure_build(part)
+
+        result = await asyncio.to_thread(_read)
         return JSONResponse(build_projection(result))
 
     async def get_properties(request: Request) -> Response:

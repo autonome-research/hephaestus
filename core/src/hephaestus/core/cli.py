@@ -40,6 +40,11 @@
   §19.40, §22.6 — the verbs the workspace's "unpin it from the command line"
   sentence names). They ship with the server package, which owns the export
   write-ahead table, but need no Node; see ``hephaestus.agent_bridge.cli_export``.
+- ``heph part list|create|show``, ``heph script show|write``, ``heph params``,
+  and ``heph prompt`` are the agent-shaped authoring verbs: list parts, create
+  or write a script through the same ``create_part`` / ``write_part`` store
+  contract, show the last published build and ``PARAMS``, and store request
+  text. They need no Node; see ``hephaestus.core.cli_authoring``.
 
 Exit codes: 0 success, 1 failure (build failed / raced, failing checks,
 sandbox unavailable), 2 usage (bad arguments, no project, unknown part).
@@ -637,6 +642,13 @@ def build_parser() -> argparse.ArgumentParser:
     from hephaestus.core import cli_init
 
     cli_init.add_subparsers(sub)
+
+    # Agent-shaped authoring verbs (heph part / script / params / prompt): the
+    # same create_part / write_part store contract the tool surface uses, plus
+    # the list_parts / BuildResult / PARAMS reads. No Node, no server.
+    from hephaestus.core import cli_authoring
+
+    cli_authoring.add_subparsers(sub)
 
     # Stage 1 render verbs (heph render / heph goldens) live in a separate module
     # so the render stack is imported only when those verbs run; every verb above

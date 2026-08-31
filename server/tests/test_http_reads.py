@@ -14,6 +14,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from hephaestus.core.checks.report import project_check_report, report_json
@@ -108,6 +109,67 @@ def test_build_route_names_the_absence_rather_than_returning_an_empty_success(
         body = web.get("/parts/bracket/build").json()
     assert body["status"] == "not_built"
     assert body["geometry_count"] == 0
+    assert body["checkpoints"] == []
+
+
+def test_build_route_projects_executor_checkpoints(tmp_path: Path) -> None:
+    """``checkpoints[]`` is the worker list, persisted on the §8 record."""
+    with workspace(tmp_path / "proj") as web:
+        assert web.post("/parts/widget/build", json={}, key=uuid7()).status_code == 200
+        body = web.get("/parts/widget/build").json()
+    assert body["status"] == "ok"
+    checkpoints = cast("list[dict[str, Any]]", body["checkpoints"])
+    assert isinstance(checkpoints, list) and len(checkpoints) >= 1
+    first = checkpoints[0]
+    assert first["index"] == 0
+    assert isinstance(first["line"], int) and first["line"] >= 1
+    assert isinstance(first["statement"], str) and first["statement"]
+    assert first["span"] == [first["line"], *first["span"][1:]]
+    assert first["artifact_ref"] is None
+    assert "bound" in first and "shapes" in first
+
+
+def test_build_route_serves_last_failure_when_there_is_no_current(tmp_path: Path) -> None:
+    """A first-fail part projects its failed record, not a ``not_built`` silence."""
+    root = tmp_path / "proj"
+    with workspace(root) as web:
+        (root / "parts" / "bracket.py").write_text(
+            "plate = Box(30, 20, 6)\n"
+            "bad = fillet(plate.edges(), radius=99.0)\n"
+            "part.geometry = plate\n",
+            encoding="utf-8",
+        )
+        posted = web.post("/parts/bracket/build", json={}, key=uuid7()).json()
+        assert posted["status"] == "error"
+        body = web.get("/parts/bracket/build").json()
+    assert body["status"] == "error"
+    assert body["current"] is False
+    checkpoints = cast("list[dict[str, Any]]", body["checkpoints"])
+    assert len(checkpoints) >= 1
+    error = cast("dict[str, Any]", body["error"])
+    assert error["last_good_artifact_ref"]
+    last = checkpoints[-1]
+    assert last["artifact_ref"] == error["last_good_artifact_ref"]
+
+
+def test_build_route_prefers_current_over_a_later_failure(tmp_path: Path) -> None:
+    """G4.2's geometry_count is a fact about the current build, not last-fail."""
+    root = tmp_path / "proj"
+    with workspace(root) as web:
+        assert web.post("/parts/widget/build", json={}, key=uuid7()).status_code == 200
+        current = web.get("/parts/widget/build").json()
+        (root / "parts" / "widget.py").write_text(
+            "body = Box(10, 10, 2)\n"
+            "bad = fillet(body.edges(), radius=99.0)\n"
+            "part.geometry = body\n",
+            encoding="utf-8",
+        )
+        assert web.post("/parts/widget/build", json={}, key=uuid7()).json()["status"] == "error"
+        body = web.get("/parts/widget/build").json()
+    assert body["status"] == "ok"
+    assert body["current"] is True
+    assert body["artifact_ref"] == current["artifact_ref"]
+    assert body["geometry_count"] == current["geometry_count"]
 
 
 def test_properties_projection_keys_are_exactly_the_declared_part_metadata(

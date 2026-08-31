@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal, cast
 
@@ -51,6 +51,7 @@ from hephaestus.core.types import (
     GeometryEntry,
     InputHashes,
     Metrics,
+    StatementCheckpoint,
     Warning,
 )
 from opstore.types import JSONValue
@@ -181,6 +182,53 @@ def _require_dict(value: JSONValue, what: str) -> dict[str, JSONValue]:
     if not isinstance(value, dict):
         raise ValidationError(f"worker result: {what} must be an object", kind="evaluation")
     return value
+
+
+def _checkpoints_from_worker(
+    raw: JSONValue | None,
+    last_good_ref: str | None,
+    error: ErrorRecord | None,
+) -> tuple[StatementCheckpoint, ...]:
+    """Lift the worker's per-statement checkpoints onto the §8 record.
+
+    The worker records index/span/bound/shapes (and, from this change, line +
+    verbatim statement text). Publication mints at most one checkpoint blob —
+    the last-good BRep of a failed build — and that ref is attached to the
+    checkpoint whose line is ``error.built_through.line``. Intermediate stops
+    carry ``artifact_ref=null``: mission rule 4 keeps per-statement BRep writes
+    lazy, and inventing a ref the store does not hold would be a lie.
+    """
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ValidationError("worker result: checkpoints must be a list", kind="evaluation")
+    parsed: list[StatementCheckpoint] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ValidationError("worker result: checkpoints must be objects", kind="evaluation")
+        record = dict(cast("dict[str, JSONValue]", item))
+        span = record.get("span")
+        if "line" not in record and isinstance(span, list) and span:
+            first = span[0]
+            if isinstance(first, int) and not isinstance(first, bool):
+                record["line"] = first
+        record.setdefault("statement", "")
+        record.setdefault("artifact_ref", None)
+        parsed.append(StatementCheckpoint.from_json(record))
+    if last_good_ref is None or error is None or error.built_through is None:
+        return tuple(parsed)
+    line = error.built_through.line
+    attached = False
+    out: list[StatementCheckpoint] = []
+    for checkpoint in parsed:
+        if not attached and checkpoint.line == line:
+            out.append(replace(checkpoint, artifact_ref=last_good_ref))
+            attached = True
+        else:
+            out.append(checkpoint)
+    if not attached and out:
+        out[-1] = replace(out[-1], artifact_ref=last_good_ref)
+    return tuple(out)
 
 
 def import_hashes(request: BuildRequest) -> dict[str, str]:
@@ -469,6 +517,9 @@ def assemble_build(
             ).items()
             if isinstance(v, str)
         },
+        checkpoints=_checkpoints_from_worker(
+            worker_result.get("checkpoints"), last_good_ref, error
+        ),
     )
     geometry_index_raw = worker_result.get("geometry_index")
     geometry_index_json = geometry_index_raw if isinstance(geometry_index_raw, dict) else None
