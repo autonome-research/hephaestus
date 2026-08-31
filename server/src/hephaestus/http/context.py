@@ -178,7 +178,12 @@ class ContextEnvelope:
 
     @property
     def is_empty(self) -> bool:
-        """§7A.3: "an empty or absent envelope is not an error"."""
+        """§7A.3: "an empty or absent envelope is not an error".
+
+        ``view`` names a reference once the operator adds it (issue #13).
+        Navigation tabs alone are still the blank canvas; a camera token
+        that the operator explicitly sent is not.
+        """
         return (
             self.part is None
             and self.artifact_ref is None
@@ -186,6 +191,7 @@ class ContextEnvelope:
             and not self.hidden_labels
             and self.section_plane is None
             and self.focus is None
+            and self.view is None
         )
 
 

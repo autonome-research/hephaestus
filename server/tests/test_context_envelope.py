@@ -196,6 +196,21 @@ def test_the_blank_canvas_composes_nothing(app: Workspace) -> None:
         assert body["sources"] == []
 
 
+def test_an_explicit_view_is_composed_rather_than_collapsed(app: Workspace) -> None:
+    """Issue #13: Add current view must change what the agent is told.
+
+    Tabs alone remain the blank canvas. A ``view`` the operator sent is a
+    reference: ``_say_viewport`` already knew the line; collapsing on
+    ``is_empty`` made the composer's disclosure say the agent would hear
+    nothing.
+    """
+    response = app.post("/context/preview", json={"context": {"view": "iso"}})
+    assert response.status_code == 200, response.text
+    body = cast("dict[str, Any]", response.json())
+    assert "camera view: iso" in body["block"]
+    assert body["truncated"] is False
+
+
 def test_composition_is_deterministic_in_the_envelope_and_the_project(app: Workspace) -> None:
     """§7A.3: "deterministic in ``(references, project state)``".
 

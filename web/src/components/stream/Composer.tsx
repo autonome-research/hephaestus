@@ -49,11 +49,14 @@
 // review finding that the workspace has no way to talk to an agent.
 //
 // **6. Session chrome stays a thin client** (issue #13). Model + effort are
-// mapped from `GET /providers` using the provider's own model ids — never
-// house names. There is no Plan mode in the engine; `[dfm] auto_run` /
-// `run_dfm` is the equivalent and stays two controls (§6.4). Add current view
-// is an explicit opt-in that opens `POST /context/preview`. No runtime / no
-// `providers.json` keeps the named `agent_unavailable` absence.
+// a *projection* of `GET /providers` using the provider's own model ids —
+// never house names, and never a picker. §7A.3's prompt body is `{text,
+// context?}`; inventing a Select that does not write would be hosted-chat
+// chrome over a field the route does not admit. There is no Plan mode in the
+// engine; `[dfm] auto_run` / `run_dfm` is the equivalent and stays two
+// controls (§6.4). Add current view is an explicit opt-in that opens
+// `POST /context/preview`. No runtime / no `providers.json` keeps the named
+// `agent_unavailable` absence.
 
 import { useCallback, useEffect, useMemo, useSyncExternalStore, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -71,18 +74,14 @@ import {
   type ProfileCapability,
 } from "../../api/sessions";
 import { copy } from "../../copy";
-import { Button, Chip, EmptyState, Select, TextInput } from "../../system";
+import { Button, Chip, EmptyState, TextInput } from "../../system";
 import { useWorkspaceState } from "../../state/react";
 import { labelsForPart, visibilityStore } from "../../state/visibility";
 import {
   defaultModel,
-  effortOptionsFor,
-  isEffortLevel,
-  modelKey,
   modelsFrom,
   showDfmChrome,
   showModelChrome,
-  type EffortLevel,
 } from "../../stream/composerChrome";
 import { chipsFor, envelopeFor, type ContextChip } from "../../stream/composerContext";
 import type { ContextMember } from "../../api/sessions";
@@ -168,22 +167,17 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   //
   // Model + effort are a projection of `GET /providers`. They render only
   // when a runtime is attached *and* that document named at least one model;
-  // an empty picker would read as a signed-in agent that is not there.
-  // DFM is the engine equivalent of a Plan/DFM chip: `[dfm] auto_run` and
-  // `run_dfm`, two controls, because collapsing them would imply a tool
-  // argument that does not exist (§6.4). There is no Plan mode to toggle.
+  // a picker over an empty set — or a Select that wrote nothing — would read
+  // as a signed-in agent that is not there. The first declared model id is
+  // the identifier; effort stays the named `off` because the prompt route
+  // has no such member. DFM is the engine equivalent of a Plan/DFM chip:
+  // `[dfm] auto_run` and `run_dfm`, two controls, because collapsing them
+  // would imply a tool argument that does not exist (§6.4). There is no
+  // Plan mode to toggle.
   const providers = useProviders();
   const models = useMemo(() => modelsFrom(providers.data), [providers.data]);
   const modelChrome = showModelChrome(agentUnavailable, models);
-  const [modelChoice, setModelChoice] = useState("");
-  const [effortChoice, setEffortChoice] = useState<EffortLevel>("off");
-  // Derived, not synced in an effect: a missing or stale choice falls back to
-  // the first declared model / `off`. The picker writes the choice; the
-  // document decides whether that choice still exists.
-  const selectedModel = models.find((row) => modelKey(row) === modelChoice) ?? defaultModel(models);
-  const resolvedChoice = selectedModel === null ? "" : modelKey(selectedModel);
-  const effortOptions = effortOptionsFor(selectedModel);
-  const effort = effortOptions.includes(effortChoice) ? effortChoice : "off";
+  const selectedModel = defaultModel(models);
 
   const dfm = useDfm(state.part);
   const [dfmBusy, setDfmBusy] = useState<"auto_run" | "run" | null>(null);
@@ -454,37 +448,26 @@ export function Composer(props: ComposerProps): React.JSX.Element {
         </div>
       ) : null}
 
-      {/* Session chrome: model + effort from GET /providers, DFM as the
-          engine equivalent of a Plan/DFM chip, and Add current view. Existing
-          `data-*` selectors on the form and the chip row are unchanged. */}
+      {/* Session chrome: model + effort projected from GET /providers (not
+          a picker — §7A.3's prompt body has no such field), DFM as the
+          engine equivalent of a Plan/DFM chip, and Add current view.
+          Existing `data-*` selectors on the form and the chip row are
+          unchanged. */}
       <div className={styles["chrome"]} data-composer-chrome="">
         {modelChrome && selectedModel !== null ? (
           <>
-            <Select
-              label={copy.composer.model}
-              hideLabel
-              value={resolvedChoice}
-              options={models.map((row) => modelKey(row))}
-              onChange={setModelChoice}
+            <Chip
+              tone="code"
               data-composer-model={selectedModel.id}
               data-composer-provider={selectedModel.providerId}
-            />
-            {selectedModel.reasoning ? (
-              <Select
-                label={copy.composer.effort}
-                hideLabel
-                value={effort}
-                options={[...effortOptions]}
-                onChange={(value) => {
-                  if (isEffortLevel(value)) setEffortChoice(value);
-                }}
-                data-composer-effort={effort}
-              />
-            ) : (
-              <span className={styles["note"]} data-composer-effort="off" data-composer-effort-absent="">
-                {copy.composer.effortOff}
-              </span>
-            )}
+            >
+              <Fact mono source="providers.models.id" value={selectedModel.id}>
+                {selectedModel.id}
+              </Fact>
+            </Chip>
+            <span className={styles["note"]} data-composer-effort="off" data-composer-effort-absent="">
+              {copy.composer.effortOff}
+            </span>
           </>
         ) : null}
 

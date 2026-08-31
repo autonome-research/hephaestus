@@ -917,12 +917,12 @@ export const copy = {
 
     /**
      * Session chrome (issue #13). Model and effort identifiers come from
-     * `GET /providers` — the option text is the provider's own model id, not
-     * a house name. Effort is offered only when that model declared
-     * `reasoning`. DFM is the engine equivalent of a Plan/DFM chip: the
-     * project `[dfm] auto_run` setting and `run_dfm`, kept as two controls
-     * because collapsing them would imply a tool argument that does not exist
-     * (INTERFACE.md §6.4).
+     * `GET /providers` — the text is the provider's own model id, not a
+     * house name. Effort is not a prompt field (§7A.3), so the chrome
+     * projects `off` rather than offering a picker. DFM is the engine
+     * equivalent of a Plan/DFM chip: the project `[dfm] auto_run` setting
+     * and `run_dfm`, kept as two controls because collapsing them would
+     * imply a tool argument that does not exist (INTERFACE.md §6.4).
      */
     model: "Model",
     effort: "Effort",

@@ -174,11 +174,15 @@ test.describe("§7A.12 case 2 — the context envelope", () => {
     await partChip.locator('[data-context-drop="part"]').click();
     await expect(partChip).toHaveAttribute("data-context-dropped", "");
 
-    // Issue #13: Add current view un-drops the view and opens the advisory preview.
+    // Issue #13: Add current view un-drops the view and opens the advisory
+    // preview. The server must compose the camera token — a disclosure that
+    // said the agent would be told nothing would be the client/server
+    // emptiness predicates disagreeing.
     await composer.locator("[data-context-add-view]").click();
     const viewChip = composer.locator('[data-context-key="view"]');
     await expect(viewChip).not.toHaveAttribute("data-context-dropped", "");
     await expect(composer.locator("[data-context-preview]")).toBeVisible();
+    await expect(composer.locator("[data-context-block]")).toContainText("camera view:");
   });
 
   test("the disclosure renders the server's block, and says it is advisory", async ({ page }) => {

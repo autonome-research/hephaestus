@@ -370,7 +370,7 @@ describe("session chrome from GET /providers", () => {
     expect(showModelChrome(false, [])).toBe(false);
   });
 
-  it("hides the model picker when the runtime is missing", () => {
+  it("hides the model projection when the runtime is missing", () => {
     const models = modelsFrom(providersDocument());
     expect(showModelChrome(true, models)).toBe(false);
     const html = markup(
@@ -390,10 +390,13 @@ describe("session chrome from GET /providers", () => {
     expect(html).toContain("data-context-add-view");
   });
 
-  it("renders the declared model id on the picker when a runtime is attached", () => {
+  it("renders the declared model id as a projection, not a picker, when a runtime is attached", () => {
     const html = markup({}, { providers: providersDocument() });
     expect(attribute(html, "data-composer-model")).toBe("heph-fake-model");
     expect(attribute(html, "data-composer-provider")).toBe("heph-fake");
+    // §7A.3's prompt body is `{text, context?}`. A Select here would write
+    // nothing and read as hosted-chat chrome.
+    expect(html).not.toMatch(/<select\b/i);
   });
 
   it("offers effort levels only when the selected model declared reasoning", () => {

@@ -7,14 +7,16 @@
 // *decisions* about what the chrome may show, so a component cannot invent a
 // house model name or a thinking level the wire never offered:
 //
-// * **Model identifiers come from `GET /providers`.** The option value is the
+// * **Model identifiers come from `GET /providers`.** The identifier is the
 //   provider's own `models[].id`, qualified by the provider id so two rows
 //   cannot collide. Nothing here mints a product name, and nothing here is
-//   used as an identifier except those two server fields.
-// * **Effort is offered only when the selected model declared `reasoning`.**
-//   The levels are Pi's closed thinking vocabulary (`off` … `xhigh`), not a
-//   house scale. A model that did not declare reasoning has no effort picker:
-//   inventing one would be a second vocabulary with nothing behind it.
+//   used as an identifier except those two server fields. The composer
+//   *projects* the first declared id; it does not offer a Select, because
+//   `POST /sessions/{id}/prompt` admits `{text, context?}` and no model field
+//   (INTERFACE.md §7A.3).
+// * **Effort is not a session field.** The levels below are Pi's closed
+//   thinking vocabulary, recorded so a later route can name them without
+//   inventing a house scale. A picker over them today would write nothing.
 // * **There is no Plan mode in the engine.** `[dfm] auto_run` / `run_dfm` is
 //   the manufacturability equivalent, and it is a *project setting* plus a
 //   tool — not a per-message flag (INTERFACE.md §6.4). The chrome therefore
@@ -111,11 +113,12 @@ export function effortOptionsFor(model: ComposerModel | null): readonly EffortLe
 }
 
 /**
- * Whether the composer may render the model/effort row.
+ * Whether the composer may render the model/effort projection.
  *
  * False when the runtime is missing (`agent_unavailable`) or when the
- * providers document names no models. A picker over an empty set would read
- * as a signed-in agent that is not there.
+ * providers document names no models. A chip over an empty set — or a
+ * Select that wrote nothing — would read as a signed-in agent that is
+ * not there.
  */
 export function showModelChrome(
   agentUnavailable: boolean,
