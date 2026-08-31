@@ -266,6 +266,22 @@ test("the grid readout reports the grid that exists, and the triad names its axe
   // colour never replaces the letter, so all three axes are named in words a
   // screen reader and a monochrome print both keep.
   await expect(page.locator("[data-axis-triad]")).toBeVisible();
+  // §5.5's operator cluster: present, defaults matching the authored picture.
+  // Existing selectors above are unchanged; this only adds the new strip.
+  await expect(page.locator("[data-appearance]")).toBeVisible();
+  for (const [control, pressed] of [
+    ["wireframe", "false"],
+    ["ortho", "true"],
+    ["grid", "true"],
+    ["triad", "true"],
+    ["materialOverride", "true"],
+  ] as const) {
+    await expect(page.locator(`[data-appearance-control="${control}"]`)).toHaveAttribute(
+      "aria-pressed",
+      pressed,
+    );
+  }
+  await expect(page.locator('[data-appearance-control="fit"]')).toBeEnabled();
   for (const axis of ["x", "y", "z"]) {
     await expect(page.locator(`[data-axis-label="${axis}"]`)).toHaveText(axis.toUpperCase());
     await expect(page.locator(`[data-axis="${axis}"]`)).toHaveAttribute(

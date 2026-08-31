@@ -59,6 +59,15 @@
   color: var(--ink-muted);
 }
 
+/* Pin + Export/BOM chrome, left-aligned on the same baseline as the pin. */
+.subject {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-inline);
+  min-width: 0;
+  justify-self: start;
+}
+
 .right {
   display: flex;
   align-items: center;

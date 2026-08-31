@@ -29,7 +29,12 @@ Artifacts (`dist/`, gitignored):
 | `opstore-0.1.0-py3-none-any.whl` | ~38 KB | internal WAL/op store |
 | `hephaestus_bench-0.1.0-py3-none-any.whl` | ~94 KB | evaluation only, behind the `bench` extra |
 
-Install: `pip install hephaestus-cad` (add `[bench]` for the Tier 3 harness).
+There is **no published wheel** and **no GitHub Release**. Users install from a
+clone (`uv sync --dev`; see `docs/install.md`). A `git+…#subdirectory=…`
+install cannot build `hephaestus-server`: the sidecar is gitignored and
+`server/hatch_build.py` refuses a non-editable wheel without it. Document that
+path only after wheels with `_sidecar/` exist. The table above is what a
+successful local `uv build` produces, not what anyone can `pip install` today.
 
 ## Why the sidecar is bundled, not vendored
 

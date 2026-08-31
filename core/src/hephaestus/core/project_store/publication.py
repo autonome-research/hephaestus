@@ -339,6 +339,20 @@ class Publisher:
             raise ValidationError("current bundle has no result record", kind="contract")
         return BuildResult.from_json(result_raw)
 
+    def last_failure_result(self, part: str) -> BuildResult | None:
+        """The most-recent failed BuildResult of ``part`` (lock-free read).
+
+        Failed publishes store the §8 record (not a current bundle) at the
+        last-failure pointer. ``None`` when no failed build has been published.
+        """
+        pointer = self._store.blobs.read_pointer(last_failure_pointer(part))
+        if pointer is None:
+            return None
+        raw = json.loads(self._store.blobs.get(pointer).decode("utf-8"))
+        if not isinstance(raw, dict):
+            raise ValidationError("last-failure record is not an object", kind="contract")
+        return BuildResult.from_json(cast("Mapping[str, JSONValue]", raw))
+
     def baseline_for(self, part: str) -> FingerprintBaseline | None:
         """§5.3 fingerprint baseline: the current bundle's descriptors + ref.
 

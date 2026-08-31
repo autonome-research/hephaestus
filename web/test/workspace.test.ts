@@ -15,11 +15,14 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_STATE,
+  INSPECTOR_TABS,
   PinAuthorityError,
   WorkspaceStore,
   clampExplode,
   decodeWorkspaceUrl,
+  effectiveInspectorTab,
   encodeWorkspaceUrl,
+  inspectorTabsFor,
   isView,
   sameState,
   type WorkspaceState,
@@ -152,12 +155,37 @@ describe("URL serialization", () => {
     expect(decodeWorkspaceUrl(encodeWorkspaceUrl(DEFAULT_STATE)).measure).toBeNull();
   });
 
+  it("round-trips the sourcing inspector tab", () => {
+    const state: WorkspaceState = { ...DEFAULT_STATE, part: "tread", inspector_tab: "sourcing" };
+    expect(decodeWorkspaceUrl(encodeWorkspaceUrl(state)).inspector_tab).toBe("sourcing");
+  });
+
   it("round-trips the Timeline and Results stage tabs", () => {
     for (const tab of ["timeline", "results"] as const) {
       const state: WorkspaceState = { ...DEFAULT_STATE, part: "tread", stage_tab: tab };
       const back = decodeWorkspaceUrl(encodeWorkspaceUrl(state));
       expect(back.stage_tab).toBe(tab);
     }
+  });
+
+  it("omits the inspector Results tab when the stage is already Results", () => {
+    expect(inspectorTabsFor("viewport")).toEqual(INSPECTOR_TABS);
+    expect(inspectorTabsFor("script")).toEqual(INSPECTOR_TABS);
+    expect(inspectorTabsFor("results")).toEqual([
+      "properties",
+      "provenance",
+      "checks",
+      "dfm",
+      "export",
+      "sourcing",
+    ]);
+    expect(inspectorTabsFor("results")).not.toContain("results");
+  });
+
+  it("does not mount inspector Results when the stage tab is Results", () => {
+    expect(effectiveInspectorTab("viewport", "results")).toBe("results");
+    expect(effectiveInspectorTab("results", "results")).toBe("properties");
+    expect(effectiveInspectorTab("results", "checks")).toBe("checks");
   });
 
   it("falls back closed on a value outside a closed vocabulary", () => {

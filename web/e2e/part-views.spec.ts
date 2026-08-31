@@ -41,8 +41,32 @@ test("Script / Timeline / Results are first-class stage tabs", async ({ page }, 
   await page.locator('[data-stage-tab="results"]').click();
   await expect(page.locator('[data-stage-panel="results"] [data-panel="results"]')).toBeVisible();
   await expect(page).toHaveURL(/tab=results/);
+  // Stage Results is the one ResultsPanel. The inspector must not also mount
+  // it — that was the duplicate list/metrics after #6.
+  await expect(page.locator('[data-inspector-panel="results"]')).toHaveCount(0);
+  await expect(page.locator('[data-inspector-tab="results"]')).toHaveCount(0);
 
   await archive(page, testInfo, "part-views-tabs");
+});
+
+test("the project tree lists the closed sections even when empty", async ({ page }, testInfo) => {
+  await open(page, route(PART));
+  const ids = ["analyses", "docs", "globals", "imports", "materials"] as const;
+  for (const id of ids) {
+    const row = page.locator(`[data-tree-row="section"][data-tree-section="${id}"]`);
+    await expect(row).toBeVisible();
+    await expect(row).toHaveAttribute("aria-expanded", "false");
+  }
+  await expect(page.locator("[data-tree-section-empty]")).toHaveCount(0);
+  // §13.1: the working tree stays a fact. Expanding a section must not hide
+  // dirty rows, and this page still addresses them with the same selector.
+  await page.locator('[data-tree-section="materials"]').click();
+  await expect(page.locator('[data-tree-section-empty="materials"]')).toBeVisible();
+  await expect(
+    page.locator('[data-tree-section-empty="materials"] [data-source]'),
+  ).toHaveCount(0);
+
+  await archive(page, testInfo, "project-tree-sections");
 });
 
 test("PARAMS sliders are the GET /parts/{part}/params projection", async ({ page }, testInfo) => {

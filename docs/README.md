@@ -3,11 +3,14 @@ Copyright 2026 The Hephaestus Authors
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Hephaestus documentation (headless)
+# Hephaestus documentation
 
-This is the documentation set for **v0.1.0-headless**: the Python wheel, the
-`heph` CLI, the MCP server, and the packaged agent sidecar. There is no web UI
-in this release and nothing here needs a browser.
+This is the documentation set for the engine-first product on `main`: the
+`heph` CLI (the agent core), optional MCP, and optional operator chrome
+(`heph serve --web`, the `web/` tree). There is no published wheel, no PyPI
+package, and no GitHub Release. Tag `v0.1.0-headless` is a historical
+engine-first cut and does not include `web/`. Install from a clone —
+[install.md](install.md).
 
 These pages are the *user-facing* half of the documentation. The normative
 design and mission documents live at the repository root and win any
@@ -15,9 +18,9 @@ disagreement; each page below names the ones it distills.
 
 | Page | What it covers |
 |---|---|
-| [install.md](install.md) | Installing the wheel, what each capability actually requires, and how to verify the install |
+| [install.md](install.md) | Installing from a clone (`uv sync --dev`), what each capability actually requires, and how to verify the install |
 | [cli.md](cli.md) | Every `heph` verb, with one honest worked example each |
-| [mcp.md](mcp.md) | Configuring a stock MCP client against `heph serve --mcp` |
+| [mcp.md](mcp.md) | Optional: configuring a stock MCP client against `heph serve --mcp` |
 | [conventions.md](conventions.md) | What a Hephaestus project is: layout, part scripts, `PARAMS`/`hc`/`CHECKS`, and what the executor will and will not allow |
 | [registry-pinning.md](registry-pinning.md) | Pinning skills/parts/materials/DFM registries by Merkle digest, and what a pin buys you |
 | [leaderboard.md](leaderboard.md) | Generated model leaderboard — which models can do CAD here, and the interpretation tax |

@@ -147,7 +147,8 @@ frames, so the two cameras agree by construction.
 `[data-field]`, `[data-check]`+`[data-badge]`, `[data-dfm-finding]`,
 `[data-dfm-descriptor]`, `[data-visibility-toggle]`, `[data-testid="viewport"]`
 with `data-glb-state` / `data-artifact-ref` / `data-section-state`,
-`[data-viewport-canvas]`, `[data-explode-t]`, `[data-section-control]` with
+`[data-viewport-canvas]`, `[data-appearance]` / `[data-appearance-control]`,
+`[data-explode-t]`, `[data-section-control]` with
 `data-section-plane`, `[data-section-plate]`+`data-plate-ref`,
 `[data-testid="stream-panel"|"transcript"]`, `[data-history-state]`,
 `[data-history-pages]`, `[data-stream-state]`, `[data-session-tab]` with

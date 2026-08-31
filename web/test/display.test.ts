@@ -38,6 +38,7 @@ import {
   GRID_TARGET_DIVISIONS,
   SOURCE_MATERIAL_KEY,
   authorDisplay,
+  applyAppearance,
   buildGroundGrid,
   gridStep,
   groundGridSpec,
@@ -392,6 +393,63 @@ describe("buildGroundGrid (§3.11.5)", () => {
 // ---------------------------------------------------------------------------
 // The palette read
 // ---------------------------------------------------------------------------
+
+describe("applyAppearance — wireframe and override, no invented material", () => {
+  it("hides the fill and keeps the silhouette when wireframe is on", () => {
+    const { scene, meshes } = loadedScene(2);
+    const display = authorDisplay(scene, PALETTE);
+    applyAppearance(scene, display.material, { wireframe: true, materialOverride: true });
+
+    expect(display.material.visible).toBe(false);
+    for (const mesh of meshes) {
+      expect(mesh.material).toBe(display.material);
+      expect(childEdges(mesh)).toHaveLength(1);
+      expect(childEdges(mesh)[0]?.visible).toBe(true);
+    }
+  });
+
+  it("restores the exporter material when override is off, and invents none", () => {
+    const { scene, meshes } = loadedScene(2);
+    const display = authorDisplay(scene, PALETTE);
+    const preserved = meshes[0]?.userData[SOURCE_MATERIAL_KEY] as MeshStandardMaterial;
+
+    applyAppearance(scene, display.material, { wireframe: false, materialOverride: false });
+
+    expect(meshes[0]?.material).toBe(preserved);
+    expect(meshes[1]?.material).toBe(meshes[1]?.userData[SOURCE_MATERIAL_KEY]);
+    expect(display.material.visible).toBe(false);
+    expect(preserved.visible).toBe(true);
+    // The restored colour is still the selection ID, not a new display colour.
+    const rgb = { r: 0, g: 0, b: 0 };
+    preserved.color.getRGB(rgb, LinearSRGBColorSpace);
+    expect([
+      Math.round(rgb.r * 255),
+      Math.round(rgb.g * 255),
+      Math.round(rgb.b * 255),
+    ]).toEqual(idToRgb(0));
+  });
+
+  it("puts the authored material back when override returns, at the part token", () => {
+    const { scene, meshes } = loadedScene(1);
+    const display = authorDisplay(scene, PALETTE);
+    applyAppearance(scene, display.material, { wireframe: false, materialOverride: false });
+    applyAppearance(scene, display.material, { wireframe: false, materialOverride: true });
+
+    expect(meshes[0]?.material).toBe(display.material);
+    expect(display.material.visible).toBe(true);
+    expect(display.material.color.getHex()).toBe(PALETTE.part.getHex());
+  });
+
+  it("is a no-op on a tree that was never authored", () => {
+    const { scene, meshes } = loadedScene(1);
+    const display = authorDisplay(scene, PALETTE);
+    const stranger = new Group();
+    stranger.add(exporterMesh(9));
+    applyAppearance(stranger, display.material, { wireframe: true, materialOverride: true });
+    expect((stranger.children[0] as Mesh).material).not.toBe(display.material);
+    expect(meshes[0]?.material).toBe(display.material);
+  });
+});
 
 describe("readViewportPalette (§3.6, §3.11)", () => {
   // The channel triples are written as decimals and composed here rather than

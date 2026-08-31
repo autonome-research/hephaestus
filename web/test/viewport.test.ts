@@ -11,7 +11,7 @@
 // that does — holds no logic of its own.
 
 import { describe, expect, it } from "vitest";
-import { Box3, Group, Mesh, Vector3 } from "three";
+import { Box3, Group, Mesh, PerspectiveCamera, Vector3 } from "three";
 import type { Object3D } from "three";
 import type { GLTF } from "three/addons/loaders/GLTFLoader.js";
 import { GlbFormatError, readGlbGeometry } from "../src/viewport/glb";
@@ -33,9 +33,11 @@ import {
 } from "../src/viewport/section";
 import {
   applyExplode,
+  applyPerspectiveFraming,
   applyVisibility,
   boundsAt,
   framingFor,
+  perspectiveFovDeg,
   indexSolidNodes,
   solidCentroids,
 } from "../src/viewport/scene";
@@ -403,6 +405,31 @@ describe("scene (§5.2, §5.4)", () => {
   it("returns no framing for a view outside the vocabulary", () => {
     const bounds = new Box3(new Vector3(0, 0, 0), new Vector3(1, 1, 1));
     expect(framingFor(bounds, "sideways", 1)).toBeNull();
+  });
+
+  it("derives a perspective FOV from the same half-height the ortho camera uses", () => {
+    // A 50-unit half-height at 100 units of distance is 2*atan(0.5) degrees.
+    expect(perspectiveFovDeg(50, 100)).toBeCloseTo((2 * Math.atan(0.5) * 180) / Math.PI, 10);
+    expect(perspectiveFovDeg(0, 100)).toBe(0);
+    expect(perspectiveFovDeg(10, 0)).toBe(0);
+    expect(perspectiveFovDeg(Number.NaN, 10)).toBe(0);
+  });
+
+  it("places a perspective camera on the same eye/target as the ortho framing", () => {
+    const bounds = new Box3(new Vector3(-5, -5, -5), new Vector3(5, 5, 5));
+    const framing = framingFor(bounds, "iso", 1);
+    expect(framing).not.toBeNull();
+    if (framing === null) return;
+    const camera = new PerspectiveCamera();
+    applyPerspectiveFraming(camera, framing);
+    expect(camera.position.toArray()).toEqual([...framing.eye]);
+    const distance = Math.hypot(
+      framing.eye[0] - framing.target[0],
+      framing.eye[1] - framing.target[1],
+      framing.eye[2] - framing.target[2],
+    );
+    expect(camera.fov).toBeCloseTo(perspectiveFovDeg(framing.halfHeight, distance), 10);
+    expect(camera.aspect).toBeCloseTo(framing.halfWidth / framing.halfHeight, 10);
   });
 });
 

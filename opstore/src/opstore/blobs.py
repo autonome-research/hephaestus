@@ -5,8 +5,10 @@ Contract (DESIGN.md "blobs.py" + fsync discipline):
 - ``put(data) -> "sha256:<hex>"`` dedups by content hash and stores at
   ``<root>/blobs/sha256/<first2>/<hex>``. Writes go to a same-directory temp
   file which is fsynced, atomically renamed into place, and followed by a
-  parent-directory fsync before the accounting row is committed. Blob files are
-  deleted only by gc.py.
+  parent-directory fsync before the accounting row is committed. The temp name
+  is unique per writer (pid + random token), not pid alone: two in-process
+  puts of the same hash — two concurrent builds of the same part — must not
+  collide on ``O_CREAT|O_EXCL``. Blob files are deleted only by gc.py.
 - Crash points (``CrashHook``): ``blobs.put.after_file_fsync``,
   ``blobs.put.after_rename``, ``blobs.put.after_dir_fsync``,
   ``blobs.put.after_db_insert``. Recovery is re-``put``: a durable file without
@@ -69,7 +71,11 @@ class BlobStore:
         final = self.path_for(blob_hash)
         if not final.exists():
             final.parent.mkdir(parents=True, exist_ok=True)
-            tmp = final.parent / f".{final.name}.{os.getpid()}.tmp"
+            # Pid alone is unique across processes, not across threads in this
+            # process. Concurrent ``put`` of the same hash (two sessions
+            # building the same part) used to share ``.{digest}.{pid}.tmp`` and
+            # the second ``O_CREAT|O_EXCL`` raised FileExistsError(17).
+            tmp = final.parent / f".{final.name}.{os.getpid()}.{os.urandom(8).hex()}.tmp"
             fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
             try:
                 os.write(fd, data)
@@ -77,10 +83,16 @@ class BlobStore:
             finally:
                 os.close(fd)
             self._crash.maybe_crash(CRASH_AFTER_FILE_FSYNC)
-            os.rename(tmp, final)
-            self._crash.maybe_crash(CRASH_AFTER_RENAME)
-            _fsync_dir(final.parent)
-            self._crash.maybe_crash(CRASH_AFTER_DIR_FSYNC)
+            # Another writer may have installed the same content while we
+            # fsynced. Drop our temp rather than racing the exclusive create
+            # a second time; the file on disk is the same bytes.
+            if final.exists():
+                os.unlink(tmp)
+            else:
+                os.rename(tmp, final)
+                self._crash.maybe_crash(CRASH_AFTER_RENAME)
+                _fsync_dir(final.parent)
+                self._crash.maybe_crash(CRASH_AFTER_DIR_FSYNC)
         with self._db.transaction() as conn:
             conn.execute(
                 "INSERT INTO blobs(hash, size, created_at, retention_class) "

@@ -102,9 +102,12 @@ export function useParts(): UseQueryResult<PartsDocument, Error> {
 /**
  * `GET /parts/{part}/build` — the projection G4.2's row count is read from.
  *
- * A part with no current build answers `status: "not_built"` with
- * `geometry_count: 0`: a **named absence**, not a 404 and not an empty success
- * (`http/projections.py`). The tree renders that state as words, because §6.3's
+ * A part with no current build and no last-failure record answers
+ * `status: "not_built"` with `geometry_count: 0`: a **named absence**, not a
+ * 404 and not an empty success (`http/projections.py`). A first-fail part
+ * projects the failed record (checkpoints + last-good) instead of silence.
+ * A later success still wins: G4.2's `geometry_count` is a fact about the
+ * current build. The tree renders the named absence as words, because §6.3's
  * rule — silence never reads as a pass — is a UI obligation on every axis.
  */
 export function useBuild(

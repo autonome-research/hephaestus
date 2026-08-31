@@ -11,6 +11,7 @@ from hephaestus.core.params import (
     extract_params,
     merge_overrides,
     params_declaration_json,
+    static_params,
 )
 
 
@@ -200,3 +201,26 @@ class TestDeclarationJson:
             "a_first": Param(1.0, min=0.0, max=2.0),
         }
         assert list(params_declaration_json(params)) == ["a_first", "z_last"]
+
+
+class TestStaticParams:
+    def test_literal_param_calls(self) -> None:
+        source = (
+            "PARAMS = {\n"
+            '    "width": Param(10.0, min=5, max=20),\n'
+            '    "count": Param(3, min=1, max=8, step=1, doc="holes"),\n'
+            "}\n"
+        )
+        decls, names = static_params(source)
+        assert names == ("width", "count")
+        assert decls["width"] == Param(10.0, min=5, max=20)
+        assert decls["count"] == Param(3, min=1, max=8, step=1, doc="holes")
+
+    def test_non_literal_value_is_named_but_not_declared(self) -> None:
+        source = 'PARAMS = {"width": Param(hc.sheet_t, min=1, max=20)}\n'
+        decls, names = static_params(source)
+        assert names == ("width",)
+        assert decls == {}
+
+    def test_syntax_error_is_empty(self) -> None:
+        assert static_params("def (:\n") == ({}, ())

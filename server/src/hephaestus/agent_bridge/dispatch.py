@@ -64,6 +64,7 @@ from hephaestus.core.errors import (
     IncoherentProjectSnapshotError,
     ValidationError,
 )
+from hephaestus.core.part_templates import BLANK_TEMPLATES
 from hephaestus.core.project_store.store import ProjectStore, WriteConflictError
 from hephaestus.core.registry import TEXT_MAX_LINES, RegistryError, RegistryOps
 from opstore.types import TerminalState
@@ -199,13 +200,8 @@ DELEGATION_TOOLS: frozenset[str] = frozenset(
     {"delegate_part_agent", "get_delegation_status", "cancel_delegation"}
 )
 
-#: Minimal create-templates (Stage 1 owns richer scaffolds; blank is enough here).
-BLANK_TEMPLATES: dict[str, str] = {
-    "blank": "from build123d import *\n\n\nwith BuildPart() as part:\n    pass\n",
-    "solid": "from build123d import *\n\n\nwith BuildPart() as part:\n    Box(10, 10, 10)\n",
-    "sheet": "from build123d import *\n\n\nwith BuildSketch() as sk:\n    Rectangle(50, 50)\n",
-    "from_store": "from build123d import *\n\n\nwith BuildPart() as part:\n    pass\n",
-}
+# Re-export: the table lives in hephaestus.core.part_templates so `heph part
+# create` writes the same bytes as create_part without importing this module.
 
 _IDENT_RE = re.compile(IDENT_PATTERN)
 
