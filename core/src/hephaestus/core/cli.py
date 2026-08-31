@@ -28,8 +28,10 @@
   documents and images (``INGEST.md`` §2); see ``hephaestus.core.cli_references``.
 - ``heph import add|list`` admits a vendor STEP or scan into ``imports/``
   (path-confined copy, optional ``create_part`` seed). The kernel already
-  imports; this is project ingress. Browser import stays deferred
-  (``INTERFACE.md`` §15.37); see ``hephaestus.core.cli_import``.
+  imports; this is project ingress. A mesh ``--part`` seed is the Stage 12
+  scan-to-part path (``import_mesh`` + ``mesh_to_solid``); then ``heph build``
+  and ``heph scan check``. Reconstruction is deferred. Browser import stays
+  deferred (``INTERFACE.md`` §15.37); see ``hephaestus.core.cli_import``.
 - ``heph assembly [--json]`` / ``heph assembly check`` show and re-evaluate the
   project's declared cross-part constraints (``ASSEMBLY.md`` §3); see
   ``hephaestus.core.cli_assembly``.

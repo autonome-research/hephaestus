@@ -11,8 +11,13 @@ browser. ``INTERFACE.md`` §15.37 still defers viewport drop.
 - ``heph import add FILE [--units {mm,cm,m,in}] [--name NAME] [--part NAME]
   [--json]`` copies the file into ``imports/`` (path confinement, no symlink
   escape, original untouched) and optionally seeds ``parts/<name>.py`` through
-  the same ``create_part`` contract as ``heph part create``.
+  the same ``create_part`` contract as ``heph part create``. For a mesh that
+  seed is the Stage 12 path (``import_mesh`` + ``mesh_to_solid``); a point
+  cloud refuses ``point_cloud_has_no_solid``. Reconstruction is not a verb.
 - ``heph import list [--json]`` lists admitted files under ``imports/``.
+- After a mesh ``--part`` seed the operator path is ``heph build`` then
+  ``heph scan`` / ``heph scan check``. ``mesh_to_solid`` may refuse
+  ``mesh_solid_invalid`` (MESH_INGEST.md §4.3). Viewport drop stays deferred.
 
 Exit codes match the engine CLI: 0 success, 1 the operation ran and the
 answer was no, 2 usage.
@@ -391,6 +396,12 @@ def _cmd_add(args: argparse.Namespace) -> int:
         print(f"copied {dest_name} ({kind}{extra}) {digest} -> {IMPORTS_DIRNAME}/{dest_name}")
         if part_name is not None:
             print(f"created parts/{part_name}.py")
+            if kind == "mesh":
+                print(
+                    f"scan-to-part: heph build {part_name}; "
+                    f"heph scan check {part_name} {dest_name} --units {units} "
+                    "(Stage 12; no reconstruction)"
+                )
     return 0
 
 
@@ -453,7 +464,11 @@ def add_subparsers(
     add.add_argument(
         "--part",
         default=None,
-        help="create parts/<name>.py via create_part (refuse if it exists; no force)",
+        help=(
+            "create parts/<name>.py via create_part (refuse if it exists; no force). "
+            "STEP seeds import_step; mesh seeds import_mesh + mesh_to_solid; "
+            "a point cloud is point_cloud_has_no_solid (no reconstruction)"
+        ),
     )
     add.add_argument("--json", action="store_true", help="emit {name, kind, sha256, path, units?}")
     add.set_defaults(func=_guard(_cmd_add))

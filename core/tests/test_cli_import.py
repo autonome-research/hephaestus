@@ -226,6 +226,30 @@ def test_add_part_seeds_import_step_term(
     assert script == 'part.geometry = import_step("vendor_plate.step")\n'
 
 
+def test_add_part_refuses_a_point_cloud_without_copying(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A cloud has no solid conversion; reconstruction is out of scope."""
+    from hephaestus.core.cli_import import ImportIngressError, seed_part_script
+
+    with pytest.raises(ImportIngressError) as caught:
+        seed_part_script("marks.xyz", kind="points", units="mm")
+    assert caught.value.reason == "point_cloud_has_no_solid"
+
+    root = project(tmp_path / "proj")
+    source = tmp_path / "marks.xyz"
+    source.write_text("0 0 0\n1 0 0\n0 1 0\n", encoding="utf-8")
+
+    assert (
+        run(root, monkeypatch, "import", "add", str(source), "--units", "mm", "--part", "cloud")
+        == 1
+    )
+    err = capsys.readouterr().err
+    assert "point_cloud_has_no_solid" in err
+    assert not (root / "parts" / "cloud.py").exists()
+    assert not (root / "imports" / "marks.xyz").exists()
+
+
 def test_add_part_seeds_import_mesh_and_mesh_to_solid(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
