@@ -17,6 +17,8 @@
 // toggles, never what is visible).
 
 import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -340,7 +342,7 @@ describe("the DOM contract", () => {
     const html = markup();
     expect(html).not.toContain("data-context-chips");
     const source = readFileSync(
-      new URL("../../src/components/stream/Composer.tsx", import.meta.url),
+      join(dirname(fileURLToPath(import.meta.url)), "../../src/components/stream/Composer.tsx"),
       "utf8",
     );
     const row = source.slice(

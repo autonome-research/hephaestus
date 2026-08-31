@@ -61,7 +61,7 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { WorkspaceError } from "../../api/client";
-import { keys, useProviders } from "../../api/queries";
+import { useProviders } from "../../api/queries";
 import { refreshAfterTurn } from "../../api/refresh";
 import { attachAgent, type AttachProjection, isAttachCause } from "../../api/attach";
 import {
