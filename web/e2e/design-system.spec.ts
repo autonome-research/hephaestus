@@ -130,26 +130,41 @@ test("the viewport ground is a token and is distinct from every chrome surface (
   const viewport = page.locator('[data-testid="viewport"]');
   await expect(viewport).toHaveAttribute("data-glb-state", "ready", { timeout: 120_000 });
 
-  // §3.10 reserves the `canvas` rung of the surface ladder for the viewport and
-  // NOTHING ELSE, and §3.11.1 asks for "a viewport ground distinct from every
-  // chrome surface, on both `setClearColor` and `scene.background`". Both ends
-  // now read the same token, which is what makes the two agree by construction
-  // rather than by a copied literal — `engine.ts`:74 used to be
-  // `new Color("#0d0f12")`, and that value WAS the app's darkest chrome surface.
+  // The well is `--viewport-ground`, not `--surface-canvas` (that rung stays
+  // the dark chrome-adjacent fill). §3.11.1 asks for "a viewport ground
+  // distinct from every chrome surface, on both `setClearColor` and
+  // `scene.background`". Velvet overrode the draft "ground darker than the
+  // part" clause: the previous near-black void hid a light solid.
   const surfaces = await page.evaluate(() => {
     const root = getComputedStyle(document.documentElement);
     const read = (name: string): string => root.getPropertyValue(name).trim();
+    const probeRgb = (name: string): [number, number, number] => {
+      const probe = document.createElement("div");
+      probe.style.backgroundColor = `var(${name})`;
+      document.body.appendChild(probe);
+      const value = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      const match = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(value);
+      if (match === null) return [0, 0, 0];
+      return [Number(match[1]), Number(match[2]), Number(match[3])];
+    };
     return {
       ground: read("--viewport-ground"),
       canvas: read("--surface-canvas"),
+      groundRgb: probeRgb("--viewport-ground"),
+      canvasRgb: probeRgb("--surface-canvas"),
       chrome: ["app", "panel", "raised", "control", "overlay"].map((name) =>
         read(`--surface-${name}`),
       ),
     };
   });
   expect(surfaces.ground, "--viewport-ground did not resolve").not.toBe("");
-  expect(surfaces.ground).toBe(surfaces.canvas);
+  expect(surfaces.ground).not.toBe(surfaces.canvas);
   expect(surfaces.chrome).not.toContain(surfaces.ground);
+  // Light modeling well, not the previous near-black void. Thresholds are
+  // luminance, not a copied hex — `no-palette-token` forbids the latter here.
+  expect(luminanceOf(surfaces.groundRgb)).toBeGreaterThan(0.7);
+  expect(luminanceOf(surfaces.canvasRgb)).toBeLessThan(0.1);
 
   // And the WebGL clear colour is that same value, sampled out of the drawing
   // buffer at a corner the geometry does not reach.
@@ -167,9 +182,7 @@ test("the viewport ground is a token and is distinct from every chrome surface (
   });
   expect(corner).not.toBeNull();
   if (corner === null) return;
-  const expected = surfaces.ground.replace("#", "");
-  const asHex = corner.map((channel) => channel.toString(16).padStart(2, "0")).join("");
-  expect(asHex).toBe(expected);
+  expect(corner).toEqual(surfaces.groundRgb);
 });
 
 // §3.11.2's part-vs-ground floor. **LANDED 2026-08-28 WITH PLAN ITEM 6.**

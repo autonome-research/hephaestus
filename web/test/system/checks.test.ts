@@ -256,19 +256,32 @@ describe("token-contrast (§3.9, §3.13.1, §3.14)", () => {
   // part vs ground, exporter-independent". Both sides, on the §3.14 precedent
   // that a check with no negative case is a check that cannot fail.
   it("holds --viewport-part to §3.11.2's 4.5:1 against the ground", async () => {
-    const table = "/* @permit part --viewport-part : canvas */";
-    const declare = (part: string): string =>
-      `${table}\n:root { --p-a: ${part}; --p-b: #080a0d; --viewport-part: var(--p-a); --surface-canvas: var(--p-b); }`;
+    const table = "/* @permit part --viewport-part : viewport-ground */";
+    const declare = (part: string, ground = "#eef1f6"): string =>
+      `${table}\n:root { --p-a: ${part}; --p-b: ${ground}; --viewport-part: var(--p-a); --viewport-ground: var(--p-b); }`;
 
-    // The shipped `--p-part`, which clears the floor with room above it.
-    expect(await css(declare("#b8c2cf"), TOKENS_PATH, "token-contrast")).toEqual([]);
+    // The modeling-well `--p-part` (`--p-graphite-500` on `--p-slate-050`).
+    expect(await css(declare("#30374a"), TOKENS_PATH, "token-contrast")).toEqual([]);
 
-    // And a part the exporter's own palette would produce: `id_to_rgb(0)` is
-    // `(0, 0, 1)`, the value §3.11.2 exists because of. It fails by the number
-    // the spec writes out, not by the `ui` floor one class down.
-    const black = await css(declare("#000001"), TOKENS_PATH, "token-contrast");
-    expect(black).toHaveLength(1);
-    expect(black[0]).toContain("below the part floor of 4.5");
+    // The pale part Velvet measured as a ghost on a light well — below the
+    // floor the spec writes out, not the `ui` floor one class down.
+    const pale = await css(declare("#b8c2cf"), TOKENS_PATH, "token-contrast");
+    expect(pale).toHaveLength(1);
+    expect(pale[0]).toContain("below the part floor of 4.5");
+  });
+
+  it("holds the triad's well-edge letters to the text floor on the ground", async () => {
+    const table = "/* @permit text --viewport-edge : viewport-ground */";
+    const declare = (edge: string, ground = "#eef1f6"): string =>
+      `${table}\n:root { --p-a: ${edge}; --p-b: ${ground}; --viewport-edge: var(--p-a); --viewport-ground: var(--p-b); }`;
+
+    // `--p-graphite-950` on the modeling well — the pairing the triad spends.
+    expect(await css(declare("#080a0d"), TOKENS_PATH, "token-contrast")).toEqual([]);
+
+    // Chrome `--ink-base` on that same well: the 1.36:1 CI failure.
+    const chrome = await css(declare("#c9d1de"), TOKENS_PATH, "token-contrast");
+    expect(chrome).toHaveLength(1);
+    expect(chrome[0]).toContain("below the text floor of 4.5");
   });
 
   it("refuses to pass vacuously when the table is empty", async () => {

@@ -353,6 +353,9 @@ function resolve(declarations, name, depth = 0) {
 function backdropToken(word) {
   if (word.startsWith("status-")) return `--${word}`;
   if (word === "accent" || word === "accent-quiet") return `--${word}`;
+  // The modeling well is not `--surface-canvas` (that rung stays the dark
+  // chrome-adjacent fill). Part/edge/grid contrast is against the well.
+  if (word === "viewport-ground") return "--viewport-ground";
   return `--surface-${word}`;
 }
 

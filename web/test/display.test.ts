@@ -17,6 +17,9 @@
 // did not destroy that channel: the exporter's material is still on the node
 // and its 0-255 triple still reconstructs exactly.
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   Box3,
@@ -48,6 +51,7 @@ import {
 import { applyVisibility, indexSolidNodes } from "../src/viewport/scene";
 import { snapshotSolids } from "../src/viewport/testHook";
 import { readGlbGeometry } from "../src/viewport/glb";
+import { DEFAULT_APPEARANCE } from "../src/state/appearance";
 import { fakeGlb } from "./glb";
 
 /** A palette that is not the token palette, so an assertion cannot pass by luck. */
@@ -490,5 +494,46 @@ describe("readViewportPalette (§3.6, §3.11)", () => {
     expect(palette.edge.getHex()).toBe(packed(255, 255, 255));
     expect(palette.grid.getHex()).toBe(packed(255, 255, 255));
     expect(palette.gridAxis.getHex()).toBe(packed(255, 255, 255));
+  });
+});
+
+describe("the shipped modeling well is not the near-black void", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const tokensRaw = readFileSync(join(here, "..", "src", "system", "tokens.css"), "utf8");
+  const tokens = tokensRaw.replace(/\/\*[\s\S]*?\*\//g, "");
+  const triad = readFileSync(
+    join(here, "..", "src", "components", "stage", "viewport", "AxisTriad.module.css"),
+    "utf8",
+  );
+  const viewport = readFileSync(
+    join(here, "..", "src", "components", "stage", "viewport", "Viewport.module.css"),
+    "utf8",
+  );
+
+  it("authors a light CAD ground and a dark part, grid on by default", () => {
+    // Velvet: Fusion/Onshape-style well. Clear colour is `--p-slate-050`,
+    // not the previous `--p-graphite-950` void. Hex values live in
+    // `tokens.css` and are checked there by `token-contrast`.
+    expect(tokens).toMatch(/--viewport-ground:\s*var\(--p-slate-050\)/);
+    expect(tokens).not.toMatch(/--viewport-ground:\s*var\(--surface-canvas\)/);
+    expect(tokens).toMatch(/--viewport-part:\s*var\(--p-part\)/);
+    expect(tokens).toMatch(/--p-part:\s*var\(--p-graphite-500\)/);
+    expect(tokens).toMatch(/--viewport-edge:\s*var\(--p-graphite-950\)/);
+    expect(tokens).toMatch(/--viewport-grid:\s*var\(--p-slate-400\)/);
+    expect(tokens).toMatch(/--viewport-grid-axis:\s*var\(--p-slate-600\)/);
+    expect(DEFAULT_APPEARANCE.grid).toBe(true);
+  });
+
+  it("spends well-edge ink on the triad and plates absence copy, not chrome ink", () => {
+    // CI: three SVG `<text>` samples at 1.36:1 (`--ink-base` on
+    // `--viewport-ground`). The triad has no plate by design; chrome
+    // `--ink-*` is for the dark surfaces.
+    expect(tokensRaw).toMatch(/@permit text\s+--viewport-edge\s*:\s*viewport-ground/);
+    expect(triad).toMatch(/stroke:\s*var\(--viewport-edge\)/);
+    expect(triad).toMatch(/color:\s*var\(--viewport-edge\)/);
+    expect(triad).toMatch(/fill:\s*var\(--viewport-edge\)/);
+    expect(triad).not.toMatch(/var\(--ink-base\)/);
+    expect(triad).not.toMatch(/var\(--ink-strong\)/);
+    expect(viewport).toMatch(/\.absencePlate[\s\S]*background:\s*var\(--surface-overlay\)/);
   });
 });

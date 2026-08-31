@@ -346,12 +346,13 @@ export interface GroundGridSpec {
  *
  * THE COUPLING IS BOUNDED, NOT ELIMINATED, AND THE BOUND IS WORTH KNOWING. Both
  * of those assertions run at the fixture's default framing, where the pad
- * projects well inside the frame — the corner sample measures `rgb(8, 10, 13)`
- * exactly, the ground token byte for byte. Under a **top** view (`+Z`) the pad
- * is a plan of itself and necessarily reaches past a camera fitted to the part,
- * so a corner sample taken there would land on grid rather than on ground. That
- * is correct behaviour rather than a defect: a case wanting the ground pixel
- * from a top view needs a sample point chosen for it, not a smaller grid.
+ * projects well inside the frame — the corner sample measures the ground token
+ * byte for byte (`--p-slate-050` on the modeling well). Under a **top** view
+ * (`+Z`) the pad is a plan of itself and necessarily reaches past a camera
+ * fitted to the part, so a corner sample taken there would land on grid rather
+ * than on ground. That is correct behaviour rather than a defect: a case
+ * wanting the ground pixel from a top view needs a sample point chosen for it,
+ * not a smaller grid.
  */
 export const GRID_MARGIN_STEPS = 2;
 

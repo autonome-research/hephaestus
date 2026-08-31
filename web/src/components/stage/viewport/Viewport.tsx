@@ -322,22 +322,24 @@ export function Viewport(): React.JSX.Element {
         // shipped absence was an italic 3.10:1 sentence in the middle of a black
         // rectangle, which reads as a bug rather than as a designed state.
         <div className={styles["absent"]} data-viewport-absence={state}>
-          <EmptyState
-            icon={ABSENCE_ICON[state]}
-            title={copy.viewport.absenceTitle[state]}
-            body={
-              <>
-                <p>{copy.viewport.absence[state]}</p>
-                {refusalReason === null ? null : (
-                  <p>
-                    <Chip tone="code" data-refusal-reason={refusalReason}>
-                      {refusalReason}
-                    </Chip>
-                  </p>
-                )}
-              </>
-            }
-          />
+          <div className={styles["absencePlate"]}>
+            <EmptyState
+              icon={ABSENCE_ICON[state]}
+              title={copy.viewport.absenceTitle[state]}
+              body={
+                <>
+                  <p>{copy.viewport.absence[state]}</p>
+                  {refusalReason === null ? null : (
+                    <p>
+                      <Chip tone="code" data-refusal-reason={refusalReason}>
+                        {refusalReason}
+                      </Chip>
+                    </p>
+                  )}
+                </>
+              }
+            />
+          </div>
         </div>
       )}
 
