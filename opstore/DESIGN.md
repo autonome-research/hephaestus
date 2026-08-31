@@ -130,7 +130,9 @@ under the same PREPARED/COMMITTED discipline; recovery completes or conflicts.
 
 ### blobs.py
 - `put(bytes) -> "sha256:..."` (dedup, fsync, `<root>/blobs/sha256/<2>/<hex>`),
-  `open_stream/get`, `has`, `size`. Blobs deleted **only** by gc.py.
+  `open_stream/get`, `has`, `size`. The exclusive temp is unique per writer
+  (pid + random token) so two in-process puts of the same hash do not collide.
+  Blobs deleted **only** by gc.py.
 - Named pointers table with `cas_swap(name, expected_hash|None, new_hash)`.
 
 ### leases.py
