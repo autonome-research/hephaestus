@@ -37,14 +37,74 @@
 // cell wrapping onto the next row) turned each path into a multi-line ribbon
 // that ate the rail. The path stays on one line; `data-value` still carries
 // every byte the server sent.
+//
+// AND THE DEFECT THE ONE-LINE FIX LEFT STANDING (operator review, 2026-09-01).
+// One line each is still 37 lines: on the live fixture the whole section was
+// `.heph/blobs/sha256/…`, `.heph/state.db`, `.heph/serve.token`, `.heph/agent/…`
+// — the workspace's own store, reported as untracked, pushing the part tree and
+// the providers sign-in below the fold of a 280px rail. §13.1 says report, not
+// enumerate-at-equal-weight: the `.heph/` rows are now ONE row carrying their
+// count, expandable to exactly the same table with exactly the same `<Fact>`
+// attribution. Nothing is dropped, and no path is shortened.
+//
+// GIT IDENTITY LIVES HERE NOW, for the same §13.1 reason the dirty rows do:
+// "the header shows the artifact axis; the rail shows the git axis; the UI never
+// blurs them." `branch` and `HEAD` were in the 44px header bar, where the head
+// was also being printed at full 40-glyph length by a `formatRef` width bug.
+// They are identity — *which repository this is* — so they sit above the working
+// tree, and this panel still reports nothing about whether a build is current.
 
+import { useState } from "react";
 import { useGitStatus } from "../../api/queries";
 import { WorkspaceError } from "../../api/client";
 import { copy } from "../../copy";
 import type { GitDirtyEntry } from "../../api/types";
-import { Badge, DataTable, EmptyState, Panel, PanelBody, PanelHeader } from "../../system";
+import {
+  Badge,
+  Button,
+  DataTable,
+  EmptyState,
+  Panel,
+  PanelBody,
+  PanelHeader,
+  formatOid,
+} from "../../system";
 import { Fact } from "../Fact";
 import styles from "./GitDirty.module.css";
+
+/** git porcelain v2 `# branch.head (detached)` — not a branch Fact. */
+export const DETACHED_BRANCH = "(detached)";
+
+/** A real git object id. The word `HEAD` is a ref name, not an oid. */
+const GIT_OID = /^[0-9a-f]{7,64}$/i;
+
+/**
+ * The branch Fact the rail may print. `(detached)` is porcelain, not a
+ * name — omit it rather than rendering it as `git.branch`.
+ */
+export function railBranch(branch: string | null | undefined): string | null {
+  if (branch === null || branch === undefined || branch === "" || branch === DETACHED_BRANCH) {
+    return null;
+  }
+  return branch;
+}
+
+/**
+ * The head Fact the rail may print. Only a real oid is abbreviated
+ * (`formatOid`). The label `HEAD` without a sha is not a fact.
+ */
+export function railHead(head: string | null | undefined): string | null {
+  if (head === null || head === undefined || head === "" || head === "HEAD") return null;
+  return GIT_OID.test(head) ? head : null;
+}
+
+/** The prefix under which the workspace writes its own store (§2.1, §13.1). */
+const GENERATED_PREFIX = ".heph/";
+
+/** True for a path the workspace itself produced, not part source. */
+export function isGeneratedPath(path: string): boolean {
+  return path.startsWith(GENERATED_PREFIX);
+}
 
 /** Which side of the index a change sits on — the server's two porcelain codes. */
 export function dirtySide(entry: GitDirtyEntry): keyof typeof copy.gitStatus {
@@ -64,6 +124,9 @@ export interface DirtyIndex {
   readonly clean: boolean | null;
   /** A named absence: not a git work tree, or git is not available. */
   readonly absence: string | null;
+  /** §13.1's git identity, on the git axis: which repository this is. */
+  readonly branch: string | null;
+  readonly head: string | null;
 }
 
 const EMPTY_INDEX: DirtyIndex = {
@@ -72,6 +135,8 @@ const EMPTY_INDEX: DirtyIndex = {
   entries: [],
   clean: null,
   absence: null,
+  branch: null,
+  head: null,
 };
 
 /** The one read of `GET /git/status`, shared by the tree and this panel. */
@@ -93,7 +158,15 @@ export function useDirtyIndex(): DirtyIndex {
     if (part === null) others.push(entry);
     else byPart.set(part, entry);
   }
-  return { byPart, others, entries: data.dirty, clean: data.clean, absence: null };
+  return {
+    byPart,
+    others,
+    entries: data.dirty,
+    clean: data.clean,
+    absence: null,
+    branch: railBranch(data.branch),
+    head: railHead(data.head),
+  };
 }
 
 /**
@@ -128,10 +201,36 @@ export function DirtyMarker({ entry }: { readonly entry: GitDirtyEntry }): React
  */
 export function GitDirtyView({ index }: { readonly index: DirtyIndex }): React.JSX.Element {
   const absence = railGitAbsence(index);
+  const [generatedOpen, setGeneratedOpen] = useState(false);
+  const generated = index.others.filter((entry) => isGeneratedPath(entry.path));
+  const authored = index.others.filter((entry) => !isGeneratedPath(entry.path));
 
   return (
     <Panel className={styles["panel"]} label={copy.rail.gitHeading}>
-      <PanelHeader title={copy.rail.gitHeading} level={2} />
+      <PanelHeader
+        title={copy.rail.gitHeading}
+        level={2}
+        actions={
+          index.branch === null && index.head === null ? undefined : (
+            <span className={styles["identity"]}>
+              {index.branch === null ? null : (
+                <span title={copy.rail.branch} className={styles["branchWrap"]}>
+                  <Fact source="git.branch" value={index.branch} className={styles["branch"]} />
+                </span>
+              )}
+              {index.head === null ? null : (
+                // The full oid stays on `data-value`; the prefix is what a git
+                // reader recognises and what fits beside a heading.
+                <span title={`${copy.rail.head} ${index.head}`}>
+                  <Fact source="git.head" value={index.head} className={styles["head"]}>
+                    {formatOid(index.head)}
+                  </Fact>
+                </span>
+              )}
+            </span>
+          )
+        }
+      />
       <PanelBody className={styles["body"]}>
         {absence !== null ? (
           // One EmptyState for BOTH rail sections. §4.7: "a shared cause is
@@ -157,32 +256,64 @@ export function GitDirtyView({ index }: { readonly index: DirtyIndex }): React.J
                 render would be exactly the client-side re-count §1 forbids. It is
                 a caption over the list; the rows below carry the attribution. */}
             <p className={styles["count"]}>{copy.rail.dirtyCount(index.entries.length)}</p>
-            {index.others.length === 0 ? null : (
+            {authored.length === 0 ? null : (
               <>
                 <p className={styles["subheading"]}>{copy.rail.dirtyOutsideParts}</p>
-                <DataTable
-                  as="div"
-                  rows={index.others.map((entry) => ({
-                    key: entry.path,
-                    label: <DirtyMarker entry={entry} />,
-                    value: (
-                      // The full path stays on `<Fact>` (`data-value`). The
-                      // wrapper is presentation: one line, ellipsis, the
-                      // complete path on hover. Shortening the *text* through
-                      // `formatRef` would hide bytes the server sent.
-                      <span className={styles["path"]} title={entry.path}>
-                        <Fact source="git.dirty[].path" value={entry.path} />
-                      </span>
-                    ),
-                    attrs: { "data-dirty": dirtySide(entry) },
-                  }))}
-                />
+                <DirtyRows entries={authored} />
+              </>
+            )}
+            {generated.length === 0 ? null : (
+              // ONE row for the workspace's own store, with its count and one
+              // click to the same table. §13.1 reports the dirty tree; it does
+              // not owe every `.heph/blobs/sha256/…` object equal weight with
+              // `parts/gusset.py` in a 280px rail.
+              <>
+                <Button
+                  variant="quiet"
+                  icon={generatedOpen ? "chevron-down" : "chevron-right"}
+                  title={copy.rail.generatedWhy}
+                  expanded={generatedOpen}
+                  className={styles["group"]}
+                  onClick={() => {
+                    setGeneratedOpen(!generatedOpen);
+                  }}
+                  data-dirty-group="generated"
+                  data-dirty-group-count={generated.length}
+                >
+                  {copy.rail.generated(generated.length)}
+                </Button>
+                {generatedOpen ? <DirtyRows entries={generated} /> : null}
               </>
             )}
           </>
         )}
       </PanelBody>
     </Panel>
+  );
+}
+
+/**
+ * The dirty rows, as §4.7's three-track table.
+ *
+ * The full path stays on `<Fact>` (`data-value`); the wrapper is presentation —
+ * one line, ellipsis, the complete path on hover. Shortening the *text* through
+ * `formatRef` would hide bytes the server sent.
+ */
+function DirtyRows({ entries }: { readonly entries: readonly GitDirtyEntry[] }): React.JSX.Element {
+  return (
+    <DataTable
+      as="div"
+      rows={entries.map((entry) => ({
+        key: entry.path,
+        label: <DirtyMarker entry={entry} />,
+        value: (
+          <span className={styles["path"]} title={entry.path}>
+            <Fact source="git.dirty[].path" value={entry.path} />
+          </span>
+        ),
+        attrs: { "data-dirty": dirtySide(entry) },
+      }))}
+    />
   );
 }
 

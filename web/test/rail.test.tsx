@@ -14,6 +14,13 @@
 // * `data-dirty` stays on the row, which is the selector the rest of the rail
 //   already uses.
 //
+// The 2026-09-01 operator review added the half one line each did not fix: 37 of
+// them is 37 lines, and on the live fixture every one was the workspace's own
+// `.heph/` store, pushing the part tree and the providers sign-in out of a 280px
+// rail. So the assertions above are now made **through the disclosure**: the
+// `.heph/` rows are one counted row, opening it yields exactly the same table,
+// and a path the operator actually authored is never grouped.
+//
 // No assertion is on a string of UI copy (§3).
 
 import { readFileSync } from "node:fs";
@@ -28,13 +35,20 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { GitDirtyEntry, GitStatusDocument, PartsDocument } from "../src/api/types";
 import { keys } from "../src/api/queries";
-import { GitDirtyView, dirtySide, type DirtyIndex } from "../src/components/rail/GitDirty";
+import {
+  GitDirtyView,
+  dirtySide,
+  isGeneratedPath,
+  railBranch,
+  railHead,
+  type DirtyIndex,
+} from "../src/components/rail/GitDirty";
 import {
   PROJECT_TREE_SECTIONS,
   ProjectSectionList,
   ProjectTree,
 } from "../src/components/rail/ProjectTree";
-import { Tree, TreeRow } from "../src/system";
+import { Tree, TreeRow, formatOid } from "../src/system";
 import { DEFAULT_STATE } from "../src/state/workspace";
 import { workspaceStore } from "../src/state/react";
 
@@ -46,11 +60,31 @@ const pathCss = readFileSync(
 
 const BLOB =
   ".heph/blobs/sha256/3c/3cc7d2c03c1e9f0a7b8d4e6f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b";
+/** A path the operator wrote, outside `parts/` and outside the generated store. */
+const AUTHORED = "docs/assembly-notes.md";
 
 function render(element: ReactElement): HTMLElement {
   const host = document.createElement("div");
   host.innerHTML = renderToStaticMarkup(element);
   return host;
+}
+
+/** A live root, for the assertions that have to open a disclosure first. */
+function live(element: ReactElement): { host: HTMLElement; root: Root } {
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  act(() => {
+    root.render(element);
+  });
+  return { host, root };
+}
+
+function drop(mounted: { host: HTMLElement; root: Root }): void {
+  act(() => {
+    mounted.root.unmount();
+  });
+  mounted.host.remove();
 }
 
 function dirtyIndex(over: Partial<DirtyIndex> = {}): DirtyIndex {
@@ -61,29 +95,122 @@ function dirtyIndex(over: Partial<DirtyIndex> = {}): DirtyIndex {
     entries: [blob],
     clean: false,
     absence: null,
+    branch: null,
+    head: null,
     ...over,
   };
 }
 
 describe("GitDirty — a long path outside parts/ stays one fact, one line", () => {
+  function open(host: HTMLElement): void {
+    const group = host.querySelector<HTMLElement>('[data-dirty-group="generated"]');
+    if (group === null) throw new Error("no generated group to open");
+    act(() => {
+      group.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+  }
+
   it("attributes the server's path and does not hide it", () => {
-    const host = render(<GitDirtyView index={dirtyIndex()} />);
-    const fact = host.querySelector('[data-source="git.dirty[].path"]');
-    expect(fact?.getAttribute("data-value")).toBe(BLOB);
-    expect(host.querySelector('[data-dirty="untracked"]')).not.toBeNull();
+    const mounted = live(<GitDirtyView index={dirtyIndex()} />);
+    try {
+      open(mounted.host);
+      const fact = mounted.host.querySelector('[data-source="git.dirty[].path"]');
+      expect(fact?.getAttribute("data-value")).toBe(BLOB);
+      expect(mounted.host.querySelector('[data-dirty="untracked"]')).not.toBeNull();
+    } finally {
+      drop(mounted);
+    }
   });
 
   it("puts the full path on title so the ellipsis is hoverable, not lost", () => {
-    const host = render(<GitDirtyView index={dirtyIndex()} />);
-    const wrap = host.querySelector(`[title="${BLOB}"]`);
-    expect(wrap).not.toBeNull();
-    expect(wrap?.querySelector('[data-source="git.dirty[].path"]')).not.toBeNull();
+    const mounted = live(<GitDirtyView index={dirtyIndex()} />);
+    try {
+      open(mounted.host);
+      const wrap = mounted.host.querySelector(`[title="${BLOB}"]`);
+      expect(wrap).not.toBeNull();
+      expect(wrap?.querySelector('[data-source="git.dirty[].path"]')).not.toBeNull();
+    } finally {
+      drop(mounted);
+    }
   });
 
   it("classifies an untracked blob as untracked, not as a part edit", () => {
     expect(
       dirtySide({ path: BLOB, part: null, index: "?", worktree: "?" }),
     ).toBe("untracked");
+  });
+});
+
+describe("GitDirty — the generated store is one counted row, not 37", () => {
+  const blob: GitDirtyEntry = { path: BLOB, part: null, index: "?", worktree: "?" };
+  const db: GitDirtyEntry = { path: ".heph/state.db", part: null, index: "?", worktree: "?" };
+  const authored: GitDirtyEntry = { path: AUTHORED, part: null, index: ".", worktree: "M" };
+
+  function index(others: readonly GitDirtyEntry[]): DirtyIndex {
+    return dirtyIndex({ others, entries: others });
+  }
+
+  it("collapses .heph/ paths behind one row carrying their count", () => {
+    const host = render(<GitDirtyView index={index([blob, db, authored])} />);
+    const group = host.querySelector('[data-dirty-group="generated"]');
+    expect(group?.getAttribute("data-dirty-group-count")).toBe("2");
+    expect(group?.getAttribute("aria-expanded")).toBe("false");
+    // Collapsed: the generated paths are one row, not two tables' worth of rows.
+    expect(host.querySelector(`[title="${BLOB}"]`)).toBeNull();
+    expect(host.querySelectorAll('[data-source="git.dirty[].path"]')).toHaveLength(1);
+  });
+
+  it("never groups a path the operator authored", () => {
+    const host = render(<GitDirtyView index={index([blob, authored])} />);
+    const shown = [...host.querySelectorAll('[data-source="git.dirty[].path"]')].map((node) =>
+      node.getAttribute("data-value"),
+    );
+    expect(shown).toEqual([AUTHORED]);
+    expect(isGeneratedPath(AUTHORED)).toBe(false);
+    expect(isGeneratedPath(BLOB)).toBe(true);
+    expect(isGeneratedPath(".heph/state.db")).toBe(true);
+  });
+
+  it("draws no group row at all when nothing generated is dirty", () => {
+    const host = render(<GitDirtyView index={index([authored])} />);
+    expect(host.querySelector("[data-dirty-group]")).toBeNull();
+    expect(host.querySelectorAll('[data-source="git.dirty[].path"]')).toHaveLength(1);
+  });
+
+  it("still reports the server's own total, group or no group", () => {
+    // §1: the caption is the length of the array `git status` served, and the
+    // grouping is presentation — it never changes the number the panel prints.
+    const host = render(<GitDirtyView index={index([blob, db, authored])} />);
+    expect(host.textContent).toContain("3");
+  });
+});
+
+describe("GitDirty — §13.1's git identity is on the git axis", () => {
+  const OID = "aabbccddeeff0011223344556677889900112233";
+
+  it("prints branch and an abbreviated HEAD in the rail, with the whole oid attributed", () => {
+    const host = render(
+      <GitDirtyView index={dirtyIndex({ branch: "main", head: OID, others: [], entries: [] })} />,
+    );
+    expect(host.querySelector('[data-source="git.branch"]')?.getAttribute("data-value")).toBe("main");
+    const head = host.querySelector('[data-source="git.head"]');
+    expect(head?.getAttribute("data-value")).toBe(OID);
+    // The 44px header bar printed the whole 40-glyph oid because
+    // `formatRef(head, 8)` sliced from the end. A prefix is a prefix.
+    expect(head?.textContent).toBe(formatOid(OID));
+    expect(head?.textContent?.length).toBe(8);
+  });
+
+  it("treats porcelain (detached) as no branch and refuses HEAD without an oid", () => {
+    expect(railBranch("(detached)")).toBeNull();
+    expect(railBranch("")).toBeNull();
+    expect(railBranch("main")).toBe("main");
+    expect(railHead("HEAD")).toBeNull();
+    expect(railHead("not-a-sha")).toBeNull();
+    expect(railHead(OID)).toBe(OID);
+    const host = render(<GitDirtyView index={dirtyIndex({ branch: null, head: null })} />);
+    expect(host.querySelector('[data-source="git.branch"]')).toBeNull();
+    expect(host.querySelector('[data-source="git.head"]')).toBeNull();
   });
 });
 
