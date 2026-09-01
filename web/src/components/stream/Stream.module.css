@@ -11,21 +11,35 @@
  */
 
 /*
- * Three rows, composer pinned. An `auto auto auto 1fr` template with the
- * composer as an `auto` sibling of the empty state let the send row fall
- * below an 800px stream: nothing shrank, and the column was not a scroll
- * host. Header / scrollable main / composer is the §4.1 peer-column claim
- * cashed out at 1280×800.
+ * Header / scrollable main / composer, composer pinned. An `auto auto auto 1fr`
+ * template with the composer as an `auto` sibling of the empty state let the
+ * send row fall below an 800px stream: nothing shrank, and the column was not a
+ * scroll host. This is the §4.1 peer-column claim cashed out at 1280×800.
+ *
+ * A FLEX COLUMN RATHER THAN A THREE-ROW GRID, and the reason is the header's
+ * conditionality. `grid-template-rows: auto minmax(0, 1fr) auto` assigns rows
+ * by child ORDER, so a panel with no session — where the header carries no fact
+ * and is not rendered — put `main` on the `auto` row and the composer on the
+ * `1fr` one. The composer stopped being pinned and the empty state's action sat
+ * under a form floating in the middle of the column. Flex makes each child
+ * declare its own behaviour instead of inheriting one from its index.
  */
 .panel {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   height: 100%;
   overflow: hidden;
 }
 
+/*
+ * One row for both header facts: §8's page counter on the left, §7.4's stream
+ * state (or the runtime fault that outranks it) on the right. The counter used
+ * to own a full-width bordered row of its own for one short sentence, which at
+ * 1280×800 is ~28px of an ~800px column spent on furniture.
+ */
 .header {
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -112,13 +126,46 @@
 }
 
 .historyBar {
+  composes: label from "../../system/type.module.css";
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-muted);
+}
+
+/* Truncation and a failed read are sentences, not counts, so they keep a row —
+   in the scrolling region, above the transcript they are about. */
+.historyNote {
   composes: body from "../../system/type.module.css";
+  margin: 0;
+  padding: var(--space-1) var(--space-3);
+  color: var(--ink-base);
+}
+
+/*
+ * The runtime stopped answering (§7.4's blind spot; `stream/runtimeFault.ts`).
+ *
+ * Bordered in the error ink and shaped like the resync break beside it, because
+ * both are "the transcript below is not the whole story" — and unlike the
+ * resync break, this one is about the process rather than the socket.
+ */
+.fault {
+  composes: body from "../../system/type.module.css";
+  margin: var(--space-2) var(--space-3);
   display: flex;
   flex-direction: column;
   gap: var(--gap-stack);
-  padding: var(--space-1) var(--space-3);
-  border-bottom: 1px solid var(--border);
+  border: 1px solid var(--status-error-ink);
+  border-radius: var(--radius-card);
+  padding: var(--space-3);
   color: var(--ink-base);
+}
+
+.faultTitle {
+  composes: eyebrow from "../../system/type.module.css";
+  color: var(--status-error-ink);
 }
 
 .scroll {
@@ -126,9 +173,11 @@
   overflow: auto;
 }
 
-/* Empty state, tabs, transcript — the region that yields height to the
-   pinned composer. `min-height: 0` is what lets this track shrink at 800px. */
+/* Empty state, tabs, transcript — the region that takes the leftover height and
+   yields it to the pinned composer. `min-height: 0` is what lets it shrink
+   below its own content at 800px instead of pushing the composer off. */
 .main {
+  flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
 }

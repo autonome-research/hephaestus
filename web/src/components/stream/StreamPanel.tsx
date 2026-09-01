@@ -50,6 +50,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { WorkspaceError } from "../../api/client";
 import { attachProjection, type AttachProjection } from "../../api/attach";
 import { refreshAfterTurn } from "../../api/refresh";
+import { runtimeFaultOf, type RuntimeFault } from "../../stream/runtimeFault";
 import {
   createSession,
   fetchSessions,
@@ -148,6 +149,36 @@ export function StreamPanel(): React.JSX.Element {
 
   const activeProfile = rows.find((row) => row.session_id === selected)?.profile ?? null;
 
+  // -- the runtime died under a request (`stream/runtimeFault.ts`) ---------
+  //
+  // §7.4's five states are all claims about the socket, and the socket outlives
+  // a sidecar restart — it reattaches to the fresh child and reports `live`,
+  // which is true and is not what the operator needs to know. The fault is a
+  // second, independent fact, and it comes from the two places a session
+  // request can fail: a read this panel issued (history, thread, the session
+  // list) and the prompt the composer issued.
+  //
+  // TAGGED WITH ITS SESSION, for `useStream`'s reason: a fault belongs to the
+  // session it happened in, and clearing it in an effect on tab change is a
+  // synchronous setState inside an effect — a cascading render. Tagging makes
+  // the reset a *derivation* instead: a fault recorded against another session
+  // simply is not this session's fault.
+  const [promptFault, setPromptFault] = useState<{
+    readonly sid: string | null;
+    readonly value: RuntimeFault | null;
+  }>({ sid: null, value: null });
+  const reportFault = useCallback(
+    (value: RuntimeFault | null) => {
+      setPromptFault({ sid: selected, value });
+    },
+    [selected],
+  );
+  const sessionsFault = runtimeFaultOf(sessions.error);
+  const fault: RuntimeFault | null =
+    sessionsFault ??
+    runtimeFaultOf(stream.error) ??
+    (promptFault.sid === selected ? promptFault.value : null);
+
   // -- §7A.11, the observer's half ----------------------------------------
   //
   // A live `terminal` frame for this session's run means an agent turn on this
@@ -190,24 +221,60 @@ export function StreamPanel(): React.JSX.Element {
     <div className={styles["panel"]} data-testid="stream-panel">
       {/* The column's name is already on the shell's own header row; repeating
           it here would put "Agent" twice above one transcript. This row carries
-          §7.4's stream state, which is the fact the header exists to show. */}
-      <div className={styles["header"]}>
-        {/* §7.4's five states as a `Badge`, so the state carries an icon and a
-            word like every other status. `data-stream-state` is unchanged and
-            stays on the styled element, which is the primitive's own (§3.4). */}
-        <Badge
-          status={STREAM_STATUS[stream.status] ?? "info"}
-          title={copy.stream.stateWhy[stream.status]}
-          data-stream-state={stream.status}
-        >
-          {copy.stream.state[stream.status]}
-        </Badge>
-        {stream.resyncs > 0 ? (
-          <span className={styles["resyncCount"]} data-resync-count={stream.resyncs}>
-            {stream.resyncs}
-          </span>
-        ) : null}
-      </div>
+          §7.4's stream state, which is the fact the header exists to show — and
+          it exists only when there is a session to have one. With none, an empty
+          32px strip with a rule under it is furniture in a column that needs
+          the height, and an `historical` pill over an empty well reads as a
+          state the operator has to resolve rather than an invitation to start. */}
+      {selected === null ? null : (
+        <div className={styles["header"]}>
+          {/* §8's page counter, on the header rather than in a bordered row of
+              its own. At 1280×800 the well is 420px wide and every full-width
+              row with a rule under it is height the transcript does not get;
+              "1 page of recorded transcript" did not need one.
+              `data-history-state` and `data-history-pages` are unmoved as
+              attributes, which is what both gates read. */}
+          {!unavailable ? (
+            <span className={styles["historyBar"]} data-history-state={stream.history.state}>
+              {/* A failed read has no count to report, and "0 pages" beside a
+                  stated failure claims a number the load never reached. The
+                  attribute still carries the count the panel actually has. */}
+              <span data-history-pages={stream.history.pages}>
+                {stream.history.state === "failed"
+                  ? copy.stream.historyFailedShort
+                  : stream.history.state === "loading" && stream.history.pages === 0
+                    ? copy.stream.historyLoading
+                    : copy.stream.historyPages(stream.history.pages)}
+              </span>
+            </span>
+          ) : null}
+
+          {/* §7.4's five states as a `Badge`, so the state carries an icon and a
+              word like every other status. `data-stream-state` is unchanged and
+              stays on the styled element, which is the primitive's own (§3.4).
+
+              When a runtime fault is known the badge shows THAT, because it is
+              the fact that changes what the operator does next. The attribute
+              keeps the socket's own answer — both are true, and a reader
+              inspecting the DOM should be able to tell them apart. */}
+          <Badge
+            status={fault !== null ? "error" : (STREAM_STATUS[stream.status] ?? "info")}
+            title={
+              fault !== null
+                ? copy.stream.runtimeFaultWhy[fault]
+                : copy.stream.stateWhy[stream.status]
+            }
+            data-stream-state={stream.status}
+          >
+            {fault !== null ? copy.stream.runtimeFault[fault] : copy.stream.state[stream.status]}
+          </Badge>
+          {stream.resyncs > 0 ? (
+            <span className={styles["resyncCount"]} data-resync-count={stream.resyncs}>
+              {stream.resyncs}
+            </span>
+          ) : null}
+        </div>
+      )}
 
       {/* §3.3's principle 5: "The agent is a peer surface, and its emptiness
           must look designed… Every state — refusal, absence, 'no runtime
@@ -221,7 +288,24 @@ export function StreamPanel(): React.JSX.Element {
           cause, the path and the one action that can change it. Rendering it
           twice would say the same refusal in two places with two shapes. */}
       <div className={styles["main"]} data-stream-main="">
-        {!unavailable && sessions.error !== null ? (
+        {/* The runtime stopped answering, said by name and in place.
+            §4.7's second EmptyState rule — "a shared cause is detected once" —
+            is why the generic refusal below is suppressed when this band is
+            showing the same failure: one cause, one sentence. */}
+        {fault !== null ? (
+          <div
+            className={styles["fault"]}
+            data-runtime-fault={fault}
+            role="status"
+            aria-live="polite"
+          >
+            <span className={styles["faultTitle"]}>{copy.stream.runtimeFaultTitle}</span>
+            <span>{copy.stream.runtimeFaultWhy[fault]}</span>
+            <span className={styles["note"]}>{copy.stream.runtimeFaultNext}</span>
+          </div>
+        ) : null}
+
+        {!unavailable && sessions.error !== null && sessionsFault === null ? (
           <EmptyState
             icon="alert"
             title={copy.errors.title}
@@ -267,19 +351,16 @@ export function StreamPanel(): React.JSX.Element {
 
         {selected !== null && !unavailable ? (
           <>
-            <div className={styles["historyBar"]} data-history-state={stream.history.state}>
-              <span data-history-pages={stream.history.pages}>
-                {stream.history.state === "loading" && stream.history.pages === 0
-                  ? copy.stream.historyLoading
-                  : copy.stream.historyPages(stream.history.pages)}
-              </span>
-              {stream.history.state === "truncated" ? (
-                <span className={styles["note"]}>{copy.stream.historyTruncated}</span>
-              ) : null}
-              {stream.history.state === "failed" ? (
-                <span className={styles["note"]}>{copy.stream.historyFailed}</span>
-              ) : null}
-            </div>
+            {/* The two history outcomes that are not a count. `failed` keeps its
+                sentence even beside the fault band: one says the recorded
+                transcript could not be read, the other says why, and dropping
+                the first would leave a transcript that is silently short. */}
+            {stream.history.state === "truncated" ? (
+              <p className={styles["historyNote"]}>{copy.stream.historyTruncated}</p>
+            ) : null}
+            {stream.history.state === "failed" ? (
+              <p className={styles["historyNote"]}>{copy.stream.historyFailed}</p>
+            ) : null}
             <div className={styles["scroll"]}>
               <Transcript rows={stream.rows} />
             </div>
@@ -297,6 +378,8 @@ export function StreamPanel(): React.JSX.Element {
         agentUnavailable={unavailable}
         liveRunId={stream.runId}
         streamLive={stream.status === "live"}
+        terminals={stream.terminals}
+        onRuntimeFault={reportFault}
         onTurnSettled={() => {
           void client.invalidateQueries({ queryKey: ["sessions"] });
         }}

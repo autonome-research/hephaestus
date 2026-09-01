@@ -100,30 +100,140 @@
   color: var(--ink-strong);
 }
 
-.args {
+/* ---- the headline: what a successful call reported ------------------
+   One line, above the disclosure, so a chip reads as an outcome rather than as
+   the wire format that produced it. `stream/toolSummary.ts` chooses what goes
+   on it; this only lays it out and keeps it to one row's worth of ink. */
+
+.summary {
+  composes: body from "../../system/type.module.css";
+  margin: 0;
   display: flex;
-  gap: var(--gap-inline);
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--gap-inline);
+  min-width: 0;
+  color: var(--ink-base);
+}
+
+.summaryPart {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
   min-width: 0;
 }
 
-.argsLabel {
+.summaryField {
   composes: label from "../../system/type.module.css";
   flex: none;
   color: var(--ink-muted);
 }
 
-.argsBody {
+.summaryValue {
   composes: code from "../../system/type.module.css";
-  color: var(--ink-base);
+  min-width: 0;
   overflow-wrap: anywhere;
+  color: var(--ink-strong);
 }
 
-/* The chip's own three-column grid: `DataTable` uses `subgrid`, and a chip is
-   not inside a `PanelBody`, so the tracks are declared here instead. */
-.fields {
+/* ---- the collapsed detail: arguments and every result field --------- */
+
+.detail {
+  min-width: 0;
+  color: var(--ink-muted);
+}
+
+/* `display: flex` on a `<summary>` removes the default disclosure marker, so a
+   collapsed chip would have nothing saying it opens. `.rawSummary` had the same
+   silent control; both take the marker below. */
+.detailSummary,
+.rawSummary {
+  composes: label from "../../system/type.module.css";
+  cursor: pointer;
+  min-height: var(--target-min);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  list-style: none;
+  color: var(--ink-muted);
+}
+
+.detailSummary::-webkit-details-marker,
+.rawSummary::-webkit-details-marker {
+  display: none;
+}
+
+.detailSummary::before,
+.rawSummary::before {
+  content: "▸";
+  flex: none;
+}
+
+details[open] > .detailSummary::before,
+details[open] > .rawSummary::before {
+  content: "▾";
+}
+
+.args {
   display: grid;
-  grid-template-columns: minmax(0, 10rem) minmax(0, 1fr) max-content;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  margin-bottom: var(--space-2);
+}
+
+.argsLabel {
+  composes: label from "../../system/type.module.css";
+  color: var(--ink-muted);
+}
+
+.argsBody {
+  composes: code from "../../system/type.module.css";
+  min-width: 0;
+  padding-left: var(--space-3);
+  color: var(--ink-base);
+  overflow-wrap: anywhere;
+  max-height: 8rem;
+  overflow-y: auto;
+}
+
+/*
+ * THE BUG THIS REPLACES, because it is not obvious from the fixed version.
+ *
+ * `.fields` was one grid with `minmax(0, 10rem) minmax(0, 1fr) max-content` and
+ * each `.field` was a single grid ITEM. Grid auto-placement therefore dealt the
+ * fields ACROSS the three tracks — field 1 into column 1, field 2 into column 2,
+ * field 3 into column 3 — instead of stacking them as rows. A `read_part`
+ * result whose third key was a sha256 then sized the `max-content` track to the
+ * un-wrapped width of the whole digest, which left nothing for the two
+ * `minmax(0, …)` tracks: they resolved to ~zero, and `.code`'s
+ * `word-break: break-all` rendered the fields sitting in them one character per
+ * line. That is the vertical letter stack the operator hit, and no amount of
+ * `overflow-wrap` would have fixed it, because the track had no width to wrap
+ * inside.
+ *
+ * So there is no shared track any more. `.fields` stacks, each `.field` carries
+ * its own single bounded track, and no field's content can size a track another
+ * field has to live in.
+ *
+ * The name sits ABOVE its value rather than beside it, which is a width
+ * decision: the well is 420px and a chip's content box is ~295px, so a
+ * name/value pair with a fixed name column leaves the value ~110px — and
+ * `part_param_state_hash` is itself 21 glyphs, so the name column wrapped and
+ * left a single orphaned letter on its own line. Stacking costs a row inside a
+ * disclosure that is collapsed by default and cannot produce that orphan at any
+ * width.
+ */
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
   margin: 0;
+  min-width: 0;
+}
+
+.field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
 }
 
@@ -141,6 +251,8 @@
 .fieldValue {
   composes: code from "../../system/type.module.css";
   margin: 0;
+  min-width: 0;
+  padding-left: var(--space-3);
   color: var(--ink-strong);
   overflow-wrap: anywhere;
   max-height: 8rem;
@@ -160,15 +272,6 @@
 }
 
 .rawResult {
-  color: var(--ink-muted);
-}
-
-.rawSummary {
-  composes: label from "../../system/type.module.css";
-  cursor: pointer;
-  min-height: var(--target-min);
-  display: flex;
-  align-items: center;
   color: var(--ink-muted);
 }
 

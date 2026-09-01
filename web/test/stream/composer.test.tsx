@@ -19,11 +19,21 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Composer, COMPOSER_STATES, DISABLED_REASONS } from "../../src/components/stream/Composer";
-import { CONTEXT_MEMBERS, type ContextMember } from "../../src/api/sessions";
+import { WorkspaceError } from "../../src/api/client";
+import {
+  CONTEXT_MEMBERS,
+  cancelRun,
+  sendPrompt,
+  type ContextMember,
+  type PromptDocument,
+} from "../../src/api/sessions";
+import type * as SessionsModule from "../../src/api/sessions";
 import type { ProvidersDocument } from "../../src/api/providers";
 import type { DfmDocument } from "../../src/api/types";
 import { refreshKeys } from "../../src/api/refresh";
@@ -40,6 +50,14 @@ import {
 import { CHIP_ORDER, chipsFor, envelopeFor } from "../../src/stream/composerContext";
 import { DEFAULT_STATE, type WorkspaceState } from "../../src/state/workspace";
 import { formatRef } from "../../src/system";
+
+// The one route the last block counts calls on. Everything else in the module is
+// the real thing — `CONTEXT_MEMBERS` is asserted against directly, and a
+// wholesale stub would make that assertion about the stub.
+vi.mock("../../src/api/sessions", async (importOriginal) => {
+  const actual = await importOriginal<typeof SessionsModule>();
+  return { ...actual, sendPrompt: vi.fn(), cancelRun: vi.fn() };
+});
 
 const NOTHING: ReadonlySet<ContextMember> = new Set();
 
@@ -509,5 +527,223 @@ describe("context chips do not force a 2400px stream", () => {
     expect(artifact?.value).toBe(ref);
     expect(formatRef(ref)).not.toBe(ref);
     expect(formatRef(ref, 22).length).toBeLessThanOrEqual(22);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A LIVE DOM, for the one claim static markup cannot make.
+//
+// Every other assertion in this file is over `renderToStaticMarkup`, which is
+// the right apparatus for a component that is a function of its props. The guard
+// inside `submit` is not: it is about a state the parent cannot pass in
+// (`post.phase === "refused"`, reached only by a POST that came back refused)
+// being reached through an event the button does not own. So this block mounts
+// the component, types into it, and dispatches the two events that bypass Send.
+//
+// It also carries the OTHER half of that state, which is the half a guard is
+// most likely to break by accident: while a run is in flight, only **send** is
+// blocked. The box stays typable and Cancel stays reachable, and both are
+// asserted against the live DOM rather than by grepping the source, because
+// "the guard turned Cancel off too" is exactly the regression a source grep
+// cannot see.
+
+let host: HTMLDivElement | null = null;
+let unmount: (() => void) | null = null;
+
+beforeAll(() => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+});
+
+afterEach(() => {
+  const teardown = unmount;
+  if (teardown !== null) act(teardown);
+  host?.remove();
+  host = null;
+  unmount = null;
+  vi.mocked(sendPrompt).mockReset();
+  vi.mocked(cancelRun).mockReset();
+});
+
+function mount(props: Partial<React.ComponentProps<typeof Composer>> = {}): HTMLDivElement {
+  const element = document.createElement("div");
+  document.body.appendChild(element);
+  const root = createRoot(element);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  act(() => {
+    root.render(
+      <QueryClientProvider client={client}>
+        <Composer
+          sessionId="sess-1"
+          profile="orchestrator"
+          attach={null}
+          agentUnavailable={false}
+          liveRunId={null}
+          streamLive={true}
+          {...props}
+        />
+      </QueryClientProvider>,
+    );
+  });
+  host = element;
+  unmount = () => {
+    root.unmount();
+  };
+  return element;
+}
+
+function input(root: HTMLElement): HTMLTextAreaElement {
+  const box = root.querySelector<HTMLTextAreaElement>("[data-composer-input]");
+  if (box === null) throw new Error("the composer rendered no input");
+  return box;
+}
+
+/** Type, the way a browser does: the native setter, then an `input` event. */
+function type(root: HTMLElement, value: string): void {
+  const setValue = Object.getOwnPropertyDescriptor(
+    window.HTMLTextAreaElement.prototype,
+    "value",
+  )?.set;
+  if (setValue === undefined) throw new Error("no textarea value setter");
+  const box = input(root);
+  act(() => {
+    setValue.call(box, value);
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+function pressEnter(root: HTMLElement): void {
+  const box = input(root);
+  act(() => {
+    box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  });
+}
+
+/** The form's own submit, which is the other path that never touches Send. */
+function submitForm(root: HTMLElement): void {
+  const form = root.querySelector("form");
+  if (form === null) throw new Error("the composer rendered no form");
+  act(() => {
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+}
+
+function composer(root: HTMLElement): HTMLElement {
+  const form = root.querySelector<HTMLElement>("[data-composer]");
+  if (form === null) throw new Error("the composer rendered no form");
+  return form;
+}
+
+/** Drive the composer into §7A.5's `run_in_flight` refusal, the only way in. */
+async function refuseRunInFlight(
+  props: Partial<React.ComponentProps<typeof Composer>> = {},
+): Promise<HTMLDivElement> {
+  vi.mocked(sendPrompt).mockRejectedValue(
+    new WorkspaceError(409, "run_in_flight", "a run is already live", {
+      session_id: "sess-other",
+      run_id: "run-live",
+    }),
+  );
+  const root = mount(props);
+  type(root, "Bump the kerf to 0.25 mm.");
+  pressEnter(root);
+  expect(vi.mocked(sendPrompt)).toHaveBeenCalledTimes(1);
+  await act(async () => undefined);
+  expect(composer(root).getAttribute("data-disabled-reason")).toBe("run_in_flight");
+  return root;
+}
+
+describe("the paths that bypass Send are gated where Send's gate is decided", () => {
+  it("sends on Enter when nothing refuses it", async () => {
+    const settled: PromptDocument = {
+      status: "ok",
+      session_id: "sess-1",
+      run_id: "run-1",
+      run_status: "completed",
+      terminal: null,
+      events: [],
+      context: null,
+    };
+    vi.mocked(sendPrompt).mockResolvedValue(settled);
+    const root = mount();
+    type(root, "Bump the kerf to 0.25 mm.");
+    pressEnter(root);
+    expect(vi.mocked(sendPrompt)).toHaveBeenCalledTimes(1);
+    await act(async () => undefined);
+  });
+
+  it("does NOT post a second prompt on Enter while a run is in flight", async () => {
+    // §7A.5: `POST /sessions/{id}/prompt` "refuses while any run is live under
+    // the runtime", and the composer disables on that refusal. `disabled` is
+    // about SENDING — this component keeps the textarea typable while the turn
+    // finishes, on purpose — so Enter reaches `submit` with a live text box and
+    // a correctly-disabled Send. Without the guard inside `submit`, that is a
+    // second POST against a run the server has already named.
+    const root = await refuseRunInFlight();
+
+    // The refusal landed, and it is the state §7A.10 names.
+    expect(composer(root).getAttribute("data-composer-state")).toBe("disabled");
+    // Send stays off. The point of the fix is that the keyboard agrees with it,
+    // not that the button starts agreeing with the keyboard.
+    expect(root.querySelector("[data-composer-send]")?.hasAttribute("disabled")).toBe(true);
+
+    pressEnter(root);
+    submitForm(root);
+    await act(async () => undefined);
+    expect(vi.mocked(sendPrompt)).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks only SEND while a run is in flight: the box types and Cancel works", async () => {
+    // The guard's blast radius, pinned. `run_in_flight` must leave the operator
+    // able to write the next message and able to end the run that is in the way
+    // — that pairing is the whole reason the refusal is not a dead end, and a
+    // guard placed one line too broadly (say, on `composerState !== "idle"`)
+    // would silently take both with it while every source grep still passed.
+    vi.mocked(cancelRun).mockResolvedValue({
+      status: "ok",
+      run_id: "run-live",
+      session_id: "sess-other",
+      abandoned_questions: 0,
+    });
+    const root = await refuseRunInFlight({ liveRunId: "run-live", streamLive: true });
+
+    // The box is live, and it accepts more text than the refused turn's.
+    expect(input(root).disabled).toBe(false);
+    type(root, "Bump the kerf to 0.25 mm and rebuild.");
+    expect(input(root).value).toBe("Bump the kerf to 0.25 mm and rebuild.");
+
+    // Cancel is reachable — §7A.10's own attribute says so, the control is not
+    // disabled, and pressing it reaches the route.
+    expect(composer(root).getAttribute("data-cancel-state")).toBe("available");
+    const cancelButton = root.querySelector<HTMLButtonElement>("[data-composer-cancel]");
+    expect(cancelButton?.hasAttribute("disabled")).toBe(false);
+    act(() => {
+      cancelButton?.click();
+    });
+    await act(async () => undefined);
+    expect(vi.mocked(cancelRun)).toHaveBeenCalledWith("run-live");
+
+    // And none of that posted a prompt.
+    expect(vi.mocked(sendPrompt)).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps §7A.5's manual retry working after a lost POST", async () => {
+    // The other side of the guard: `data-send-state="unknown"` is not a
+    // `disabledReason`, so the operator's own Send-again must still post. A
+    // guard that refused every non-idle state would have taken this with it.
+    vi.mocked(sendPrompt).mockRejectedValue(new Error("the POST did not come back"));
+    const root = mount();
+    type(root, "Bump the kerf to 0.25 mm.");
+    pressEnter(root);
+    await act(async () => undefined);
+
+    expect(composer(root).getAttribute("data-send-state")).toBe("unknown");
+    expect(composer(root).getAttribute("data-disabled-reason")).toBe("null");
+    const retry = root.querySelector<HTMLButtonElement>("[data-composer-retry]");
+    expect(retry).not.toBeNull();
+    act(() => {
+      retry?.click();
+    });
+    await act(async () => undefined);
+    expect(vi.mocked(sendPrompt)).toHaveBeenCalledTimes(2);
   });
 });

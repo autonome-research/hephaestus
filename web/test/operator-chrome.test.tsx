@@ -84,13 +84,23 @@ describe("stream column — composer is a pinned footer, not overflow", () => {
   const stream = css("components/stream/Stream.module.css");
   const shell = css("components/Shell.module.css");
 
-  it("pins the composer as the last auto row under a shrinking main", () => {
-    expect(stream).toMatch(
-      /\.panel\s*\{[^}]*grid-template-rows:\s*auto minmax\(0,\s*1fr\) auto/,
-    );
+  // RETARGETED, and the claim is unweakened. This used to assert the panel's
+  // `grid-template-rows: auto minmax(0, 1fr) auto`, which pinned the composer by
+  // its child INDEX — so the panel with no session, whose header carries no fact
+  // and is not rendered, put `main` on the `auto` row and the composer on the
+  // `1fr` one: the composer floated in the middle of an empty column. The
+  // property the assertion was always for is "the composer is the last child and
+  // main is the one that shrinks", and a flex column states that per child
+  // rather than per position.
+  it("pins the composer as the last child under a shrinking main", () => {
+    expect(stream).toMatch(/\.panel\s*\{[^}]*flex-direction:\s*column/);
+    expect(stream).toMatch(/\.header\s*\{[^}]*flex:\s*none/);
+    expect(stream).toMatch(/\.main\s*\{[^}]*flex:\s*1 1 auto/);
     expect(stream).toMatch(/\.main\s*\{[^}]*min-height:\s*0/);
     expect(stream).toMatch(/\.main\s*\{[^}]*overflow:\s*auto/);
     expect(stream).toMatch(/\.panel\s*\{[^}]*overflow:\s*hidden/);
+    const composer = css("components/stream/Composer.module.css");
+    expect(composer).toMatch(/\.composer\s*\{[^}]*flex:\s*0 0 auto/);
   });
 
   it("keeps the stream column from growing the 800px shell", () => {

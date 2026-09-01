@@ -43,6 +43,16 @@ export type TextInputProps = FieldFrame & {
   readonly onFocus?: (() => void) | undefined;
   readonly onBlur?: (() => void) | undefined;
   /**
+   * Keys, for the one control where the keyboard is the primary affordance.
+   *
+   * The composer (§7A) is a conversation, and a conversation held entirely by
+   * reaching for a Send button is not one. The primitive stays dumb about which
+   * key means what — the binding is the call site's decision, because a
+   * `multiline` field that swallowed Enter everywhere would break the two
+   * places this primitive is a genuine paragraph editor.
+   */
+  readonly onKeyDown?: ((event: React.KeyboardEvent<HTMLTextAreaElement>) => void) | undefined;
+  /**
    * The §23.3 password discipline, and it is three properties rather than one.
    *
    * "…the key goes into a `type="password"` field with `autocomplete="off"` and
@@ -72,6 +82,7 @@ export function TextInput(props: TextInputProps): React.JSX.Element {
     secret,
     onFocus,
     onBlur,
+    onKeyDown,
   } = props;
   const id = useId();
   const messageId = `${id}-message`;
@@ -100,6 +111,7 @@ export function TextInput(props: TextInputProps): React.JSX.Element {
           rows={rows}
           {...(onFocus === undefined ? {} : { onFocus })}
           {...(onBlur === undefined ? {} : { onBlur })}
+          {...(onKeyDown === undefined ? {} : { onKeyDown })}
           onChange={(event) => {
             onChange(event.target.value);
           }}
