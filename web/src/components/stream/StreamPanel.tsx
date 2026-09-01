@@ -206,8 +206,9 @@ export function StreamPanel(): React.JSX.Element {
   // Sidecar death produces neither a `terminal` nor a prompt response, so the
   // effect above never fires and the rail stays stale (#59). A grade that
   // means the process is gone is itself a turn-settled signal: refetch the
-  // same keys. The pin is not written here — `refreshAfterTurn` only
-  // invalidates queries, and `observeCurrent` is already a no-op while held.
+  // same keys. A held pin is not written here — `observeCurrent` is already
+  // a no-op while held. Selecting a part `create_part` just added is a
+  // §4.5 amendment, not an advance of `pin_mode === "pinned"`.
   const refreshedFault = useRef<RuntimeFault | null>(null);
   useEffect(() => {
     if (fault === null || !processGone(fault)) {

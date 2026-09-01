@@ -121,10 +121,22 @@ export function PanelSection({
 export function PanelNote({
   children,
   className,
+  live,
   ...rest
-}: { readonly children: ReactNode; readonly className?: string | undefined } & DataAttributes): React.JSX.Element {
+}: {
+  readonly children: ReactNode;
+  readonly className?: string | undefined;
+  /** #85 / §3.13.5: refusals mount as a live region. */
+  readonly live?: "assertive" | "polite" | undefined;
+} & DataAttributes): React.JSX.Element {
   return (
-    <p className={cx(styles["note"], roles["body"], className)} {...dataProps(rest)}>
+    <p
+      className={cx(styles["note"], roles["body"], className)}
+      {...(live === undefined
+        ? {}
+        : { role: live === "assertive" ? "alert" : "status", "aria-live": live })}
+      {...dataProps(rest)}
+    >
       {children}
     </p>
   );

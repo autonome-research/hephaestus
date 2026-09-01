@@ -34,6 +34,7 @@ function chrome(
       pinned="artifact:build:sha256:aaaa"
       pinMode="pinned"
       onExport={() => Promise.reject(new Error("not called"))}
+      onDownload={() => Promise.reject(new Error("not called"))}
       onOpenInspector={() => undefined}
       {...overrides}
     />,

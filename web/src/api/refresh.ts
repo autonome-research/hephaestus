@@ -23,11 +23,13 @@
 // is why this module's whole surface is a list of *keys*: there is nowhere to
 // put a payload, so there is nothing to merge.
 //
-// **2. The pin does not move.** §4.5's sticky-pin tightening (binding G5.6) is
-// untouched: a refetch updates *current* and never re-points the workspace at a
-// build the operator did not choose. This module never calls `workspaceStore`,
-// and the one door a server response has to the pin — `observeCurrent` — is
-// already a no-op while held.
+// **2. A held pin does not move.** §4.5's sticky-pin tightening (binding G5.6)
+// is untouched: `observeCurrent` is already a no-op while held. The 2026-09-01
+// amendment under §4.5 adds one *selection* act after `create_part`: when the
+// tree grows a name it did not have and `pin_mode` is `"current"`, the
+// workspace selects that part so `observeCurrent` can follow its build. A pin
+// whose mode is `"pinned"` is not auto-advanced. The fixture-default empty
+// part is not a held pin the operator chose.
 //
 // WHEN IT FIRES (§7A.11): on a `terminal` frame for a run on this project, and
 // on the prompt response, which §7A.6 already makes the authority for turn
@@ -35,7 +37,10 @@
 // tab gets, and the terminal frame is what an observer tab has.
 
 import type { QueryClient } from "@tanstack/react-query";
+import { workspaceStore } from "../state/react";
+import type { WorkspaceStore } from "../state/workspace";
 import { keys } from "./queries";
+import type { PartsDocument } from "./types";
 
 /**
  * The keys §7A.11 enumerates, resolved for one part.
@@ -68,6 +73,33 @@ export function refreshKeys(part: string | null): readonly (readonly unknown[])[
   ];
 }
 
+export function partNames(document: PartsDocument | undefined): readonly string[] {
+  return document?.parts.map((row) => row.name) ?? [];
+}
+
+/** Names in `after` that were not in `before` — both lists are server projections. */
+export function createdPartNames(
+  before: readonly string[],
+  after: readonly string[],
+): readonly string[] {
+  const seen = new Set(before);
+  return after.filter((name) => !seen.has(name));
+}
+
+/**
+ * §4.5 amendment: select a part the agent just created, unless the pin is held.
+ *
+ * This writes `part`, never `artifact_ref` / `pin_mode`. `observeCurrent` still
+ * owns the pin and still no-ops while held.
+ */
+export function adoptCreatedPart(store: WorkspaceStore, created: readonly string[]): void {
+  if (created.length === 0) return;
+  if (store.getSnapshot().pin_mode === "pinned") return;
+  const name = created[created.length - 1];
+  if (name === undefined || store.getSnapshot().part === name) return;
+  store.update({ part: name, selection: null, measure: null });
+}
+
 /**
  * Invalidate the §7A.11 keys after one agent turn on this project.
  *
@@ -77,12 +109,21 @@ export function refreshKeys(part: string | null): readonly (readonly unknown[])[
  * always the server's answer to the same route the panel reads, never a value
  * this function computed.
  *
+ * After the parts projection settles, adopt a name the tree did not have
+ * unless the pin is held (§4.5's 2026-09-01 amendment). The pin doors are
+ * not called here.
+ *
  * Deliberately fire-and-forget: the caller has already rendered the turn, and a
  * composer that waited for nine refetches before re-enabling its textarea would
  * make the agent's own latency the operator's.
  */
 export function refreshAfterTurn(client: QueryClient, part: string | null): void {
+  const before = partNames(client.getQueryData<PartsDocument>(keys.parts()));
   for (const queryKey of refreshKeys(part)) {
     void client.invalidateQueries({ queryKey });
   }
+  void client.invalidateQueries({ queryKey: keys.parts(), refetchType: "all" }).then(() => {
+    const after = partNames(client.getQueryData<PartsDocument>(keys.parts()));
+    adoptCreatedPart(workspaceStore, createdPartNames(before, after));
+  });
 }

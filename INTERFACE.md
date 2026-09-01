@@ -1630,6 +1630,13 @@ offers "Follow current" as an explicit one-click action that states what it will
 discard. A workspace that auto-refreshed to latest would silently fall back to
 current geometry, which `architecture.md` §4.4 forbids outright.
 
+**AMENDED 2026-09-01 — follow a part the agent just created.** After a turn that
+`create_part`s a name the tree did not have, the workspace selects that part and
+follows its current build **unless** `pin_mode` is `"pinned"`. A held pin does
+not move. The fixture-default empty part is not a held pin the operator chose.
+The inspector still follows rail selection: a held pin is the canvas/export axis,
+not a freeze of every panel.
+
 ### 4.6 The `<Fact>` primitive
 
 ```tsx
