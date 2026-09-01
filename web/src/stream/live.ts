@@ -67,16 +67,17 @@ export interface LiveState {
   /** How many times this panel has been dropped and resumed. Rendered. */
   readonly resyncs: number;
   /**
-   * The run the last live frame belonged to (§7A.5).
+   * The run that is live *now* (§7A.5).
    *
    * **The composer's only source of its own run id.** `run_prompt` blocks for
    * the whole turn, so its response arrives *after* the run is over and cannot
    * be the source of a mid-run cancel target; the id therefore comes from the
    * first `/events` frame whose envelope `session_id` matches the tab —
-   * precisely the field §2.7 added the envelope for. Distinct from `cursor`,
+   * precisely the field §2.7 added the envelope for. It is **cleared** on the
+   * `terminal` frame that ends that run, and on submit (see `clearLiveRun`), so
+   * a finished id is never offered as a cancel target. Distinct from `cursor`,
    * which deliberately stops advancing on a `terminal` (its `seq = 2**62` is
-   * past `Number.MAX_SAFE_INTEGER`) and would therefore be missing the run of
-   * the one frame that says a run ended.
+   * past `Number.MAX_SAFE_INTEGER`).
    */
   readonly runId: string | null;
   /**
@@ -139,11 +140,11 @@ export function receive(state: LiveState, frame: EventFrame): LiveState {
     cursor: Number.isSafeInteger(frame.seq)
       ? { run_id: frame.run_id, seq: frame.seq }
       : state.cursor,
-    // Advanced on EVERY frame, terminal included — unlike `cursor`, which must
-    // not carry a seq the browser rounded. This is an identity the composer
-    // renders, never a value echoed back to the server, so the rounding that
-    // makes `2**62` unusable as a resume cursor is irrelevant here.
-    runId: frame.run_id,
+    // Set from a live frame; cleared on `terminal` so the id the composer
+    // holds is only ever a run that is live *now*. Unlike `cursor`, which must
+    // not carry a seq the browser rounded, this is an identity the composer
+    // renders, never a value echoed back to the server.
+    runId: frame.kind === "terminal" ? null : frame.run_id,
     terminals: state.terminals + (frame.kind === "terminal" ? 1 : 0),
     resyncs: state.resyncs,
     seen: seen.length > LIVE_DEDUPE_WINDOW ? seen.slice(seen.length - LIVE_DEDUPE_WINDOW) : seen,
@@ -228,6 +229,18 @@ export function disconnected(state: LiveState, next: StreamState): LiveState {
 /** A status transition with no other effect (`connecting`, `open`, `detached`). */
 export function setStatus(state: LiveState, next: StreamState): LiveState {
   return { ...state, status: next };
+}
+
+/**
+ * Forget the live run id (§7A.5).
+ *
+ * Called on submit so a second turn cannot offer Cancel against the previous
+ * run during the window before the first frame of the new one arrives. The
+ * next matching frame sets `runId` again.
+ */
+export function clearLiveRun(state: LiveState): LiveState {
+  if (state.runId === null) return state;
+  return { ...state, runId: null };
 }
 
 /**

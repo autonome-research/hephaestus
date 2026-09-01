@@ -56,3 +56,43 @@ export function isSendKey(event: SendKey): boolean {
   if (event.shiftKey) return false;
   return !event.isComposing;
 }
+
+/**
+ * May this control start a turn? Enter, the Send button, and `submit()` share
+ * this predicate — a gate that lived only on the button would be one the
+ * keyboard walks past, and a gate that lived only in `submit` would leave
+ * Send looking enabled while a click did nothing (#44).
+ */
+export function canSendTurn(input: {
+  readonly disabledReason: DisabledReason | null;
+  readonly text: string;
+  readonly sending: boolean;
+}): boolean {
+  if (input.disabledReason !== null) return false;
+  if (input.sending) return false;
+  return input.text.trim() !== "";
+}
+
+/** Closed reasons Cancel names when it is not available (§7A.5, §7A.6). */
+export const CANCEL_REASONS = ["cancelIdle", "cancelNoRun", "cancelNoStream"] as const;
+export type CancelReason = (typeof CANCEL_REASONS)[number];
+
+/**
+ * Cancel is available iff the live run id is known and the socket is `live`.
+ *
+ * `runId` means the run that is live *now* — not the last one this tab saw.
+ * Between submit and the first matching frame the id is unknown (`cancelNoRun`);
+ * a socket that is not `live` cannot learn one (`cancelNoStream`); idle Cancel
+ * stays rendered and names `cancelIdle` (§7A.6). `awaitingRun` is the submit
+ * window, not a second enablement gate — a live id on a live socket is enough.
+ */
+export function cancelAvailability(input: {
+  readonly liveRunId: string | null;
+  readonly streamLive: boolean;
+  readonly awaitingRun: boolean;
+}): { readonly available: true } | { readonly available: false; readonly reason: CancelReason } {
+  if (input.liveRunId !== null && input.streamLive) return { available: true };
+  if (!input.streamLive) return { available: false, reason: "cancelNoStream" };
+  if (input.awaitingRun) return { available: false, reason: "cancelNoRun" };
+  return { available: false, reason: "cancelIdle" };
+}

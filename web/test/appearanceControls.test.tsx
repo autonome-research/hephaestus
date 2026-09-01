@@ -54,7 +54,7 @@ describe("AppearanceControls — bound to the pin, not a second inspector", () =
   it("disables Fit when no pinned artifact is on the canvas, with a reason", () => {
     const host = render(<AppearanceControls canFit={false} onFit={() => undefined} />);
     const fit = host.querySelector('[data-appearance-control="fit"]');
-    expect(fit?.hasAttribute("disabled")).toBe(true);
+    expect(fit?.getAttribute("aria-disabled")).toBe("true");
     expect(fit?.getAttribute("title")).toBeTruthy();
     expect(fit?.getAttribute("aria-describedby")).toBeTruthy();
   });
@@ -62,7 +62,7 @@ describe("AppearanceControls — bound to the pin, not a second inspector", () =
   it("keeps Fit enabled when the pin is on the canvas", () => {
     const host = render(<AppearanceControls canFit onFit={() => undefined} />);
     const fit = host.querySelector('[data-appearance-control="fit"]');
-    expect(fit?.hasAttribute("disabled")).toBe(false);
+    expect(fit?.getAttribute("aria-disabled")).not.toBe("true");
   });
 
   it("does not introduce an icon id — §3.12 stays closed", () => {

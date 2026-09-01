@@ -375,7 +375,7 @@ describe("§22.7 — the export panel", () => {
   it("disables the run control with a reason when there is no pin", () => {
     const dom = panel({ pinned: null });
     const run = dom.querySelector("[data-export-run]");
-    expect(run?.hasAttribute("disabled")).toBe(true);
+    expect(run?.getAttribute("aria-disabled")).toBe("true");
     // §4.7: a disabled control in this app must always be able to say why.
     expect(run?.getAttribute("title")).toBeTruthy();
     expect(dom.querySelector("[data-export-blocked]")?.getAttribute("data-export-blocked")).toBe(
@@ -385,7 +385,7 @@ describe("§22.7 — the export panel", () => {
 
   it("disables the run control when the pin is not a successful build", () => {
     const dom = panel({ pinned: "artifact:build-checkpoint:sha256:cccc" });
-    expect(dom.querySelector("[data-export-run]")?.hasAttribute("disabled")).toBe(true);
+    expect(dom.querySelector("[data-export-run]")?.getAttribute("aria-disabled")).toBe("true");
     expect(dom.querySelector("[data-export-blocked]")?.getAttribute("data-export-blocked")).toBe(
       "invalid_source",
     );
@@ -443,7 +443,7 @@ describe("§22.7 — the export panel", () => {
   it("disables a download above the server's ceiling, with a reason", () => {
     const dom = panel({ history: { ...HISTORY, max_download_bytes: 1 } });
     const download = dom.querySelector("[data-export-download]");
-    expect(download?.hasAttribute("disabled")).toBe(true);
+    expect(download?.getAttribute("aria-disabled")).toBe("true");
     expect(download?.getAttribute("title")).toBeTruthy();
   });
 
@@ -461,7 +461,7 @@ describe("§22.7 — the export panel", () => {
     // subject line says the build is behind the script."
     const dom = panel({ stale: true });
     expect(dom.querySelector("[data-export-stale='true']")).not.toBeNull();
-    expect(dom.querySelector("[data-export-run]")?.hasAttribute("disabled")).toBe(false);
+    expect(dom.querySelector("[data-export-run]")?.getAttribute("aria-disabled")).not.toBe("true");
   });
 
   it("starts in the idle state, from the closed vocabulary", () => {

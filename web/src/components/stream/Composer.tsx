@@ -55,7 +55,8 @@
 // chrome over a field the route does not admit. There is no Plan mode in the
 // engine. `[dfm] auto_run` / `run_dfm` stay two controls (§6.4) and live on
 // the inspector DFM panel, not here — the composer is for talking. Context
-// chips and Add current view fold into the disclose control. No runtime /
+// chips sit above the textarea by default (§7A.3 / #79); disclose still
+// hides the composed preview and the advisory sentence. No runtime /
 // no `providers.json` keeps the named `agent_unavailable` absence.
 
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore, useState } from "react";
@@ -76,7 +77,7 @@ import { Button, Chip, CHIP_REF_WIDTH, EmptyState, TextInput, formatRef } from "
 import { useWorkspaceState } from "../../state/react";
 import { labelsForPart, visibilityStore } from "../../state/visibility";
 import { defaultModel, modelsFrom, showModelChrome } from "../../stream/composerChrome";
-import { isComposable, isSendKey } from "../../stream/composerGate";
+import { canSendTurn, cancelAvailability, isComposable, isSendKey } from "../../stream/composerGate";
 import { chipsFor, envelopeFor, type ContextChip } from "../../stream/composerContext";
 import { runtimeFaultOf, type RuntimeFault } from "../../stream/runtimeFault";
 import type { ContextMember } from "../../api/sessions";
@@ -127,6 +128,17 @@ export interface ComposerProps {
   readonly onRuntimeFault?: ((fault: RuntimeFault | null) => void) | undefined;
   /** Fired after a turn settles, so the panel can refetch its own session list. */
   readonly onTurnSettled?: (() => void) | undefined;
+  /**
+   * Forget the live run id on submit (§7A.5). The stream holds the previous
+   * turn's id until `terminal` unless this fires — a second Send would then
+   * offer Cancel against a finished run (#99).
+   */
+  readonly onForgetLiveRun?: (() => void) | undefined;
+  /**
+   * Incremented after `POST /sessions` so the new session's box is focused
+   * (#61). `0` / omitted means "do not steal focus".
+   */
+  readonly focusNonce?: number | undefined;
 }
 
 /** What the POST is doing. `unknown` is a *state*, not an error to swallow. */
@@ -149,7 +161,16 @@ type Post =
     };
 
 export function Composer(props: ComposerProps): React.JSX.Element {
-  const { sessionId, profile, attach, agentUnavailable, liveRunId, streamLive, terminals } = props;
+  const {
+    sessionId,
+    profile,
+    attach,
+    agentUnavailable,
+    liveRunId,
+    streamLive,
+    terminals,
+    focusNonce,
+  } = props;
   const client = useQueryClient();
   const state = useWorkspaceState();
   const hidden = useSyncExternalStore(
@@ -169,6 +190,11 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [cancelNote, setCancelNote] = useState<string | null>(null);
   const [attaching, setAttaching] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);
+  const liveRunIdRef = useRef(liveRunId);
+  useEffect(() => {
+    liveRunIdRef.current = liveRunId;
+  }, [liveRunId]);
   const [attachError, setAttachError] = useState<string | null>(null);
   const chips = useMemo(() => chipsFor(state, hiddenLabels), [state, hiddenLabels]);
   const envelope = useMemo(
@@ -240,18 +266,16 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   const composable = isComposable(disabledReason);
 
   // §7A.5's named limit, rendered with its reason rather than as a dead button.
-  // The window is one model round-trip; saying so is what keeps it from reading
-  // as a broken control. A `run_in_flight` refusal is cancellable on the same
-  // terms as one's own turn — the run id comes from the stream either way, and
-  // "wait for it to finish, or cancel it" is the remedy the refusal itself
-  // names, so the control that performs it has to be reachable.
+  // Cancel is available iff the live id is known and the socket is `live` —
+  // not iff this tab's POST is in flight. Gating on `awaitingRun` kept Cancel
+  // dark through a turn that was already producing chips (#45) and, once
+  // `runId` stopped being cleared, offered it against the *previous* run (#99).
   const awaitingRun = post.phase === "sending" || refusedRunInFlight;
-  const cancellable = awaitingRun && liveRunId !== null && streamLive;
-  const cancelWhy = !awaitingRun
+  const cancel = cancelAvailability({ liveRunId, streamLive, awaitingRun });
+  const cancellable = cancel.available;
+  const cancelWhy = cancel.available
     ? copy.composer.cancelIdle
-    : !streamLive
-      ? copy.composer.cancelNoStream
-      : copy.composer.cancelNoRun;
+    : copy.composer[cancel.reason];
 
   // A run ending is what makes a `run_in_flight` refusal stop being true, and
   // `terminal` is the frame that says a run ended (§7A.11's counter). Monotone,
@@ -267,6 +291,13 @@ export function Composer(props: ComposerProps): React.JSX.Element {
         : previous,
     );
   }, [terminals]);
+
+  // #61: after New session / Ask about <part>, the nonce ticks and focus
+  // lands on the box that exists so the operator can talk.
+  useEffect(() => {
+    if (focusNonce === undefined || focusNonce === 0) return;
+    inputRef.current?.focus();
+  }, [focusNonce]);
 
   // -- the disclosure (§7A.3) --------------------------------------------
   //
@@ -319,12 +350,23 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   // line means Enter posts a second prompt against a run the server has already
   // told us is in flight. §7A.5's "the composer disables while any run is live"
   // is a statement about sending, and sending is what happens here.
+  const sending = post.phase === "sending";
+  const sendAllowed = canSendTurn({ disabledReason, text, sending });
+
   const submit = useCallback(() => {
-    if (disabledReason !== null) return;
-    // Narrowing for `sendPrompt` below, and redundant with the line above:
-    // `sessionId === null` is `no_session`.
-    if (sessionId === null || text.trim() === "" || post.phase === "sending") return;
+    // THE GUARD IS THE SAME PREDICATE AS THE SEND BUTTON. Enter, click, and
+    // the form's `onSubmit` all land here. A gate that lived only on the
+    // button would be one the keyboard walks past; a gate that lived only
+    // here would leave Send looking enabled while a click did nothing (#44).
+    if (!canSendTurn({ disabledReason, text, sending: post.phase === "sending" })) return;
+    // Narrowing for `sendPrompt` below: `sessionId === null` is `no_session`
+    // and is already refused by `canSendTurn`.
+    if (sessionId === null) return;
     setCancelNote(null);
+    // Forget the previous run *before* the POST. Otherwise Cancel is aimed
+    // at a finished id for the whole window until the first new frame (#99).
+    liveRunIdRef.current = null;
+    props.onForgetLiveRun?.();
     setPost({ phase: "sending" });
     void sendPrompt(sessionId, text, envelope)
       .then((document) => {
@@ -366,10 +408,16 @@ export function Composer(props: ComposerProps): React.JSX.Element {
       });
   }, [disabledReason, sessionId, text, post.phase, envelope, client, state.part, props]);
 
-  const cancel = useCallback(() => {
-    if (liveRunId === null) return;
-    void cancelRun(liveRunId)
+  const cancelTurn = useCallback(() => {
+    // Available iff the live id is known and the socket is live. A no-op
+    // cancel of a finished run must not print "Cancelled." while a new turn
+    // keeps running (#99) — so we refuse here, and we also refuse to claim
+    // success if the live id moved on before the response arrived.
+    if (liveRunId === null || !streamLive) return;
+    const target = liveRunId;
+    void cancelRun(target)
       .then((document) => {
+        if (liveRunIdRef.current !== target) return;
         setCancelNote(copy.composer.cancelled(document.abandoned_questions));
       })
       .catch(() => {
@@ -377,7 +425,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
         // report honestly; the run's own terminal is what settles it.
         setCancelNote(null);
       });
-  }, [liveRunId]);
+  }, [liveRunId, streamLive]);
 
   const retryAttach = useCallback(() => {
     setAttaching(true);
@@ -398,13 +446,15 @@ export function Composer(props: ComposerProps): React.JSX.Element {
       });
   }, [client]);
 
-  const sendDisabled = disabledReason !== null || text.trim() === "" || post.phase === "sending";
+  const sendDisabled = !sendAllowed;
   const sendReason =
     disabledReason !== null
       ? copy.composer.disabled[disabledReason]
-      : post.phase === "sending"
+      : sending
         ? copy.composer.sending
         : copy.composer.placeholder;
+  const sendHint =
+    sending || refusedRunInFlight ? copy.composer.sendHintBusy : copy.composer.sendHint;
 
   // Enter sends; `stream/composerGate.ts` decides which keystroke that is.
   //
@@ -490,6 +540,27 @@ export function Composer(props: ComposerProps): React.JSX.Element {
         </div>
       ) : null}
 
+      {/* §7A.3: the removable chip row sits above the textarea by default,
+          not behind a disclosure. `disclosed` only hides the composed preview
+          and the advisory sentence. An empty envelope (nothing that names a
+          reference) mounts no row and no placeholder. */}
+      {envelope !== null ? (
+        <ul
+          className={styles["chips"]}
+          data-context-chips=""
+          aria-label={copy.composer.contextHeading}
+        >
+          {chips.map((chip) => (
+            <ContextChipRow
+              key={chip.key}
+              chip={chip}
+              dropped={dropped.has(chip.key)}
+              onToggle={toggleChip}
+            />
+          ))}
+        </ul>
+      ) : null}
+
       <TextInput
         label={copy.composer.label}
         hideLabel
@@ -506,6 +577,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
         onKeyDown={onPromptKey}
         placeholder={copy.composer.placeholder}
         disabled={!composable || post.phase === "sending"}
+        inputRef={inputRef}
         data-composer-input=""
       />
 
@@ -514,7 +586,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
           is a second. */}
       {promptFocused || text !== "" ? (
         <p className={styles["hint"]} data-composer-hint="">
-          {copy.composer.sendHint}
+          {sendHint}
         </p>
       ) : null}
 
@@ -533,16 +605,17 @@ export function Composer(props: ComposerProps): React.JSX.Element {
         ) : null}
         <Button
           variant="primary"
-          type="submit"
-          title={copy.composer.sendHint}
+          type="button"
+          title={sendHint}
           data-composer-send=""
+          onClick={submit}
           {...(sendDisabled ? { disabled: true as const, reason: sendReason } : {})}
         >
           {post.phase === "sending" ? copy.composer.sending : copy.composer.send}
         </Button>
         <Button
           variant="quiet"
-          onClick={cancel}
+          onClick={cancelTurn}
           data-composer-cancel=""
           {...(cancellable ? {} : { disabled: true as const, reason: cancelWhy })}
         >
@@ -604,20 +677,6 @@ export function Composer(props: ComposerProps): React.JSX.Element {
 
       {disclosed ? (
         <div className={styles["disclosure"]} data-context-preview="">
-          <ul
-            className={styles["chips"]}
-            data-context-chips=""
-            aria-label={copy.composer.contextHeading}
-          >
-            {chips.map((chip) => (
-              <ContextChipRow
-                key={chip.key}
-                chip={chip}
-                dropped={dropped.has(chip.key)}
-                onToggle={toggleChip}
-              />
-            ))}
-          </ul>
           <Button variant="quiet" onClick={addCurrentView} data-context-add-view="">
             {copy.composer.addCurrentView}
           </Button>

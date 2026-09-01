@@ -159,6 +159,26 @@ describe("the well spends its height on the transcript", () => {
   it("still keeps the composer as the panel's last child", () => {
     expect(panel.lastIndexOf("<Composer")).toBeGreaterThan(panel.lastIndexOf("data-stream-main"));
   });
+
+  it("bottom-anchors the empty invitation so the void sits above it (#56)", () => {
+    expect(stream).toMatch(/\[data-stream-empty\]\s*\.main\s*\{[^}]*justify-content:\s*flex-end/);
+    expect(panel).toContain('data-stream-empty');
+  });
+
+  it("does not mount NewSessionAction only when the session list is empty (#70)", () => {
+    // §7A.2's two create affordances stay reachable after the first session.
+    // One element, two call sites: the empty invitation *and* the tab stack.
+    expect(panel).toContain("const createAction");
+    expect(panel).toContain("action={createAction}");
+    const afterTabs = panel.slice(panel.indexOf("<SessionTabs"));
+    expect(afterTabs).toContain("{createAction}");
+    expect(afterTabs).toContain("Send does not create a session");
+  });
+
+  it("focuses the composer after New session (#61)", () => {
+    expect(panel).toContain("setFocusNonce");
+    expect(panel).toContain("focusNonce={focusNonce}");
+  });
 });
 
 describe("the session tab row is a name, not three metadata strings", () => {
@@ -204,6 +224,8 @@ describe("the composer is usable, and says how it is used", () => {
 
   it("keeps Send a first-class control and not an overflow item", () => {
     expect(composer).toContain('data-composer-send=""');
+    expect(composer).toContain("onClick={submit}");
+    expect(composer).toContain("canSendTurn");
     expect(composer).not.toMatch(/overflow|Popover/);
   });
 
@@ -213,7 +235,7 @@ describe("the composer is usable, and says how it is used", () => {
   });
 
   it("makes a run_in_flight refusal cancellable and typable, so it has an exit", () => {
-    expect(composer).toContain("const awaitingRun = post.phase === \"sending\" || refusedRunInFlight");
+    expect(composer).toContain("cancelAvailability");
     expect(composer).toContain("isComposable(disabledReason)");
     // And it expires on the frame that says the run ended.
     expect(composer).toMatch(/seenTerminals\.current = count/);

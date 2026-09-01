@@ -25,7 +25,7 @@
   flex: 0 0 auto;
 }
 
-/* ---- the context chip row (§7A.3), inside disclose ----------------- */
+/* ---- the context chip row (§7A.3), above the textarea by default ---- */
 
 .chips {
   margin: 0;

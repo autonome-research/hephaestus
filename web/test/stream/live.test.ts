@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import type { EventFrame } from "../../src/api/events";
 import {
+  clearLiveRun,
   disconnected,
   emptyLive,
   LIVE_DEDUPE_WINDOW,
@@ -157,6 +158,19 @@ describe("what a real socket taught this reducer", () => {
     expect(state.entries).toHaveLength(2);
     expect(state.cursor).toEqual({ run_id: fixture.run_id, seq: 5 });
     expect(resumeFrame(state, fixture.session_id)?.resume.after.seq).toBe(5);
+    // §7A.5: `runId` is the run that is live *now*. A terminal ends it.
+    expect(state.runId).toBeNull();
+  });
+
+  it("sets runId from a matching live frame and forgets it on clearLiveRun", () => {
+    let state = emptyLive("live");
+    expect(state.runId).toBeNull();
+    state = receive(state, frame(0));
+    expect(state.runId).toBe(fixture.run_id);
+    state = clearLiveRun(state);
+    expect(state.runId).toBeNull();
+    // Identity: clearing an already-cleared state is a no-op.
+    expect(clearLiveRun(state)).toBe(state);
   });
 
   it("bounds the identities it remembers", () => {

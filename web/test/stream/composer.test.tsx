@@ -49,7 +49,9 @@ import {
 } from "../../src/stream/composerChrome";
 import { CHIP_ORDER, chipsFor, envelopeFor } from "../../src/stream/composerContext";
 import { DEFAULT_STATE, type WorkspaceState } from "../../src/state/workspace";
+import { workspaceStore } from "../../src/state/react";
 import { formatRef } from "../../src/system";
+import { copy } from "../../src/copy";
 
 // The one route the last block counts calls on. Everything else in the module is
 // the real thing — `CONTEXT_MEMBERS` is asserted against directly, and a
@@ -355,8 +357,8 @@ describe("the DOM contract", () => {
 
   it("puts no data-source on any context chip", () => {
     // §7A.10: "no chip carries a `data-source`, because no chip is a fact
-    // (§4.6)". Chips fold into disclose, so idle markup has no chip row;
-    // the row template itself must still not mint a `data-source`.
+    // (§4.6)". An empty envelope mounts no row; the row template itself
+    // must still not mint a `data-source`.
     const html = markup();
     expect(html).not.toContain("data-context-chips");
     const source = readFileSync(
@@ -562,6 +564,7 @@ afterEach(() => {
   unmount = null;
   vi.mocked(sendPrompt).mockReset();
   vi.mocked(cancelRun).mockReset();
+  workspaceStore.reset(DEFAULT_STATE);
 });
 
 function mount(props: Partial<React.ComponentProps<typeof Composer>> = {}): HTMLDivElement {
@@ -684,7 +687,8 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     expect(composer(root).getAttribute("data-composer-state")).toBe("disabled");
     // Send stays off. The point of the fix is that the keyboard agrees with it,
     // not that the button starts agreeing with the keyboard.
-    expect(root.querySelector("[data-composer-send]")?.hasAttribute("disabled")).toBe(true);
+    expect(root.querySelector("[data-composer-send]")?.getAttribute("aria-disabled")).toBe("true");
+    expect(root.querySelector("[data-composer-send]")?.hasAttribute("disabled")).toBe(false);
 
     pressEnter(root);
     submitForm(root);
@@ -715,6 +719,7 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     // disabled, and pressing it reaches the route.
     expect(composer(root).getAttribute("data-cancel-state")).toBe("available");
     const cancelButton = root.querySelector<HTMLButtonElement>("[data-composer-cancel]");
+    expect(cancelButton?.getAttribute("aria-disabled")).not.toBe("true");
     expect(cancelButton?.hasAttribute("disabled")).toBe(false);
     act(() => {
       cancelButton?.click();
@@ -745,5 +750,81 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     });
     await act(async () => undefined);
     expect(vi.mocked(sendPrompt)).toHaveBeenCalledTimes(2);
+  });
+
+  it("starts a turn from Send click, not only Enter (#44)", async () => {
+    const settled: PromptDocument = {
+      status: "ok",
+      session_id: "sess-1",
+      run_id: "run-1",
+      run_status: "completed",
+      terminal: null,
+      events: [],
+      context: null,
+    };
+    vi.mocked(sendPrompt).mockResolvedValue(settled);
+    const forget = vi.fn();
+    const root = mount({ onForgetLiveRun: forget });
+    type(root, "Bump the kerf to 0.25 mm.");
+    const send = root.querySelector<HTMLButtonElement>("[data-composer-send]");
+    expect(send?.getAttribute("aria-disabled")).not.toBe("true");
+    act(() => {
+      send?.click();
+    });
+    expect(vi.mocked(sendPrompt)).toHaveBeenCalledTimes(1);
+    expect(forget).toHaveBeenCalledTimes(1);
+    await act(async () => undefined);
+  });
+
+  it("mounts the chip row at rest when the envelope names a reference (#79)", () => {
+    workspaceStore.reset({ ...DEFAULT_STATE, part: "kerf_card" });
+    const root = mount();
+    const row = root.querySelector("[data-context-chips]");
+    expect(row).not.toBeNull();
+    expect(root.querySelector('[data-context-key="part"]')?.getAttribute("data-context-value")).toBe(
+      "kerf_card",
+    );
+    // Disclose still hides the preview block, not the chips.
+    expect(root.querySelector("[data-context-preview]")).toBeNull();
+    expect(root.querySelector("[data-context-block]")).toBeNull();
+  });
+
+  it("mounts no chip row and no placeholder when the envelope is empty (#79)", () => {
+    workspaceStore.reset(DEFAULT_STATE);
+    const root = mount();
+    expect(root.querySelector("[data-context-chips]")).toBeNull();
+    expect(root.textContent ?? "").not.toContain(copy.composer.contextNone);
+  });
+
+  it("focuses the composer input when the create nonce ticks (#61)", () => {
+    const root = mount({ focusNonce: 1 });
+    expect(document.activeElement).toBe(input(root));
+  });
+
+  it("does not offer Cancel against a finished run, and a no-op does not print Cancelled (#99)", async () => {
+    vi.mocked(cancelRun).mockResolvedValue({
+      status: "ok",
+      run_id: "run-old",
+      session_id: "sess-1",
+      abandoned_questions: 0,
+    });
+    const root = mount({ liveRunId: null, streamLive: true });
+    expect(composer(root).getAttribute("data-cancel-state")).toBe("unavailable");
+    const cancelButton = root.querySelector<HTMLButtonElement>("[data-composer-cancel]");
+    expect(cancelButton?.getAttribute("aria-disabled")).toBe("true");
+    act(() => {
+      cancelButton?.click();
+    });
+    await act(async () => undefined);
+    expect(vi.mocked(cancelRun)).not.toHaveBeenCalled();
+    expect(root.querySelector("[data-cancel-note]")).toBeNull();
+  });
+
+  it("keeps Cancel available through a live turn (#45)", () => {
+    const root = mount({ liveRunId: "run-live", streamLive: true });
+    expect(composer(root).getAttribute("data-cancel-state")).toBe("available");
+    expect(root.querySelector("[data-composer-cancel]")?.getAttribute("aria-disabled")).not.toBe(
+      "true",
+    );
   });
 });

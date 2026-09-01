@@ -112,6 +112,7 @@ export function StreamPanel(): React.JSX.Element {
   const stream = useStream(selected);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [focusNonce, setFocusNonce] = useState(0);
 
   // §4.5 addresses a session as `?s=`. With none in the URL, the first session
   // this server owns is opened — a navigation default, never a fact, and it is
@@ -206,6 +207,9 @@ export function StreamPanel(): React.JSX.Element {
         .then((document) => {
           workspaceStore.update({ session: document.session_id });
           void client.invalidateQueries({ queryKey: ["sessions"] });
+          // §7A.2 / #61: the create exists so the operator can talk. Focus
+          // the box after the session is addressed; do not wait for a click.
+          setFocusNonce((n) => n + 1);
         })
         .catch((cause: unknown) => {
           setCreateError(cause instanceof Error ? cause.message : copy.errors.title);
@@ -217,8 +221,17 @@ export function StreamPanel(): React.JSX.Element {
     [client],
   );
 
+  const createAction = (
+    <NewSessionAction profiles={profiles} part={part} pending={creating} onCreate={create} />
+  );
+  const emptyInvitation = !unavailable && rows.length === 0 && sessions.isFetched;
+
   return (
-    <div className={styles["panel"]} data-testid="stream-panel">
+    <div
+      className={styles["panel"]}
+      data-testid="stream-panel"
+      {...(emptyInvitation ? { "data-stream-empty": "" } : {})}
+    >
       {/* The column's name is already on the shell's own header row; repeating
           it here would put "Agent" twice above one transcript. This row carries
           §7.4's stream state, which is the fact the header exists to show — and
@@ -322,25 +335,23 @@ export function StreamPanel(): React.JSX.Element {
             body={sessionEmptyBody(partCount, part)}
             density="inline"
             data-session-empty={sessionEmptyKind(partCount)}
-            action={
-              <NewSessionAction
-                profiles={profiles}
-                part={part}
-                pending={creating}
-                onCreate={create}
-              />
-            }
+            action={createAction}
           />
         ) : !unavailable ? (
-          <SessionTabs
-            tabs={tabs}
-            sessions={rows}
-            selected={selected}
-            bounded={stream.threadBounded}
-            onSelect={(sessionId) => {
-              workspaceStore.update({ session: sessionId });
-            }}
-          />
+          <>
+            <SessionTabs
+              tabs={tabs}
+              sessions={rows}
+              selected={selected}
+              bounded={stream.threadBounded}
+              onSelect={(sessionId) => {
+                workspaceStore.update({ session: sessionId });
+              }}
+            />
+            {/* §7A.2 / #70: both create affordances stay reachable after the
+                first session exists. Send does not create a session. */}
+            {createAction}
+          </>
         ) : null}
 
         {createError !== null ? (
@@ -379,6 +390,8 @@ export function StreamPanel(): React.JSX.Element {
         liveRunId={stream.runId}
         streamLive={stream.status === "live"}
         terminals={stream.terminals}
+        onForgetLiveRun={stream.clearRunId}
+        focusNonce={focusNonce}
         onRuntimeFault={reportFault}
         onTurnSettled={() => {
           void client.invalidateQueries({ queryKey: ["sessions"] });
