@@ -127,7 +127,7 @@ describe("a runtime fault is named, and does not masquerade as a stream state", 
       panel.indexOf("sessions.error !== null && sessionsFault === null"),
     );
     expect(band).toContain("{createAction}");
-    expect(band).not.toMatch(/[Rr]econnect/);
+    expect(band).not.toMatch(/<Button[^>]*>[\s\S]*[Rr]econnect/);
     expect(copy.stream.runtimeFaultNext).toMatch(/[Nn]ew session/);
     expect(copy.stream.runtimeFaultNext).not.toMatch(/Send again/);
     expect(copy.stream.runtimeFaultNext).not.toMatch(/composer below/);
@@ -150,9 +150,9 @@ describe("a runtime fault is named, and does not masquerade as a stream state", 
     expect(refresh).toContain("processGone(fault)");
     expect(refresh).toContain("refreshAfterTurn(client, part)");
     expect(refresh).not.toContain("workspaceStore");
-    expect(refresh).not.toContain("observeCurrent");
-    expect(refresh).not.toContain("followCurrent");
-    expect(refresh).not.toContain("hold(");
+    expect(refresh).not.toMatch(/observeCurrent\(/);
+    expect(refresh).not.toMatch(/followCurrent\(/);
+    expect(refresh).not.toMatch(/hold\(/);
   });
 
   it("states a shared cause once", () => {

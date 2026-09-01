@@ -304,8 +304,8 @@ describe("the read-refresh boundary", () => {
     const invalidate = vi.spyOn(client, "invalidateQueries");
     refreshAfterTurn(client, "kerf_card");
     expect(invalidate).toHaveBeenCalled();
-    expect(workspaceStore.getState().artifact_ref).toBe(A);
-    expect(workspaceStore.getState().pin_mode).toBe("pinned");
+    expect(workspaceStore.getSnapshot().artifact_ref).toBe(A);
+    expect(workspaceStore.getSnapshot().pin_mode).toBe("pinned");
     workspaceStore.reset(DEFAULT_STATE);
   });
 });
