@@ -214,6 +214,23 @@ describe("ResultsView renders the build result (§6.1)", () => {
     expect(values(hidden, "build.metrics[]")).toEqual(values(shown, "build.metrics[]"));
   });
 
+  it("explains hiding only once hiding is in play", () => {
+    // The panel shipped TWO permanent paragraphs about the visibility toggles,
+    // under every built part's geometry list, whether or not anything was
+    // hidden. The fact answers a question a reader can only have after hiding
+    // something, so it is printed then (operator review, 2026-09-01).
+    const first = build.geometries[0];
+    expect(first).toBeDefined();
+    const label = first?.label ?? "";
+    const idle = render(<ResultsView part="panel" build={build} hidden={new Set()} />);
+    expect(idle.querySelector("[data-results-hidden-note]")).toBeNull();
+    const hiding = render(
+      <ResultsView part="panel" build={build} hidden={new Set([visibilityKey("panel", label)])} />,
+    );
+    expect(hiding.querySelector("[data-results-hidden-note]")).not.toBeNull();
+    expect(hiding.querySelectorAll("[data-results-hidden-note]")).toHaveLength(1);
+  });
+
   it("names the absence when a part has no current build", () => {
     const notBuilt: BuildDocument = {
       status: "not_built",

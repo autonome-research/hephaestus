@@ -169,13 +169,18 @@ export function ResultsView({ part, build, hidden, onToggle }: ResultsViewProps)
                 );
               })}
             </ul>
-            <PanelNote>{copy.results.hiddenNote}</PanelNote>
-            {/* The viewport (§5) applies these labels to the loaded GLB's mesh
-                nodes — `viewport/scene.ts::applyVisibility` reads the same store
-                through `visibilityStore.hiddenLabels(part)`. The note names where
-                the effect is visible, because the toggle and the picture live in
-                different regions of §4.1's shell. */}
-            <PanelNote>{copy.results.appliesToViewport}</PanelNote>
+            {/* ONE note, and only once hiding is in play.
+                The panel shipped two permanent paragraphs about the toggles —
+                that hiding is a scene-graph property, and that the effect is
+                visible on the Viewport tab — under every built part's geometry
+                list, whether or not anything was hidden. The fact answers a
+                question ("did hiding re-measure anything?") that a reader can
+                only have after they have hidden something, so it is printed
+                then. `viewport/scene.ts::applyVisibility` reads the same store
+                through `visibilityStore.hiddenLabels(part)`. */}
+            {hiddenCount === 0 ? null : (
+              <PanelNote data-results-hidden-note="">{copy.results.hiddenNote}</PanelNote>
+            )}
 
             {metrics === null ? null : (
               <PanelSection eyebrow={copy.results.metricsHeading}>

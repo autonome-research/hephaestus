@@ -42,6 +42,13 @@ export const copy = {
     head: "HEAD",
     pin: "Artifact pin",
     buildState: "Build",
+    /**
+     * The hold control's label is a VERB. It used to be `pinMode.pinned`
+     * ("held"), so the bar printed a state word on a button beside two other
+     * state words — four labels for one fact on an unbuilt part (§4.1's
+     * 2026-09-01 amendment).
+     */
+    hold: "Hold",
     followCurrent: "Follow current",
     /** §4.5: the action states what it will discard before it does it. */
     followCurrentExplain:
@@ -145,8 +152,7 @@ export const copy = {
       materials: "Materials",
     },
     sectionEmptyTitle: "No facts",
-    sectionEmpty:
-      "The engine has not projected any items for this section. Nothing is being hidden, and no catalog is invented here.",
+    sectionEmpty: "The engine has not projected any items for this section.",
     /** §13.1: the rail shows the git axis; the header shows the artifact axis. */
     gitHeading: "Working tree",
     versionsHeading: "Versions",
@@ -172,6 +178,19 @@ export const copy = {
     /** §13.1's Script-tab marker, as a word beside the icon (§3.13.2). */
     dirtyShort: "changed",
     dirtyOutsideParts: "Changed paths outside parts/",
+    /**
+     * §13.1 reports a dirty tree and never hides one, but `.heph/` is the
+     * workspace's OWN store — blobs, the state db, the serve token, agent logs —
+     * and on the fixture it was 30-odd untracked rows drowning the part tree in
+     * the 280px rail. One row, a count, and one click to the same facts.
+     */
+    generated: (n: number): string =>
+      n === 1 ? "1 generated .heph path" : `${n} generated .heph paths`,
+    generatedWhy:
+      "Paths the workspace writes under .heph/ — the object store, the state database, and the agent's own files. They are reported because git reports them; none of them is part source.",
+    /** §13.1's git identity: which repository this is, on the git axis. */
+    branch: "Branch",
+    head: "HEAD",
     /** §13.2: the read-only list of tags that exist on this repository. */
     tagsHeading: "Tags",
     /**
@@ -437,9 +456,8 @@ export const copy = {
     failedTitle: "Build failed",
     /** The group marker, as a word rather than as a sentence in a chip. */
     group: "group",
-    notBuilt:
-      "This part has no current build, so there is no build result to report. Nothing is being hidden.",
-    failed: "The last build of this part failed. The geometry list below is empty for that reason.",
+    notBuilt: "This part has no current build, so there is no build result to report.",
+    failed: "The last build of this part failed, so the geometry list is empty.",
     metricsHeading: "Metrics",
     /** §5.4: a scene-graph property, never geometry. The words say so. */
     show: "Show in the viewport",
@@ -452,18 +470,20 @@ export const copy = {
      * G4.5's control region. See `GridReadout.tsx` for the measurement.
      */
     hiddenCount: (n: number): string => (n === 1 ? "1 hidden" : `${String(n)} hidden`),
+    /**
+     * ONE sentence, printed only while something is actually hidden.
+     *
+     * There were two, and they were always on screen: this one plus "Hiding
+     * applies on the Viewport tab, to the geometry of the artifact currently
+     * pinned." Two paragraphs about a toggle nobody had touched yet, under every
+     * built part's geometry list. The fact is worth stating when it is load
+     * bearing — a reader wondering whether hiding re-measured anything — and the
+     * moment it becomes load bearing is the moment an entry is hidden.
+     */
     hiddenNote:
-      "Hiding removes the entry's meshes from the viewport scene graph. It changes nothing about the build result, and the numbers below are unaffected.",
+      "Hiding removes the entry's meshes from the Viewport tab's scene graph. Every number here is unchanged.",
     groupNote:
       "This entry covers more than one solid; the toggle covers the group, which is the only namespace the build result gives.",
-    /**
-     * Was "there is no viewport yet, so hiding is recorded and has nothing to
-     * apply to". The viewport landed (§5), so the sentence became false and was
-     * replaced rather than left standing: the toggle now hides the entry's
-     * meshes in the Stage's scene graph, on the Viewport tab.
-     */
-    appliesToViewport:
-      "Hiding applies on the Viewport tab, to the geometry of the artifact currently pinned.",
   },
 
   /** §6.2: "all metadata fields" resolved to the closed `part.*` vocabulary. */
