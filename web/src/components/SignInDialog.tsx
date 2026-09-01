@@ -39,7 +39,7 @@
 // carries `data-signin-flow`. Selectors that read copy would pin wording, which
 // §3 forbids.
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { WorkspaceError } from "../api/client";
 import {
   CREDENTIAL_SCOPES,
@@ -137,11 +137,10 @@ export function SignInDialog(props: SignInDialogProps): React.JSX.Element {
   const [busy, setBusy] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
   const [confirmRuns, setConfirmRuns] = useState<number | null>(null);
-  const flowRef = useRef(flow);
-  flowRef.current = flow;
 
   const dismiss = useCallback((): void => {
-    if (flowRef.current !== null) void cancelLogin(provider.id);
+    // Idempotent: closing an unstarted dialog is a no-op on the sidecar.
+    void cancelLogin(provider.id);
     onClose();
   }, [provider.id, onClose]);
 
