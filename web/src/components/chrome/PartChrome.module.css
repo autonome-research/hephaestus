@@ -38,3 +38,11 @@
 .muted {
   color: var(--ink-muted);
 }
+
+.file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gap-inline);
+  min-width: 0;
+}

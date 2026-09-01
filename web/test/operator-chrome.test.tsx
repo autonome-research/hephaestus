@@ -365,10 +365,13 @@ describe("artifact pin — one chip, one state word", () => {
       build({ status: "not_built", current: false, artifact_ref: null, geometry_count: 0 }),
     );
     expect(node.getAttribute("data-build-state")).toBe("not_built");
-    // One visible word. `build.current`'s clipped 1px mirror is the only other
-    // text in the chip, and it is read aloud rather than drawn.
+    // One visible word. `build.current`'s clipped 1px mirror stays attributed
+    // and is silent in the accessibility tree (#96).
     expect(node.querySelector('[data-source="build.status"]')?.textContent).toBe(
       copy.buildState.not_built,
+    );
+    expect(node.querySelector('[data-source="build.current"]')?.getAttribute("aria-hidden")).toBe(
+      "true",
     );
     expect(node.querySelector("[data-pin-action]")).toBeNull();
     expect(node.querySelector("[data-pin-state]")).toBeNull();
@@ -389,6 +392,8 @@ describe("artifact pin — chip width that fits the 1280 header", () => {
     expect(CHIP_REF_WIDTH).toBeLessThanOrEqual(22);
     expect(formatRef(REF, CHIP_REF_WIDTH).length).toBeLessThanOrEqual(CHIP_REF_WIDTH);
     expect(formatRef(REF, CHIP_REF_WIDTH)).not.toBe(REF);
+    expect(formatRef(REF, CHIP_REF_WIDTH)).toMatch(/^build · [0-9a-f]{8}$/);
+    expect(formatRef(REF, CHIP_REF_WIDTH)).not.toContain("artifact:");
     const pin = readFileSync(join(webSrc, "components/ArtifactPin.tsx"), "utf8");
     expect(pin).toMatch(/formatRef\(ref,\s*CHIP_REF_WIDTH\)/);
     const composer = readFileSync(join(webSrc, "components/stream/Composer.tsx"), "utf8");

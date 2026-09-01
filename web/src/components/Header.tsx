@@ -40,8 +40,10 @@
 //     badge whose word is the most specific state that is true, and the hold
 //     control is a verb (`Hold`) or is not there at all.
 //
-// When the pin is held, `data-pin-mode="pinned"` marks the header and every
-// panel below inherits the marking through the shell's own attribute.
+// When the pin is held, `data-pin-mode="pinned"` marks the header. The pin
+// is the canvas/export axis; rail selection is the inspector/script axis.
+// The attribute is a marking, not a claim that every panel reports against
+// the held artifact (#78).
 
 import type { ReactNode } from "react";
 import { useBuild, useProject } from "../api/queries";
@@ -80,7 +82,11 @@ export function Header({ railToggle }: HeaderProps): React.JSX.Element {
         )}
       </div>
 
-      <div className={styles["subject"]}>
+      <div
+        className={styles["subject"]}
+        role="group"
+        aria-label={copy.header.chromeGroup}
+      >
         <ArtifactPin build={build.data} />
         <PartChrome />
       </div>

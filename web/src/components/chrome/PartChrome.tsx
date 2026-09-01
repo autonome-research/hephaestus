@@ -28,7 +28,7 @@ type ChromeDialog = "export" | "sourcing" | null;
 
 export function PartChrome(): React.JSX.Element {
   const [open, setOpen] = useState<ChromeDialog>(null);
-  const { part, pinned, pinMode, onExport } = useExportActions();
+  const { part, pinned, pinMode, history, onExport, onDownload } = useExportActions();
 
   const close = (): void => {
     setOpen(null);
@@ -72,7 +72,9 @@ export function PartChrome(): React.JSX.Element {
           part={part}
           pinned={pinned}
           pinMode={pinMode}
+          history={history}
           onExport={onExport}
+          onDownload={onDownload}
           onOpenInspector={openInspectorExport}
         />
       </Popover>

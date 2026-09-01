@@ -64,8 +64,13 @@
 }
 
 .label {
-  flex: 1 1 auto;
-  min-width: 0;
+  /* #88: the name is the row's subject. A flex-none trailing group (dirty
+     badge + geometry chip) used to spend the label down to ~28px — one
+     glyph, no ellipsis. The name shrinks last: it keeps an ellipsis-wide
+     floor and the trailing group is the one that yields. Overflow stays
+     hidden so the rail cannot grow past 279 (#32 stays closed). */
+  flex: 1 1 8ch;
+  min-width: 8ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -75,5 +80,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
 }

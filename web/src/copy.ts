@@ -58,8 +58,23 @@ export const copy = {
     followCurrentExplain:
       "Stop holding this artifact and show the current build instead. " +
       "The selection, crop, and measurement taken against the held artifact are discarded.",
-    pinnedBanner:
-      "Showing a held artifact, not the current build. Every panel below reports against this artifact.",
+    /**
+     * The two axes the header must name (#78). The pin is canvas/export.
+     * Rail selection is inspector/script. A held pin does not freeze the
+     * inspector — that is locked — so this sentence must not claim it does.
+     */
+    pinSplit:
+      "The pin is the canvas and export axis. The selected part is the inspector and script axis.",
+    /**
+     * Held-pin title. Names the source part when it is not the rail selection,
+     * so hold-jig + select-kerf_card does not read as if kerf_card is on screen.
+     */
+    pinnedBanner: (heldFrom: string | null, selected: string | null): string => {
+      if (heldFrom !== null && selected !== null && heldFrom !== selected) {
+        return `Showing a held artifact from ${heldFrom}, not ${selected}. ${copy.header.pinSplit}`;
+      }
+      return `Showing a held artifact, not the current build. ${copy.header.pinSplit}`;
+    },
     unpinned: "Following the current build",
     /**
      * §4.7: "Disabled requires a `reason` prop… a disabled control in this app
@@ -68,6 +83,16 @@ export const copy = {
      */
     holdUnavailable:
       "There is no artifact to hold: this part has no build whose artifact the workspace could pin.",
+    /**
+     * #90: the same sentence written for the other direction. Following current
+     * with no current build would discard the held artifact for nothing.
+     */
+    followUnavailable: (part: string | null): string =>
+      part === null
+        ? "There is no current build to follow: no part is selected, so there is no artifact the workspace could pin."
+        : `There is no current build to follow: ${part} has no artifact the workspace could pin.`,
+    /** #83: the pin + Export + BOM cluster. */
+    chromeGroup: "Artifact pin, export, and BOM",
   },
 
   /**

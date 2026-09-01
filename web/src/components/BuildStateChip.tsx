@@ -100,8 +100,8 @@ export function BuildStateBadge({
   if (clipped) {
     return (
       <span className={styles["wrap"]}>
-        <Fact source="build.status" value={build.status} className={styles["hidden"]} />
-        <Fact source="build.current" value={build.current} className={styles["hidden"]} />
+        <Fact source="build.status" value={build.status} className={styles["hidden"]} silent />
+        <Fact source="build.current" value={build.current} className={styles["hidden"]} silent />
       </span>
     );
   }
@@ -112,7 +112,7 @@ export function BuildStateBadge({
           {copy.buildState[state]}
         </Fact>
       </Badge>
-      <Fact source="build.current" value={build.current} className={styles["hidden"]} />
+      <Fact source="build.current" value={build.current} className={styles["hidden"]} silent />
     </span>
   );
 }

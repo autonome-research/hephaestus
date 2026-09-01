@@ -67,9 +67,13 @@ export interface ArtifactPinProps {
 export function ArtifactPin({ build }: ArtifactPinProps): React.JSX.Element {
   const ref = useWorkspace((s) => s.artifact_ref);
   const mode = useWorkspace((s) => s.pin_mode);
+  const selected = useWorkspace((s) => s.part);
   const held = mode === "pinned";
   const currentRef = build?.artifact_ref ?? null;
   const state = buildState(build);
+  const heldFrom = workspaceStore.heldFromPart();
+  const banner = copy.header.pinnedBanner(heldFrom, selected);
+  const followBlocked = currentRef === null;
 
   return (
     <div
@@ -77,12 +81,15 @@ export function ArtifactPin({ build }: ArtifactPinProps): React.JSX.Element {
       data-pin-mode={mode}
       data-testid="artifact-pin"
       {...(state === null ? {} : { "data-build-state": state })}
+      {...(heldFrom !== null && selected !== null && heldFrom !== selected
+        ? { "data-pin-from": heldFrom }
+        : {})}
       title={
         ref === null
           ? held
-            ? copy.header.pinnedBanner
+            ? banner
             : copy.header.unpinned
-          : `${ref}. ${held ? copy.header.pinnedBanner : copy.header.unpinned}`
+          : `${ref}. ${held ? banner : copy.header.unpinned}`
       }
     >
       {ref === null ? null : (
@@ -112,20 +119,31 @@ export function ArtifactPin({ build }: ArtifactPinProps): React.JSX.Element {
         <span className={styles["absent"]}>{copy.absent.unavailable}</span>
       ) : null}
       {held ? (
-        <Button
-          variant="secondary"
-          title={copy.header.followCurrentExplain}
-          onClick={() => {
-            workspaceStore.followCurrent(currentRef);
-          }}
-          data-pin-action="follow"
-        >
-          {copy.header.followCurrent}
-        </Button>
+        followBlocked ? (
+          <Button
+            variant="secondary"
+            disabled
+            reason={copy.header.followUnavailable(selected)}
+            data-pin-action="follow"
+          >
+            {copy.header.followCurrent}
+          </Button>
+        ) : (
+          <Button
+            variant="secondary"
+            title={copy.header.followCurrentExplain}
+            onClick={() => {
+              workspaceStore.followCurrent(currentRef);
+            }}
+            data-pin-action="follow"
+          >
+            {copy.header.followCurrent}
+          </Button>
+        )
       ) : ref === null ? null : (
         <Button
           variant="secondary"
-          title={copy.header.pinnedBanner}
+          title={copy.header.pinSplit}
           onClick={() => {
             workspaceStore.hold(ref);
           }}

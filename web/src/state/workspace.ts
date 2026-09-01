@@ -283,12 +283,23 @@ export class PinAuthorityError extends Error {}
  */
 export class WorkspaceStore {
   private state: WorkspaceState;
+  /**
+   * The part that was selected when `hold()` ran. Not URL state: §4.5's closed
+   * record does not grow a field for a sentence. The chip uses it to name which
+   * part a held artifact came from when the rail has moved on (#78).
+   */
+  private heldFrom: string | null = null;
   private readonly listeners = new Set<() => void>();
 
   constructor(initial: WorkspaceState = DEFAULT_STATE) {
     this.state = initial;
     this.subscribe = this.subscribe.bind(this);
     this.getSnapshot = this.getSnapshot.bind(this);
+  }
+
+  /** The part a held artifact was taken from, or `null` when not held / unknown. */
+  heldFromPart(): string | null {
+    return this.state.pin_mode === "pinned" ? this.heldFrom : null;
   }
 
   subscribe(listener: () => void): () => void {
@@ -320,6 +331,7 @@ export class WorkspaceStore {
 
   /** An explicit user act: hold this artifact, whatever `current` becomes. */
   hold(ref: string): void {
+    this.heldFrom = this.state.part;
     this.commit({ ...this.state, artifact_ref: ref, pin_mode: "pinned" });
   }
 
@@ -329,6 +341,7 @@ export class WorkspaceStore {
    * taken against the held artifact and does not transfer to another one.
    */
   followCurrent(currentRef: string | null): void {
+    this.heldFrom = null;
     this.commit({
       ...this.state,
       artifact_ref: currentRef,
@@ -350,6 +363,12 @@ export class WorkspaceStore {
 
   /** Adopt a whole state — a browser back/forward, or a hydrated URL. */
   reset(state: WorkspaceState): void {
+    if (state.pin_mode !== "pinned") {
+      this.heldFrom = null;
+    } else if (state.artifact_ref !== this.state.artifact_ref) {
+      // A pasted URL can hold a ref without saying which part minted it.
+      this.heldFrom = null;
+    }
     this.commit(state);
   }
 

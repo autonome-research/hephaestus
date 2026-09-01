@@ -37,6 +37,12 @@ export interface FactProps {
   readonly className?: string | undefined;
   /** Renders a ref or a hash in the mono face without changing the data. */
   readonly mono?: boolean | undefined;
+  /**
+   * Keep `data-source` / `data-value` and drop the text from the accessibility
+   * tree. The clipped `build.current` leaf is a boolean hook, not a sentence
+   * (#96): announcing the bare word `true` / `false` is the defect.
+   */
+  readonly silent?: boolean | undefined;
 }
 
 /** The canonical string form of a value, used for `data-value` and the default text. */
@@ -45,13 +51,25 @@ function serialize(value: FactProps["value"]): string {
   return String(value);
 }
 
-export function Fact({ source, value, children, className, mono }: FactProps): React.JSX.Element {
+export function Fact({
+  source,
+  value,
+  children,
+  className,
+  mono,
+  silent,
+}: FactProps): React.JSX.Element {
   const text = serialize(value);
   const classes = [styles["fact"], mono === true ? styles["mono"] : null, className]
     .filter((c): c is string => typeof c === "string" && c !== "")
     .join(" ");
   return (
-    <span className={classes} data-source={source} data-value={text}>
+    <span
+      className={classes}
+      data-source={source}
+      data-value={text}
+      {...(silent === true ? { "aria-hidden": true as const } : {})}
+    >
       {children ?? text}
     </span>
   );

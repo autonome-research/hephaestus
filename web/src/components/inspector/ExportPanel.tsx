@@ -120,9 +120,16 @@ export interface Submission {
   readonly sheet: DrawingSheet;
   readonly docKind: DocKind;
   readonly artifactRef: string | null;
+  /**
+   * The route path parameter, and the tool argument `name`. A held pin can
+   * outlive a rail click (#100): hold jig, select kerf_card, export STEP —
+   * that is a different submission than the jig's, and a key that omits the
+   * part is `key_payload_mismatch` for the life of the page.
+   */
+  readonly part: string | null;
 }
 
-const INITIAL: Omit<Submission, "artifactRef"> = {
+const INITIAL: Omit<Submission, "artifactRef" | "part"> = {
   subject: "export",
   format: "step",
   layout: "as_built",
@@ -140,16 +147,19 @@ const INITIAL: Omit<Submission, "artifactRef"> = {
  * The artifact ref is in the signature because it is a field of the request —
  * exporting the same format from a different pin is a different submission, and
  * reusing the key across the two would be `key_payload_mismatch` by the server's
- * own reckoning.
+ * own reckoning. The part is in it for the same reason: it is the route's path
+ * parameter and it lands in the tool arguments as `name` (#100).
  */
-function signature(submission: Submission): string {
+export function signature(submission: Submission): string {
   const parts: readonly string[] =
     submission.subject === "export"
       ? [submission.format, submission.layout, submission.blankWidth, submission.blankHeight]
       : submission.subject === "drawing"
         ? [submission.drawingKind, submission.sheet]
         : [submission.docKind];
-  return [submission.subject, submission.artifactRef ?? "", ...parts].join("|");
+  return [submission.subject, submission.part ?? "", submission.artifactRef ?? "", ...parts].join(
+    "|",
+  );
 }
 
 /** The kind segment of an artifact ref — the only thing this panel reads off one. */
@@ -244,7 +254,7 @@ export function ExportView(props: ExportViewProps): React.JSX.Element {
     keyof typeof copy.export.refusals | null
   >(null);
 
-  const submission: Submission = { ...fields, artifactRef: pinned };
+  const submission: Submission = { ...fields, artifactRef: pinned, part };
   // One key per distinct field set (§22.2's TIGHTENING), minted by the same
   // function the request uses so the attribute a test reads and the header the
   // server receives cannot be two different keys.
@@ -475,7 +485,6 @@ export function ExportView(props: ExportViewProps): React.JSX.Element {
           <div className={styles["actions"]}>
             <Button
               variant="primary"
-              icon="download"
               data-export-run=""
               data-export-key={idempotencyKey}
               {...(blockerReason !== null
@@ -492,7 +501,7 @@ export function ExportView(props: ExportViewProps): React.JSX.Element {
 
         {refusal === null ? null : (
           <PanelSection eyebrow={copy.export.refusalHeading}>
-            <PanelNote className={styles["span"]} data-export-refusal={refusal}>
+            <PanelNote className={styles["span"]} live="assertive" data-export-refusal={refusal}>
               {copy.export.refusals[refusal]}
             </PanelNote>
           </PanelSection>

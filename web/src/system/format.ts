@@ -112,13 +112,33 @@ export function formatValue(value: unknown): string {
 export const CHIP_REF_WIDTH = 22;
 
 /**
+ * `artifact:<kind>:<algo>:<digest>` — the only ref grammar the pin and the
+ * composer chips spend their width on. Spending it on `artifact:build:` is what
+ * printed `artifact:buil…` in a 22-glyph chip (#57).
+ */
+const ARTIFACT_REF = /^artifact:([^:]+):([^:]+):(.+)$/;
+
+/**
  * A content-addressed ref, shortened for a chip while staying identifiable.
  *
- * Head and tail, never a bare `.slice(-10)`: `ScriptEditor`'s status bar shipped
- * two different refs both rendered `.slice(-10)`, which collided on the fixture
- * and printed the same hash twice with no labels (§4.7).
+ * Artifact refs print `kind · <digest prefix>` so the operator sees the hash,
+ * not the scheme. Other strings keep head and tail, never a bare `.slice(-10)`:
+ * `ScriptEditor`'s status bar shipped two different refs both rendered
+ * `.slice(-10)`, which collided on the fixture and printed the same hash twice
+ * with no labels (§4.7).
  */
 export function formatRef(ref: string, width = 34): string {
+  const artifact = ARTIFACT_REF.exec(ref);
+  if (artifact !== null) {
+    const kind = artifact[1] ?? "";
+    const digest = artifact[3] ?? "";
+    const prefix = digest.slice(0, 8);
+    const compact = `${kind} · ${prefix}`;
+    if (compact.length <= width) return compact;
+    // A long kind (build-checkpoint) still yields the digest, not the scheme.
+    if (prefix.length > 0 && prefix.length <= width) return prefix;
+    return digest.slice(0, Math.max(0, width));
+  }
   if (ref.length <= width) return ref;
   const tail = 8;
   // Below `tail + 2` there is no room for a head, an ellipsis and a tail, and
