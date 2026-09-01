@@ -285,6 +285,57 @@ describe("artifact pin — one chip, one state word", () => {
     expect(node.textContent).not.toContain(copy.buildState.preview);
   });
 
+  it("keeps both build fields attributed WHILE HELD, which is the G5.5/G5.6 path", () => {
+    // The first cut of this chip chose between the `held` word and the badge
+    // with a ternary, so while held the badge never mounted and both build
+    // fields went with it — on the one path §4.1 says the operator must not be
+    // able to forget which build they are looking at. Same strength as the
+    // following-current case below; only the drawn badge differs.
+    const node = pin({ artifact_ref: REF_A, pin_mode: "pinned" }, build({ current: false }));
+    expect(node.getAttribute("data-build-state")).toBe("preview");
+    expect(node.querySelector('[data-source="build.status"]')?.getAttribute("data-value")).toBe("ok");
+    expect(node.querySelector('[data-source="build.current"]')?.getAttribute("data-value")).toBe(
+      "false",
+    );
+    expect(node.querySelector('[data-source="build.artifact_ref"]')?.getAttribute("data-value")).toBe(
+      REF_A,
+    );
+    // §3.4: `data-build-state` is the pin chip's own, minted once. `node` IS the
+    // chip, so a second copy would show up as a DESCENDANT carrying it.
+    expect(node.querySelectorAll("[data-build-state]")).toHaveLength(0);
+  });
+
+  it("mounts the build fields on every state the server answered for", () => {
+    // Enumerated rather than sampled: the defect was one branch of a ternary,
+    // and a per-state assertion is what makes another one impossible to add
+    // without a failure.
+    const states = [
+      { over: {}, expected: "current" },
+      { over: { current: false }, expected: "preview" },
+      { over: { status: "error" as const, current: false }, expected: "failed" },
+      { over: { status: "not_built" as const, current: false }, expected: "not_built" },
+    ];
+    for (const mode of ["current", "pinned"] as const) {
+      for (const { over, expected } of states) {
+        const node = pin({ artifact_ref: REF_A, pin_mode: mode }, build(over));
+        expect(node.getAttribute("data-build-state"), `${mode}/${expected}`).toBe(expected);
+        expect(
+          node.querySelector('[data-source="build.status"]'),
+          `${mode}/${expected} status`,
+        ).not.toBeNull();
+        expect(
+          node.querySelector('[data-source="build.current"]'),
+          `${mode}/${expected} current`,
+        ).not.toBeNull();
+        act(() => {
+          mounted?.root.unmount();
+        });
+        mounted?.host.remove();
+        mounted = null;
+      }
+    }
+  });
+
   it("says `not built` once, with no ref, no hold, and no fourth label", () => {
     const node = pin(
       { artifact_ref: null, pin_mode: "current" },

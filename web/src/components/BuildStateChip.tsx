@@ -72,11 +72,39 @@ const BADGE: Readonly<Record<BuildState, BadgeStatus>> = {
 
 export function BuildStateBadge({
   build,
+  clipped = false,
 }: {
   readonly build: BuildDocument | undefined;
+  /**
+   * Mount the two build fields without drawing the badge.
+   *
+   * The held pin prints its OWN word (`ArtifactPin`), and two state words in one
+   * chip is the defect §4.1's amendment closed. But `build.status` and
+   * `build.current` are facts about the build the operator is looking at, and
+   * G5.5/G5.6 — a held artifact — is precisely the path where they must be
+   * readable. Unmounting them there would make the amendment's claim that they
+   * stay false exactly where it matters most.
+   *
+   * So the fields stay and the badge does not. The two `<Fact>`s carry `.hidden`
+   * INDIVIDUALLY rather than the wrap carrying it around a whole badge: a
+   * clipped node has to be a leaf. `overflow: hidden` on a 1px box clips what is
+   * *painted*, not the layout of what is inside it, so a `Badge` under a clipped
+   * wrap would still report a full-width box to anything measuring the document
+   * — including §3.13.1's contrast sweep, which skips a box only when it is 2px
+   * or smaller. This is the same 1px leaf `build.current` has always used.
+   */
+  readonly clipped?: boolean | undefined;
 }): React.JSX.Element | null {
   const state = buildState(build);
   if (state === null || build === undefined) return null;
+  if (clipped) {
+    return (
+      <span className={styles["wrap"]}>
+        <Fact source="build.status" value={build.status} className={styles["hidden"]} />
+        <Fact source="build.current" value={build.current} className={styles["hidden"]} />
+      </span>
+    );
+  }
   return (
     <span className={styles["wrap"]} title={copy.header.buildState}>
       <Badge status={BADGE[state]}>

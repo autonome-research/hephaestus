@@ -38,6 +38,18 @@
 // Both `data-pin-mode` and `data-build-state` stay on the chip, and
 // `build.status` / `build.current` / `build.artifact_ref` keep their `<Fact>`
 // attribution, so the DOM contract the e2e reads is unchanged by the collapse.
+//
+// THAT LAST SENTENCE WAS A LIE FOR ONE STATE, and it is worth naming because it
+// is the state the whole chip exists for. The first cut of this collapse chose
+// between the `held` word and `BuildStateBadge` with a ternary, so while held the
+// badge never mounted — and `build.status` and `build.current` went with it. The
+// pin's own §4.1 quote says a held artifact is "exactly the case where a user
+// must not be able to forget which build they are looking at", so unmounting the
+// two fields that say which build it is, on that path alone, is the collapse
+// eating the fact it was supposed to be clarifying. The badge is now mounted
+// whenever there is a build document and takes `clipped` while held: one visible
+// word, both fields attributed. `data-build-state` stays on this chip and is not
+// re-minted on the badge.
 
 import type { BuildDocument } from "../api/types";
 import { copy } from "../copy";
@@ -78,18 +90,25 @@ export function ArtifactPin({ build }: ArtifactPinProps): React.JSX.Element {
           {formatRef(ref, CHIP_REF_WIDTH)}
         </Fact>
       )}
-      {/* The one word. `held` is the pin axis and outranks the build state while
-          it is true — a held artifact is the state §4.1 says the operator must
-          not be able to forget — and every other case is the build's own. */}
+      {/* The one VISIBLE word. `held` is the pin axis and outranks the build
+          state while it is true — a held artifact is the state §4.1 says the
+          operator must not be able to forget — and every other case is the
+          build's own. */}
       {held ? (
         <span className={styles["mode"]} data-pin-state="held">
           {copy.pinMode.pinned}
         </span>
-      ) : state !== null ? (
-        <BuildStateBadge build={build} />
-      ) : ref === null ? (
-        // No ref and no build document: the workspace has nothing to report
-        // about an artifact, and says which kind of nothing that is.
+      ) : null}
+      {/* The badge is mounted whenever the server gave us a build, INCLUDING
+          while held — `clipped` drops the drawn badge and keeps `build.status`
+          and `build.current` as 1px facts. Skipping the component entirely on
+          the held path is what the first cut of this chip did, and it unmounted
+          both fields on exactly the G5.5/G5.6 path they exist for. */}
+      {state !== null ? (
+        <BuildStateBadge build={build} clipped={held} />
+      ) : ref === null && !held ? (
+        // No ref, no build document, and not held: the workspace has nothing to
+        // report about an artifact, and says which kind of nothing that is.
         <span className={styles["absent"]}>{copy.absent.unavailable}</span>
       ) : null}
       {held ? (

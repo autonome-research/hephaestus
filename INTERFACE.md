@@ -1494,10 +1494,22 @@ what let an unbuilt part print four labels for one fact: `unavailable` (no ref),
 state word), and `not built` (build state). The build-state badge renders inside
 the pin chip, which is the element the state is about, and the word is the most
 specific state that is true: the build state while following current, `held`
-while held, and no hold control at all when there is no artifact to hold. Both
-`data-pin-mode` and `data-build-state` stay on the chip and `build.status` /
-`build.current` keep their `<Fact>` attribution, so the DOM contract is
-unchanged. The hold control's label becomes a verb.
+while held, and no hold control at all when there is no artifact to hold. The
+hold control's label becomes a verb.
+
+**One word is a claim about what is DRAWN, never about what is reported.**
+`data-pin-mode` and `data-build-state` stay on the chip, and `build.status` /
+`build.current` keep their `<Fact>` attribution **in every state the server
+answered for, `held` included** — G5.5/G5.6 is the path this chip exists for, and
+a collapse that unmounted the two fields naming the build would be eating the
+fact it is supposed to be clarifying. While held the badge is *clipped* by the
+1px recipe rather than skipped, so the two fields are readable and the drawn word
+is still only `held`. Each clipped node is a leaf: `overflow: hidden` on a 1px
+box clips what is painted, not the layout of what is inside it, so clipping a
+wrapper around a whole `Badge` would still report a full-width box to anything
+measuring the document — including §3.13.1's contrast sweep, which skips a box
+only at 2px or smaller. `data-build-state` is minted on the pin chip and on
+nothing inside it.
 
 Export and BOM remain **two visible icon-only controls** in the bar
 (`[data-chrome-export]` / `[data-chrome-bom]`, issue #12). Neither is moved
