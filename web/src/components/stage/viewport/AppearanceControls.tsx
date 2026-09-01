@@ -48,7 +48,7 @@ const BEHIND_VIEW = ["wireframe", "ortho", "triad", "materialOverride"] as const
 function FitButton({ canFit, onFit }: AppearanceControlsProps): React.JSX.Element {
   return canFit ? (
     <Button
-      variant="quiet"
+      variant="secondary"
       data-appearance-control="fit"
       title={copy.viewport.appearance.fit.explain}
       onClick={onFit}
@@ -57,7 +57,7 @@ function FitButton({ canFit, onFit }: AppearanceControlsProps): React.JSX.Elemen
     </Button>
   ) : (
     <Button
-      variant="quiet"
+      variant="secondary"
       data-appearance-control="fit"
       disabled
       reason={copy.viewport.appearance.fit.disabled}

@@ -50,7 +50,7 @@ export type { PanelBodyProps, PanelHeaderProps, PanelProps } from "./Panel";
 export { Popover } from "./Popover";
 export type { PopoverProps } from "./Popover";
 
-export { TabBar } from "./TabBar";
+export { TabBar, tabControlId } from "./TabBar";
 export type { TabBarProps, TabSpec } from "./TabBar";
 
 export { Tree, TreeGroup, TreeRow } from "./TreeRow";

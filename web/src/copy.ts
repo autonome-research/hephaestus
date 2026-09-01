@@ -36,6 +36,16 @@ export const copy = {
     hint: "The printed address looks like http://127.0.0.1:8760/#t=…",
   },
 
+  /**
+   * §3.13.4 skip links. They land on the canvas (`#stage`) and the composer
+   * (`#composer`) so Tab does not have to walk the rail and overlay chrome.
+   */
+  skip: {
+    links: "Skip links",
+    stage: "Skip to stage",
+    composer: "Skip to composer",
+  },
+
   header: {
     project: "Project",
     /**

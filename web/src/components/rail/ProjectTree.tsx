@@ -28,13 +28,13 @@
 // and current, and this tree shows the two axes side by side without joining
 // them.
 //
-// Below the parts list sit five closed sections (Analyses / Docs / Globals /
-// Imports / Materials). They are listed even when empty. The engine has no
-// HTTP projection for those inventories, so an expanded section is an
-// empty-honest absence — not a catalog invented here. Git dirty stays in
-// `GitDirty` (§13.1); this tree does not hide `.heph/` rows.
+// Parts and the five closed sections (Analyses / Docs / Globals / Imports /
+// Materials) are one `role="tree"` (#65). Collapsed is a tree-item state, not
+// a second widget. Sections stay listed even when empty; an expanded section
+// is an empty-honest absence. Git dirty stays in `GitDirty` (§13.1); this
+// tree does not hide `.heph/` rows.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useBuild, useParts } from "../../api/queries";
 import { copy } from "../../copy";
 import type { PartSummary } from "../../api/types";
@@ -124,27 +124,27 @@ export function ProjectTree(): React.JSX.Element {
               </>
             }
           />
-        ) : (
-          <Tree label={copy.rail.partsHeading}>
-            {parts.data.parts.map((part) => (
-              <PartNode
-                key={part.name}
-                part={part}
-                dirty={dirty}
-                selected={selected === part.name}
-              />
-            ))}
-          </Tree>
-        )}
-        <ProjectSectionList open={open} onToggle={toggle} />
+        ) : null}
+        <Tree label={copy.rail.title}>
+          {parts.data?.parts.map((part) => (
+            <PartNode
+              key={part.name}
+              part={part}
+              dirty={dirty}
+              selected={selected === part.name}
+            />
+          ))}
+          <ProjectSectionList open={open} onToggle={toggle} />
+        </Tree>
       </PanelBody>
     </Panel>
   );
 }
 
 /**
- * The five closed sections, as a tree. Split out so a test can assert the
+ * The five closed sections, as tree items. Split out so a test can assert the
  * inventory and the empty-honest expanded body without standing up `GET /parts`.
+ * The caller wraps them in the same `Tree` as the parts (#65).
  */
 export function ProjectSectionList({
   open,
@@ -154,7 +154,7 @@ export function ProjectSectionList({
   readonly onToggle: (id: ProjectTreeSection) => void;
 }): React.JSX.Element {
   return (
-    <Tree label={copy.rail.title}>
+    <>
       {PROJECT_TREE_SECTIONS.map((id) => {
         const expanded = open.has(id);
         return (
@@ -189,7 +189,7 @@ export function ProjectSectionList({
           </TreeRow>
         );
       })}
-    </Tree>
+    </>
   );
 }
 
@@ -206,6 +206,12 @@ function PartNode({ part, dirty, selected }: PartNodeProps): React.JSX.Element {
   const build = useBuild(part.name, selected);
   const entry = dirty.byPart.get(part.name);
   const built = build.data;
+  const [expanded, setExpanded] = useState(selected);
+  const canExpand = selected && built !== undefined && built.geometries.length > 0;
+
+  useEffect(() => {
+    if (selected) setExpanded(true);
+  }, [selected]);
 
   const open = (): void => {
     workspaceStore.update({ part: part.name, selection: null, measure: null });
@@ -215,9 +221,15 @@ function PartNode({ part, dirty, selected }: PartNodeProps): React.JSX.Element {
     <TreeRow
       depth={0}
       selected={selected}
-      expanded={selected}
+      {...(canExpand
+        ? {
+            expanded,
+            onToggle: () => {
+              setExpanded((current) => !current);
+            },
+          }
+        : {})}
       onSelect={open}
-      onToggle={open}
       data-part={part.name}
       data-tree-row="part"
       label={<Fact source="parts[].name" value={part.name} className={styles["partName"]} />}
@@ -240,7 +252,7 @@ function PartNode({ part, dirty, selected }: PartNodeProps): React.JSX.Element {
         </>
       }
     >
-      {selected && built !== undefined && built.geometries.length > 0 ? (
+      {canExpand && expanded && built !== undefined ? (
         <TreeGroup>
           {built.geometries.map((geometry, index) => (
             <TreeRow

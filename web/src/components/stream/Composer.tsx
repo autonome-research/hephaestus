@@ -499,7 +499,10 @@ export function Composer(props: ComposerProps): React.JSX.Element {
 
   return (
     <form
+      id="composer"
       className={styles["composer"]}
+      aria-label={copy.composer.label}
+      tabIndex={-1}
       data-composer=""
       data-session-id={sessionId ?? ""}
       data-profile={profile ?? ""}
@@ -639,7 +642,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
           {post.phase === "sending" ? copy.composer.sending : copy.composer.send}
         </Button>
         <Button
-          variant="quiet"
+          variant="secondary"
           onClick={cancelTurn}
           data-composer-cancel=""
           {...(cancellable ? {} : { disabled: true as const, reason: cancelWhy })}
@@ -647,7 +650,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
           {copy.composer.cancel}
         </Button>
         <Button
-          variant="quiet"
+          variant="secondary"
           onClick={() => {
             setDisclosed((open) => !open);
           }}

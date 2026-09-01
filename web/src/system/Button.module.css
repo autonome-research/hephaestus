@@ -18,8 +18,11 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-1);
-  /* §3.13.6: the floor is a hit area, reached by padding. */
+  /* §3.13.6: the floor is a hit area, reached by padding. Icon-only
+     buttons used to rely on padding + glyph for width and could fall
+     below 24px if padding shrank (#87). */
   min-height: var(--target-min);
+  min-width: var(--target-min);
   padding: var(--pad-control);
   border: 1px solid var(--border-control);
   border-radius: var(--radius-control);

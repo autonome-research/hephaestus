@@ -37,6 +37,36 @@
   background: var(--surface-app);
 }
 
+/* §3.13.4: skip past the rail and overlay chrome to the canvas and composer.
+   Hidden until focused so they do not add a row to the 44px header. */
+.skip {
+  position: absolute;
+  z-index: 40;
+}
+
+.skip a {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.skip a:focus-visible {
+  width: auto;
+  height: auto;
+  clip-path: none;
+  overflow: visible;
+  left: var(--space-2);
+  top: var(--space-2);
+  padding: var(--pad-control);
+  background: var(--surface-overlay);
+  color: var(--ink-strong);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+}
+
 .shell > header {
   flex: none;
   height: var(--header-height);

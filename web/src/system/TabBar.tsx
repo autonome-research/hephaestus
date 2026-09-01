@@ -50,6 +50,13 @@ export interface TabBarProps<Id extends string> {
    * same roving tabindex, arrows, Home/End; Tab still leaves the list.
    */
   readonly layout?: "bar" | "stack" | undefined;
+  /** The `tabpanel` this list controls. Each tab emits `aria-controls` (#82). */
+  readonly panelId?: string | undefined;
+}
+
+/** Stable element id for a tab, so a `tabpanel` can point back with `aria-labelledby`. */
+export function tabControlId(attr: `data-${string}`, id: string): string {
+  return `${attr.slice("data-".length)}-${id}`;
 }
 
 export function TabBar<Id extends string>({
@@ -60,6 +67,7 @@ export function TabBar<Id extends string>({
   label,
   className,
   layout = "bar",
+  panelId,
 }: TabBarProps<Id>): React.JSX.Element {
   const listRef = useRef<HTMLDivElement | null>(null);
 
@@ -100,8 +108,10 @@ export function TabBar<Id extends string>({
           key={tab.id}
           type="button"
           role="tab"
+          id={tabControlId(attr, tab.id)}
           aria-selected={tab.id === selected}
           tabIndex={tab.id === selected ? 0 : -1}
+          {...(panelId === undefined ? {} : { "aria-controls": panelId })}
           className={cx(styles["tab"], roles["label"])}
           title={tab.title}
           style={tab.style}

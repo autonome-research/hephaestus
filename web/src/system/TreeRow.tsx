@@ -19,11 +19,36 @@
 // Left collapses (or ascends), Home/End go to the ends. The rows themselves are
 // a flat, ordered list with a `depth`, which is what the rail already has.
 
-import { useRef, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Icon } from "./icons";
 import { cx, dataProps, type DataAttributes } from "./dataAttrs";
 import styles from "./TreeRow.module.css";
 import roles from "./type.module.css";
+
+/**
+ * The tree's tab stop is a focus-holder, not a selection. A disclosure-only
+ * tree has no `aria-selected="true"` row; it still needs exactly one
+ * `tabIndex={0}` (#102). Selected, when present, wins; otherwise the first
+ * visible row holds the stop. Arrow keys move the holder with focus.
+ */
+type TreeFocus = {
+  readonly holderId: string | null;
+  readonly claim: (id: string, selected: boolean) => void;
+  readonly release: (id: string) => void;
+  readonly moveHolder: (id: string) => void;
+};
+
+const TreeFocusContext = createContext<TreeFocus | null>(null);
 
 export interface TreeProps {
   readonly label: string;
@@ -40,6 +65,55 @@ export interface TreeProps {
  */
 export function Tree({ label, className, children }: TreeProps): React.JSX.Element {
   const ref = useRef<HTMLUListElement | null>(null);
+  const rows = useRef(new Map<string, { selected: boolean; order: number }>());
+  const order = useRef(0);
+  const [holderId, setHolderId] = useState<string | null>(null);
+
+  const reconcile = useCallback((): void => {
+    let first: string | null = null;
+    let firstOrder = Infinity;
+    let selected: string | null = null;
+    for (const [id, info] of rows.current) {
+      if (info.order < firstOrder) {
+        firstOrder = info.order;
+        first = id;
+      }
+      if (info.selected) selected = id;
+    }
+    const next = selected ?? first;
+    setHolderId((current) => (current === next ? current : next));
+  }, []);
+
+  const claim = useCallback(
+    (id: string, selected: boolean): void => {
+      const existing = rows.current.get(id);
+      if (existing === undefined) {
+        rows.current.set(id, { selected, order: order.current });
+        order.current += 1;
+      } else {
+        rows.current.set(id, { selected, order: existing.order });
+      }
+      reconcile();
+    },
+    [reconcile],
+  );
+
+  const release = useCallback(
+    (id: string): void => {
+      rows.current.delete(id);
+      reconcile();
+    },
+    [reconcile],
+  );
+
+  const moveHolder = useCallback((id: string): void => {
+    if (rows.current.has(id)) setHolderId(id);
+  }, []);
+
+  const focus = useMemo(
+    (): TreeFocus => ({ holderId, claim, release, moveHolder }),
+    [holderId, claim, release, moveHolder],
+  );
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLUListElement>): void => {
     const root = ref.current;
@@ -83,19 +157,24 @@ export function Tree({ label, className, children }: TreeProps): React.JSX.Eleme
         return;
     }
     event.preventDefault();
-    items[next]?.focus();
+    const target = items[next];
+    const nextId = target?.getAttribute("data-tree-focus");
+    if (nextId !== null && nextId !== undefined) moveHolder(nextId);
+    target?.focus();
   };
 
   return (
-    <ul
-      ref={ref}
-      className={cx(styles["tree"], className)}
-      role="tree"
-      aria-label={label}
-      onKeyDown={onKeyDown}
-    >
-      {children}
-    </ul>
+    <TreeFocusContext.Provider value={focus}>
+      <ul
+        ref={ref}
+        className={cx(styles["tree"], className)}
+        role="tree"
+        aria-label={label}
+        onKeyDown={onKeyDown}
+      >
+        {children}
+      </ul>
+    </TreeFocusContext.Provider>
   );
 }
 
@@ -123,6 +202,19 @@ export function TreeRow(props: TreeRowProps): React.JSX.Element {
    * A test that only dispatches `click` still selects — `armed` stays false.
    */
   const armed = useRef(false);
+  const focusId = useId();
+  const treeFocus = useContext(TreeFocusContext);
+  const claim = treeFocus?.claim;
+  const release = treeFocus?.release;
+  useLayoutEffect(() => {
+    if (claim === undefined || release === undefined) return;
+    claim(focusId, selected);
+    return () => {
+      release(focusId);
+    };
+  }, [claim, release, focusId, selected]);
+  const tabIndex =
+    treeFocus === null ? (selected ? 0 : -1) : treeFocus.holderId === focusId ? 0 : -1;
   const select = (): void => {
     onSelect?.();
   };
@@ -131,7 +223,8 @@ export function TreeRow(props: TreeRowProps): React.JSX.Element {
       className={cx(styles["node"], className)}
       role="treeitem"
       aria-selected={selected}
-      tabIndex={selected ? 0 : -1}
+      tabIndex={tabIndex}
+      data-tree-focus={focusId}
       {...(expanded === undefined ? {} : { "aria-expanded": expanded })}
       {...dataProps(props)}
       onKeyDown={(event) => {

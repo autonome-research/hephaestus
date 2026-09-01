@@ -85,7 +85,10 @@ describe("Viewport — an empty well carries one state and no controls", () => {
 
   it("keeps the canvas itself, because the well is the CAD surface (§5)", () => {
     const host = mount();
-    expect(host.querySelector("[data-viewport-canvas]")).not.toBeNull();
+    const canvas = host.querySelector<HTMLCanvasElement>("[data-viewport-canvas]");
+    expect(canvas).not.toBeNull();
+    expect(canvas?.tabIndex).toBe(0);
+    expect(canvas?.id).toBe("stage");
   });
 });
 

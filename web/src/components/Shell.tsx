@@ -35,6 +35,7 @@ import { copy } from "../copy";
 import { useWorkspace } from "../state/react";
 import { shellStore } from "../state/shell";
 import { Button, Icon, useBreakpoint } from "../system";
+import roles from "../system/type.module.css";
 import { Header } from "./Header";
 import { RefusalBanner } from "./RefusalBanner";
 import { GitDirtyPanel } from "./rail/GitDirty";
@@ -91,6 +92,14 @@ export function Shell(): React.JSX.Element {
 
   return (
     <div className={styles["shell"]} data-pin-mode={pinMode}>
+      <nav className={styles["skip"]} aria-label={copy.skip.links}>
+        <a className={roles["label"]} href="#stage" data-skip="stage">
+          {copy.skip.stage}
+        </a>
+        <a className={roles["label"]} href="#composer" data-skip="composer">
+          {copy.skip.composer}
+        </a>
+      </nav>
       <Header
         railToggle={
           shell.railOverlay ? (

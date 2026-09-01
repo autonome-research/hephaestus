@@ -33,6 +33,9 @@ describe("AppearanceControls — bound to the pin, not a second inspector", () =
       expect(host.querySelector(`[data-appearance-control="${field}"]`)).not.toBeNull();
     }
     expect(host.querySelector('[data-appearance-control="fit"]')).not.toBeNull();
+    expect(host.querySelector('[data-appearance-control="fit"]')?.getAttribute("data-variant")).toBe(
+      "secondary",
+    );
     const order = [...host.querySelectorAll("[data-appearance-control]")].map((node) =>
       node.getAttribute("data-appearance-control"),
     );
