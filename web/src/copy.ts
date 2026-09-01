@@ -25,15 +25,18 @@ export const copy = {
     tagline: "workspace",
   },
 
-  /** §2.2: with no token the app renders one non-interactive panel. */
+  /** §2.2: with no token the app renders one absence panel. */
   noToken: {
     title: "No workspace token",
     body:
-      "This page was opened without a token, so it cannot talk to the workspace API. " +
+      "This page has no token held, so it cannot talk to the workspace API. " +
       "Start the server in the project directory and open the address it prints — " +
       "the token travels in the URL fragment and is never sent to any other host.",
     command: "heph serve --web",
     hint: "The printed address looks like http://127.0.0.1:8760/#t=…",
+    paste: "Workspace token",
+    pasteInvalid: "That does not look like a #t= address or a token.",
+    apply: "Hold this token",
   },
 
   header: {
@@ -1428,7 +1431,8 @@ export const copy = {
 
   errors: {
     title: "The server refused this request",
-    unauthorized: "The token this page holds was not accepted. Restart the server and reopen its address.",
+    unauthorized:
+      "The token this page holds was not accepted. Paste a new #t= value from the address the server prints, or restart the server and reopen its address.",
     retry: "Try again",
     reason: "Reason",
   },

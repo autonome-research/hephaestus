@@ -3,16 +3,16 @@
 //
 // The app root: the query client, the token gate, and the one server→pin edge.
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MissingTokenError, WorkspaceError } from "./api/client";
 import { useBuild, useParts } from "./api/queries";
-import { workspaceToken } from "./api/token";
+import { subscribeToken, workspaceToken } from "./api/token";
 import { NoToken } from "./components/NoToken";
 import { Shell } from "./components/Shell";
 import { useWorkspace, workspaceStore } from "./state/react";
 
-export const queryClient = new QueryClient({
+const QUERY_DEFAULTS: ConstructorParameters<typeof QueryClient>[0] = {
   defaultOptions: {
     queries: {
       // A refusal is the server's considered answer, not a transient failure.
@@ -26,7 +26,19 @@ export const queryClient = new QueryClient({
       refetchOnWindowFocus: true,
     },
   },
-});
+};
+
+/**
+ * The token this tab holds, subscribed so a live 401 remounts the gate (#80).
+ *
+ * `workspaceToken()` is not reactive on its own. `dropToken()` (and a paste
+ * recovery) notify; this hook is the one place the gate re-reads.
+ */
+function useHeldToken(): string | null {
+  const [token, setToken] = useState(workspaceToken);
+  useEffect(() => subscribeToken(() => setToken(workspaceToken())), []);
+  return token;
+}
 
 /**
  * The **only** path from a server response to the pin.
@@ -61,15 +73,24 @@ function DefaultPart(): null {
   return null;
 }
 
-export function App(): React.JSX.Element {
-  // §2.2: with no token, one non-interactive panel — and no query is issued,
-  // because every request would 401 and the panel is the answer either way.
-  if (workspaceToken() === null) return <NoToken />;
+function SignedInApp(): React.JSX.Element {
+  // A fresh client per hold: a 401 that remounts this tree must not keep the
+  // refusals of the token that was just forgotten.
+  const [client] = useState(() => new QueryClient(QUERY_DEFAULTS));
   return (
-    <QueryClientProvider client={queryClient}>
+    <QueryClientProvider client={client}>
       <DefaultPart />
       <CurrentBuildObserver />
       <Shell />
     </QueryClientProvider>
   );
+}
+
+export function App(): React.JSX.Element {
+  // §2.2: with no token, one panel — and no query is issued, because every
+  // request would 401 and the panel is the answer either way. The gate
+  // re-renders when the hold changes, so a live 401 cannot leave a zombie Shell.
+  const token = useHeldToken();
+  if (token === null) return <NoToken />;
+  return <SignedInApp />;
 }
