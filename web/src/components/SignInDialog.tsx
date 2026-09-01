@@ -24,7 +24,9 @@
 //   installing' and finds Hephaestus dead was misled by our silence."
 // * **The device code is large and the URI is a link the operator opens in a
 //   normal tab** (§23.4). The browser never talks to the provider; the sidecar
-//   does the polling.
+//   does the polling. This dialog polls `loginStatus` until complete or a named
+//   failure, and `cancelLogin` on dismiss — the API existed; the dialog did not
+//   call it.
 // * **The paste fallback explains the connection error before it happens**
 //   (§23.4). The redirect goes to a loopback address where nothing is
 //   listening — by decision, not by accident — so the operator sees a browser
@@ -37,12 +39,14 @@
 // carries `data-signin-flow`. Selectors that read copy would pin wording, which
 // §3 forbids.
 
-import { useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { WorkspaceError } from "../api/client";
 import {
   CREDENTIAL_SCOPES,
   beginLogin,
+  cancelLogin,
   completeLogin,
+  loginStatus,
   submitKey,
   type CredentialScope,
   type FlowDocument,
@@ -77,6 +81,47 @@ export function refusalText(error: unknown): string {
   return known[error.reason] ?? error.message;
 }
 
+const PENDING_FLOW = new Set(["authorization_pending", "awaiting_input", "slow_down"]);
+const FAILED_FLOW = new Set(["failed", "cancelled", "expired"]);
+
+/**
+ * What a `loginStatus` body means for an open device-code / authorize-url flow.
+ *
+ * The client polls THIS; the sidecar polls the provider (§23.4). Pending and
+ * `slow_down` stay 200. Completion is `flow.state === "complete"` or the
+ * status route flipping to `{type:"oauth"}`. A named failure stops the loop.
+ */
+export function loginPollOutcome(status: Record<string, unknown>): "pending" | "complete" | "failed" {
+  const reason = typeof status.reason === "string" ? status.reason : null;
+  if (reason === "authorization_pending" || reason === "slow_down") return "pending";
+  if (status.status === "error" && reason !== null) return "failed";
+
+  const nested = status.flow;
+  const flowState =
+    nested !== null && typeof nested === "object" && typeof (nested as { state?: unknown }).state === "string"
+      ? (nested as { state: string }).state
+      : typeof status.state === "string" &&
+          (PENDING_FLOW.has(status.state) || FAILED_FLOW.has(status.state) || status.state === "complete")
+        ? status.state
+        : null;
+
+  if (flowState === "complete" || status.type === "oauth") return "complete";
+  if (flowState !== null && FAILED_FLOW.has(flowState)) return "failed";
+  return "pending";
+}
+
+function pollIntervalMs(flow: FlowDocument, status: Record<string, unknown> | null): number {
+  const named = typeof status?.reason === "string" ? status.reason : null;
+  const nested = status?.flow;
+  const flowState =
+    nested !== null && typeof nested === "object" && typeof (nested as { state?: unknown }).state === "string"
+      ? (nested as { state: string }).state
+      : null;
+  const seconds = flow.interval_seconds ?? 2;
+  const slowed = named === "slow_down" || flowState === "slow_down";
+  return Math.max(0, (slowed ? seconds * 2 : seconds) * 1000);
+}
+
 export function SignInDialog(props: SignInDialogProps): React.JSX.Element {
   const { provider, open, onClose, onSignedIn } = props;
   const [mode, setMode] = useState<SignInMode>(
@@ -92,6 +137,52 @@ export function SignInDialog(props: SignInDialogProps): React.JSX.Element {
   const [busy, setBusy] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
   const [confirmRuns, setConfirmRuns] = useState<number | null>(null);
+
+  const dismiss = useCallback((): void => {
+    // Idempotent: closing an unstarted dialog is a no-op on the sidecar.
+    void cancelLogin(provider.id);
+    onClose();
+  }, [provider.id, onClose]);
+
+  useEffect(() => {
+    if (!open || flow === null) return;
+    let cancelled = false;
+    let timer = 0;
+    const tick = async (waitMs: number): Promise<void> => {
+      timer = window.setTimeout(() => {
+        void (async () => {
+          let status: Record<string, unknown> | null = null;
+          try {
+            status = await loginStatus(provider.id);
+            if (cancelled) return;
+            const outcome = loginPollOutcome(status);
+            if (outcome === "complete") {
+              onSignedIn();
+              onClose();
+              return;
+            }
+            if (outcome === "failed") {
+              const reason = typeof status.reason === "string" ? status.reason : "authorization_expired";
+              const known = copy.providers.refusal as Readonly<Record<string, string>>;
+              setRefusal(known[reason] ?? copy.errors.title);
+              return;
+            }
+          } catch (error) {
+            if (cancelled) return;
+            setRefusal(refusalText(error));
+            return;
+          }
+          if (cancelled) return;
+          void tick(pollIntervalMs(flow, status));
+        })();
+      }, waitMs);
+    };
+    void tick(pollIntervalMs(flow, null));
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [open, flow, provider.id, onSignedIn, onClose]);
 
   const run = async (work: () => Promise<void>): Promise<void> => {
     setBusy(true);
@@ -143,7 +234,7 @@ export function SignInDialog(props: SignInDialogProps): React.JSX.Element {
   return (
     <Popover
       open={open}
-      onClose={onClose}
+      onClose={dismiss}
       label={copy.providers.dialog.title}
       variant="dialog"
       data-signin-dialog={provider.id}

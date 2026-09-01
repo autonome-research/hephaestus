@@ -14,8 +14,18 @@
 // The rewrite happens **once, before anything else reads the hash**, because
 // §4.5's route lives in that same fragment and `#t=…` is not a route. `main.tsx`
 // calls `claimToken()` first for exactly that reason.
+//
+// Persistence is `sessionStorage` keyed to this origin — not a query string
+// (§2.2 forbids that) and not a fragment the workspace route then overwrites.
+// A 401 forgets the token and tells the App gate, so this tab remounts the
+// §2.2 panel instead of leaving a shell that 401s every subsequent request.
 
-const STORAGE_KEY = "hephaestus.workspace.token";
+export const TOKEN_STORAGE_KEY = "hephaestus.workspace.token";
+
+/** Why this tab has no token. `unauthorized` is a live §2.4 401, not absence at open. */
+export type TokenAbsence = "none" | "unauthorized";
+
+type TokenListener = () => void;
 
 /**
  * The `#t=` parameter, if this load carries one.
@@ -50,6 +60,18 @@ function session(): Storage | null {
 }
 
 let held: string | null = null;
+let absence: TokenAbsence = "none";
+const listeners = new Set<TokenListener>();
+
+function remember(token: string): void {
+  held = token;
+  absence = "none";
+  session()?.setItem(TOKEN_STORAGE_KEY, token);
+}
+
+function notify(): void {
+  for (const listener of listeners) listener();
+}
 
 /**
  * Take the token out of the URL fragment into `sessionStorage`, once.
@@ -61,24 +83,84 @@ export function claimToken(): string | null {
   const store = session();
   const fromHash = tokenFromHash(window.location.hash);
   if (fromHash !== null) {
-    held = fromHash;
-    store?.setItem(STORAGE_KEY, fromHash);
+    remember(fromHash);
     // Rewrite before the router reads the hash. `replaceState` and not
     // `pushState`: the token-bearing URL must not remain reachable by Back.
     window.history.replaceState(null, "", window.location.pathname + window.location.search);
     return held;
   }
-  held = store?.getItem(STORAGE_KEY) ?? null;
+  held = store?.getItem(TOKEN_STORAGE_KEY) ?? null;
+  // A page load has no live 401. Absence-at-open is `none` whether storage
+  // still holds a token or not; `unauthorized` is only set by `dropToken`.
+  absence = "none";
   return held;
 }
 
-/** The token this tab holds. `claimToken()` must have run first. */
+/**
+ * The token this tab holds.
+ *
+ * Falls back to `sessionStorage` when the in-memory hold is empty so a reload
+ * (new JS context, same origin, same tab) still has the token the page was
+ * given, even if `claimToken()` has not run again yet.
+ */
 export function workspaceToken(): string | null {
+  if (held !== null) return held;
+  held = session()?.getItem(TOKEN_STORAGE_KEY) ?? null;
   return held;
+}
+
+/** Why the gate is showing the no-token panel. */
+export function tokenAbsence(): TokenAbsence {
+  return absence;
+}
+
+/**
+ * Subscribe to hold / drop. The App gate remounts when the token this tab
+ * holds changes — a live 401 must not leave a zombie Shell (#80).
+ */
+export function subscribeToken(listener: TokenListener): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+/**
+ * A `#t=` value pasted into the no-token panel (#47).
+ *
+ * Accepts the printed address, a `#t=…` fragment, a `t=…` pair, or the bare
+ * token. A §4.5 route fragment is never a token — that is the explode collision.
+ */
+export function parsePastedToken(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (trimmed === "") return null;
+  try {
+    const fromUrl = tokenFromHash(new URL(trimmed).hash);
+    if (fromUrl !== null) return fromUrl;
+  } catch {
+    // Not an absolute URL; try the other shapes.
+  }
+  const hashAt = trimmed.indexOf("#");
+  if (hashAt >= 0) return tokenFromHash(trimmed.slice(hashAt));
+  const fromPair = tokenFromHash(trimmed);
+  if (fromPair !== null) return fromPair;
+  if (trimmed.startsWith("/") || trimmed.includes("?") || /\s/.test(trimmed)) return null;
+  return trimmed;
+}
+
+/** Hold a pasted `#t=` (or the token itself) and tell the gate. */
+export function holdPastedToken(raw: string): string | null {
+  const token = parsePastedToken(raw);
+  if (token === null) return null;
+  remember(token);
+  notify();
+  return token;
 }
 
 /** Forget the token — used when the server rejects it (§2.4 `unauthorized`). */
 export function dropToken(): void {
   held = null;
-  session()?.removeItem(STORAGE_KEY);
+  absence = "unauthorized";
+  session()?.removeItem(TOKEN_STORAGE_KEY);
+  notify();
 }

@@ -67,8 +67,9 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
   const response = await fetch(`${API_PREFIX}${path}`, { ...init, headers });
   if (response.status === 401) {
     // The token this tab holds is not the token the server minted — a restarted
-    // server mints a new one. Forgetting it puts the app back in §2.2's
-    // no-token panel instead of retrying a request that cannot succeed.
+    // server mints a new one. Forgetting it notifies the App gate, which
+    // remounts §2.2's no-token panel in this tab (§2.4 `unauthorized`) instead
+    // of leaving a shell that then 401s every request.
     dropToken();
   }
   return response;
