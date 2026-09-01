@@ -191,24 +191,19 @@ export function StreamPanel(): React.JSX.Element {
 
   // -- §7A.11, the observer's half ----------------------------------------
   //
-  // A live `terminal` frame for this session's run means an agent turn on this
-  // project just finished. Refetch the enumerated read keys; never merge, never
-  // move the pin. The counter is monotone so this fires once per completed run
-  // and not again on an unrelated re-render.
-  const seenTerminals = useRef(0);
-  useEffect(() => {
-    if (stream.terminals === seenTerminals.current) return;
-    seenTerminals.current = stream.terminals;
-    if (stream.terminals === 0) return;
-    refreshAfterTurn(client, part);
-  }, [stream.terminals, client, part]);
-
-  // Sidecar death produces neither a `terminal` nor a prompt response, so the
-  // effect above never fires and the rail stays stale (#59). A grade that
-  // means the process is gone is itself a turn-settled signal: refetch the
-  // same keys. A held pin is not written here — `observeCurrent` is already
-  // a no-op while held. Selecting a part `create_part` just added is a
-  // §4.5 amendment, not an advance of `pin_mode === "pinned"`.
+  // A live `terminal` for a run on this *project* is owned by
+  // `useProjectRefresh` (Shell), not this column: a delegated child writes
+  // from a session this tab is not showing, and a collapsed Stream unmounts
+  // this panel entirely (#92). The originating tab still refreshes from its
+  // prompt response in Composer.
+  //
+  // Sidecar death produces neither a `terminal` nor a prompt response, so
+  // without this path the rail stays stale (#59). A grade that means the
+  // process is gone is itself a turn-settled signal: refetch the same keys.
+  // A held pin is not written here — `observeCurrent` is already a no-op
+  // while held. Selecting a part `create_part` just added is a §4.5
+  // amendment, not an advance of `pin_mode === "pinned"`. The project
+  // observer repeats this for the collapsed-Stream band.
   const refreshedFault = useRef<RuntimeFault | null>(null);
   useEffect(() => {
     if (fault === null || !processGone(fault)) {

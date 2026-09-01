@@ -208,6 +208,11 @@ export const copy = {
     dirtyShort: "changed",
     dirtyOutsideParts: "Changed paths outside parts/",
     /**
+     * A dirty path the server attributed to a part that is no longer a row in
+     * `GET /parts` — typically deleted while `heph serve` was running (#95).
+     */
+    dirtyUnplaced: "Changed paths not on the part tree",
+    /**
      * §13.1 reports a dirty tree and never hides one, but `.heph/` is the
      * workspace's OWN store — blobs, the state db, the serve token, agent logs —
      * and on the fixture it was 30-odd untracked rows drowning the part tree in
@@ -399,6 +404,16 @@ export const copy = {
         explain:
           "Override every solid with the viewport part colour, at least 4.5:1 against the ground. Off restores the exporter's own material; it does not invent a new one.",
       },
+      /**
+       * The extras that do not need to sit on a 580px stage at rest (#60).
+       * Fit / iso / grid stay; wireframe, ortho, axes, material live here.
+       */
+      more: {
+        label: "View",
+        explain: "Wireframe, projection, axes, and the material override.",
+        show: "Show view options",
+        hide: "Hide view options",
+      },
     },
     viewCube: {
       label: "Standard views",
@@ -416,6 +431,9 @@ export const copy = {
       reset: "Collapse",
       /** §4.7: a disabled control always says why. */
       resetDisabled: "The assembly is already collapsed.",
+      /** A 1-solid sheet cannot explode; the slider starts collapsed (#60). */
+      noop: "This part is a single solid, so explode has nothing to separate.",
+      disclose: "Show explode",
     },
     section: {
       label: "Section",

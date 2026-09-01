@@ -25,3 +25,14 @@
   background: var(--surface-overlay);
   box-shadow: var(--elev-popover);
 }
+
+.more {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+}
+
+.more[hidden] {
+  display: none;
+}

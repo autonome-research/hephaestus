@@ -16,8 +16,7 @@
 //
 // It also forces the VOCABULARY to be honest: two statuses may not share an
 // icon id, so `info` and `dirty` take different ids rather than both taking
-// `dot`. That assertion is what makes §3.9's "five status hues for six statuses"
-// safe — `dirty` and `error` share a hue and are told apart by icon and word.
+// `dot`. `dirty` and `error` also take different hues (brass vs amber, #81).
 //
 // Clean-room hygiene (§3, §3.14): no assertion here is on a string of UI copy.
 // Where a visible distinction is the obligation, the assertion is that two
@@ -42,6 +41,9 @@ import {
   StatusBadge,
 } from "../../src/system";
 import { copy } from "../../src/copy";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 function render(element: ReactElement): HTMLElement {
   const host = document.createElement("div");
@@ -90,6 +92,19 @@ describe("§3.14 — every Badge status differs in icon AND in text", () => {
     expect(new Set(ids).size, "two statuses share an icon id").toBe(BADGE_STATUSES.length);
     // §3.14 names the pair this rule exists for by name.
     expect(BADGE_ICONS.info).not.toBe(BADGE_ICONS.dirty);
+  });
+
+  it("gives dirty its own brass, not error amber (#81)", () => {
+    const tokens = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../../src/system/tokens.css"),
+      "utf8",
+    );
+    expect(tokens).toMatch(/--status-error-ink:\s*var\(--p-amber-400\)/);
+    expect(tokens).toMatch(/--status-dirty-ink:\s*var\(--p-brass-400\)/);
+    expect(tokens).toMatch(/--p-brass-400:\s*#c4a35a/);
+    expect(tokens).not.toMatch(/--status-dirty-ink:\s*var\(--p-amber-400\)/);
+    expect(tokens).not.toMatch(/--status-dirty-ink:\s*var\(--p-grey/);
+    expect(tokens).not.toMatch(/--status-dirty-ink:\s*var\(--status-error-ink\)/);
   });
 
   it("renders a DISTINCT icon id and DISTINCT text for each of the six", () => {

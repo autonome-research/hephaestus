@@ -48,6 +48,12 @@ export interface StreamSocketHandlers {
 
 export interface StreamSocketOptions {
   readonly sessionId: string;
+  /**
+   * Extra session ids on the same socket (#92). The selected tab still owns
+   * `sessionId` for resume; a project-lifetime observer lists every session
+   * the rail cares about and does not resume.
+   */
+  readonly sessionIds?: readonly string[] | undefined;
   readonly token: string;
   /** Injected so the reducer's contract can be driven without a real socket. */
   readonly factory?: (url: string, protocols: readonly string[]) => WebSocket;
@@ -56,8 +62,9 @@ export interface StreamSocketOptions {
 }
 
 /** `{"subscribe": {"sessions": [...], "runs": [...]}}` — §2.7's filter frame. */
-export function subscribeFrame(sessionId: string): string {
-  return JSON.stringify({ subscribe: { sessions: [sessionId], runs: [] } });
+export function subscribeFrame(sessionId: string | readonly string[]): string {
+  const sessions = typeof sessionId === "string" ? [sessionId] : [...sessionId];
+  return JSON.stringify({ subscribe: { sessions, runs: [] } });
 }
 
 /** `{"resume": {"session_id": …, "after": {"run_id", "seq"}}}`. */
@@ -120,7 +127,7 @@ export class StreamSocket {
     this.socket = socket;
     socket.onopen = (): void => {
       this.attempt = 0;
-      socket.send(subscribeFrame(this.options.sessionId));
+      socket.send(subscribeFrame(this.options.sessionIds ?? this.options.sessionId));
       const cursor = this.handlers.cursor();
       if (cursor !== null) {
         // A resume without a prior cursor would ask the server to replay the

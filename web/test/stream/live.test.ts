@@ -276,6 +276,9 @@ describe("StreamSocket", () => {
     expect(
       Object.keys(JSON.parse(resumeFrameJson("s", { run_id: "r", seq: 1 })) as object),
     ).toEqual(["resume"]);
+    expect(JSON.parse(subscribeFrame(["orch", "child"])) as { subscribe: { sessions: string[] } }).toEqual({
+      subscribe: { sessions: ["orch", "child"], runs: [] },
+    });
   });
 
   it("reports a 4409 close as a resync and reconnects", () => {

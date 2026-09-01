@@ -21,7 +21,7 @@
 //
 // No new icon id: §3.12 is closed at 18. The words live in `copy.ts`.
 
-import { useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { copy } from "../../../copy";
 import { appearanceStore, type AppearanceToggle } from "../../../state/appearance";
 import { Button } from "../../../system";
@@ -42,14 +42,52 @@ const TOGGLE_COPY: Readonly<Record<AppearanceToggle, { label: string; explain: s
   materialOverride: copy.viewport.appearance.material,
 };
 
-/** Issue #10's listed order: wireframe / fit / ortho / grid / triad / material. */
-const CLUSTER_ORDER = ["wireframe", "fit", "ortho", "grid", "triad", "materialOverride"] as const;
+/** Fit and grid stay on the stage; the rest live behind View (#60). */
+const BEHIND_VIEW = ["wireframe", "ortho", "triad", "materialOverride"] as const;
+
+function FitButton({ canFit, onFit }: AppearanceControlsProps): React.JSX.Element {
+  return canFit ? (
+    <Button
+      variant="quiet"
+      data-appearance-control="fit"
+      title={copy.viewport.appearance.fit.explain}
+      onClick={onFit}
+    >
+      {copy.viewport.appearance.fit.label}
+    </Button>
+  ) : (
+    <Button
+      variant="quiet"
+      data-appearance-control="fit"
+      disabled
+      reason={copy.viewport.appearance.fit.disabled}
+    >
+      {copy.viewport.appearance.fit.label}
+    </Button>
+  );
+}
 
 export function AppearanceControls({ canFit, onFit }: AppearanceControlsProps): React.JSX.Element {
   const appearance = useSyncExternalStore(
     appearanceStore.subscribe,
     appearanceStore.getSnapshot,
     appearanceStore.getSnapshot,
+  );
+  const [moreOpen, setMoreOpen] = useState(false);
+
+  const toggle = (field: AppearanceToggle): React.JSX.Element => (
+    <Button
+      key={field}
+      variant="toggle"
+      pressed={appearance[field]}
+      data-appearance-control={field}
+      title={TOGGLE_COPY[field].explain}
+      onClick={() => {
+        appearanceStore.toggle(field);
+      }}
+    >
+      {TOGGLE_COPY[field].label}
+    </Button>
   );
 
   return (
@@ -59,44 +97,27 @@ export function AppearanceControls({ canFit, onFit }: AppearanceControlsProps): 
       role="toolbar"
       aria-label={copy.viewport.appearance.label}
     >
-      {CLUSTER_ORDER.map((field) =>
-        field === "fit" ? (
-          canFit ? (
-            <Button
-              key="fit"
-              variant="quiet"
-              data-appearance-control="fit"
-              title={copy.viewport.appearance.fit.explain}
-              onClick={onFit}
-            >
-              {copy.viewport.appearance.fit.label}
-            </Button>
-          ) : (
-            <Button
-              key="fit"
-              variant="quiet"
-              data-appearance-control="fit"
-              disabled
-              reason={copy.viewport.appearance.fit.disabled}
-            >
-              {copy.viewport.appearance.fit.label}
-            </Button>
-          )
-        ) : (
-          <Button
-            key={field}
-            variant="toggle"
-            pressed={appearance[field]}
-            data-appearance-control={field}
-            title={TOGGLE_COPY[field].explain}
-            onClick={() => {
-              appearanceStore.toggle(field);
-            }}
-          >
-            {TOGGLE_COPY[field].label}
-          </Button>
-        ),
-      )}
+      <FitButton canFit={canFit} onFit={onFit} />
+      {toggle("grid")}
+      <Button
+        variant="quiet"
+        expanded={moreOpen}
+        data-appearance-more=""
+        title={copy.viewport.appearance.more.explain}
+        onClick={() => {
+          setMoreOpen((open) => !open);
+        }}
+      >
+        {moreOpen ? copy.viewport.appearance.more.hide : copy.viewport.appearance.more.show}
+      </Button>
+      <div
+        className={styles["more"]}
+        hidden={!moreOpen}
+        data-appearance-extras=""
+        data-appearance-extras-open={moreOpen ? "true" : "false"}
+      >
+        {BEHIND_VIEW.map((field) => toggle(field))}
+      </div>
     </div>
   );
 }

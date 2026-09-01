@@ -160,6 +160,28 @@ export function formatOid(oid: string, width = 8): string {
   return oid.length <= width ? oid : oid.slice(0, width);
 }
 
+/**
+ * A last-observed timestamp as a reader should see it (§23.8, #94).
+ *
+ * Today prints a clock. Any other day prints a date or a relative age — a bare
+ * `toLocaleTimeString()` on a three-day-old observation reads as this afternoon.
+ * `data-value` still carries the raw epoch; this is presentation only.
+ */
+export function formatObservedAt(epochSeconds: number, now: Date = new Date()): string {
+  const at = new Date(epochSeconds * 1000);
+  if (Number.isNaN(at.getTime())) return String(epochSeconds);
+  const sameDay =
+    at.getFullYear() === now.getFullYear() &&
+    at.getMonth() === now.getMonth() &&
+    at.getDate() === now.getDate();
+  if (sameDay) return at.toLocaleTimeString();
+  const deltaDays = Math.round((at.getTime() - now.getTime()) / 86_400_000);
+  if (deltaDays !== 0 && Math.abs(deltaDays) < 7) {
+    return new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(deltaDays, "day");
+  }
+  return at.toLocaleDateString();
+}
+
 /** A byte count, for the §8 pager. Decimal units, because the server counts bytes. */
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes)) return String(bytes);

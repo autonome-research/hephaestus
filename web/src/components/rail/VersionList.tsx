@@ -25,6 +25,7 @@ import { copy } from "../../copy";
 import { useWorkspace } from "../../state/react";
 import { Chip, EmptyState, Panel, PanelBody, PanelHeader } from "../../system";
 import { Fact } from "../Fact";
+import { RefusalBanner } from "../RefusalBanner";
 import { railGitAbsence, useDirtyIndex } from "./GitDirty";
 import styles from "./VersionList.module.css";
 
@@ -54,6 +55,13 @@ export function VersionList(): React.JSX.Element | null {
             density="inline"
             title={copy.rail.versionsNoPartTitle}
             body={copy.rail.versionsNoPart}
+          />
+        ) : log.error !== null ? (
+          <RefusalBanner
+            error={log.error}
+            onRetry={() => {
+              void log.refetch();
+            }}
           />
         ) : log.data === undefined ? (
           <p className={styles["absent"]}>{copy.absent.loading}</p>

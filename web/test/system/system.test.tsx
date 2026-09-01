@@ -228,6 +228,22 @@ describe("§4.7 — a disabled control always says why", () => {
       render(<Button>go</Button>).querySelector("button")?.getAttribute("aria-pressed"),
     ).toBeNull();
   });
+
+  it("emits aria-expanded on a disclosure, and never aria-pressed", () => {
+    const open = render(
+      <Button variant="quiet" expanded>
+        show
+      </Button>,
+    ).querySelector("button");
+    expect(open?.getAttribute("aria-expanded")).toBe("true");
+    expect(open?.getAttribute("aria-pressed")).toBeNull();
+    const shut = render(
+      <Button variant="quiet" expanded={false}>
+        show
+      </Button>,
+    ).querySelector("button");
+    expect(shut?.getAttribute("aria-expanded")).toBe("false");
+  });
 });
 
 describe("§4.7 — Chip is inert by contract", () => {

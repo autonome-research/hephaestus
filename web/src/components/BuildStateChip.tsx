@@ -62,10 +62,10 @@ export function buildState(build: BuildDocument | undefined): BuildState | null 
  * `not_run` — an absence rather than a verdict — and take their distinctness
  * from the word beside the icon, which is exactly §3.13.2's requirement.
  */
-const BADGE: Readonly<Record<BuildState, BadgeStatus>> = {
+export const BUILD_STATE_BADGE: Readonly<Record<BuildState, BadgeStatus>> = {
   current: "pass",
   preview: "info",
-  stale: "error",
+  stale: "not_run",
   failed: "fail",
   not_built: "not_run",
 };
@@ -107,7 +107,7 @@ export function BuildStateBadge({
   }
   return (
     <span className={styles["wrap"]} title={copy.header.buildState}>
-      <Badge status={BADGE[state]}>
+      <Badge status={BUILD_STATE_BADGE[state]}>
         <Fact source="build.status" value={build.status}>
           {copy.buildState[state]}
         </Fact>

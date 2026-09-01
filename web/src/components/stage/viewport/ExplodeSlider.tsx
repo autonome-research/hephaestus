@@ -24,6 +24,7 @@
 // reader who wanted exactly 0.60 had to drag for it. The `Slider` primitive
 // pairs the range with a number input over the same value.
 
+import { useState } from "react";
 import { copy } from "../../../copy";
 import { useWorkspace, workspaceStore } from "../../../state/react";
 import { Button, Slider } from "../../../system";
@@ -31,8 +32,38 @@ import styles from "./ExplodeSlider.module.css";
 
 const STEP = 0.01;
 
-export function ExplodeSlider(): React.JSX.Element {
+export function ExplodeSlider({
+  noop = false,
+}: {
+  /** A 1-solid sheet: explode does nothing, so the slider starts collapsed (#60). */
+  readonly noop?: boolean | undefined;
+}): React.JSX.Element {
   const t = useWorkspace((s) => s.explode_t);
+  const [open, setOpen] = useState(false);
+  const collapsed = noop && t === 0 && !open;
+
+  if (collapsed) {
+    return (
+      <div
+        className={styles["control"]}
+        data-explode-t={t}
+        data-explode-collapsed=""
+        title={copy.viewport.explode.noop}
+      >
+        <Button
+          variant="quiet"
+          expanded={false}
+          data-explode-disclose=""
+          title={copy.viewport.explode.noop}
+          onClick={() => {
+            setOpen(true);
+          }}
+        >
+          {copy.viewport.explode.disclose}
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className={styles["control"]} data-explode-t={t} title={copy.viewport.explode.explain}>

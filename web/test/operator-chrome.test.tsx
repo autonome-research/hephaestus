@@ -20,6 +20,7 @@ import { keys } from "../src/api/queries";
 import type { ProvidersDocument } from "../src/api/providers";
 import type { BuildDocument, GitStatusDocument, ProjectDocument } from "../src/api/types";
 import { ArtifactPin } from "../src/components/ArtifactPin";
+import { BUILD_STATE_BADGE } from "../src/components/BuildStateChip";
 import { Header } from "../src/components/Header";
 import { DEFAULT_STATE, type WorkspaceState } from "../src/state/workspace";
 import { workspaceStore } from "../src/state/react";
@@ -222,6 +223,33 @@ describe("rail providers — collapsed by default so Sign-in stays in the box", 
     expect(markup).toContain("data-providers-details");
   });
 
+  it("collapses a signed-in provider to one chip, not the configuration essay (#55)", () => {
+    const markup = providersMarkup(
+      providersDocument({
+        providers: [
+          {
+            id: "heph-fake",
+            kind: "openai_compatible",
+            name: "Fake",
+            models: [{ id: "glm-5.3-flash", name: "glm-5.3-flash" }],
+            source: "project",
+            health: "accepted",
+            last_observed_at: 1_700_000_000,
+            available: true,
+            unavailable_reason: null,
+          },
+        ],
+      }),
+    );
+    expect(markup).toContain("data-providers-collapsed");
+    expect(markup).toContain('data-provider-chip="heph-fake"');
+    expect(markup).toContain('data-provider-source="project"');
+    expect(markup).not.toContain("data-provider-signin");
+    expect(markup).not.toContain("data-provider-signout");
+    expect(markup).not.toContain("data-discovery-run");
+    expect(markup).toContain("data-providers-details");
+  });
+
   it("keeps acknowledged egress hosts in the compact DOM (G10C)", () => {
     const markup = providersMarkup(
       providersDocument({
@@ -243,6 +271,64 @@ describe("rail providers — collapsed by default so Sign-in stays in the box", 
     expect(markup).toContain("data-providers-attach");
     expect(markup).toContain("data-discovery-run");
     expect(markup).not.toContain(copy.providers.allowlistNote);
+  });
+
+  it("splits health into two Facts with unformatted wire values (#94)", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(
+      keys.providers(),
+      providersDocument({
+        providers: [
+          {
+            id: "heph-fake",
+            kind: "openai_compatible",
+            name: "Fake",
+            models: [{ id: "glm-5.3-flash", name: "glm-5.3-flash" }],
+            source: "project",
+            health: "accepted",
+            last_observed_at: 1_700_000_000,
+            available: true,
+            unavailable_reason: null,
+          },
+        ],
+      }),
+    );
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    try {
+      await act(async () => {
+        root.render(
+          <QueryClientProvider client={client}>
+            <ProvidersPanel />
+          </QueryClientProvider>,
+        );
+      });
+      await act(async () => {
+        host.querySelector("[data-providers-details]")?.dispatchEvent(
+          new MouseEvent("click", { bubbles: true }),
+        );
+      });
+      const health = host.querySelector('[data-source="providers.health"]');
+      expect(health?.getAttribute("data-value")).toBe("accepted");
+      const observed = host.querySelector('[data-source="providers.last_observed_at"]');
+      expect(observed?.getAttribute("data-value")).toBe("1700000000");
+      expect(health?.textContent).not.toContain("1700000000");
+    } finally {
+      act(() => {
+        root.unmount();
+      });
+      host.remove();
+    }
+  });
+});
+
+describe("build-state badge mapping", () => {
+  it("maps stale to an absence, not an error (#97)", () => {
+    expect(BUILD_STATE_BADGE.stale).toBe("not_run");
+    expect(BUILD_STATE_BADGE.not_built).toBe("not_run");
+    expect(BUILD_STATE_BADGE.failed).toBe("fail");
+    expect(BUILD_STATE_BADGE.stale).not.toBe("error");
   });
 });
 

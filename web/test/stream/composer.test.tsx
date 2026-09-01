@@ -36,6 +36,7 @@ import {
 import type * as SessionsModule from "../../src/api/sessions";
 import type { ProvidersDocument } from "../../src/api/providers";
 import type { DfmDocument } from "../../src/api/types";
+import { collectSessionIds } from "../../src/api/projectRefresh";
 import { refreshAfterTurn, refreshKeys } from "../../src/api/refresh";
 import { keys } from "../../src/api/queries";
 import {
@@ -297,6 +298,24 @@ describe("the read-refresh boundary", () => {
     expect(refreshKeys(null)).toEqual([keys.project(), keys.parts(), keys.gitStatus()]);
   });
 
+  it("collects listed sessions and thread children so a delegated turn refreshes (#92)", () => {
+    expect(collectSessionIds(["orch"], ["orch", "child"])).toEqual(["child", "orch"]);
+    expect(collectSessionIds([], ["child"])).toEqual(["child"]);
+    expect(collectSessionIds(["a", "b"], ["b"])).toEqual(["a", "b"]);
+  });
+
+  it("hangs the §7A.11 terminal observer at project lifetime, not Stream mount (#92)", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const observer = readFileSync(join(here, "../../src/api/projectRefresh.ts"), "utf8");
+    const shell = readFileSync(join(here, "../../src/components/Shell.tsx"), "utf8");
+    const panel = readFileSync(join(here, "../../src/components/stream/StreamPanel.tsx"), "utf8");
+    expect(observer).toContain("frame.kind !== \"terminal\"");
+    expect(observer).toContain("refreshAfterTurn(client, partRef.current)");
+    expect(observer).not.toMatch(/tool_result[\s\S]*merge/);
+    expect(shell).toContain("useProjectRefresh()");
+    expect(panel).not.toContain("stream.terminals === seenTerminals.current");
+  });
+
   it("does not move a held pin when those keys are invalidated (#59)", () => {
     const A = "artifact:build:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     workspaceStore.reset({ ...DEFAULT_STATE, artifact_ref: A, pin_mode: "pinned" });
@@ -383,6 +402,31 @@ describe("the DOM contract", () => {
     );
     expect(row).toContain("data-context-key");
     expect(row).not.toContain("data-source");
+    expect(row).toContain('variant="toggle"');
+    expect(row).toContain("pressed={dropped}");
+  });
+
+  it("uses expanded on disclosures and toggle on context-drop (pressed discriminant)", () => {
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../../src/components/stream/Composer.tsx"),
+      "utf8",
+    );
+    const discloseBtn = source.slice(
+      source.lastIndexOf("<Button", source.indexOf("data-context-disclose")),
+      source.indexOf("data-context-disclose") + 80,
+    );
+    expect(discloseBtn).toContain("expanded={disclosed}");
+    expect(discloseBtn).not.toContain("pressed={disclosed}");
+    const providers = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../../src/components/ProvidersPanel.tsx"),
+      "utf8",
+    );
+    const details = providers.slice(
+      providers.lastIndexOf("<Button", providers.indexOf("data-providers-details")),
+      providers.indexOf("data-providers-details") + 40,
+    );
+    expect(details).toContain("expanded={detailsOpen}");
+    expect(details).not.toContain("pressed={detailsOpen}");
   });
 
   it("keeps the existing composer selectors when chrome is present", () => {

@@ -150,11 +150,14 @@
   --p-blue-fill: #26374b; /* 16% --p-blue-500 over --p-graphite-700 */
   --p-blue-ink: #06121d;
 
-  /* Status hues. Five, and every one of them ships with a word and a glyph
-     beside it (§3.9: "colour is never alone"). */
+  /* Status hues. Each ships with a word and a glyph beside it (§3.9:
+     "colour is never alone"). Dirty (git) is brass, distinct from error
+     amber, so the two cannot scan as one alarm on the same frame (#81). */
   --p-green-400: #5ed69a;
   --p-red-400: #ff8f8f;
   --p-amber-400: #ecb54a;
+  /* Git dirty: a brass of its own, not the alarm amber and not grey (#81). */
+  --p-brass-400: #c4a35a;
   --p-grey-400: #a9b0be;
   --p-sky-300: #7cc4ff;
 
@@ -164,6 +167,7 @@
   --p-green-fill: #223834;
   --p-red-fill: #3b2d32;
   --p-amber-fill: #383327;
+  --p-brass-fill: #323029; /* 16% --p-brass-400 over --p-graphite-800 */
   --p-grey-fill: #2e3239;
   --p-sky-fill: #263544;
   --p-green-300: #9ad1a8;
@@ -237,10 +241,10 @@
   --accent-quiet: var(--p-blue-fill);
   --focus-ring: var(--p-blue-300);
 
-  /* ---- status: ink + 16% fill, per §3.9. Six names over five hues:
-     `dirty` and `error` share a hue and take DIFFERENT icon ids, because
-     §3.14's component test asserts a distinct icon per status and two statuses
-     sharing an id would make that assertion false by construction. */
+  /* ---- status: ink + 16% fill, per §3.9. Six names, six hues after #81:
+     `dirty` (git) is brass, `error` (runtime/artifact fault) stays amber.
+     Icons remain distinct as well — §3.14's component test still forbids two
+     statuses sharing an icon id. */
   --status-pass-ink: var(--p-green-400);
   --status-pass-fill: var(--p-green-fill);
   --status-fail-ink: var(--p-red-400);
@@ -251,8 +255,8 @@
   --status-not-run-fill: var(--p-grey-fill);
   --status-info-ink: var(--p-sky-300);
   --status-info-fill: var(--p-sky-fill);
-  --status-dirty-ink: var(--p-amber-400);
-  --status-dirty-fill: var(--p-amber-fill);
+  --status-dirty-ink: var(--p-brass-400);
+  --status-dirty-fill: var(--p-brass-fill);
 
   /* ---- syntax (§4.7's ScriptEditor) -------------------------------------
      NAMED EXTENSION TO §3.9's ROLE LIST, recorded rather than smuggled. §3.9
