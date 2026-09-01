@@ -9,15 +9,20 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { createRoot, type Root } from "react-dom/client";
+import { act } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 
 import { keys } from "../src/api/queries";
 import type { ProvidersDocument } from "../src/api/providers";
-import type { GitStatusDocument, ProjectDocument } from "../src/api/types";
-import { Header, headerBranch, headerHead } from "../src/components/Header";
+import type { BuildDocument, GitStatusDocument, ProjectDocument } from "../src/api/types";
+import { ArtifactPin } from "../src/components/ArtifactPin";
+import { Header } from "../src/components/Header";
+import { DEFAULT_STATE, type WorkspaceState } from "../src/state/workspace";
+import { workspaceStore } from "../src/state/react";
 import { NewSessionAction } from "../src/components/stream/Composer";
 import { PROJECT_TREE_SECTIONS, ProjectSectionList } from "../src/components/rail/ProjectTree";
 import { ProvidersPanel } from "../src/components/ProvidersPanel";
@@ -228,6 +233,144 @@ describe("rail providers — collapsed by default so Sign-in stays in the box", 
   });
 });
 
+describe("artifact pin — one chip, one state word", () => {
+  const REF_A = "artifact:build:sha256:" + "a".repeat(64);
+
+  function build(over: Partial<BuildDocument> = {}): BuildDocument {
+    return {
+      status: "ok",
+      current: true,
+      geometry_count: 2,
+      geometries: [],
+      artifact_ref: REF_A,
+      ...over,
+    };
+  }
+
+  let mounted: { host: HTMLElement; root: Root } | null = null;
+
+  /**
+   * A LIVE root, not `renderToStaticMarkup`. `useWorkspace`'s server snapshot is
+   * `DEFAULT_STATE` by design (§4.5), so static markup cannot see a held pin.
+   */
+  function pin(state: Partial<WorkspaceState>, document: BuildDocument | undefined): Element {
+    workspaceStore.reset({ ...DEFAULT_STATE, ...state });
+    const host = window.document.createElement("div");
+    window.document.body.appendChild(host);
+    const root = createRoot(host);
+    act(() => {
+      root.render(<ArtifactPin build={document} />);
+    });
+    mounted = { host, root };
+    const node = host.querySelector('[data-testid="artifact-pin"]');
+    if (node === null) throw new Error("no pin");
+    return node;
+  }
+
+  afterEach(() => {
+    if (mounted !== null) {
+      const live = mounted;
+      act(() => {
+        live.root.unmount();
+      });
+      live.host.remove();
+      mounted = null;
+    }
+    workspaceStore.reset(DEFAULT_STATE);
+  });
+
+  it("prints the build state and a hold VERB while following current", () => {
+    const node = pin({ artifact_ref: REF_A, pin_mode: "current" }, build());
+    expect(node.getAttribute("data-build-state")).toBe("current");
+    expect(node.querySelector('[data-pin-action="hold"]')?.textContent).toBe(copy.header.hold);
+    // The pin vocabulary's own word is not also printed: one axis at a time.
+    expect(node.textContent).not.toContain(copy.pinMode.current);
+    expect(node.textContent).toContain(copy.buildState.current);
+  });
+
+  it("prints `held` and the discard action while held, and no second state word", () => {
+    const node = pin({ artifact_ref: REF_A, pin_mode: "pinned" }, build({ current: false }));
+    expect(node.querySelector("[data-pin-state]")?.textContent).toBe(copy.pinMode.pinned);
+    expect(node.querySelector('[data-pin-action="follow"]')).not.toBeNull();
+    expect(node.textContent).not.toContain(copy.buildState.preview);
+  });
+
+  it("keeps both build fields attributed WHILE HELD, which is the G5.5/G5.6 path", () => {
+    // The first cut of this chip chose between the `held` word and the badge
+    // with a ternary, so while held the badge never mounted and both build
+    // fields went with it — on the one path §4.1 says the operator must not be
+    // able to forget which build they are looking at. Same strength as the
+    // following-current case below; only the drawn badge differs.
+    const node = pin({ artifact_ref: REF_A, pin_mode: "pinned" }, build({ current: false }));
+    expect(node.getAttribute("data-build-state")).toBe("preview");
+    expect(node.querySelector('[data-source="build.status"]')?.getAttribute("data-value")).toBe("ok");
+    expect(node.querySelector('[data-source="build.current"]')?.getAttribute("data-value")).toBe(
+      "false",
+    );
+    expect(node.querySelector('[data-source="build.artifact_ref"]')?.getAttribute("data-value")).toBe(
+      REF_A,
+    );
+    // §3.4: `data-build-state` is the pin chip's own, minted once. `node` IS the
+    // chip, so a second copy would show up as a DESCENDANT carrying it.
+    expect(node.querySelectorAll("[data-build-state]")).toHaveLength(0);
+  });
+
+  it("mounts the build fields on every state the server answered for", () => {
+    // Enumerated rather than sampled: the defect was one branch of a ternary,
+    // and a per-state assertion is what makes another one impossible to add
+    // without a failure.
+    const states = [
+      { over: {}, expected: "current" },
+      { over: { current: false }, expected: "preview" },
+      { over: { status: "error" as const, current: false }, expected: "failed" },
+      { over: { status: "not_built" as const, current: false }, expected: "not_built" },
+    ];
+    for (const mode of ["current", "pinned"] as const) {
+      for (const { over, expected } of states) {
+        const node = pin({ artifact_ref: REF_A, pin_mode: mode }, build(over));
+        expect(node.getAttribute("data-build-state"), `${mode}/${expected}`).toBe(expected);
+        expect(
+          node.querySelector('[data-source="build.status"]'),
+          `${mode}/${expected} status`,
+        ).not.toBeNull();
+        expect(
+          node.querySelector('[data-source="build.current"]'),
+          `${mode}/${expected} current`,
+        ).not.toBeNull();
+        act(() => {
+          mounted?.root.unmount();
+        });
+        mounted?.host.remove();
+        mounted = null;
+      }
+    }
+  });
+
+  it("says `not built` once, with no ref, no hold, and no fourth label", () => {
+    const node = pin(
+      { artifact_ref: null, pin_mode: "current" },
+      build({ status: "not_built", current: false, artifact_ref: null, geometry_count: 0 }),
+    );
+    expect(node.getAttribute("data-build-state")).toBe("not_built");
+    // One visible word. `build.current`'s clipped 1px mirror is the only other
+    // text in the chip, and it is read aloud rather than drawn.
+    expect(node.querySelector('[data-source="build.status"]')?.textContent).toBe(
+      copy.buildState.not_built,
+    );
+    expect(node.querySelector("[data-pin-action]")).toBeNull();
+    expect(node.querySelector("[data-pin-state]")).toBeNull();
+    expect(node.querySelector('[data-source="build.artifact_ref"]')).toBeNull();
+  });
+
+  it("keeps both build fields attributed inside the chip", () => {
+    const node = pin({ artifact_ref: REF_A, pin_mode: "current" }, build());
+    expect(node.querySelector('[data-source="build.status"]')?.getAttribute("data-value")).toBe("ok");
+    expect(node.querySelector('[data-source="build.current"]')?.getAttribute("data-value")).toBe(
+      "true",
+    );
+  });
+});
+
 describe("artifact pin — chip width that fits the 1280 header", () => {
   it("shortens the visible pin below the width that ate Token", () => {
     expect(CHIP_REF_WIDTH).toBeLessThanOrEqual(22);
@@ -275,7 +418,7 @@ describe("rail project sections — listed, empty-honest, collapsed", () => {
   });
 });
 
-describe("header git identity — no invented branch, no HEAD without a sha", () => {
+describe("header — one row of facts on the artifact axis", () => {
   const OID = "aabbccddeeff0011223344556677889900112233";
 
   function projectDocument(): ProjectDocument {
@@ -311,31 +454,34 @@ describe("header git identity — no invented branch, no HEAD without a sha", ()
     );
   }
 
-  it("treats porcelain (detached) as no branch and still shows an oid head", () => {
-    expect(headerBranch("(detached)")).toBeNull();
-    expect(headerBranch("main")).toBe("main");
-    expect(headerHead(OID)).toBe(OID);
-    expect(headerHead("HEAD")).toBeNull();
-    const markup = headerMarkup(gitDocument({ branch: "(detached)", head: OID }));
-    expect(markup).not.toContain('data-source="git.branch"');
-    expect(markup).not.toContain("(detached)");
-    expect(markup).toContain('data-source="git.head"');
-    expect(markup).toContain(`data-value="${OID}"`);
-    expect(markup).toContain(formatRef(OID, 8));
-  });
-
-  it("omits both fields when GET /git/status has not answered", () => {
-    const markup = headerMarkup(null);
+  it("keeps the git axis out of the 44px bar entirely (§13.1)", () => {
+    // The header used to print `project · units · branch · HEAD`, and the HEAD
+    // it printed was the WHOLE 40-glyph oid plus an ellipsis plus its own last
+    // eight bytes, because `formatRef(ref, 8)` sliced `(0, -1)`. Both halves are
+    // closed here: `format.ts` refuses that width, and branch/HEAD are the git
+    // axis, so they live in the rail's Working tree panel (`rail.test.tsx`).
+    const markup = headerMarkup(gitDocument({ branch: "main", head: OID }));
     expect(markup).not.toContain('data-source="git.branch"');
     expect(markup).not.toContain('data-source="git.head"');
-    expect(markup).not.toContain(copy.header.head);
+    expect(markup).not.toContain(OID);
+    expect(formatRef(OID, 8)).toBe(OID.slice(0, 8));
+    expect(formatRef(OID, 8).length).toBe(8);
   });
 
-  it("does not print the label HEAD when head is not an oid", () => {
-    const markup = headerMarkup(gitDocument({ branch: "(detached)", head: "HEAD" }));
-    expect(markup).not.toContain('data-source="git.branch"');
-    expect(markup).not.toContain('data-source="git.head"');
-    expect(markup).not.toContain(copy.header.head);
+  it("still names the project and its units, and nothing else, as identity", () => {
+    const markup = headerMarkup(gitDocument());
+    expect(markup).toContain('data-source="project.name"');
+    expect(markup).toContain('data-source="project.units"');
+  });
+
+  it("offers no hold control while there is no artifact to hold", () => {
+    // The shipped bar carried a DISABLED button labelled `held` — a state word
+    // on a control — beside `unavailable`, `CURRENT` and `not built`. Four
+    // labels, one fact. The control is gone on this path; the chip keeps one word.
+    const markup = headerMarkup(gitDocument());
+    expect(markup).toContain('data-testid="artifact-pin"');
+    expect(markup).not.toContain('data-pin-action="hold"');
+    expect(markup).not.toContain('data-pin-action="follow"');
   });
 
   it("does not paint a decorative Token chip in the signed-in header", () => {

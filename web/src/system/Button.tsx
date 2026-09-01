@@ -46,6 +46,14 @@ export type ButtonProps = {
   readonly variant?: ButtonVariant | undefined;
   /** `toggle` only: drives `aria-pressed` and the accent-quiet fill. */
   readonly pressed?: boolean | undefined;
+  /**
+   * A disclosure control's state, as `aria-expanded`.
+   *
+   * Distinct from `pressed`: `aria-pressed` says *this control is on*, and a
+   * disclosure is not on — it reveals a region. A chevron that rotates is a
+   * colour-and-shape carrier with nothing behind it for a screen reader (§3.13.2).
+   */
+  readonly expanded?: boolean | undefined;
   readonly onClick?: (() => void) | undefined;
   readonly type?: "button" | "submit" | undefined;
   readonly icon?: IconId | undefined;
@@ -65,6 +73,7 @@ export function Button(props: ButtonProps): React.JSX.Element {
   const {
     variant = "secondary",
     pressed,
+    expanded,
     onClick,
     type = "button",
     icon,
@@ -90,6 +99,7 @@ export function Button(props: ButtonProps): React.JSX.Element {
         // broken one. Both carriers are present: the pointer one and the AT one.
         {...(isDisabled ? { title: reason, "aria-describedby": reasonId } : { title })}
         {...(variant === "toggle" ? { "aria-pressed": pressed === true } : {})}
+        {...(expanded === undefined ? {} : { "aria-expanded": expanded })}
         {...(labelled ? { "aria-label": iconLabel } : {})}
         {...(onClick === undefined ? {} : { onClick })}
         {...dataProps(props)}

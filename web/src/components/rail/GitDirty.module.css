@@ -58,3 +58,44 @@
   white-space: nowrap;
   word-break: normal;
 }
+
+/* §13.1's git identity beside the heading. `min-width: 0` everywhere on the
+   way down, because a long branch name is the same rail-widening leak the
+   providers header was (measured 319 vs 279 at `--rail-width: 280px`). */
+.identity {
+  display: flex;
+  align-items: baseline;
+  gap: var(--gap-inline);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.branchWrap {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.branch {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-base);
+}
+
+.head {
+  composes: code from "../../system/type.module.css";
+  white-space: nowrap;
+  color: var(--ink-muted);
+}
+
+/* The one row that stands for the whole `.heph/` store. A row, not a heading:
+   it is a disclosure control and carries a control's affordance. */
+.group {
+  justify-self: start;
+  grid-column: 1 / -1;
+  min-width: 0;
+  max-width: 100%;
+}

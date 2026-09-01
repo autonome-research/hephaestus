@@ -28,6 +28,21 @@
 // and `data-section-state` carries §5.3's distinction ("preview" while the
 // clipping plane is live, "rendered" once the server's plate is up, absent when
 // there is no section).
+//
+// THE OVERLAYS EXIST WHEN THERE IS GEOMETRY (operator review, 2026-09-01). The
+// shipped viewport painted the whole control frame over every state, so an
+// unbuilt part got a view cube, an axis triad, a grid readout describing a grid
+// that was not drawn, six appearance toggles, an explode slider, a `Cut a
+// section` control, and a centred paragraph — nine surfaces around an empty
+// well, every one of them addressing an artifact that is not there. §5.5 defines
+// the cluster as operator chrome "bound to the pin", and `Fit`'s own disabled
+// reason already said "No pinned artifact is on the canvas, so there is nothing
+// to frame" — which is true of the entire frame, not of one button in it. The
+// overlays now render while `hasGeometry` holds (`ready`, and `stale`, which by
+// §5.5 keeps the LAST COMPLETED artifact on the canvas and must not lose its
+// controls mid-rebuild); otherwise the well carries one short empty state and
+// nothing else. G4.5's control-region thresholds are unaffected: they are
+// measured on a `ready` canvas, where every overlay is exactly where it was.
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { WorkspaceError } from "../../../api/client";
@@ -61,6 +76,59 @@ const ABSENCE_ICON: Readonly<Record<Exclude<GlbState, "ready">, IconId>> = {
   "no-webgl": "alert",
   empty: "cube",
 };
+
+/**
+ * The states whose TITLE is the whole fact, so the plate prints no sentence.
+ *
+ * "No artifact pinned" over "No artifact is pinned, so there is no geometry to
+ * show." is the heading twice. The other four absences say something the title
+ * does not — which artifact is still on the canvas, that the server refused, that
+ * this browser has no WebGL, that the build has no solids — and keep their prose.
+ */
+const TITLE_IS_ENOUGH: ReadonlySet<GlbState> = new Set<GlbState>(["no-pin", "loading"]);
+
+/**
+ * The well's one composed state, for every case that is not `ready`.
+ *
+ * Exported so all seven can be asserted without a WebGL context: jsdom reaches
+ * exactly one of them (`no-webgl`), and "the empty viewport is quiet" is a claim
+ * about the other six as much as about that one.
+ */
+export function ViewportAbsence({
+  state,
+  refusalReason,
+}: {
+  readonly state: Exclude<GlbState, "ready">;
+  readonly refusalReason: string | null;
+}): React.JSX.Element {
+  const prose = !TITLE_IS_ENOUGH.has(state) || refusalReason !== null;
+  return (
+    <div className={styles["absent"]} data-viewport-absence={state}>
+      <div className={styles["absencePlate"]}>
+        <EmptyState
+          icon={ABSENCE_ICON[state]}
+          title={copy.viewport.absenceTitle[state]}
+          {...(prose
+            ? {
+                body: (
+                  <>
+                    <p>{copy.viewport.absence[state]}</p>
+                    {refusalReason === null ? null : (
+                      <p>
+                        <Chip tone="code" data-refusal-reason={refusalReason}>
+                          {refusalReason}
+                        </Chip>
+                      </p>
+                    )}
+                  </>
+                ),
+              }
+            : {})}
+        />
+      </div>
+    </div>
+  );
+}
 
 export function Viewport(): React.JSX.Element {
   const artifactRef = useWorkspace((s) => s.artifact_ref);
@@ -303,6 +371,13 @@ export function Viewport(): React.JSX.Element {
   // replaces it. `channel_overlay === "section"` is §4.5's switch for the plate.
   const sectionState = plane === null ? null : overlay === "section" ? "rendered" : "preview";
 
+  /**
+   * Is there geometry on this canvas? `ready` yes; `stale` also yes — §5.5's
+   * whole point is that a rebuild keeps the last completed artifact — and every
+   * other state is an empty well whose controls would address nothing.
+   */
+  const hasGeometry = state === "ready" || state === "stale";
+
   return (
     <div
       ref={hostRef}
@@ -321,26 +396,7 @@ export function Viewport(): React.JSX.Element {
         // with a shape, an icon, a heading and its prose in a legible ink. The
         // shipped absence was an italic 3.10:1 sentence in the middle of a black
         // rectangle, which reads as a bug rather than as a designed state.
-        <div className={styles["absent"]} data-viewport-absence={state}>
-          <div className={styles["absencePlate"]}>
-            <EmptyState
-              icon={ABSENCE_ICON[state]}
-              title={copy.viewport.absenceTitle[state]}
-              body={
-                <>
-                  <p>{copy.viewport.absence[state]}</p>
-                  {refusalReason === null ? null : (
-                    <p>
-                      <Chip tone="code" data-refusal-reason={refusalReason}>
-                        {refusalReason}
-                      </Chip>
-                    </p>
-                  )}
-                </>
-              }
-            />
-          </div>
-        </div>
+        <ViewportAbsence state={state} refusalReason={refusalReason} />
       )}
 
       {sectionState === "preview" ? (
@@ -355,28 +411,33 @@ export function Viewport(): React.JSX.Element {
 
       {overlay === "section" && plane !== null ? <SectionPlate plane={plane.spec} /> : null}
 
-      <ViewCube />
-      {/* §3.11.6. Bottom-left with the readout, and — like the readout — an
-          overlay that never changes size, because a Playwright element
-          screenshot composites what is painted over the canvas and G4.5's
-          control region is exactly that frame (see `GridReadout`'s header). */}
-      <AxisTriad engine={engine} visible={appearance.triad} />
-      {/* The grid step is a fact about a grid, so it is reported only while
-          there is one. Derived at render rather than cleared from the load
-          effect: an effect that calls `setState` in its own body is the
-          cascading render `react-hooks/set-state-in-effect` refuses, and the
-          answer is a pure function of state we already hold. Off is the same
-          as "no framing": the readout must not describe a grid the operator
-          has hidden. */}
-      <GridReadout scale={scale} step={displayedRef === null || !appearance.grid ? 0 : step} />
-      <AppearanceControls canFit={displayedRef !== null && state === "ready"} onFit={onFit} />
-      <div className={styles["controls"]}>
-        <ExplodeSlider />
-        {/* The bounds belong to the *loaded* GLB: while none is loaded the
-            control seats its offset on its own fallback range rather than on the
-            previous artifact's, which would name a plane in the wrong model. */}
-        <SectionControl bounds={glb.data === undefined ? null : bounds} />
-      </div>
+      {!hasGeometry ? null : (
+        <>
+          <ViewCube />
+          {/* §3.11.6. Bottom-left with the readout, and — like the readout — an
+              overlay that never changes size, because a Playwright element
+              screenshot composites what is painted over the canvas and G4.5's
+              control region is exactly that frame (see `GridReadout`'s header). */}
+          <AxisTriad engine={engine} visible={appearance.triad} />
+          {/* The grid step is a fact about a grid, so it is reported only while
+              there is one. Derived at render rather than cleared from the load
+              effect: an effect that calls `setState` in its own body is the
+              cascading render `react-hooks/set-state-in-effect` refuses, and the
+              answer is a pure function of state we already hold. Off is the same
+              as "no framing": the readout must not describe a grid the operator
+              has hidden. */}
+          <GridReadout scale={scale} step={displayedRef === null || !appearance.grid ? 0 : step} />
+          <AppearanceControls canFit={displayedRef !== null && state === "ready"} onFit={onFit} />
+          <div className={styles["controls"]}>
+            <ExplodeSlider />
+            {/* The bounds belong to the *loaded* GLB: while none is loaded the
+                control seats its offset on its own fallback range rather than on
+                the previous artifact's, which would name a plane in the wrong
+                model. */}
+            <SectionControl bounds={glb.data === undefined ? null : bounds} />
+          </div>
+        </>
+      )}
     </div>
   );
 }

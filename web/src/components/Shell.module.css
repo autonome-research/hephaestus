@@ -4,8 +4,12 @@
  *
  * INTERFACE.md §4.1's shell, as a grid.
  *
- *   HEADER   project · branch · HEAD | ARTIFACT PIN | Export/BOM | build state
+ *   HEADER   project · units | ARTIFACT PIN (ref + state) | Export/BOM
  *   RAIL 280px | STAGE 1fr | STREAM 420px
+ *
+ * The git axis (branch, HEAD, dirty rows) is the RAIL's, per §13.1 and §4.1's
+ * 2026-09-01 amendment; the build state renders inside the pin chip rather than
+ * in a third header cell.
  *
  * §4.1's TIGHTENING (binds G4's shell deliverable): **THIS FILE KEEPS NO MEDIA
  * QUERY THAT CHANGES `grid-template-columns`.** The grid is driven by

@@ -30,6 +30,13 @@
 //
 // The chip is a `<Badge>` (§4.7), so the glyph and the fill come from the system
 // layer and the state cannot be encoded by colour alone.
+//
+// §4.1's SECOND AMENDMENT (operator review, 2026-09-01). This badge no longer
+// occupies its own cell at the right edge of the bar: it renders INSIDE the pin
+// chip, which is the element the state is about. Two chips ~600px apart, each
+// carrying one word of a two-word verdict, is what let an unbuilt part print
+// four labels for one fact — see `ArtifactPin.tsx`. The mapping, the vocabulary
+// and the two `<Fact>` attributions below are unchanged; only the place is.
 
 import type { BuildDocument } from "../api/types";
 import { copy } from "../copy";
@@ -63,15 +70,43 @@ const BADGE: Readonly<Record<BuildState, BadgeStatus>> = {
   not_built: "not_run",
 };
 
-export function BuildStateChip({
+export function BuildStateBadge({
   build,
+  clipped = false,
 }: {
   readonly build: BuildDocument | undefined;
+  /**
+   * Mount the two build fields without drawing the badge.
+   *
+   * The held pin prints its OWN word (`ArtifactPin`), and two state words in one
+   * chip is the defect §4.1's amendment closed. But `build.status` and
+   * `build.current` are facts about the build the operator is looking at, and
+   * G5.5/G5.6 — a held artifact — is precisely the path where they must be
+   * readable. Unmounting them there would make the amendment's claim that they
+   * stay false exactly where it matters most.
+   *
+   * So the fields stay and the badge does not. The two `<Fact>`s carry `.hidden`
+   * INDIVIDUALLY rather than the wrap carrying it around a whole badge: a
+   * clipped node has to be a leaf. `overflow: hidden` on a 1px box clips what is
+   * *painted*, not the layout of what is inside it, so a `Badge` under a clipped
+   * wrap would still report a full-width box to anything measuring the document
+   * — including §3.13.1's contrast sweep, which skips a box only when it is 2px
+   * or smaller. This is the same 1px leaf `build.current` has always used.
+   */
+  readonly clipped?: boolean | undefined;
 }): React.JSX.Element | null {
   const state = buildState(build);
   if (state === null || build === undefined) return null;
+  if (clipped) {
+    return (
+      <span className={styles["wrap"]}>
+        <Fact source="build.status" value={build.status} className={styles["hidden"]} />
+        <Fact source="build.current" value={build.current} className={styles["hidden"]} />
+      </span>
+    );
+  }
   return (
-    <span className={styles["wrap"]} data-build-state={state} title={copy.header.buildState}>
+    <span className={styles["wrap"]} title={copy.header.buildState}>
       <Badge status={BADGE[state]}>
         <Fact source="build.status" value={build.status}>
           {copy.buildState[state]}
