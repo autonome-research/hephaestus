@@ -38,8 +38,12 @@ export const copy = {
 
   header: {
     project: "Project",
-    branch: "Branch",
-    head: "HEAD",
+    /**
+     * `branch` and `head` used to live here. §13.1 puts the git axis on the rail
+     * and the artifact axis in the header, and the header was reporting both —
+     * so the two words moved to `rail.branch` / `rail.head` with the working
+     * tree they belong to.
+     */
     pin: "Artifact pin",
     buildState: "Build",
     /**

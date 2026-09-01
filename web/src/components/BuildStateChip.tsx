@@ -30,6 +30,13 @@
 //
 // The chip is a `<Badge>` (§4.7), so the glyph and the fill come from the system
 // layer and the state cannot be encoded by colour alone.
+//
+// §4.1's SECOND AMENDMENT (operator review, 2026-09-01). This badge no longer
+// occupies its own cell at the right edge of the bar: it renders INSIDE the pin
+// chip, which is the element the state is about. Two chips ~600px apart, each
+// carrying one word of a two-word verdict, is what let an unbuilt part print
+// four labels for one fact — see `ArtifactPin.tsx`. The mapping, the vocabulary
+// and the two `<Fact>` attributions below are unchanged; only the place is.
 
 import type { BuildDocument } from "../api/types";
 import { copy } from "../copy";
@@ -63,7 +70,7 @@ const BADGE: Readonly<Record<BuildState, BadgeStatus>> = {
   not_built: "not_run",
 };
 
-export function BuildStateChip({
+export function BuildStateBadge({
   build,
 }: {
   readonly build: BuildDocument | undefined;
@@ -71,7 +78,7 @@ export function BuildStateChip({
   const state = buildState(build);
   if (state === null || build === undefined) return null;
   return (
-    <span className={styles["wrap"]} data-build-state={state} title={copy.header.buildState}>
+    <span className={styles["wrap"]} title={copy.header.buildState}>
       <Badge status={BADGE[state]}>
         <Fact source="build.status" value={build.status}>
           {copy.buildState[state]}
