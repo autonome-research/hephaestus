@@ -143,19 +143,40 @@
   color: var(--ink-muted);
 }
 
-.detailSummary {
+/* `display: flex` on a `<summary>` removes the default disclosure marker, so a
+   collapsed chip would have nothing saying it opens. `.rawSummary` had the same
+   silent control; both take the marker below. */
+.detailSummary,
+.rawSummary {
   composes: label from "../../system/type.module.css";
   cursor: pointer;
   min-height: var(--target-min);
   display: flex;
   align-items: center;
+  gap: var(--space-1);
+  list-style: none;
   color: var(--ink-muted);
+}
+
+.detailSummary::-webkit-details-marker,
+.rawSummary::-webkit-details-marker {
+  display: none;
+}
+
+.detailSummary::before,
+.rawSummary::before {
+  content: "▸";
+  flex: none;
+}
+
+details[open] > .detailSummary::before,
+details[open] > .rawSummary::before {
+  content: "▾";
 }
 
 .args {
   display: grid;
-  grid-template-columns: minmax(0, 6rem) minmax(0, 1fr);
-  gap: var(--gap-inline);
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   margin-bottom: var(--space-2);
 }
@@ -168,6 +189,7 @@
 .argsBody {
   composes: code from "../../system/type.module.css";
   min-width: 0;
+  padding-left: var(--space-3);
   color: var(--ink-base);
   overflow-wrap: anywhere;
   max-height: 8rem;
@@ -190,8 +212,16 @@
  * inside.
  *
  * So there is no shared track any more. `.fields` stacks, each `.field` carries
- * its own name/value template, and every track is bounded by `minmax(0, …)` —
- * which means no field's content can size a track another field has to live in.
+ * its own single bounded track, and no field's content can size a track another
+ * field has to live in.
+ *
+ * The name sits ABOVE its value rather than beside it, which is a width
+ * decision: the well is 420px and a chip's content box is ~295px, so a
+ * name/value pair with a fixed name column leaves the value ~110px — and
+ * `part_param_state_hash` is itself 21 glyphs, so the name column wrapped and
+ * left a single orphaned letter on its own line. Stacking costs a row inside a
+ * disclosure that is collapsed by default and cannot produce that orphan at any
+ * width.
  */
 .fields {
   display: flex;
@@ -203,8 +233,7 @@
 
 .field {
   display: grid;
-  grid-template-columns: minmax(0, 9rem) minmax(0, 1fr);
-  gap: var(--gap-inline);
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
 }
 
@@ -223,6 +252,7 @@
   composes: code from "../../system/type.module.css";
   margin: 0;
   min-width: 0;
+  padding-left: var(--space-3);
   color: var(--ink-strong);
   overflow-wrap: anywhere;
   max-height: 8rem;
@@ -242,15 +272,6 @@
 }
 
 .rawResult {
-  color: var(--ink-muted);
-}
-
-.rawSummary {
-  composes: label from "../../system/type.module.css";
-  cursor: pointer;
-  min-height: var(--target-min);
-  display: flex;
-  align-items: center;
   color: var(--ink-muted);
 }
 

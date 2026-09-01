@@ -150,11 +150,10 @@ describe("the well spends its height on the transcript", () => {
     expect(stream).toMatch(/\.historyBar\s*\{[^}]*flex:\s*1 1 auto/);
   });
 
-  it("renders no stream badge, and no page counter, with no session selected", () => {
-    // An `historical` pill over an empty well is a state to resolve; the empty
-    // well's content is an action.
-    expect(panel).toMatch(/\{selected !== null \? \(\s*<Badge/);
-    expect(panel).toMatch(/\{selected !== null && !unavailable \? \(\s*<span/);
+  it("renders no header row at all with no session selected", () => {
+    // An `historical` pill over an empty well is a state to resolve, and an
+    // empty bordered strip is furniture; the empty well's content is an action.
+    expect(panel).toMatch(/\{selected === null \? null : \(\s*<div className=\{styles\["header"\]\}/);
   });
 
   it("still keeps the composer as the panel's last child", () => {

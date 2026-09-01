@@ -221,52 +221,60 @@ export function StreamPanel(): React.JSX.Element {
     <div className={styles["panel"]} data-testid="stream-panel">
       {/* The column's name is already on the shell's own header row; repeating
           it here would put "Agent" twice above one transcript. This row carries
-          §7.4's stream state, which is the fact the header exists to show. */}
-      <div className={styles["header"]}>
-        {/* §8's page counter, on the header rather than in a bordered row of its
-            own. At 1280×800 the well is ~380px wide and every full-width row
-            with a rule under it is height the transcript does not get; "1 page
-            of recorded transcript" did not need one. `data-history-state` and
-            `data-history-pages` are unmoved as attributes, which is what both
-            gates read. */}
-        {selected !== null && !unavailable ? (
-          <span className={styles["historyBar"]} data-history-state={stream.history.state}>
-            <span data-history-pages={stream.history.pages}>
-              {stream.history.state === "loading" && stream.history.pages === 0
-                ? copy.stream.historyLoading
-                : copy.stream.historyPages(stream.history.pages)}
+          §7.4's stream state, which is the fact the header exists to show — and
+          it exists only when there is a session to have one. With none, an empty
+          32px strip with a rule under it is furniture in a column that needs
+          the height, and an `historical` pill over an empty well reads as a
+          state the operator has to resolve rather than an invitation to start. */}
+      {selected === null ? null : (
+        <div className={styles["header"]}>
+          {/* §8's page counter, on the header rather than in a bordered row of
+              its own. At 1280×800 the well is 420px wide and every full-width
+              row with a rule under it is height the transcript does not get;
+              "1 page of recorded transcript" did not need one.
+              `data-history-state` and `data-history-pages` are unmoved as
+              attributes, which is what both gates read. */}
+          {!unavailable ? (
+            <span className={styles["historyBar"]} data-history-state={stream.history.state}>
+              {/* A failed read has no count to report, and "0 pages" beside a
+                  stated failure claims a number the load never reached. The
+                  attribute still carries the count the panel actually has. */}
+              <span data-history-pages={stream.history.pages}>
+                {stream.history.state === "failed"
+                  ? copy.stream.historyFailedShort
+                  : stream.history.state === "loading" && stream.history.pages === 0
+                    ? copy.stream.historyLoading
+                    : copy.stream.historyPages(stream.history.pages)}
+              </span>
             </span>
-          </span>
-        ) : null}
+          ) : null}
 
-        {/* §7.4's five states as a `Badge`, so the state carries an icon and a
-            word like every other status. `data-stream-state` is unchanged and
-            stays on the styled element, which is the primitive's own (§3.4).
-            With no session selected there is no socket and nothing to be live
-            or historical about, so no badge is rendered: an `historical` pill
-            over an empty well reads as a state the operator has to resolve.
+          {/* §7.4's five states as a `Badge`, so the state carries an icon and a
+              word like every other status. `data-stream-state` is unchanged and
+              stays on the styled element, which is the primitive's own (§3.4).
 
-            When a runtime fault is known the badge shows THAT, because it is
-            the fact that changes what the operator does next. The attribute
-            keeps the socket's own answer — both are true, and a reader
-            inspecting the DOM should be able to tell them apart. */}
-        {selected !== null ? (
+              When a runtime fault is known the badge shows THAT, because it is
+              the fact that changes what the operator does next. The attribute
+              keeps the socket's own answer — both are true, and a reader
+              inspecting the DOM should be able to tell them apart. */}
           <Badge
             status={fault !== null ? "error" : (STREAM_STATUS[stream.status] ?? "info")}
             title={
-              fault !== null ? copy.stream.runtimeFaultWhy[fault] : copy.stream.stateWhy[stream.status]
+              fault !== null
+                ? copy.stream.runtimeFaultWhy[fault]
+                : copy.stream.stateWhy[stream.status]
             }
             data-stream-state={stream.status}
           >
             {fault !== null ? copy.stream.runtimeFault[fault] : copy.stream.state[stream.status]}
           </Badge>
-        ) : null}
-        {stream.resyncs > 0 ? (
-          <span className={styles["resyncCount"]} data-resync-count={stream.resyncs}>
-            {stream.resyncs}
-          </span>
-        ) : null}
-      </div>
+          {stream.resyncs > 0 ? (
+            <span className={styles["resyncCount"]} data-resync-count={stream.resyncs}>
+              {stream.resyncs}
+            </span>
+          ) : null}
+        </div>
+      )}
 
       {/* §3.3's principle 5: "The agent is a peer surface, and its emptiness
           must look designed… Every state — refusal, absence, 'no runtime

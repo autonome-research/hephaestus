@@ -190,13 +190,22 @@ describe("the field grid cannot collapse a track to zero again", () => {
 
   it("bounds every track a field's own content can size", () => {
     // `max-content` is what let one digest take the whole width and leave the
-    // `minmax(0, …)` tracks at zero. No unbounded track may reach these rows.
+    // `minmax(0, …)` tracks at zero. No unbounded track may reach these rows,
+    // and no track may be shared between two fields.
     const rows = /\.field\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
     expect(rows).toContain("minmax(0,");
     expect(rows).not.toContain("max-content");
     const fields = /\.fields\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
     expect(fields).not.toContain("max-content");
     expect(fields).not.toContain("grid-template-columns");
+  });
+
+  it("gives the collapsed disclosures a visible marker", () => {
+    // `display: flex` on a `<summary>` drops the browser's own triangle, which
+    // is how the shipped `.rawSummary` became a control with nothing saying it
+    // opened.
+    expect(css).toMatch(/\.detailSummary::before[\s\S]*?content:/);
+    expect(css).toMatch(/details\[open\][\s\S]*?\.detailSummary::before[\s\S]*?content:/);
   });
 
   it("lets both cells shrink below their own min-content", () => {

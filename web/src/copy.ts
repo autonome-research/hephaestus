@@ -817,6 +817,8 @@ export const copy = {
     historyTruncated:
       "Stopped after the page limit for one reopen. This transcript is longer than what is shown.",
     historyFailed: "The recorded transcript could not be read.",
+    /** The same fact, on the header row that otherwise carries a page count. */
+    historyFailedShort: "Transcript unread",
 
     /** §8's named absences: what a reopened transcript cannot contain. */
     absence: {
@@ -979,7 +981,12 @@ export const copy = {
     placeholder: "Ask the agent about this, or tell it what to change.",
     send: "Send",
     sending: "Sending…",
-    cancel: "Cancel the run",
+    /**
+     * "Cancel the run" wrapped the actions row at 420px, pushing §7A.3's
+     * disclosure onto a second line under an idle composer. The word is the
+     * control; every reason string below still says which run and why.
+     */
+    cancel: "Cancel",
     /**
      * The keyboard, which is how a conversation is actually held.
      *
