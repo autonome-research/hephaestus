@@ -38,7 +38,7 @@ import roles from "./type.module.css";
 /**
  * The tree's tab stop is a focus-holder, not a selection. A disclosure-only
  * tree has no `aria-selected="true"` row; it still needs exactly one
- * `tabIndex={0}` (#102). Selected, when present, wins; otherwise the first
+ * `tabIndex={0}` (issue 102). Selected, when present, wins; otherwise the first
  * visible row holds the stop. Arrow keys move the holder with focus.
  */
 type TreeFocus = {

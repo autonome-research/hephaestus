@@ -34,7 +34,7 @@
 // is an empty-honest absence. Git dirty stays in `GitDirty` (§13.1); this
 // tree does not hide `.heph/` rows.
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useBuild, useParts } from "../../api/queries";
 import { copy } from "../../copy";
 import type { PartSummary } from "../../api/types";
@@ -207,13 +207,15 @@ function PartNode({ part, dirty, selected }: PartNodeProps): React.JSX.Element {
   const entry = dirty.byPart.get(part.name);
   const built = build.data;
   const [expanded, setExpanded] = useState(selected);
+  const [selectedWhenSet, setSelectedWhenSet] = useState(selected);
+  if (selected !== selectedWhenSet) {
+    setSelectedWhenSet(selected);
+    if (selected) setExpanded(true);
+  }
   const canExpand = selected && built !== undefined && built.geometries.length > 0;
 
-  useEffect(() => {
-    if (selected) setExpanded(true);
-  }, [selected]);
-
   const open = (): void => {
+    setExpanded(true);
     workspaceStore.update({ part: part.name, selection: null, measure: null });
   };
 

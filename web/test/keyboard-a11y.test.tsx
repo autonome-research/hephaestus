@@ -121,7 +121,7 @@ const BUILT: BuildDocument = {
   ],
 };
 
-describe("Tree — focus-holder is not selection (#102)", () => {
+describe("Tree — focus-holder is not selection (issue 102)", () => {
   it("gives a tree with no selected row exactly one tabindex=0 holder", () => {
     const host = live(
       <Tree label="sections">
@@ -160,7 +160,7 @@ describe("Tree — focus-holder is not selection (#102)", () => {
   });
 });
 
-describe("ProjectTree — one tree; expand is not select (#65, #91)", () => {
+describe("ProjectTree — one tree; expand is not select (issues 65, 91)", () => {
   it("is a single tree and ArrowDown from the last part reaches Analyses", () => {
     const host = live(treeClient(["gusset", "shelf", "tread"], "gusset"));
     expect(host.querySelectorAll('[role="tree"]')).toHaveLength(1);
@@ -230,7 +230,7 @@ describe("ProjectTree — one tree; expand is not select (#65, #91)", () => {
   });
 });
 
-describe("canvas, skip links, composer name (#64, #68)", () => {
+describe("canvas, skip links, composer name (issues 64, 68)", () => {
   it("puts the canvas in the tab order and names it, not the wrapper", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const host = live(
@@ -278,7 +278,7 @@ describe("canvas, skip links, composer name (#64, #68)", () => {
   });
 });
 
-describe("tablists wire aria-controls / aria-labelledby (#82, #68)", () => {
+describe("tablists wire aria-controls / aria-labelledby (issues 82, 68)", () => {
   it("points inspector tabs at the drawer panel", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const host = live(
@@ -356,7 +356,7 @@ describe("tablists wire aria-controls / aria-labelledby (#82, #68)", () => {
   });
 });
 
-describe("Popover trap stays closed after a panel click (#84)", () => {
+describe("Popover trap stays closed after a panel click (issue 84)", () => {
   it("cycles Tab back to the first control when the panel itself is focused", () => {
     const host = live(
       <Popover open onClose={() => undefined} label="export" variant="dialog">
@@ -399,7 +399,7 @@ describe("Popover trap stays closed after a panel click (#84)", () => {
   });
 });
 
-describe("Fit / Cancel / disclose resting chrome and Button min-width (#67, #87)", () => {
+describe("Fit / Cancel / disclose resting chrome and Button min-width (issues 67, 87)", () => {
   it("gives Fit the same resting variant as a control, not quiet", () => {
     const host = document.createElement("div");
     host.innerHTML = renderToStaticMarkup(
