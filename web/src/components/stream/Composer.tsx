@@ -309,7 +309,20 @@ export function Composer(props: ComposerProps): React.JSX.Element {
 
   // -- the turn -----------------------------------------------------------
 
+  // THE GUARD IS THE SAME PREDICATE AS `sendDisabled`, and it has to be. Enter
+  // and the form's own `onSubmit` reach this function directly, without passing
+  // through the Send button, so a disabled Send is not a gate — it is a
+  // *rendering* of a gate that has to exist here. `run_in_flight` is the case
+  // that proves it: `post.phase` is `refused` rather than `sending`, and this
+  // component deliberately keeps the textarea typable while a turn finishes
+  // (`stream/composerGate.ts`), so a `disabledReason` check absent from this
+  // line means Enter posts a second prompt against a run the server has already
+  // told us is in flight. §7A.5's "the composer disables while any run is live"
+  // is a statement about sending, and sending is what happens here.
   const submit = useCallback(() => {
+    if (disabledReason !== null) return;
+    // Narrowing for `sendPrompt` below, and redundant with the line above:
+    // `sessionId === null` is `no_session`.
     if (sessionId === null || text.trim() === "" || post.phase === "sending") return;
     setCancelNote(null);
     setPost({ phase: "sending" });
@@ -351,7 +364,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
         // is not retried automatically and the stream is named as the authority.
         setPost({ phase: "unknown" });
       });
-  }, [sessionId, text, post.phase, envelope, client, state.part, props]);
+  }, [disabledReason, sessionId, text, post.phase, envelope, client, state.part, props]);
 
   const cancel = useCallback(() => {
     if (liveRunId === null) return;
@@ -394,9 +407,12 @@ export function Composer(props: ComposerProps): React.JSX.Element {
         : copy.composer.placeholder;
 
   // Enter sends; `stream/composerGate.ts` decides which keystroke that is.
-  // `submit` is already idempotent about the states that must not send (no
-  // session, empty text, a POST in flight), so the binding adds no second gate
-  // that could disagree with the button's.
+  //
+  // This binding adds NO gate of its own, and that is a claim about `submit`
+  // rather than about the keyboard: every state that must not send is refused
+  // there, on the same predicate `sendDisabled` renders. It has to be that way
+  // round — this path and the form's `onSubmit` both bypass the Send button, so
+  // a gate living only on the button would be a gate the keyboard walks past.
   const onPromptKey = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
       if (!isSendKey({ ...event, isComposing: event.nativeEvent.isComposing })) return;
