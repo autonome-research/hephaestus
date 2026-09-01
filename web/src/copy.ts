@@ -742,6 +742,33 @@ export const copy = {
       detached: "Not attached to an event stream.",
     },
 
+    /**
+     * The runtime died under a request (`stream/runtimeFault.ts`).
+     *
+     * §7.4's five states are all claims about the socket, and the socket
+     * survives a sidecar restart — so a well that showed only `live` after
+     * `session.prompt` failed was stating the one true thing that did not
+     * matter. These three sentences say which grade of "the runtime is not
+     * answering" the server actually gave us, and none of them claims more.
+     */
+    runtimeFault: {
+      process_down: "runtime restarted",
+      timeout: "runtime not answering",
+      unreachable: "runtime unreachable",
+    },
+    runtimeFaultTitle: "The agent runtime stopped answering",
+    runtimeFaultWhy: {
+      process_down:
+        "The agent runtime restarted or exited while this page was talking to it. Anything it was running at the time is gone — a restart ends every turn in flight — and a run that ended this way records no run-end band below.",
+      timeout:
+        "The agent runtime did not answer in time. A turn that was running may have been lost, and a run that ended this way records no run-end band below.",
+      unreachable:
+        "The server failed this session request without naming a reason. The agent runtime is the only process behind these routes, so it is the likely cause — but the server did not say so, and this page does not claim it did.",
+    },
+    /** The turn is not retried here; §7A.5 forbids it. Say what to do instead. */
+    runtimeFaultNext:
+      "The composer below still works. Send again when you are ready — nothing is resent on its own, because a turn that may have started must not be started twice.",
+
     /** §2.4's `agent_unavailable`, said in words rather than as an empty panel. */
     noAgentTitle: "No runtime attached",
     noAgent:
@@ -762,9 +789,20 @@ export const copy = {
       quick_edit: "quick edit of",
       delegation: "delegated by",
     },
+    /**
+     * §2.8's thread state. Only `unlinked` is RENDERED as a word.
+     *
+     * "threaded" beside a tab that is visibly indented under its parent
+     * restates the indent, and at ~380px it was the third metadata string on a
+     * one-session tab row — the "wall of badges" an operator read as chrome
+     * rather than as content. §2.8's requirement is specifically about the
+     * other case ("a pre-existing transcript reopens flat and says why"), so
+     * the unlinked word stays, short, with `unlinkedWhy` on its `title`. Both
+     * states remain addressable through `data-thread-state`, unchanged.
+     */
     threadState: {
       linked: "threaded",
-      unlinked: "no recorded parent",
+      unlinked: "no parent",
     },
     unlinkedWhy:
       "No parent edge is recorded for this session. It is either a root, or a transcript older than the threading table — in which case its parent cannot be recovered and is not guessed at.",
@@ -813,6 +851,20 @@ export const copy = {
       callMissing: "The call this result belongs to is not on this page.",
       arguments: "Arguments",
       fields: "Result",
+      /**
+       * The chip's collapsed detail (`stream/toolSummary.ts`).
+       *
+       * A successful call's headline is above this control; what is behind it
+       * is the call's arguments and every field of the result document, which
+       * is the wire format and reads like one. §7.2's `data-field` nodes are
+       * all still in the DOM — collapsed, never dropped — because the gate
+       * reads the attribute set and a reader reads the sentence.
+       */
+      detail: (fields: number): string =>
+        fields === 1 ? "1 result field" : `${String(fields)} result fields`,
+      detailNoFields: "Call detail",
+      /** §7.2's own count, when nothing in the document was short enough to headline. */
+      summaryOpaque: "This result carries identifiers only; open the detail to read them.",
       unparsed: {
         empty: "This call recorded no result document.",
         not_json: "This result is not a JSON document, so its fields cannot be named.",
@@ -928,6 +980,16 @@ export const copy = {
     send: "Send",
     sending: "Sending…",
     cancel: "Cancel the run",
+    /**
+     * The keyboard, which is how a conversation is actually held.
+     *
+     * A textarea with a Send button and no key binding is a form, not a chat:
+     * every turn costs a trip to the pointer. Enter sends and Shift+Enter opens
+     * a line, which is the binding every reader already has in their fingers —
+     * and it is announced, because an unannounced one is indistinguishable from
+     * a text box that loses your newline.
+     */
+    sendHint: "Enter sends · Shift+Enter for a new line",
 
     /**
      * §7A.5's TIGHTENING: the composer never retries a prompt automatically.
@@ -965,6 +1027,17 @@ export const copy = {
         "A turn is already running. Wait for it to finish, or cancel it, before starting another.",
       no_session: "No session is selected, so this message has nowhere to go.",
     },
+    /**
+     * `run_in_flight` disables SEND, never the text box.
+     *
+     * The shipped composer disabled the textarea on every reason alike, so a
+     * `run_in_flight` refusal left a box that could not be typed into and a
+     * button that could not be pressed, with nothing in the UI able to clear
+     * either — the operator's only exit was another tab. Composing while a turn
+     * finishes is exactly what the wait is for, so the box stays live and the
+     * refusal clears itself when the run reports its terminal.
+     */
+    runInFlightCompose: "You can write the next message while this turn finishes.",
     runInFlightHolder: (sessionId: string): string => `The live run belongs to session ${sessionId}.`,
 
     /**

@@ -62,7 +62,11 @@ export function SessionTabs({
 
   return (
     <div className={styles["tabs"]}>
-      <h2 className={styles["tabsHeading"]}>{copy.stream.sessionsHeading}</h2>
+      {/* A heading over a list of one is a label for something the reader can
+          already see. It appears once there is a choice to make. */}
+      {tabs.length > 1 ? (
+        <h2 className={styles["tabsHeading"]}>{copy.stream.sessionsHeading}</h2>
+      ) : null}
       {bounded ? <p className={styles["note"]}>{copy.stream.threadBounded}</p> : null}
       <ul className={styles["tabList"]} role="tablist" aria-label={copy.stream.sessionsHeading}>
         {tabs.map((tab) => {
@@ -93,10 +97,13 @@ export function SessionTabs({
                 </span>
                 {/* The state lives on the button alone: two elements carrying
                     `data-thread-state` would double every selector that reads
-                    it, and the tab IS the thing that is linked or not. */}
-                <span className={styles["tabThread"]}>
-                  {copy.stream.threadState[tab.thread_state]}
-                </span>
+                    it, and the tab IS the thing that is linked or not. Only the
+                    unlinked word is rendered — see `copy.stream.threadState`. */}
+                {tab.thread_state === "unlinked" ? (
+                  <span className={styles["tabThread"]}>
+                    {copy.stream.threadState.unlinked}
+                  </span>
+                ) : null}
               </button>
             </li>
           );

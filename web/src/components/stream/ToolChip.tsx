@@ -7,7 +7,10 @@
 //            data-event-id="run-a1b2c3d4e5f6#41"   <!-- live -->
 //            data-tool-call-id="…">
 //     <header>…</header>
-//     <dl><div data-field="artifact_ref">…</div>…</dl>
+//     <p data-chip-summary>…</p>
+//     <details data-chip-detail>
+//       <dl><div data-field="artifact_ref">…</div>…</dl>
+//     </details>
 //   </article>
 //
 // * `data-tool-name` — the canonical name from `tool_call.name`. For a result
@@ -38,12 +41,35 @@
 // The call's `arguments` are shown but carry no `data-field`: `data-field` names
 // keys of the *result* document, and putting an argument under it would break
 // groundedness on the very attribute the gate reads.
+//
+// WHAT CHANGED, AND WHY THE CONTRACT DID NOT. The field rows used to be the
+// chip's whole visible body: every key of every document, values verbatim, in
+// `.code` — which sets `word-break: break-all`. A `read_part` result carrying a
+// `part_param_state_hash` therefore rendered a 71-glyph sha256 in a column the
+// CSS had already collapsed to zero width (see `Transcript.module.css` on the
+// auto-placement bug), one character per line. Two facts about that failure are
+// worth separating: the vertical letter stack was a layout bug and is fixed in
+// the stylesheet, and the wall of hash was a READING failure that no stylesheet
+// fixes — a successful call has an outcome, and it belongs in a sentence.
+//
+// So the chip now leads with §7.2's two attributes as words (name, status) plus
+// a headline drawn from the result document by `stream/toolSummary.ts`, and the
+// arguments and the full field list move behind one `<details>`, collapsed.
+// **Every `data-field` node is still rendered, in document order, inside that
+// disclosure**: `<details>` hides its children from view, not from the DOM, and
+// both gates read the attribute set (`e2e/stream.spec.ts` through `evaluateAll`,
+// `test/stream/components.test.tsx` through `querySelectorAll`). §7.2's
+// predicate is a statement about `F`, the chip's `data-field` values, and `F` is
+// unchanged. §4.7's own instruction for the neighbouring case is the precedent:
+// "a reading surface never receives `JSON.stringify` output… the raw object goes
+// behind a `<details>`."
 
 import { readToolCall, readToolResult } from "../../api/events";
 import { copy } from "../../copy";
 import { StatusBadge } from "../../system";
 import { EventImageInline } from "./EventImage";
-import { fieldDisplay, parseToolResult, referenceFields } from "../../stream/toolResult";
+import { parseToolResult, referenceFields } from "../../stream/toolResult";
+import { displayValue, summaryOf, type ToolSummary } from "../../stream/toolSummary";
 import type { ChipStatus, TranscriptItem } from "../../stream/transcript";
 import styles from "./Transcript.module.css";
 
@@ -93,6 +119,9 @@ export function ToolChip({
   const fields = parsed !== null && parsed.state === "parsed" ? parsed.fields : [];
   const refs = new Set(referenceFields(fields));
   const fieldState = parsed === null ? undefined : parsed.state;
+  const summary =
+    parsed !== null && parsed.state === "parsed" ? summaryOf(parsed.doc, parsed.fields) : null;
+  const args = callPayload?.args;
 
   return (
     <article
@@ -119,12 +148,7 @@ export function ToolChip({
         <p className={styles["note"]}>{copy.stream.chip.callMissing}</p>
       ) : null}
 
-      {callPayload !== null && callPayload.args !== undefined ? (
-        <div className={styles["args"]}>
-          <span className={styles["argsLabel"]}>{copy.stream.chip.arguments}</span>
-          <code className={styles["argsBody"]}>{fieldDisplay(callPayload.args)}</code>
-        </div>
-      ) : null}
+      {summary === null ? null : <SummaryLine summary={summary} />}
 
       {children}
 
@@ -149,25 +173,52 @@ export function ToolChip({
             </details>
           ) : null}
         </div>
-      ) : (
-        <dl
-          className={styles["fields"]}
-          {...(result !== null && result.eventId !== call.eventId
-            ? { "data-event-id": result.eventId, "data-surface": result.surface }
-            : {})}
-        >
-          {parsed.fields.map((field) => (
-            <div
-              key={field}
-              className={styles["field"]}
-              data-field={field}
-              {...(refs.has(field) ? { "data-field-reference": "true" } : {})}
-            >
-              <dt className={styles["fieldName"]}>{field}</dt>
-              <dd className={styles["fieldValue"]}>{fieldDisplay(parsed.doc[field])}</dd>
+      ) : null}
+
+      {/* One disclosure for the wire format: the call's arguments and every key
+          of the result document. Collapsed, and the `data-field` nodes inside
+          are in the DOM whether it is open or not (see the module header). */}
+      {args === undefined && parsed?.state !== "parsed" ? null : (
+        <details className={styles["detail"]} data-chip-detail="">
+          <summary className={styles["detailSummary"]}>
+            {parsed !== null && parsed.state === "parsed"
+              ? copy.stream.chip.detail(parsed.fields.length)
+              : copy.stream.chip.detailNoFields}
+          </summary>
+          {args === undefined ? null : (
+            <div className={styles["args"]}>
+              <span className={styles["argsLabel"]}>{copy.stream.chip.arguments}</span>
+              <code className={styles["argsBody"]}>{displayValue(args).full}</code>
             </div>
-          ))}
-        </dl>
+          )}
+          {parsed === null || parsed.state !== "parsed" ? null : (
+            <dl
+              className={styles["fields"]}
+              {...(result !== null && result.eventId !== call.eventId
+                ? { "data-event-id": result.eventId, "data-surface": result.surface }
+                : {})}
+            >
+              {parsed.fields.map((field) => {
+                const shown = displayValue(parsed.doc[field]);
+                return (
+                  <div
+                    key={field}
+                    className={styles["field"]}
+                    data-field={field}
+                    {...(refs.has(field) ? { "data-field-reference": "true" } : {})}
+                  >
+                    <dt className={styles["fieldName"]}>{field}</dt>
+                    {/* The whole value on `title`, always: an elided digest a
+                        reader cannot recover is a digest this page destroyed. */}
+                    <dd className={styles["fieldValue"]} title={shown.full}>
+                      {shown.text}
+                    </dd>
+                  </div>
+                );
+              })}
+            </dl>
+          )}
+        </details>
       )}
 
       {images.length > 0 ? (
@@ -181,5 +232,33 @@ export function ToolChip({
         </div>
       ) : null}
     </article>
+  );
+}
+
+/**
+ * The headline: the outcome a successful call reported, in one line.
+ *
+ * Composed of the document's own keys and values (`stream/toolSummary.ts` picks
+ * them; nothing here re-words one). When the document carried nothing short
+ * enough to headline — a result that is only refs and hashes — the line says
+ * that instead of printing one, and points at the disclosure that holds them.
+ */
+function SummaryLine({ summary }: { readonly summary: ToolSummary }): React.JSX.Element {
+  if (summary.parts.length === 0) {
+    return (
+      <p className={styles["summary"]} data-chip-summary="opaque">
+        {copy.stream.chip.summaryOpaque}
+      </p>
+    );
+  }
+  return (
+    <p className={styles["summary"]} data-chip-summary="fields">
+      {summary.parts.map((part) => (
+        <span key={part.field} className={styles["summaryPart"]}>
+          <span className={styles["summaryField"]}>{part.field}</span>
+          <span className={styles["summaryValue"]}>{part.value}</span>
+        </span>
+      ))}
+    </p>
   );
 }
