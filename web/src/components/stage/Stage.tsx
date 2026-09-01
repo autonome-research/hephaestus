@@ -32,7 +32,7 @@ import { copy } from "../../copy";
 import { useWorkspace, workspaceStore } from "../../state/react";
 import { shellStore } from "../../state/shell";
 import { effectiveInspectorTab, STAGE_TABS, type StageTab } from "../../state/workspace";
-import { Badge, EmptyState, TabBar, useShell } from "../../system";
+import { Badge, EmptyState, TabBar, tabControlId, useShell } from "../../system";
 import { ResultsPanel } from "../inspector/ResultsPanel";
 import { dirtySideWord, useDirtyIndex } from "../rail/GitDirty";
 import { Inspector } from "./Inspector";
@@ -100,6 +100,7 @@ export function Stage(): React.JSX.Element {
       <div className={styles["region"]}>
         <TabBar
           attr="data-stage-tab"
+          panelId="stage-panel"
           label={copy.stage.tabsLabel}
           selected={tab}
           onSelect={(next: StageTab) => {
@@ -125,7 +126,12 @@ export function Stage(): React.JSX.Element {
           }))}
         />
 
-        <div className={styles["content"]} role="tabpanel">
+        <div
+          className={styles["content"]}
+          role="tabpanel"
+          id="stage-panel"
+          aria-labelledby={tabControlId("data-stage-tab", tab)}
+        >
           {tab === "script" ? (
             <ScriptWorkspace />
           ) : tab === "viewport" ? (

@@ -76,14 +76,23 @@ export function Popover(props: PopoverProps): React.JSX.Element | null {
       const panel = panelRef.current;
       if (panel === null) return;
       const items = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE));
-      if (items.length === 0) return;
+      if (items.length === 0) {
+        event.preventDefault();
+        panel.focus();
+        return;
+      }
       const first = items[0];
       const last = items[items.length - 1];
       if (first === undefined || last === undefined) return;
-      if (event.shiftKey && document.activeElement === first) {
+      const active = document.activeElement;
+      const inItems = active instanceof HTMLElement && items.includes(active);
+      // A click on the panel (`tabIndex={-1}`) or the scrim leaves
+      // `activeElement` outside the focusable list. Wrapping only at the
+      // first/last item lets Tab escape from that state (#84).
+      if (event.shiftKey && (!inItems || active === first)) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
+      } else if (!event.shiftKey && (!inItems || active === last)) {
         event.preventDefault();
         first.focus();
       }

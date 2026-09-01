@@ -386,9 +386,15 @@ export function Viewport(): React.JSX.Element {
       data-glb-state={state}
       {...(displayedRef === null ? {} : { "data-artifact-ref": displayedRef })}
       {...(sectionState === null ? {} : { "data-section-state": sectionState })}
-      aria-label={copy.viewport.label}
     >
-      <canvas ref={canvasRef} className={styles["canvas"]} data-viewport-canvas="" />
+      <canvas
+        ref={canvasRef}
+        id="stage"
+        className={styles["canvas"]}
+        data-viewport-canvas=""
+        tabIndex={0}
+        aria-label={copy.viewport.label}
+      />
 
       {state === "ready" ? null : (
         // §3.3's principle 5, generalised past the stream column: every state —

@@ -63,7 +63,7 @@ import {
 } from "../../api/sessions";
 import { useParts } from "../../api/queries";
 import { copy } from "../../copy";
-import { Badge, Button, EmptyState, type BadgeStatus } from "../../system";
+import { Badge, Button, EmptyState, tabControlId, type BadgeStatus } from "../../system";
 import { useWorkspace, workspaceStore } from "../../state/react";
 import { sessionEmptyBody, sessionEmptyKind } from "../../stream/sessionEmpty";
 import { useStream } from "../../stream/useStream";
@@ -385,6 +385,7 @@ export function StreamPanel(): React.JSX.Element {
               sessions={rows}
               selected={selected}
               bounded={stream.threadBounded}
+              panelId="transcript-panel"
               onSelect={(sessionId) => {
                 workspaceStore.update({ session: sessionId });
               }}
@@ -413,7 +414,14 @@ export function StreamPanel(): React.JSX.Element {
             {stream.history.state === "truncated" ? (
               <p className={styles["historyNote"]}>{copy.stream.historyTruncated}</p>
             ) : null}
-            <div className={styles["scrollHost"]}>
+            <div
+              className={styles["scrollHost"]}
+              role="tabpanel"
+              id="transcript-panel"
+              aria-labelledby={
+                selected === null ? undefined : tabControlId("data-session-tab", selected)
+              }
+            >
               <div className={styles["scroll"]} ref={scrollRef} data-transcript-scroll="">
                 <Transcript rows={stream.rows} runtimeFault={fault} />
               </div>

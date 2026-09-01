@@ -43,7 +43,7 @@ import {
   inspectorTabsFor,
   type InspectorTab,
 } from "../../state/workspace";
-import { TabBar } from "../../system";
+import { TabBar, tabControlId } from "../../system";
 import { ChecksPanel } from "../inspector/ChecksPanel";
 import { DfmPanel, type DescriptorIntent } from "../inspector/DfmPanel";
 import { ExportPanel } from "../inspector/ExportPanel";
@@ -64,6 +64,7 @@ export function Inspector(): React.JSX.Element {
     <section className={styles["drawer"]} aria-label={copy.inspector.tabs[tab]}>
       <TabBar
         attr="data-inspector-tab"
+        panelId="inspector-panel"
         label={copy.inspector.tabsLabel}
         selected={tab}
         onSelect={(next: InspectorTab) => {
@@ -71,7 +72,13 @@ export function Inspector(): React.JSX.Element {
         }}
         tabs={tabs.map((name) => ({ id: name, label: copy.inspector.tabs[name] }))}
       />
-      <div className={styles["content"]} role="tabpanel" data-inspector-panel={tab}>
+      <div
+        className={styles["content"]}
+        role="tabpanel"
+        id="inspector-panel"
+        aria-labelledby={tabControlId("data-inspector-tab", tab)}
+        data-inspector-panel={tab}
+      >
         {tab === "results" ? (
           <ResultsPanel />
         ) : tab === "properties" ? (

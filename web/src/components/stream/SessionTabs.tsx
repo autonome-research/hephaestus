@@ -19,7 +19,7 @@
 // session is created, and the CLI's hold on a session is untouched.
 //
 // The widget is `TabBar`: roving tabindex, arrows, Home/End, Tab leaves the
-// list. #68's tabpanel / well-role work is a later a11y PR.
+// list. The transcript is the `tabpanel` this list controls (#68).
 
 import { copy } from "../../copy";
 import type { SessionRow } from "../../api/sessions";
@@ -39,6 +39,8 @@ export interface SessionTabsProps {
   readonly selected: string | null;
   readonly onSelect: (sessionId: string) => void;
   readonly bounded: boolean;
+  /** The transcript `tabpanel` this list controls (#68). */
+  readonly panelId?: string | undefined;
 }
 
 export function SessionTabs({
@@ -47,6 +49,7 @@ export function SessionTabs({
   selected,
   onSelect,
   bounded,
+  panelId,
 }: SessionTabsProps): React.JSX.Element {
   const byId = new Map(sessions.map((row) => [row.session_id, row]));
   const selectedId = selected ?? tabs[0]?.session_id ?? "";
@@ -61,6 +64,7 @@ export function SessionTabs({
       {bounded ? <p className={styles["note"]}>{copy.stream.threadBounded}</p> : null}
       <TabBar
         attr="data-session-tab"
+        panelId={panelId}
         layout="stack"
         className={styles["sessionTabs"]}
         label={copy.stream.sessionsHeading}
