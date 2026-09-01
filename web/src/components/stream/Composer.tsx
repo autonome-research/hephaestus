@@ -646,7 +646,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
           onClick={() => {
             setDisclosed((open) => !open);
           }}
-          pressed={disclosed}
+          expanded={disclosed}
           data-context-disclose=""
         >
           {disclosed ? copy.composer.discloseHide : copy.composer.disclose}
@@ -750,7 +750,7 @@ function ContextChipRow(props: {
           : formatRef(chip.value ?? "", CHIP_REF_WIDTH)}
       </Chip>
       <Button
-        variant="quiet"
+        variant="toggle"
         icon="close"
         iconLabel={copy.composer.contextDrop(label)}
         pressed={dropped}

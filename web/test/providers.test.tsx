@@ -35,7 +35,8 @@ import {
   type DiscoveryOffer,
   type ProviderRow,
 } from "../src/api/providers";
-import { availabilityChip, healthLine } from "../src/components/ProvidersPanel";
+import { availabilityChip, healthObserved } from "../src/components/ProvidersPanel";
+import { formatObservedAt } from "../src/system";
 import { SignInDialog, refusalText } from "../src/components/SignInDialog";
 import { WorkspaceError } from "../src/api/client";
 import { copy } from "../src/copy";
@@ -129,16 +130,19 @@ describe("§23.7's verification is reported without substitution", () => {
 });
 
 describe("§23.8's health is LAST OBSERVED, never current", () => {
-  it("says only the state when nothing has been observed", () => {
-    const line = healthLine(row({ health: "unused", last_observed_at: null }));
-    expect(line).toBe(copy.providers.health.unused);
+  it("says nothing observed when the timestamp is absent", () => {
+    expect(healthObserved(row({ health: "unused", last_observed_at: null }))).toBeNull();
   });
 
-  it("carries a time when something has", () => {
-    const line = healthLine(row({ health: "accepted", last_observed_at: 1_700_000_000 }));
-    expect(line).toContain(copy.providers.health.accepted);
-    // A time is present, so the staleness is on screen rather than implied.
-    expect(line.length).toBeGreaterThan(copy.providers.health.accepted.length);
+  it("prints a clock for today and a date when the observation is older (#94)", () => {
+    const now = new Date("2026-09-01T14:32:00");
+    const today = Math.floor(now.getTime() / 1000);
+    const threeDays = today - 3 * 86_400;
+    expect(formatObservedAt(today, now)).toBe(new Date(today * 1000).toLocaleTimeString());
+    expect(formatObservedAt(threeDays, now)).not.toBe(new Date(threeDays * 1000).toLocaleTimeString());
+    const observed = healthObserved(row({ health: "accepted", last_observed_at: threeDays }), now);
+    expect(observed).toContain(copy.providers.healthStale);
+    expect(observed).not.toBeNull();
   });
 });
 

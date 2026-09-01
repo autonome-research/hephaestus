@@ -26,7 +26,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it, afterEach } from "vitest";
+import { describe, expect, it, afterEach, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createRoot, type Root } from "react-dom/client";
 import { act } from "react";
@@ -34,15 +34,21 @@ import type { ReactElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { GitDirtyEntry, GitStatusDocument, PartsDocument } from "../src/api/types";
+import { WorkspaceError } from "../src/api/client";
 import { keys } from "../src/api/queries";
+import { claimToken, dropToken } from "../src/api/token";
+import { copy } from "../src/copy";
 import {
   GitDirtyView,
   dirtySide,
+  gitCapabilityAbsence,
+  indexDirty,
   isGeneratedPath,
   railBranch,
   railHead,
   type DirtyIndex,
 } from "../src/components/rail/GitDirty";
+import { VersionList } from "../src/components/rail/VersionList";
 import {
   PROJECT_TREE_SECTIONS,
   ProjectSectionList,
@@ -80,6 +86,27 @@ function live(element: ReactElement): { host: HTMLElement; root: Root } {
   return { host, root };
 }
 
+function refuseAll(): void {
+  window.history.replaceState(null, "", "/#t=rail-test-token");
+  claimToken();
+  vi.stubGlobal(
+    "fetch",
+    async () =>
+      new Response(JSON.stringify({ status: "error", reason: "transport_error", message: "refused" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      }),
+  );
+}
+
+async function flush(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+  });
+}
+
 function drop(mounted: { host: HTMLElement; root: Root }): void {
   act(() => {
     mounted.root.unmount();
@@ -95,6 +122,7 @@ function dirtyIndex(over: Partial<DirtyIndex> = {}): DirtyIndex {
     entries: [blob],
     clean: false,
     absence: null,
+    error: null,
     branch: null,
     head: null,
     ...over,
@@ -267,6 +295,8 @@ describe("part row click selects the part", () => {
     host = undefined;
     root = undefined;
     workspaceStore.reset(DEFAULT_STATE);
+    vi.unstubAllGlobals();
+    dropToken();
   });
 
   async function mount(element: ReactElement): Promise<HTMLElement> {
@@ -373,5 +403,154 @@ describe("part row click selects the part", () => {
       );
     });
     expect(workspaceStore.getSnapshot().part).toBe("shelf");
+  });
+
+  it("prints a refusal, not Loading…, when GET /parts is refused (#89)", async () => {
+    refuseAll();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(keys.gitStatus(), {
+      status: "ok",
+      dirty: [],
+      clean: true,
+      head: "abc",
+      branch: "main",
+    } satisfies GitStatusDocument);
+    const container = await mount(
+      <QueryClientProvider client={client}>
+        <ProjectTree />
+      </QueryClientProvider>,
+    );
+    await flush();
+    expect(container.querySelector('[data-refusal-reason="transport_error"]')).not.toBeNull();
+    expect(container.textContent).not.toContain(copy.absent.loading);
+  });
+});
+
+describe("GitDirty — refused is not loading, and orphans still get a row", () => {
+  const status = (
+    dirty: readonly GitDirtyEntry[],
+  ): GitStatusDocument => ({
+    status: "ok",
+    dirty,
+    clean: dirty.length === 0,
+    head: "abc",
+    branch: "main",
+  });
+
+  it("names only git_unavailable and not_a_git_repository as capability absences (#89)", () => {
+    expect(gitCapabilityAbsence(new WorkspaceError(503, "git_unavailable", "no git"))).toBe(
+      copy.absent.gitUnavailable,
+    );
+    expect(gitCapabilityAbsence(new WorkspaceError(404, "not_a_git_repository", "no repo"))).toBe(
+      copy.absent.noGit,
+    );
+    expect(gitCapabilityAbsence(new WorkspaceError(500, "transport_error", "boom"))).toBeNull();
+    expect(gitCapabilityAbsence(new Error("socket"))).toBeNull();
+  });
+
+  it("prints a refusal, not Loading…, when git status is a 500 (#89)", () => {
+    const err = new WorkspaceError(500, "transport_error", "boom");
+    const host = render(<GitDirtyView index={dirtyIndex({ error: err, clean: null })} />);
+    expect(host.querySelector('[data-refusal-reason="transport_error"]')).not.toBeNull();
+    expect(host.textContent).not.toContain(copy.absent.loading);
+  });
+
+  it("still prints Loading… only while the fetch is in flight (#89)", () => {
+    const host = render(<GitDirtyView index={dirtyIndex({ clean: null, error: null })} />);
+    expect(host.textContent).toContain(copy.absent.loading);
+    expect(host.querySelector("[data-refusal-reason]")).toBeNull();
+  });
+
+  it("places a deleted part's dirty path on a row, not only in the caption (#95)", () => {
+    const orphan: GitDirtyEntry = {
+      path: "parts/old_bracket.py",
+      part: "old_bracket",
+      index: "D",
+      worktree: ".",
+    };
+    const live: GitDirtyEntry = {
+      path: "parts/gusset.py",
+      part: "gusset",
+      index: "M",
+      worktree: ".",
+    };
+    const index = indexDirty(status([orphan, live]), null, new Set(["gusset"]));
+    expect(index.byPart.has("gusset")).toBe(true);
+    expect(index.byPart.has("old_bracket")).toBe(false);
+    expect(index.others.map((entry) => entry.path)).toEqual(["parts/old_bracket.py"]);
+    expect(index.entries).toHaveLength(2);
+    const host = render(<GitDirtyView index={index} />);
+    expect(host.textContent).toContain("2");
+    expect(
+      [...host.querySelectorAll('[data-source="git.dirty[].path"]')].map((node) =>
+        node.getAttribute("data-value"),
+      ),
+    ).toEqual(["parts/old_bracket.py"]);
+  });
+
+  it("does not drop a second dirty path on the same part (#95)", () => {
+    const deleted: GitDirtyEntry = {
+      path: "parts/old_name.py",
+      part: "bracket",
+      index: "D",
+      worktree: ".",
+    };
+    const added: GitDirtyEntry = {
+      path: "parts/bracket.py",
+      part: "bracket",
+      index: "?",
+      worktree: "?",
+    };
+    const index = indexDirty(status([deleted, added]), null, new Set(["bracket"]));
+    expect(index.byPart.get("bracket")?.path).toBe("parts/old_name.py");
+    expect(index.others.map((entry) => entry.path)).toEqual(["parts/bracket.py"]);
+    expect(index.byPart.size + index.others.length).toBe(index.entries.length);
+  });
+});
+
+describe("VersionList — refused is not loading", () => {
+  let host: HTMLElement | undefined;
+  let root: Root | undefined;
+
+  afterEach(() => {
+    act(() => {
+      root?.unmount();
+    });
+    host?.remove();
+    host = undefined;
+    root = undefined;
+    workspaceStore.reset(DEFAULT_STATE);
+    vi.unstubAllGlobals();
+    dropToken();
+  });
+
+  it("prints a refusal, not Loading…, when GET /git/log is refused (#89)", async () => {
+    refuseAll();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(keys.gitStatus(), {
+      status: "ok",
+      dirty: [],
+      clean: true,
+      head: "abc",
+      branch: "main",
+    } satisfies GitStatusDocument);
+    client.setQueryData(keys.parts(), {
+      status: "ok",
+      parts: [],
+    } satisfies PartsDocument);
+    workspaceStore.reset({ ...DEFAULT_STATE, part: "gusset" });
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root?.render(
+        <QueryClientProvider client={client}>
+          <VersionList />
+        </QueryClientProvider>,
+      );
+    });
+    await flush();
+    expect(host.querySelector('[data-refusal-reason="transport_error"]')).not.toBeNull();
+    expect(host.textContent).not.toContain(copy.absent.loading);
   });
 });

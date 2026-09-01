@@ -55,10 +55,10 @@
 // tree, and this panel still reports nothing about whether a build is current.
 
 import { useState } from "react";
-import { useGitStatus } from "../../api/queries";
+import { useGitStatus, useParts } from "../../api/queries";
 import { WorkspaceError } from "../../api/client";
 import { copy } from "../../copy";
-import type { GitDirtyEntry } from "../../api/types";
+import type { GitDirtyEntry, GitStatusDocument } from "../../api/types";
 import {
   Badge,
   Button,
@@ -70,6 +70,7 @@ import {
   formatOid,
 } from "../../system";
 import { Fact } from "../Fact";
+import { RefusalBanner } from "../RefusalBanner";
 import styles from "./GitDirty.module.css";
 
 /** git porcelain v2 `# branch.head (detached)` — not a branch Fact. */
@@ -118,12 +119,17 @@ export function dirtySide(entry: GitDirtyEntry): keyof typeof copy.gitStatus {
 export interface DirtyIndex {
   /** part name → its dirty row, for the tree's inline markers. */
   readonly byPart: ReadonlyMap<string, GitDirtyEntry>;
-  /** Changed paths the server did not attribute to a part. */
+  /** Changed paths the panel body renders (unattributed, extras, orphans). */
   readonly others: readonly GitDirtyEntry[];
   readonly entries: readonly GitDirtyEntry[];
   readonly clean: boolean | null;
   /** A named absence: not a git work tree, or git is not available. */
   readonly absence: string | null;
+  /**
+   * A refused read that is not a named git-capability absence. In-flight is
+   * `error === null && clean === null`; a 500 is not loading (#89).
+   */
+  readonly error: Error | null;
   /** §13.1's git identity, on the git axis: which repository this is. */
   readonly branch: string | null;
   readonly head: string | null;
@@ -135,28 +141,50 @@ const EMPTY_INDEX: DirtyIndex = {
   entries: [],
   clean: null,
   absence: null,
+  error: null,
   branch: null,
   head: null,
 };
 
-/** The one read of `GET /git/status`, shared by the tree and this panel. */
-export function useDirtyIndex(): DirtyIndex {
-  const status = useGitStatus();
-  if (status.error instanceof WorkspaceError) {
-    return {
-      ...EMPTY_INDEX,
-      absence:
-        status.error.reason === "git_unavailable" ? copy.absent.gitUnavailable : copy.absent.noGit,
-    };
-  }
-  const data = status.data;
+/** The two reasons `GET /git/status` names as "git itself is not here". */
+export function gitCapabilityAbsence(error: Error | null): string | null {
+  if (!(error instanceof WorkspaceError)) return null;
+  if (error.reason === "git_unavailable") return copy.absent.gitUnavailable;
+  if (error.reason === "not_a_git_repository") return copy.absent.noGit;
+  return null;
+}
+
+/**
+ * Split one `git status` document across the tree markers and the panel body.
+ *
+ * `partNames === null` means `GET /parts` has not answered yet — attributed
+ * entries stay on `byPart` so a later tree can mark them. Once the parts list
+ * is known, an entry whose part is not a row still gets a panel row (#95),
+ * and a second path on the same part is not dropped by last-wins.
+ */
+export function indexDirty(
+  data: GitStatusDocument | undefined,
+  error: Error | null,
+  partNames: ReadonlySet<string> | null,
+): DirtyIndex {
+  const absence = gitCapabilityAbsence(error);
+  if (absence !== null) return { ...EMPTY_INDEX, absence };
+  if (error !== null) return { ...EMPTY_INDEX, error };
   if (data === undefined) return EMPTY_INDEX;
   const byPart = new Map<string, GitDirtyEntry>();
   const others: GitDirtyEntry[] = [];
   for (const entry of data.dirty) {
     const part = entry.part ?? null;
-    if (part === null) others.push(entry);
-    else byPart.set(part, entry);
+    if (part === null) {
+      others.push(entry);
+      continue;
+    }
+    const onTree = partNames === null || partNames.has(part);
+    if (!onTree || byPart.has(part)) {
+      others.push(entry);
+      continue;
+    }
+    byPart.set(part, entry);
   }
   return {
     byPart,
@@ -164,9 +192,23 @@ export function useDirtyIndex(): DirtyIndex {
     entries: data.dirty,
     clean: data.clean,
     absence: null,
+    error: null,
     branch: railBranch(data.branch),
     head: railHead(data.head),
   };
+}
+
+/** The one read of `GET /git/status`, shared by the tree and this panel. */
+export function useDirtyIndex(): DirtyIndex {
+  const status = useGitStatus();
+  const parts = useParts();
+  const partNames =
+    parts.error !== null
+      ? new Set<string>()
+      : parts.data === undefined
+        ? null
+        : new Set(parts.data.parts.map((row) => row.name));
+  return indexDirty(status.data, status.error, partNames);
 }
 
 /**
@@ -199,11 +241,19 @@ export function DirtyMarker({ entry }: { readonly entry: GitDirtyEntry }): React
  * facts (§13.1 reports, never hides) and the job here is to keep them on one
  * line rather than eating the rail.
  */
-export function GitDirtyView({ index }: { readonly index: DirtyIndex }): React.JSX.Element {
+export function GitDirtyView({
+  index,
+  onRetry,
+}: {
+  readonly index: DirtyIndex;
+  readonly onRetry?: (() => void) | undefined;
+}): React.JSX.Element {
   const absence = railGitAbsence(index);
   const [generatedOpen, setGeneratedOpen] = useState(false);
   const generated = index.others.filter((entry) => isGeneratedPath(entry.path));
   const authored = index.others.filter((entry) => !isGeneratedPath(entry.path));
+  const unplaced = authored.filter((entry) => entry.part !== null);
+  const outside = authored.filter((entry) => entry.part === null);
 
   return (
     <Panel className={styles["panel"]} label={copy.rail.gitHeading}>
@@ -243,6 +293,8 @@ export function GitDirtyView({ index }: { readonly index: DirtyIndex }): React.J
             body={absence}
             data-rail-shared-absence=""
           />
+        ) : index.error !== null ? (
+          <RefusalBanner error={index.error} onRetry={onRetry} />
         ) : index.clean === null ? (
           <p className={styles["absent"]}>{copy.absent.loading}</p>
         ) : index.clean ? (
@@ -256,10 +308,16 @@ export function GitDirtyView({ index }: { readonly index: DirtyIndex }): React.J
                 render would be exactly the client-side re-count §1 forbids. It is
                 a caption over the list; the rows below carry the attribution. */}
             <p className={styles["count"]}>{copy.rail.dirtyCount(index.entries.length)}</p>
-            {authored.length === 0 ? null : (
+            {outside.length === 0 ? null : (
               <>
                 <p className={styles["subheading"]}>{copy.rail.dirtyOutsideParts}</p>
-                <DirtyRows entries={authored} />
+                <DirtyRows entries={outside} />
+              </>
+            )}
+            {unplaced.length === 0 ? null : (
+              <>
+                <p className={styles["subheading"]}>{copy.rail.dirtyUnplaced}</p>
+                <DirtyRows entries={unplaced} />
               </>
             )}
             {generated.length === 0 ? null : (
@@ -318,5 +376,13 @@ function DirtyRows({ entries }: { readonly entries: readonly GitDirtyEntry[] }):
 }
 
 export function GitDirtyPanel(): React.JSX.Element {
-  return <GitDirtyView index={useDirtyIndex()} />;
+  const status = useGitStatus();
+  return (
+    <GitDirtyView
+      index={useDirtyIndex()}
+      onRetry={() => {
+        void status.refetch();
+      }}
+    />
+  );
 }

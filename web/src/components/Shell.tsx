@@ -29,6 +29,7 @@
 // cannot live in 44px" (§7A.1).
 
 import { useEffect, useRef } from "react";
+import { useProjectRefresh } from "../api/projectRefresh";
 import { useProject } from "../api/queries";
 import { copy } from "../copy";
 import { useWorkspace } from "../state/react";
@@ -45,6 +46,8 @@ import { StreamPanel } from "./stream/StreamPanel";
 import styles from "./Shell.module.css";
 
 export function Shell(): React.JSX.Element {
+  // §7A.11 lives at project lifetime, not Stream column mount (#92).
+  useProjectRefresh();
   const shell = useBreakpoint();
   // §4.1: when the pin is not the current build "the header is visibly marked
   // and every panel below inherits that marking". The attribute is the

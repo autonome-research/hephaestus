@@ -66,6 +66,7 @@ import {
   PanelNote,
   PanelSection,
   StatusBadge,
+  formatObservedAt,
   type ChipStatus,
 } from "../system";
 import { Fact } from "./Fact";
@@ -89,12 +90,16 @@ export function availabilityChip(available: boolean | null): ChipStatus {
   return available ? "ok" : "error";
 }
 
-/** The "accepted 14:32" half of §23.8's health axis, or a named absence. */
-export function healthLine(row: ProviderRow): string {
-  const health = copy.providers.health[row.health];
-  if (row.last_observed_at === null) return health;
-  const at = new Date(row.last_observed_at * 1000);
-  return `${health} · ${copy.providers.healthStale} ${at.toLocaleTimeString()}`;
+/**
+ * Presentation of `last_observed_at` — never welded into the health Fact.
+ *
+ * Two fields, two attributions (#94). A clock without a date hid a three-day-old
+ * observation; `formatObservedAt` prints a date or a relative age when the
+ * observation is not from today.
+ */
+export function healthObserved(row: ProviderRow, now: Date = new Date()): string | null {
+  if (row.last_observed_at === null) return null;
+  return `${copy.providers.healthStale} ${formatObservedAt(row.last_observed_at, now)}`;
 }
 
 export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
@@ -181,7 +186,7 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
         actions={
           <Button
             variant="quiet"
-            pressed={detailsOpen}
+            expanded={detailsOpen}
             onClick={() => {
               setDetailsOpen((open) => !open);
             }}
@@ -292,6 +297,9 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
                 row={row}
                 busy={busy}
                 compact={!detailsOpen}
+                onOpenDetails={() => {
+                  setDetailsOpen(true);
+                }}
                 onSignIn={() => {
                   setDialogFor(row.id);
                 }}
@@ -327,6 +335,7 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
           offers={offers}
           busy={busy}
           compact={!detailsOpen}
+          signedIn={rows.some((row) => row.source !== "none")}
           onDiscover={() => {
             // THE ONLY call site. Never on mount, never on a timer, never as a
             // side effect of another action (§15.41, §23.5).
@@ -368,12 +377,13 @@ interface ProviderRowViewProps {
   readonly row: ProviderRow;
   readonly busy: boolean;
   readonly compact: boolean;
+  readonly onOpenDetails: () => void;
   readonly onSignIn: () => void;
   readonly onSignOut: () => void;
 }
 
 function ProviderRowView(props: ProviderRowViewProps): React.JSX.Element {
-  const { row, busy, compact, onSignIn, onSignOut } = props;
+  const { row, busy, compact, onOpenDetails, onSignIn, onSignOut } = props;
   const signedIn = row.source !== "none";
   const actions = (
     <div className={styles["actions"]}>
@@ -406,8 +416,21 @@ function ProviderRowView(props: ProviderRowViewProps): React.JSX.Element {
         data-provider-health={row.health}
         data-provider-available={row.available === null ? "unknown" : String(row.available)}
       >
-        <Chip tone="code">{row.id}</Chip>
-        {actions}
+        {signedIn ? (
+          <Button
+            variant="quiet"
+            onClick={onOpenDetails}
+            data-provider-chip={row.id}
+            title={copy.providers.detailsShow}
+          >
+            {row.id}
+          </Button>
+        ) : (
+          <>
+            <Chip tone="code">{row.id}</Chip>
+            {actions}
+          </>
+        )}
       </div>
     );
   }
@@ -430,8 +453,23 @@ function ProviderRowView(props: ProviderRowViewProps): React.JSX.Element {
           {
             key: "health",
             label: copy.providers.health.label,
-            // AXIS 2, and it says *when*, not *now*.
-            value: <Fact source="providers.health" value={healthLine(row)} />,
+            // AXIS 2, and it says *when*, not *now*. Two Facts: the wire
+            // health, then `last_observed_at` with a date when it is not today.
+            value: (
+              <>
+                <Fact source="providers.health" value={row.health}>
+                  {copy.providers.health[row.health]}
+                </Fact>
+                {row.last_observed_at === null ? null : (
+                  <>
+                    {" · "}
+                    <Fact source="providers.last_observed_at" value={row.last_observed_at}>
+                      {healthObserved(row)}
+                    </Fact>
+                  </>
+                )}
+              </>
+            ),
             ...(row.last_observed_at === null ? { note: copy.providers.healthNever } : {}),
           },
           {
@@ -475,12 +513,15 @@ interface DiscoverySectionProps {
   readonly offers: readonly DiscoveryOffer[] | null;
   readonly busy: boolean;
   readonly compact: boolean;
+  /** Hunt-for-sign-ins lives behind Show configuration once attached (#55). */
+  readonly signedIn: boolean;
   readonly onDiscover: () => void;
   readonly onAdopt: (offer: DiscoveryOffer) => void;
 }
 
-function DiscoverySection(props: DiscoverySectionProps): React.JSX.Element {
-  const { offers, busy, compact, onDiscover, onAdopt } = props;
+function DiscoverySection(props: DiscoverySectionProps): React.JSX.Element | null {
+  const { offers, busy, compact, signedIn, onDiscover, onAdopt } = props;
+  if (compact && signedIn) return null;
   return (
     <PanelSection eyebrow={copy.providers.discover.title}>
       {compact ? null : <PanelNote>{copy.providers.discover.note}</PanelNote>}

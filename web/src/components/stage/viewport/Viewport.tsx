@@ -429,7 +429,9 @@ export function Viewport(): React.JSX.Element {
           <GridReadout scale={scale} step={displayedRef === null || !appearance.grid ? 0 : step} />
           <AppearanceControls canFit={displayedRef !== null && state === "ready"} onFit={onFit} />
           <div className={styles["controls"]}>
-            <ExplodeSlider />
+            <ExplodeSlider
+              noop={glb.data !== undefined && glb.data.geometry.mesh_count <= 1}
+            />
             {/* The bounds belong to the *loaded* GLB: while none is loaded the
                 control seats its offset on its own fallback range rather than on
                 the previous artifact's, which would name a plane in the wrong

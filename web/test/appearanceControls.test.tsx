@@ -36,7 +36,21 @@ describe("AppearanceControls — bound to the pin, not a second inspector", () =
     const order = [...host.querySelectorAll("[data-appearance-control]")].map((node) =>
       node.getAttribute("data-appearance-control"),
     );
-    expect(order).toEqual(["wireframe", "fit", "ortho", "grid", "triad", "materialOverride"]);
+    // Fit and grid stay; wireframe / ortho / axes / material live behind View.
+    expect(order).toEqual(["fit", "grid", "wireframe", "ortho", "triad", "materialOverride"]);
+  });
+
+  it("keeps Fit and grid at rest and starts the extras collapsed (#60)", () => {
+    const host = render(<AppearanceControls canFit onFit={() => undefined} />);
+    expect(host.querySelector('[data-appearance-control="fit"]')).not.toBeNull();
+    expect(host.querySelector('[data-appearance-control="grid"]')).not.toBeNull();
+    expect(host.querySelector("[data-appearance-more]")?.getAttribute("aria-expanded")).toBe(
+      "false",
+    );
+    expect(host.querySelector("[data-appearance-extras]")?.hasAttribute("hidden")).toBe(true);
+    expect(host.querySelector("[data-appearance-extras]")?.getAttribute("data-appearance-extras-open")).toBe(
+      "false",
+    );
   });
 
   it("defaults match the authored picture — G4.5/§3.11.2 must not move by existing", () => {

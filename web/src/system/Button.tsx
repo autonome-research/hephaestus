@@ -47,10 +47,17 @@ type Disablement =
   | { readonly disabled: true; readonly reason: string }
   | { readonly disabled?: false | undefined; readonly reason?: undefined };
 
-export type ButtonProps = {
-  readonly variant?: ButtonVariant | undefined;
-  /** `toggle` only: drives `aria-pressed` and the accent-quiet fill. */
-  readonly pressed?: boolean | undefined;
+/**
+ * `pressed` is part of the variant discriminant, the same shape `Disablement`
+ * already uses: a quiet / primary / secondary button cannot accept a state the
+ * primitive would then discard (#101). `toggle` is the only variant that emits
+ * `aria-pressed` and the accent-quiet fill.
+ */
+type Pressed =
+  | { readonly variant: "toggle"; readonly pressed?: boolean | undefined }
+  | { readonly variant?: Exclude<ButtonVariant, "toggle"> | undefined };
+
+type ButtonBase = {
   /**
    * A disclosure control's state, as `aria-expanded`.
    *
@@ -74,10 +81,11 @@ export type ButtonProps = {
 } & Disablement &
   DataAttributes;
 
+export type ButtonProps = ButtonBase & Pressed;
+
 export function Button(props: ButtonProps): React.JSX.Element {
   const {
     variant = "secondary",
-    pressed,
     expanded,
     onClick,
     type = "button",
@@ -89,6 +97,7 @@ export function Button(props: ButtonProps): React.JSX.Element {
     disabled,
     reason,
   } = props;
+  const pressed = props.variant === "toggle" ? props.pressed : undefined;
   const reasonId = useId();
   const isDisabled = disabled === true;
   const labelled = iconLabel !== undefined && children === undefined;

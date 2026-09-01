@@ -26,6 +26,7 @@ import { act } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { Viewport, ViewportAbsence } from "../src/components/stage/viewport/Viewport";
+import { ExplodeSlider } from "../src/components/stage/viewport/ExplodeSlider";
 import { DEFAULT_STATE } from "../src/state/workspace";
 import { workspaceStore } from "../src/state/react";
 
@@ -131,5 +132,27 @@ describe("ViewportAbsence — a title that is the whole fact is the whole state"
   it("still shows a refusal reason on a state that would otherwise be title-only", () => {
     const host = plate("no-pin", "malformed_gltf");
     expect(host.querySelector('[data-refusal-reason="malformed_gltf"]')).not.toBeNull();
+  });
+});
+
+describe("ExplodeSlider — a 1-solid sheet starts collapsed (#60)", () => {
+  afterEach(() => {
+    workspaceStore.reset(DEFAULT_STATE);
+  });
+
+  it("keeps data-explode-t and hides the slider when explode cannot separate anything", () => {
+    const host = document.createElement("div");
+    host.innerHTML = renderToStaticMarkup(<ExplodeSlider noop />);
+    expect(host.querySelector("[data-explode-t]")?.getAttribute("data-explode-t")).toBe("0");
+    expect(host.querySelector("[data-explode-collapsed]")).not.toBeNull();
+    expect(host.querySelector("[data-testid='explode-slider']")).toBeNull();
+    expect(host.querySelector("[data-explode-disclose]")).not.toBeNull();
+  });
+
+  it("shows the slider when explode can separate solids", () => {
+    const host = document.createElement("div");
+    host.innerHTML = renderToStaticMarkup(<ExplodeSlider />);
+    expect(host.querySelector("[data-explode-collapsed]")).toBeNull();
+    expect(host.querySelector("[data-testid='explode-slider']")).not.toBeNull();
   });
 });

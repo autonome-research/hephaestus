@@ -50,6 +50,7 @@ import {
   TreeRow,
 } from "../../system";
 import { Fact } from "../Fact";
+import { RefusalBanner } from "../RefusalBanner";
 import { DirtyMarker, useDirtyIndex, type DirtyIndex } from "./GitDirty";
 import styles from "./ProjectTree.module.css";
 
@@ -87,7 +88,14 @@ export function ProjectTree(): React.JSX.Element {
     <Panel className={styles["panel"]} label={copy.rail.partsHeading}>
       <PanelHeader title={copy.rail.partsHeading} level={2} />
       <PanelBody className={styles["body"]}>
-        {parts.data === undefined ? (
+        {parts.error !== null ? (
+          <RefusalBanner
+            error={parts.error}
+            onRetry={() => {
+              void parts.refetch();
+            }}
+          />
+        ) : parts.data === undefined ? (
           <p className={styles["absent"]}>{copy.absent.loading}</p>
         ) : parts.data.parts.length === 0 ? (
           // §7A.2's "where a part comes from, said out loud". After the

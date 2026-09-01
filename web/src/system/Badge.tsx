@@ -60,9 +60,9 @@ export type ChipStatus = (typeof CHIP_STATUSES)[number];
  * One icon id per `Badge` status — SIX ids for six statuses, none shared.
  *
  * §3.14: "two statuses may not share an icon id, so `info` and `dirty` take
- * different ids rather than both taking `dot`". `dirty` and `error` do share a
- * *hue* (§3.9 names five status hues for six statuses); they are told apart by
- * the icon and the word, which is precisely the encoding §3.13.2 requires.
+ * different ids rather than both taking `dot`". `dirty` (git) and `error`
+ * (runtime/artifact fault) also take different hues — brass vs amber — so a
+ * dirty tree and a sidecar death cannot scan as one alarm (#81, §13.1).
  */
 export const BADGE_ICONS: Readonly<Record<BadgeStatus, IconId>> = {
   pass: "check",

@@ -64,6 +64,7 @@ export {
   CHIP_REF_WIDTH,
   formatBytes,
   formatNumber,
+  formatObservedAt,
   formatOid,
   formatRef,
   formatValue,
