@@ -36,7 +36,7 @@ import {
 import type * as SessionsModule from "../../src/api/sessions";
 import type { ProvidersDocument } from "../../src/api/providers";
 import type { DfmDocument } from "../../src/api/types";
-import { refreshKeys } from "../../src/api/refresh";
+import { refreshAfterTurn, refreshKeys } from "../../src/api/refresh";
 import { keys } from "../../src/api/queries";
 import {
   EFFORT_LEVELS,
@@ -295,6 +295,18 @@ describe("the read-refresh boundary", () => {
     // The case that matters: no part is selected, and `keys.parts()` is how the
     // part the agent just created appears in the tree without a manual reload.
     expect(refreshKeys(null)).toEqual([keys.project(), keys.parts(), keys.gitStatus()]);
+  });
+
+  it("does not move a held pin when those keys are invalidated (#59)", () => {
+    const A = "artifact:build:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    workspaceStore.reset({ ...DEFAULT_STATE, artifact_ref: A, pin_mode: "pinned" });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    refreshAfterTurn(client, "kerf_card");
+    expect(invalidate).toHaveBeenCalled();
+    expect(workspaceStore.getState().artifact_ref).toBe(A);
+    expect(workspaceStore.getState().pin_mode).toBe("pinned");
+    workspaceStore.reset(DEFAULT_STATE);
   });
 });
 
@@ -729,6 +741,41 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
 
     // And none of that posted a prompt.
     expect(vi.mocked(sendPrompt)).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not paint HTTP 500 under the composer when the runtime is gone (#52)", async () => {
+    const report = vi.fn();
+    vi.mocked(sendPrompt).mockRejectedValue(
+      new WorkspaceError(500, "transport_error", "HTTP 500"),
+    );
+    const root = mount({ onRuntimeFault: report });
+    type(root, "Bump the kerf to 0.25 mm.");
+    pressEnter(root);
+    await act(async () => undefined);
+
+    expect(report).toHaveBeenCalledWith("unreachable");
+    expect(composer(root).getAttribute("data-send-state")).toBe("unknown");
+    expect(root.querySelector("[data-composer-refused]")).toBeNull();
+    expect(root.querySelector("[data-send-unknown]")).toBeNull();
+    expect(root.querySelector("[data-composer-retry]")).toBeNull();
+    expect(root.textContent ?? "").not.toContain("HTTP 500");
+    expect(root.textContent ?? "").not.toContain(copy.errors.title);
+  });
+
+  it("grades a named process_down as idle so the band is the only statement (#52)", async () => {
+    const report = vi.fn();
+    vi.mocked(sendPrompt).mockRejectedValue(
+      new WorkspaceError(503, "process_down", "sidecar restarted"),
+    );
+    const root = mount({ onRuntimeFault: report });
+    type(root, "Bump the kerf to 0.25 mm.");
+    pressEnter(root);
+    await act(async () => undefined);
+
+    expect(report).toHaveBeenCalledWith("process_down");
+    expect(composer(root).getAttribute("data-send-state")).toBe("ok");
+    expect(root.querySelector("[data-composer-refused]")).toBeNull();
+    expect(root.textContent ?? "").not.toContain("sidecar restarted");
   });
 
   it("keeps §7A.5's manual retry working after a lost POST", async () => {

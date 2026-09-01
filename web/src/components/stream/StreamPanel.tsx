@@ -41,16 +41,19 @@
 // deliberate. The originating tab refreshes from its own prompt **response**,
 // which §7A.6 makes the authority for turn completion. An *observer* tab has no
 // response — the turn was started from a terminal, or from another tab — so it
-// refreshes on the live `terminal` frame instead. Both are the same refetch of
-// the same server projection; neither merges a tool result, and neither moves
-// the pin.
+// refreshes on the live `terminal` frame instead. A runtime-fault grade that
+// means the process is gone is a third turn-settled signal: sidecar death
+// produces neither a terminal nor a prompt response, so without it the rail
+// stays stale. All three are the same refetch of the same server projection;
+// none merges a tool result, and none moves the pin.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { WorkspaceError } from "../../api/client";
 import { attachProjection, type AttachProjection } from "../../api/attach";
 import { refreshAfterTurn } from "../../api/refresh";
-import { runtimeFaultOf, type RuntimeFault } from "../../stream/runtimeFault";
+import { processGone, runtimeFaultOf, type RuntimeFault } from "../../stream/runtimeFault";
+import { sessionCannotPrompt } from "../../stream/sessionPrompt";
 import {
   createSession,
   fetchSessions,
@@ -175,10 +178,16 @@ export function StreamPanel(): React.JSX.Element {
     [selected],
   );
   const sessionsFault = runtimeFaultOf(sessions.error);
+  const streamFault = runtimeFaultOf(stream.error);
   const fault: RuntimeFault | null =
     sessionsFault ??
-    runtimeFaultOf(stream.error) ??
+    streamFault ??
     (promptFault.sid === selected ? promptFault.value : null);
+  const cannotPrompt = sessionCannotPrompt({
+    runtimeFault: fault,
+    historyFailed: stream.history.state === "failed",
+    streamReason: stream.error instanceof WorkspaceError ? stream.error.reason : null,
+  });
 
   // -- §7A.11, the observer's half ----------------------------------------
   //
@@ -193,6 +202,22 @@ export function StreamPanel(): React.JSX.Element {
     if (stream.terminals === 0) return;
     refreshAfterTurn(client, part);
   }, [stream.terminals, client, part]);
+
+  // Sidecar death produces neither a `terminal` nor a prompt response, so the
+  // effect above never fires and the rail stays stale (#59). A grade that
+  // means the process is gone is itself a turn-settled signal: refetch the
+  // same keys. The pin is not written here — `refreshAfterTurn` only
+  // invalidates queries, and `observeCurrent` is already a no-op while held.
+  const refreshedFault = useRef<RuntimeFault | null>(null);
+  useEffect(() => {
+    if (fault === null || !processGone(fault)) {
+      refreshedFault.current = null;
+      return;
+    }
+    if (refreshedFault.current === fault) return;
+    refreshedFault.current = fault;
+    refreshAfterTurn(client, part);
+  }, [fault, client, part]);
 
   // §7A.2: `POST /sessions` is reached from exactly two affordances, both
   // explicit — never on focus, never on a first keystroke, never as recovery
@@ -231,6 +256,7 @@ export function StreamPanel(): React.JSX.Element {
       className={styles["panel"]}
       data-testid="stream-panel"
       {...(emptyInvitation ? { "data-stream-empty": "" } : {})}
+      {...(cannotPrompt ? { "data-session-cannot-prompt": "" } : {})}
     >
       {/* The column's name is already on the shell's own header row; repeating
           it here would put "Agent" twice above one transcript. This row carries
@@ -315,28 +341,37 @@ export function StreamPanel(): React.JSX.Element {
             <span className={styles["faultTitle"]}>{copy.stream.runtimeFaultTitle}</span>
             <span>{copy.stream.runtimeFaultWhy[fault]}</span>
             <span className={styles["note"]}>{copy.stream.runtimeFaultNext}</span>
+            {/* Primary recovery is New session, never Send again. No reconnect
+                wizard — no route backs one. */}
+            {createAction}
           </div>
         ) : null}
 
         {!unavailable && sessions.error !== null && sessionsFault === null ? (
-          <EmptyState
-            icon="alert"
-            title={copy.errors.title}
-            body={sessions.error.message}
-            data-refusal-reason={refusal !== null ? refusal.reason : "transport_error"}
-          />
+          <>
+            <EmptyState
+              icon="alert"
+              title={copy.errors.title}
+              body={sessions.error.message}
+              data-refusal-reason={refusal !== null ? refusal.reason : "transport_error"}
+            />
+            {cannotPrompt ? createAction : null}
+          </>
         ) : !unavailable && rows.length === 0 && sessions.isFetched ? (
           // §7A.2's entry point. One honest sentence plus the two create
           // actions — a three-paragraph tutorial under the buttons pushed
-          // the pinned composer off an 800px stream.
-          <EmptyState
-            icon="info"
-            title={copy.stream.noSessionsTitle}
-            body={sessionEmptyBody(partCount, part)}
-            density="inline"
-            data-session-empty={sessionEmptyKind(partCount)}
-            action={createAction}
-          />
+          // the pinned composer off an 800px stream. When the fault band
+          // already carries the pair, do not mount it twice.
+          fault !== null ? null : (
+            <EmptyState
+              icon="info"
+              title={copy.stream.noSessionsTitle}
+              body={sessionEmptyBody(partCount, part)}
+              density="inline"
+              data-session-empty={sessionEmptyKind(partCount)}
+              action={createAction}
+            />
+          )
         ) : !unavailable ? (
           <>
             <SessionTabs
@@ -349,8 +384,11 @@ export function StreamPanel(): React.JSX.Element {
               }}
             />
             {/* §7A.2 / #70: both create affordances stay reachable after the
-                first session exists. Send does not create a session. */}
-            {createAction}
+                first session exists. Send does not create a session. When
+                the current tab cannot prompt, the pair is the recovery,
+                not only the empty-list invitation. The fault band already
+                carries it when a runtime fault is showing. */}
+            {fault === null && (cannotPrompt || rows.length > 0) ? createAction : null}
           </>
         ) : null}
 
@@ -373,7 +411,7 @@ export function StreamPanel(): React.JSX.Element {
               <p className={styles["historyNote"]}>{copy.stream.historyFailed}</p>
             ) : null}
             <div className={styles["scroll"]}>
-              <Transcript rows={stream.rows} />
+              <Transcript rows={stream.rows} runtimeFault={fault} />
             </div>
           </>
         ) : null}

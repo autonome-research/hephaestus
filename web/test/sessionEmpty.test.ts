@@ -8,6 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { copy } from "../src/copy";
 import { sessionEmptyBody, sessionEmptyKind } from "../src/stream/sessionEmpty";
+import { sessionCannotPrompt } from "../src/stream/sessionPrompt";
 
 describe("session empty-state copy — honest about parts", () => {
   it("claims there is no part only when the project has none", () => {
@@ -36,5 +37,36 @@ describe("session empty-state copy — honest about parts", () => {
     expect(sessionEmptyBody(undefined, null)).toBe(copy.stream.noSessions);
     expect(sessionEmptyBody(undefined, "shelf")).toBe(copy.composer.noSessionSelectedPart("shelf"));
     expect(sessionEmptyBody(undefined, "shelf")).not.toContain("There is no part yet");
+  });
+});
+
+describe("the current tab cannot take a prompt (#43)", () => {
+  it("is true for a runtime fault, unknown_session, or unread history", () => {
+    expect(
+      sessionCannotPrompt({ runtimeFault: "unreachable", historyFailed: false, streamReason: null }),
+    ).toBe(true);
+    expect(
+      sessionCannotPrompt({
+        runtimeFault: null,
+        historyFailed: false,
+        streamReason: "unknown_session",
+      }),
+    ).toBe(true);
+    expect(
+      sessionCannotPrompt({ runtimeFault: null, historyFailed: true, streamReason: null }),
+    ).toBe(true);
+  });
+
+  it("is false for a healthy tab, and does not steal §7A.8's refusal", () => {
+    expect(
+      sessionCannotPrompt({ runtimeFault: null, historyFailed: false, streamReason: null }),
+    ).toBe(false);
+    expect(
+      sessionCannotPrompt({
+        runtimeFault: null,
+        historyFailed: false,
+        streamReason: "agent_unavailable",
+      }),
+    ).toBe(false);
   });
 });

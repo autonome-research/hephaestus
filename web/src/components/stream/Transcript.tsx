@@ -12,26 +12,43 @@
 
 import { readAudit, readTerminal } from "../../api/events";
 import { copy } from "../../copy";
+import type { RuntimeFault } from "../../stream/runtimeFault";
 import type { PanelRow, TranscriptItem } from "../../stream/transcript";
+import { runsWithTerminal } from "../../stream/transcript";
 import { AskUserWidget } from "./AskUserWidget";
 import { TextBlock, ThoughtSection } from "./ThoughtSection";
 import { EventImageInline } from "./EventImage";
 import { ToolChip } from "./ToolChip";
 import styles from "./Transcript.module.css";
 
-export function Transcript({ rows }: { readonly rows: readonly PanelRow[] }): React.JSX.Element {
+export function Transcript({
+  rows,
+  runtimeFault = null,
+}: {
+  readonly rows: readonly PanelRow[];
+  readonly runtimeFault?: RuntimeFault | null;
+}): React.JSX.Element {
+  const terminals = runsWithTerminal(rows);
   return (
     <ol className={styles["transcript"]} data-testid="transcript">
       {rows.map((row) => (
         <li key={row.key} className={styles["row"]} data-row={row.row}>
-          <Row row={row} />
+          <Row row={row} runtimeFault={runtimeFault} terminals={terminals} />
         </li>
       ))}
     </ol>
   );
 }
 
-function Row({ row }: { readonly row: PanelRow }): React.JSX.Element | null {
+function Row({
+  row,
+  runtimeFault,
+  terminals,
+}: {
+  readonly row: PanelRow;
+  readonly runtimeFault: RuntimeFault | null;
+  readonly terminals: ReadonlySet<string>;
+}): React.JSX.Element | null {
   switch (row.row) {
     case "text":
       return <TextBlock items={row.items} />;
@@ -47,8 +64,18 @@ function Row({ row }: { readonly row: PanelRow }): React.JSX.Element | null {
           status={row.status}
         />
       );
-    case "ask":
-      return <AskUserWidget row={row} />;
+    case "ask": {
+      const runId = (row.question ?? row.call ?? row.answer)?.runId ?? null;
+      return (
+        <AskUserWidget
+          row={row}
+          death={{
+            fault: runtimeFault,
+            runHasTerminal: runId !== null && terminals.has(runId),
+          }}
+        />
+      );
+    }
     case "image":
       return <EventImageInline item={row.item} />;
     case "audit":

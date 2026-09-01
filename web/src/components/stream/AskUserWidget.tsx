@@ -53,6 +53,7 @@ import {
   type AskChoice,
   type AskPost,
   type AskRowLike,
+  type AskRuntimeDeath,
 } from "../../stream/ask";
 import { fieldDisplay, parseToolResult } from "../../stream/toolResult";
 import { readToolResult } from "../../api/events";
@@ -60,7 +61,13 @@ import { chipAttributes } from "./ToolChip";
 import { Button, StatusBadge, TextInput } from "../../system";
 import styles from "./Transcript.module.css";
 
-export function AskUserWidget({ row }: { readonly row: AskRowLike }): React.JSX.Element | null {
+export function AskUserWidget({
+  row,
+  death = null,
+}: {
+  readonly row: AskRowLike;
+  readonly death?: AskRuntimeDeath | null;
+}): React.JSX.Element | null {
   const [post, setPost] = useState<AskPost>(ASK_POST_IDLE);
   // The two in-progress answers a person can be composing. They are pixels, not
   // facts: nothing is sent until a submit, and nothing here is ever read back as
@@ -69,7 +76,7 @@ export function AskUserWidget({ row }: { readonly row: AskRowLike }): React.JSX.
   const [typed, setTyped] = useState("");
 
   const anchor = row.call ?? row.question ?? row.answer;
-  const content = askContent(row, post);
+  const content = askContent(row, post, death);
   const chip = row.call === null ? null : chipAttributes("ask_user", row.status, row.call);
   const resultPayload = row.result === null ? null : readToolResult(row.result.payload);
   const parsed = resultPayload === null ? null : parseToolResult(resultPayload.text);
@@ -90,15 +97,19 @@ export function AskUserWidget({ row }: { readonly row: AskRowLike }): React.JSX.
    * hears are the same sentence the widget already prints in place.
    */
   const offReason =
-    content.unavailable !== null
-      ? copy.stream.ask.unavailable[content.unavailable]
-      : content.state === "submitting"
-        ? copy.stream.ask.sending
-        : content.state === "abandoned"
-          ? copy.stream.ask.abandoned
-          : content.state === "failed"
-            ? copy.stream.ask.failed
-            : copy.stream.ask.answeredAlready;
+    content.lostToRuntime && content.answered
+      ? copy.stream.ask.answeredRunLost
+      : content.lostToRuntime
+        ? copy.stream.ask.abandonedRuntime
+        : content.unavailable !== null
+          ? copy.stream.ask.unavailable[content.unavailable]
+          : content.state === "submitting"
+            ? copy.stream.ask.sending
+            : content.state === "abandoned"
+              ? copy.stream.ask.abandoned
+              : content.state === "failed"
+                ? copy.stream.ask.failed
+                : copy.stream.ask.answeredAlready;
   const sessionId = content.sessionId;
   const questionId = content.questionId;
 
@@ -295,7 +306,13 @@ export function AskUserWidget({ row }: { readonly row: AskRowLike }): React.JSX.
 
       {content.state === "abandoned" ? (
         <p className={styles["note"]} data-ask-abandoned="1">
-          {copy.stream.ask.abandoned}
+          {content.lostToRuntime ? copy.stream.ask.abandonedRuntime : copy.stream.ask.abandoned}
+        </p>
+      ) : null}
+
+      {content.answered && content.lostToRuntime ? (
+        <p className={styles["note"]} data-ask-run-lost="1">
+          {copy.stream.ask.answeredRunLost}
         </p>
       ) : null}
 
@@ -327,7 +344,7 @@ export function AskUserWidget({ row }: { readonly row: AskRowLike }): React.JSX.
               : copy.stream.ask.answeredOther}
           </span>
         </div>
-      ) : (
+      ) : content.state === "abandoned" || content.state === "failed" ? null : (
         <p className={styles["note"]}>{copy.stream.ask.pending}</p>
       )}
 

@@ -26,11 +26,14 @@ import { describe, expect, it } from "vitest";
 import { AskUserWidget } from "../../src/components/stream/AskUserWidget";
 import type { EventFrame } from "../../src/api/events";
 import type { AnswerDocument } from "../../src/api/sessions";
+import { copy } from "../../src/copy";
 import {
   answerValue,
   askAffordance,
   askContent,
   ASK_AFFORDANCES,
+  ASK_POST_IDLE,
+  ASK_STATES,
   type AskAffordance,
   type AskChoice,
   type AskRowLike,
@@ -217,6 +220,38 @@ describe("§7A.7 — first answer wins, and every outcome is a rendered state", 
     expect(gone.refusal?.reason).toBe("unknown_question");
   });
 
+  it("abandons a pending question when the runtime dies, without a click (#50)", () => {
+    const dead = askContent(row, ASK_POST_IDLE, {
+      fault: "unreachable",
+      runHasTerminal: false,
+    });
+    expect(dead.state).toBe("abandoned");
+    expect(dead.lostToRuntime).toBe(true);
+    expect(dead.answered).toBe(false);
+    expect(ASK_STATES).toContain(dead.state);
+    expect(ASK_STATES).toHaveLength(6);
+  });
+
+  it("does not abandon a question whose run already produced a terminal", () => {
+    const settled = askContent(row, ASK_POST_IDLE, {
+      fault: "process_down",
+      runHasTerminal: true,
+    });
+    expect(settled.state).toBe("answerable");
+    expect(settled.lostToRuntime).toBe(false);
+  });
+
+  it("keeps an accepted answer recorded and names that the run did not resume (#50)", () => {
+    const kept = askContent(row, { phase: "settled", document: answerDocument() }, {
+      fault: "unreachable",
+      runHasTerminal: false,
+    });
+    expect(kept.state).toBe("answered");
+    expect(kept.answered).toBe(true);
+    expect(kept.lostToRuntime).toBe(true);
+    expect(kept.answeredBy).toBe("self");
+  });
+
   it("keeps any other refusal named rather than flattening it into failure", () => {
     const refused = askContent(row, {
       phase: "refused",
@@ -295,8 +330,11 @@ describe("§7A.7 — a widget that cannot be answered says which kind of cannot"
 // because that state is owned by the widget and arrives from the route; §7A.12
 // case 5 asserts those in the browser, against a real answer.
 
-function render(row: AskRowLike): Document {
-  const markup = renderToStaticMarkup(<AskUserWidget row={row} />);
+function render(
+  row: AskRowLike,
+  death: { readonly fault: "process_down" | "timeout" | "unreachable" | null; readonly runHasTerminal: boolean } | null = null,
+): Document {
+  const markup = renderToStaticMarkup(<AskUserWidget row={row} death={death} />);
   return new DOMParser().parseFromString(`<body>${markup}</body>`, "text/html");
 }
 
@@ -368,5 +406,23 @@ describe("§7A.7 — the widget's controls, and the `disabled` that closed", () 
     expect(document_.querySelector("[data-ask-disabled]")?.textContent ?? "").toContain(
       "admits no answer",
     );
+  });
+
+  it("renders abandoned with restart copy when the runtime is gone (#50)", () => {
+    const row = questionRow({
+      question: "Which?",
+      options: ["a"],
+      allow_free_text: false,
+    });
+    const document_ = render(row, { fault: "unreachable", runHasTerminal: false });
+    const ask = document_.querySelector("[data-ask-state]");
+    expect(ask?.getAttribute("data-ask-state")).toBe("abandoned");
+    expect(document_.querySelector("[data-ask-abandoned]")?.textContent ?? "").toContain(
+      "Start a new session",
+    );
+    expect(document_.textContent ?? "").not.toContain(copy.stream.ask.pending);
+    expect(document_.textContent ?? "").not.toContain(copy.stream.ask.answeredAlready);
+    const option = document_.querySelector("[data-ask-option]");
+    expect(option?.getAttribute("aria-disabled")).toBe("true");
   });
 });

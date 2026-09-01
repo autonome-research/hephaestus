@@ -789,9 +789,9 @@ export const copy = {
       unreachable:
         "The server failed this session request without naming a reason. The agent runtime is the only process behind these routes, so it is the likely cause — but the server did not say so, and this page does not claim it did.",
     },
-    /** The turn is not retried here; §7A.5 forbids it. Say what to do instead. */
+    /** The turn is not retried here; §7A.5 forbids it. Recovery is New session. */
     runtimeFaultNext:
-      "The composer below still works. Send again when you are ready — nothing is resent on its own, because a turn that may have started must not be started twice.",
+      "This session cannot take another prompt. Start a new session — nothing is resent on its own, because a turn that may have started must not be started twice.",
 
     /** §2.4's `agent_unavailable`, said in words rather than as an empty panel. */
     noAgentTitle: "No runtime attached",
@@ -963,6 +963,19 @@ export const copy = {
        */
       abandoned:
         "This question is no longer open. It was answered elsewhere, abandoned with its run, or never reached this server.",
+      /**
+       * `data-runtime-fault` is set and this run never produced a `terminal`.
+       * Same `abandoned` state — no sixth §7.4 / §7A.7 value — said in words
+       * that name the restart and the recovery.
+       */
+      abandonedRuntime:
+        "The agent runtime stopped answering before this question could be answered. Start a new session — this one cannot take the answer.",
+      /**
+       * An answer accepted before death stays recorded. The run did not
+       * resume; do not relabel this "already answered".
+       */
+      answeredRunLost:
+        "This answer was recorded. The run did not resume after the runtime stopped answering.",
       /** A named refusal from §2.4's envelope, rendered as itself (§4.4). */
       failed: "The server refused this answer:",
       /**
