@@ -192,7 +192,9 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   const [attaching, setAttaching] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);
   const liveRunIdRef = useRef(liveRunId);
-  liveRunIdRef.current = liveRunId;
+  useEffect(() => {
+    liveRunIdRef.current = liveRunId;
+  }, [liveRunId]);
   const [attachError, setAttachError] = useState<string | null>(null);
   const chips = useMemo(() => chipsFor(state, hiddenLabels), [state, hiddenLabels]);
   const envelope = useMemo(
@@ -363,6 +365,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     setCancelNote(null);
     // Forget the previous run *before* the POST. Otherwise Cancel is aimed
     // at a finished id for the whole window until the first new frame (#99).
+    liveRunIdRef.current = null;
     props.onForgetLiveRun?.();
     setPost({ phase: "sending" });
     void sendPrompt(sessionId, text, envelope)
