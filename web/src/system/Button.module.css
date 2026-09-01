@@ -33,12 +33,12 @@
     border-color var(--dur-1) var(--ease);
 }
 
-.button:hover:not(:disabled) {
+.button:hover:not([aria-disabled="true"]) {
   color: var(--ink-strong);
   background: var(--surface-overlay);
 }
 
-.button:disabled {
+.button[aria-disabled="true"] {
   color: var(--ink-muted);
   cursor: default;
 }
@@ -53,13 +53,13 @@
   border-color: var(--accent);
 }
 
-.button[data-variant="primary"]:hover:not(:disabled) {
+.button[data-variant="primary"]:hover:not([aria-disabled="true"]) {
   color: var(--accent-ink);
   background: var(--focus-ring);
   border-color: var(--focus-ring);
 }
 
-.button[data-variant="primary"]:disabled {
+.button[data-variant="primary"][aria-disabled="true"] {
   color: var(--ink-muted);
   background: var(--surface-control);
   border-color: var(--border-control);
@@ -73,7 +73,7 @@
   border-color: transparent;
 }
 
-.button[data-variant="quiet"]:hover:not(:disabled) {
+.button[data-variant="quiet"]:hover:not([aria-disabled="true"]) {
   color: var(--ink-strong);
   background: var(--surface-raised);
   border-color: var(--border-control);

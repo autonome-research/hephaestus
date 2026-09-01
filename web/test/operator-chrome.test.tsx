@@ -106,6 +106,9 @@ describe("stream column — composer is a pinned footer, not overflow", () => {
     expect(stream).toMatch(/\.panel\s*\{[^}]*overflow:\s*hidden/);
     const composer = css("components/stream/Composer.module.css");
     expect(composer).toMatch(/\.composer\s*\{[^}]*flex:\s*0 0 auto/);
+    // #56: the empty column's leftover height sits *above* the invitation,
+    // not between the plate and the composer. Alignment, not re-order.
+    expect(stream).toMatch(/\[data-stream-empty\]\s*\.main\s*\{[^}]*justify-content:\s*flex-end/);
   });
 
   it("keeps the stream column from growing the 800px shell", () => {

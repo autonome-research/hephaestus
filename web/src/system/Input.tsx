@@ -19,7 +19,7 @@
 // The primitive cannot mint one either — that is `<Fact>`'s exclusive right
 // (§4.6, and `heph/no-derived-fact` enforces it).
 
-import { useId, type ReactNode } from "react";
+import { useId, type ReactNode, type Ref } from "react";
 import { cx, dataProps, type DataAttributes } from "./dataAttrs";
 import styles from "./Input.module.css";
 import roles from "./type.module.css";
@@ -52,6 +52,8 @@ export type TextInputProps = FieldFrame & {
    * places this primitive is a genuine paragraph editor.
    */
   readonly onKeyDown?: ((event: React.KeyboardEvent<HTMLTextAreaElement>) => void) | undefined;
+  /** Optional handle on the editable control — the composer focuses this after create (#61). */
+  readonly inputRef?: Ref<HTMLTextAreaElement | HTMLInputElement> | undefined;
   /**
    * The §23.3 password discipline, and it is three properties rather than one.
    *
@@ -83,6 +85,7 @@ export function TextInput(props: TextInputProps): React.JSX.Element {
     onFocus,
     onBlur,
     onKeyDown,
+    inputRef,
   } = props;
   const id = useId();
   const messageId = `${id}-message`;
@@ -109,6 +112,7 @@ export function TextInput(props: TextInputProps): React.JSX.Element {
         <textarea
           {...shared}
           rows={rows}
+          ref={inputRef as Ref<HTMLTextAreaElement> | undefined}
           {...(onFocus === undefined ? {} : { onFocus })}
           {...(onBlur === undefined ? {} : { onBlur })}
           {...(onKeyDown === undefined ? {} : { onKeyDown })}
@@ -119,6 +123,7 @@ export function TextInput(props: TextInputProps): React.JSX.Element {
       ) : (
         <input
           {...shared}
+          ref={inputRef as Ref<HTMLInputElement> | undefined}
           type={secret === true ? "password" : "text"}
           // §23.3's three properties on the key field. Written as literal JSX
           // props so the set is visible at a glance rather than hidden in a

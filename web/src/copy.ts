@@ -1021,6 +1021,12 @@ export const copy = {
      * a text box that loses your newline.
      */
     sendHint: "Enter sends · Shift+Enter for a new line",
+    /**
+     * Mid-turn the box stays typable (#63) so the next message can be written,
+     * but Enter must not look bound. A silent `submit()` return is the same
+     * class of lie as a Send that looks enabled and does nothing (#44).
+     */
+    sendHintBusy: "A turn is running. Wait for it to finish, or Cancel.",
 
     /**
      * §7A.5's TIGHTENING: the composer never retries a prompt automatically.

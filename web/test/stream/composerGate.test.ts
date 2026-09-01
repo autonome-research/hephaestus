@@ -19,7 +19,14 @@
 
 import { describe, expect, it } from "vitest";
 import { DISABLED_REASONS } from "../../src/components/stream/Composer";
-import { COMPOSABLE_REASONS, isComposable, isSendKey } from "../../src/stream/composerGate";
+import {
+  CANCEL_REASONS,
+  canSendTurn,
+  cancelAvailability,
+  COMPOSABLE_REASONS,
+  isComposable,
+  isSendKey,
+} from "../../src/stream/composerGate";
 
 describe("which disabled reasons still admit typing", () => {
   it("partitions §7A.10's closed vocabulary, leaving none unclassified", () => {
@@ -69,5 +76,37 @@ describe("which keystroke sends a turn", () => {
     for (const other of ["Tab", "Escape", "a", " ", "NumpadEnter"]) {
       expect(key({ key: other }), other).toBe(false);
     }
+  });
+});
+
+describe("Send and Cancel share one predicate each", () => {
+  it("lets Send start a turn only when there is a session, text, and no in-flight POST", () => {
+    const ok = { disabledReason: null, text: "Add a 2 mm chamfer.", sending: false };
+    expect(canSendTurn(ok)).toBe(true);
+    expect(canSendTurn({ ...ok, text: "   " })).toBe(false);
+    expect(canSendTurn({ ...ok, sending: true })).toBe(false);
+    expect(canSendTurn({ ...ok, disabledReason: "no_session" })).toBe(false);
+    expect(canSendTurn({ ...ok, disabledReason: "run_in_flight" })).toBe(false);
+    expect(canSendTurn({ ...ok, disabledReason: "agent_unavailable" })).toBe(false);
+  });
+
+  it("offers Cancel iff the live run id is known and the socket is live", () => {
+    expect(
+      cancelAvailability({ liveRunId: "run-1", streamLive: true, awaitingRun: true }),
+    ).toEqual({ available: true });
+    // #45: a live id on a live socket is enough — not also `awaitingRun`.
+    expect(
+      cancelAvailability({ liveRunId: "run-1", streamLive: true, awaitingRun: false }),
+    ).toEqual({ available: true });
+    expect(
+      cancelAvailability({ liveRunId: null, streamLive: true, awaitingRun: true }),
+    ).toEqual({ available: false, reason: "cancelNoRun" });
+    expect(
+      cancelAvailability({ liveRunId: null, streamLive: true, awaitingRun: false }),
+    ).toEqual({ available: false, reason: "cancelIdle" });
+    expect(
+      cancelAvailability({ liveRunId: "run-1", streamLive: false, awaitingRun: true }),
+    ).toEqual({ available: false, reason: "cancelNoStream" });
+    expect(CANCEL_REASONS).toEqual(["cancelIdle", "cancelNoRun", "cancelNoStream"]);
   });
 });

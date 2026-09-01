@@ -25,10 +25,15 @@
 // as an `aria-describedby` target, because a `title` is not reachable from the
 // keyboard and a disabled control is exactly where a keyboard user is stuck.
 //
+// Native `disabled` is not used. A natively-disabled control is removed from
+// the tab order, so the `aria-describedby` reason can never be heard from the
+// keyboard — the exact failure #63 names. `aria-disabled` keeps the control
+// reachable; the click / submit handler is what refuses the action.
+//
 // §3.13.6: every control clears a 24×24px hit area, achieved by padding rather
 // than by font-size — the shipped 11px pill controls were ~18px tall.
 
-import { useId, type ReactNode } from "react";
+import { useId, type MouseEvent, type ReactNode } from "react";
 import { Icon, type IconId } from "./icons";
 import { cx, dataProps, type DataAttributes } from "./dataAttrs";
 import styles from "./Button.module.css";
@@ -88,20 +93,30 @@ export function Button(props: ButtonProps): React.JSX.Element {
   const isDisabled = disabled === true;
   const labelled = iconLabel !== undefined && children === undefined;
 
+  const refuse = (event: MouseEvent<HTMLButtonElement>): void => {
+    // `aria-disabled` does not stop click or form submit the way native
+    // `disabled` does. The refusal is the handler: no action, and a submit
+    // button must not start a turn whose predicate already said no.
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
   return (
     <>
       <button
         type={type}
         className={cx(styles["button"], roles["label"], className)}
         data-variant={variant}
-        disabled={isDisabled}
+        // Not native `disabled`: that drops the control from the tab order, so
+        // the reason below can never be read from the keyboard (#63).
+        {...(isDisabled ? { "aria-disabled": true as const } : {})}
         // A disabled control that cannot say why is indistinguishable from a
         // broken one. Both carriers are present: the pointer one and the AT one.
         {...(isDisabled ? { title: reason, "aria-describedby": reasonId } : { title })}
         {...(variant === "toggle" ? { "aria-pressed": pressed === true } : {})}
         {...(expanded === undefined ? {} : { "aria-expanded": expanded })}
         {...(labelled ? { "aria-label": iconLabel } : {})}
-        {...(onClick === undefined ? {} : { onClick })}
+        onClick={isDisabled ? refuse : onClick}
         {...dataProps(props)}
       >
         {icon === undefined ? null : <Icon id={icon} size={13} />}

@@ -353,7 +353,8 @@ describe("§7A.7 — the widget's controls, and the `disabled` that closed", () 
     // Nothing is selected yet, so the one submit is inert — and inert because
     // there is no answer to send, which is a different thing from unanswerable.
     const submit = document_.querySelector('[data-ask-submit="options"]');
-    expect(submit?.hasAttribute("disabled")).toBe(true);
+    expect(submit?.getAttribute("aria-disabled")).toBe("true");
+    expect(submit?.hasAttribute("disabled")).toBe(false);
     expect(document_.querySelector('[data-ask-submit="text"]')).toBeNull();
   });
 

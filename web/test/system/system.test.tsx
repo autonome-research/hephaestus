@@ -191,7 +191,8 @@ describe("§4.7 — a disabled control always says why", () => {
       </Button>,
     );
     const button = host.querySelector("button");
-    expect(button?.hasAttribute("disabled")).toBe(true);
+    expect(button?.hasAttribute("disabled")).toBe(false);
+    expect(button?.getAttribute("aria-disabled")).toBe("true");
     expect(button?.getAttribute("title")).toBe(copy.header.holdUnavailable);
     const describedBy = button?.getAttribute("aria-describedby") ?? "";
     expect(describedBy).not.toBe("");

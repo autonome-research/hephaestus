@@ -182,6 +182,18 @@
   overflow: auto;
 }
 
+/*
+ * Empty column (#56): the invitation and the composer sit together at the
+ * bottom. `.main` still grows (it is the leftover-height sibling) but its
+ * content is packed to the end, so the ~472px void is *above* the plate, not
+ * between the plate and the box. Composer stays the panel's last child (§7A.1).
+ */
+.panel[data-stream-empty] .main {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
 .absent {
   composes: body from "../../system/type.module.css";
   margin: 0;

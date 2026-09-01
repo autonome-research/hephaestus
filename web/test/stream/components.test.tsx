@@ -217,7 +217,8 @@ describe("the ask_user widget (§7.3)", () => {
   it("disables every control in a reopened transcript and says which kind of disabled it is", () => {
     const document_ = renderRows(groupRows(historyItems));
     const options = [...document_.querySelectorAll("[data-ask-option]")];
-    expect(options.every((node) => node.hasAttribute("disabled"))).toBe(true);
+    expect(options.every((node) => node.getAttribute("aria-disabled") === "true")).toBe(true);
+    expect(options.every((node) => !node.hasAttribute("disabled"))).toBe(true);
     // The archived question was answered, so the widget's *state* is `answered`
     // — but `data-ask-unavailable` is a property of answerability, not of the
     // lifecycle, so the reason the controls are dead survives the answer.

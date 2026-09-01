@@ -23,11 +23,19 @@
 // state, and the empty values are module constants so the identity a `useMemo`
 // depends on does not change every render.
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchHistoryPage, fetchThread, type ThreadDocument } from "../api/sessions";
 import { workspaceToken } from "../api/token";
 import { emptyHistory, loadHistory, type HistoryProgress } from "./history";
-import { disconnected, emptyLive, receive, resync, setStatus, type LiveState } from "./live";
+import {
+  clearLiveRun,
+  disconnected,
+  emptyLive,
+  receive,
+  resync,
+  setStatus,
+  type LiveState,
+} from "./live";
 import { eventsUrl, StreamSocket } from "./socket";
 import { loadThreadTree, threadTabs, type ThreadTab } from "./thread";
 import { panelRows, type PanelRow, type StreamState } from "./transcript";
@@ -58,8 +66,10 @@ export interface StreamView {
   readonly threadState: ThreadDocument["thread_state"] | null;
   readonly threadBounded: boolean;
   readonly resyncs: number;
-  /** The run of the last live frame for this session — the composer's own (§7A.5). */
+  /** The run that is live *now* for this session — the composer's own (§7A.5). */
   readonly runId: string | null;
+  /** Forget `runId` on submit so Cancel cannot target a finished turn. */
+  readonly clearRunId: () => void;
   /** Live `terminal` frames seen; §7A.11's read-refresh trigger. */
   readonly terminals: number;
   readonly error: Error | null;
@@ -186,6 +196,14 @@ export function useStream(sessionId: string | null): StreamView {
     };
   }, [sessionId, token]);
 
+  const clearRunId = useCallback(() => {
+    if (sessionId === null) return;
+    setLive((prev) => ({
+      sid: sessionId,
+      value: clearLiveRun(prev.sid === sessionId ? prev.value : CONNECTING),
+    }));
+  }, [sessionId]);
+
   return {
     rows: panelRows(shownHistory.items, shownLive.entries),
     status: shownLive.status,
@@ -195,6 +213,7 @@ export function useStream(sessionId: string | null): StreamView {
     threadBounded: shownThread.bounded,
     resyncs: shownLive.resyncs,
     runId: shownLive.runId,
+    clearRunId,
     terminals: shownLive.terminals,
     error: shownError ?? shownHistory.error,
   };

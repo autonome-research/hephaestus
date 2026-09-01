@@ -77,7 +77,7 @@ describe("Export chrome — bound to the pin", () => {
 
   it("disables the run control when there is no pin", () => {
     const dom = chrome({ pinned: null });
-    expect(dom.querySelector("[data-export-run]")?.hasAttribute("disabled")).toBe(true);
+    expect(dom.querySelector("[data-export-run]")?.getAttribute("aria-disabled")).toBe("true");
     expect(dom.querySelector("[data-export-blocked]")?.getAttribute("data-export-blocked")).toBe(
       "no_pin",
     );
