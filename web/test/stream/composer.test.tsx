@@ -28,6 +28,7 @@ import { Composer, COMPOSER_STATES, DISABLED_REASONS } from "../../src/component
 import { WorkspaceError } from "../../src/api/client";
 import {
   CONTEXT_MEMBERS,
+  cancelRun,
   sendPrompt,
   type ContextMember,
   type PromptDocument,
@@ -55,7 +56,7 @@ import { formatRef } from "../../src/system";
 // wholesale stub would make that assertion about the stub.
 vi.mock("../../src/api/sessions", async (importOriginal) => {
   const actual = await importOriginal<typeof SessionsModule>();
-  return { ...actual, sendPrompt: vi.fn() };
+  return { ...actual, sendPrompt: vi.fn(), cancelRun: vi.fn() };
 });
 
 const NOTHING: ReadonlySet<ContextMember> = new Set();
@@ -538,6 +539,13 @@ describe("context chips do not force a 2400px stream", () => {
 // (`post.phase === "refused"`, reached only by a POST that came back refused)
 // being reached through an event the button does not own. So this block mounts
 // the component, types into it, and dispatches the two events that bypass Send.
+//
+// It also carries the OTHER half of that state, which is the half a guard is
+// most likely to break by accident: while a run is in flight, only **send** is
+// blocked. The box stays typable and Cancel stays reachable, and both are
+// asserted against the live DOM rather than by grepping the source, because
+// "the guard turned Cancel off too" is exactly the regression a source grep
+// cannot see.
 
 let host: HTMLDivElement | null = null;
 let unmount: (() => void) | null = null;
@@ -553,6 +561,7 @@ afterEach(() => {
   host = null;
   unmount = null;
   vi.mocked(sendPrompt).mockReset();
+  vi.mocked(cancelRun).mockReset();
 });
 
 function mount(props: Partial<React.ComponentProps<typeof Composer>> = {}): HTMLDivElement {
@@ -624,6 +633,25 @@ function composer(root: HTMLElement): HTMLElement {
   return form;
 }
 
+/** Drive the composer into §7A.5's `run_in_flight` refusal, the only way in. */
+async function refuseRunInFlight(
+  props: Partial<React.ComponentProps<typeof Composer>> = {},
+): Promise<HTMLDivElement> {
+  vi.mocked(sendPrompt).mockRejectedValue(
+    new WorkspaceError(409, "run_in_flight", "a run is already live", {
+      session_id: "sess-other",
+      run_id: "run-live",
+    }),
+  );
+  const root = mount(props);
+  type(root, "Bump the kerf to 0.25 mm.");
+  pressEnter(root);
+  expect(vi.mocked(sendPrompt)).toHaveBeenCalledTimes(1);
+  await act(async () => undefined);
+  expect(composer(root).getAttribute("data-disabled-reason")).toBe("run_in_flight");
+  return root;
+}
+
 describe("the paths that bypass Send are gated where Send's gate is decided", () => {
   it("sends on Enter when nothing refuses it", async () => {
     const settled: PromptDocument = {
@@ -650,30 +678,51 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     // finishes, on purpose — so Enter reaches `submit` with a live text box and
     // a correctly-disabled Send. Without the guard inside `submit`, that is a
     // second POST against a run the server has already named.
-    vi.mocked(sendPrompt).mockRejectedValue(
-      new WorkspaceError(409, "run_in_flight", "a run is already live", {
-        session_id: "sess-other",
-        run_id: "run-live",
-      }),
-    );
-    const root = mount();
-    type(root, "Bump the kerf to 0.25 mm.");
-    pressEnter(root);
-    expect(vi.mocked(sendPrompt)).toHaveBeenCalledTimes(1);
-    await act(async () => undefined);
+    const root = await refuseRunInFlight();
 
     // The refusal landed, and it is the state §7A.10 names.
-    expect(composer(root).getAttribute("data-disabled-reason")).toBe("run_in_flight");
     expect(composer(root).getAttribute("data-composer-state")).toBe("disabled");
     // Send stays off. The point of the fix is that the keyboard agrees with it,
     // not that the button starts agreeing with the keyboard.
     expect(root.querySelector("[data-composer-send]")?.hasAttribute("disabled")).toBe(true);
-    // And the box is still typable, which is why the guard has to be in `submit`.
-    expect(input(root).disabled).toBe(false);
 
     pressEnter(root);
     submitForm(root);
     await act(async () => undefined);
+    expect(vi.mocked(sendPrompt)).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks only SEND while a run is in flight: the box types and Cancel works", async () => {
+    // The guard's blast radius, pinned. `run_in_flight` must leave the operator
+    // able to write the next message and able to end the run that is in the way
+    // — that pairing is the whole reason the refusal is not a dead end, and a
+    // guard placed one line too broadly (say, on `composerState !== "idle"`)
+    // would silently take both with it while every source grep still passed.
+    vi.mocked(cancelRun).mockResolvedValue({
+      status: "ok",
+      run_id: "run-live",
+      session_id: "sess-other",
+      abandoned_questions: 0,
+    });
+    const root = await refuseRunInFlight({ liveRunId: "run-live", streamLive: true });
+
+    // The box is live, and it accepts more text than the refused turn's.
+    expect(input(root).disabled).toBe(false);
+    type(root, "Bump the kerf to 0.25 mm and rebuild.");
+    expect(input(root).value).toBe("Bump the kerf to 0.25 mm and rebuild.");
+
+    // Cancel is reachable — §7A.10's own attribute says so, the control is not
+    // disabled, and pressing it reaches the route.
+    expect(composer(root).getAttribute("data-cancel-state")).toBe("available");
+    const cancelButton = root.querySelector<HTMLButtonElement>("[data-composer-cancel]");
+    expect(cancelButton?.hasAttribute("disabled")).toBe(false);
+    act(() => {
+      cancelButton?.click();
+    });
+    await act(async () => undefined);
+    expect(vi.mocked(cancelRun)).toHaveBeenCalledWith("run-live");
+
+    // And none of that posted a prompt.
     expect(vi.mocked(sendPrompt)).toHaveBeenCalledTimes(1);
   });
 
