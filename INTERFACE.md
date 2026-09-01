@@ -1371,16 +1371,16 @@ surface except the three the operator asked us to add.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│ HEADER  project · branch · HEAD | ARTIFACT PIN | Export/BOM | build state │
+│ HEADER  project · units | ARTIFACT PIN (ref + state) | Export/BOM         │
 ├────────────┬────────────────────────────────────┬────────────────────────┤
 │   RAIL     │              STAGE                 │        STREAM          │
 │   280px    │              1fr                   │        420px           │
 │  parts     │  ┌ tabs: Viewport | Script | Diff ┐ │  session tabs (nested) │
 │  tree      │  │  three.js canvas               │ │  ─────────────────     │
-│  git dirty │  │  view cube ▸ top-right         │ │  event log             │
-│  versions  │  │  grid readout ▸ bottom-left    │ │  tool chips            │
-│            │  │  selection popover ▸ anchored  │ │  thought sections      │
-│            │  │  measure HUD ▸ bottom-centre   │ │  images                │
+│  branch ·  │  │  view cube ▸ top-right         │ │  event log             │
+│  HEAD      │  │  grid readout ▸ bottom-left    │ │  tool chips            │
+│  git dirty │  │  (overlays only while there is │ │  thought sections      │
+│  versions  │  │   geometry on the canvas)      │ │  images                │
 │            │  └────────────────────────────────┘ │  ask_user widget       │
 │            ├────────────────────────────────────┤ │  ─────────────────    │
 │            │  INSPECTOR (drawer, resizable)     │ │  composer             │
@@ -1395,8 +1395,8 @@ surface except the three the operator asked us to add.
   header is visibly marked and every panel below inherits that marking. This is
   the most important element in the document, because G5.5/G5.6 are exactly the
   case where a user must not be able to forget which build they are looking at.
-- **RAIL** is the project: part tree, inline git dirty markers (§13.1), and the
-  selected part's version list.
+- **RAIL** is the project: part tree, the repository's identity and inline git
+  dirty markers (§13.1), and the selected part's version list.
 - **STAGE** is geometry, with Script and Diff as *tabs over the same region*, so
   the viewport is the default and text is the deviation — the inverse of an
   IDE, on purpose. This is a CAD workspace.
@@ -1466,6 +1466,42 @@ closed vocabularies that both spell "current", rendered in two chip styles
 ~600px apart on two different axes — pin freshness versus build state. The
 build-state vocabulary changes `current` → **`up to date`**; the pin vocabulary
 keeps `current`. Two axes, two words.
+
+**AMENDED 2026-09-01 — the header bar, measured at 1280×800.** The bar above
+still read, left to right: `workspace · mm · main
+9931468701937cdaef0c230ec11d3ce1728a65c…728a65c7 · unavailable · CURRENT · held
+· not built`. Twelve text nodes, and not one of them a thing an operator can act
+on. Three corrections, and the diagram above is drawn to the amended header
+rather than to the shipped one:
+
+**(a) The abbreviated HEAD was not abbreviated.** `formatRef(ref, 8)` fell
+through to `ref.slice(0, width - tail - 1)`, and for `width = 8` that is
+`slice(0, -1)` — the whole 40-glyph oid, then an ellipsis, then its own last
+eight bytes. A 49-glyph sha in a 44px bar. `format.ts` refuses a width with no
+room for head-ellipsis-tail and returns a prefix, and `formatOid` is the
+abbreviation an oid actually takes.
+
+**(b) The git axis leaves the header.** §13.1 is already explicit — "the header
+shows the artifact axis; the rail shows the git axis; the UI never blurs them" —
+and the header was printing `branch` and `HEAD`, which are git. They move to the
+rail's `Working tree` panel header, beside the dirty rows they describe. The
+header's identity cell is `project · units` and nothing else.
+
+**(c) The pin and build-state vocabularies collapse into ONE chip with ONE
+word.** Two chips ~600px apart each carrying one word of a two-word verdict is
+what let an unbuilt part print four labels for one fact: `unavailable` (no ref),
+`CURRENT` (pin freshness), `held` (a *disabled* hold button whose label is a
+state word), and `not built` (build state). The build-state badge renders inside
+the pin chip, which is the element the state is about, and the word is the most
+specific state that is true: the build state while following current, `held`
+while held, and no hold control at all when there is no artifact to hold. Both
+`data-pin-mode` and `data-build-state` stay on the chip and `build.status` /
+`build.current` keep their `<Fact>` attribution, so the DOM contract is
+unchanged. The hold control's label becomes a verb.
+
+Export and BOM remain **two visible icon-only controls** in the bar
+(`[data-chrome-export]` / `[data-chrome-bom]`, issue #12). Neither is moved
+behind an overflow.
 
 ### 4.2 Panel inventory (closed for Stage 4/5)
 
@@ -1952,6 +1988,25 @@ and `heph render` remain orthographic. The cluster is **not** workspace state:
 G4.5's thresholds are unchanged — the strip is fixed-size chrome and does not
 move on a visibility toggle.
 
+**AMENDED 2026-09-01 — the overlays exist when there is geometry.** "Bound to
+the pin" was implemented as *always drawn*, so an unbuilt part got the whole
+control frame around an empty well: view cube, axis triad, a grid readout
+reporting a step for a grid that was not drawn, six appearance toggles, an
+explode slider, `Cut a section`, and a centred paragraph — nine surfaces
+addressing an artifact that is not there. `Fit`'s own disabled reason already
+said so ("No pinned artifact is on the canvas, so there is nothing to frame"),
+and that is true of the frame, not of one button in it.
+
+So the viewport paints its overlays while `data-glb-state` is `ready` **or**
+`stale` — `stale` included by name, because §5.5's rebuild case keeps the last
+completed artifact on the canvas and must not lose its controls mid-rebuild. In
+every other state the well carries **one** composed absence and nothing else,
+and the two absences whose heading is already the whole fact (`no-pin`,
+`loading`) print no prose under it: `EmptyState`'s `body` is optional and the
+container is not rendered without one. G4.5's control-region thresholds are
+untouched — they are measured on a `ready` canvas, where every overlay is
+exactly where it was.
+
 During a rebuild the viewport keeps the **last completed** artifact and the
 header shows `stale` with the ref it is showing. `architecture.md` §3 already
 guarantees a long build never blocks inspection; the UI's job is to express
@@ -1977,6 +2032,16 @@ it to the DOM row count; it does not recount client-side and does not consult
 the GLTF. A separate **server-side pytest invariant** asserts the three numbers
 agree for the fixture — agreement is an invariant, not this clause, and when it
 breaks a Python test fails rather than an e2e.
+
+**AMENDED 2026-09-01 — the panel stops explaining itself unprompted.** §5.4's
+"hiding changes nothing about the result" was rendered as **two permanent
+paragraphs** below every built part's geometry list, whether or not anything was
+hidden, and the `not_built` absence ended with "Nothing is being hidden." — a
+sentence about a mechanism the reader has not touched, in the state where there
+is no mechanism to touch. The claim is worth making the moment it is load
+bearing, which is the moment an entry is hidden: it is one sentence now, carried
+on `[data-results-hidden-note]`, printed only while this part has a hidden entry.
+`not_built` says what it is and stops.
 
 ### 6.2 Properties
 
@@ -3189,6 +3254,25 @@ tab. Dirtiness is a `git status` fact about `parts/*.py` in the working tree.
 entirely disjoint from artifact and publication state** — a part can be clean and
 unbuilt, or dirty and current. The header shows the artifact axis; the rail shows
 the git axis; the UI never blurs them.
+
+**AMENDED 2026-09-01 — "the rail shows the git axis", cashed out.** Two things
+followed from that sentence and were not done:
+
+1. **`branch` and `HEAD` are git**, and they were in the header (§4.1's
+   amendment (b)). They are the repository's *identity* rather than its state, so
+   they sit in the `Working tree` panel's header, above the rows — one branch
+   name and an eight-byte oid prefix, with the whole oid on `data-value`.
+2. **Reporting a dirty tree is not enumerating it at equal weight.** On the live
+   fixture 36 of 38 changed paths were the workspace's own store —
+   `.heph/blobs/sha256/…`, `.heph/state.db`, `.heph/serve.token`,
+   `.heph/agent/…` — and in a 280px rail they pushed the part tree, the version
+   list and the providers sign-in past ~1000px of scroll. Paths under `.heph/`
+   are therefore **one counted, expandable row** (`[data-dirty-group="generated"]`
+   with `data-dirty-group-count`), collapsed by default; opening it yields
+   exactly the same table with exactly the same `<Fact source="git.dirty[].path">`
+   attribution. **Nothing is hidden and no path is shortened** — the caption above
+   still prints the length of the array `git status` served, and a path the
+   operator authored is never grouped.
 
 ### 13.2 Publish is overloaded — and the workspace names both
 
