@@ -56,6 +56,7 @@
 }
 
 .tabs {
+  flex: none;
   padding: var(--space-2) var(--space-2) var(--space-2) 0;
   border-bottom: 1px solid var(--border);
 }
@@ -66,46 +67,8 @@
   color: var(--ink-muted);
 }
 
-.tabList {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.tabItem + .tabItem {
-  margin-top: 1px;
-}
-
-.tab {
-  composes: label from "../../system/type.module.css";
-  display: flex;
-  align-items: center;
-  gap: var(--gap-inline);
+.sessionTabs {
   width: 100%;
-  min-height: var(--target-min);
-  padding: var(--space-1) var(--space-2);
-  text-align: left;
-  border-radius: var(--radius-control);
-  color: var(--ink-base);
-}
-
-.tab:hover {
-  background: var(--surface-raised);
-  color: var(--ink-strong);
-}
-
-.tab[aria-selected="true"] {
-  background: var(--surface-raised);
-  color: var(--ink-strong);
-  box-shadow: inset 2px 0 0 var(--accent);
-}
-
-.tabLabel {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .tabMeta {
@@ -113,25 +76,11 @@
   color: var(--ink-muted);
 }
 
-.tabThread {
-  flex: none;
-  color: var(--ink-muted);
-}
-
-/* §2.8's honesty state, STATED rather than dimmed. The shipped rule made it
-   italic in a grey below the legibility floor — the styling of a footnote on a
-   fact the section calls first-class. */
-.tab[data-thread-state="unlinked"] .tabThread {
-  color: var(--status-not-run-ink);
-}
-
 .historyBar {
   composes: label from "../../system/type.module.css";
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   color: var(--ink-muted);
 }
 
@@ -139,6 +88,7 @@
    in the scrolling region, above the transcript they are about. */
 .historyNote {
   composes: body from "../../system/type.module.css";
+  flex: none;
   margin: 0;
   padding: var(--space-1) var(--space-3);
   color: var(--ink-base);
@@ -153,6 +103,7 @@
  */
 .fault {
   composes: body from "../../system/type.module.css";
+  flex: none;
   margin: var(--space-2) var(--space-3);
   display: flex;
   flex-direction: column;
@@ -168,18 +119,41 @@
   color: var(--status-error-ink);
 }
 
+/*
+ * Exactly one scroller in the well column, around the transcript alone (#98).
+ * Session tabs, the fault band, and the page counter stay outside it. `.main`
+ * is the leftover-height sibling and must not itself scroll — scrolling it
+ * used to take the tabs with the transcript.
+ */
+.scrollHost {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .scroll {
+  flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+}
+
+.jumpLatest {
+  position: absolute;
+  right: var(--space-2);
+  bottom: var(--space-2);
 }
 
 /* Empty state, tabs, transcript — the region that takes the leftover height and
    yields it to the pinned composer. `min-height: 0` is what lets it shrink
    below its own content at 800px instead of pushing the composer off. */
 .main {
+  display: flex;
+  flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
 }
 
 /*

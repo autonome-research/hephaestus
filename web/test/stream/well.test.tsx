@@ -25,8 +25,10 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { SessionTabs } from "../../src/components/stream/SessionTabs";
 import { copy } from "../../src/copy";
 import { RUNTIME_FAULTS } from "../../src/stream/runtimeFault";
@@ -203,9 +205,37 @@ describe("the well spends its height on the transcript", () => {
     expect(panel).toContain("setFocusNonce");
     expect(panel).toContain("focusNonce={focusNonce}");
   });
+
+  it("scrolls only the transcript, and follows newest until the operator leaves (#98)", () => {
+    expect(stream).toMatch(/\.main\s*\{[^}]*overflow:\s*hidden/);
+    expect(stream).toMatch(/\.scroll\s*\{[^}]*overflow:\s*auto/);
+    expect(panel).toContain("useFollowScroll");
+    expect(panel).toContain("data-transcript-scroll");
+    expect(panel).toContain("data-jump-latest");
+    expect(panel).toContain("copy.stream.historyFailed");
+    expect(panel).not.toContain("historyFailedShort");
+  });
+});
+
+describe("well leftover copy (#66, #74, #75)", () => {
+  it("uses human words for explode, roots, disclose, and a failed history read", () => {
+    expect(copy.composer.contextKey.explode_t).toBe("explode");
+    expect(copy.composer.contextKey.explode_t).not.toMatch(/explode t/i);
+    expect(copy.stream.projectSession).toBe("project session");
+    expect(copy.composer.disclose).toBe("Composer preview");
+    expect(copy.stream.historyFailed).toMatch(/could not be read/);
+    expect(copy.composer.runInFlightHolder("Ask about kerf_card")).toContain("Ask about kerf_card");
+    expect(copy.composer.runInFlightHolder("Ask about kerf_card")).not.toMatch(/session sess-/);
+  });
 });
 
 describe("the session tab row is a name, not three metadata strings", () => {
+  it("reuses TabBar for the session tablist", () => {
+    expect(source("components/stream/SessionTabs.tsx")).toContain("<TabBar");
+    expect(source("components/stream/SessionTabs.tsx")).toContain('attr="data-session-tab"');
+    expect(source("components/stream/SessionTabs.tsx")).toContain('layout="stack"');
+  });
+
   it("drops the heading over a list of one", () => {
     const one = tabsMarkup([tab()], [row()]);
     expect(one.querySelector("h2")).toBeNull();
@@ -224,17 +254,18 @@ describe("the session tab row is a name, not three metadata strings", () => {
     expect(button?.textContent ?? "").toContain("kerf_card");
   });
 
-  it("keeps §2.8's unlinked state stated, short, with the whole reason on title", () => {
-    const unlinked = tabsMarkup(
-      [tab({ thread_state: "unlinked" })],
-      [row({ thread_state: "unlinked" })],
+  it("does not call a root 'no parent' — a root is not a missing parent", () => {
+    const root = tabsMarkup(
+      [tab({ thread_state: "unlinked", parent_session_id: null, depth: 0 })],
+      [row({ thread_state: "unlinked", profile: "orchestrator", part: null })],
     );
-    const button = unlinked.querySelector("[data-session-tab]");
+    const button = root.querySelector("[data-session-tab]");
     expect(button?.getAttribute("data-thread-state")).toBe("unlinked");
-    expect(button?.textContent ?? "").toContain(copy.stream.threadState.unlinked);
+    expect(button?.textContent ?? "").not.toMatch(/no parent/i);
+    expect(button?.textContent ?? "").toContain(copy.stream.projectSession);
+    expect(button?.textContent ?? "").toContain(copy.composer.createOrchestrator);
     expect(button?.getAttribute("title") ?? "").toContain("cannot be recovered");
-    // Short enough to sit beside a part name in a 420px column.
-    expect(copy.stream.threadState.unlinked.length).toBeLessThanOrEqual(12);
+    expect(button?.getAttribute("data-session-id")).toBe("sess-kerf");
   });
 });
 
@@ -268,5 +299,65 @@ describe("the composer is usable, and says how it is used", () => {
   it("keeps the idle composer one row, and the hint out of it", () => {
     expect(composer).toMatch(/promptRows = promptFocused \|\| text\.trim\(\) !== "" \? 3 : 1/);
     expect(composer).toMatch(/\{promptFocused \|\| text !== "" \? \(/);
+  });
+});
+
+describe("session tabs reuse TabBar keyboard (#62)", () => {
+  let host: HTMLDivElement | null = null;
+  let unmount: (() => void) | null = null;
+
+  afterEach(() => {
+    if (unmount !== null) act(unmount);
+    host?.remove();
+    host = null;
+    unmount = null;
+  });
+
+  it("moves with arrows and Home/End; Tab leaves the list", () => {
+    const tabs = [
+      tab(),
+      tab({ session_id: "sess-child", parent_session_id: "sess-kerf", depth: 1, thread_state: "linked" }),
+      tab({ session_id: "sess-other", parent_session_id: null, depth: 0, thread_state: "unlinked" }),
+    ];
+    const sessions = [
+      row(),
+      row({ session_id: "sess-child", part: "riser" }),
+      row({ session_id: "sess-other", profile: "orchestrator", part: null }),
+    ];
+    const seen: string[] = [];
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    act(() => {
+      root.render(
+        <SessionTabs
+          tabs={tabs}
+          sessions={sessions}
+          selected="sess-kerf"
+          onSelect={(id) => {
+            seen.push(id);
+          }}
+          bounded={false}
+        />,
+      );
+    });
+    unmount = () => {
+      root.unmount();
+    };
+    const list = host.querySelector("[role='tablist']");
+    expect(list).not.toBeNull();
+    const buttons = [...host.querySelectorAll<HTMLButtonElement>("[data-session-tab]")];
+    expect(buttons.map((node) => node.tabIndex)).toEqual([0, -1, -1]);
+    act(() => {
+      list?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    });
+    act(() => {
+      list?.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+    });
+    act(() => {
+      list?.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
+    });
+    expect(seen).toEqual(["sess-child", "sess-other", "sess-kerf"]);
+    expect(host.querySelector("ul[role='tablist']")).toBeNull();
   });
 });

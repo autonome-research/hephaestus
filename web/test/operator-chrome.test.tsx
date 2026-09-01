@@ -103,7 +103,8 @@ describe("stream column — composer is a pinned footer, not overflow", () => {
     expect(stream).toMatch(/\.header\s*\{[^}]*flex:\s*none/);
     expect(stream).toMatch(/\.main\s*\{[^}]*flex:\s*1 1 auto/);
     expect(stream).toMatch(/\.main\s*\{[^}]*min-height:\s*0/);
-    expect(stream).toMatch(/\.main\s*\{[^}]*overflow:\s*auto/);
+    expect(stream).toMatch(/\.main\s*\{[^}]*overflow:\s*hidden/);
+    expect(stream).toMatch(/\.scroll\s*\{[^}]*overflow:\s*auto/);
     expect(stream).toMatch(/\.panel\s*\{[^}]*overflow:\s*hidden/);
     const composer = css("components/stream/Composer.module.css");
     expect(composer).toMatch(/\.composer\s*\{[^}]*flex:\s*0 0 auto/);

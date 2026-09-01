@@ -69,7 +69,7 @@ import { copy } from "../../copy";
 import { StatusBadge } from "../../system";
 import { EventImageInline } from "./EventImage";
 import { parseToolResult, referenceFields } from "../../stream/toolResult";
-import { displayValue, summaryOf, type ToolSummary } from "../../stream/toolSummary";
+import { chipHeadline, displayValue, type ToolSummary } from "../../stream/toolSummary";
 import type { ChipStatus, TranscriptItem } from "../../stream/transcript";
 import styles from "./Transcript.module.css";
 
@@ -119,9 +119,12 @@ export function ToolChip({
   const fields = parsed !== null && parsed.state === "parsed" ? parsed.fields : [];
   const refs = new Set(referenceFields(fields));
   const fieldState = parsed === null ? undefined : parsed.state;
-  const summary =
-    parsed !== null && parsed.state === "parsed" ? summaryOf(parsed.doc, parsed.fields) : null;
   const args = callPayload?.args;
+  const summary = chipHeadline({
+    args,
+    doc: parsed !== null && parsed.state === "parsed" ? parsed.doc : null,
+    fields: parsed !== null && parsed.state === "parsed" ? parsed.fields : [],
+  });
 
   return (
     <article
@@ -148,7 +151,9 @@ export function ToolChip({
         <p className={styles["note"]}>{copy.stream.chip.callMissing}</p>
       ) : null}
 
-      {summary === null ? null : <SummaryLine summary={summary} />}
+      {summary.parts.length > 0 || (parsed !== null && parsed.state === "parsed") ? (
+        <SummaryLine summary={summary} />
+      ) : null}
 
       {children}
 

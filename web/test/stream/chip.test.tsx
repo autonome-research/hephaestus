@@ -105,6 +105,17 @@ describe("a successful call reads as an outcome (§7.2, §3.3)", () => {
     expect(value?.getAttribute("title")).toBe(STATE_HASH);
   });
 
+  it("puts the call operand on a running chip, without inventing a data-field", () => {
+    const markup = renderToStaticMarkup(
+      <ToolChip toolName="read_part" call={call(1)} result={null} images={[]} status="running" />,
+    );
+    const parsed = new DOMParser().parseFromString(`<body>${markup}</body>`, "text/html");
+    const chip = parsed.querySelector("[data-tool-name]");
+    expect(chip?.getAttribute("data-status")).toBe("running");
+    expect(chip?.querySelector("[data-chip-summary]")?.textContent ?? "").toContain("kerf_card");
+    expect(chip?.querySelectorAll("[data-field]")).toHaveLength(0);
+  });
+
   it("carries the whole result document behind ONE collapsed disclosure", () => {
     const detail = chip.querySelector("[data-chip-detail]");
     expect(detail?.tagName.toLowerCase()).toBe("details");
@@ -161,8 +172,16 @@ describe("§7.2's field contract survives the disclosure", () => {
         }),
       },
     });
+    const buildCall = liveItem({
+      run_id: RUN,
+      seq: 3,
+      kind: "tool_call",
+      session_id: SESSION,
+      tool_call_id: "call-read-1",
+      payload: { name: "build_part", arguments: {} },
+    });
     const markup = renderToStaticMarkup(
-      <ToolChip toolName="build_part" call={call(3)} result={opaque} images={[]} status="ok" />,
+      <ToolChip toolName="build_part" call={buildCall} result={opaque} images={[]} status="ok" />,
     );
     const parsed = new DOMParser().parseFromString(`<body>${markup}</body>`, "text/html");
     expect(parsed.querySelector("[data-chip-summary]")?.getAttribute("data-chip-summary")).toBe(

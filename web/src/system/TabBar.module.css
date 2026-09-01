@@ -41,3 +41,27 @@
   color: var(--ink-strong);
   box-shadow: inset 0 -2px 0 var(--accent);
 }
+
+/*
+ * Session tabs (§7.1): a stacked tree, not a horizontal strip. Keyboard
+ * contract is unchanged — this is layout. Selected marker is a LEFT inset
+ * so a vertical list does not grow a bottom rule on the selected row.
+ */
+.stack {
+  flex-direction: column;
+  align-items: stretch;
+  overflow: visible;
+  background: transparent;
+  border-bottom: none;
+  padding: 0;
+  gap: 1px;
+}
+
+.stack .tab {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.stack .tab[aria-selected="true"] {
+  box-shadow: inset 2px 0 0 var(--accent);
+}

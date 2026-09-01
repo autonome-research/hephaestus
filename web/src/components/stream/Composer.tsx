@@ -139,6 +139,11 @@ export interface ComposerProps {
    * (#61). `0` / omitted means "do not steal focus".
    */
   readonly focusNonce?: number | undefined;
+  /**
+   * Human title for a session id (#51 / #66). The `run_in_flight` holder
+   * used to dump the UUID; the tab label is what the operator already reads.
+   */
+  readonly sessionTitle?: ((sessionId: string) => string) | undefined;
 }
 
 /** What the POST is doing. `unknown` is a *state*, not an error to swallow. */
@@ -680,7 +685,10 @@ export function Composer(props: ComposerProps): React.JSX.Element {
               would be naming a session it inferred was busy. */}
           {post.reason === "run_in_flight" && typeof post.data["session_id"] === "string" ? (
             <p data-run-in-flight-session={post.data["session_id"]}>
-              {copy.composer.runInFlightHolder(post.data["session_id"])}
+              {copy.composer.runInFlightHolder(
+                props.sessionTitle?.(post.data["session_id"]) ??
+                  copy.composer.createOrchestrator,
+              )}
             </p>
           ) : null}
           {post.reason === "run_in_flight" ? (

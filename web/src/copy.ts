@@ -857,20 +857,26 @@ export const copy = {
       delegation: "delegated by",
     },
     /**
-     * §2.8's thread state. Only `unlinked` is RENDERED as a word.
+     * §2.8's thread state. The unlinked word is not a visible subtitle.
      *
      * "threaded" beside a tab that is visibly indented under its parent
      * restates the indent, and at ~380px it was the third metadata string on a
      * one-session tab row — the "wall of badges" an operator read as chrome
      * rather than as content. §2.8's requirement is specifically about the
      * other case ("a pre-existing transcript reopens flat and says why"), so
-     * the unlinked word stays, short, with `unlinkedWhy` on its `title`. Both
-     * states remain addressable through `data-thread-state`, unchanged.
+     * the unlinked word is not printed on a root (a root is not a missing
+     * parent). `unlinkedWhy` stays on `title`. Both states remain
+     * addressable through `data-thread-state`, unchanged.
      */
     threadState: {
       linked: "threaded",
-      unlinked: "no parent",
+      unlinked: "project session",
     },
+    /**
+     * A root is not a missing parent. The tab subtitle uses this instead of
+     * `threadState.unlinked` ("no parent" was the lie #62/#66 named).
+     */
+    projectSession: "project session",
     unlinkedWhy:
       "No parent edge is recorded for this session. It is either a root, or a transcript older than the threading table — in which case its parent cannot be recovered and is not guessed at.",
     threadBounded:
@@ -884,8 +890,16 @@ export const copy = {
     historyTruncated:
       "Stopped after the page limit for one reopen. This transcript is longer than what is shown.",
     historyFailed: "The recorded transcript could not be read.",
-    /** The same fact, on the header row that otherwise carries a page count. */
-    historyFailedShort: "Transcript unread",
+    /**
+     * #75: the header row states the reason, not a hedge. A shorter label
+     * used to hide why (`Transcript unread`). The full sentence is the
+     * visible text; this key stays only so a title attribute can stay short
+     * without becoming a second hedge.
+     */
+    historyFailedShort: "The recorded transcript could not be read.",
+    jumpToLatest: "Latest",
+    jumpToLatestWhy:
+      "Show the newest turn. Following stopped when this transcript was scrolled up.",
 
     /** §8's named absences: what a reopened transcript cannot contain. */
     absence: {
@@ -1131,7 +1145,7 @@ export const copy = {
      * refusal clears itself when the run reports its terminal.
      */
     runInFlightCompose: "You can write the next message while this turn finishes.",
-    runInFlightHolder: (sessionId: string): string => `The live run belongs to session ${sessionId}.`,
+    runInFlightHolder: (title: string): string => `The live run belongs to ${title}.`,
 
     /**
      * §7A.8's cause vocabulary, rendered where the operator can act on it.
@@ -1166,7 +1180,7 @@ export const copy = {
       stage_tab: "stage tab",
       inspector_tab: "inspector tab",
       view: "view",
-      explode_t: "explode t",
+      explode_t: "explode",
       section_plane: "section",
       hidden_labels: "hidden",
       selection: "selection",
@@ -1174,8 +1188,8 @@ export const copy = {
     },
     hiddenCount: (n: number): string => (n === 1 ? "1 label hidden" : `${n} labels hidden`),
     /** §7A.3's disclosure: what the agent will actually be told. */
-    disclose: "What will the agent be told?",
-    discloseHide: "Hide what the agent will be told",
+    disclose: "Composer preview",
+    discloseHide: "Hide composer preview",
     discloseAdvisory:
       "A preview. The message is composed again when it is sent, so what the agent receives is the version echoed back on the turn — not this one.",
     discloseTruncated:
