@@ -47,7 +47,7 @@
 // stays stale. All three are the same refetch of the same server projection;
 // none merges a tool result, and none moves the pin.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { WorkspaceError } from "../../api/client";
 import { attachProjection, type AttachProjection } from "../../api/attach";
@@ -68,6 +68,7 @@ import { useWorkspace, workspaceStore } from "../../state/react";
 import { sessionEmptyBody, sessionEmptyKind } from "../../stream/sessionEmpty";
 import { useStream } from "../../stream/useStream";
 import { useFollowScroll } from "../../stream/followScroll";
+import { sessionPromptStore } from "../../stream/sessionPrompts";
 import { titleForSession } from "../../stream/sessionTitle";
 import { Composer, NewSessionAction } from "./Composer";
 import { SessionTabs } from "./SessionTabs";
@@ -149,9 +150,14 @@ export function StreamPanel(): React.JSX.Element {
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const { following, jumpToLatest } = useFollowScroll(scrollRef, selected, stream.rows.length);
+  const firstPrompts = useSyncExternalStore(
+    sessionPromptStore.subscribe,
+    sessionPromptStore.getSnapshot,
+    sessionPromptStore.getServerSnapshot,
+  );
   const sessionTitle = useCallback(
-    (sessionId: string) => titleForSession(sessionId, rows, tabs),
-    [rows, tabs],
+    (sessionId: string) => titleForSession(sessionId, rows, tabs, undefined, firstPrompts[sessionId]),
+    [rows, tabs, firstPrompts],
   );
 
   const refusal = sessions.error instanceof WorkspaceError ? sessions.error : null;

@@ -60,6 +60,13 @@
 .stack .tab {
   width: 100%;
   justify-content: flex-start;
+  overflow: hidden;
+}
+
+.stack .tab > span:first-of-type {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .stack .tab[aria-selected="true"] {
