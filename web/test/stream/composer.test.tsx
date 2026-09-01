@@ -442,6 +442,14 @@ describe("the DOM contract", () => {
     expect(html).not.toContain("data-context-chips");
     expect(html).not.toContain("data-context-add-view");
   });
+
+  it("labels disclose as a preview, not as what the agent will be told (#74)", () => {
+    const html = markup();
+    expect(html).toContain(copy.composer.disclose);
+    expect(html).not.toContain("What will the agent be told?");
+    expect(copy.composer.disclose).toBe("Composer preview");
+    expect(copy.composer.discloseAdvisory.length).toBeGreaterThan(20);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -787,6 +795,16 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
 
     // And none of that posted a prompt.
     expect(vi.mocked(sendPrompt)).toHaveBeenCalledTimes(1);
+  });
+
+  it("names the holding session with the human tab title, not the UUID (#66)", async () => {
+    const root = await refuseRunInFlight({
+      sessionTitle: (id) => (id === "sess-other" ? "Ask about kerf_card" : id),
+    });
+    const holder = root.querySelector("[data-run-in-flight-session]");
+    expect(holder?.getAttribute("data-run-in-flight-session")).toBe("sess-other");
+    expect(holder?.textContent ?? "").toContain("Ask about kerf_card");
+    expect(holder?.textContent ?? "").not.toContain("sess-other");
   });
 
   it("does not paint HTTP 500 under the composer when the runtime is gone (#52)", async () => {

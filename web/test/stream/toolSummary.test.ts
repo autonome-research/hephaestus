@@ -25,8 +25,10 @@ import {
   DIGEST_GLYPHS,
   SUMMARY_FIELDS_MAX,
   SUMMARY_VALUE_MAX,
+  chipHeadline,
   displayValue,
   isOpaqueDigest,
+  operandFromArgs,
   summaryOf,
 } from "../../src/stream/toolSummary";
 import { parseToolResult } from "../../src/stream/toolResult";
@@ -104,8 +106,8 @@ describe("the headline is drawn from the document, never composed", () => {
     const parsed = parseToolResult(READ_PART);
     if (parsed.state !== "parsed") throw new Error("fixture does not parse");
     const summary = summaryOf(parsed.doc, parsed.fields);
-    expect(summary.parts.map((part) => part.field)).toEqual(["status", "part"]);
-    expect(summary.parts.map((part) => part.value)).toEqual(["ok", "kerf_card"]);
+    expect(summary.parts.map((part) => part.field)).toEqual(["part"]);
+    expect(summary.parts.map((part) => part.value)).toEqual(["kerf_card"]);
     // The count is the document's own, so the disclosure below the headline can
     // be labelled without the chip recounting anything.
     expect(summary.fields).toBe(4);
@@ -157,5 +159,38 @@ describe("the headline is drawn from the document, never composed", () => {
   it("does not headline a multi-line string", () => {
     const doc = { message: "line one\nline two" };
     expect(summaryOf(doc, Object.keys(doc)).parts).toEqual([]);
+  });
+
+  it("does not headline result metadata the operator already has on the badge", () => {
+    const doc = { status: "ok", line_count: 65, truncated: false, generation: 3, current: true };
+    expect(summaryOf(doc, Object.keys(doc)).parts).toEqual([]);
+  });
+});
+
+describe("the chip face uses call arguments for the operand (#71, #48)", () => {
+  it("reads the part from a running call that has no result document", () => {
+    expect(operandFromArgs({ name: "tread" })).toEqual({ field: "name", value: "tread" });
+    const running = chipHeadline({ args: { part: "kerf_card" } });
+    expect(running.parts).toEqual([{ field: "part", value: "kerf_card" }]);
+    expect(running.fields).toBe(0);
+  });
+
+  it("keeps that operand on ok when the result omitted part (#69)", () => {
+    const doc = { status: "ok", line_count: 65, truncated: false };
+    const summary = chipHeadline({
+      args: { name: "kerf_card" },
+      doc,
+      fields: Object.keys(doc),
+    });
+    expect(summary.parts.map((part) => part.value)).toEqual(["kerf_card"]);
+    expect(summary.parts.map((part) => part.field)).not.toContain("line_count");
+    expect(summary.fields).toBe(3);
+  });
+
+  it("does not turn an argument into a result field", () => {
+    const doc = { status: "ok" };
+    const summary = chipHeadline({ args: { name: "tread" }, doc, fields: Object.keys(doc) });
+    expect(summary.parts[0]?.value).toBe("tread");
+    expect(Object.keys(doc)).not.toContain("name");
   });
 });

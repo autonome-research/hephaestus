@@ -19,7 +19,7 @@
 // every selector the gate suite already reads survives verbatim on an element
 // this primitive now owns.
 
-import { useRef, type ReactNode } from "react";
+import { useRef, type CSSProperties, type ReactNode } from "react";
 import { cx, type DataAttributes } from "./dataAttrs";
 import styles from "./TabBar.module.css";
 import roles from "./type.module.css";
@@ -31,6 +31,10 @@ export interface TabSpec<Id extends string> {
   readonly trailing?: ReactNode | undefined;
   /** Addressing attributes for this tab, forwarded verbatim. */
   readonly attrs?: DataAttributes | undefined;
+  /** Native `title` — session tabs put the UUID here, not in the label. */
+  readonly title?: string | undefined;
+  /** Per-tab layout (thread depth indent). */
+  readonly style?: CSSProperties | undefined;
 }
 
 export interface TabBarProps<Id extends string> {
@@ -41,6 +45,11 @@ export interface TabBarProps<Id extends string> {
   readonly onSelect: (id: Id) => void;
   readonly label: string;
   readonly className?: string | undefined;
+  /**
+   * `bar` is the Stage/Inspector strip. `stack` is the session tablist:
+   * same roving tabindex, arrows, Home/End; Tab still leaves the list.
+   */
+  readonly layout?: "bar" | "stack" | undefined;
 }
 
 export function TabBar<Id extends string>({
@@ -50,6 +59,7 @@ export function TabBar<Id extends string>({
   onSelect,
   label,
   className,
+  layout = "bar",
 }: TabBarProps<Id>): React.JSX.Element {
   const listRef = useRef<HTMLDivElement | null>(null);
 
@@ -80,7 +90,7 @@ export function TabBar<Id extends string>({
   return (
     <div
       ref={listRef}
-      className={cx(styles["bar"], className)}
+      className={cx(styles["bar"], layout === "stack" && styles["stack"], className)}
       role="tablist"
       aria-label={label}
       onKeyDown={onKeyDown}
@@ -93,6 +103,8 @@ export function TabBar<Id extends string>({
           aria-selected={tab.id === selected}
           tabIndex={tab.id === selected ? 0 : -1}
           className={cx(styles["tab"], roles["label"])}
+          title={tab.title}
+          style={tab.style}
           {...{ [attr]: tab.id }}
           {...(tab.attrs ?? {})}
           onClick={() => {

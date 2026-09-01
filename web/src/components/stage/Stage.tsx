@@ -34,7 +34,7 @@ import { shellStore } from "../../state/shell";
 import { effectiveInspectorTab, STAGE_TABS, type StageTab } from "../../state/workspace";
 import { Badge, EmptyState, TabBar, useShell } from "../../system";
 import { ResultsPanel } from "../inspector/ResultsPanel";
-import { useDirtyIndex } from "../rail/GitDirty";
+import { dirtySideWord, useDirtyIndex } from "../rail/GitDirty";
 import { Inspector } from "./Inspector";
 import { ScriptWorkspace } from "./ScriptWorkspace";
 import { Timeline } from "./Timeline";
@@ -49,7 +49,8 @@ export function Stage(): React.JSX.Element {
   const shell = useShell();
   const hostRef = useRef<HTMLDivElement | null>(null);
   // §13.1: "a dot on the Script tab", from `git status` and from nothing else.
-  const partDirty = part !== null && dirty.byPart.has(part);
+  const partDirty = part !== null ? dirty.byPart.get(part) : undefined;
+  const scriptDirtyWord = partDirty === undefined ? null : dirtySideWord(partDirty);
 
   /**
    * The drag handle. Pointer capture rather than document listeners so a drag
@@ -112,11 +113,11 @@ export function Stage(): React.JSX.Element {
           tabs={STAGE_TABS.map((name) => ({
             id: name,
             label: copy.stage.tabs[name],
-            ...(name === "script" && partDirty
+            ...(name === "script" && scriptDirtyWord !== null
               ? {
                   trailing: (
-                    <Badge status="dirty" title={copy.rail.dirtyMarkerLabel}>
-                      {copy.rail.dirtyShort}
+                    <Badge status="dirty" title={scriptDirtyWord}>
+                      {scriptDirtyWord}
                     </Badge>
                   ),
                 }

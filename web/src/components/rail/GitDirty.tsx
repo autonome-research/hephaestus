@@ -116,6 +116,11 @@ export function dirtySide(entry: GitDirtyEntry): keyof typeof copy.gitStatus {
   return staged ? "index" : "worktree";
 }
 
+/** The Script-tab word — same vocabulary as the rail's DirtyMarker (#72). */
+export function dirtySideWord(entry: GitDirtyEntry): string {
+  return copy.gitStatus[dirtySide(entry)];
+}
+
 export interface DirtyIndex {
   /** part name → its dirty row, for the tree's inline markers. */
   readonly byPart: ReadonlyMap<string, GitDirtyEntry>;

@@ -10,19 +10,27 @@
 // breadth-first order, at the server's `depth`. Nothing is sorted, nested, or
 // inferred from a session's profile or its part name.
 //
-// `data-thread-state="unlinked"` is §2.8's honesty state and it is *stated*, not
-// implied by an absent indent: an unindented tab and a session whose parent
-// cannot be recovered look identical, and only one of them is a fact about the
-// project. A pre-existing transcript reopens flat and says why.
+// `data-thread-state="unlinked"` is §2.8's honesty state. A root is not a
+// missing parent — the unlinked word is not printed there. The attribute
+// stays, and the UUID stays on `title` / `data-session-id`.
 //
 // A browser tab is a client, never a lease holder (§7.1). Selecting a tab
 // changes `?s=` in the §4.5 route and nothing else — no lease is taken, no
 // session is created, and the CLI's hold on a session is untouched.
+//
+// The widget is `TabBar`: roving tabindex, arrows, Home/End, Tab leaves the
+// list. #68's tabpanel / well-role work is a later a11y PR.
 
 import { copy } from "../../copy";
 import type { SessionRow } from "../../api/sessions";
 import type { ThreadTab } from "../../stream/thread";
 import { originPart } from "../../stream/thread";
+import {
+  sessionLabel,
+  sessionTabMeta,
+  sessionTitleAttr,
+} from "../../stream/sessionTitle";
+import { TabBar } from "../../system";
 import styles from "./Stream.module.css";
 
 export interface SessionTabsProps {
@@ -33,24 +41,6 @@ export interface SessionTabsProps {
   readonly bounded: boolean;
 }
 
-const PROFILE_LABELS = copy.stream.profile;
-const EDGE_LABELS = copy.stream.edgeKind;
-
-function profileLabel(profile: string | undefined): string | null {
-  if (profile === undefined) return null;
-  if (profile === "orchestrator" || profile === "part" || profile === "quick_edit") {
-    return PROFILE_LABELS[profile];
-  }
-  // A profile outside `SESSION_PROFILES` is shown as the server spelled it
-  // rather than mapped onto a neighbour.
-  return profile;
-}
-
-function edgeLabel(kind: string | null): string | null {
-  if (kind === "quick_edit" || kind === "delegation") return EDGE_LABELS[kind];
-  return kind;
-}
-
 export function SessionTabs({
   tabs,
   sessions,
@@ -59,6 +49,7 @@ export function SessionTabs({
   bounded,
 }: SessionTabsProps): React.JSX.Element {
   const byId = new Map(sessions.map((row) => [row.session_id, row]));
+  const selectedId = selected ?? tabs[0]?.session_id ?? "";
 
   return (
     <div className={styles["tabs"]}>
@@ -68,47 +59,44 @@ export function SessionTabs({
         <h2 className={styles["tabsHeading"]}>{copy.stream.sessionsHeading}</h2>
       ) : null}
       {bounded ? <p className={styles["note"]}>{copy.stream.threadBounded}</p> : null}
-      <ul className={styles["tabList"]} role="tablist" aria-label={copy.stream.sessionsHeading}>
-        {tabs.map((tab) => {
+      <TabBar
+        attr="data-session-tab"
+        layout="stack"
+        className={styles["sessionTabs"]}
+        label={copy.stream.sessionsHeading}
+        selected={selectedId}
+        onSelect={onSelect}
+        tabs={tabs.map((tab) => {
           const row = byId.get(tab.session_id);
           const part = row?.part ?? originPart(tab.origin);
-          const kind = edgeLabel(tab.kind);
-          return (
-            <li key={tab.session_id} className={styles["tabItem"]}>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={selected === tab.session_id}
-                className={styles["tab"]}
-                data-session-tab={tab.session_id}
-                data-thread-depth={tab.depth}
-                data-thread-state={tab.thread_state}
-                {...(tab.kind === null ? {} : { "data-thread-kind": tab.kind })}
-                {...(part === null || part === undefined ? {} : { "data-part": part })}
-                style={{ paddingLeft: `calc(var(--space-2) + ${String(tab.depth)} * var(--space-4))` }}
-                onClick={() => {
-                  onSelect(tab.session_id);
-                }}
-                title={tab.thread_state === "unlinked" ? copy.stream.unlinkedWhy : undefined}
-              >
-                <span className={styles["tabLabel"]}>{part ?? tab.session_id}</span>
-                <span className={styles["tabMeta"]}>
-                  {profileLabel(row?.profile) ?? (kind ?? copy.absent.unavailable)}
-                </span>
-                {/* The state lives on the button alone: two elements carrying
-                    `data-thread-state` would double every selector that reads
-                    it, and the tab IS the thing that is linked or not. Only the
-                    unlinked word is rendered — see `copy.stream.threadState`. */}
-                {tab.thread_state === "unlinked" ? (
-                  <span className={styles["tabThread"]}>
-                    {copy.stream.threadState.unlinked}
-                  </span>
-                ) : null}
-              </button>
-            </li>
-          );
+          const label = sessionLabel({
+            sessionId: tab.session_id,
+            profile: row?.profile ?? null,
+            part: row?.part ?? null,
+            kind: tab.kind,
+            origin: tab.origin,
+            createdAt: tab.created_at ?? null,
+          });
+          const meta = sessionTabMeta(tab, row);
+          return {
+            id: tab.session_id,
+            label,
+            title: sessionTitleAttr(tab.session_id, tab.thread_state),
+            trailing:
+              meta === null ? undefined : <span className={styles["tabMeta"]}>{meta}</span>,
+            style: {
+              paddingLeft: `calc(var(--space-2) + ${String(tab.depth)} * var(--space-4))`,
+            },
+            attrs: {
+              "data-session-id": tab.session_id,
+              "data-thread-depth": tab.depth,
+              "data-thread-state": tab.thread_state,
+              ...(tab.kind === null ? {} : { "data-thread-kind": tab.kind }),
+              ...(part === null || part === undefined ? {} : { "data-part": part }),
+            },
+          };
         })}
-      </ul>
+      />
     </div>
   );
 }

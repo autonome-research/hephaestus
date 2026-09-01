@@ -41,6 +41,7 @@ import { copy } from "../src/copy";
 import {
   GitDirtyView,
   dirtySide,
+  dirtySideWord,
   gitCapabilityAbsence,
   indexDirty,
   isGeneratedPath,
@@ -166,6 +167,21 @@ describe("GitDirty — a long path outside parts/ stays one fact, one line", () 
     expect(
       dirtySide({ path: BLOB, part: null, index: "?", worktree: "?" }),
     ).toBe("untracked");
+  });
+
+  it("gives the Script tab the same side word the rail prints (#72)", () => {
+    const untracked = { path: "parts/kerf_card.py", part: "kerf_card", index: "?", worktree: "?" };
+    expect(dirtySideWord(untracked)).toBe(copy.gitStatus.untracked);
+    expect(dirtySideWord(untracked)).not.toBe(copy.rail.dirtyShort);
+    expect(dirtySideWord({ path: "parts/a.py", part: "a", index: "M", worktree: "." })).toBe(
+      copy.gitStatus.index,
+    );
+    const stage = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../src/components/stage/Stage.tsx"),
+      "utf8",
+    );
+    expect(stage).toContain("dirtySideWord");
+    expect(stage).not.toContain("copy.rail.dirtyShort");
   });
 });
 

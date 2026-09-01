@@ -63,10 +63,12 @@ import {
 } from "../../api/sessions";
 import { useParts } from "../../api/queries";
 import { copy } from "../../copy";
-import { Badge, EmptyState, type BadgeStatus } from "../../system";
+import { Badge, Button, EmptyState, type BadgeStatus } from "../../system";
 import { useWorkspace, workspaceStore } from "../../state/react";
 import { sessionEmptyBody, sessionEmptyKind } from "../../stream/sessionEmpty";
 import { useStream } from "../../stream/useStream";
+import { useFollowScroll } from "../../stream/followScroll";
+import { titleForSession } from "../../stream/sessionTitle";
 import { Composer, NewSessionAction } from "./Composer";
 import { SessionTabs } from "./SessionTabs";
 import { Transcript } from "./Transcript";
@@ -140,8 +142,16 @@ export function StreamPanel(): React.JSX.Element {
             depth: 0,
             thread_state: row.thread_state,
             origin: {},
+            created_at: null,
           })),
     [stream.tabs, rows],
+  );
+
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const { following, jumpToLatest } = useFollowScroll(scrollRef, selected, stream.rows.length);
+  const sessionTitle = useCallback(
+    (sessionId: string) => titleForSession(sessionId, rows, tabs),
+    [rows, tabs],
   );
 
   const refusal = sessions.error instanceof WorkspaceError ? sessions.error : null;
@@ -276,7 +286,7 @@ export function StreamPanel(): React.JSX.Element {
                   attribute still carries the count the panel actually has. */}
               <span data-history-pages={stream.history.pages}>
                 {stream.history.state === "failed"
-                  ? copy.stream.historyFailedShort
+                  ? copy.stream.historyFailed
                   : stream.history.state === "loading" && stream.history.pages === 0
                     ? copy.stream.historyLoading
                     : copy.stream.historyPages(stream.history.pages)}
@@ -403,11 +413,21 @@ export function StreamPanel(): React.JSX.Element {
             {stream.history.state === "truncated" ? (
               <p className={styles["historyNote"]}>{copy.stream.historyTruncated}</p>
             ) : null}
-            {stream.history.state === "failed" ? (
-              <p className={styles["historyNote"]}>{copy.stream.historyFailed}</p>
-            ) : null}
-            <div className={styles["scroll"]}>
-              <Transcript rows={stream.rows} runtimeFault={fault} />
+            <div className={styles["scrollHost"]}>
+              <div className={styles["scroll"]} ref={scrollRef} data-transcript-scroll="">
+                <Transcript rows={stream.rows} runtimeFault={fault} />
+              </div>
+              {following ? null : (
+                <Button
+                  variant="secondary"
+                  className={styles["jumpLatest"]}
+                  data-jump-latest=""
+                  title={copy.stream.jumpToLatestWhy}
+                  onClick={jumpToLatest}
+                >
+                  {copy.stream.jumpToLatest}
+                </Button>
+              )}
             </div>
           </>
         ) : null}
@@ -427,6 +447,7 @@ export function StreamPanel(): React.JSX.Element {
         onForgetLiveRun={stream.clearRunId}
         focusNonce={focusNonce}
         onRuntimeFault={reportFault}
+        sessionTitle={sessionTitle}
         onTurnSettled={() => {
           void client.invalidateQueries({ queryKey: ["sessions"] });
         }}

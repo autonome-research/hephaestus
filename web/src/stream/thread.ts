@@ -85,6 +85,8 @@ export interface ThreadTab {
   readonly depth: number;
   readonly thread_state: ThreadState;
   readonly origin: Readonly<Record<string, unknown>>;
+  /** From the edge row; `null` at a list fallback that has no thread walk. */
+  readonly created_at?: number | null;
 }
 
 /**
@@ -107,6 +109,7 @@ export function threadTabs(document: ThreadDocument): readonly ThreadTab[] {
       depth: node.depth,
       thread_state: linked ? "linked" : "unlinked",
       origin: node.origin,
+      created_at: node.created_at,
     };
   });
 }

@@ -58,13 +58,42 @@ export const SUMMARY_FIELDS_MAX = 2;
  * headline as well as to the field set.
  */
 export const HEADLINE_FIELDS: readonly string[] = [
-  "status",
   "part",
   "name",
+  "path",
+  "file",
+  "question",
+  "artifact",
   "message",
   "reason",
   "state",
+];
+
+/**
+ * Result keys that answer "how much / which generation", not "which operand".
+ *
+ * These stay behind the disclosure. Putting `line_count` or `status` on the
+ * face is what made three `read_part` chips identical (#48). `status` is
+ * already the chip badge.
+ */
+export const HEADLINE_METADATA: ReadonlySet<string> = new Set([
+  "status",
+  "line_count",
+  "lines",
+  "truncated",
+  "generation",
+  "current",
   "count",
+]);
+
+/** Call-argument keys that name the operand the operator already knows. */
+export const OPERAND_FIELDS: readonly string[] = [
+  "part",
+  "name",
+  "path",
+  "file",
+  "question",
+  "artifact",
 ];
 
 /**
@@ -148,14 +177,55 @@ function headlineValue(value: unknown): string | null {
 export function summaryOf(doc: ToolResultDocument, fields: readonly string[]): ToolSummary {
   const ordered = [
     ...HEADLINE_FIELDS.filter((field) => fields.includes(field)),
-    ...fields.filter((field) => !HEADLINE_FIELDS.includes(field)),
+    ...fields.filter((field) => !HEADLINE_FIELDS.includes(field) && !HEADLINE_METADATA.has(field)),
   ];
   const parts: SummaryPart[] = [];
   for (const field of ordered) {
     if (parts.length === SUMMARY_FIELDS_MAX) break;
+    if (HEADLINE_METADATA.has(field)) continue;
     const value = headlineValue(doc[field]);
     if (value === null) continue;
     parts.push({ field, value });
   }
   return { parts, fields: fields.length };
+}
+
+/**
+ * The operand on a tool call's arguments, if one is short enough to read.
+ *
+ * Used for the chip face while `running` (no result yet) and after `ok` when
+ * the result document omitted the part (#69). Never written as `data-field`.
+ */
+export function operandFromArgs(args: unknown): SummaryPart | null {
+  if (args === null || typeof args !== "object" || Array.isArray(args)) return null;
+  const record = args as Readonly<Record<string, unknown>>;
+  for (const field of OPERAND_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(record, field)) continue;
+    const value = headlineValue(record[field]);
+    if (value === null) continue;
+    return { field, value };
+  }
+  return null;
+}
+
+export interface ChipHeadlineInput {
+  readonly args?: unknown;
+  readonly doc?: ToolResultDocument | null;
+  readonly fields?: readonly string[];
+}
+
+/**
+ * Face of the chip: argument operand first, then a result headline, else none.
+ *
+ * `fields` is still the result document's key count — the disclosure label
+ * — even when the visible line came from the call.
+ */
+export function chipHeadline(input: ChipHeadlineInput): ToolSummary {
+  const fieldCount = input.fields?.length ?? 0;
+  const operand = operandFromArgs(input.args);
+  if (operand !== null) return { parts: [operand], fields: fieldCount };
+  if (input.doc !== null && input.doc !== undefined && input.fields !== undefined) {
+    return summaryOf(input.doc, input.fields);
+  }
+  return { parts: [], fields: fieldCount };
 }
