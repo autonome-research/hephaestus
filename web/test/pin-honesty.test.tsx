@@ -97,8 +97,9 @@ describe("formatRef — hash prefix, not the scheme (#57)", () => {
   });
 
   it("still distinguishes two refs that share a tail", () => {
-    const a = "artifact:build:sha256:" + "a".repeat(56) + "cbe552b4";
-    const b = "artifact:render:sha256:" + "b".repeat(56) + "cbe552b4";
+    const tail = "cbe552b4cf";
+    const a = "artifact:build:sha256:" + "a".repeat(54) + tail;
+    const b = "artifact:render:sha256:" + "b".repeat(54) + tail;
     expect(a.slice(-10)).toBe(b.slice(-10));
     expect(formatRef(a)).toBe("build · aaaaaaaa");
     expect(formatRef(b)).toBe("render · bbbbbbbb");
