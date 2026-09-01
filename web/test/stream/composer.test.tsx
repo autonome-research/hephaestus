@@ -311,7 +311,9 @@ describe("the read-refresh boundary", () => {
     const panel = readFileSync(join(here, "../../src/components/stream/StreamPanel.tsx"), "utf8");
     expect(observer).toContain("frame.kind !== \"terminal\"");
     expect(observer).toContain("refreshAfterTurn(client, partRef.current)");
-    expect(observer).not.toMatch(/tool_result[\s\S]*merge/);
+    expect(observer).toContain("collectSessionIds");
+    expect(observer).toContain('invalidateQueries({ queryKey: ["sessions"] })');
+    expect(observer).not.toContain("setQueryData");
     expect(shell).toContain("useProjectRefresh()");
     expect(panel).not.toContain("stream.terminals === seenTerminals.current");
   });

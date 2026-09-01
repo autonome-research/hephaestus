@@ -26,7 +26,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it, afterEach } from "vitest";
+import { describe, expect, it, afterEach, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createRoot, type Root } from "react-dom/client";
 import { act } from "react";
@@ -36,6 +36,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { GitDirtyEntry, GitStatusDocument, PartsDocument } from "../src/api/types";
 import { WorkspaceError } from "../src/api/client";
 import { keys } from "../src/api/queries";
+import { claimToken, dropToken } from "../src/api/token";
 import { copy } from "../src/copy";
 import {
   GitDirtyView,
@@ -83,6 +84,27 @@ function live(element: ReactElement): { host: HTMLElement; root: Root } {
     root.render(element);
   });
   return { host, root };
+}
+
+function refuseAll(): void {
+  window.history.replaceState(null, "", "/#t=rail-test-token");
+  claimToken();
+  vi.stubGlobal(
+    "fetch",
+    async () =>
+      new Response(JSON.stringify({ status: "error", reason: "transport_error", message: "refused" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      }),
+  );
+}
+
+async function flush(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+  });
 }
 
 function drop(mounted: { host: HTMLElement; root: Root }): void {
@@ -273,6 +295,8 @@ describe("part row click selects the part", () => {
     host = undefined;
     root = undefined;
     workspaceStore.reset(DEFAULT_STATE);
+    vi.unstubAllGlobals();
+    dropToken();
   });
 
   async function mount(element: ReactElement): Promise<HTMLElement> {
@@ -382,14 +406,8 @@ describe("part row click selects the part", () => {
   });
 
   it("prints a refusal, not Loading…, when GET /parts is refused (#89)", async () => {
+    refuseAll();
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    await client.prefetchQuery({
-      queryKey: keys.parts(),
-      queryFn: async () => {
-        throw new WorkspaceError(500, "transport_error", "parts gone");
-      },
-      retry: false,
-    });
     client.setQueryData(keys.gitStatus(), {
       status: "ok",
       dirty: [],
@@ -402,6 +420,7 @@ describe("part row click selects the part", () => {
         <ProjectTree />
       </QueryClientProvider>,
     );
+    await flush();
     expect(container.querySelector('[data-refusal-reason="transport_error"]')).not.toBeNull();
     expect(container.textContent).not.toContain(copy.absent.loading);
   });
@@ -501,9 +520,12 @@ describe("VersionList — refused is not loading", () => {
     host = undefined;
     root = undefined;
     workspaceStore.reset(DEFAULT_STATE);
+    vi.unstubAllGlobals();
+    dropToken();
   });
 
   it("prints a refusal, not Loading…, when GET /git/log is refused (#89)", async () => {
+    refuseAll();
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     client.setQueryData(keys.gitStatus(), {
       status: "ok",
@@ -516,13 +538,6 @@ describe("VersionList — refused is not loading", () => {
       status: "ok",
       parts: [],
     } satisfies PartsDocument);
-    await client.prefetchQuery({
-      queryKey: keys.gitLog("gusset"),
-      queryFn: async () => {
-        throw new WorkspaceError(500, "transport_error", "log gone");
-      },
-      retry: false,
-    });
     workspaceStore.reset({ ...DEFAULT_STATE, part: "gusset" });
     host = document.createElement("div");
     document.body.appendChild(host);
@@ -534,6 +549,7 @@ describe("VersionList — refused is not loading", () => {
         </QueryClientProvider>,
       );
     });
+    await flush();
     expect(host.querySelector('[data-refusal-reason="transport_error"]')).not.toBeNull();
     expect(host.textContent).not.toContain(copy.absent.loading);
   });
