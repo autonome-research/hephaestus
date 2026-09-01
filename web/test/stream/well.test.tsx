@@ -118,17 +118,41 @@ describe("a runtime fault is named, and does not masquerade as a stream state", 
     expect(Object.keys(copy.stream.runtimeFaultWhy).sort()).toEqual([...RUNTIME_FAULTS].sort());
   });
 
-  it("offers no recovery control, and points at the composer instead", () => {
-    // §7A.5: a turn that may have started is never resent automatically, so the
-    // recovery on offer is the operator's own next message and nothing else —
-    // no button in the band, no wizard behind one.
+  it("offers New session on the fault band, never Send again (#43)", () => {
+    // Recovery is POST /sessions `{profile: "orchestrator"}`. No reconnect
+    // wizard — no route backs one. The band is the only place a runtime fault
+    // is stated; the next-step sentence must not point at Send.
     const band = panel.slice(
       panel.indexOf("data-runtime-fault={fault}"),
-      panel.indexOf("sessionsFault === null"),
+      panel.indexOf("sessions.error !== null && sessionsFault === null"),
     );
-    expect(band).not.toContain("<Button");
-    expect(band).not.toContain("onClick");
-    expect(copy.stream.runtimeFaultNext).toContain("composer");
+    expect(band).toContain("{createAction}");
+    expect(band).not.toMatch(/<Button[^>]*>[\s\S]*[Rr]econnect/);
+    expect(copy.stream.runtimeFaultNext).toMatch(/[Nn]ew session/);
+    expect(copy.stream.runtimeFaultNext).not.toMatch(/Send again/);
+    expect(copy.stream.runtimeFaultNext).not.toMatch(/composer below/);
+    expect(copy.composer.retry).toBe("Send again");
+  });
+
+  it("renders the create pair when the current tab cannot prompt (#43)", () => {
+    // §7A.2's pair is not only the empty-list invitation. A selected dead
+    // session keeps the tabs; the pair must still be reachable.
+    expect(panel).toContain("sessionCannotPrompt");
+    expect(panel).toContain("cannotPrompt");
+    expect(panel).toContain("data-session-cannot-prompt");
+  });
+
+  it("refreshes workspace reads when the process is gone, without touching the pin (#59)", () => {
+    const refresh = panel.slice(
+      panel.indexOf("Sidecar death produces neither"),
+      panel.indexOf("§7A.2: `POST /sessions`"),
+    );
+    expect(refresh).toContain("processGone(fault)");
+    expect(refresh).toContain("refreshAfterTurn(client, part)");
+    expect(refresh).not.toContain("workspaceStore");
+    expect(refresh).not.toMatch(/observeCurrent\(/);
+    expect(refresh).not.toMatch(/followCurrent\(/);
+    expect(refresh).not.toMatch(/hold\(/);
   });
 
   it("states a shared cause once", () => {
@@ -171,7 +195,7 @@ describe("the well spends its height on the transcript", () => {
     expect(panel).toContain("const createAction");
     expect(panel).toContain("action={createAction}");
     const afterTabs = panel.slice(panel.indexOf("<SessionTabs"));
-    expect(afterTabs).toContain("{createAction}");
+    expect(afterTabs).toContain("createAction");
     expect(afterTabs).toContain("Send does not create a session");
   });
 

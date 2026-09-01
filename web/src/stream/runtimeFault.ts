@@ -66,3 +66,36 @@ export function runtimeFaultOf(error: unknown): RuntimeFault | null {
   if (error.reason === "agent_unavailable") return null;
   return error.status >= 500 ? "unreachable" : null;
 }
+
+/**
+ * Grades that mean the process is gone, so §7A.11 must refetch.
+ *
+ * `process_down` is the server naming a dead bridge. `unreachable` is the
+ * unnamed 5xx the engine actually returns today (`refusal_for` has no `-32004`
+ * branch). Either way the sidecar that wrote the last parts/git/build
+ * projections is not the one that will answer the next read — a refetch is
+ * what makes a part created before death appear. `timeout` is not this: the
+ * process may still be there, and a refetch would be a guess.
+ */
+export function processGone(fault: RuntimeFault | null): boolean {
+  return fault === "process_down" || fault === "unreachable";
+}
+
+/**
+ * What the composer POST becomes after a failure (INTERFACE.md §7A.5).
+ *
+ * A runtime fault is **not** `refused`. `refused` paints a footer that restates
+ * the fault band (the HTTP 500 under Send) and keeps `data-send-state="ok"`,
+ * which hides the §7A.5 `unknown` recovery when the 5xx has no envelope — the
+ * turn may have started. Named liveness (`process_down`, `timeout`) is settled
+ * on the band; the composer goes idle so it does not also narrate it.
+ */
+export function promptFailurePost(
+  cause: unknown,
+): "unknown" | "refused" | "idle" {
+  const fault = runtimeFaultOf(cause);
+  if (fault === "unreachable") return "unknown";
+  if (fault !== null) return "idle";
+  if (cause instanceof WorkspaceError) return "refused";
+  return "unknown";
+}

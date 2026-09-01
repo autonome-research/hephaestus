@@ -14,6 +14,7 @@ import {
   liveItem,
   liveRows,
   panelRows,
+  runsWithTerminal,
   type PanelRow,
   type TranscriptItem,
 } from "../../src/stream/transcript";
@@ -206,6 +207,30 @@ describe("the panel's rows (§8)", () => {
     // be the silent join §8 forbids.
     expect(rows.filter((row) => row.row === "text")).toHaveLength(2);
     expect(rows[1]?.row).toBe("resync");
+  });
+});
+
+describe("runsWithTerminal — sidecar death never mints one (#50)", () => {
+  it("collects only live terminal rows", () => {
+    const ended = liveItem({
+      run_id: "run-done",
+      seq: 99,
+      kind: "terminal",
+      session_id: "sess-1",
+      payload: { state: "completed", terminal_id: "term-1" },
+    });
+    const open = liveItem({
+      run_id: "run-open",
+      seq: 1,
+      kind: "question",
+      session_id: "sess-1",
+      payload: { question_id: "q-1", question: "Which?" },
+    });
+    const rows = liveRows([
+      { entry: "event", item: open },
+      { entry: "event", item: ended },
+    ]);
+    expect([...runsWithTerminal(rows)]).toEqual(["run-done"]);
   });
 });
 

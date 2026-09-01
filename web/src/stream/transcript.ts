@@ -551,3 +551,19 @@ export function panelRows(
   if (before.length === 0 || after.length === 0) return [...before, ...after];
   return [...before, { row: "seam", key: "seam" }, ...after];
 }
+
+/**
+ * Run ids that have produced a live `terminal` row in this transcript.
+ *
+ * Sidecar death never mints one (live-only; the run is gone). `ask_user`
+ * widgets whose run is not in this set go `abandoned` once
+ * `data-runtime-fault` is set — derived from the fault + the rows, not a
+ * sixth event kind (§15.10).
+ */
+export function runsWithTerminal(rows: readonly PanelRow[]): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const row of rows) {
+    if (row.row === "terminal") ids.add(row.item.runId);
+  }
+  return ids;
+}

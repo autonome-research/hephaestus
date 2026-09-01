@@ -55,6 +55,7 @@ import {
   type ClarificationOption,
 } from "../api/events";
 import type { AnswerDocument, AnsweredBy } from "../api/sessions";
+import type { RuntimeFault } from "./runtimeFault";
 import { parseToolResult } from "./toolResult";
 import type { ChipStatus, TranscriptItem } from "./transcript";
 
@@ -145,6 +146,13 @@ export interface AskContent {
   readonly answered: boolean;
   readonly answer: unknown;
   readonly answeredBy: AnsweredBy | null;
+  /**
+   * `data-runtime-fault` is set for this session and this widget's run has
+   * not produced a `terminal`. Same six `AskState` values — no sixth §7.4
+   * state. An unanswered question is `abandoned`; an accepted answer stays
+   * recorded and this flag is what names "the run did not resume".
+   */
+  readonly lostToRuntime: boolean;
 }
 
 export interface AskRowLike {
@@ -156,8 +164,18 @@ export interface AskRowLike {
   readonly status: ChipStatus;
 }
 
+/** How this session died, if it did. Derived, never a sixth event kind. */
+export interface AskRuntimeDeath {
+  readonly fault: RuntimeFault | null;
+  readonly runHasTerminal: boolean;
+}
+
 /** Everything the widget renders, from whichever of the two sources exists. */
-export function askContent(row: AskRowLike, post: AskPost = ASK_POST_IDLE): AskContent {
+export function askContent(
+  row: AskRowLike,
+  post: AskPost = ASK_POST_IDLE,
+  death: AskRuntimeDeath | null = null,
+): AskContent {
   const question = row.question === null ? null : readQuestion(row.question.payload);
   const call = row.call === null ? null : readToolCall(row.call.payload);
   const args =
@@ -192,6 +210,7 @@ export function askContent(row: AskRowLike, post: AskPost = ASK_POST_IDLE): AskC
   // reopened widget still carries `reopened` — the reason it has no controls —
   // instead of losing it the moment an answer exists to show.
   const unavailable = askUnavailable(row.source, questionId, sessionId, affordance);
+  const lostToRuntime = death !== null && death.fault !== null && !death.runHasTerminal;
   const base = {
     source: row.source,
     sessionId,
@@ -201,6 +220,7 @@ export function askContent(row: AskRowLike, post: AskPost = ASK_POST_IDLE): AskC
     multi,
     affordance,
     unavailable,
+    lostToRuntime,
   } as const;
 
   // ORDER IS THE ARGUMENT. A settled POST is this client's own outcome and the
@@ -208,6 +228,8 @@ export function askContent(row: AskRowLike, post: AskPost = ASK_POST_IDLE): AskC
   // outranks a refusal, because "another client answered, here is what the run
   // was told" is truer and more useful than "that question is gone" — and a
   // cancelled run, which has no answer anywhere, still lands on `abandoned`.
+  // A runtime fault does not relabel an accepted answer "already answered";
+  // `lostToRuntime` is the note that the run did not resume.
   if (post.phase === "settled") {
     return {
       ...base,
@@ -239,6 +261,20 @@ export function askContent(row: AskRowLike, post: AskPost = ASK_POST_IDLE): AskC
       answered: true,
       answer: recorded.answer,
       answeredBy: "other",
+    };
+  }
+  // Sidecar death never yields `terminal` (live-only; the run is gone) and
+  // never yields `404 unknown_question` until a click. Once the well knows
+  // the runtime is gone, pending widgets go `abandoned` without that click.
+  if (lostToRuntime) {
+    return {
+      ...base,
+      questionId,
+      state: "abandoned",
+      refusal: null,
+      answered: false,
+      answer: null,
+      answeredBy: null,
     };
   }
   if (post.phase === "refused") {

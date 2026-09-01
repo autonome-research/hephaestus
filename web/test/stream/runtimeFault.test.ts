@@ -15,7 +15,12 @@
 
 import { describe, expect, it } from "vitest";
 import { WorkspaceError } from "../../src/api/client";
-import { RUNTIME_FAULTS, runtimeFaultOf } from "../../src/stream/runtimeFault";
+import {
+  RUNTIME_FAULTS,
+  processGone,
+  promptFailurePost,
+  runtimeFaultOf,
+} from "../../src/stream/runtimeFault";
 
 describe("what counts as evidence that the runtime is not answering", () => {
   it("takes the server's own liveness reasons by name", () => {
@@ -83,5 +88,38 @@ describe("what counts as evidence that the runtime is not answering", () => {
       runtimeFaultOf(new WorkspaceError(500, "transport_error", "x")),
     ];
     for (const answer of answers) expect(RUNTIME_FAULTS).toContain(answer);
+  });
+});
+
+describe("which fault grades mean the process is gone (#59)", () => {
+  it("refreshes on process_down and unreachable, not on timeout", () => {
+    expect(processGone("process_down")).toBe(true);
+    expect(processGone("unreachable")).toBe(true);
+    expect(processGone("timeout")).toBe(false);
+    expect(processGone(null)).toBe(false);
+  });
+});
+
+describe("how a failed prompt is graded so the 500 does not hide unknown (#52)", () => {
+  it("treats an unnamed 5xx as unknown, not refused", () => {
+    expect(promptFailurePost(new WorkspaceError(500, "transport_error", "HTTP 500"))).toBe(
+      "unknown",
+    );
+    expect(promptFailurePost(new WorkspaceError(502, "transport_error", "HTTP 502"))).toBe(
+      "unknown",
+    );
+  });
+
+  it("does not paint a refused footer for a named liveness reason", () => {
+    expect(promptFailurePost(new WorkspaceError(503, "process_down", "sidecar restarted"))).toBe(
+      "idle",
+    );
+    expect(promptFailurePost(new WorkspaceError(504, "timeout", "no response"))).toBe("idle");
+  });
+
+  it("keeps a named 4xx as refused, and a lost POST as unknown", () => {
+    expect(promptFailurePost(new WorkspaceError(409, "run_in_flight", "busy"))).toBe("refused");
+    expect(promptFailurePost(new WorkspaceError(404, "unknown_session", "gone"))).toBe("refused");
+    expect(promptFailurePost(new Error("the POST did not come back"))).toBe("unknown");
   });
 });

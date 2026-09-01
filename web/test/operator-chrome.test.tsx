@@ -131,6 +131,16 @@ describe("stream column — composer is a pinned footer, not overflow", () => {
 });
 
 describe("empty-session create — one sentence, two actions, no tutorial", () => {
+  it("still paints New session when GET /sessions left profiles empty (#43)", () => {
+    const markup = html(
+      <NewSessionAction profiles={[]} part="kerf_card" pending={false} onCreate={() => undefined} />,
+    );
+    expect(markup).toContain('data-create-profile="orchestrator"');
+    expect(markup).toContain('data-create-profile="part"');
+    expect(markup).toContain(copy.composer.createOrchestrator);
+    expect(markup).toContain(copy.composer.createPart("kerf_card"));
+  });
+
   it("renders the two create buttons and no explainer paragraphs", () => {
     const markup = html(
       <NewSessionAction

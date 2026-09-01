@@ -79,7 +79,7 @@ import { labelsForPart, visibilityStore } from "../../state/visibility";
 import { defaultModel, modelsFrom, showModelChrome } from "../../stream/composerChrome";
 import { canSendTurn, cancelAvailability, isComposable, isSendKey } from "../../stream/composerGate";
 import { chipsFor, envelopeFor, type ContextChip } from "../../stream/composerContext";
-import { runtimeFaultOf, type RuntimeFault } from "../../stream/runtimeFault";
+import { promptFailurePost, runtimeFaultOf, type RuntimeFault } from "../../stream/runtimeFault";
 import type { ContextMember } from "../../api/sessions";
 import { Fact } from "../Fact";
 import styles from "./Composer.module.css";
@@ -145,7 +145,15 @@ export interface ComposerProps {
 type Post =
   | { readonly phase: "idle" }
   | { readonly phase: "sending" }
-  | { readonly phase: "unknown" }
+  | {
+      readonly phase: "unknown";
+      /**
+       * The lost POST was a runtime fault (unnamed 5xx). The fault band is
+       * the only place that is stated — this flag keeps the §7A.5
+       * `data-send-state="unknown"` without painting a second footer.
+       */
+      readonly runtimeFault?: boolean;
+    }
   | {
       readonly phase: "refused";
       readonly reason: string;
@@ -387,6 +395,23 @@ export function Composer(props: ComposerProps): React.JSX.Element {
         void document;
       })
       .catch((cause: unknown) => {
+        const fault = runtimeFaultOf(cause);
+        if (fault !== null) props.onRuntimeFault?.(fault);
+        const next = promptFailurePost(cause);
+        if (next === "unknown") {
+          // Unnamed 5xx: the turn may have started. `data-send-state="unknown"`
+          // is the §7A.5 recovery. The fault band states the 5xx; do not also
+          // paint a footer that restates it or says "Send again".
+          setPost({ phase: "unknown", ...(fault !== null ? { runtimeFault: true } : {}) });
+          return;
+        }
+        if (next === "idle") {
+          // Named liveness (`process_down`, `timeout`): the band already said
+          // the run is gone. Idle, not refused — a refused footer would be
+          // the HTTP 500 sitting under Send.
+          setPost({ phase: "idle" });
+          return;
+        }
         if (cause instanceof WorkspaceError) {
           // A NAMED refusal is an answer, and it keeps the operator's text.
           setPost({
@@ -395,11 +420,6 @@ export function Composer(props: ComposerProps): React.JSX.Element {
             message: cause.message,
             data: cause.data,
           });
-          // A refusal that says the runtime is not there is a fact about the
-          // session, not about this form: the run this page was watching died
-          // with it, and the well says so once, above the transcript.
-          const fault = runtimeFaultOf(cause);
-          if (fault !== null) props.onRuntimeFault?.(fault);
           return;
         }
         // The POST did not come back. §7A.5: the turn MAY have started, so it
@@ -637,7 +657,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
           may have started. The retry is the OPERATOR's, deliberately: an
           automatic one over an at-least-once route is a duplicate-turn
           generator with a spinner on it. */}
-      {post.phase === "unknown" ? (
+      {post.phase === "unknown" && post.runtimeFault !== true ? (
         <div className={styles["note"]} data-send-unknown="">
           <strong>{copy.composer.sendUnknownTitle}</strong>
           <p>{copy.composer.sendUnknown}</p>
@@ -769,33 +789,43 @@ export function NewSessionAction(props: {
   const { profiles, part, pending, onCreate } = props;
   const orchestrator = profiles.find((row) => row.profile === "orchestrator");
   const partProfile = profiles.find((row) => row.profile === "part");
+  // POST /sessions does not need this list — only the capability line does.
+  // A 500 on the same document that raised `data-runtime-fault` leaves
+  // `profiles = []`. Hiding the buttons then is the #43 dead-end: the one
+  // §7A.2 affordance dies with the read that reported the fault.
   return (
     <div className={styles["create"]} data-session-create="">
-      {orchestrator !== undefined ? (
-        <Button
-          variant="primary"
-          title={copy.composer.profileWhat(
-            orchestrator.profile,
-            orchestrator.can_delegate,
-            orchestrator.part_scoped,
-          )}
-          onClick={() => {
-            onCreate("orchestrator", null);
-          }}
-          data-create-profile="orchestrator"
-          {...(pending ? { disabled: true as const, reason: copy.composer.sending } : {})}
-        >
-          {copy.composer.createOrchestrator}
-        </Button>
-      ) : null}
-      {partProfile !== undefined && part !== null ? (
+      <Button
+        variant="primary"
+        title={
+          orchestrator !== undefined
+            ? copy.composer.profileWhat(
+                orchestrator.profile,
+                orchestrator.can_delegate,
+                orchestrator.part_scoped,
+              )
+            : copy.composer.createOrchestrator
+        }
+        onClick={() => {
+          onCreate("orchestrator", null);
+        }}
+        data-create-profile="orchestrator"
+        {...(pending ? { disabled: true as const, reason: copy.composer.sending } : {})}
+      >
+        {copy.composer.createOrchestrator}
+      </Button>
+      {part !== null ? (
         <Button
           variant="secondary"
-          title={copy.composer.profileWhat(
-            partProfile.profile,
-            partProfile.can_delegate,
-            partProfile.part_scoped,
-          )}
+          title={
+            partProfile !== undefined
+              ? copy.composer.profileWhat(
+                  partProfile.profile,
+                  partProfile.can_delegate,
+                  partProfile.part_scoped,
+                )
+              : copy.composer.createPart(part)
+          }
           onClick={() => {
             onCreate("part", part);
           }}
