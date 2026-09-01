@@ -121,7 +121,23 @@ export const CHIP_REF_WIDTH = 22;
 export function formatRef(ref: string, width = 34): string {
   if (ref.length <= width) return ref;
   const tail = 8;
+  // Below `tail + 2` there is no room for a head, an ellipsis and a tail, and
+  // `slice(0, negative)` counts from the END — which is how `formatRef(head, 8)`
+  // printed a 40-glyph sha plus an ellipsis plus its own last eight bytes into
+  // the 44px header bar. A width that small can only be a prefix.
+  if (width < tail + 2) return ref.slice(0, width);
   return `${ref.slice(0, width - tail - 1)}…${ref.slice(-tail)}`;
+}
+
+/**
+ * A git object id, abbreviated the way git abbreviates one: a prefix.
+ *
+ * An oid is not a content-addressed ref with a scheme in front of it, so the
+ * head-and-tail treatment `formatRef` gives a ref says nothing extra here — the
+ * first bytes are what `git show` takes and what a reader recognises.
+ */
+export function formatOid(oid: string, width = 8): string {
+  return oid.length <= width ? oid : oid.slice(0, width);
 }
 
 /** A byte count, for the §8 pager. Decimal units, because the server counts bytes. */

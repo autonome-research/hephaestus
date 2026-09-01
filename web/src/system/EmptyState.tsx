@@ -37,7 +37,17 @@ import roles from "./type.module.css";
 export type EmptyStateProps = {
   readonly icon: IconId;
   readonly title: ReactNode;
-  readonly body: ReactNode;
+  /**
+   * The prose. **Optional**, and the container is not rendered without it.
+   *
+   * §4.7 asks for prose because the shipped absences were bare grey sentences
+   * with no shape; it does not ask for a second copy of the heading. Where the
+   * title already IS the whole fact — `No artifact pinned` under a body reading
+   * "No artifact is pinned, so there is no geometry to show." — the sentence is
+   * not prose, it is the heading again in a smaller ink, and the reader pays for
+   * it in the middle of an empty viewport.
+   */
+  readonly body?: ReactNode | undefined;
   /** A `Button`, where an action actually exists. Never a decorative one. */
   readonly action?: ReactNode | undefined;
   /** `panel` centres in a region; `inline` sits in the flow of a rail section. */
@@ -55,7 +65,9 @@ export function EmptyState(props: EmptyStateProps): React.JSX.Element {
     >
       <Icon id={icon} size={22} className={styles["icon"]} />
       <p className={cx(styles["title"], roles["title"])}>{title}</p>
-      <div className={cx(styles["body"], roles["body"])}>{body}</div>
+      {body === undefined ? null : (
+        <div className={cx(styles["body"], roles["body"])}>{body}</div>
+      )}
       {action === undefined ? null : <div className={styles["action"]}>{action}</div>}
     </div>
   );
