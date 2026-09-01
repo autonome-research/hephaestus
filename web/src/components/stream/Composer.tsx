@@ -79,6 +79,8 @@ import { labelsForPart, visibilityStore } from "../../state/visibility";
 import { defaultModel, modelsFrom, showModelChrome } from "../../stream/composerChrome";
 import { canSendTurn, cancelAvailability, isComposable, isSendKey } from "../../stream/composerGate";
 import { chipsFor, envelopeFor, type ContextChip } from "../../stream/composerContext";
+import { sessionPromptStore } from "../../stream/sessionPrompts";
+import { holderSessionTitle } from "../../stream/sessionTitle";
 import { promptFailurePost, runtimeFaultOf, type RuntimeFault } from "../../stream/runtimeFault";
 import type { ContextMember } from "../../api/sessions";
 import { Fact } from "../Fact";
@@ -375,6 +377,9 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     // Narrowing for `sendPrompt` below: `sessionId === null` is `no_session`
     // and is already refused by `canSendTurn`.
     if (sessionId === null) return;
+    // Remember the opening line before the POST returns so the session tab
+    // retitles on this frame. History will never echo the prompt back.
+    sessionPromptStore.remember(sessionId, text);
     setCancelNote(null);
     // Forget the previous run *before* the POST. Otherwise Cancel is aimed
     // at a finished id for the whole window until the first new frame (#99).
@@ -689,8 +694,10 @@ export function Composer(props: ComposerProps): React.JSX.Element {
           {post.reason === "run_in_flight" && typeof post.data["session_id"] === "string" ? (
             <p data-run-in-flight-session={post.data["session_id"]}>
               {copy.composer.runInFlightHolder(
-                props.sessionTitle?.(post.data["session_id"]) ??
-                  copy.composer.createOrchestrator,
+                holderSessionTitle(
+                  post.data["session_id"],
+                  props.sessionTitle?.(post.data["session_id"]),
+                ),
               )}
             </p>
           ) : null}

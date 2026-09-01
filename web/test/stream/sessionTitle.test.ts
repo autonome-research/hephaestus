@@ -3,12 +3,18 @@
 //
 // Session tabs are conversations, not keys (#51, #62, #66).
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { copy } from "../../src/copy";
 import type { SessionRow } from "../../src/api/sessions";
 import type { ThreadTab } from "../../src/stream/thread";
+import { sessionPromptStore } from "../../src/stream/sessionPrompts";
 import {
+  SESSION_LABEL_MAX,
+  applySessionDocumentTitle,
+  defaultDocumentTitle,
+  holderSessionTitle,
   isSessionRoot,
+  sessionDocumentTitle,
   sessionLabel,
   sessionTabMeta,
   sessionTitleAttr,
@@ -42,6 +48,11 @@ function row(over: Partial<SessionRow> = {}): SessionRow {
   };
 }
 
+afterEach(() => {
+  sessionPromptStore.reset();
+  applySessionDocumentTitle(null);
+});
+
 describe("session tab labels are human (#51)", () => {
   it("never uses the UUID as the visible label", () => {
     expect(sessionLabel({ sessionId: UUID })).toBe(copy.composer.createOrchestrator);
@@ -49,6 +60,45 @@ describe("session tab labels are human (#51)", () => {
     expect(sessionLabel({ sessionId: OTHER, firstPrompt: OTHER })).toBe(
       copy.composer.createOrchestrator,
     );
+  });
+
+  it("clips a long first prompt instead of falling back to the id", () => {
+    const prompt =
+      "Create a new laser-cut part named kerf_coupon with slots to measure kerf compensation across the sheet.";
+    const label = sessionLabel({ sessionId: UUID, firstPrompt: prompt });
+    expect(label.length).toBeLessThanOrEqual(SESSION_LABEL_MAX);
+    expect(label.endsWith("…")).toBe(true);
+    expect(label).toContain("kerf_coupon");
+    expect(label).not.toContain(UUID);
+    expect(label).not.toBe(UUID.slice(0, 8));
+  });
+
+  it("wires a remembered prompt into titleForSession for the in-flight holder", () => {
+    const title = titleForSession(
+      UUID,
+      [row()],
+      [tab()],
+      undefined,
+      "Create a new laser-cut part named kerf_coupon…",
+    );
+    expect(title).toContain("kerf_coupon");
+    expect(title).not.toBe(UUID);
+  });
+
+  it("rejects a holder title that is still the session id (#66)", () => {
+    expect(holderSessionTitle(UUID, UUID)).toBe(copy.composer.createOrchestrator);
+    expect(holderSessionTitle(UUID, "Ask about kerf_coupon")).toBe("Ask about kerf_coupon");
+  });
+
+  it("keeps the browser tab title off the raw id", () => {
+    expect(sessionDocumentTitle("Create a new laser-cut part named kerf_coupon")).not.toContain(
+      UUID,
+    );
+    applySessionDocumentTitle("Create a new laser-cut part named kerf_coupon");
+    expect(document.title).not.toBe(UUID);
+    expect(document.title).toContain("kerf_coupon");
+    applySessionDocumentTitle(null);
+    expect(document.title).toBe(defaultDocumentTitle());
   });
 
   it("prefers the first prompt line, then the bound part, then New session", () => {
@@ -73,6 +123,13 @@ describe("session tab labels are human (#51)", () => {
     const label = sessionLabel({ sessionId: UUID, createdAt: created, now });
     expect(label.startsWith(`${copy.composer.createOrchestrator} · `)).toBe(true);
     expect(label).not.toContain(UUID);
+  });
+
+  it("remembers only the first prompt this page sent", () => {
+    sessionPromptStore.remember(UUID, "Create a new laser-cut part named kerf_coupon…");
+    sessionPromptStore.remember(UUID, "Now add mounting holes.");
+    expect(sessionPromptStore.getSnapshot()[UUID]).toContain("kerf_coupon");
+    expect(sessionPromptStore.getSnapshot()[UUID] ?? "").not.toContain("mounting");
   });
 
   it("keeps the UUID on title / tooltip", () => {

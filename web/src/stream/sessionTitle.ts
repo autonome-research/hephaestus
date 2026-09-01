@@ -16,6 +16,13 @@ import { originPart, type ThreadTab } from "./thread";
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * Visible tab width at 1280×800 is ~420px of 12px UI type. A full first-prompt
+ * sentence does not fit; a truncated UUID pair also does not, and those two
+ * failures used to look the same. Clip the *conversation*, never the id.
+ */
+export const SESSION_LABEL_MAX = 56;
+
 export interface SessionTitleInput {
   readonly sessionId: string;
   readonly profile?: string | null;
@@ -28,11 +35,21 @@ export interface SessionTitleInput {
   readonly now?: Date;
 }
 
-function firstLine(text: string | null | undefined): string | null {
+export function isSessionId(value: string): boolean {
+  return UUID.test(value);
+}
+
+/** First line of a prompt, or `null` when it is empty or is itself a UUID. */
+export function firstPromptLine(text: string | null | undefined): string | null {
   if (text === null || text === undefined) return null;
   const line = text.trim().split(/\r?\n/, 1)[0]?.trim() ?? "";
   if (line === "" || UUID.test(line)) return null;
   return line;
+}
+
+function clipLabel(text: string): string {
+  if (text.length <= SESSION_LABEL_MAX) return text;
+  return `${text.slice(0, SESSION_LABEL_MAX - 1)}…`;
 }
 
 function boundPart(input: SessionTitleInput): string | null {
@@ -44,15 +61,51 @@ function boundPart(input: SessionTitleInput): string | null {
  * The human label for one session tab. Never a UUID.
  *
  * Precedence is what the operator can recognise: their own words, then the
- * part they asked about, then the create affordance plus a time.
+ * part they asked about, then the create affordance plus a time. A long
+ * prompt is clipped; the fallback is never `session.id.slice`.
  */
 export function sessionLabel(input: SessionTitleInput): string {
-  const prompt = firstLine(input.firstPrompt);
-  if (prompt !== null) return prompt;
+  const prompt = firstPromptLine(input.firstPrompt);
+  if (prompt !== null) return clipLabel(prompt);
   const part = boundPart(input);
   if (part !== null) return copy.composer.createPart(part);
   if (input.createdAt !== null && input.createdAt !== undefined) {
     return `${copy.composer.createOrchestrator} · ${formatObservedAt(input.createdAt, input.now)}`;
+  }
+  return copy.composer.createOrchestrator;
+}
+
+/** Chrome `document.title` for a conversation. Never the raw session id. */
+export function sessionDocumentTitle(label: string): string {
+  return `${label} · ${copy.app.name}`;
+}
+
+export function defaultDocumentTitle(): string {
+  return `${copy.app.name} ${copy.app.tagline}`;
+}
+
+/** Apply or restore the browser tab title. The UUID is not a title. */
+export function applySessionDocumentTitle(label: string | null): void {
+  document.title =
+    label === null || label === "" ? defaultDocumentTitle() : sessionDocumentTitle(label);
+}
+
+/**
+ * The in-flight holder sentence (#66). A callback that still echoes the
+ * session id is treated as missing — the UUID stays on `data-run-in-flight-session`.
+ */
+export function holderSessionTitle(
+  sessionId: string,
+  resolved: string | null | undefined,
+): string {
+  if (
+    resolved !== null &&
+    resolved !== undefined &&
+    resolved !== "" &&
+    resolved !== sessionId &&
+    !isSessionId(resolved)
+  ) {
+    return resolved;
   }
   return copy.composer.createOrchestrator;
 }
@@ -100,6 +153,7 @@ export function titleInputFor(
   sessions: readonly SessionRow[],
   tabs: readonly ThreadTab[],
   now?: Date,
+  firstPrompt?: string | null,
 ): SessionTitleInput {
   const row = sessions.find((item) => item.session_id === sessionId);
   const tab = tabs.find((item) => item.session_id === sessionId);
@@ -110,6 +164,7 @@ export function titleInputFor(
     kind: tab?.kind ?? null,
     origin: tab?.origin ?? {},
     createdAt: tab?.created_at ?? null,
+    firstPrompt: firstPrompt ?? null,
     ...(now === undefined ? {} : { now }),
   };
 }
@@ -120,6 +175,7 @@ export function titleForSession(
   sessions: readonly SessionRow[],
   tabs: readonly ThreadTab[],
   now?: Date,
+  firstPrompt?: string | null,
 ): string {
-  return sessionLabel(titleInputFor(sessionId, sessions, tabs, now));
+  return sessionLabel(titleInputFor(sessionId, sessions, tabs, now, firstPrompt));
 }

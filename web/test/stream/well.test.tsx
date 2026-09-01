@@ -31,6 +31,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
 import { SessionTabs } from "../../src/components/stream/SessionTabs";
 import { copy } from "../../src/copy";
+import { sessionPromptStore } from "../../src/stream/sessionPrompts";
+import { applySessionDocumentTitle } from "../../src/stream/sessionTitle";
 import { RUNTIME_FAULTS } from "../../src/stream/runtimeFault";
 import type { SessionRow } from "../../src/api/sessions";
 import type { ThreadTab } from "../../src/stream/thread";
@@ -299,6 +301,54 @@ describe("the composer is usable, and says how it is used", () => {
   it("keeps the idle composer one row, and the hint out of it", () => {
     expect(composer).toMatch(/promptRows = promptFocused \|\| text\.trim\(\) !== "" \? 3 : 1/);
     expect(composer).toMatch(/\{promptFocused \|\| text !== "" \? \(/);
+  });
+});
+
+describe("a first prompt is the visible session name, not the UUID (#51)", () => {
+  let host: HTMLDivElement | null = null;
+  let unmount: (() => void) | null = null;
+
+  afterEach(() => {
+    if (unmount !== null) act(unmount);
+    host?.remove();
+    host = null;
+    unmount = null;
+    sessionPromptStore.reset();
+    applySessionDocumentTitle(null);
+  });
+
+  it("does not render the UUID as the accessible or visible name, nor as document.title", () => {
+    const sessionId = "ecec51cc-c398-4811-b0d9-35ad6d77bf18";
+    const prompt = "Create a new laser-cut part named kerf_coupon with slots for kerf.";
+    sessionPromptStore.remember(sessionId, `${prompt}\nAnd rebuild.`);
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    act(() => {
+      root.render(
+        <SessionTabs
+          tabs={[tab({ session_id: sessionId, thread_state: "unlinked" })]}
+          sessions={[row({ session_id: sessionId, profile: "orchestrator", part: null })]}
+          selected={sessionId}
+          onSelect={() => undefined}
+          bounded={false}
+        />,
+      );
+    });
+    unmount = () => {
+      root.unmount();
+    };
+    const button = host.querySelector<HTMLButtonElement>("[data-session-tab]");
+    expect(button).not.toBeNull();
+    expect(button?.textContent ?? "").toContain("kerf_coupon");
+    expect(button?.textContent ?? "").not.toContain(sessionId);
+    expect(button?.getAttribute("aria-label") ?? "").toContain("kerf_coupon");
+    expect(button?.getAttribute("aria-label") ?? "").not.toContain(sessionId);
+    expect(button?.getAttribute("title") ?? "").toContain(sessionId);
+    expect(button?.getAttribute("data-session-id")).toBe(sessionId);
+    expect(document.title).not.toBe(sessionId);
+    expect(document.title).not.toContain(sessionId);
+    expect(document.title).toContain("kerf_coupon");
   });
 });
 

@@ -52,6 +52,7 @@ import { CHIP_ORDER, chipsFor, envelopeFor } from "../../src/stream/composerCont
 import { DEFAULT_STATE, type WorkspaceState } from "../../src/state/workspace";
 import { workspaceStore } from "../../src/state/react";
 import { formatRef } from "../../src/system";
+import { sessionPromptStore } from "../../src/stream/sessionPrompts";
 import { copy } from "../../src/copy";
 
 // The one route the last block counts calls on. Everything else in the module is
@@ -631,6 +632,7 @@ afterEach(() => {
   vi.mocked(sendPrompt).mockReset();
   vi.mocked(cancelRun).mockReset();
   workspaceStore.reset(DEFAULT_STATE);
+  sessionPromptStore.reset();
 });
 
 function mount(props: Partial<React.ComponentProps<typeof Composer>> = {}): HTMLDivElement {
@@ -737,6 +739,7 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     type(root, "Bump the kerf to 0.25 mm.");
     pressEnter(root);
     expect(vi.mocked(sendPrompt)).toHaveBeenCalledTimes(1);
+    expect(sessionPromptStore.getSnapshot()["sess-1"]).toBe("Bump the kerf to 0.25 mm.");
     await act(async () => undefined);
   });
 

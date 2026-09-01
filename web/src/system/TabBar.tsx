@@ -33,6 +33,11 @@ export interface TabSpec<Id extends string> {
   readonly attrs?: DataAttributes | undefined;
   /** Native `title` — session tabs put the UUID here, not in the label. */
   readonly title?: string | undefined;
+  /**
+   * Accessible name when it must not pick up `title` (session UUID tooltip).
+   * Stage / Inspector tabs omit this and keep their visible label.
+   */
+  readonly ariaLabel?: string | undefined;
   /** Per-tab layout (thread depth indent). */
   readonly style?: CSSProperties | undefined;
 }
@@ -115,6 +120,7 @@ export function TabBar<Id extends string>({
           className={cx(styles["tab"], roles["label"])}
           title={tab.title}
           style={tab.style}
+          {...(tab.ariaLabel === undefined ? {} : { "aria-label": tab.ariaLabel })}
           {...{ [attr]: tab.id }}
           {...(tab.attrs ?? {})}
           onClick={() => {
