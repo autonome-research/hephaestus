@@ -4,15 +4,20 @@ import { TOOLS, TOOL_NAMES } from "../src/tools/schema.gen.js";
 import { PROMPT_MAX_UTF8_BYTES } from "../src/limits.js";
 
 describe("generated tool surface", () => {
-  it("declares the Stage 2 surface, the Stage 2V ledger, Stage 6, Stage 8A references, Stage 8B compare_solids, the Stage 8C constraint quartet and the KINEMATICS.md Stage 9A/9B/9C kinematics tools and the MESH_INGEST.md Stage 12C compare_to_scan (54 tools)", () => {
+  it("declares the Stage 2 surface, the Stage 2V ledger, Stage 6, Stage 8A references, Stage 8B compare_solids, the Stage 8C constraint quartet, the KINEMATICS.md Stage 9A/9B/9C kinematics tools, the MESH_INGEST.md Stage 12C compare_to_scan and the SOLVER.md Stage 13 propose-only trio (57 tools)", () => {
     // Tool count repointed for KINEMATICS.md Stage 9A (§6): +7 for the joint
     // and pose quartets plus check_motion; repointed again for KINEMATICS.md
     // Stage 9B (§4/§6): +3 for the motion-check triplet; repointed again for
     // KINEMATICS.md Stage 9C (§5/§6, 2026-08-27): +3 for the coupling triplet
     // (declare_coupling / update_coupling / read_couplings); repointed again
     // for MESH_INGEST.md §7.2 (Stage 12C): +1 for compare_to_scan, the one new
-    // tool of mesh ingest.
-    expect(TOOL_NAMES).toHaveLength(54);
+    // tool of mesh ingest; repointed again for SOLVER.md Stage 13: +3 for the
+    // propose-only trio (solve_pose / propose_placement / read_proposals) —
+    // and nothing that applies a proposal, which is the stage's whole mandate.
+    expect(TOOL_NAMES).toHaveLength(57);
+    for (const solver of ["solve_pose", "propose_placement", "read_proposals"]) {
+      expect(TOOL_NAMES).toContain(solver);
+    }
     for (const ledger of ["record_requirements", "read_requirements", "update_requirement"]) {
       expect(TOOL_NAMES).toContain(ledger);
     }
