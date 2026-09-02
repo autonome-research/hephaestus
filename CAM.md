@@ -276,7 +276,14 @@ A runnable machine program is the opposite of cheap and reversible. So:
   against geometry the model did not choose — the same argument, unchanged.
 - **The model MAY NOT** cause a runnable program to reach the filesystem.
   There is no model tool that writes a program. Emission is the operator CLI
-  verb `heph cam emit <setup>` (§9), and it additionally requires
+  verb `heph cam emit <setup>` (§9). Prior claim on the name: the shipped 2D
+  laser/waterjet cut-file path already owns `heph cam emit` (no `<setup>`
+  argument, no consent gate, DXF-only — an inert cut-file, not a machine
+  program). The Stage 14 landing must reconcile the two contracts under one
+  verb (the `<setup>` argument, consent gate, and refusal set apply when the
+  setup names a milling process) or give the milling form its own verb; it
+  may not silently change the shipped 2D behaviour. Milling emission
+  additionally requires
   **runtime-recorded operator consent** on the `ask_user` pattern: consent is
   stored in fields the model-facing writes refuse, exactly as `asked` and
   `resolution` are refused from `record_requirements` / `update_requirement`

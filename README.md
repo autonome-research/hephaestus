@@ -61,6 +61,13 @@ write are `create_part` / `write_part` (CAS: `--expected-hash` is the
 Full verb list: [docs/cli.md](docs/cli.md). MCP is optional:
 [docs/mcp.md](docs/mcp.md).
 
+Beyond part authoring, the engine ships a pinned component registry
+(`heph registry`), STEP/mesh import and scan comparison (`heph import`,
+`heph scan`), joints and motion checks (`heph joints`, `heph motion`),
+a propose-only pose solver (`heph solve`), 2D laser/waterjet cut-file
+emission (`heph cam emit`), and a scored agent bench — all in
+[docs/cli.md](docs/cli.md).
+
 ## More
 
 - [docs/install.md](docs/install.md) — capability caveats

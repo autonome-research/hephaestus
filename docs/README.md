@@ -37,6 +37,11 @@ These stay in the tree. They are not the front door.
 | `VALIDATION.md` | Validation ladder and reported metrics |
 | `PACKAGING.md` | Wheel and sidecar build |
 | `COMPARE.md`, `ASSEMBLY.md`, `INGEST.md`, `EXTERNAL_EVAL.md` | Stage 8 capability specs |
+| `KINEMATICS.md` | Stage 9 joints, poses, and motion checks |
+| `INTERFACE.md` | Stage 10 workspace (server + web) spec |
+| `PARTS_STORE.md` | Stage 11 component store and registries |
+| `MESH_INGEST.md` | Stage 12 mesh and scan ingest |
+| `SOLVER.md` | Stage 13 pose solving and placement proposals |
 
 ## Checking these docs
 
