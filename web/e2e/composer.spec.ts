@@ -112,9 +112,22 @@ test.describe("§7A.12 case 1 — the blank canvas reaches the workspace", () =>
       "data-composer-model",
       "heph-fake-model",
     );
+    // §7A.10(a), amended 2026-09-01: the RESTING action row is one button.
+    // Cancel does not mount while nothing is cancellable (§7A.10(b)) and the
+    // state attribute says so with no control present, and the chip form does
+    // not mount while the disclosure is collapsed (§7A.3(c)).
+    await expect(composer).toHaveAttribute("data-cancel-state", "unavailable");
+    await expect(composer.locator("[data-composer-cancel]")).toHaveCount(0);
+    await expect(composer.locator("[data-context-chips]")).toHaveCount(0);
+    await expect(composer.locator("[data-context-summary]")).toHaveCount(1);
+
     await expect(composer.locator("[data-context-disclose]")).toHaveCount(1);
     await composer.locator("[data-context-disclose]").click();
     await expect(composer.locator("[data-context-add-view]")).toHaveCount(1);
+    // …and the other half: opening it mounts the editable form.
+    await expect(composer.locator("[data-context-chips]")).toHaveCount(1);
+    await composer.locator("[data-context-disclose]").click();
+    await expect(composer.locator("[data-context-chips]")).toHaveCount(0);
 
     await composer
       .locator("[data-composer-input]")
@@ -158,9 +171,41 @@ test.describe("§7A.12 case 2 — the context envelope", () => {
     await openSession(page, created.session_id);
     const composer = page.locator(`[data-composer][data-session-id="${created.session_id}"]`);
 
+    // §7A.3(a)(d), amended 2026-09-01: at rest the envelope is ONE line, and
+    // the line publishes the member keys the POST would send. The `part` is in
+    // the route, so it is on the line before anything is opened.
+    const summary = composer.locator("[data-context-summary]");
+    await expect(summary).toHaveCount(1);
+    await expect(summary).toContainText(PART);
+    expect(((await summary.getAttribute("data-context-keys")) ?? "").split(" ")).toContain("part");
+
     // Context chips and Add current view fold into disclose. Open it so
-    // the row is in the DOM; idle composer is prompt + Send/Cancel/disclose.
+    // the row is in the DOM; the idle composer is one context line, the
+    // prompt, and Send.
     await composer.locator("[data-context-disclose]").click();
+
+    // §7A.3(d)'s testable, against the running app: the published key set IS
+    // the chips' key set. A summary that named a member the form did not offer
+    // — or offered one it did not name — would be the line and the envelope
+    // disagreeing about what is being sent.
+    //
+    // Both halves are read in ONE DOM evaluation, after the disclosure is open.
+    // The product is same-render consistent (Composer derives chips, envelope
+    // and summary from one `state` in one pass), but `state.artifact_ref`
+    // arrives asynchronously, so sampling the line before the click and the
+    // chips after it compares two different states and fails on a correct
+    // build. One sample, one render, no retry.
+    const { published, chipKeys } = await composer.evaluate((host) => ({
+      published: (host.querySelector("[data-context-summary]")?.getAttribute("data-context-keys") ??
+        ""
+      )
+        .split(" ")
+        .filter((key) => key !== ""),
+      chipKeys: [...host.querySelectorAll("[data-context-chips] [data-context-key]")].map(
+        (node) => node.getAttribute("data-context-key") ?? "",
+      ),
+    }));
+    expect([...chipKeys].sort()).toEqual([...published].sort());
 
     // The part is in the route, so the part chip is in the row. §7A.10's DOM
     // contract: a chip carries `data-context-key` and its value, and NO
@@ -187,6 +232,16 @@ test.describe("§7A.12 case 2 — the context envelope", () => {
     // Every member is opt-out (§7A.3).
     await partChip.locator('[data-context-drop="part"]').click();
     await expect(partChip).toHaveAttribute("data-context-dropped", "");
+
+    // §7A.3(e): an EXCLUDED member stays visible on the resting line. "The
+    // agent will not be told about the part" is a fact about what is being
+    // sent, so it is drawn rather than left to the absence of a token — and it
+    // survives collapsing the form that removed it.
+    await composer.locator("[data-context-disclose]").click();
+    await expect(composer.locator("[data-context-chips]")).toHaveCount(0);
+    await expect(summary.locator('[data-context-removed="part"]')).toHaveCount(1);
+    await expect(summary).not.toContainText(PART);
+    await composer.locator("[data-context-disclose]").click();
 
     // Add current view stays a real action on disclose; POST /context/preview
     // must still compose the camera token — a disclosure that said the agent

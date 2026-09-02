@@ -509,6 +509,11 @@ describe("composer chrome — talking surface, not a Plan/DFM toolbar", () => {
     expect(composer.indexOf("data-context-add-view")).toBeGreaterThan(
       composer.indexOf("data-context-disclose"),
     );
+    // AMENDED 2026-09-01 (§7A.10(a)): and the row Send sits in holds nothing
+    // else at rest. The model moved to the meta line, the disclosure to the
+    // summary line, and Cancel mounts only while a run is cancellable.
+    expect(composer).toContain("data-context-summary");
+    expect(composer).not.toMatch(/<Chip[\s\S]{0,80}data-composer-model/);
   });
 });
 

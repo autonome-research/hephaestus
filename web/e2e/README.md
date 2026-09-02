@@ -49,7 +49,7 @@ one; a fake model inside it would make the gate a test of a modified server.
 | G4.6 | `viewport.spec.ts` | pairwise centroid distances out of `window.__hephaestus_viewport__` |
 | G4.7 | `viewport.spec.ts` | the plate's **server** bytes against the committed golden |
 | G4.8 | `stream.spec.ts` | `heph agent` from the command line, streaming into an already-attached panel |
-| G4.9 | `stream.spec.ts` | `data-history-pages` > 1 over the committed >250-event transcript |
+| G4.9 | `stream.spec.ts` | `data-history-pages` > 1 on the panel root over the committed >250-event transcript, with §8(b)'s negative half beside it: at the latest page the count is an attribute and no counter row is drawn |
 | G4.10 | `stream.spec.ts` | nested tab with `data-thread-kind="quick_edit"`, child transcript reopened |
 | G4.11 | `stream.spec.ts` | every archived `(session_id, ordinal)` id in the DOM exactly once |
 | G4.12 | `harness/archive.ts` | named screenshots attached; **never** compared to anything |
@@ -150,10 +150,18 @@ with `data-glb-state` / `data-artifact-ref` / `data-section-state`,
 `[data-viewport-canvas]`, `[data-appearance]` / `[data-appearance-control]`,
 `[data-explode-t]`, `[data-section-control]` with
 `data-section-plane`, `[data-section-plate]`+`data-plate-ref`,
-`[data-testid="stream-panel"|"transcript"]`, `[data-history-state]`,
-`[data-history-pages]`, `[data-stream-state]`, `[data-session-tab]` with
+`[data-testid="stream-panel"]` — which carries `data-stream`,
+`data-history-state` and `data-history-pages` **unconditionally**, since
+§7.4(a)/§8(a) make the drawn badge and the drawn page counter exception-only and
+a gate cannot read a row that is not mounted (§7.4(b), §8(c)) —
+`[data-testid="transcript"]`, `[data-history-bar]` and `[data-stream-state]`
+(the two DRAWN exceptions, absent in the steady state),
+`[data-session-create]` / `[data-session-ask]` / `[data-session-create-menu]`,
+`[data-stream-collapse]`, `[data-session-tab]` with
 `data-thread-depth` / `data-thread-kind`, `[data-event-id]`+`data-surface`,
-`[data-tool-name]`+`data-status`+`data-tool-call-id`, `[data-field-state]`,
+`[data-tool-name]`+`data-status`+`data-tool-call-id` (with §7.2 (a)'s
+`data-chip-repeat` / `data-event-ids` / `data-tool-call-ids` on a coalesced
+row), `[data-chip-detail]`+`[data-chip-detail-count]`, `[data-field-state]`,
 `[data-image-state]`+`data-mime-type`, `[data-terminal-state]`,
 `[data-testid="no-token"]`.
 

@@ -176,6 +176,113 @@ describe("header chips — labelled group (#83)", () => {
   });
 });
 
+/*
+ * §4.1(d), amended 2026-09-01 — repair (a).
+ *
+ * The section carried two readings of what the header draws: an opening bullet
+ * naming "the artifact pin **and** the build-state chip", and the 2026-09-01
+ * one-chip collapse. Both are struck but the collapse, and the collapse is now
+ * the sole normative statement — so the thing worth asserting is the SINGULAR:
+ * one element mints `data-build-state`, it is the pin, and no second element in
+ * the bar draws a build-state or pin-freshness word.
+ *
+ * The negative half is the half that catches a regression here. A second badge
+ * added beside the pin would satisfy every existing assertion in this file: the
+ * pin still has its attribute, both `<Fact>`s are still attributed, the group
+ * still has its label. Only a count notices.
+ */
+describe("§4.1(d) — one chip, one build-state word", () => {
+  function header(state: Partial<WorkspaceState>, document: BuildDocument | undefined): HTMLElement {
+    workspaceStore.reset({ ...DEFAULT_STATE, ...state });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(keys.project(), {
+      status: "ok",
+      root: "/tmp/p",
+      name: "fixture",
+      units: "mm",
+      parts: state.part === undefined || state.part === null ? [] : [state.part],
+      serve_mode: true,
+    } satisfies ProjectDocument);
+    if (document !== undefined && typeof state.part === "string") {
+      client.setQueryData(keys.build(state.part), document);
+    }
+    return mount(
+      <QueryClientProvider client={client}>
+        <Header />
+      </QueryClientProvider>,
+    );
+  }
+
+  /** Every pin/build state the bar can be in, which is where "in any state" bites. */
+  const STATES: readonly (readonly [string, Partial<WorkspaceState>, BuildDocument | undefined])[] =
+    [
+      ["following, up to date", { part: "tread", artifact_ref: JIG, pin_mode: "current" }, build()],
+      [
+        "following, preview",
+        { part: "tread", artifact_ref: JIG, pin_mode: "current" },
+        build({ current: false }),
+      ],
+      [
+        "following, failed",
+        { part: "tread", artifact_ref: JIG, pin_mode: "current" },
+        build({ status: "error", current: false }),
+      ],
+      [
+        "following, not built",
+        { part: "tread", artifact_ref: null, pin_mode: "current" },
+        build({ status: "not_built", current: false, artifact_ref: null }),
+      ],
+      ["held", { part: "tread", artifact_ref: JIG, pin_mode: "pinned" }, build({ current: false })],
+      ["no build document", { part: "tread", artifact_ref: null, pin_mode: "current" }, undefined],
+    ];
+
+  it.each(STATES)("mints data-build-state once, on the pin — %s", (_label, state, document) => {
+    const host = header(state, document);
+    const minted = host.querySelectorAll("[data-build-state]");
+    expect(minted.length).toBeLessThanOrEqual(1);
+    for (const node of minted) {
+      expect(node.getAttribute("data-testid")).toBe("artifact-pin");
+    }
+  });
+
+  it.each(STATES)("draws no second build-state word — %s", (_label, state, document) => {
+    const host = header(state, document);
+    const text = host.textContent ?? "";
+    for (const word of Object.values(copy.buildState)) {
+      const drawn = text.split(word).length - 1;
+      expect(drawn, word).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it.each(STATES)("never draws the pin-freshness word in the bar — %s", (_label, state, document) => {
+    // §4.1(d): "`pinMode.current`/`pin.current` is **not drawn as a word in the
+    // header in any state** and survives only as title-attribute and
+    // `data-pin-mode` text." The pin axis is still readable — `data-pin-mode`
+    // is on the chip and the title says which artifact is showing — and the
+    // key is not deleted, because §12.1's own copy still uses the vocabulary.
+    //
+    // `Follow current` is exempt and is the reason this reads the bar with the
+    // controls removed: it is a VERB on a button — the action §4.5 requires the
+    // header to offer — not a state word reporting pin freshness. The defect
+    // the clause names is a *label* printing the state, which is what the
+    // shipped bar's disabled `held` button was.
+    const host = header(state, document);
+    const bar = host.querySelector("header");
+    for (const control of bar?.querySelectorAll("button") ?? []) control.remove();
+    expect(bar?.textContent ?? "").not.toContain(copy.pinMode.current);
+    expect(host.querySelector("[data-pin-mode]")).not.toBeNull();
+  });
+
+  it("keeps the two vocabularies apart, and keeps both keys", () => {
+    // The copy half of the ruling: `buildState.current` is the drawn word while
+    // following current; `pinMode.current` stays for §12.1's pin copy. Neither
+    // key is deleted — a build that draws BOTH words in the bar is what fails.
+    expect(copy.buildState.current).toBe("up to date");
+    expect(copy.pinMode.current).toBe("current");
+    expect(copy.buildState.current).not.toBe(copy.pinMode.current);
+  });
+});
+
 describe("Follow current — disabled when the selected part has no build (#90)", () => {
   it("does not discard a held artifact when the selected part is unbuilt", () => {
     workspaceStore.reset({

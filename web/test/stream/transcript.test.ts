@@ -210,6 +210,183 @@ describe("the panel's rows (§8)", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// §7.2 (a) — repeat groups, both halves
+// ---------------------------------------------------------------------------
+
+describe("consecutive identical successful calls coalesce (§7.2 (a))", () => {
+  const RUN = "run-repeat000000";
+  const DOC = { status: "ok", total: 1, items: [{ name: "tread_checks" }] };
+
+  /** One `tool_call` + `tool_result` pair, in the live namespace. */
+  function pair(
+    index: number,
+    patch: {
+      readonly tool?: string;
+      readonly doc?: unknown;
+      readonly text?: string;
+      readonly isError?: boolean | null;
+      readonly args?: unknown;
+    } = {},
+  ): TranscriptItem[] {
+    const tool = patch.tool ?? "list_project_checks";
+    const callId = `c-${String(index)}`;
+    const payload =
+      patch.text === undefined ? JSON.stringify(patch.doc ?? DOC) : patch.text;
+    return [
+      liveItem({
+        run_id: RUN,
+        seq: index * 2,
+        kind: "tool_call",
+        session_id: "sess-repeat",
+        tool_call_id: callId,
+        payload: { name: tool, arguments: patch.args ?? {} },
+      }),
+      liveItem({
+        run_id: RUN,
+        seq: index * 2 + 1,
+        kind: "tool_result",
+        session_id: "sess-repeat",
+        tool_call_id: callId,
+        // `?? false` would turn the deliberate `null` — §7.2's `unknown`
+        // fallback — into `ok`, which is the very defect the fallback exists to
+        // stop, so the absent case is tested rather than the falsy one.
+        payload: {
+          toolName: tool,
+          isError: patch.isError === undefined ? false : patch.isError,
+          text: payload,
+        },
+      }),
+    ];
+  }
+
+  function chips(items: readonly TranscriptItem[]): readonly PanelRow[] {
+    return groupRows(items).filter((row) => row.row === "chip");
+  }
+
+  it("folds a run of three into one row carrying the count", () => {
+    const rows = chips([...pair(0), ...pair(1), ...pair(2)]);
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    expect(row?.row === "chip" ? row.repeat?.length : null).toBe(3);
+  });
+
+  it("loses no id: the members' ids are the calls' ids, in render order", () => {
+    const items = [...pair(0), ...pair(1), ...pair(2)];
+    const row = chips(items)[0];
+    const members = row?.row === "chip" ? (row.repeat ?? []) : [];
+    expect(members.map((member) => member.call.eventId)).toEqual([
+      `${RUN}#0`,
+      `${RUN}#2`,
+      `${RUN}#4`,
+    ]);
+    expect(members.map((member) => member.result?.eventId)).toEqual([
+      `${RUN}#1`,
+      `${RUN}#3`,
+      `${RUN}#5`,
+    ]);
+    // The row still anchors on the FIRST member, so every address that resolved
+    // before the amendment still resolves.
+    expect(row?.row === "chip" ? row.call.eventId : null).toBe(`${RUN}#0`);
+  });
+
+  it("draws no count for a run of one", () => {
+    const rows = chips(pair(0));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.row === "chip" ? rows[0].repeat : "missing").toBeUndefined();
+  });
+
+  it("coalesces across key order, because the test is on the canonical document", () => {
+    const rows = chips([
+      ...pair(0, { doc: { a: 1, b: 2 } }),
+      ...pair(1, { doc: { b: 2, a: 1 } }),
+    ]);
+    expect(rows).toHaveLength(1);
+  });
+
+  describe("the negative half — a group does NOT form when", () => {
+    it("the documents differ by any byte", () => {
+      expect(chips([...pair(0), ...pair(1, { doc: { ...DOC, total: 2 } })])).toHaveLength(2);
+    });
+
+    it("the tool names differ", () => {
+      expect(chips([...pair(0), ...pair(1, { tool: "read_part" })])).toHaveLength(2);
+    });
+
+    it("any member failed — two identical failures never coalesce", () => {
+      const rows = chips([...pair(0, { isError: true }), ...pair(1, { isError: true })]);
+      expect(rows).toHaveLength(2);
+      expect(rows.every((row) => row.row === "chip" && row.status === "error")).toBe(true);
+    });
+
+    it("a member is still running", () => {
+      const [call] = pair(9);
+      expect(call).toBeDefined();
+      const rows = chips([...pair(0), ...(call === undefined ? [] : [call])]);
+      expect(rows).toHaveLength(2);
+    });
+
+    it("a member's outcome is unknown", () => {
+      const rows = chips([
+        ...pair(0, { isError: null }),
+        ...pair(1, { isError: null }),
+      ]);
+      expect(rows).toHaveLength(2);
+      expect(rows.every((row) => row.row === "chip" && row.status === "unknown")).toBe(true);
+    });
+
+    it("an item of another kind falls between them", () => {
+      const between = liveItem({
+        run_id: RUN,
+        seq: 500,
+        kind: "text_delta",
+        session_id: "sess-repeat",
+        payload: { text: "Scanning." },
+      });
+      expect(chips([...pair(0), between, ...pair(1)])).toHaveLength(2);
+    });
+
+    it("a member carries an inline image, whose own identity a shared row cannot hold", () => {
+      const image = liveItem({
+        run_id: RUN,
+        seq: 501,
+        kind: "image",
+        session_id: "sess-repeat",
+        tool_call_id: "c-0",
+        payload: { mimeType: "image/png", bytes: 5, data: "aGVsbG8=" },
+      });
+      const [call, result] = pair(0);
+      expect(call).toBeDefined();
+      expect(result).toBeDefined();
+      if (call === undefined || result === undefined) return;
+      expect(chips([call, result, image, ...pair(1)])).toHaveLength(2);
+    });
+
+    it("the members lie on opposite sides of the §8 seam", () => {
+      const history = [...pair(0)].map((item) =>
+        historicalItem(
+          { run_id: "sess-repeat", seq: item.seq, kind: item.rawKind, tool_call_id: "c-0", payload: item.payload },
+          "sess-repeat",
+        ),
+      );
+      const rows = panelRows(
+        history,
+        pair(1).map((item) => ({ entry: "event", item }) as const),
+      );
+      expect(rows.filter((row) => row.row === "chip")).toHaveLength(2);
+    });
+
+    it("a labelled resync break falls between them", () => {
+      const rows = liveRows([
+        ...pair(0).map((item) => ({ entry: "event", item }) as const),
+        { entry: "break", resync: { key: "r1", outcome: "gap", after: null } },
+        ...pair(1).map((item) => ({ entry: "event", item }) as const),
+      ]);
+      expect(rows.filter((row) => row.row === "chip")).toHaveLength(2);
+    });
+  });
+});
+
 describe("runsWithTerminal — sidecar death never mints one (#50)", () => {
   it("collects only live terminal rows", () => {
     const ended = liveItem({

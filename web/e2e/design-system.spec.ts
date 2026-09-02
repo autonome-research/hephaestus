@@ -363,6 +363,45 @@ test("the shell grid matches §4.1's table at five widths and never overflows", 
   }
 });
 
+// ---------------------------------------------------------------------------
+// §4.1(d) and §4.1(f), amended 2026-09-01 — repairs (a) and (b)
+
+test("the header draws one build-state chip, and it is the pin (§4.1(d))", async ({ page }) => {
+  // Repair (a): the section carried two readings of what the header draws, and
+  // the one-chip collapse is now the only normative one. The measurable form is
+  // a COUNT — a second badge added beside the pin breaks nothing else, because
+  // every attribute and every `<Fact>` would still be where it was.
+  await open(page, route(PART));
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const pin = page.locator("[data-testid='artifact-pin']");
+  await expect(pin).toBeVisible();
+
+  const header = page.locator("header");
+  await expect(header.locator("[data-build-state]")).toHaveCount(1);
+  await expect(pin).toHaveAttribute("data-build-state", /.+/);
+  // The pin axis stays readable as an attribute in every state (§4.1(a)'s
+  // precedent: a fact stays in the DOM when its drawn word goes).
+  await expect(page.locator("[data-pin-mode]").first()).toHaveAttribute("data-pin-mode", /.+/);
+});
+
+test("the collapsed stream strip carries no count, dot, or badge (§4.1(f))", async ({ page }) => {
+  // Repair (b): "the docked strip with an unread count" is WITHDRAWN, recorded
+  // as §19 item 42, and the strip renders the strip and nothing else. This is
+  // the assertion that makes the deferral a decision rather than a silence.
+  await open(page, route(PART));
+  await expect(page.locator("[data-testid='artifact-pin']")).toBeVisible();
+  await page.setViewportSize({ width: 1279, height: 1000 });
+  await expect(page.locator("[data-band]")).toHaveAttribute("data-band", "medium");
+
+  const strip = page.locator("[data-stream-strip]");
+  await expect(strip).toHaveCount(1);
+  await expect(strip.locator("[data-resync-count]")).toHaveCount(0);
+  await expect(strip.locator("[data-stream-state]")).toHaveCount(0);
+  await expect(strip.locator("[role='status']")).toHaveCount(0);
+  // No number, in any shape: a count that arrived as "9+" would still be one.
+  expect(((await strip.textContent()) ?? "").replace(/\s+/gu, "")).not.toMatch(/[0-9]/u);
+});
+
 test("the rail overlay below 1024px can be dismissed (§4.1(b), §3.13.4)", async ({ page }) => {
   await open(page, route(PART));
   await page.setViewportSize({ width: 1000, height: 900 });

@@ -3,6 +3,12 @@
 //
 // Whether the current STREAM tab can take a prompt (INTERFACE.md §7A.2, §7A.5).
 //
+// RENAMED 2026-09-01 (§7.1(c)): `stream/sessionPrompt.ts` → this file.
+// `stream/sessionPrompts.ts` — the store that remembers each session's opening
+// line — keeps its name. Two modules in one directory differing only by a
+// trailing `s`, one a gate and one a store, is a name that fails a reader on
+// the import line. Mechanical: no exported symbol changed.
+//
 // §7A.2's create pair — New session / Ask about <part> — is reachable from
 // exactly two explicit affordances. PR 1 already mounts them after the first
 // session exists. This module is the *other* half of that table: the pair must

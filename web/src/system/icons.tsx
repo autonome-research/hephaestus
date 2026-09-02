@@ -62,6 +62,10 @@ export const ICON_IDS = [
   "refresh",
   "download",
   "pin",
+  // §7.1(b), amended 2026-09-01: the session strip's create action is "a single
+  // icon-only `+` control", and no id in the closed 18 draws a plus. Adding one
+  // is a spec edit (§3.12) and it is recorded there as the nineteenth id.
+  "plus",
 ] as const;
 
 export type IconId = (typeof ICON_IDS)[number];
@@ -99,6 +103,7 @@ const PATHS: Readonly<Record<IconId, string>> = {
     "M13.6 8 A5.6 5.6 0 1 1 11.4 3.6 M11.4 3.6 L14.4 3.1 M11.4 3.6 L11.9 0.9",
   download: "M8 2 L8 10.6 M4.4 7.1 L8 10.8 L11.6 7.1 M2.6 13.6 L13.4 13.6",
   pin: "M6 1.8 L10 1.8 L9.4 6.2 L12 8.6 L4 8.6 L6.6 6.2 Z M8 8.6 L8 14.2",
+  plus: "M8 3 L8 13 M3 8 L13 8",
 };
 
 export interface IconProps {

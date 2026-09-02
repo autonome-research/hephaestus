@@ -62,6 +62,9 @@ function Row({
           result={row.result}
           images={row.images}
           status={row.status}
+          // §7.2 (a): the repeat group `stream/transcript.ts` decided. Grouping
+          // is not a chip's decision to make — a chip cannot see its neighbours.
+          repeat={row.repeat ?? null}
         />
       );
     case "ask": {
@@ -104,8 +107,16 @@ function Row({
         </p>
       );
     case "absence":
+      // §8(d), amended 2026-09-01: one short sentence in the transcript's own
+      // type role — not a bordered blockquote. The notice still renders exactly
+      // once, in place, and the fuller reading is on `title`: shortening is not
+      // deletion, and §8's absence rule is re-affirmed by this row existing.
       return (
-        <p className={styles["absence"]} data-absence={row.absence}>
+        <p
+          className={styles["absence"]}
+          data-absence={row.absence}
+          title={copy.stream.absenceDetail[row.absence]}
+        >
           {copy.stream.absence[row.absence]}
         </p>
       );
@@ -118,8 +129,16 @@ function Row({
       );
     case "resync":
       return (
-        <p className={styles["resync"]} data-resync={row.resync.outcome} role="status">
+        <p
+          className={styles["resync"]}
+          data-resync={row.resync.outcome}
+          role="status"
+          title={copy.stream.resyncDetail[row.resync.outcome]}
+        >
           <span className={styles["resyncTitle"]}>{copy.stream.resync.title}</span>
+          {/* §7.4(d): the verdict is drawn, the mechanism is on `title`. `gap`
+              still says the events are NOT recovered — §7.4(c) keeps this break
+              exactly as specified, and nothing here permits a silent one. */}
           <span>{copy.stream.resync[row.resync.outcome]}</span>
           {row.resync.after === null ? null : (
             <span className={styles["resyncAfter"]}>

@@ -55,9 +55,42 @@
 // chrome over a field the route does not admit. There is no Plan mode in the
 // engine. `[dfm] auto_run` / `run_dfm` stay two controls (§6.4) and live on
 // the inspector DFM panel, not here — the composer is for talking. Context
-// chips sit above the textarea by default (§7A.3 / #79); disclose still
-// hides the composed preview and the advisory sentence. No runtime /
+// chips used to sit above the textarea by default (§7A.3 / #79); decision 7
+// below moves them behind the summary line, and disclose still hides the
+// composed preview and the advisory sentence. No runtime /
 // no `providers.json` keeps the named `agent_unavailable` absence.
+//
+// **7. AMENDED 2026-09-01 (§0.2b) — the resting composer is an input and one
+// button.** Three drawn controls stood permanently in the action row: Send, a
+// Cancel that was `disabled` for nearly all of the time, and a full `secondary`
+// disclosure. Above them sat a chip row that `chipsFor` always filled with
+// `stage_tab` / `inspector_tab` / `view`, so an idle composer was four rows of
+// chrome around a one-row textarea. The amendment collapses that:
+//
+// * §7A.3(a)-(e): ONE summary line — `Context:` and the envelope's present
+//   members, in a fixed order, `+N` for the remainder — with the editable chip
+//   form behind it. `ul[data-context-chips]` does **not** mount while the
+//   disclosure is collapsed. An **excluded** member stays visible on the line
+//   (§7A.3(e)), because "the agent will not be told about the selection" is a
+//   fact about what is being sent and the quiet path is only for the envelope
+//   the workspace state implies.
+// * §7A.6 / §7A.10(b): Cancel MOUNTS iff `data-cancel-state="available"`. The
+//   attribute itself is unchanged and stays on the form, so `unavailable` is
+//   still readable with no control present, and its reason moved to the form's
+//   `title` rather than being a disabled button's excuse.
+// * §7A.10(a): Send keeps disabled-with-reason. It is a **primary** action, and
+//   one that vanished would leave the operator with no target for "why can't I
+//   send?" — the opposite case from Cancel.
+// * §7A.10(c)(d): the disclosure is a compact quiet toggle attached to the
+//   summary line (one affordance), and the model chip is quiet inline text in
+//   the meta line rather than a bordered `Chip` in the action row. Every
+//   attribute — `data-context-disclose`, `data-composer-model`, its `<Fact>`
+//   attribution — is unchanged; only where they are drawn moves.
+//
+// NOTHING LEFT THE DOM (§0.2b's governing discipline). `data-cancel-state`,
+// `data-send-state`, `data-composer-state`, `data-disabled-reason`, every
+// `data-context-key`/`-value`/`-count` and the model attribution are all still
+// minted; what was dropped is a count nobody read and two normal-state words.
 
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -78,7 +111,13 @@ import { useWorkspaceState } from "../../state/react";
 import { labelsForPart, visibilityStore } from "../../state/visibility";
 import { defaultModel, modelsFrom, showModelChrome } from "../../stream/composerChrome";
 import { canSendTurn, cancelAvailability, isComposable, isSendKey } from "../../stream/composerGate";
-import { chipsFor, envelopeFor, type ContextChip } from "../../stream/composerContext";
+import {
+  chipsFor,
+  envelopeFor,
+  summaryFor,
+  type ContextChip,
+  type ContextSummary,
+} from "../../stream/composerContext";
 import { sessionPromptStore } from "../../stream/sessionPrompts";
 import { holderSessionTitle } from "../../stream/sessionTitle";
 import { promptFailurePost, runtimeFaultOf, type RuntimeFault } from "../../stream/runtimeFault";
@@ -216,6 +255,13 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     () => envelopeFor(state, hiddenLabels, dropped, added),
     [state, hiddenLabels, dropped, added],
   );
+  // §7A.3(d): the summary is a projection of the envelope this form would POST,
+  // not a second reading of the workspace. That is what makes `data-context-keys`
+  // and the chips' `data-context-key` set answer the same question.
+  const summary = useMemo(
+    () => summaryFor(envelope, chips, dropped),
+    [envelope, chips, dropped],
+  );
 
   // -- session chrome (issue #13) ----------------------------------------
   //
@@ -288,9 +334,10 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   const awaitingRun = post.phase === "sending" || refusedRunInFlight;
   const cancel = cancelAvailability({ liveRunId, streamLive, awaitingRun });
   const cancellable = cancel.available;
-  const cancelWhy = cancel.available
-    ? copy.composer.cancelIdle
-    : copy.composer[cancel.reason];
+  // §7A.6's amendment: the reason is no longer a button's excuse — there is no
+  // button to hang it on while the run is not cancellable. It stays readable,
+  // on the form the `data-cancel-state` attribute is already on.
+  const cancelWhy = cancel.available ? null : copy.composer[cancel.reason];
 
   // A run ending is what makes a `run_in_flight` refusal stop being true, and
   // `terminal` is the frame that says a run ended (§7A.11's counter). Monotone,
@@ -515,6 +562,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
       data-disabled-reason={disabledReason ?? "null"}
       data-cancel-state={cancellable ? "available" : "unavailable"}
       data-send-state={post.phase === "unknown" ? "unknown" : "ok"}
+      {...(cancelWhy !== null ? { title: cancelWhy } : {})}
       onSubmit={(event) => {
         event.preventDefault();
         submit();
@@ -573,11 +621,23 @@ export function Composer(props: ComposerProps): React.JSX.Element {
         </div>
       ) : null}
 
-      {/* §7A.3: the removable chip row sits above the textarea by default,
-          not behind a disclosure. `disclosed` only hides the composed preview
-          and the advisory sentence. An empty envelope (nothing that names a
-          reference) mounts no row and no placeholder. */}
-      {envelope !== null ? (
+      {/* §7A.3(a): ONE line at rest — the word `Context:`, the envelope's
+          present members in the fixed order, `+N` for the remainder, and any
+          member the operator excluded, said out loud (§7A.3(e)). The toggle is
+          attached to it: §7A.10(c) makes the line and the toggle one
+          affordance, so the chip form and the composed preview open together. */}
+      <ContextSummaryLine
+        summary={summary}
+        disclosed={disclosed}
+        onToggle={() => {
+          setDisclosed((open) => !open);
+        }}
+      />
+
+      {/* §7A.3(c): the editable chip form IS the disclosure. It does not mount
+          while collapsed — `chipsFor` still enumerates every member, so the row
+          is complete when it is shown; what changed is when it mounts. */}
+      {disclosed && chips.length > 0 ? (
         <ul
           className={styles["chips"]}
           data-context-chips=""
@@ -614,28 +674,39 @@ export function Composer(props: ComposerProps): React.JSX.Element {
         data-composer-input=""
       />
 
-      {/* The keyboard binding, said out loud — but only once the box is in use,
-          because §7A's idle composer is one row and a permanent hint under it
-          is a second. */}
-      {promptFocused || text !== "" ? (
-        <p className={styles["hint"]} data-composer-hint="">
-          {sendHint}
+      {/* §7A.10(d): the model is quiet inline text in the meta line, not a
+          bordered `Chip` in the action row. Its attributes and its `<Fact>`
+          attribution are unchanged — `providers.models.id` is a server fact and
+          §4.6 governs it — and it renders under exactly the condition it did.
+          The keyboard binding joins it here, and only once the box is in use:
+          §7A's idle composer is one row and a permanent hint under it is a
+          second. The line itself does not mount when it would be empty. */}
+      {(modelChrome && selectedModel !== null) || promptFocused || text !== "" ? (
+        <p className={styles["meta"]}>
+          {modelChrome && selectedModel !== null ? (
+            <span
+              className={styles["model"]}
+              title={copy.composer.model}
+              data-composer-model={selectedModel.id}
+              data-composer-provider={selectedModel.providerId}
+            >
+              <Fact mono source="providers.models.id" value={selectedModel.id}>
+                {selectedModel.id}
+              </Fact>
+            </span>
+          ) : null}
+          {promptFocused || text !== "" ? (
+            <span className={styles["hint"]} data-composer-hint="">
+              {sendHint}
+            </span>
+          ) : null}
         </p>
       ) : null}
 
+      {/* §7A.10(a): in the resting state this row holds exactly one element with
+          a button role. Cancel joins it the instant a run this tab can cancel is
+          in flight (§7A.10(b)) and leaves again when it is not. */}
       <div className={styles["actions"]}>
-        {modelChrome && selectedModel !== null ? (
-          <Chip
-            tone="code"
-            title={copy.composer.model}
-            data-composer-model={selectedModel.id}
-            data-composer-provider={selectedModel.providerId}
-          >
-            <Fact mono source="providers.models.id" value={selectedModel.id}>
-              {selectedModel.id}
-            </Fact>
-          </Chip>
-        ) : null}
         <Button
           variant="primary"
           type="button"
@@ -646,24 +717,11 @@ export function Composer(props: ComposerProps): React.JSX.Element {
         >
           {post.phase === "sending" ? copy.composer.sending : copy.composer.send}
         </Button>
-        <Button
-          variant="secondary"
-          onClick={cancelTurn}
-          data-composer-cancel=""
-          {...(cancellable ? {} : { disabled: true as const, reason: cancelWhy })}
-        >
-          {copy.composer.cancel}
-        </Button>
-        <Button
-          variant="secondary"
-          onClick={() => {
-            setDisclosed((open) => !open);
-          }}
-          expanded={disclosed}
-          data-context-disclose=""
-        >
-          {disclosed ? copy.composer.discloseHide : copy.composer.disclose}
-        </Button>
+        {cancellable ? (
+          <Button variant="secondary" onClick={cancelTurn} data-composer-cancel="">
+            {copy.composer.cancel}
+          </Button>
+        ) : null}
       </div>
 
       {/* §7A.5: a lost POST leaves the text in the box and states that the turn
@@ -742,6 +800,79 @@ export function Composer(props: ComposerProps): React.JSX.Element {
         </div>
       ) : null}
     </form>
+  );
+}
+
+/**
+ * §7A.3(a)'s resting line, and §7A.10(c)'s toggle, which are one affordance.
+ *
+ * It **re-words nothing and computes nothing** (§1): every token is a closed
+ * §4.5 token or an identifier the client is echoing back, and the only
+ * arithmetic is `+N` over the client's own envelope members. `formatRef` is
+ * applied where §4.1(a) already applies it — presentation, over a value whose
+ * full form the chip form still carries on `data-context-value`.
+ *
+ * The line mounts unconditionally, including on the blank canvas, where it says
+ * so in one word. Two reasons, and neither is decoration: `data-context-keys`
+ * is §7A.3(d)'s machine reading of the envelope's shape and an empty envelope
+ * has a shape ("nothing"); and the toggle is the only route to Add current
+ * view, which is how a blank canvas acquires its first reference (#13).
+ */
+function ContextSummaryLine(props: {
+  readonly summary: ContextSummary;
+  readonly disclosed: boolean;
+  readonly onToggle: () => void;
+}): React.JSX.Element {
+  const { summary, disclosed, onToggle } = props;
+  const empty = summary.tokens.length === 0 && summary.remaining === 0 && summary.removed.length === 0;
+  return (
+    <p
+      className={styles["summary"]}
+      data-context-summary=""
+      data-context-keys={summary.keys.join(" ")}
+      // §7.4(d)'s rule applied here: the short form is drawn, the long form is
+      // on `title`. The blank canvas is one word on the line and a sentence for
+      // the reader who asks what "none" means.
+      {...(empty ? { title: copy.composer.contextNone } : {})}
+    >
+      <span className={styles["summaryLabel"]}>{copy.composer.contextSummary}</span>
+      {empty ? <span className={styles["summaryToken"]}>{copy.composer.contextEmpty}</span> : null}
+      {summary.tokens.map((token) => (
+        <span
+          key={token.key}
+          className={styles["summaryToken"]}
+          title={token.text}
+          data-context-token={token.key}
+        >
+          {token.abbreviate ? formatRef(token.text, CHIP_REF_WIDTH) : token.text}
+        </span>
+      ))}
+      {summary.remaining > 0 ? (
+        <span className={styles["summaryToken"]} data-context-more={summary.remaining}>
+          {copy.composer.contextMore(summary.remaining)}
+        </span>
+      ) : null}
+      {/* §7A.3(e): an exclusion is a fact about what is being SENT, so it is
+          drawn rather than left to the absence of a token. */}
+      {summary.removed.map((key) => (
+        <span
+          key={key}
+          className={styles["summaryRemoved"]}
+          data-context-removed={key}
+          title={copy.composer.contextDrop(copy.composer.contextKey[key])}
+        >
+          {copy.composer.contextExcluded(copy.composer.contextKey[key])}
+        </span>
+      ))}
+      <Button
+        variant="quiet"
+        onClick={onToggle}
+        expanded={disclosed}
+        data-context-disclose=""
+      >
+        {disclosed ? copy.composer.discloseHide : copy.composer.disclose}
+      </Button>
+    </p>
   );
 }
 
@@ -848,6 +979,10 @@ export function NewSessionAction(props: {
             onCreate("part", part);
           }}
           data-create-profile="part"
+          // §7.1(b)(3): the part-scoped create is addressable by name wherever
+          // it lives — here on the empty-list invitation, and on the `+`
+          // control's menu entry beside a drawn tab strip.
+          data-session-ask=""
           {...(pending ? { disabled: true as const, reason: copy.composer.sending } : {})}
         >
           {copy.composer.createPart(part)}

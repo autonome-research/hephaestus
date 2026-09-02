@@ -192,19 +192,20 @@
 
 /* ---- the stream's two states -------------------------------------------- */
 
+/*
+ * §4.1(e), amended 2026-09-01: the band keeps its CONTROL and loses its LABEL,
+ * so it holds one collapse button and nothing else. Its height is one control
+ * rather than a row of type, and the column's name for assistive technology
+ * stays on the `aside`'s `aria-label` — where it always was.
+ */
 .streamHeader {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: var(--gap-inline);
-  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
+  padding: var(--space-1) var(--space-2);
   border-bottom: 1px solid var(--border);
-  min-height: var(--header-height);
-}
-
-.streamTitle {
-  composes: eyebrow from "../system/type.module.css";
-  color: var(--ink-muted);
+  min-height: var(--target-min);
 }
 
 .strip {

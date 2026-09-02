@@ -813,12 +813,21 @@ export const copy = {
       historical: "historical",
       detached: "detached",
     },
+    /**
+     * AMENDED 2026-09-01 (§7.4(d)) — one sentence, ≤25 words, each.
+     *
+     * These are the badge's `title`, and a tooltip that runs to three lines is
+     * read as an error dialog. `live` is retained although §7.4(a) never draws
+     * the badge in that state: the map stays TOTAL over the closed vocabulary
+     * so a sixth state cannot land without copy. Length is asserted in
+     * `test/stream/metaCopy.test.ts`, both halves.
+     */
     stateWhy: {
       live: "Attached to this session's event stream.",
-      reconnecting: "The event stream closed. Reopening it.",
+      reconnecting: "The event stream closed and is being reopened.",
       resyncing:
-        "The server dropped this page from the stream to protect the run, and the page is reattaching. Events sent while it was gone may be missing, and any that are appear below as a labelled break.",
-      historical: "Showing the recorded transcript. This page is not attached to a live stream.",
+        "The stream was dropped to protect the run and is reattaching; anything missed appears below as a labelled break.",
+      historical: "Showing the recorded transcript, not a live stream.",
       detached: "Not attached to an event stream.",
     },
 
@@ -837,17 +846,38 @@ export const copy = {
       unreachable: "runtime unreachable",
     },
     runtimeFaultTitle: "The agent runtime stopped answering",
+    /**
+     * AMENDED 2026-09-01 (§7.4(d)) — the grade, in one sentence.
+     *
+     * These three ran 29-43 words each and stated the mechanism twice: once
+     * here, and once in the run-end band the transcript already draws. **The
+     * cause is never shortened away** — `runtimeFault`'s three-word verdicts
+     * are untouched — and the paragraph is not deleted either: it moves to
+     * `runtimeFaultDetail` below, which the fault band hangs on `title`.
+     */
     runtimeFaultWhy: {
+      process_down: "The agent runtime restarted or exited while this page was talking to it.",
+      timeout: "The agent runtime did not answer in time.",
+      unreachable: "The server failed this session request without naming a reason.",
+    },
+    /**
+     * The long form, on `title` (§7.4(d): "what is cut is the paragraph
+     * explaining the mechanism, which belongs on `title`"). Total over the same
+     * three grades, for the same reason `stateWhy` is total over five states.
+     */
+    runtimeFaultDetail: {
       process_down:
-        "The agent runtime restarted or exited while this page was talking to it. Anything it was running at the time is gone — a restart ends every turn in flight — and a run that ended this way records no run-end band below.",
+        "Anything the runtime was running at the time is gone — a restart ends every turn in flight — and a run that ended this way records no run-end band below.",
       timeout:
-        "The agent runtime did not answer in time. A turn that was running may have been lost, and a run that ended this way records no run-end band below.",
+        "A turn that was running may have been lost, and a run that ended this way records no run-end band below.",
       unreachable:
-        "The server failed this session request without naming a reason. The agent runtime is the only process behind these routes, so it is the likely cause — but the server did not say so, and this page does not claim it did.",
+        "The agent runtime is the only process behind these routes, so it is the likely cause — but the server did not say so, and this page does not claim it did.",
     },
     /** The turn is not retried here; §7A.5 forbids it. Recovery is New session. */
-    runtimeFaultNext:
-      "This session cannot take another prompt. Start a new session — nothing is resent on its own, because a turn that may have started must not be started twice.",
+    runtimeFaultNext: "This session cannot take another prompt; start a new session.",
+    /** §7A.5's reason, on `title`: why nothing is resent for you. */
+    runtimeFaultNextDetail:
+      "Nothing is resent on its own, because a turn that may have started must not be started twice.",
 
     /** §2.4's `agent_unavailable`, said in words rather than as an empty panel. */
     noAgentTitle: "No runtime attached",
@@ -855,9 +885,26 @@ export const copy = {
       "This server has no agent runtime attached, so it has no sessions to show. Start it with a provider configuration to create or attach one.",
     noSessionsTitle: "No sessions",
     noSessions: "No sessions are attached to this server.",
+    /**
+     * §7.1(a), amended 2026-09-01: retained as the tab list's `aria-label` and
+     * drawn nowhere. The `<h2>` it used to fill is struck — a heading over a
+     * list whose accessible name is the same word said "session" twice above a
+     * strip of sessions.
+     */
     sessionsHeading: "Sessions",
-    selectSessionTitle: "No session selected",
-    selectSession: "Select a session to see its transcript.",
+    /*
+     * `selectSessionTitle` and `selectSession` are REMOVED (§7A.10(e)(2),
+     * amended 2026-09-01). Neither had an importer under `web/src`: the panel
+     * with no session selected renders §7A.2's create invitation, not a
+     * "select a session" instruction, and a copy key nothing draws is the dead
+     * surface §0.2b's repair (c) is about.
+     */
+    /**
+     * §7.1(b): the `+` at the end of the strip, when a part is selected and the
+     * control therefore has two entries. Icon-only controls carry their label
+     * as `aria-label` (§3.12), so this is the name the control is announced by.
+     */
+    createMenu: "Start a session",
 
     /** §7.1's tab list; the profile and edge words are the server's own. */
     profile: {
@@ -896,42 +943,81 @@ export const copy = {
       "The walk up this thread hit its depth bound before reaching a root, so the tabs above may not be the whole tree.",
 
     /** §8: history is the prefix, the live stream is the suffix, the join is seen. */
-    seam: "End of the recorded transcript. Everything below arrived live.",
-    historyLoading: "Loading the recorded transcript…",
+    seam: "End of the recorded transcript — everything below arrived live.",
+    /*
+     * `historyLoading` is REMOVED (§8(b), amended 2026-09-01): "the loading
+     * ellipsis is not an exception — a transcript that is still filling is
+     * already visibly filling", so the string had no site left to render in and
+     * a copy key nothing draws is the dead surface §0.2b's repair (c) is about.
+     * `data-history-state="loading"` on the panel root still reports the state.
+     */
     historyPages: (pages: number): string =>
       pages === 1 ? "1 page of recorded transcript" : `${pages} pages of recorded transcript`,
     historyTruncated:
-      "Stopped after the page limit for one reopen. This transcript is longer than what is shown.",
+      "Stopped after the page limit for one reopen; this transcript is longer than what is shown.",
     historyFailed: "The recorded transcript could not be read.",
-    /**
-     * #75: the header row states the reason, not a hedge. A shorter label
-     * used to hide why (`Transcript unread`). The full sentence is the
-     * visible text; this key stays only so a title attribute can stay short
-     * without becoming a second hedge.
+    /*
+     * `historyFailedShort` is REMOVED (§7A.10(e)(2), amended 2026-09-01). It
+     * was a duplicate of `historyFailed` byte for byte and its only reader was
+     * an assertion that the panel did not render it — "a copy key that only a
+     * test reads is a string the product does not have". `StreamHeader` draws
+     * `historyFailed`, and the test now asserts against that.
      */
-    historyFailedShort: "The recorded transcript could not be read.",
     jumpToLatest: "Latest",
     jumpToLatestWhy:
       "Show the newest turn. Following stopped when this transcript was scrolled up.",
 
-    /** §8's named absences: what a reopened transcript cannot contain. */
+    /**
+     * §8's named absences: what a reopened transcript cannot contain.
+     *
+     * AMENDED 2026-09-01 (§8(d)) — one short sentence each, in the transcript's
+     * own type role. The notices are re-affirmed, not relaxed: each still
+     * renders exactly once, in place, and neither is removed. What changed is
+     * that `terminal` stopped being a 28-word blockquote interrupting the
+     * transcript it annotates. The fuller reading is `absenceDetail`, on
+     * `title` — a notice deleted rather than shortened fails §8's absence rule.
+     */
     absence: {
       user_prompt:
         "Prompts are not part of the recorded event vocabulary, so this transcript shows the agent's side only.",
+      terminal: "Run outcomes are recorded live, so a reopened transcript shows no run-end band.",
+    },
+    absenceDetail: {
+      user_prompt:
+        "The recorded event vocabulary has no user_prompt kind, so what was typed into the composer is not recoverable from a reopened transcript and is not reconstructed here.",
       terminal:
         "Run outcomes are recorded live and are not part of a reopened transcript, so no run-end band is shown here. Nothing below implies a run is still open.",
     },
 
     /** §7.4 / §2.7: a resync is labelled, and never healed from history. */
+    /**
+     * AMENDED 2026-09-01 (§7.4(d)) — one sentence per outcome.
+     *
+     * The verdict survives whole: `gap` still says the events **are not
+     * recovered**, which is the one thing §2.7 forbids this break from
+     * softening. What moved to `title` is the mechanism — the two identity
+     * namespaces of §2.8 — which explains *why* they cannot be recovered and is
+     * not the fact the reader needs mid-transcript.
+     */
     resync: {
       title: "Stream break",
-      pending: "The stream was dropped and is reattaching. What was missed is not yet known.",
+      pending: "The stream was dropped and is reattaching; what was missed is not yet known.",
       contiguous:
         "The stream was dropped and resumed at the next event, so nothing between them was lost.",
-      gap: "The stream was dropped and resumed past the last event this page saw. The events in between are gone from the live buffer and are not recovered from the recorded transcript, because the two do not share an identity.",
+      gap: "The stream resumed past the last event this page saw; those events are gone and are not recovered from the recorded transcript.",
       unknown:
-        "The stream was dropped and reattached, and nothing has arrived for that run since, so whether anything was missed is not known.",
+        "The stream reattached and nothing has arrived since, so whether anything was missed is not known.",
       after: "Last event before the break",
+    },
+    /** The long form of each outcome, on the break's `title` (§7.4(d)). */
+    resyncDetail: {
+      pending:
+        "The page is reattaching to the run's event stream. Until the first event arrives there is nothing to compare against, so whether the gap contains events is not yet decidable.",
+      contiguous:
+        "The first event after the break carries the sequence number that follows the last one this page saw, so the live buffer lost nothing between them.",
+      gap: "The events in between are gone from the live buffer and are not healed from the recorded transcript: live events are keyed (run_id, seq) and historical ones (session_id, ordinal), and the two do not share an identity.",
+      unknown:
+        "The stream was dropped and reattached, and nothing has arrived for that run since, so there is no later event to compare against and no claim is made.",
     },
 
     /** §7.2's chip. `unknown` is the section's own named fallback. */
@@ -956,9 +1042,15 @@ export const copy = {
        * all still in the DOM — collapsed, never dropped — because the gate
        * reads the attribute set and a reader reads the sentence.
        */
+      detailLabel: "Detail",
+      /**
+       * §7.2 (b), amended 2026-09-01: this count is the disclosure's first
+       * line, never the resting chip face. On the face it was chrome about a
+       * list; behind the control it tells a reader who asked for the list how
+       * long it is. `data-field` nodes are unchanged in both states.
+       */
       detail: (fields: number): string =>
         fields === 1 ? "1 result field" : `${String(fields)} result fields`,
-      detailNoFields: "Call detail",
       /** §7.2's own count, when nothing in the document was short enough to headline. */
       summaryOpaque: "This result carries identifiers only; open the detail to read them.",
       unparsed: {
@@ -1109,7 +1201,7 @@ export const copy = {
      * but Enter must not look bound. A silent `submit()` return is the same
      * class of lie as a Send that looks enabled and does nothing (#44).
      */
-    sendHintBusy: "A turn is running. Wait for it to finish, or Cancel.",
+    sendHintBusy: "A turn is running; wait for it to finish, or Cancel.",
 
     /**
      * §7A.5's TIGHTENING: the composer never retries a prompt automatically.
@@ -1183,9 +1275,25 @@ export const copy = {
 
     /** §7A.3's chip row: the references this turn will carry, each droppable. */
     contextHeading: "This message will carry",
+    /**
+     * §7A.3(a)'s resting line. The label is the whole sentence: the members
+     * that follow are the closed §4.5 tokens and echoed identifiers the
+     * envelope carries, and a longer preamble would be words about words.
+     */
+    contextSummary: "Context:",
+    /** The blank canvas, in one word. The long form is `contextNone`. */
+    contextEmpty: "none",
+    /** §7A.3(a)'s `+N`: a count of the client's own envelope members. */
+    contextMore: (n: number): string => `+${n}`,
+    /**
+     * §7A.3(e): an excluded member stays VISIBLE. "The agent will not be told
+     * about the selection" is a fact about what is being sent, and the quiet
+     * path is only for the envelope the workspace state implies.
+     */
+    contextExcluded: (label: string): string => `−${label}`,
     contextDrop: (label: string): string => `Do not send ${label}`,
     contextNone:
-      "This message carries no workspace references. The agent is told nothing about what is on this page.",
+      "This message carries no workspace references, so the agent is told nothing about this page.",
     contextKey: {
       part: "part",
       artifact_ref: "artifact",
@@ -1200,14 +1308,23 @@ export const copy = {
       focus: "focus",
     },
     hiddenCount: (n: number): string => (n === 1 ? "1 label hidden" : `${n} labels hidden`),
-    /** §7A.3's disclosure: what the agent will actually be told. */
-    disclose: "Composer preview",
-    discloseHide: "Hide composer preview",
+    /**
+     * §7A.3's disclosure: what the agent will actually be told.
+     *
+     * AMENDED 2026-09-01 (§7A.10(c)) — one word each. The control is no longer a
+     * full `secondary` button in the action row; it is a compact quiet toggle
+     * attached to the summary line, and the line beside it already says what is
+     * being previewed. "Composer preview" on a control that sits inside the
+     * composer, under a line that starts `Context:`, spent three words saying
+     * where it was.
+     */
+    disclose: "Preview",
+    discloseHide: "Hide",
     discloseAdvisory:
-      "A preview. The message is composed again when it is sent, so what the agent receives is the version echoed back on the turn — not this one.",
+      "A preview: the message is composed again when it is sent, so the agent receives the version echoed back on the turn.",
     discloseTruncated:
-      "This is longer than one context block may be, so it was cut. The agent is told that it was cut.",
-    discloseEmpty: "Nothing. The agent is told only what you type.",
+      "This is longer than one context block may be, so it was cut and the agent is told so.",
+    discloseEmpty: "Nothing — the agent is told only what you type.",
     discloseFailed: "The preview could not be composed.",
 
     /**
@@ -1218,17 +1335,15 @@ export const copy = {
      * (`[dfm] auto_run` + `run_dfm`); the composer does not host them.
      */
     model: "Model",
-    effort: "Effort",
-    /**
-     * Effort is not a prompt field (§7A.3). The composer used to project a
-     * bare "off" next to the model id; that control wrote nothing and read
-     * as an unlabelled toggle. The word stays here for the decision module.
-     */
-    effortOff: "off",
+    // `effort` / `effortOff` used to live here for a decision module that had
+    // no surface. §7A.10(e)(1) removes the effort vocabulary outright — "a
+    // closed vocabulary with no surface is a spec claim by implication" — so
+    // the two words went with it rather than waiting for a control no clause
+    // specifies.
     noModels: "No models are declared in the provider configuration.",
     addCurrentView: "Add current view",
     addCurrentViewWhy:
-      "Include this page's view and selection in the context the agent is told. The preview below is advisory — the message is composed again when it is sent.",
+      "Include this page's view and selection in the context the agent is told.",
     dfmAutoRun: "DFM auto-run",
     dfmRun: "Run DFM",
     dfmNoPart: "No part is selected, so design-for-manufacture has nothing to evaluate.",
@@ -1251,7 +1366,7 @@ export const copy = {
      * composer that is not there."
      */
     blankCanvas:
-      "There is no part yet. Parts are made by asking an agent for one — it calls `create_part` and writes the script. Start a session and describe what you want.",
+      "There is no part yet — ask an agent for one and it calls `create_part` to write the script.",
     blankCanvasAction: "Start a session",
     /**
      * Empty *session* copy when the project already has parts. The blank-canvas
@@ -1259,12 +1374,12 @@ export const copy = {
      * context chips with "There is no part yet" is the defect.
      */
     noSessionSelectedPart: (part: string): string =>
-      `There is no session yet. ${part} is selected — start a session about it, or a project-wide session.`,
+      `No session yet, and ${part} is selected — start a session about it, or a project-wide one.`,
     noSessionHasParts:
-      "There is no session yet. This project already has parts. Start a session to work on one, or a project-wide session.",
+      "No session yet — start one to work on a part of this project, or a project-wide one.",
     /** §15.30: a new *project* is out of reach from here, and is refused by name. */
     noProject:
-      "A new project is `heph init` at a terminal. This server opens a project that already exists.",
+      "A new project is `heph init` at a terminal; this server opens one that already exists.",
     /** §7A.2's profile line, composed from the server's own capability facts. */
     profileWhat: (profile: string, canDelegate: boolean, partScoped: boolean): string =>
       `A ${profile} session. It ${canDelegate ? "can delegate to part agents and" : "cannot delegate, and"} ${
@@ -1272,7 +1387,7 @@ export const copy = {
       }.`,
     /** §7A.2: there is no route that closes a session, and none is invented. */
     orphanNote:
-      "Starting a session twice leaves an extra idle one. Idle sessions cost nothing and there is no way to close one from here; leave it.",
+      "Starting a session twice leaves an extra idle one, which costs nothing and cannot be closed from here.",
   },
 
   /**

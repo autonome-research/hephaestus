@@ -23,11 +23,15 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { ToolChip } from "../../src/components/stream/ToolChip";
-import { liveItem } from "../../src/stream/transcript";
-import type { TranscriptItem } from "../../src/stream/transcript";
+import { Transcript } from "../../src/components/stream/Transcript";
+import { copy } from "../../src/copy";
+import { groupRows, liveItem } from "../../src/stream/transcript";
+import type { PanelRow, TranscriptItem } from "../../src/stream/transcript";
 
 const RUN = "run-aabbccddeeff";
 const SESSION = "sess-kerf";
@@ -189,6 +193,281 @@ describe("§7.2's field contract survives the disclosure", () => {
     );
     // The ref is still a `data-field` node, so containment holds.
     expect(parsed.querySelectorAll('[data-field="artifact_ref"]')).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §7.2 (a)-(d), amended 2026-09-01: the resting face, and repetition
+// ---------------------------------------------------------------------------
+
+const REPEAT_RUN = "run-repeat000000";
+const REPEAT_DOC = { status: "ok", check_set_generation: "0", total: 1 };
+
+/** `n` identical successful `list_project_checks` calls, back to back. */
+function repeatItems(n: number, args: (index: number) => unknown = () => ({})): TranscriptItem[] {
+  const items: TranscriptItem[] = [];
+  for (let index = 0; index < n; index += 1) {
+    items.push(
+      liveItem({
+        run_id: REPEAT_RUN,
+        seq: index * 2,
+        kind: "tool_call",
+        session_id: SESSION,
+        tool_call_id: `c-scan-${String(index)}`,
+        payload: { name: "list_project_checks", arguments: args(index) },
+      }),
+      liveItem({
+        run_id: REPEAT_RUN,
+        seq: index * 2 + 1,
+        kind: "tool_result",
+        session_id: SESSION,
+        tool_call_id: `c-scan-${String(index)}`,
+        payload: {
+          toolName: "list_project_checks",
+          isError: false,
+          text: JSON.stringify(REPEAT_DOC),
+        },
+      }),
+    );
+  }
+  return items;
+}
+
+function renderRows(rows: readonly PanelRow[]): Document {
+  const markup = renderToStaticMarkup(<Transcript rows={rows} />);
+  return new DOMParser().parseFromString(`<body>${markup}</body>`, "text/html");
+}
+
+describe("a repeat group renders as one row, and drops no id (§7.2 (a))", () => {
+  const items = repeatItems(3);
+  const document_ = renderRows(groupRows(items));
+  const chips = [...document_.querySelectorAll("[data-tool-name]")];
+
+  it("renders one chip for three calls, with the count and the shared badge", () => {
+    expect(chips).toHaveLength(1);
+    const chip = chips[0];
+    expect(chip?.getAttribute("data-chip-repeat")).toBe("3");
+    expect(chip?.getAttribute("data-status")).toBe("ok");
+    expect(chip?.querySelector("header")?.textContent ?? "").toContain("×3");
+  });
+
+  it("keeps the set of rendered ids equal to the tool-call event ids", () => {
+    // §7.2 (a)'s own test, as amended 2026-09-01. `data-event-id` ∪
+    // `data-event-ids`, per node, across every element of the transcript — a
+    // coalescing that loses an id fails. SET, not multiset, and the clause now
+    // says so: the anchor id is published twice on purpose (as `data-event-id`
+    // so addressing resolves, and again as the first entry of `data-event-ids`
+    // so the member list is complete), which a multiset comparison would count
+    // twice and fail on a correct render.
+    const rendered = new Set<string>();
+    for (const node of document_.querySelectorAll("[data-event-id], [data-event-ids]")) {
+      const single = node.getAttribute("data-event-id");
+      if (single !== null) rendered.add(single);
+      for (const id of (node.getAttribute("data-event-ids") ?? "").split(" ")) {
+        if (id !== "") rendered.add(id);
+      }
+    }
+    expect([...rendered].sort()).toEqual(items.map((item) => item.eventId).sort());
+  });
+
+  it("anchors on the first member and pluralizes the tool-call id", () => {
+    const chip = chips[0];
+    expect(chip?.getAttribute("data-event-id")).toBe(`${REPEAT_RUN}#0`);
+    expect(chip?.getAttribute("data-event-ids")).toBe(
+      `${REPEAT_RUN}#0 ${REPEAT_RUN}#2 ${REPEAT_RUN}#4`,
+    );
+    expect(chip?.getAttribute("data-tool-call-ids")).toBe("c-scan-0 c-scan-1 c-scan-2");
+    // "`data-tool-call-id` … becomes `data-tool-call-ids` on a coalesced row".
+    expect(chip?.hasAttribute("data-tool-call-id")).toBe(false);
+  });
+
+  it("renders the shared document's fields once, and still headlines it", () => {
+    const chip = chips[0];
+    const fields = [...(chip?.querySelectorAll("[data-field]") ?? [])].map(
+      (node) => node.getAttribute("data-field") ?? "",
+    );
+    expect(fields).toEqual(Object.keys(REPEAT_DOC));
+    // §7.2 (d): a coalesced row is never `data-chip-summary` absent.
+    expect(chip?.querySelector("[data-chip-summary]")).not.toBeNull();
+  });
+
+  it("names every distinct argument document the members actually sent", () => {
+    const mixed = renderRows(
+      groupRows(repeatItems(3, (index) => (index === 2 ? { deep: true } : {}))),
+    );
+    const detail = mixed.querySelector("[data-chip-detail]");
+    expect(mixed.querySelectorAll("[data-tool-name]")).toHaveLength(1);
+    expect(detail?.textContent ?? "").toContain("deep");
+    // Two distinct argument documents, the first sent by two of the three.
+    expect(detail?.querySelectorAll("[class*='args']").length).toBeGreaterThan(1);
+  });
+
+  it("does not coalesce when the calls are not identical (the negative half)", () => {
+    const differing = repeatItems(2);
+    const second = differing[3];
+    expect(second).toBeDefined();
+    const items_ = [
+      ...differing.slice(0, 3),
+      liveItem({
+        run_id: REPEAT_RUN,
+        seq: 3,
+        kind: "tool_result",
+        session_id: SESSION,
+        tool_call_id: "c-scan-1",
+        payload: {
+          toolName: "list_project_checks",
+          isError: false,
+          text: JSON.stringify({ ...REPEAT_DOC, total: 2 }),
+        },
+      }),
+    ];
+    const document2 = renderRows(groupRows(items_));
+    const rendered = [...document2.querySelectorAll("[data-tool-name]")];
+    expect(rendered).toHaveLength(2);
+    for (const chip of rendered) {
+      expect(chip.hasAttribute("data-chip-repeat")).toBe(false);
+      expect(chip.getAttribute("data-tool-call-id")).toBeTruthy();
+    }
+  });
+});
+
+describe("the field count is inside the disclosure, never on the face (§7.2 (b))", () => {
+  const hosts: HTMLElement[] = [];
+
+  afterEach(() => {
+    for (const host of hosts.splice(0)) host.remove();
+  });
+
+  function mount(rows: readonly PanelRow[]): HTMLElement {
+    const host = document.createElement("div");
+    document.body.append(host);
+    hosts.push(host);
+    const root = createRoot(host);
+    act(() => {
+      root.render(<Transcript rows={rows} />);
+    });
+    return host;
+  }
+
+  function occurrences(text: string, needle: string): number {
+    return text.split(needle).length - 1;
+  }
+
+  it("renders the string on no chip while every disclosure is closed", () => {
+    const host = mount(groupRows([...repeatItems(2), ...call2()]));
+    const details = [...host.querySelectorAll("details[data-chip-detail]")];
+    expect(details.length).toBeGreaterThan(1);
+    for (const node of details) expect(node.hasAttribute("open")).toBe(false);
+    expect(occurrences(host.textContent ?? "", "result field")).toBe(0);
+    // The `data-field` nodes are unchanged in both states — the count was
+    // chrome about a list, not the list.
+    expect(host.querySelectorAll("[data-field]").length).toBeGreaterThan(0);
+  });
+
+  it("renders it exactly once when one disclosure is opened", () => {
+    const host = mount(groupRows([...repeatItems(2), ...call2()]));
+    const fieldsBefore = host.querySelectorAll("[data-field]").length;
+    const first = host.querySelector("details[data-chip-detail]");
+    expect(first).not.toBeNull();
+    act(() => {
+      if (first instanceof HTMLDetailsElement) {
+        first.open = true;
+        first.dispatchEvent(new Event("toggle"));
+      }
+    });
+    expect(occurrences(host.textContent ?? "", copy.stream.chip.detail(3))).toBe(1);
+    expect(host.querySelectorAll("[data-chip-detail-count]")).toHaveLength(1);
+    expect(host.querySelectorAll("[data-field]").length).toBe(fieldsBefore);
+  });
+});
+
+/** A second, different chip, so "no chip renders it" has more than one chip. */
+function call2(): TranscriptItem[] {
+  return [
+    liveItem({
+      run_id: REPEAT_RUN,
+      seq: 900,
+      kind: "tool_call",
+      session_id: SESSION,
+      tool_call_id: "c-other",
+      payload: { name: "read_part", arguments: { name: "kerf_card" } },
+    }),
+    liveItem({
+      run_id: REPEAT_RUN,
+      seq: 901,
+      kind: "tool_result",
+      session_id: SESSION,
+      tool_call_id: "c-other",
+      payload: {
+        toolName: "read_part",
+        isError: false,
+        text: JSON.stringify({ status: "ok", part: "kerf_card", line_count: 12 }),
+      },
+    }),
+  ];
+}
+
+describe("at most one preamble note, and never above the headline (§7.2 (c))", () => {
+  function orphan(isError: boolean | null): TranscriptItem {
+    return liveItem({
+      run_id: REPEAT_RUN,
+      seq: 11,
+      kind: "tool_result",
+      session_id: SESSION,
+      tool_call_id: "c-orphan",
+      payload: { toolName: "read_part", isError, text: "{}" },
+    });
+  }
+
+  function chipOf(markup: string): Element {
+    const parsed = new DOMParser().parseFromString(`<body>${markup}</body>`, "text/html");
+    const chip = parsed.querySelector("[data-tool-name]");
+    if (chip === null) throw new Error("the chip did not render");
+    return chip;
+  }
+
+  it("renders no note at all for a successful call with a result", () => {
+    const chip = chipDocument();
+    expect(chip.textContent ?? "").not.toContain(copy.stream.chip.runningWhy);
+    expect(chip.textContent ?? "").not.toContain(copy.stream.chip.unknownWhy);
+    expect(chip.textContent ?? "").not.toContain(copy.stream.chip.callMissing);
+    expect(chip.hasAttribute("title")).toBe(false);
+  });
+
+  it("renders exactly one note for a running call, below the headline", () => {
+    const chip = chipOf(
+      renderToStaticMarkup(
+        <ToolChip toolName="read_part" call={call(1)} result={null} images={[]} status="running" />,
+      ),
+    );
+    expect(chip.textContent ?? "").toContain(copy.stream.chip.runningWhy);
+    const nodes = [...chip.children];
+    const summaryAt = nodes.findIndex((node) => node.hasAttribute("data-chip-summary"));
+    const noteAt = nodes.findIndex((node) =>
+      (node.textContent ?? "").includes(copy.stream.chip.runningWhy),
+    );
+    expect(summaryAt).toBeGreaterThanOrEqual(0);
+    expect(noteAt).toBeGreaterThan(summaryAt);
+  });
+
+  it("draws the most specific note and keeps the suppressed one on `title`", () => {
+    // An orphan result whose failure flag is unrecoverable is BOTH
+    // `callMissing` and `unknown`. §7.2 (c)'s precedence draws the first;
+    // the second is not lost, it moves to the chip's `title`.
+    const item = orphan(null);
+    const chip = chipOf(
+      renderToStaticMarkup(
+        <ToolChip toolName="read_part" call={item} result={item} images={[]} status="unknown" />,
+      ),
+    );
+    const notes = [...chip.children].filter((node) =>
+      [copy.stream.chip.callMissing, copy.stream.chip.unknownWhy, copy.stream.chip.runningWhy].some(
+        (text) => (node.textContent ?? "") === text,
+      ),
+    );
+    expect(notes).toHaveLength(1);
+    expect(notes[0]?.textContent).toBe(copy.stream.chip.callMissing);
+    expect(chip.getAttribute("title") ?? "").toContain(copy.stream.chip.unknownWhy);
   });
 });
 

@@ -16,9 +16,9 @@
 // 1. **The stream state.** §7.4's closed vocabulary is on the header, and
 //    `resyncing` is visible — "a silent gap in a transcript the user believes is
 //    complete is worse than a labelled one."
-// 2. **The page count.** §8: "the panel renders progressively and shows a page
-//    counter — 'multi-page' is a user-visible fact, not only a test fact." It is
-//    the number of pages the server served, counted from responses.
+// 2. **The page count.** §8: multi-page history is "a user-visible fact, not
+//    only a test fact". It is the number of pages the server served, counted
+//    from responses.
 // 3. **`agent_unavailable`.** With no agent runtime, `GET /sessions` refuses
 //    `503 agent_unavailable` (`http/app.py::sessions_or_refuse`) and the panel
 //    renders that refusal by name — now **with the server's own cause and the
@@ -30,6 +30,15 @@
 //    is to type English at an orchestrator agent, which calls `create_part`.
 //    "A blank canvas the operator has to guess is filled by talking is the same
 //    defect as a composer that is not there."
+//
+// THE FIRST TWO ARE **DRAWN** ONLY AS EXCEPTIONS (§7.4(a), §8(a), amended
+// 2026-09-01). The badge does not mount for a `live` socket with no fault, and
+// the counter does not mount for a history whose latest page is the one on
+// screen. Neither fact leaves the panel: `data-stream`, `data-history-state`
+// and `data-history-pages` are on this panel's ROOT, unconditionally, which is
+// what §7.4(b) and §8(c) make the gates read in every state. `StreamHeader`
+// owns the row; `stream/streamChrome.ts` owns the two decisions, so each of
+// them has exactly one place it is made.
 //
 // THE COMPOSER'S CITATION IS STRUCK. This file used to state "§9 puts prompting
 // in Stage 5", and §9 does not: it is titled "Stage 5 — editing", its four
@@ -53,7 +62,7 @@ import { WorkspaceError } from "../../api/client";
 import { attachProjection, type AttachProjection } from "../../api/attach";
 import { refreshAfterTurn } from "../../api/refresh";
 import { processGone, runtimeFaultOf, type RuntimeFault } from "../../stream/runtimeFault";
-import { sessionCannotPrompt } from "../../stream/sessionPrompt";
+import { sessionCannotPrompt } from "../../stream/sessionPromptGate";
 import {
   createSession,
   fetchSessions,
@@ -63,7 +72,7 @@ import {
 } from "../../api/sessions";
 import { useParts } from "../../api/queries";
 import { copy } from "../../copy";
-import { Badge, Button, EmptyState, tabControlId, type BadgeStatus } from "../../system";
+import { Button, EmptyState, tabControlId } from "../../system";
 import { useWorkspace, workspaceStore } from "../../state/react";
 import { sessionEmptyBody, sessionEmptyKind } from "../../stream/sessionEmpty";
 import { useStream } from "../../stream/useStream";
@@ -71,7 +80,8 @@ import { useFollowScroll } from "../../stream/followScroll";
 import { sessionPromptStore } from "../../stream/sessionPrompts";
 import { titleForSession } from "../../stream/sessionTitle";
 import { Composer, NewSessionAction } from "./Composer";
-import { SessionTabs } from "./SessionTabs";
+import { SessionCreateAction, SessionTabs } from "./SessionTabs";
+import { StreamHeader } from "./StreamHeader";
 import { Transcript } from "./Transcript";
 import styles from "./Stream.module.css";
 
@@ -80,22 +90,6 @@ const SESSIONS_STALE_MS = 5_000;
 
 const EMPTY_SESSIONS: readonly SessionRow[] = [];
 const EMPTY_PROFILES: readonly ProfileCapability[] = [];
-
-/**
- * §7.4's five stream states onto §4.7's six-value badge vocabulary.
- *
- * `reconnecting` and `resyncing` are both "the plumbing is working on it" and
- * share the error hue; they are told apart by the WORD, which is the carrier
- * §3.13.2 requires and the one the shipped colour-plus-border pill leaned on
- * least.
- */
-const STREAM_STATUS: Readonly<Record<string, BadgeStatus>> = {
-  live: "pass",
-  reconnecting: "error",
-  resyncing: "error",
-  historical: "info",
-  detached: "not_run",
-};
 
 export function StreamPanel(): React.JSX.Element {
   const selected = useWorkspace((s) => s.session);
@@ -258,73 +252,49 @@ export function StreamPanel(): React.JSX.Element {
     [client],
   );
 
+  // The worded pair, kept for the two surfaces §7.1(b)(1) leaves it on: the
+  // empty-list invitation (§7A.2 — "there is no strip to hang an icon on") and
+  // the runtime-fault band, which the clause's own render condition excludes
+  // from the `+` by name ("no runtime fault") and which §4.7 keeps loud.
   const createAction = (
     <NewSessionAction profiles={profiles} part={part} pending={creating} onCreate={create} />
   );
+  // §7.1(b): beside a drawn tab strip the pair is ONE icon-only `+` at the end
+  // of the strip, under exactly the condition the pair rendered under before.
+  const stripCreate =
+    fault === null && (cannotPrompt || rows.length > 0) ? (
+      <SessionCreateAction profiles={profiles} part={part} pending={creating} onCreate={create} />
+    ) : null;
   const emptyInvitation = !unavailable && rows.length === 0 && sessions.isFetched;
 
   return (
     <div
       className={styles["panel"]}
       data-testid="stream-panel"
+      // §7.4(b) and §8(c): the socket's own answer, the history read's state and
+      // its page count ride on the panel root in EVERY state, because the drawn
+      // row is now an exception and a gate cannot read a row that is not there.
+      // These three are the durable hooks; nothing about them is conditional.
+      data-stream={stream.status}
+      data-history-state={stream.history.state}
+      data-history-pages={stream.history.pages}
       {...(emptyInvitation ? { "data-stream-empty": "" } : {})}
       {...(cannotPrompt ? { "data-session-cannot-prompt": "" } : {})}
     >
       {/* The column's name is already on the shell's own header row; repeating
           it here would put "Agent" twice above one transcript. This row carries
-          §7.4's stream state, which is the fact the header exists to show — and
-          it exists only when there is a session to have one. With none, an empty
-          32px strip with a rule under it is furniture in a column that needs
-          the height, and an `historical` pill over an empty well reads as a
-          state the operator has to resolve rather than an invitation to start. */}
+          §7.4's stream state and §8's page count — and, since 2026-09-01, it
+          carries them only when one of them is an exception, so the steady state
+          spends no height on a badge saying nothing is wrong. With no session
+          there is nothing to report at all. `StreamHeader` returns null when the
+          row would be empty; `agent_unavailable` has no history to count. */}
       {selected === null ? null : (
-        <div className={styles["header"]}>
-          {/* §8's page counter, on the header rather than in a bordered row of
-              its own. At 1280×800 the well is 420px wide and every full-width
-              row with a rule under it is height the transcript does not get;
-              "1 page of recorded transcript" did not need one.
-              `data-history-state` and `data-history-pages` are unmoved as
-              attributes, which is what both gates read. */}
-          {!unavailable ? (
-            <span className={styles["historyBar"]} data-history-state={stream.history.state}>
-              {/* A failed read has no count to report, and "0 pages" beside a
-                  stated failure claims a number the load never reached. The
-                  attribute still carries the count the panel actually has. */}
-              <span data-history-pages={stream.history.pages}>
-                {stream.history.state === "failed"
-                  ? copy.stream.historyFailed
-                  : stream.history.state === "loading" && stream.history.pages === 0
-                    ? copy.stream.historyLoading
-                    : copy.stream.historyPages(stream.history.pages)}
-              </span>
-            </span>
-          ) : null}
-
-          {/* §7.4's five states as a `Badge`, so the state carries an icon and a
-              word like every other status. `data-stream-state` is unchanged and
-              stays on the styled element, which is the primitive's own (§3.4).
-
-              When a runtime fault is known the badge shows THAT, because it is
-              the fact that changes what the operator does next. The attribute
-              keeps the socket's own answer — both are true, and a reader
-              inspecting the DOM should be able to tell them apart. */}
-          <Badge
-            status={fault !== null ? "error" : (STREAM_STATUS[stream.status] ?? "info")}
-            title={
-              fault !== null
-                ? copy.stream.runtimeFaultWhy[fault]
-                : copy.stream.stateWhy[stream.status]
-            }
-            data-stream-state={stream.status}
-          >
-            {fault !== null ? copy.stream.runtimeFault[fault] : copy.stream.state[stream.status]}
-          </Badge>
-          {stream.resyncs > 0 ? (
-            <span className={styles["resyncCount"]} data-resync-count={stream.resyncs}>
-              {stream.resyncs}
-            </span>
-          ) : null}
-        </div>
+        <StreamHeader
+          status={stream.status}
+          fault={fault}
+          history={unavailable ? null : stream.history}
+          resyncs={stream.resyncs}
+        />
       )}
 
       {/* §3.3's principle 5: "The agent is a peer surface, and its emptiness
@@ -351,8 +321,17 @@ export function StreamPanel(): React.JSX.Element {
             aria-live="polite"
           >
             <span className={styles["faultTitle"]}>{copy.stream.runtimeFaultTitle}</span>
-            <span>{copy.stream.runtimeFaultWhy[fault]}</span>
-            <span className={styles["note"]}>{copy.stream.runtimeFaultNext}</span>
+            {/* §7.4(d), amended 2026-09-01: the grade in one sentence, the
+                mechanism on `title`. The paragraph is not deleted — a reader
+                who wants to know what a restart did to the turn in flight asks
+                for it, and the band stops spending four lines saying it to a
+                reader who does not. */}
+            <span title={copy.stream.runtimeFaultDetail[fault]}>
+              {copy.stream.runtimeFaultWhy[fault]}
+            </span>
+            <span className={styles["note"]} title={copy.stream.runtimeFaultNextDetail}>
+              {copy.stream.runtimeFaultNext}
+            </span>
             {/* Primary recovery is New session, never Send again. No reconnect
                 wizard — no route backs one. */}
             {createAction}
@@ -386,22 +365,27 @@ export function StreamPanel(): React.JSX.Element {
           )
         ) : !unavailable ? (
           <>
+            {/* §7A.2 / #70: both create affordances stay reachable after the
+                first session exists. Send does not create a session. When
+                the current tab cannot prompt, the create is the recovery,
+                not only the empty-list invitation. The fault band already
+                carries it when a runtime fault is showing.
+
+                §7.1(b), amended: it rides IN the strip as a `+` rather than as
+                a band under it, so "New session" and "Ask about <part>" are not
+                printed a second time beneath a list whose every row is already
+                a session. */}
             <SessionTabs
               tabs={tabs}
               sessions={rows}
               selected={selected}
               bounded={stream.threadBounded}
               panelId="transcript-panel"
+              create={stripCreate}
               onSelect={(sessionId) => {
                 workspaceStore.update({ session: sessionId });
               }}
             />
-            {/* §7A.2 / #70: both create affordances stay reachable after the
-                first session exists. Send does not create a session. When
-                the current tab cannot prompt, the pair is the recovery,
-                not only the empty-list invitation. The fault band already
-                carries it when a runtime fault is showing. */}
-            {fault === null && (cannotPrompt || rows.length > 0) ? createAction : null}
           </>
         ) : null}
 

@@ -5,10 +5,13 @@
 // has no parts (INTERFACE.md §7A.2). A selected part with "There is no part
 // yet" is a lie.
 
+import { readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { copy } from "../src/copy";
 import { sessionEmptyBody, sessionEmptyKind } from "../src/stream/sessionEmpty";
-import { sessionCannotPrompt } from "../src/stream/sessionPrompt";
+import { sessionCannotPrompt } from "../src/stream/sessionPromptGate";
 
 describe("session empty-state copy — honest about parts", () => {
   it("claims there is no part only when the project has none", () => {
@@ -68,5 +71,36 @@ describe("the current tab cannot take a prompt (#43)", () => {
         streamReason: "agent_unavailable",
       }),
     ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §7.1(c) — the one-character filename confusion, repaired
+//
+// `stream/sessionPrompt.ts` (the gate) and `stream/sessionPrompts.ts` (the
+// remembered-first-line store) differed by a trailing `s` and were imported
+// side by side in `StreamPanel.tsx`. The gate is now `sessionPromptGate.ts`.
+// The rename is mechanical — `sessionCannotPrompt` is imported above under the
+// new path, unchanged — so the test worth having is the RULE, not the pair:
+// a build in which two modules under `stream/` differ only by a trailing `s`
+// fails this clause, whatever they are called.
+
+describe("§7.1(c) — no two stream modules differ only by a trailing s", () => {
+  it("finds no such pair", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const names = readdirSync(join(here, "../src/stream"))
+      .filter((name) => name.endsWith(".ts"))
+      .map((name) => name.slice(0, -".ts".length));
+    const set = new Set(names);
+    for (const name of names) {
+      expect(
+        name.endsWith("s") && set.has(name.slice(0, -1)),
+        `stream/${name}.ts and stream/${name.slice(0, -1)}.ts differ only by a trailing s`,
+      ).toBe(false);
+    }
+    // …and the rename itself landed.
+    expect(set.has("sessionPromptGate")).toBe(true);
+    expect(set.has("sessionPrompt")).toBe(false);
+    expect(set.has("sessionPrompts")).toBe(true);
   });
 });

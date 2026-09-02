@@ -29,6 +29,16 @@
 // how many solids are visible. §7A.3 draws exactly that line and the server's
 // composed block draws it again in words.
 
+// AMENDED 2026-09-01 (§0.2b, §7A.3(a)-(e)). The envelope's *content* rules
+// above are unchanged in every particular — the closed field list, the three
+// stated WHYs, the "references, never facts" tightening. What is added is
+// `summaryFor`, the pure projection behind the composer's **resting one-line
+// summary**: the same members, in a fixed drawn order, with the remainder
+// counted rather than drawn. It re-words nothing and computes nothing; the only
+// arithmetic is `+N`, a count of the client's own envelope members and not a
+// measurement of anything in the model (the same line §7A.3 already draws for
+// `hidden_labels`).
+
 import type { ContextEnvelope, ContextMember } from "../api/sessions";
 import type { WorkspaceState } from "../state/workspace";
 
@@ -189,4 +199,118 @@ export function envelopeFor(
     envelope.focus !== undefined ||
     (added.has("view") && envelope.view !== undefined);
   return namesAReference ? envelope : null;
+}
+
+// ---------------------------------------------------------------------------
+// §7A.3(a)-(e) — the resting summary line
+// ---------------------------------------------------------------------------
+
+/**
+ * The order the resting line names members in (§7A.3(a)).
+ *
+ * `part`, `artifact_ref`, the `stage_tab`/`inspector_tab` pair and `view` are
+ * **drawn**; everything after `view` is **counted** into `+N`. `pin_mode` is
+ * absent for the same reason it has no chip: it is not an independently
+ * addressable member, it qualifies `artifact_ref` and travels with it.
+ */
+export const SUMMARY_ORDER: readonly ContextMember[] = [
+  "part",
+  "artifact_ref",
+  "stage_tab",
+  "inspector_tab",
+  "view",
+  "selection",
+  "explode_t",
+  "section_plane",
+  "hidden_labels",
+  "focus",
+];
+
+/** The members the line draws in full; the rest are counted (§7A.3(a)). */
+const DRAWN: ReadonlySet<ContextMember> = new Set<ContextMember>([
+  "part",
+  "artifact_ref",
+  "stage_tab",
+  "inspector_tab",
+  "view",
+]);
+
+/**
+ * One drawn token on the resting line.
+ *
+ * `text` is the value **as the envelope carries it**; abbreviation is the
+ * component's job, because `formatRef` is a rendering and this module is the
+ * decision. `abbreviate` says which tokens §4.1(a)'s ref shortening applies to.
+ */
+export interface SummaryToken {
+  /** The member that produced it. The stage/inspector pair is keyed `stage_tab`. */
+  readonly key: ContextMember;
+  readonly text: string;
+  readonly abbreviate: boolean;
+}
+
+/**
+ * What the resting line says, and what `data-context-keys` publishes.
+ *
+ * `keys` is **the envelope's own member keys**, in :data:`SUMMARY_ORDER`, with
+ * `pin_mode` folded into the `artifact_ref` it qualifies. §7A.3(d)'s testable is
+ * that this list, the envelope `POST /prompt` would send, and the chips'
+ * `data-context-key` set once the disclosure is open all name the same members.
+ */
+export interface ContextSummary {
+  readonly keys: readonly ContextMember[];
+  readonly tokens: readonly SummaryToken[];
+  /** Members present in the envelope but past `view` in the drawn order. */
+  readonly remaining: number;
+  /**
+   * Members the operator excluded (§7A.3(e)).
+   *
+   * An exclusion is a fact about what is being sent — "the agent will not be
+   * told about the selection" — so it stays visible on the resting line rather
+   * than taking the quiet path the implied envelope gets.
+   */
+  readonly removed: readonly ContextMember[];
+}
+
+/**
+ * The resting line for one envelope, plus the exclusions that shaped it.
+ *
+ * `offered` is `chipsFor`'s complete enumeration: a member the workspace could
+ * have carried. A member in `offered` and in `dropped` was excluded, and §7A.3(e)
+ * says the line says so.
+ */
+export function summaryFor(
+  envelope: ContextEnvelope | null,
+  offered: readonly ContextChip[],
+  dropped: ReadonlySet<ContextMember>,
+): ContextSummary {
+  const present = (key: ContextMember): boolean =>
+    envelope !== null && envelope[key] !== undefined;
+  const keys = SUMMARY_ORDER.filter(present);
+
+  const tokens: SummaryToken[] = [];
+  if (present("part")) tokens.push({ key: "part", text: String(envelope?.part), abbreviate: false });
+  if (present("artifact_ref")) {
+    tokens.push({ key: "artifact_ref", text: String(envelope?.artifact_ref), abbreviate: true });
+  }
+  // ONE token for the two navigation tabs (§7A.3(a)): "the `stage_tab` /
+  // `inspector_tab` pair as one `stage/inspector` pair". Either half can be
+  // dropped on its own, so the pair degrades to whichever half survives rather
+  // than printing a placeholder for a member the envelope does not carry.
+  const stage = present("stage_tab") ? String(envelope?.stage_tab) : null;
+  const inspector = present("inspector_tab") ? String(envelope?.inspector_tab) : null;
+  if (stage !== null || inspector !== null) {
+    tokens.push({
+      key: stage !== null ? "stage_tab" : "inspector_tab",
+      text: stage !== null && inspector !== null ? `${stage}/${inspector}` : (stage ?? inspector ?? ""),
+      abbreviate: false,
+    });
+  }
+  if (present("view")) tokens.push({ key: "view", text: String(envelope?.view), abbreviate: false });
+
+  const remaining = keys.filter((key) => !DRAWN.has(key)).length;
+  const offeredKeys = new Set(offered.map((chip) => chip.key));
+  const removed = SUMMARY_ORDER.filter((key) => offeredKeys.has(key) && dropped.has(key));
+
+  return { keys, tokens, remaining, removed };
 }

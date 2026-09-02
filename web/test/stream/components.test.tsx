@@ -20,6 +20,7 @@ import { describe, expect, it } from "vitest";
 import { readToolResult } from "../../src/api/events";
 import { SessionTabs } from "../../src/components/stream/SessionTabs";
 import { Transcript } from "../../src/components/stream/Transcript";
+import { copy } from "../../src/copy";
 import { parseToolResult } from "../../src/stream/toolResult";
 import {
   groupRows,
@@ -269,6 +270,38 @@ describe("the transcript's honesty rows (§8, §7.4)", () => {
     expect(document_.querySelector('[data-absence="terminal"]')?.textContent ?? "").toContain(
       "no run-end band",
     );
+  });
+
+  /*
+   * §8(d) and §7.4(d), amended 2026-09-01 — shortened, not deleted.
+   *
+   * Both halves are asserted here because only one of them is obvious. That
+   * the drawn sentence is short is what the amendment asked for; that the
+   * paragraph is still reachable is what keeps the change from being the
+   * deletion §8's absence rule forbids. A build that dropped `absenceDetail`
+   * would pass every assertion above this block.
+   */
+  it("draws the short absence sentence and keeps the long form on title", () => {
+    const document_ = renderRows(panelRows(historyItems, []));
+    const terminal = document_.querySelector('[data-absence="terminal"]');
+    expect(terminal?.textContent).toBe(copy.stream.absence.terminal);
+    expect(terminal?.getAttribute("title")).toBe(copy.stream.absenceDetail.terminal);
+    // The notice renders exactly once, in place — §8(d) re-affirms that.
+    expect(document_.querySelectorAll('[data-absence="terminal"]')).toHaveLength(1);
+    const prompts = document_.querySelector('[data-absence="user_prompt"]');
+    expect(prompts?.getAttribute("title")).toBe(copy.stream.absenceDetail.user_prompt);
+  });
+
+  it("keeps the break's verdict drawn and its mechanism on title", () => {
+    const rows = panelRows(historyItems, [
+      ...liveEntries,
+      { entry: "break", resync: { key: "resync:2", outcome: "gap", after: null } },
+    ]);
+    const marker = renderRows(rows).querySelector("[data-resync]");
+    // §7.4(c): nothing here permits a silent gap. The drawn line still says
+    // the events are not recovered; the two-namespace reason is the title.
+    expect(marker?.textContent ?? "").toContain("are not recovered");
+    expect(marker?.getAttribute("title")).toBe(copy.stream.resyncDetail.gap);
   });
 
   it("renders the live terminal band with its outcome", () => {

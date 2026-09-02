@@ -25,9 +25,9 @@
 // "New session". The UUID stays on `title` / `data-session-id`. History omits
 // prompts, so the first line is remembered on Send (`sessionPrompts.ts`).
 
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { copy } from "../../copy";
-import type { SessionRow } from "../../api/sessions";
+import type { ProfileCapability, SessionRow } from "../../api/sessions";
 import type { ThreadTab } from "../../stream/thread";
 import { originPart } from "../../stream/thread";
 import { sessionPromptStore } from "../../stream/sessionPrompts";
@@ -37,7 +37,7 @@ import {
   sessionTabMeta,
   sessionTitleAttr,
 } from "../../stream/sessionTitle";
-import { TabBar } from "../../system";
+import { Button, Popover, TabBar } from "../../system";
 import styles from "./Stream.module.css";
 
 export interface SessionTabsProps {
@@ -48,6 +48,12 @@ export interface SessionTabsProps {
   readonly bounded: boolean;
   /** The transcript `tabpanel` this list controls (#68). */
   readonly panelId?: string | undefined;
+  /**
+   * §7.1(b): the create affordance, as the strip's LAST ITEM rather than as a
+   * band under it. The panel decides whether it renders at all; the strip only
+   * decides where it sits. `undefined` is the state where the panel says no.
+   */
+  readonly create?: ReactNode;
 }
 
 function labelFor(
@@ -73,6 +79,7 @@ export function SessionTabs({
   onSelect,
   bounded,
   panelId,
+  create,
 }: SessionTabsProps): React.JSX.Element {
   const byId = new Map(sessions.map((row) => [row.session_id, row]));
   const selectedId = selected ?? tabs[0]?.session_id ?? "";
@@ -96,11 +103,12 @@ export function SessionTabs({
 
   return (
     <div className={styles["tabs"]}>
-      {/* A heading over a list of one is a label for something the reader can
-          already see. It appears once there is a choice to make. */}
-      {tabs.length > 1 ? (
-        <h2 className={styles["tabsHeading"]}>{copy.stream.sessionsHeading}</h2>
-      ) : null}
+      {/* §7.1(a), amended 2026-09-01: THE HEADING DOES NOT RENDER, in any state.
+          It was an `<h2>` over a list whose `aria-label` is the same string —
+          the word "session" printed twice above a strip whose every row is one.
+          `copy.stream.sessionsHeading` survives as that label below, so the
+          landmark and the accessible name are unchanged; what is dropped is the
+          visible duplicate, which §3.13 does not count as removing a name. */}
       {bounded ? <p className={styles["note"]}>{copy.stream.threadBounded}</p> : null}
       <TabBar
         attr="data-session-tab"
@@ -135,6 +143,143 @@ export function SessionTabs({
           };
         })}
       />
+      {/* The strip's last item (§7.1(b)). Outside the `tablist`, because a
+          create is not a session and a roving tabindex over the tabs must not
+          walk onto it. */}
+      {create === undefined || create === null ? null : (
+        <div className={styles["tabsCreate"]}>{create}</div>
+      )}
+    </div>
+  );
+}
+
+export interface SessionCreateActionProps {
+  readonly profiles: readonly ProfileCapability[];
+  readonly part: string | null;
+  readonly pending: boolean;
+  readonly onCreate: (profile: "orchestrator" | "part", part: string | null) => void;
+}
+
+/**
+ * §7.1(b): the two create affordances as ONE icon-only `+` at the end of the
+ * session strip.
+ *
+ * The wording is not printed twice. `New session` and `Ask about <part>` are
+ * the `+`'s two menu entries and the menu is drawn **only while open**; with no
+ * part selected there is one entry, and the `+` activates it directly rather
+ * than opening a one-item menu — a menu whose only job is to be dismissed is a
+ * click that reports nothing.
+ *
+ * The hooks are unmoved: `[data-session-create]` addresses the new-session
+ * action and `[data-session-ask]` the part-scoped one, wherever they live —
+ * on the `+` itself in the one-entry case, on the entries in the two-entry one.
+ * `data-create-profile` is unchanged and still names the profile the POST will
+ * carry, so a gate that addressed either action by name still finds it.
+ *
+ * The capability list is decoration, not a gate: `POST /sessions` does not need
+ * it, and a 500 on the document that reported a runtime fault leaves
+ * `profiles = []`. Hiding the create then would kill the one §7A.2 affordance
+ * with the read that reported the failure (#43).
+ */
+export function SessionCreateAction({
+  profiles,
+  part,
+  pending,
+  onCreate,
+}: SessionCreateActionProps): React.JSX.Element {
+  const [open, setOpen] = useState(false);
+  const orchestrator = profiles.find((row) => row.profile === "orchestrator");
+  const partProfile = profiles.find((row) => row.profile === "part");
+  const newSessionWhy =
+    orchestrator === undefined
+      ? copy.composer.createOrchestrator
+      : copy.composer.profileWhat(
+          orchestrator.profile,
+          orchestrator.can_delegate,
+          orchestrator.part_scoped,
+        );
+  const askWhy =
+    part === null
+      ? null
+      : partProfile === undefined
+        ? copy.composer.createPart(part)
+        : copy.composer.profileWhat(
+            partProfile.profile,
+            partProfile.can_delegate,
+            partProfile.part_scoped,
+          );
+  const disablement = pending
+    ? ({ disabled: true as const, reason: copy.composer.sending } as const)
+    : ({} as const);
+
+  if (part === null) {
+    return (
+      <Button
+        variant="quiet"
+        icon="plus"
+        iconLabel={copy.composer.createOrchestrator}
+        title={newSessionWhy}
+        onClick={() => {
+          onCreate("orchestrator", null);
+        }}
+        data-session-create=""
+        data-create-profile="orchestrator"
+        {...disablement}
+      />
+    );
+  }
+
+  return (
+    <div className={styles["tabsCreateAnchor"]}>
+      <Button
+        variant="quiet"
+        icon="plus"
+        iconLabel={copy.stream.createMenu}
+        title={copy.stream.createMenu}
+        expanded={open}
+        onClick={() => {
+          setOpen((was) => !was);
+        }}
+        data-session-create-menu=""
+        {...disablement}
+      />
+      <Popover
+        open={open}
+        onClose={() => {
+          setOpen(false);
+        }}
+        label={copy.stream.createMenu}
+        variant="popover"
+        className={styles["createMenu"]}
+        data-session-create-open=""
+      >
+        <Button
+          variant="quiet"
+          title={newSessionWhy}
+          onClick={() => {
+            setOpen(false);
+            onCreate("orchestrator", null);
+          }}
+          data-session-create=""
+          data-create-profile="orchestrator"
+          {...disablement}
+        >
+          {copy.composer.createOrchestrator}
+        </Button>
+        <Button
+          variant="quiet"
+          title={askWhy ?? ""}
+          onClick={() => {
+            setOpen(false);
+            onCreate("part", part);
+          }}
+          data-session-ask=""
+          data-create-profile="part"
+          {...disablement}
+        >
+          {copy.composer.createPart(part)}
+        </Button>
+      </Popover>
     </div>
   );
 }

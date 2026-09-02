@@ -181,9 +181,14 @@ describe("§3.14 — the other two status vocabularies keep the same recipe", ()
 });
 
 describe("§3.12 — the sprite is closed and every id it names resolves", () => {
-  it("names exactly 18 ids", () => {
-    expect(ICON_IDS).toHaveLength(18);
-    expect(new Set(ICON_IDS).size).toBe(18);
+  it("names exactly 19 ids", () => {
+    // 18 until 2026-09-01, when §3.12 recorded `plus` as a spec edit: §7.1(b)'s
+    // amended create affordance is "a single icon-only `+` control" and no id in
+    // the closed 18 drew a plus. The count is asserted here because §3.12 states
+    // it in prose, and the two must not drift.
+    expect(ICON_IDS).toHaveLength(19);
+    expect(new Set(ICON_IDS).size).toBe(19);
+    expect(ICON_IDS).toContain("plus");
   });
 
   it("draws exactly one path per icon, with no embedded colour", () => {

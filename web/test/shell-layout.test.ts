@@ -10,6 +10,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { copy } from "../src/copy";
 import { formatRef } from "../src/system";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -74,5 +75,59 @@ describe("left rail — no dead band between the section list and Working tree",
     const tree = css("components/rail/ProjectTree.module.css");
     expect(tree).toMatch(/\.panel\s*\{[^}]*flex:\s*none/);
     expect(tree).toMatch(/\.panel\s*\{[^}]*align-content:\s*start/);
+  });
+});
+
+/*
+ * §4.1(f) + §19 item 42, amended 2026-09-01 — repair (b).
+ *
+ * The breakpoint prose promised "a docked strip with an unread count" and
+ * nothing ever built one. The amendment does not build it either: it WITHDRAWS
+ * the clause, for two stated reasons — the strip is a control that expands on
+ * focus (§4.1(a), §7A.1), so a badge on it would be a number on a thing whose
+ * only job is to stop existing; and "unread" is not a fact this product has,
+ * since live events are keyed `(run_id, seq)` and historical ones
+ * `(session_id, ordinal)` with no read watermark on either side, so a count
+ * would be client-side derived state (§1).
+ *
+ * "Normative now: the collapsed Stream strip renders the collapsed strip and
+ * nothing else — no count, no dot, no badge." A deferral with no assertion is
+ * how the original clause rotted, so the deferral gets one: this is the test
+ * that fails when someone adds the badge back without re-entering §19.42.
+ */
+describe("§4.1(f) — the collapsed strip renders no count", () => {
+  function source(relative: string): string {
+    return readFileSync(join(webSrc, relative), "utf8");
+  }
+
+  const shell = source("components/Shell.tsx");
+  const strip = shell.slice(shell.indexOf("data-stream-strip"), shell.indexOf("</aside>"));
+
+  it("draws the control and its name, and nothing that reports a number", () => {
+    expect(strip).toContain("<Icon");
+    expect(strip).toContain("stripLabel");
+    // No Badge, no count, no unread vocabulary. The strip's whole content is
+    // the icon and the vertical name of the column it expands.
+    expect(strip).not.toMatch(/<Badge/);
+    expect(strip).not.toMatch(/unread/i);
+    expect(strip).not.toMatch(/data-(unread|stream-count|stream-unread)/);
+    expect(strip).not.toMatch(/\.length\b/);
+  });
+
+  it("has no dot or badge in the strip's own stylesheet", () => {
+    // A count does not have to be a number to be a count: §4.1(f) forbids the
+    // dot too, which is the shape this would come back as.
+    const styles = css("components/Shell.module.css");
+    const block = styles.slice(styles.indexOf(".strip"), styles.indexOf(".stripLabel"));
+    expect(block).not.toMatch(/::(before|after)/);
+    expect(block).not.toMatch(/border-radius:\s*50%/);
+  });
+
+  it("keeps no unread copy for it to draw", () => {
+    // The withdrawn clause left no string behind either — a copy key waiting
+    // for a control is the dead surface §0.2b's repair (c) is about. (The
+    // word itself survives in `unknownKind`, where "shown unread" describes an
+    // event outside the vocabulary; it is the KEY that would be the surface.)
+    expect(Object.keys(copy.stream).filter((key) => /unread/i.test(key))).toEqual([]);
   });
 });

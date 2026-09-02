@@ -29,12 +29,20 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
-import { SessionTabs } from "../../src/components/stream/SessionTabs";
+import { SessionCreateAction, SessionTabs } from "../../src/components/stream/SessionTabs";
+import { StreamHeader } from "../../src/components/stream/StreamHeader";
 import { copy } from "../../src/copy";
 import { sessionPromptStore } from "../../src/stream/sessionPrompts";
 import { applySessionDocumentTitle } from "../../src/stream/sessionTitle";
-import { RUNTIME_FAULTS } from "../../src/stream/runtimeFault";
-import type { SessionRow } from "../../src/api/sessions";
+import { RUNTIME_FAULTS, type RuntimeFault } from "../../src/stream/runtimeFault";
+import {
+  EXCEPTIONAL_STREAM_STATES,
+  showsHistoryBar,
+  showsStreamBadge,
+} from "../../src/stream/streamChrome";
+import type { HistoryProgress } from "../../src/stream/history";
+import type { StreamState } from "../../src/stream/transcript";
+import type { ProfileCapability, SessionRow } from "../../src/api/sessions";
 import type { ThreadTab } from "../../src/stream/thread";
 
 const webSrc = join(dirname(fileURLToPath(import.meta.url)), "../../src");
@@ -92,13 +100,16 @@ describe("a runtime fault is named, and does not masquerade as a stream state", 
   const panel = source("components/stream/StreamPanel.tsx");
 
   it("keeps §7.4's closed vocabulary out of the fault's way", () => {
-    // No sixth stream state, and `data-stream-state` still carries the socket's
-    // own answer — which the e2e reads by name (`stream.spec.ts` G4.8).
+    // No sixth stream state. `data-stream-state` still carries the socket's own
+    // answer wherever the badge is drawn (§7.4(b)) — and since the badge is now
+    // exception-only, the panel root carries the same answer in EVERY state,
+    // which is what the e2e reads by name (`stream.spec.ts` G4.8).
     const states = source("stream/transcript.ts");
     expect(states).toMatch(
       /STREAM_STATES = \[\s*"live",\s*"reconnecting",\s*"resyncing",\s*"historical",\s*"detached",\s*\]/,
     );
-    expect(panel).toContain("data-stream-state={stream.status}");
+    expect(source("components/stream/StreamHeader.tsx")).toContain("data-stream-state={status}");
+    expect(panel).toContain("data-stream={stream.status}");
     expect(panel).not.toContain('data-stream-state="runtime');
   });
 
@@ -109,9 +120,11 @@ describe("a runtime fault is named, and does not masquerade as a stream state", 
 
   it("shows the fault on the badge instead of the socket state", () => {
     // The badge is what the operator reads; `live` beside a dead run is the
-    // one true thing that does not matter.
-    expect(panel).toMatch(/status=\{fault !== null \? "error"/);
-    expect(panel).toMatch(/fault !== null \? copy\.stream\.runtimeFault\[fault\]/);
+    // one true thing that does not matter. The row moved to `StreamHeader`
+    // (§7.4(a)), and the fault is still what it draws.
+    const header = source("components/stream/StreamHeader.tsx");
+    expect(header).toMatch(/status=\{fault !== null \? "error"/);
+    expect(header).toMatch(/fault !== null \? copy\.stream\.runtimeFault\[fault\]/);
   });
 
   it("has one sentence per fault grade, and no grade without one", () => {
@@ -170,10 +183,16 @@ describe("the well spends its height on the transcript", () => {
   const panel = source("components/stream/StreamPanel.tsx");
   const stream = css("components/stream/Stream.module.css");
 
-  it("folds §8's page counter onto the header row it shares with the state", () => {
-    // The attributes both gates read are unmoved; only the row is.
+  it("keeps §8's page count on the panel root, where the gates read it", () => {
+    // §8(c): `data-history-state` and `data-history-pages` are unconditionally
+    // mounted on the panel root, so dropping the drawn row drops no fact. They
+    // are minted once each — a second copy on the row would give a gate two
+    // answers, and the row is now the half that can be absent.
     expect(panel).toContain("data-history-state={stream.history.state}");
     expect(panel).toContain("data-history-pages={stream.history.pages}");
+    expect(panel.match(/data-history-state=/g) ?? []).toHaveLength(1);
+    expect(panel.match(/data-history-pages=/g) ?? []).toHaveLength(1);
+    expect(source("components/stream/StreamHeader.tsx")).not.toContain("data-history-state=");
     expect(stream).not.toMatch(/\.historyBar\s*\{[^}]*border-bottom/);
     expect(stream).toMatch(/\.historyBar\s*\{[^}]*flex:\s*1 1 auto/);
   });
@@ -181,7 +200,7 @@ describe("the well spends its height on the transcript", () => {
   it("renders no header row at all with no session selected", () => {
     // An `historical` pill over an empty well is a state to resolve, and an
     // empty bordered strip is furniture; the empty well's content is an action.
-    expect(panel).toMatch(/\{selected === null \? null : \(\s*<div className=\{styles\["header"\]\}/);
+    expect(panel).toMatch(/\{selected === null \? null : \(\s*<StreamHeader/);
   });
 
   it("still keeps the composer as the panel's last child", () => {
@@ -193,14 +212,18 @@ describe("the well spends its height on the transcript", () => {
     expect(panel).toContain('data-stream-empty');
   });
 
-  it("does not mount NewSessionAction only when the session list is empty (#70)", () => {
-    // §7A.2's two create affordances stay reachable after the first session.
-    // One element, two call sites: the empty invitation *and* the tab stack.
+  it("keeps a create reachable after the first session exists (#70, §7.1(b))", () => {
+    // §7A.2's create stays reachable after the first session — but beside a
+    // drawn tab strip it is the strip's `+`, not a second worded band. The
+    // worded pair survives on the two surfaces §7.1(b)(1) leaves it on: the
+    // empty-list invitation and the runtime-fault band.
     expect(panel).toContain("const createAction");
     expect(panel).toContain("action={createAction}");
+    expect(panel).toContain("const stripCreate");
+    expect(panel).toMatch(/fault === null && \(cannotPrompt \|\| rows\.length > 0\)/);
+    expect(panel).toContain("create={stripCreate}");
     const afterTabs = panel.slice(panel.indexOf("<SessionTabs"));
-    expect(afterTabs).toContain("createAction");
-    expect(afterTabs).toContain("Send does not create a session");
+    expect(afterTabs).not.toContain("{createAction}");
   });
 
   it("focuses the composer after New session (#61)", () => {
@@ -214,8 +237,39 @@ describe("the well spends its height on the transcript", () => {
     expect(panel).toContain("useFollowScroll");
     expect(panel).toContain("data-transcript-scroll");
     expect(panel).toContain("data-jump-latest");
-    expect(panel).toContain("copy.stream.historyFailed");
+    expect(source("components/stream/StreamHeader.tsx")).toContain("copy.stream.historyFailed");
+  });
+
+  it("states a failed read in one string, and keeps no second spelling of it", () => {
+    // §7A.10(e)(2), amended 2026-09-01: `historyFailedShort` was `historyFailed`
+    // byte for byte and its only reader was the assertion that the panel did
+    // not render it. "A copy key that only a test reads is a string the product
+    // does not have", so the key is gone and the assertion is on the string the
+    // product does draw.
+    expect(Object.keys(copy.stream)).not.toContain("historyFailedShort");
+    expect(copy.stream.historyFailed).toBe("The recorded transcript could not be read.");
+    const header = source("components/stream/StreamHeader.tsx");
+    expect(header).not.toContain("historyFailedShort");
     expect(panel).not.toContain("historyFailedShort");
+  });
+});
+
+describe("§7A.10(e)(2) — copy keys with no importer are gone", () => {
+  it("removes the select-a-session pair, which nothing drew", () => {
+    // The panel with no session selected renders §7A.2's create invitation —
+    // "There is no session yet" and the two actions — not an instruction to
+    // pick one from a strip that may be empty. Neither key had an importer.
+    expect(Object.keys(copy.stream)).not.toContain("selectSessionTitle");
+    expect(Object.keys(copy.stream)).not.toContain("selectSession");
+    expect(source("components/stream/StreamPanel.tsx")).not.toMatch(/selectSession/);
+  });
+
+  it("keeps `sessionsHeading`, which §7.1(a) still needs as an accessible name", () => {
+    // The removal rule is "no importer", not "not drawn". This one is drawn
+    // nowhere and imported by the tab list's `aria-label`, and deleting it
+    // would take §3.13's accessible name with it.
+    expect(copy.stream.sessionsHeading).toBe("Sessions");
+    expect(source("components/stream/SessionTabs.tsx")).toContain("sessionsHeading");
   });
 });
 
@@ -224,7 +278,13 @@ describe("well leftover copy (#66, #74, #75)", () => {
     expect(copy.composer.contextKey.explode_t).toBe("explode");
     expect(copy.composer.contextKey.explode_t).not.toMatch(/explode t/i);
     expect(copy.stream.projectSession).toBe("project session");
-    expect(copy.composer.disclose).toBe("Composer preview");
+    // AMENDED 2026-09-01 (§7A.10(c)): one word each. The control is a compact
+    // quiet toggle attached to a line that already starts `Context:`, so
+    // "Composer preview" spent three words saying where it was. It is still a
+    // human word, which is what this test is about, and it is still not
+    // "What will the agent be told?".
+    expect(copy.composer.disclose).toBe("Preview");
+    expect(copy.composer.discloseHide).toBe("Hide");
     expect(copy.stream.historyFailed).toMatch(/could not be read/);
     expect(copy.composer.runInFlightHolder("Ask about kerf_card")).toContain("Ask about kerf_card");
     expect(copy.composer.runInFlightHolder("Ask about kerf_card")).not.toMatch(/session sess-/);
@@ -238,14 +298,23 @@ describe("the session tab row is a name, not three metadata strings", () => {
     expect(source("components/stream/SessionTabs.tsx")).toContain('layout="stack"');
   });
 
-  it("drops the heading over a list of one", () => {
+  it("draws no heading in any state, and keeps it as the list's name (§7.1(a))", () => {
+    // Both halves of the clause. The heading used to appear once there was a
+    // choice to make; the amendment strikes it outright, because the list's
+    // `aria-label` is the same string and a visible copy of an accessible name
+    // is the duplicate §0.2b measured — not the name itself.
     const one = tabsMarkup([tab()], [row()]);
-    expect(one.querySelector("h2")).toBeNull();
     const many = tabsMarkup(
       [tab(), tab({ session_id: "sess-child", parent_session_id: "sess-kerf", depth: 1 })],
       [row(), row({ session_id: "sess-child", part: "riser" })],
     );
-    expect(many.querySelector("h2")?.textContent).toBe(copy.stream.sessionsHeading);
+    for (const document_ of [one, many]) {
+      expect(document_.querySelector("h1,h2,h3,h4,h5,h6")).toBeNull();
+      expect(document_.body.textContent ?? "").not.toContain(copy.stream.sessionsHeading);
+      // §3.13's floor is unchanged: the name is still on the list.
+      const list = document_.querySelector("[role='tablist']");
+      expect(list?.getAttribute("aria-label")).toBe(copy.stream.sessionsHeading);
+    }
   });
 
   it("does not restate the indent as a word", () => {
@@ -286,9 +355,17 @@ describe("the composer is usable, and says how it is used", () => {
     expect(composer).not.toMatch(/overflow|Popover/);
   });
 
-  it("keeps Cancel rendered whether or not it is available (§7A.6)", () => {
+  // AMENDED 2026-09-01 (§7A.6, §7A.10(b)): Cancel MOUNTS rather than dims. The
+  // old reading — "rendered whether or not it is available" — was the shipped
+  // behaviour the amendment names as the defect: a disabled button standing in
+  // the action row for nearly all of the time. The fact stays: the state
+  // attribute is unconditional and its reason moved to the form's `title`.
+  it("mounts Cancel iff the state is available, and keeps the attribute (§7A.6)", () => {
     expect(composer).toContain('data-composer-cancel=""');
-    expect(composer).toMatch(/cancellable \? \{\} : \{ disabled: true as const, reason: cancelWhy \}/);
+    expect(composer).toMatch(/\{cancellable \? \(/);
+    expect(composer).toContain('data-cancel-state={cancellable ? "available" : "unavailable"}');
+    expect(composer).toMatch(/cancelWhy !== null \? \{ title: cancelWhy \}/);
+    expect(composer).not.toMatch(/data-composer-cancel[\s\S]{0,120}disabled: true as const/);
   });
 
   it("makes a run_in_flight refusal cancellable and typable, so it has an exit", () => {
@@ -409,5 +486,286 @@ describe("session tabs reuse TabBar keyboard (#62)", () => {
     });
     expect(seen).toEqual(["sess-child", "sess-other", "sess-kerf"]);
     expect(host.querySelector("ul[role='tablist']")).toBeNull();
+  });
+});
+
+// --------------------------------------------------------------------------
+// §7.4(a) and §8(a), amended 2026-09-01 — the header row is an exception
+//
+// Both clauses have an explicit negative half, so every assertion below comes
+// in a pair: the state that must draw the element, and the state that must not
+// mount it at all. `StreamHeader` is a pure function of its props, so the pair
+// is read from the DOM rather than from the panel's source text.
+
+function header(props: {
+  status?: StreamState;
+  fault?: RuntimeFault | null;
+  history?: HistoryProgress | null;
+  resyncs?: number;
+}): Document {
+  return parse(
+    renderToStaticMarkup(
+      <StreamHeader
+        status={props.status ?? "live"}
+        fault={props.fault ?? null}
+        history={props.history === undefined ? history({}) : props.history}
+        resyncs={props.resyncs ?? 0}
+      />,
+    ),
+  );
+}
+
+function history(patch: Partial<HistoryProgress>): HistoryProgress {
+  return { items: [], pages: 1, state: "complete", error: null, ...patch };
+}
+
+describe("the stream-state badge mounts only for an exceptional state (§7.4(a))", () => {
+  it("mounts nothing in the steady live state", () => {
+    const steady = header({ status: "live" });
+    expect(steady.querySelector("[data-stream-state]")).toBeNull();
+    // Not a muted one, not a dot: the row itself is gone when it holds nothing.
+    expect(steady.body.textContent).toBe("");
+    expect(steady.body.firstElementChild).toBeNull();
+  });
+
+  it("mounts exactly one badge for each of the four exceptional states", () => {
+    for (const status of EXCEPTIONAL_STREAM_STATES) {
+      const drawn = header({ status });
+      const badges = drawn.querySelectorAll("[data-stream-state]");
+      expect(badges, status).toHaveLength(1);
+      expect(badges[0]?.getAttribute("data-stream-state"), status).toBe(status);
+      expect(drawn.body.textContent ?? "", status).toContain(copy.stream.state[status]);
+    }
+  });
+
+  it("mounts one badge for a runtime fault under a live socket, and draws the fault", () => {
+    // The socket says `live` and is telling the truth; the sidecar is gone. The
+    // fault outranks the word, and the socket's own answer stays on the panel
+    // root's `data-stream` (asserted on the panel above).
+    for (const grade of RUNTIME_FAULTS) {
+      const drawn = header({ status: "live", fault: grade });
+      const badge = drawn.querySelector("[data-stream-state]");
+      expect(badge?.getAttribute("data-stream-state"), grade).toBe("live");
+      expect(badge?.textContent ?? "", grade).toBe(copy.stream.runtimeFault[grade]);
+      expect(badge?.getAttribute("title") ?? "", grade).toBe(copy.stream.runtimeFaultWhy[grade]);
+    }
+  });
+
+  it("decides the same thing in the predicate the row is drawn from", () => {
+    expect(showsStreamBadge("live", null)).toBe(false);
+    expect(showsStreamBadge("live", "unreachable")).toBe(true);
+    for (const status of EXCEPTIONAL_STREAM_STATES) {
+      expect(showsStreamBadge(status, null), status).toBe(true);
+    }
+  });
+});
+
+describe("the page counter mounts only when it is an exception (§8(a))", () => {
+  it("mounts nothing for a one-page, a no-page, or a loading history", () => {
+    for (const progress of [
+      history({ pages: 1, state: "complete" }),
+      history({ pages: 0, state: "complete" }),
+      history({ pages: 0, state: "loading" }),
+      history({ pages: 3, state: "loading" }),
+      // A multi-page history whose latest page is the one on screen: this
+      // client walks the cursor to `done` and renders every page it fetched.
+      history({ pages: 4, state: "complete" }),
+    ]) {
+      const drawn = header({ history: progress, status: "live" });
+      expect(drawn.querySelector("[data-history-bar]"), progress.state).toBeNull();
+      expect(drawn.body.textContent ?? "", progress.state).not.toContain(
+        copy.stream.historyPages(progress.pages),
+      );
+    }
+  });
+
+  it("mounts and stays loud when the read failed", () => {
+    const failed = header({ history: history({ pages: 0, state: "failed" }), status: "live" });
+    expect(failed.querySelector("[data-history-bar]")).not.toBeNull();
+    expect(failed.body.textContent ?? "").toContain(copy.stream.historyFailed);
+    // No count beside a stated failure: "0 pages" claims a number the load
+    // never reached. The panel root's attribute still carries what it has.
+    expect(failed.body.textContent ?? "").not.toContain(copy.stream.historyPages(0));
+  });
+
+  it("mounts when a bounded walk left recorded transcript above the prefix", () => {
+    const bounded = header({ history: history({ pages: 7, state: "truncated" }), status: "live" });
+    expect(bounded.querySelector("[data-history-bar]")).not.toBeNull();
+    expect(bounded.body.textContent ?? "").toContain(copy.stream.historyPages(7));
+  });
+
+  it("decides the same thing in the predicate the row is drawn from", () => {
+    expect(showsHistoryBar(history({ pages: 1, state: "complete" }))).toBe(false);
+    expect(showsHistoryBar(history({ pages: 9, state: "complete" }))).toBe(false);
+    expect(showsHistoryBar(history({ pages: 0, state: "loading" }))).toBe(false);
+    expect(showsHistoryBar(history({ pages: 9, state: "loading" }))).toBe(false);
+    expect(showsHistoryBar(history({ pages: 1, state: "truncated" }))).toBe(false);
+    expect(showsHistoryBar(history({ pages: 2, state: "truncated" }))).toBe(true);
+    expect(showsHistoryBar(history({ pages: 0, state: "failed" }))).toBe(true);
+  });
+
+  it("keeps §7.4(c)'s resync readout, which is an exception by construction", () => {
+    const resynced = header({ status: "live", resyncs: 2 });
+    expect(resynced.querySelector("[data-resync-count]")?.getAttribute("data-resync-count")).toBe(
+      "2",
+    );
+    expect(header({ status: "live", resyncs: 0 }).querySelector("[data-resync-count]")).toBeNull();
+  });
+
+  it("draws no counter at all when there is no history to count", () => {
+    // `agent_unavailable`: the panel has no session read to report on, and a
+    // count of a load that never started would be a fact the panel does not have.
+    expect(header({ history: null, status: "live" }).body.firstElementChild).toBeNull();
+  });
+});
+
+describe("the create affordance is one `+` in the strip (§7.1(b))", () => {
+  const profiles: readonly ProfileCapability[] = [
+    { profile: "orchestrator", can_delegate: true, part_scoped: false, requires_part: false },
+    { profile: "part", can_delegate: false, part_scoped: true, requires_part: true },
+  ];
+
+  function strip(part: string | null): Document {
+    return parse(
+      renderToStaticMarkup(
+        <SessionCreateAction
+          profiles={profiles}
+          part={part}
+          pending={false}
+          onCreate={() => undefined}
+        />,
+      ),
+    );
+  }
+
+  it("prints neither wording as a visible label while the strip is drawn", () => {
+    for (const part of [null, "kerf_card"]) {
+      const drawn = strip(part);
+      const text = drawn.body.textContent ?? "";
+      expect(text, String(part)).not.toContain(copy.composer.createOrchestrator);
+      expect(text, String(part)).not.toContain(copy.composer.createPart("kerf_card"));
+      // Icon-only: the label is the accessible name, not a word in the strip.
+      const button = drawn.querySelector("button");
+      expect(button?.getAttribute("aria-label") ?? "", String(part)).not.toBe("");
+    }
+  });
+
+  it("activates the one create directly when no part is selected", () => {
+    // A menu with one entry is a click that reports nothing. The `+` IS the
+    // action, and it keeps the hook that addresses it.
+    const drawn = strip(null);
+    expect(drawn.querySelectorAll("button")).toHaveLength(1);
+    const button = drawn.querySelector("[data-session-create]");
+    expect(button?.getAttribute("data-create-profile")).toBe("orchestrator");
+    expect(drawn.querySelector("[data-session-ask]")).toBeNull();
+    expect(drawn.querySelector("[data-session-create-open]")).toBeNull();
+  });
+
+  it("draws the menu only while open, with both hooks inside it", () => {
+    const closed = strip("kerf_card");
+    expect(closed.querySelectorAll("button")).toHaveLength(1);
+    expect(closed.querySelector("[data-session-create-menu]")?.getAttribute("aria-expanded")).toBe(
+      "false",
+    );
+    expect(closed.querySelector("[data-session-create-open]")).toBeNull();
+    expect(closed.querySelector("[data-session-create]")).toBeNull();
+    expect(closed.querySelector("[data-session-ask]")).toBeNull();
+
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    act(() => {
+      root.render(
+        <SessionCreateAction
+          profiles={profiles}
+          part="kerf_card"
+          pending={false}
+          onCreate={() => undefined}
+        />,
+      );
+    });
+    act(() => {
+      host.querySelector<HTMLButtonElement>("[data-session-create-menu]")?.click();
+    });
+    const menu = host.querySelector("[data-session-create-open]");
+    expect(menu).not.toBeNull();
+    expect(menu?.querySelector("[data-session-create]")?.getAttribute("data-create-profile")).toBe(
+      "orchestrator",
+    );
+    expect(menu?.querySelector("[data-session-ask]")?.getAttribute("data-create-profile")).toBe(
+      "part",
+    );
+    expect(menu?.textContent ?? "").toContain(copy.composer.createOrchestrator);
+    expect(menu?.textContent ?? "").toContain(copy.composer.createPart("kerf_card"));
+    act(() => {
+      root.unmount();
+    });
+    host.remove();
+  });
+
+  it("sits inside the tab strip, and only when the panel passes one", () => {
+    const without = tabsMarkup([tab()], [row()]);
+    expect(without.querySelector("[data-session-create], [data-session-create-menu]")).toBeNull();
+    const withCreate = parse(
+      renderToStaticMarkup(
+        <SessionTabs
+          tabs={[tab()]}
+          sessions={[row()]}
+          selected="sess-kerf"
+          onSelect={() => undefined}
+          bounded={false}
+          create={
+            <SessionCreateAction
+              profiles={profiles}
+              part={null}
+              pending={false}
+              onCreate={() => undefined}
+            />
+          }
+        />,
+      ),
+    );
+    const create = withCreate.querySelector("[data-session-create]");
+    expect(create).not.toBeNull();
+    // Outside the tablist: a create is not a session, and the roving tabindex
+    // must not walk onto it.
+    expect(create?.closest("[role='tablist']")).toBeNull();
+    const tabsBand = withCreate.body.firstElementChild;
+    expect(create?.closest("div")?.parentElement).toBe(tabsBand);
+  });
+});
+
+describe("the shell's eyebrow keeps its control and loses its label (§4.1(e), (f))", () => {
+  const shell = source("components/Shell.tsx");
+  const band = shell.slice(
+    shell.indexOf('<div className={styles["streamHeader"]}>'),
+    shell.indexOf("<StreamPanel />"),
+  );
+
+  it("draws no title in the band, and keeps the column's name on the aside", () => {
+    expect(band).not.toContain("copy.stream.title");
+    expect(band).not.toContain("streamTitle");
+    expect(shell).toContain('aria-label={copy.stream.title}');
+    expect(source("components/Shell.module.css")).not.toContain(".streamTitle");
+  });
+
+  it("holds exactly one child element, and it is the collapse affordance", () => {
+    expect(band).toContain("data-stream-collapse");
+    expect(band.match(/<[A-Za-z]/g) ?? []).toHaveLength(2); // the band and its one child
+    expect(band).toContain("iconLabel={copy.stream.collapse}");
+  });
+
+  it("renders the band only while the column is expanded", () => {
+    expect(shell).toMatch(/\{shell\.streamOpen \? \(/);
+  });
+
+  it("renders no unread count, dot or badge on the collapsed strip (§4.1(f))", () => {
+    // The clause is WITHDRAWN, not merely unbuilt (§19.42): the strip is a
+    // control that expands on focus, and "unread" is a fact this product does
+    // not have. The strip is an icon and the column's name, and nothing else.
+    const strip = shell.slice(shell.indexOf("data-stream-strip"));
+    expect(strip).not.toMatch(/unread|Badge|data-unread|count/i);
+    // And no copy exists for one, so a lane cannot draw it by accident.
+    expect(Object.keys(copy.stream).filter((key) => /unread/i.test(key))).toEqual([]);
   });
 });

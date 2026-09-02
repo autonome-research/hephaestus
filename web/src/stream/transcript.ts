@@ -22,6 +22,13 @@
 // group element, and a group of many renders one span per event, each carrying
 // its own `data-event-id`. G4.11 matches archived ids against the reopened DOM,
 // so an id that grouping swallowed would be an id the gate cannot find.
+//
+// REPEAT GROUPS (§7.2 (a), amended 2026-09-01) obey the same discipline one step
+// further down: consecutive chips of one tool whose results are byte-identical
+// after canonical-JSON serialization render as ONE row carrying `×N`, and every
+// member's event id and tool-call id stays in the DOM on that row. The decision
+// is here rather than in `ToolChip` because §7.2 (e) says so and because a chip
+// cannot see its neighbours — a chip that could would be reading the transcript.
 
 import {
   isEventKind,
@@ -141,6 +148,12 @@ export function chipStatus(result: TranscriptItem | null): ChipStatus {
 /** The tool whose result §7.3 renders as a widget rather than a generic chip. */
 export const ASK_USER_TOOL = "ask_user";
 
+/** One call of a §7.2 (a) repeat group: the call event and its result event. */
+export interface ChipMember {
+  readonly call: TranscriptItem;
+  readonly result: TranscriptItem | null;
+}
+
 export type TranscriptRow =
   | { readonly row: "text"; readonly key: string; readonly items: readonly TranscriptItem[] }
   | { readonly row: "thought"; readonly key: string; readonly items: readonly TranscriptItem[] }
@@ -152,6 +165,15 @@ export type TranscriptRow =
       readonly result: TranscriptItem | null;
       readonly images: readonly TranscriptItem[];
       readonly status: ChipStatus;
+      /**
+       * §7.2 (a): every member of this repeat group, in render order, the first
+       * one included — `call` and `result` above are that first member's.
+       *
+       * Present **only** when the group has two or more members: "N=1 draws no
+       * count", so a lone chip carries no `repeat` and renders exactly as it
+       * did before the amendment.
+       */
+      readonly repeat?: readonly ChipMember[];
     }
   | {
       readonly row: "ask";
@@ -398,7 +420,105 @@ export function groupRows(items: readonly TranscriptItem[]): readonly Transcript
     }
   }
   closeRuns();
-  return rows;
+  return coalesceRepeats(rows);
+}
+
+// ---------------------------------------------------------------------------
+// §7.2 (a) — repeat groups
+// ---------------------------------------------------------------------------
+
+/**
+ * A value serialized so that two equal documents produce equal strings.
+ *
+ * §7.2 (a) groups on results that are "byte-identical after canonical-JSON
+ * serialization", which is a statement about the DOCUMENT and not about the
+ * server's whitespace or key order. Objects therefore serialize with their keys
+ * sorted; everything else is `JSON.stringify`'s own canonical form.
+ */
+export function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  const record = value as Readonly<Record<string, unknown>>;
+  const keys = Object.keys(record).sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`;
+}
+
+/**
+ * The string two chips must share to coalesce, or `null` if this chip may not.
+ *
+ * §7.2 (a)'s negative half, in one place: a chip whose status is anything but
+ * `ok` never joins a group — "two failed calls never coalesce, even when
+ * identical", because a repeated failure is the signal this column exists to
+ * carry. A chip with no result cannot be `ok` and is excluded by the same test.
+ *
+ * A chip carrying inline images is excluded too, and that is this module's own
+ * reading rather than a clause: an `image` event has its own identity, a
+ * coalesced row renders ONE document, and folding two image-bearing calls into
+ * one row would either drop an event id or render bytes the row does not claim.
+ * Rendering both members separately loses nothing, so that is what happens.
+ *
+ * An `ok` result whose text is not a JSON object still coalesces, on the raw
+ * text: it has no document to canonicalize, so byte-identity of what the chip
+ * actually renders is the honest test, and the `unparsed` refusal renders once
+ * with its cause exactly as it does on a lone chip.
+ */
+function repeatSignature(row: TranscriptRow): string | null {
+  if (row.row !== "chip") return null;
+  if (row.status !== "ok") return null;
+  if (row.images.length > 0) return null;
+  if (row.result === null) return null;
+  const payload = readToolResult(row.result.payload);
+  if (payload === null) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(payload.text) as unknown;
+  } catch {
+    return `${row.toolName} raw ${payload.text}`;
+  }
+  return `${row.toolName} doc ${canonicalJson(parsed)}`;
+}
+
+/**
+ * §7.2 (a): fold each maximal run of ≥2 identical successful chips into one row.
+ *
+ * A **rendering** operation over already-normalized rows. It computes nothing,
+ * merges no payloads and never produces a document no server sent (§1): the one
+ * document the row renders is the first member's, and the members are
+ * byte-identical by the group's own definition.
+ *
+ * "Adjacent in render order with no item of any other kind between them" is
+ * enforced by running over the row list: a `text_delta` paragraph, a thought, an
+ * image, an ask widget, an audit line or a terminal band between two calls is a
+ * row between them and breaks the run. The §8 seam, the historical absences and
+ * a resync break are added around this function's output by `panelRows`, so a
+ * group can never span one of those either.
+ */
+export function coalesceRepeats(rows: readonly TranscriptRow[]): readonly TranscriptRow[] {
+  const out: TranscriptRow[] = [];
+  let index = 0;
+  while (index < rows.length) {
+    const row = rows[index];
+    if (row === undefined) break;
+    const signature = repeatSignature(row);
+    if (signature === null || row.row !== "chip") {
+      out.push(row);
+      index += 1;
+      continue;
+    }
+    const members: ChipMember[] = [{ call: row.call, result: row.result }];
+    let next = index + 1;
+    while (next < rows.length) {
+      const candidate = rows[next];
+      if (candidate === undefined || candidate.row !== "chip") break;
+      if (repeatSignature(candidate) !== signature) break;
+      members.push({ call: candidate.call, result: candidate.result });
+      next += 1;
+    }
+    // "N=1 draws no count": a run of one is the row it already was.
+    out.push(members.length < 2 ? row : { ...row, repeat: members });
+    index = next;
+  }
+  return out;
 }
 
 function chipRow(draft: ChipDraft): TranscriptRow {

@@ -16,7 +16,7 @@
 // `explode_t` (a parameter, never a displacement) and `hidden_labels` (the
 // toggles, never what is visible).
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { act } from "react";
@@ -39,16 +39,14 @@ import type { DfmDocument } from "../../src/api/types";
 import { collectSessionIds } from "../../src/api/projectRefresh";
 import { refreshAfterTurn, refreshKeys } from "../../src/api/refresh";
 import { keys } from "../../src/api/queries";
+import { defaultModel, modelsFrom, showModelChrome } from "../../src/stream/composerChrome";
 import {
-  EFFORT_LEVELS,
-  defaultModel,
-  effortOptionsFor,
-  modelKey,
-  modelsFrom,
-  showDfmChrome,
-  showModelChrome,
-} from "../../src/stream/composerChrome";
-import { CHIP_ORDER, chipsFor, envelopeFor } from "../../src/stream/composerContext";
+  CHIP_ORDER,
+  SUMMARY_ORDER,
+  chipsFor,
+  envelopeFor,
+  summaryFor,
+} from "../../src/stream/composerContext";
 import { DEFAULT_STATE, type WorkspaceState } from "../../src/state/workspace";
 import { workspaceStore } from "../../src/state/react";
 import { formatRef } from "../../src/system";
@@ -64,6 +62,17 @@ vi.mock("../../src/api/sessions", async (importOriginal) => {
 });
 
 const NOTHING: ReadonlySet<ContextMember> = new Set();
+
+/** Every `.ts`/`.tsx` under a directory, for the dead-surface gate below. */
+function sourceFiles(root: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const path = join(root, entry.name);
+    if (entry.isDirectory()) out.push(...sourceFiles(path));
+    else if (path.endsWith(".ts") || path.endsWith(".tsx")) out.push(path);
+  }
+  return out;
+}
 
 function stateWith(patch: Partial<WorkspaceState>): WorkspaceState {
   return { ...DEFAULT_STATE, ...patch };
@@ -380,13 +389,44 @@ describe("the DOM contract", () => {
     }
   });
 
-  it("renders cancel as unavailable-with-a-reason, never as a dead button", () => {
-    // §7A.5's named limit. Between submit and the first event carrying the run
-    // id, cancel is unavailable — the window is one model round-trip, and the
-    // composer says so rather than offering a control that does nothing.
+  it("mounts NO cancel while the run is not cancellable, and keeps the attribute", () => {
+    // §7A.6 / §7A.10(b), amended 2026-09-01. Between submit and the first event
+    // carrying the run id, cancel is unavailable — and a permanently-mounted
+    // disabled button for nearly all of the time is the chrome the amendment
+    // removes. The FACT does not leave the DOM: `data-cancel-state` is still on
+    // the form, and its reason is on the form's `title`.
     const html = markup({ liveRunId: null });
     expect(attribute(html, "data-cancel-state")).toBe("unavailable");
+    expect(html).not.toContain("data-composer-cancel");
+    const host = document.createElement("div");
+    host.innerHTML = html;
+    expect(host.querySelector("[data-composer]")?.getAttribute("title")).toBe(
+      copy.composer.cancelIdle,
+    );
+  });
+
+  it("mounts cancel the instant the state says available (the other half)", () => {
+    const html = markup({ liveRunId: "run-live", streamLive: true });
+    expect(attribute(html, "data-cancel-state")).toBe("available");
     expect(html).toContain("data-composer-cancel");
+  });
+
+  it("has exactly one button-role element in the resting action row (§7A.10(a))", () => {
+    // The clause's own test, scoped to the ACTION ROW as §7A.10(a)'s testable
+    // now says (amended 2026-09-01 to match its own normative sentence): (c)
+    // puts `[data-context-disclose]` inside the same <form>, attached to the
+    // summary line, so a form-scoped count is two at rest by design. Send is
+    // the one action; Cancel is absent because the state is not `available`.
+    const html = markup();
+    const host = document.createElement("div");
+    host.innerHTML = html;
+    const actions = host.querySelector("[data-composer-send]")?.parentElement;
+    expect(actions).not.toBeNull();
+    expect(actions?.querySelectorAll("button, [role='button']").length).toBe(1);
+    // Send keeps disabled-with-reason: a PRIMARY action that vanished would
+    // leave no target for "why can't I send?", which is the opposite case
+    // from Cancel.
+    expect(host.querySelector("[data-composer-send]")?.getAttribute("aria-disabled")).toBe("true");
   });
 
   it("puts no data-source on any context chip", () => {
@@ -414,10 +454,9 @@ describe("the DOM contract", () => {
       join(dirname(fileURLToPath(import.meta.url)), "../../src/components/stream/Composer.tsx"),
       "utf8",
     );
-    const discloseBtn = source.slice(
-      source.lastIndexOf("<Button", source.indexOf("data-context-disclose")),
-      source.indexOf("data-context-disclose") + 80,
-    );
+    // The JSX occurrence, not the header comment's mention of the hook.
+    const hook = source.indexOf('data-context-disclose=""');
+    const discloseBtn = source.slice(source.lastIndexOf("<Button", hook), hook + 40);
     expect(discloseBtn).toContain("expanded={disclosed}");
     expect(discloseBtn).not.toContain("pressed={disclosed}");
     const providers = readFileSync(
@@ -438,18 +477,119 @@ describe("the DOM contract", () => {
     expect(html).toContain("data-composer-input");
     expect(html).toContain("data-composer-send");
     expect(html).toContain("data-context-disclose");
+    expect(html).toContain("data-context-summary");
     expect(html).toMatch(/<textarea[^>]*rows="1"/);
     expect(html).not.toMatch(/<textarea[^>]*rows="3"/);
     expect(html).not.toContain("data-context-chips");
     expect(html).not.toContain("data-context-add-view");
   });
 
-  it("labels disclose as a preview, not as what the agent will be told (#74)", () => {
+  it("labels disclose in one word, attached to the summary line (§7A.10(c))", () => {
     const html = markup();
     expect(html).toContain(copy.composer.disclose);
     expect(html).not.toContain("What will the agent be told?");
-    expect(copy.composer.disclose).toBe("Composer preview");
+    // One word each, and the hook and both strings survive the shortening.
+    expect(copy.composer.disclose.split(" ")).toHaveLength(1);
+    expect(copy.composer.discloseHide.split(" ")).toHaveLength(1);
     expect(copy.composer.discloseAdvisory.length).toBeGreaterThan(20);
+    const host = document.createElement("div");
+    host.innerHTML = html;
+    const toggle = host.querySelector("[data-context-disclose]");
+    // The line and the toggle are ONE affordance: the toggle is a child of the
+    // summary line, quiet rather than a full `secondary` button in the actions.
+    expect(toggle?.getAttribute("data-variant")).toBe("quiet");
+    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle?.closest("[data-context-summary]")).not.toBeNull();
+  });
+
+  it("draws the model as quiet text in the meta line, not a chip in the actions (§7A.10(d))", () => {
+    const html = markup({}, { providers: providersDocument() });
+    const host = document.createElement("div");
+    host.innerHTML = html;
+    const model = host.querySelector("[data-composer-model]");
+    // Every attribute and the `<Fact>` attribution are unchanged; only the
+    // drawing moved. `providers.models.id` is a server fact (§4.6).
+    expect(model?.getAttribute("data-composer-provider")).toBe("heph-fake");
+    expect(model?.querySelector("[data-source='providers.models.id']")).not.toBeNull();
+    expect(model?.closest("[data-composer-send]")).toBeNull();
+    expect(host.querySelector("[data-composer-send]")?.parentElement?.contains(model!)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §7A.3(a)-(e) — the resting summary line
+
+describe("the resting context summary", () => {
+  it("names the envelope's members in the fixed order, and counts the rest", () => {
+    const state = stateWith({
+      part: "tread",
+      artifact_ref: "artifact:build:sha256:f908224c00000000000000000000000000000000000000000000000000000000",
+      stage_tab: "viewport",
+      inspector_tab: "results",
+      view: "iso",
+      focus: "geometry:tread",
+    });
+    const envelope = envelopeFor(state, ["cleat_left"], NOTHING);
+    const summary = summaryFor(envelope, chipsFor(state, ["cleat_left"]), NOTHING);
+    expect(summary.tokens.map((token) => token.key)).toEqual([
+      "part",
+      "artifact_ref",
+      "stage_tab",
+      "view",
+    ]);
+    // §7A.3(a)'s worked example: `Context: tread · build f908224c · viewport/results · iso`.
+    expect(summary.tokens[0]?.text).toBe("tread");
+    expect(summary.tokens[2]?.text).toBe("viewport/results");
+    expect(summary.tokens[3]?.text).toBe("iso");
+    // The ref is abbreviated where it is drawn, never re-worded here.
+    expect(summary.tokens[1]?.abbreviate).toBe(true);
+    expect(summary.tokens[1]?.text).toBe(state.artifact_ref);
+    // `hidden_labels` and `focus` are past `view` in the drawn order, so they
+    // are counted rather than drawn.
+    expect(summary.remaining).toBe(2);
+  });
+
+  it("publishes exactly the envelope's own member keys (§7A.3(d))", () => {
+    const state = stateWith({
+      part: "tread",
+      artifact_ref: "artifact:build:sha256:aa",
+      focus: "geometry:tread",
+    });
+    const chips = chipsFor(state, []);
+    const envelope = envelopeFor(state, [], NOTHING);
+    const summary = summaryFor(envelope, chips, NOTHING);
+    // The one member `keys` folds away, said out loud: `pin_mode` is not
+    // independently addressable — it qualifies `artifact_ref` and travels with
+    // it — so it has no chip and no summary token either. Everything else is
+    // key-for-key the envelope this form would POST.
+    const published = new Set<string>(summary.keys);
+    if (envelope?.artifact_ref !== undefined) published.add("pin_mode");
+    expect([...published].sort()).toEqual(Object.keys(envelope ?? {}).sort());
+    // …and the same set the chips carry once the disclosure is open. Nothing
+    // is dropped here, so the two must agree member for member.
+    expect([...summary.keys].sort()).toEqual([...chips.map((chip) => chip.key)].sort());
+    expect(SUMMARY_ORDER).not.toContain("pin_mode");
+  });
+
+  it("says an excluded member out loud, and keeps saying it when nothing is left", () => {
+    // §7A.3(e). Dropping the only reference collapses the envelope to the blank
+    // canvas — and the line must still report the exclusion, because "the agent
+    // will not be told about the part" is a fact about what is being sent.
+    const state = stateWith({ part: "tread" });
+    const dropped: ReadonlySet<ContextMember> = new Set(["part"]);
+    const chips = chipsFor(state, []);
+    const envelope = envelopeFor(state, [], dropped);
+    expect(envelope).toBeNull();
+    const summary = summaryFor(envelope, chips, dropped);
+    expect(summary.removed).toEqual(["part"]);
+    expect(summary.keys).toEqual([]);
+  });
+
+  it("reports nothing removed on the envelope the workspace state implies", () => {
+    const state = stateWith({ part: "tread" });
+    const summary = summaryFor(envelopeFor(state, [], NOTHING), chipsFor(state, []), NOTHING);
+    expect(summary.removed).toEqual([]);
+    expect(summary.keys).toContain("part");
   });
 });
 
@@ -463,8 +603,14 @@ describe("session chrome from GET /providers", () => {
     const models = modelsFrom(document);
     expect(models).toHaveLength(1);
     expect(models[0]?.id).toBe("heph-fake-model");
-    expect(modelKey(models[0]!)).toBe("heph-fake/heph-fake-model");
-    expect(modelKey(models[0]!)).not.toMatch(/smith|arche|composer-1/i);
+    expect(models[0]?.providerId).toBe("heph-fake");
+    expect(models[0]?.id).not.toMatch(/smith|arche|composer-1/i);
+    expect(models[0]?.providerId).not.toMatch(/smith|arche|composer-1/i);
+  });
+
+  it("projects the FIRST declared model, and nothing when there is none", () => {
+    expect(defaultModel(modelsFrom(providersDocument()))?.id).toBe("heph-fake-model");
+    expect(defaultModel([])).toBeNull();
   });
 
   it("names no models when the configuration file does not exist", () => {
@@ -502,29 +648,7 @@ describe("session chrome from GET /providers", () => {
     expect(html).not.toMatch(/<select\b/i);
   });
 
-  it("offers effort levels only when the selected model declared reasoning", () => {
-    const plain = defaultModel(modelsFrom(providersDocument()));
-    expect(effortOptionsFor(plain)).toEqual(["off"]);
-    const reasoning = defaultModel(
-      modelsFrom(
-        providersDocument({
-          providers: [
-            {
-              id: "heph-fake",
-              kind: "openai_compatible",
-              name: "Fake",
-              models: [{ id: "reasoner", name: "reasoner", reasoning: true }],
-              source: "project",
-              health: "accepted",
-              last_observed_at: null,
-              available: true,
-              unavailable_reason: null,
-            },
-          ],
-        }),
-      ),
-    );
-    expect(effortOptionsFor(reasoning)).toEqual(EFFORT_LEVELS);
+  it("mints no effort control and no effort vocabulary (§7A.10(e)(1))", () => {
     const html = markup(
       {},
       {
@@ -546,20 +670,67 @@ describe("session chrome from GET /providers", () => {
       },
     );
     // Effort is not a prompt field. The strip used to project a bare "off"
-    // with no accessible name; that control is gone. The decision module
-    // still records the closed vocabulary for a later route.
+    // with no accessible name; that control is gone — and so, now, is the
+    // vocabulary behind it: §7A.10(e)(1) removed `EFFORT_LEVELS` /
+    // `isEffortLevel` outright, because "a closed vocabulary with no surface is
+    // a spec claim by implication".
     expect(html).not.toContain("data-composer-effort");
     expect(html).not.toContain("data-composer-effort-absent");
+    const chrome = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../../src/stream/composerChrome.ts"),
+      "utf8",
+    );
+    expect(chrome).not.toContain("EFFORT_LEVELS");
+    expect(chrome).not.toContain("isEffortLevel");
+    expect(chrome).not.toContain("parseModelKey");
+    expect(copy.composer).not.toHaveProperty("effort");
+    expect(copy.composer).not.toHaveProperty("effortOff");
+  });
+
+  // §7A.10(e)(1)'s testable, stated as the rule rather than as a list: "every
+  // symbol exported from `composerChrome.ts` has at least one importer under
+  // `web/src`". A decision module is a claim about a surface; one nothing
+  // imports is a claim the codebase cannot support, and the list of orphans
+  // grows back unless something counts them.
+  it("exports nothing from composerChrome.ts that no src module imports", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = join(here, "../../src");
+    const chrome = readFileSync(join(src, "stream/composerChrome.ts"), "utf8");
+    const values = [...chrome.matchAll(/^export (?:const|function|class) (\w+)/gm)].map(
+      (match) => match[1] ?? "",
+    );
+    expect(values.length).toBeGreaterThan(0);
+    const sources = sourceFiles(src).filter((file) => !file.endsWith("composerChrome.ts"));
+    const corpus = sources.map((file) => readFileSync(file, "utf8")).join("\n");
+    for (const symbol of values) {
+      expect(
+        new RegExp(`\\b${symbol}\\b`).test(corpus),
+        `${symbol} is exported from composerChrome.ts and imported by nothing under src/`,
+      ).toBe(true);
+    }
+    // A TYPE export is held to the neighbouring rule rather than to this one,
+    // and §7A.10(e)(1)'s testable now splits the two kinds itself rather than
+    // leaving the split to this comment (amended 2026-09-01):
+    // it earns its keep by being NAMEABLE, so a caller can declare a variable
+    // of the type an exported function returns. The test is that it appears in
+    // one of this module's own exported signatures — an exported type nothing
+    // in the module's surface mentions is the same dead claim as a dead value.
+    const types = [...chrome.matchAll(/^export (?:interface|type) (\w+)/gm)].map(
+      (match) => match[1] ?? "",
+    );
+    const signatures = [...chrome.matchAll(/^export (?:const|function) [\s\S]*?\{$/gm)]
+      .map((match) => match[0])
+      .join("\n");
+    for (const symbol of types) {
+      expect(
+        new RegExp(`\\b${symbol}\\b`).test(signatures) || new RegExp(`\\b${symbol}\\b`).test(corpus),
+        `${symbol} is exported from composerChrome.ts and named by nothing`,
+      ).toBe(true);
+    }
   });
 });
 
 describe("the idle composer does not host DFM chrome", () => {
-  it("still knows when the inspector may show the two §6.4 controls", () => {
-    expect(showDfmChrome(false, "tread", true)).toBe("chip");
-    expect(showDfmChrome(false, "tread", false)).toBe("hidden");
-    expect(showDfmChrome(false, null, false)).toBe("absent");
-    expect(showDfmChrome(true, "tread", true)).toBe("hidden");
-  });
 
   it("does not put auto_run or Run DFM on the idle composer", () => {
     const html = markup();
@@ -890,24 +1061,136 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     await act(async () => undefined);
   });
 
-  it("mounts the chip row at rest when the envelope names a reference (#79)", () => {
+  it("summarises the envelope at rest and mounts NO chip row (§7A.3(a)(c))", () => {
     workspaceStore.reset({ ...DEFAULT_STATE, part: "kerf_card" });
     const root = mount();
-    const row = root.querySelector("[data-context-chips]");
-    expect(row).not.toBeNull();
-    expect(root.querySelector('[data-context-key="part"]')?.getAttribute("data-context-value")).toBe(
-      "kerf_card",
-    );
-    // Disclose still hides the preview block, not the chips.
+    // The resting height is one line of context, whatever the envelope carries.
+    expect(root.querySelector("[data-context-chips]")).toBeNull();
+    const line = root.querySelector("[data-context-summary]");
+    expect(line).not.toBeNull();
+    expect(line?.textContent ?? "").toContain(copy.composer.contextSummary);
+    expect(line?.textContent ?? "").toContain("kerf_card");
+    expect((line?.getAttribute("data-context-keys") ?? "").split(" ")).toContain("part");
+    // Disclose still hides the composed preview; nothing about the route moved.
     expect(root.querySelector("[data-context-preview]")).toBeNull();
     expect(root.querySelector("[data-context-block]")).toBeNull();
   });
 
-  it("mounts no chip row and no placeholder when the envelope is empty (#79)", () => {
+  it("expands the editable chip form on the summary toggle, and collapses again", () => {
+    workspaceStore.reset({ ...DEFAULT_STATE, part: "kerf_card" });
+    const root = mount();
+    const toggle = root.querySelector<HTMLButtonElement>("[data-context-disclose]");
+    expect(toggle).not.toBeNull();
+    act(() => {
+      toggle?.click();
+    });
+    // The chips are COMPLETE when shown — `chipsFor` still enumerates every
+    // member; what changed is when the list mounts.
+    expect(root.querySelector("[data-context-chips]")).not.toBeNull();
+    expect(
+      root.querySelector('[data-context-key="part"]')?.getAttribute("data-context-value"),
+    ).toBe("kerf_card");
+    // §7A.3(d)'s testable, against the live DOM: the published key set is the
+    // chips' key set.
+    const published = (
+      root.querySelector("[data-context-summary]")?.getAttribute("data-context-keys") ?? ""
+    ).split(" ");
+    const chipKeys = [...root.querySelectorAll("[data-context-chips] [data-context-key]")].map(
+      (node) => node.getAttribute("data-context-key") ?? "",
+    );
+    expect([...published].sort()).toEqual([...chipKeys].sort());
+    act(() => {
+      root.querySelector<HTMLButtonElement>("[data-context-disclose]")?.click();
+    });
+    expect(root.querySelector("[data-context-chips]")).toBeNull();
+  });
+
+  it("draws an excluded member on the resting line (§7A.3(e))", () => {
+    workspaceStore.reset({ ...DEFAULT_STATE, part: "kerf_card" });
+    const root = mount();
+    act(() => {
+      root.querySelector<HTMLButtonElement>("[data-context-disclose]")?.click();
+    });
+    act(() => {
+      root.querySelector<HTMLButtonElement>('[data-context-drop="part"]')?.click();
+    });
+    act(() => {
+      root.querySelector<HTMLButtonElement>("[data-context-disclose]")?.click();
+    });
+    const line = root.querySelector("[data-context-summary]");
+    expect(line?.querySelector('[data-context-removed="part"]')).not.toBeNull();
+    expect(line?.textContent ?? "").toContain(copy.composer.contextKey.part);
+    expect(line?.getAttribute("data-context-keys")).toBe("");
+  });
+
+  it("holds §7A.3(d)'s halves with a member dropped, superset and all", () => {
+    // The amended (d). `data-context-keys` names exactly what the POST would
+    // send; the chips are a SUPERSET by construction, because a chip is the
+    // control a member is un-excluded from and one that vanished with its
+    // member would take that control away. Halves (2), (3) and (4) here; half
+    // (1) — published == envelope — is `summaryFor`'s own unit above.
+    workspaceStore.reset({ ...DEFAULT_STATE, part: "kerf_card" });
+    const root = mount();
+    act(() => {
+      root.querySelector<HTMLButtonElement>("[data-context-disclose]")?.click();
+    });
+    const keysNow = (): string[] =>
+      (root.querySelector("[data-context-summary]")?.getAttribute("data-context-keys") ?? "")
+        .split(" ")
+        .filter((key) => key !== "");
+    const chipKeys = (selector: string): string[] =>
+      [...root.querySelectorAll(`[data-context-chips] ${selector}`)].map(
+        (node) => node.getAttribute("data-context-key") ?? "",
+      );
+
+    // (4), nothing dropped and the envelope non-null: published == chips.
+    expect(keysNow().sort()).toEqual(chipKeys("[data-context-key]").sort());
+    expect(chipKeys("[data-context-key][data-context-dropped]")).toEqual([]);
+
+    act(() => {
+      root.querySelector<HTMLButtonElement>('[data-context-drop="view"]')?.click();
+    });
+
+    // (3): `view` leaves the published set and the envelope, and its chip stays
+    // in the row wearing `data-context-dropped` — no fact left the DOM (§0.2b).
+    expect(keysNow()).not.toContain("view");
+    expect(chipKeys("[data-context-key][data-context-dropped]")).toEqual(["view"]);
+    // (4) again, with the exclusion: published == chips minus the dropped ones.
+    expect(keysNow().sort()).toEqual(
+      chipKeys("[data-context-key]:not([data-context-dropped])").sort(),
+    );
+    // (2): the line never names a member the form does not offer, even now.
+    for (const key of keysNow()) expect(chipKeys("[data-context-key]")).toContain(key);
+
+    // Drop the only member that names a reference: the envelope goes away
+    // entirely, so the published set is empty while the chips still OFFER the
+    // three navigation members. Superset, not equality — this is the case the
+    // struck three-way equality got wrong.
+    act(() => {
+      root.querySelector<HTMLButtonElement>('[data-context-drop="part"]')?.click();
+    });
+    expect(keysNow()).toEqual([]);
+    expect(chipKeys("[data-context-key]")).toContain("stage_tab");
+    // And both exclusions are visible on the resting line, not quiet (§7A.3(e)).
+    act(() => {
+      root.querySelector<HTMLButtonElement>("[data-context-disclose]")?.click();
+    });
+    const line = root.querySelector("[data-context-summary]");
+    expect(line?.querySelector('[data-context-removed="part"]')).not.toBeNull();
+    expect(line?.querySelector('[data-context-removed="view"]')).not.toBeNull();
+  });
+
+  it("says the blank canvas in one word, and mounts no chip row (#79)", () => {
     workspaceStore.reset(DEFAULT_STATE);
     const root = mount();
     expect(root.querySelector("[data-context-chips]")).toBeNull();
+    // The long paragraph is not the resting rendering; one word is.
     expect(root.textContent ?? "").not.toContain(copy.composer.contextNone);
+    const line = root.querySelector("[data-context-summary]");
+    expect(line?.getAttribute("data-context-keys")).toBe("");
+    expect(line?.textContent ?? "").toContain(copy.composer.contextEmpty);
+    // The long form is not gone, it is on `title` (§7.4(d)'s rule).
+    expect(line?.getAttribute("title")).toBe(copy.composer.contextNone);
   });
 
   it("focuses the composer input when the create nonce ticks (#61)", () => {
@@ -924,11 +1207,9 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     });
     const root = mount({ liveRunId: null, streamLive: true });
     expect(composer(root).getAttribute("data-cancel-state")).toBe("unavailable");
-    const cancelButton = root.querySelector<HTMLButtonElement>("[data-composer-cancel]");
-    expect(cancelButton?.getAttribute("aria-disabled")).toBe("true");
-    act(() => {
-      cancelButton?.click();
-    });
+    // §7A.10(b): the control is not there to click. The fact is still readable.
+    expect(root.querySelector("[data-composer-cancel]")).toBeNull();
+    expect(composer(root).getAttribute("title")).toBe(copy.composer.cancelIdle);
     await act(async () => undefined);
     expect(vi.mocked(cancelRun)).not.toHaveBeenCalled();
     expect(root.querySelector("[data-cancel-note]")).toBeNull();
@@ -937,8 +1218,13 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
   it("keeps Cancel available through a live turn (#45)", () => {
     const root = mount({ liveRunId: "run-live", streamLive: true });
     expect(composer(root).getAttribute("data-cancel-state")).toBe("available");
-    expect(root.querySelector("[data-composer-cancel]")?.getAttribute("aria-disabled")).not.toBe(
-      "true",
-    );
+    const cancelButton = root.querySelector<HTMLButtonElement>("[data-composer-cancel]");
+    expect(cancelButton).not.toBeNull();
+    expect(cancelButton?.getAttribute("aria-disabled")).not.toBe("true");
+    // A cancellable run gets an ENABLED control, never a disabled one — the
+    // amendment's whole point is that there is no third state to draw.
+    expect(cancelButton?.hasAttribute("disabled")).toBe(false);
+    // And the form no longer carries a reason it has no control for.
+    expect(composer(root).hasAttribute("title")).toBe(false);
   });
 });

@@ -69,11 +69,43 @@ async function openSession(page: Page, sessionId: string): Promise<void> {
   await expect(page.locator('[data-testid="stream-panel"]')).toBeVisible();
 }
 
-/** Every `data-event-id` the transcript has rendered, in document order. */
+/**
+ * Every event id the transcript has rendered, in document order.
+ *
+ * §7.2 (a) coalesces consecutive identical successful calls into one row, and
+ * that row carries `data-event-id` (its first member) **and** `data-event-ids`
+ * (every member, first included). The two are read together, deduplicated
+ * per node, which is exactly the clause's own predicate: the multiset of ids in
+ * `data-event-id` ∪ `data-event-ids` equals the multiset of event ids. A
+ * coalescing that lost an id fails here rather than passing quietly.
+ */
 async function renderedEventIds(page: Page): Promise<string[]> {
   return await page
-    .locator('[data-testid="transcript"] [data-event-id]')
-    .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-event-id") ?? ""));
+    .locator('[data-testid="transcript"] [data-event-id], [data-testid="transcript"] [data-event-ids]')
+    .evaluateAll((nodes) =>
+      nodes.flatMap((node) => {
+        const ids = new Set<string>();
+        const single = node.getAttribute("data-event-id");
+        if (single !== null && single !== "") ids.add(single);
+        for (const id of (node.getAttribute("data-event-ids") ?? "").split(" ")) {
+          if (id !== "") ids.add(id);
+        }
+        return [...ids];
+      }),
+    );
+}
+
+/**
+ * The chip rendering one tool call, coalesced or not.
+ *
+ * §7.2 (a): `data-tool-call-id` stays singular on a lone chip and becomes
+ * `data-tool-call-ids` on a coalesced row, so a gate that addressed calls by the
+ * singular attribute alone would stop seeing the repeated ones.
+ */
+function chipForCall(page: Page, callId: string) {
+  return page
+    .locator(`[data-tool-call-id="${callId}"], [data-tool-call-ids~="${callId}"]`)
+    .first();
 }
 
 // --------------------------------------------------------------------------
@@ -88,14 +120,20 @@ test("reopening loads the multi-page transcript and matches the archive (G4.9, G
 
   await openSession(page, ORCHESTRATOR);
 
-  // §8: "the panel renders progressively and shows a page counter — 'multi-page'
-  // is a user-visible fact, not only a test fact."
-  const bar = page.locator("[data-history-state]");
-  await expect(bar).toHaveAttribute("data-history-state", "complete", { timeout: 120_000 });
-  await expect(page.locator("[data-history-pages]")).toHaveAttribute(
-    "data-history-pages",
-    String(pages),
-  );
+  // §8(c), amended 2026-09-01: multi-page is still a user-visible fact and the
+  // gate still reads it by name — from the panel ROOT, which carries
+  // `data-history-state` and `data-history-pages` unconditionally now that the
+  // drawn counter is exception-only.
+  const panel = page.locator('[data-testid="stream-panel"]');
+  await expect(panel).toHaveAttribute("data-history-state", "complete", { timeout: 120_000 });
+  await expect(panel).toHaveAttribute("data-history-pages", String(pages));
+  await expect(page.locator("[data-history-state]")).toHaveCount(1);
+
+  // §8(b)'s negative half, over the exact case it names: "a multi-page history
+  // whose latest page is the one on screen". The count is in the DOM as an
+  // attribute and nowhere as a row.
+  await expect(page.locator("[data-history-bar]")).toHaveCount(0);
+  await expect(page.getByText("pages of recorded transcript")).toHaveCount(0);
 
   // G4.11: the archived identities, in the DOM, each exactly once. "Exactly
   // once" is load-bearing: contiguous text events group for layout, and a
@@ -164,7 +202,7 @@ test("every chip carries its required and referenced result fields (G4.D)", asyn
   let degraded = 0;
   for (const call of calls) {
     const callId = call.tool_call_id ?? "";
-    const chip = page.locator(`[data-tool-call-id="${callId}"]`).first();
+    const chip = chipForCall(page, callId);
     const toolName = String((call.payload ?? {})["name"] ?? "");
     await expect(chip).toHaveAttribute("data-tool-name", toolName);
 
@@ -218,6 +256,81 @@ test("every chip carries its required and referenced result fields (G4.D)", asyn
 });
 
 // --------------------------------------------------------------------------
+// §7.2 (a)-(c), amended 2026-09-01 — the resting face, and repetition
+
+test("repeated identical calls coalesce, and the resting face drops the field count (§7.2)", async ({
+  page,
+}) => {
+  // The recorded turn scans the project check set 130 times, in runs broken up
+  // by the agent's own narration. That is the shape the amendment exists for,
+  // and the expectations here are derived from the archive rather than written
+  // down, so a re-recorded fixture cannot silently make this test vacuous.
+  const rows = archived().filter((row) => row.session_id === ORCHESTRATOR);
+  const repeated = new Map<string, number>();
+  for (const row of rows) {
+    if (row.kind !== "tool_call") continue;
+    const name = String((row.payload ?? {})["name"] ?? "");
+    repeated.set(name, (repeated.get(name) ?? 0) + 1);
+  }
+  const [tool, calls] = [...repeated.entries()].sort((a, b) => b[1] - a[1])[0] ?? ["", 0];
+  expect(calls, "the fixture transcript no longer repeats any call").toBeGreaterThan(1);
+
+  await openSession(page, ORCHESTRATOR);
+  await expect(page.locator("[data-history-state]")).toHaveAttribute(
+    "data-history-state",
+    "complete",
+    { timeout: 120_000 },
+  );
+
+  const chips = page.locator(`[data-tool-name="${tool}"]`);
+  await expect(chips.first()).toBeVisible();
+  const drawn = await chips.evaluateAll((nodes) =>
+    nodes.map((node) => ({
+      repeat: node.getAttribute("data-chip-repeat"),
+      events: (node.getAttribute("data-event-ids") ?? "").split(" ").filter((id) => id !== ""),
+      callIds: (node.getAttribute("data-tool-call-ids") ?? "").split(" ").filter((id) => id !== ""),
+      singleCall: node.getAttribute("data-tool-call-id"),
+      count: node.querySelector("header")?.textContent ?? "",
+    })),
+  );
+
+  // One row per RUN of identical calls, not one per call.
+  expect(drawn.length).toBeLessThan(calls);
+  let addressed = 0;
+  for (const chip of drawn) {
+    if (chip.repeat === null) {
+      // A run of one keeps the singular attribute and draws no count.
+      expect(chip.singleCall).toBeTruthy();
+      expect(chip.count).not.toContain("×");
+      addressed += 1;
+      continue;
+    }
+    // Nothing left the DOM: the count, the member event ids and the member
+    // tool-call ids all agree, and the count is drawn as `×N`.
+    expect(Number(chip.repeat)).toBeGreaterThan(1);
+    expect(chip.events).toHaveLength(Number(chip.repeat));
+    expect(chip.callIds).toHaveLength(Number(chip.repeat));
+    expect(chip.singleCall).toBeNull();
+    expect(chip.count).toContain(`×${chip.repeat}`);
+    addressed += chip.callIds.length;
+  }
+  expect(addressed, "a coalesced row swallowed a call").toBe(calls);
+
+  // §7.2 (b): with every disclosure closed the field count is nowhere in the
+  // transcript; opening one renders it exactly once.
+  await expect(page.locator("[data-chip-detail-count]")).toHaveCount(0);
+  await page.locator("[data-chip-detail] > summary").first().click();
+  await expect(page.locator("[data-chip-detail-count]")).toHaveCount(1);
+
+  // §7.2 (c): a successful call with a result draws no preamble note. The
+  // fixture's successful chips are the ones that would have stacked them.
+  const notes = await chips.evaluateAll((nodes) =>
+    nodes.map((node) => node.textContent ?? "").filter((text) => text.includes("No result for")),
+  );
+  expect(notes).toEqual([]);
+});
+
+// --------------------------------------------------------------------------
 // G4.10 — threading
 
 test("the quick-edit child threads under its parent in the tab list (G4.10)", async ({
@@ -261,6 +374,66 @@ test("the quick-edit child threads under its parent in the tab list (G4.10)", as
 });
 
 // --------------------------------------------------------------------------
+// §4.1(e), §7.1(a)(b), amended 2026-09-01 — the column names itself once
+
+test("the stream column says 'session' once above the transcript (§7.1, §4.1(e))", async ({
+  page,
+}) => {
+  // §0.2b's measurement: above the first transcript event the column drew an
+  // `Agent` eyebrow, a `SESSIONS` heading, a session tab, and a
+  // `New session` / `Ask about tread` pair — four bands for one column.
+  await openSession(page, ORCHESTRATOR);
+  const column = page.locator("aside");
+  await expect(page.locator("[data-session-tab]").first()).toBeVisible();
+
+  // §7.1(a): the heading does not render in any state, and the list keeps the
+  // same string as its accessible name.
+  await expect(column.getByRole("heading")).toHaveCount(0);
+  await expect(column.getByText("Sessions", { exact: true })).toHaveCount(0);
+  await expect(column.locator("[role='tablist']")).toHaveAttribute("aria-label", "Sessions");
+
+  // §7.1(b): one compact create in the strip, and neither wording drawn as a
+  // visible button label while the strip is drawn. The menu is drawn only while
+  // open, so both entries are absent until the `+` is pressed.
+  const create = page.locator("[data-session-create], [data-session-create-menu]");
+  await expect(create).toHaveCount(1);
+  // The worded pair is not drawn beside the strip in any form: every worded
+  // create action carries `data-create-profile`, and none is mounted.
+  // (A session TAB may read "New session" — that is a session's name, not a
+  // create control, which is why this reads the control's own hook.)
+  await expect(page.locator("[data-create-profile]")).toHaveCount(0);
+  await expect(page.locator("[data-session-create-open]")).toHaveCount(0);
+  // A part is selected here (the route names one), so the `+` has two entries
+  // and opens a menu. The one-entry case activates directly and is not pressed
+  // from an e2e: `POST /sessions` is at-least-once and there is no route that
+  // closes a session, so a click here would leave one behind (§7A.2).
+  const menuButton = page.locator("[data-session-create-menu]");
+  await expect(menuButton).toHaveCount(1);
+  await expect(menuButton).toHaveAttribute("aria-expanded", "false");
+  await menuButton.click();
+  const menu = page.locator("[data-session-create-open]");
+  await expect(menu).toHaveCount(1);
+  await expect(menu.locator("[data-session-create]")).toHaveCount(1);
+  await expect(menu.locator("[data-session-ask]")).toHaveCount(1);
+  await expect(menu.getByText("New session", { exact: true })).toHaveCount(1);
+  await expect(menu.getByText(`Ask about ${PART}`, { exact: true })).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+
+  // §4.1(e): the eyebrow band holds exactly one child, the collapse control,
+  // and does not draw the column's name — which stays on the `aside`.
+  const collapse = page.locator("[data-stream-collapse]");
+  await expect(collapse).toHaveCount(1);
+  await expect(column).toHaveAttribute("aria-label", "Agent");
+  const bandChildren = await collapse.evaluate((node) => {
+    const band = node.parentElement;
+    return { children: band?.childElementCount ?? -1, text: (band?.textContent ?? "").trim() };
+  });
+  expect(bandChildren.children).toBe(1);
+  expect(bandChildren.text).toBe("");
+});
+
+// --------------------------------------------------------------------------
 // G4.8 — a CLI-started session streams live into the panel
 
 test("a session started by `heph agent` streams live into the panel (G4.8)", async ({
@@ -298,11 +471,16 @@ test("a session started by `heph agent` streams live into the panel (G4.8)", asy
     expect(live, `heph agent created no session. Output:\n${transcript.join("")}`).toBeTruthy();
 
     await openSession(page, live ?? "");
-    await expect(page.locator("[data-stream-state]")).toHaveAttribute(
-      "data-stream-state",
+    // §7.4(b), amended 2026-09-01: the socket's own answer is on the panel root
+    // in every state, and that is what a gate reads. The badge is the DRAWN
+    // exception — §7.4(a) forbids it for a `live` socket with no fault, so the
+    // steady live state carries the attribute and mounts no element.
+    await expect(page.locator('[data-testid="stream-panel"]')).toHaveAttribute(
+      "data-stream",
       "live",
       { timeout: 60_000 },
     );
+    await expect(page.locator("[data-stream-state]")).toHaveCount(0);
 
     agent.stdin.write("Run the project checks against the tread.\n");
 

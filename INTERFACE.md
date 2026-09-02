@@ -222,6 +222,61 @@ derived from its secret. An approval that permits *at most* X does not oblige
 X, and this document does not weaken a shipped refusal on the strength of a
 permission it did not need.
 
+### 0.2b The 2026-09-01 stream review — noise/signal: the stream column earns its pixels
+
+The same reviewer opened the workspace on the public clean-room fixture at
+1280×800, ran one blank-canvas turn, and reported that **the 420px column
+spends most of its height saying things about itself**. The measurement, taken
+on the shipped build, is the record:
+
+| What was drawn | Height it took | What it told an operator |
+|---|---|---|
+| Nine consecutive `read_part` chips, all `ok`, same part | ~9 rows + 9 headers | one fact, nine times |
+| A collapsed `9 result fields` row on every resting chip | 1 row per chip | a count of a thing already behind a disclosure |
+| Up to three preamble notes above the headline (`ToolChip.tsx`:144-152) | up to 3 rows per chip | conditions that are mutually near-exclusive |
+| `1 page of recorded transcript` | 1 row, always | nothing, in the only state it ever renders |
+| A `live` badge | 1 row, always | that the normal case is the normal case |
+| `SESSIONS` heading, plus `Agent` eyebrow, plus a session tab, plus `New session` / `Ask about tread` | 4 bands | the word "session" four times before the first event |
+| Three always-mounted context-chip rows above the composer | 3 rows | state visible ~600px away in the header, rail and inspector |
+| `Send` / `Cancel` / `Show preview`, all resting | 1 row, 3 controls | two controls that do nothing in the resting state |
+| 40-60 word explanatory strings (`copy.ts`:819-820, 840-846, 849-850, 931) | 3-6 rows each | prose in the place a transcript belongs |
+
+**Ruling: the spec was right about the column and wrong about its resting
+state.** §3.3's "a dense professional instrument with a collaborator in it" and
+§7's rendering contract are unchanged and are re-affirmed. What this document
+never wrote down is **when a piece of chrome must NOT render**, and a spec that
+only says what a surface renders will be implemented as a surface that renders
+everything, always. Every clause below is therefore stated in both directions:
+the condition under which an element mounts, and the explicit statement that it
+does not mount otherwise. A clause with no negative half is not a clause this
+review accepts.
+
+**One discipline governs the whole amendment, and it is not "show less".** No
+fact leaves the DOM. Coalescing keeps every event id, the resting face keeps
+every `data-*` attribute §7.2 and §7A.10 fix, and a shortened string keeps its
+long form on `title`. **A count is not a fact and a state word for the normal
+state is not a fact** — those go. §4.4's honesty discipline is the constraint in
+the other direction: nothing here permits eliding a *failure*, a partial
+result, or an absence. Every rule below is written so that its quiet path is the
+**successful, expected, singular** case, and every exceptional case is louder
+than it was before.
+
+**Where the amendment lands.** No section is renumbered and no gate text is
+edited; these are tightenings under G4's existing stream/composer deliverables.
+One number is allocated outside an existing sequence: **§19 item 42**, which is
+where the withdrawn unread count is recorded. §0.2's "items 17-41 in one
+sequence" allocation is extended by that one item and by no other.
+
+| Item | Amendment block | Clauses |
+|---|---|---|
+| Coalescing, resting chip face, preamble notes | **§7.2** | C1-C5 |
+| Status line: page counter and stream badge | **§7.4**, **§8** | C6-C8 |
+| Header/session taxonomy stack | **§4.1**, **§7.1** | C9-C13 |
+| Context chips → one summary line | **§7A.3**, **§7A.10** | C14-C16 |
+| Composer resting actions | **§7A.6**, **§7A.10** | C17-C20 |
+| Meta-copy length | **§7.4**, **§8**, **§7A.10** | C21-C22 |
+| Spec repairs (a) header contradiction, (b) unread count, (c) dead surface | **§4.1**, **§7.1**, **§7A.10** | C10, C12, C23-C26 |
+
 ---
 
 ## 1. The boundary, stated as a test
@@ -1270,19 +1325,26 @@ preview is non-evidentiary (§5.3).
 ### 3.12 Iconography — a closed, repo-owned sprite
 
 `web/src/system/icons.tsx` exports one component over a **closed vocabulary of
-18 ids** spanning status, structure, object and action. Adding an id is a spec
+19 ids** spanning status, structure, object and action. Adding an id is a spec
 edit, exactly as adding a panel is. Rules, all mechanical: single path,
 `viewBox="0 0 16 16"`, `stroke="currentColor"`, no `<style>`, no gradient, no
 embedded colour — so an icon inside a danger-ink badge is red with no
 icon-specific rule. `aria-hidden` unless the icon is a control's only label, in
 which case the control carries `aria-label` from `copy.ts`.
 
+**SPEC EDIT 2026-09-01 (§0.2b, §7.1(b)) — the eighteenth id becomes nineteen.**
+`plus` is added to the action group, as the single-path `M8 3 L8 13 M3 8 L13 8`,
+because §7.1(b)'s amended create affordance is "a single icon-only `+` control"
+and no id in the closed 18 draws a plus. Recorded here rather than minted in a
+component, which is exactly the edit this section requires; the count above is
+the number a test asserts, so the two cannot drift.
+
 **Refusal:** no icon font, no `@iconify`, no Lucide, no Heroicons. The bundle
 ships inside a Python wheel and its weight is the operator's download — the
 original §3 reason, still correct.
 
 **Refusal:** icons never replace words in a status. `<Badge>` renders **icon +
-word**, always. The 18 ids exist to make a scan *faster*, never to make it
+word**, always. The 19 ids exist to make a scan *faster*, never to make it
 *possible*.
 
 ### 3.13 Accessibility floor — replacing the original §3 row
@@ -1389,9 +1451,13 @@ surface except the three the operator asked us to add.
 └────────────┴────────────────────────────────────┴────────────────────────┘
 ```
 
-- **HEADER** carries the two facts that make provenance legible at a glance:
-  the **artifact pin** (§12.1) and the **build-state chip** (`current` /
-  `preview` / `stale` / `failed`). When the pin is not the current build the
+- **HEADER** carries ~~the two facts that make provenance legible at a glance:
+  the **artifact pin** (§12.1) and the **build-state chip**~~ **STRUCK
+  2026-09-01, repair (a)** — superseded by the 2026-09-01 one-chip collapse,
+  clause (c) below, which is the only normative reading. It carries **one**
+  chip: the **artifact pin** (§12.1), with the build state (`up to date` /
+  `preview` / `stale` / `failed` /
+  `not built`) drawn **inside** it. When the pin is not the current build the
   header is visibly marked and every panel below inherits that marking. This is
   the most important element in the document, because G5.5/G5.6 are exactly the
   case where a user must not be able to forget which build they are looking at.
@@ -1407,9 +1473,11 @@ surface except the three the operator asked us to add.
   default. Giving the agent a column rather than a bottom drawer is the
   "collaborator, not console" claim cashed out in layout.
 
-Breakpoints: below 1280px the Stream collapses to a docked strip with an unread
-count; below 1024px the Rail collapses to an overlay. There is no phone layout
-and none is attempted.
+Breakpoints: below 1280px the Stream collapses to a docked strip ~~with an
+unread count~~ **STRUCK 2026-09-01, repair (b) — see clause (f) of the
+2026-09-01 amendment below, which defers the unread count explicitly rather than
+leaving it a normative clause nothing implements**; below 1024px the Rail
+collapses to an overlay. There is no phone layout and none is attempted.
 
 **AMENDED 2026-08-28 — three corrections, each a defect the shipped build can
 be measured exhibiting.**
@@ -1458,7 +1526,10 @@ construction**, which §3.14's e2e asserts.
 **Header layout.** The header grid is a symmetric three-up centring the artifact
 pin, so with a short project name roughly 450px of the left cell and 350px of
 the right are dead in a 44px bar. It becomes `auto 1fr auto`, left-aligned on
-one baseline, reading **identity → pin → icon-only Export/BOM → build state**, with one
+one baseline, reading ~~**identity → pin → icon-only Export/BOM → build
+state**~~ **STRUCK 2026-09-01, repair (a): a four-element reading order whose
+fourth element no longer exists.** The order is **identity → pin (build state
+inside it) → icon-only Export/BOM**, with one
 dominant element in the pin chip (the ref, in `.code`) and `ARTIFACT PIN`
 demoted to a title attribute. **Copy defect, fixed at the same time:**
 `copy.ts`:58 (`pin.current`) and :62 (`buildState.current`) are two different
@@ -1514,6 +1585,58 @@ nothing inside it.
 Export and BOM remain **two visible icon-only controls** in the bar
 (`[data-chrome-export]` / `[data-chrome-bom]`, issue #12). Neither is moved
 behind an overflow.
+
+**AMENDED 2026-09-01 (second amendment of this date) — the shell's own labels
+stop competing with the stream's content.** §0.2b's measurement: above the first
+transcript event the column drew an `Agent` eyebrow, a `SESSIONS` heading, a
+session tab, and a `New session` / `Ask about tread` pair — four bands, and the
+word "session" printed four times. Three corrections, and repair (a)'s
+self-contradiction is closed above rather than here.
+
+**(d) The §4.1 header contradiction is resolved in favour of the one-badge
+rule.** The two strikes above are the whole of repair (a) in this section: the
+opening bullet's two-chip sentence and the 2026-08-28 header-layout reading
+order are struck, and the 2026-09-01 clause (c) collapse is the sole normative
+statement of what the header draws. **Testable:** at any viewport ≥1280px and in
+every pin/build state, `[data-build-state]` is minted on exactly one element,
+that element is the pin chip, and the header contains **no** second element
+drawing a build-state or pin-freshness word. `copy.ts` is reconciled with the
+same ruling: `buildState.current` is `up to date` and is the word the badge
+draws while following current; `pinMode.current`/`pin.current` is **not drawn as
+a word in the header in any state** and survives only as title-attribute and
+`data-pin-mode` text. Neither key is deleted — §12.1 still uses the pin
+vocabulary in the pin's own copy — but a build that draws both words in the bar
+fails this clause.
+
+**(e) The `Agent` eyebrow strip keeps its control and loses its label.**
+`Shell.tsx`:179-190 renders a `streamHeader` band carrying a title node and the
+collapse button. **The title node does not render.** The band renders **only**
+when the Stream column is expanded, contains **only** the collapse affordance
+(`[data-stream-collapse]`, unchanged, keeping its `iconLabel` for
+`copy.stream.collapse` as the accessible name), and the column's name for
+assistive technology stays on the `aside`'s existing `aria-label`. **Testable:**
+with the Stream expanded, `[data-stream-collapse]` is present and the
+`streamHeader` band has exactly one child element; no visible text node in the
+band renders `copy.stream.title`. The band's height is one control, not a row of
+type. §3.13's accessible-name floor is unchanged: removing a *visible* duplicate
+of an `aria-label` is not removing the name.
+
+**(f) The unread count is DEFERRED, explicitly, and is not a live clause.** The
+struck breakpoint phrase promised an unread count on the 44px collapsed strip
+and nothing has ever implemented one — a normative clause silently unimplemented
+is the failure mission rule 1 exists to catch, and this document does not
+tolerate it in either direction. **The clause is withdrawn, not merely
+unbuilt**, for a stated reason: §4.1(a)/§7A.1 already make the strip a
+**control** that expands on focus or activation, so the number would be a badge
+on a thing whose only job is to stop existing; and "unread" has no definition in
+this document — the client has `(run_id, seq)` and `(session_id, ordinal)`
+(§2.8) and no read watermark of any kind, so implementing it would mean minting
+one, which is client-side derived state (§1) about events the server never
+tracked. **Normative now:** the collapsed Stream strip renders **the collapsed
+strip and nothing else** — no count, no dot, no badge. Should the count be
+wanted, it re-enters as a §19 item with a server-side or explicitly
+workspace-state-backed read watermark, and only then. It is recorded in §19 so
+it is not lost.
 
 ### 4.2 Panel inventory (closed for Stage 4/5)
 
@@ -2145,6 +2268,50 @@ lease holder.** While the CLI holds a persistent session's lease, the browser
 reads and can prompt *through the owning server* (§2.1), which is the only
 reason both surfaces can drive one session at all.
 
+**AMENDED 2026-09-01 (§0.2b) — the tab strip is the session taxonomy, and it is
+the only copy of it.**
+
+**(a) The `SESSIONS` heading does not render.** `SessionTabs.tsx`:102 draws an
+`<h2>` above a list whose `aria-label` (`:110`) is the same string. **Normative:
+the tab strip has no visible heading in any state.** The list keeps its
+`aria-label` and its `role`, so the landmark and the accessible name are
+unchanged; `copy.stream.sessionsHeading` survives as that label only. **Testable:**
+no visible text node inside the Stream column renders `copy.stream.sessionsHeading`;
+`[role=tablist]`/the sessions list still exposes it as an accessible name.
+
+**(b) The create affordances merge into the strip as ONE compact `+` action.**
+`StreamPanel.tsx`:404's `createAction` pair (`New session` / `Ask about <part>`)
+renders as **a single icon-only `+` control that is the last item of the session
+tab strip**, not as a band below it. **Normative, and each half is testable:**
+
+1. The `+` control renders **whenever the panel can create a session** — which
+   is the condition the shipped pair already renders under (no runtime fault,
+   and either the current tab cannot prompt or at least one session exists) —
+   and renders **in no other state**. The empty-list invitation (§7A.2) is
+   unchanged and is the one place a full-width worded create control still
+   renders, because there is no strip to hang an icon on.
+2. **No wording appears twice.** `New session` and `Ask about <part>` do not
+   render as visible button labels anywhere the tab strip is drawn. They become
+   the two entries of the `+` control's menu, and the menu is drawn **only while
+   open**. When a part is selected the menu has both entries; with no part
+   selected it has one, and the `+` activates it directly rather than opening a
+   one-item menu.
+3. The existing test hooks are **unmoved**: `[data-session-create]` and
+   `[data-session-ask]` still address the two actions, wherever they live. A
+   lane that renames them has changed a contract this clause did not open.
+4. `data-create-error` is unchanged and still renders as a note; a create
+   failure is an exception and stays loud.
+
+**(c) Dead surface, repair (c) — the one-character filename confusion.**
+`stream/sessionPrompt.ts` (the gate, `sessionCannotPrompt`) and
+`stream/sessionPrompts.ts` (the remembered-first-line store,
+`sessionPromptStore`) differ by one character and are imported side by side in
+`StreamPanel.tsx`:56 and :71. **Normative:** the gate module is renamed
+`stream/sessionPromptGate.ts`; `stream/sessionPrompts.ts` keeps its name because
+it is the store the plural describes. The rename is mechanical — no exported
+symbol changes — and a build in which two modules under `stream/` differ only by
+a trailing `s` fails this clause.
+
 ### 7.2 The tool chip contract
 
 A testability contract imposed on the DOM, specified as a component contract
@@ -2262,6 +2429,94 @@ schema-driven chip. Both satisfy the same attribute contract, so a degraded
 fixture never breaks the contract — it renders plainly. **A chip degrades by
 omission and names the absent fields; it never fabricates a placeholder value.**
 
+**AMENDED 2026-09-01 (§0.2b) — the chip's resting face, and repetition.** Nothing
+below touches the attribute contract above: `data-tool-name`, `data-status`,
+`data-event-id`, `data-tool-call-id` and the `data-field` set are **unchanged in
+every clause**, and both assertions of the completeness predicate still run
+against every call. What changes is what a *resting, successful, repeated* chip
+draws.
+
+**(a) Consecutive identical successful calls coalesce into one row.** Define a
+**repeat group**: a maximal run of two or more transcript items that are
+*adjacent in render order with no item of any other kind between them*, share
+one `data-tool-name`, each have `data-status="ok"`, and whose §7.2 result
+documents are **byte-identical after canonical-JSON serialization**. A repeat
+group renders as **one row**: the tool name, a repeat count, the shared status
+badge, and the one-line headline `stream/toolSummary.ts` computes for the shared
+document — with **one** disclosure holding the detail.
+
+- **Count.** The row draws `×N` where `N` is the number of calls in the group,
+  in the type role §3.8 gives a count, never as a sentence.
+- **Nothing is dropped from the DOM.** The row carries
+  `data-chip-repeat="N"`, `data-event-id` of the **first** member (so existing
+  addressing still resolves), and `data-event-ids` as a space-separated list of
+  every member's id in render order. `data-tool-call-id` likewise becomes
+  `data-tool-call-ids` on a coalesced row and stays singular on a single chip.
+  §7.2's `data-field` nodes render once, on the coalesced row, from the shared
+  document. **Testable:** for any transcript, the **set** of ids in
+  `data-event-id` ∪ `data-event-ids` across all chips equals the set of
+  tool-call event ids in the underlying entries. A coalescing that loses an id
+  fails. *Set, not multiset, and the reason is stated rather than left to the
+  test: the anchor id is deliberately published twice — once as
+  `data-event-id`, so existing addressing still resolves, and again as the first
+  entry of `data-event-ids`, so the member list is complete on its own. A
+  multiset comparison would count that anchor twice and fail on a correct
+  render, which is a testable the build cannot pass rather than a rule the build
+  must meet (§0.2b).*
+- **The negative half, stated four ways, because this is where honesty is at
+  risk.** A group does **not** form, and every member renders as its own chip,
+  when: any member's `data-status` is `error`, `running` or `unknown`; the
+  members' result documents differ in any byte; any item of another kind
+  (`text_delta`, `thought`, `image`, `question`, `answer`, `audit`, `terminal`,
+  a resync seam, or the §8 history/live seam) falls between them; or the members
+  lie on opposite sides of that seam. **Two failed calls never coalesce, even
+  when identical.** A repeated failure is the signal this column exists to
+  carry, and folding nine failures into one row would be eliding the fact
+  §4.4 forbids eliding.
+- **N=1 draws no count.** A single call renders exactly as it does today, with
+  no `data-chip-repeat` attribute.
+- Coalescing is a **rendering** operation over already-normalized entries. It
+  computes nothing, merges no payloads, and never produces a document no
+  server sent (§1). The one document a coalesced row renders is one member's,
+  and the members are byte-identical by the group's own definition.
+
+**(b) The resting face loses the field count.** The collapsed `N result fields`
+row (`copy.stream.chip.detail`, `copy.ts`:959-960) **does not render on the
+resting chip face in any state.** It renders **inside** the disclosure, as that
+disclosure's own label or first line, where a reader who asked for detail can
+use it. **Testable:** with every disclosure closed, no chip in the transcript
+renders the string produced by `copy.stream.chip.detail`; opening one disclosure
+renders it exactly once. The `data-field` nodes themselves are unchanged and
+stay in the DOM whether the disclosure is open or shut, as they already do — the
+count was chrome about a list, not the list.
+
+**(c) At most one preamble note, and never above the headline.**
+`ToolChip.tsx`:144-152 stacks up to three `<p class=note>` blocks — `unknownWhy`,
+`runningWhy`, `callMissing` — between the header and the summary line.
+**Normative:** the resting chip face renders **at most one** note, and it renders
+**below** the headline, not above it. The note renders **only** when the chip is
+in an exceptional state — `data-status` of `error`, `running` or `unknown`, or a
+missing result record. When more than one condition is true the chip draws the
+**most specific** one, in the fixed precedence `callMissing` → `unknown` →
+`running`, and the others are unmounted rather than stacked. **A chip with
+`data-status="ok"` and a result present renders no note at all.** The suppressed
+conditions are not lost: each stays on the chip's `title`, and §7.2's
+`data-field-state="unparsed"` path is untouched — an unparsed result still
+renders its stated reason in the chip body, because that is a refusal carrying
+its cause and not a preamble.
+
+**(d) What a coalesced row must still be able to say.** A group whose members
+are `ok` can still hold a result the summary cannot headline; that row renders
+`data-chip-summary="opaque"` exactly as a single chip does (§7.2's named
+fallback), and the ×N count does not change the sentence. A coalesced row is
+never `data-chip-summary` absent.
+
+**(e) These clauses bind `Transcript.tsx`, `ToolChip.tsx` and
+`stream/toolSummary.ts` only.** Grouping is decided in the transcript's row
+construction (`stream/transcript.ts`'s `PanelRow`), not inside a chip, because a
+chip cannot see its neighbours and a chip that could would be reading the
+transcript.
+
 ### 7.3 Kinds
 
 - `text_delta` → streamed assistant text.
@@ -2307,6 +2562,48 @@ Closed vocabulary on the Stream header: `live`, `reconnecting`, `resyncing`,
 `historical`, `detached`. `resyncing` is §2.7's close-and-refill state and is
 **visible** — a silent gap in a transcript the user believes is complete is
 worse than a labelled one.
+
+**AMENDED 2026-09-01 (§0.2b) — the badge is exception-only.** The vocabulary is
+**unchanged** and so is every attribute; what changes is that the vocabulary is
+now five words of which **one is never drawn**.
+
+**(a) The stream-state badge renders only for the four exceptional states.**
+`StreamPanel.tsx`:311-321's `Badge` mounts **if and only if** `stream.status` is
+one of `reconnecting`, `resyncing`, `historical`, `detached`, **or** a runtime
+fault is known (§7A.8's `runtimeFault`, which outranks the socket word and keeps
+its `error` tone). **When `stream.status` is `live` and no fault is known, the
+badge does not mount** — no element, not a muted one, not a dot. **Testable:** in
+the steady live state the Stream header contains no element matching
+`[data-stream-state]`; inducing any of the four states, or a runtime fault,
+mounts exactly one. A `live` badge is the interface reporting that nothing is
+wrong, which is the one thing a status line must never spend a row on.
+
+**(b) `data-stream-state` follows the badge, and the state is still readable
+without it.** The attribute lives on the badge (§3.4's primitive-owns-its-node
+rule), so in the live state it is absent from the DOM. Gates and e2e that need
+the socket's own answer in **every** state read `[data-stream]` on the Stream
+panel root, which carries `stream.status` unconditionally and is the durable
+hook; the badge is the *drawn* exception. A lane that satisfies (a) by hiding the
+badge with CSS while leaving it mounted has not satisfied it.
+
+**(c) `resyncs` and the resync seam are untouched.** The `[data-resync-count]`
+readout and §8's in-transcript labelled break are exceptions by construction and
+keep rendering exactly as specified. Nothing in (a) permits a silent gap.
+
+**(d) Meta-copy length, binding `copy.stream.stateWhy` and
+`copy.stream.runtimeFaultWhy`.** Every string in these two maps is **one
+sentence**, and the long-form explanation moves to the element's `title` where
+one is wanted. `copy.ts`:819-820 (`stateWhy.resyncing`, 46 words) and 840-846
+(`runtimeFaultWhy.*`, 40-56 words each) and 849-850 (`runtimeFaultNext`) are the
+named offenders. **Testable:** no value in `copy.stream.stateWhy`,
+`copy.stream.runtimeFaultWhy`, `copy.stream.runtimeFaultNext` or
+`copy.stream.resync` (`copy.ts`:931) exceeds **25 words or one sentence**,
+whichever binds first. `stateWhy.live` is retained in `copy.ts` — a badge that
+does not mount needs no tooltip, but the map stays total over the closed
+vocabulary so a future state cannot land without copy. **The cause is never
+shortened away:** `runtimeFault`'s three-word verdicts, `resync.gap`'s statement
+that events are *not recovered*, and §7A.8's named `cause` all survive; what is
+cut is the paragraph explaining the mechanism, which belongs on `title`.
 
 ---
 
@@ -2514,6 +2811,81 @@ prompt route composes again, from the same function, at send time, and the
 response echoes the block actually sent. Saying the preview is authoritative
 would be a claim the two calls cannot make good on.
 
+**AMENDED 2026-09-01 (§0.2b) — the envelope is summarized at rest and editable on
+demand.** The envelope's *content* rules above are unchanged in every
+particular: the closed field list, the three stated WHYs, and the "references,
+never facts" tightening all stand, and this amendment does not add, remove or
+re-shape a single member of `context`. It changes **only** how the composer
+draws the envelope it is about to send.
+
+**(a) One summary line at rest.** Above the composer input the resting state
+renders **exactly one** line: the word `Context:` followed by the envelope's
+present members in the fixed order `part`, `artifact_ref` (abbreviated by
+`formatOid`/`formatRef`, §4.1(a)), `stage_tab`/`inspector_tab` as one
+`stage/inspector` pair, `view`, then a `+N` count for any remaining members —
+for example `Context: tread · build f908224c · viewport/results · iso`. Values
+are the same closed tokens and echoed identifiers the envelope carries; the line
+**re-words nothing and computes nothing** (§1), and a member absent from the
+envelope is absent from the line.
+
+**(b) The chip form is the disclosure.** Activating the summary line expands the
+**editable** chip form — the `<ul data-context-chips>` of §7A.10, with its
+per-chip remove/restore affordances — and activating it again collapses back to
+the line. The expanded state is per-tab UI state and is not part of the
+envelope.
+
+**(c) The negative half.** `chipsFor` (`stream/composerContext.ts`:91-99)
+currently pushes `stage_tab`, `inspector_tab` and `view` unconditionally, so
+three rows are always mounted. **Normative: `ul[data-context-chips]` does not
+mount while the disclosure is collapsed**, and the composer's resting height is
+one line of context regardless of how many members the envelope carries.
+`chipsFor` still enumerates every member — the chips are complete when shown;
+what changes is when the list mounts.
+
+**(d) What must stay true in both states.** The summary line carries
+`data-context-summary` and, for machine readers, `data-context-keys` — a
+space-separated list of the member keys present, in the same order — so the
+envelope's shape is inspectable without opening anything.
+
+**The binding equality is two-way, not three-way, and the third set is a
+superset.** `[data-context-keys]` names **exactly** what `POST /prompt` would
+send — that is the fact the line publishes, and it holds in every state. The
+chips are a different set by construction: `chipsFor` enumerates every member
+the workspace could **offer**, which is a superset of what the envelope
+carries, and it must stay a superset, because a chip is the control an operator
+un-excludes a member from and a chip that vanished when its member left the
+envelope would take that control away with it. Two ways the two sets diverge,
+both of them correct:
+
+- **An excluded member** (see (e)) leaves the envelope and leaves
+  `[data-context-keys]`, while its chip stays mounted carrying
+  `data-context-key` **and** `data-context-dropped`.
+- **A workspace that names no reference at all** sends no envelope, so
+  `[data-context-keys]` is empty while the chips still offer `stage_tab`,
+  `inspector_tab` and `view` — none of which names a reference on its own.
+
+**Testable, and every half of it:** (1) the key set on `[data-context-keys]`
+equals the key set of the envelope `POST /prompt` would send, in every state,
+excluded members included; (2) with the disclosure open, no key on
+`[data-context-keys]` is missing from the chips' `data-context-key` set — the
+line never names a member the form does not offer; (3) with a member dropped,
+it is absent from `[data-context-keys]` and from the envelope, present in the
+chip row as a `data-context-dropped` chip, and named on the resting line per
+(e); (4) with nothing dropped and the envelope non-null, the published set
+equals the set of chips not marked dropped. An earlier form of this clause
+asserted a flat three-way equality; it is false in both cases above against a
+correct build, and is struck. §7A.12 case 2's golden is unaffected: it
+asserts the **composed block**, not the chrome. Any e2e that addresses
+`[data-context-key]` opens the disclosure first, and that is a test edit, not a
+contract change.
+
+**(e) An excluded member is an exception and stays visible.** If the operator
+removes a member (or a member is excluded for any reason), the resting summary
+line **says so** — the removed key renders struck or as an explicit
+`−<key>` token on the line — because "the agent will not be told about the
+selection" is a fact about what is being sent, and the quiet path is only for
+the envelope the workspace state implies.
+
 ### 7A.4 Where the composed block goes — and the one field it must never touch
 
 The sidecar's `session.prompt` takes `{session_id, run_id, prompt}` and nothing
@@ -2668,6 +3040,20 @@ an answer and receives `404 unknown_question`; on that 404 it disables with
 `data-ask-state="abandoned"` and the stated reason. This is a real gap, bounded
 by the `terminal` band in the common case, and it is written down rather than
 closed with a new event kind.
+
+**AMENDED 2026-09-01 (§0.2b) — Cancel mounts, rather than dims.** The shipped
+composer renders a permanently-mounted `Cancel` button that is `disabled` with a
+reason for the whole of the time no run is in flight, which is nearly all of the
+time. **Normative: the cancel control mounts if and only if the composer's
+`data-cancel-state` is `available`** — that is, a run this tab can cancel is in
+flight — and **does not mount** in any other state: no disabled button, no
+greyed word. The state attribute itself is unchanged and stays on the form
+(§7A.10), so `data-cancel-state="unavailable"` is still readable with no control
+present. Everything else in this section is untouched: what cancel *does*, the
+`4409` reasoning, `abandoned_questions`, and the `data-ask-state="abandoned"`
+path are all unchanged, and a cancellable run still gets a control the instant
+it becomes cancellable. `copy.composer.cancelWhy`'s disabled-reason string
+survives for the `title` of the composer form and is no longer a button reason.
 
 ### 7A.7 Answering `ask_user` from the browser
 
@@ -2847,6 +3233,92 @@ a `data-source`, because no chip is a fact (§4.6); a chip that ever renders a
 measured value is a `heph/no-derived-fact` failure, and the rule already in §1
 catches it without extension.
 
+**AMENDED 2026-09-01 (§0.2b) — the resting composer is an input and one button.**
+Every attribute in the block above is **unchanged and still unconditionally
+present on the form**, including `data-cancel-state` and `data-send-state`. What
+changes is which of them own a drawn control. The `<ul data-context-chips>` in
+the block is now conditional per §7A.3(c) and the form gains
+`[data-context-summary]` per §7A.3(d); the amended shape is:
+
+```html
+<form data-composer …>
+  <p data-context-summary data-context-keys="part artifact_ref inspector_tab view">…</p>
+  <!-- ul[data-context-chips] mounts ONLY while the disclosure is open (§7A.3) -->
+  <textarea data-composer-input></textarea>
+  <!-- resting: exactly one button -->
+  <button data-composer-send>…</button>
+</form>
+```
+
+**(a) Send is the only resting button.** In the resting state
+(`data-composer-state="idle"`, no run in flight) the composer's action row
+contains **exactly one** element with a button role: `[data-composer-send]`.
+**Testable:** query the **action row** for button-role elements in the resting
+state and the count is one. *The scope is the action row, not the form: (c)
+places `[data-context-disclose]` inside the same `<form>`, attached to the
+summary line, so a form-scoped query returns two at rest by design. The rule
+this clause states is that the row of actions holds one target, and the testable
+now says the same thing the normative sentence above says.* Send keeps its existing disabled-with-reason behaviour when it
+cannot send — a *primary* action that vanishes would leave an operator with no
+target for the question "why can't I send?", which is the opposite case from
+Cancel.
+
+**(b) Cancel mounts only while cancellable** — §7A.6's amendment, restated here
+as the DOM half: `[data-composer-cancel]` exists in the DOM **iff**
+`data-cancel-state="available"`.
+
+**(c) The context preview moves behind a compact toggle.**
+`[data-context-disclose]` stops being a full `secondary` button in the action
+row. It renders as a **compact, quiet toggle attached to the summary line of
+§7A.3(a)** — the line and the toggle are one affordance — and it keeps its
+`aria-expanded`, its `[data-context-disclose]` hook and both copy strings.
+`copy.composer.disclose` / `discloseHide` are shortened to a single word each.
+The `POST /context/preview` behaviour above is entirely unchanged; only its
+entry point moves.
+
+**(d) The model chip stays as quiet text.** `[data-composer-model]` /
+`[data-composer-provider]` keep their attributes and their `<Fact>` attribution
+— `providers.models.id` is a server fact and §4.6 governs it — but the chip
+renders as **quiet inline text** in the composer's meta line, not as a bordered
+`Chip` in the action row. It renders **only when a model is selected and model
+chrome is enabled**, exactly as today; nothing about *when* it renders changes.
+
+**(e) Dead surface, repair (c) — remove or wire, and this document chooses.**
+Three groups, each with a stated disposition, because an exported symbol nothing
+imports is a claim the codebase makes and cannot support:
+
+1. `stream/composerChrome.ts`:49-77 — `EFFORT_LEVELS`, `EffortLevel`,
+   `isEffortLevel`, `modelKey`, `parseModelKey`. The effort vocabulary is
+   **removed**: no clause of §7A specifies a thinking-level control, and a
+   closed vocabulary with no surface is a spec claim by implication. `modelKey`
+   / `parseModelKey` are **removed unless the model selector wires them in the
+   same change** — the selector's option identity is `providerId/modelId`
+   either way, and if it is wired it is wired through these functions rather
+   than through a second inline spelling of the same join. **Testable, split by
+   export kind because the two kinds carry different claims:** every **value**
+   export of `composerChrome.ts` (`const`, `function`, `class`) has at least one
+   importer under `web/src`; every **type** export appears in the signature of
+   at least one value this module exports. *A value nothing imports is dead
+   code. A type nothing imports may still be load-bearing — `modelsFrom` returns
+   `ComposerModel[]`, and a return type a caller cannot name is a worse
+   interface than one no caller spells out. Requiring an importer for the type
+   would force either an unused import or an anonymous return, so the rule for
+   types is nameability, not importers.*
+2. `copy.ts` — `selectSessionTitle` (:859) and `selectSession` (:860) have no
+   importer and are **removed**; `historyFailedShort` (:912) is **removed if its
+   only reader is a test**, and the test asserts against `historyFailed`
+   instead. A copy key that only a test reads is a string the product does not
+   have. `sessionsHeading` is **retained** — §7.1(a) keeps it as the tab list's
+   accessible name.
+3. The `stream/sessionPrompt.ts` → `stream/sessionPromptGate.ts` rename is
+   §7.1(c).
+
+**(f) Composer meta-copy.** `copy.composer`'s hint and explanatory strings follow
+§7.4(d)'s rule: one sentence each, long form on `title`. The §7A.5
+lost-POST statement ("the turn may have started"), §7A.8's `cause`, and every
+disabled *reason* are **exempt** — they are the exceptional path, and this
+amendment shortens the resting path only.
+
 ### 7A.11 The read-refresh boundary — the turn's effect on the rest of the workspace
 
 *(2026-08-28 review addition. Without this the section answers complaint 1 as
@@ -2911,8 +3383,10 @@ fixture **separate** from G4.8's:
 
 On reopen: `GET /sessions/{id}/thread` for structure, then paged
 `GET /sessions/{id}/history` per session with the cursor forwarded verbatim
-until `done`. The panel renders progressively and shows a page counter —
-"multi-page" is a user-visible fact, not only a test fact.
+until `done`. The panel renders progressively ~~and shows a page counter —
+"multi-page" is a user-visible fact, not only a test fact~~ **STRUCK
+2026-09-01 (§0.2b) — replaced by the exception-only rule below, which keeps the
+user-visible fact and drops the row that reported its absence.**
 
 Rules the client obeys and the e2e checks:
 
@@ -2939,6 +3413,52 @@ Rules the client obeys and the e2e checks:
   lost" across a resync overstated all five.
 - Threading comes from the edge table; a session with no edge renders at root
   with `data-thread-state="unlinked"` (§2.8).
+
+**AMENDED 2026-09-01 (§0.2b) — the page counter is exception-only.** The struck
+sentence was right that multi-page history is a user-visible fact and wrong that
+the counter is therefore always drawn: in the fixture and in every small session
+it renders `1 page of recorded transcript`, which is a row spent saying there is
+nothing to say.
+
+**(a) When it renders.** `StreamPanel.tsx`:288-300's `historyBar` mounts **if and
+only if** at least one of:
+
+1. `stream.history.pages > 1` **and** the panel is **not** showing the latest
+   page — i.e. there is recorded transcript above the rendered prefix that the
+   reader has not reached; **or**
+2. `stream.history.state === "failed"` — a read that did not complete, which
+   keeps `copy.stream.historyFailed` and stays loud.
+
+**(b) When it must NOT render.** In every other state — including
+`pages === 1`, including `pages === 0`, including `state === "loading"` while
+the first page is in flight, and including a multi-page history whose latest
+page is the one on screen — **no `historyBar` element mounts**. The loading
+ellipsis is not an exception: a transcript that is still filling is already
+visibly filling.
+
+**(c) Nothing the gates read moves.** `data-history-state` and
+`data-history-pages` are the attributes G4 reads and they stay
+**unconditionally mounted** on the Stream panel root, exactly as
+§4.1's amendment (a) precedent keeps a fact in the DOM while dropping its drawn
+row. **Testable:** with a one-page fixture, `[data-history-pages="1"]` is present
+in the DOM and no element renders `copy.stream.historyPages(1)`; with a failed
+read, both the attribute and `copy.stream.historyFailed` render.
+
+**(d) The named-absence notices are one sentence each, and stay.** The four
+unrecoverable kinds above still each render as a named absence — that rule is
+re-affirmed, not relaxed. What changes is length: the run-outcomes explainer
+(`copy.ts`:920-922, "Run outcomes are recorded live and are not part of a
+reopened transcript…") stops rendering as a multi-line blockquote and renders as
+**one short sentence in the transcript's own type role**, with the fuller
+explanation on `title`. **Testable:** each named-absence notice is ≤25 words and
+one sentence; each still renders exactly once per transcript, in place, and none
+is removed. A notice deleted rather than shortened fails §8's absence rule and
+this clause together.
+
+**(e) "Not at latest" is a rendering fact, not a derived one.** The condition in
+(a)(1) is read from the panel's own paging state — which page the panel has
+rendered against the count the server's cursor walk reported — and never from
+counting events or comparing ordinals across the history/live seam (§1).
 
 ---
 
@@ -3510,7 +4030,8 @@ force under the gate its section names.**
 *From §3 / §4.7 — the design system (Stage 4):*
 
 38. **No CSS framework, no component library, no icon package, and no second
-    theme.** The sprite is repo-owned and closed at 18 ids; light theme is an
+    theme.** The sprite is repo-owned and closed at 19 ids (18 until the
+    2026-09-01 §3.12 spec edit added `plus`); light theme is an
     §18 candidate (§3.2, §3.5, §3.12).
 39. **No primitive that mints a `<Fact>` from a `source` string**, and no
     amendment to `heph/no-derived-fact` to permit one (§3.4).
@@ -3857,6 +4378,18 @@ four amendments.** Each names its stage. **Updated 2026-08-28: the
     flagship fixture's `tread.py` sets `part.blank_size` as an f-string **on
     purpose**, so `export_part(layout="nested_sheet")` refuses on the product's
     own showcase part (§22.1, §22.7).
+
+42. **An unread-event watermark for the collapsed Stream strip** (§0.2b, §4.1(f),
+    added 2026-09-01). §4.1's original "docked strip with an unread count" is
+    **struck as a normative clause and recorded here instead**, because "unread"
+    is a fact the product does not have: live events are keyed `(run_id, seq)`
+    and historical ones `(session_id, ordinal)` (§2.8), no read watermark exists
+    on either side, and a client-side one would be derived state (§1). Building
+    it means minting a watermark — server-side, or as explicit §4.5 workspace
+    state with a stated definition of "read" — **and** re-arguing §4.1(a)'s rule
+    that the strip is a control that expands on focus, which is what makes a
+    count on it near-pointless today. Until then the strip renders no count, and
+    that is a decision rather than a gap.
 
 *§23 — provider sign-in. **Stage 10B**, Gate G10B, with credential discovery at
 **Stage 10C**, Gate G10C (both approved 2026-08-28). Its own new-work list is

@@ -25,7 +25,69 @@
   flex: 0 0 auto;
 }
 
-/* ---- the context chip row (§7A.3), above the textarea by default ---- */
+/* ---- the resting context line (§7A.3(a), 2026-09-01) ---------------- */
+
+/*
+ * ONE line, whatever the envelope carries. It wraps rather than scrolls: a
+ * summary that clipped its own last member would be the opposite of what it is
+ * for. The toggle is the last child and is part of the line (§7A.10(c)).
+ */
+.summary {
+  composes: label from "../../system/type.module.css";
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1);
+  min-width: 0;
+  color: var(--ink-muted);
+}
+
+.summaryLabel {
+  color: var(--ink-muted);
+}
+
+.summaryToken {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink-base);
+}
+
+/*
+ * An excluded member, drawn struck — the same treatment a dropped chip gets in
+ * the form below, for the same reason: §7A.3(e) keeps the exclusion visible
+ * because it is a fact about what is being sent.
+ */
+.summaryRemoved {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink-muted);
+  text-decoration: line-through;
+}
+
+/* ---- the composer meta line (§7A.10(d)) ----------------------------- */
+
+/*
+ * Quiet inline text: the model the turn will reach, and the keyboard binding
+ * once the box is in use. Not a control row — nothing here is pressable.
+ */
+.meta {
+  composes: label from "../../system/type.module.css";
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--ink-muted);
+}
+
+.model {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ---- the context chip row (§7A.3), behind the summary line ---------- */
 
 .chips {
   margin: 0;
@@ -75,10 +137,9 @@
 }
 
 /* The keyboard binding, once the box is in use. Muted: it is an affordance
-   note, not a fact about the project. */
+   note, not a fact about the project. It composes no type role of its own —
+   `.meta`, the line it sits on, carries one. */
 .hint {
-  composes: label from "../../system/type.module.css";
-  margin: 0;
   color: var(--ink-muted);
 }
 

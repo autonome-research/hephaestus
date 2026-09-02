@@ -176,8 +176,12 @@ export function Shell(): React.JSX.Element {
         <aside className={styles["stream"]} aria-label={copy.stream.title}>
           {shell.streamOpen ? (
             <>
+              {/* §4.1(e), amended 2026-09-01: the eyebrow keeps its control and
+                  loses its label. `copy.stream.title` is the `aside`'s
+                  `aria-label` above and is not drawn again here — an `Agent`
+                  eyebrow over a `SESSIONS` heading over a session tab was three
+                  bands naming the same column. Exactly one child element. */}
               <div className={styles["streamHeader"]}>
-                <span className={styles["streamTitle"]}>{copy.stream.title}</span>
                 <Button
                   variant="quiet"
                   icon="chevron-right"
@@ -194,6 +198,20 @@ export function Shell(): React.JSX.Element {
             // §4.1: the strip is a CONTROL. Focus alone expands it, because a
             // composer cannot live in 44px and a tab stop that leads into a
             // 44px column is a trap with extra steps.
+            //
+            // §4.1(f), amended 2026-09-01 — repair (b): **no unread count, and
+            // that is a decision rather than a gap.** The struck breakpoint
+            // prose promised "a docked strip with an unread count" and nothing
+            // ever built one. The clause is WITHDRAWN, not merely unbuilt: a
+            // badge on a control whose only job is to stop existing on focus
+            // would be a number nobody reads, and "unread" is a fact this
+            // product does not have — live events are keyed `(run_id, seq)`,
+            // historical ones `(session_id, ordinal)` (§2.8), and there is no
+            // read watermark on either side, so a count here would be
+            // client-side derived state (§1). It re-enters as §19 item 42, with
+            // a server-side or explicit §4.5 workspace-state watermark, or not
+            // at all. The strip renders the strip and nothing else — no count,
+            // no dot, no badge (asserted in `test/shell-layout.test.ts`).
             <button
               type="button"
               className={styles["strip"]}

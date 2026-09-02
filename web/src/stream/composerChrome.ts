@@ -14,9 +14,15 @@
 //   *projects* the first declared id; it does not offer a Select, because
 //   `POST /sessions/{id}/prompt` admits `{text, context?}` and no model field
 //   (INTERFACE.md §7A.3).
-// * **Effort is not a session field.** The levels below are Pi's closed
-//   thinking vocabulary, recorded so a later route can name them without
-//   inventing a house scale. A picker over them today would write nothing.
+// * **Effort is not a session field, and is no longer a vocabulary here.**
+//   §7A.10(e)(1) removed it: "no clause of §7A specifies a thinking-level
+//   control, and a closed vocabulary with no surface is a spec claim by
+//   implication". The provider/model join helpers went the same way — the
+//   model selector they were minted for was never wired, and an exported
+//   symbol nothing imports is a claim the codebase makes and cannot support.
+//   The DFM chrome decision and the per-row model projection left for the same
+//   reason: `DfmPanel` decides its own three states (§6.4) and never imported
+//   the one written here.
 // * **There is no Plan mode in the engine.** `[dfm] auto_run` / `run_dfm` is
 //   the manufacturability equivalent, and it is a *project setting* plus a
 //   tool — not a per-message flag (INTERFACE.md §6.4). Those two controls
@@ -26,7 +32,7 @@
 //   agent. `modelsFrom` returns nothing when the file does not exist, so the
 //   composer cannot render a picker of models nobody configured.
 
-import type { ProviderRow, ProvidersDocument } from "../api/providers";
+import type { ProvidersDocument } from "../api/providers";
 
 /**
  * One model the composer may name, as `GET /providers` declared it.
@@ -40,38 +46,6 @@ export interface ComposerModel {
   readonly id: string;
   readonly name: string;
   readonly reasoning: boolean;
-}
-
-/**
- * Pi thinking levels. Closed, and offered only for a model that declared
- * `reasoning: true` on the providers document.
- */
-export const EFFORT_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
-export type EffortLevel = (typeof EFFORT_LEVELS)[number];
-
-const EFFORT_SET: ReadonlySet<string> = new Set<string>(EFFORT_LEVELS);
-
-/** Whether a value is inside the closed effort vocabulary. */
-export function isEffortLevel(value: unknown): value is EffortLevel {
-  return typeof value === "string" && EFFORT_SET.has(value);
-}
-
-/**
- * The wire key for one model: `providerId/modelId`.
- *
- * The model id alone is the identifier the provider declared; the provider
- * id qualifies it so two rows cannot share one option. Neither half is a
- * house name.
- */
-export function modelKey(model: ComposerModel): string {
-  return `${model.providerId}/${model.id}`;
-}
-
-/** Parse a `modelKey` back into its two server fields. */
-export function parseModelKey(key: string): { readonly providerId: string; readonly id: string } | null {
-  const split = key.indexOf("/");
-  if (split <= 0 || split === key.length - 1) return null;
-  return { providerId: key.slice(0, split), id: key.slice(split + 1) };
 }
 
 /**
@@ -106,14 +80,8 @@ export function defaultModel(models: readonly ComposerModel[]): ComposerModel | 
   return models[0] ?? null;
 }
 
-/** The effort options a given model actually supports. */
-export function effortOptionsFor(model: ComposerModel | null): readonly EffortLevel[] {
-  if (model === null || !model.reasoning) return ["off"];
-  return EFFORT_LEVELS;
-}
-
 /**
- * Whether the composer may render the model/effort projection.
+ * Whether the composer may render the model projection.
  *
  * False when the runtime is missing (`agent_unavailable`) or when the
  * providers document names no models. A chip over an empty set — or a
@@ -125,38 +93,4 @@ export function showModelChrome(
   models: readonly ComposerModel[],
 ): boolean {
   return !agentUnavailable && models.length > 0;
-}
-
-/**
- * The DFM chrome state. Closed at three:
- *
- * * `chip` — a part is selected and `GET /parts/{part}/dfm` answered, so the
- *   two §6.4 controls (auto_run toggle + Run DFM) can project that document;
- * * `absent` — no part is selected, and the chrome says so rather than
- *   offering a control that writes nothing;
- * * `hidden` — the runtime is missing, or the document has not arrived. The
- *   composer does not invent a DFM setting, and it does not put DFM chrome
- *   on the `agent_unavailable` refusal.
- */
-export const DFM_CHROME = ["chip", "absent", "hidden"] as const;
-export type DfmChrome = (typeof DFM_CHROME)[number];
-
-export function showDfmChrome(
-  agentUnavailable: boolean,
-  part: string | null,
-  hasDfm: boolean,
-): DfmChrome {
-  if (agentUnavailable) return "hidden";
-  if (part === null) return "absent";
-  return hasDfm ? "chip" : "hidden";
-}
-
-/** A provider row's models, for tests that build a document by hand. */
-export function modelsOf(row: ProviderRow): readonly ComposerModel[] {
-  return row.models.map((model) => ({
-    providerId: row.id,
-    id: model.id,
-    name: model.name === "" ? model.id : model.name,
-    reasoning: model.reasoning === true,
-  }));
 }

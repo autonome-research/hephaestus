@@ -412,6 +412,11 @@ describe("Fit / Cancel / disclose resting chrome and Button min-width (issues 67
     expect(grid?.getAttribute("data-variant")).toBe("toggle");
   });
 
+  // AMENDED 2026-09-01 (§7A.10(a)-(c)). At rest there is no Cancel to size: it
+  // mounts only while a run is cancellable. The disclosure is a compact QUIET
+  // toggle attached to the summary line — still a `Button` primitive, so it
+  // still carries the min target the rule in this file is about, which is the
+  // half of the old assertion worth keeping.
   it("gives composer Cancel and disclose a resting control surface", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const html = renderToStaticMarkup(
@@ -428,13 +433,31 @@ describe("Fit / Cancel / disclose resting chrome and Button min-width (issues 67
     );
     const host = document.createElement("div");
     host.innerHTML = html;
-    expect(host.querySelector("[data-composer-cancel]")?.getAttribute("data-variant")).toBe(
+    // No run is cancellable here, so §7A.10(b) says there is no control.
+    expect(host.querySelector("[data-composer-cancel]")).toBeNull();
+    const disclose = host.querySelector("[data-context-disclose]");
+    expect(disclose?.getAttribute("data-variant")).toBe("quiet");
+    expect(disclose?.tagName).toBe("BUTTON");
+
+    // …and the other half: a cancellable run draws a real `secondary` control.
+    const live = renderToStaticMarkup(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <Composer
+          sessionId="sess-1"
+          profile="orchestrator"
+          attach={null}
+          agentUnavailable={false}
+          liveRunId="run-live"
+          streamLive
+        />
+      </QueryClientProvider>,
+    );
+    const liveHost = document.createElement("div");
+    liveHost.innerHTML = live;
+    expect(liveHost.querySelector("[data-composer-cancel]")?.getAttribute("data-variant")).toBe(
       "secondary",
     );
-    expect(host.querySelector("[data-context-disclose]")?.getAttribute("data-variant")).toBe(
-      "secondary",
-    );
-    expect(host.querySelector("[data-composer-cancel]")?.getAttribute("data-variant")).not.toBe(
+    expect(liveHost.querySelector("[data-composer-cancel]")?.getAttribute("data-variant")).not.toBe(
       "quiet",
     );
   });
