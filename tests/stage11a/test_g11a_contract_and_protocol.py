@@ -43,16 +43,33 @@ from opstore import OpStore
 # clause 15 — contract drift, record-only half
 
 
+#: What the declared surface stood at when Stage 11 closed — 53 -> 54 was
+#: ``MESH_INGEST.md`` §7.2 (Stage 12C, ``compare_to_scan``), a different
+#: stage's declared addition — and every tool declared after it, each by the
+#: amendment that declared it.
+TOOL_PIN_AT_STAGE_11: int = 54
+TOOLS_DECLARED_AFTER_STAGE_11: tuple[str, ...] = (
+    # SOLVER.md §11, Stage 13A / 13B (54 -> 55 -> 57).
+    "solve_pose",
+    "propose_placement",
+    "read_proposals",
+)
+
+
 def test_the_tool_count_is_unchanged_by_this_stage() -> None:
     """§3: two result schemas grow; no tool is added. That is the whole point
     of putting the capability in the result rather than on the surface.
 
-    The literal moved 53 -> 54 when MESH_INGEST.md §7.2 (Stage 12C) added
-    ``compare_to_scan``. What THIS clause pins is unchanged and is asserted
-    directly: Stage 11 adds no tool of its own.
+    What THIS clause pins is Stage 11's own DELTA, and it is asserted as one: a
+    bare literal said instead that no later stage may ever add a tool, which is
+    not what the clause means and which turned it red the moment Stage 13A
+    landed ``solve_pose``. The surface is what Stage 11 left plus the additions
+    named above and nothing else, so an unaccounted tool is still a red build.
     """
-    assert len(tools_decl.tool_names()) == 54
-    assert "compare_to_scan" in tools_decl.tool_names()
+    declared = set(tools_decl.tool_names())
+    assert "compare_to_scan" in declared
+    assert set(TOOLS_DECLARED_AFTER_STAGE_11) <= declared
+    assert len(declared) == TOOL_PIN_AT_STAGE_11 + len(TOOLS_DECLARED_AFTER_STAGE_11)
 
 
 def test_the_generated_artifacts_regenerate_identically() -> None:
@@ -323,13 +340,15 @@ def test_the_geom_seam_holds_exactly_the_declared_pure_services() -> None:
     """§10: "this stage adds nothing to the nine pure services". Enumerated, so
     the claim fails here if a later edit smuggles one in unannounced.
 
-    The list moved from nine to eleven, and both additions are declared by a
+    The list moved from nine to twelve, and every addition is declared by a
     later stage rather than by this one: ``MESH_INGEST.md`` §2.1 adds
     ``geom.mesh`` as the tenth pure service (external triangles -> facts, the
-    mission rule 6 seam against ``render.tessellate``) and §4 adds
+    mission rule 6 seam against ``render.tessellate``), §4 adds
     ``geom.mesh_solid`` as the eleventh (the OCCT half — sew, the
-    ``BRepCheck_Analyzer`` gate, the loft). What THIS clause pins is unchanged:
-    Stage 11 adds none of them, and every name below is still here.
+    ``BRepCheck_Analyzer`` gate, the loft), and ``SOLVER.md`` §4.1 adds
+    ``geom.solve`` as the twelfth (Stage 13A: pure functions over frames and
+    numbers, no executor, no store, no verdicts). What THIS clause pins is
+    unchanged: Stage 11 adds none of them, and every name below is still here.
     """
     package = REPO / "core" / "src" / "hephaestus" / "geom"
     services = sorted(path.stem for path in package.glob("*.py") if path.stem != "__init__")
@@ -343,6 +362,7 @@ def test_the_geom_seam_holds_exactly_the_declared_pure_services() -> None:
         "mesh_solid",
         "metrics",
         "nesting",
+        "solve",
         "step_io",
         "topology",
     ]

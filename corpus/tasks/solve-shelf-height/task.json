@@ -1,0 +1,45 @@
+{
+  "id": "solve-shelf-height",
+  "prompt": "This project already has both parts and both knobs; nothing needs modelling. `post` is a 12 x 12 mm column standing on z = 0 whose height is the bounded parameter `post_h`, and `shelf` is a 50 x 50 mm plate 6 mm thick whose underside sits at the project parameter `hc.shelf_z`. At the values they ship with, the shelf floats 10 mm up while the post stops at 20 mm, so nothing seats on anything.\n\nDeliver geometry in which:\n  1. the shelf's underside sits flush on the post's top face - a `coincident` mate, within 0.05 mm; and\n  2. the shelf's TOP face stands 46.0 mm above the post's base face, within 0.05 mm.\n\nDo not guess the two numbers and do not hand-solve them. Declare the two constraints with `declare_constraint` (id them `shelf_seats` and `shelf_stands`), then call `propose_placement` with `space=\"parameters\"`, `free=[\"hc.shelf_z\", \"post.post_h\"]` and your declared constraint ids to have the engine measure the values for you.\n\nThe proposal is a MEASUREMENT and nothing applies it - no tool writes a parameter for you, and reading a proposal changes no geometry. Applying it is your act: read the proposed values out of the result and author them, with `set_params` or by editing the declarations, then rebuild both parts. You are graded on the rebuilt geometry, so a correct proposal you never applied scores nothing.\n\nBuild both parts when the geometry is right.",
+  "budget_tool_calls": 17,
+  "required_checks": [
+    "solve_shelf_height"
+  ],
+  "export_requirements": [],
+  "render_requirements": [],
+  "scan_requirements": [],
+  "constraint_requirements": [],
+  "proposal_requirements": [
+    {
+      "entry": {
+        "id": "shelf_seats",
+        "kind": "coincident",
+        "a": "post:post_top",
+        "b": "shelf:shelf_under",
+        "tol_mm": 0.05
+      },
+      "kind": "constraint_satisfied",
+      "note": "the shelf seats flush on the post; measured on the REBUILT parts, never on a proposal"
+    },
+    {
+      "entry": {
+        "id": "shelf_stands",
+        "kind": "distance",
+        "a": "shelf:shelf_top",
+        "b": "post:post_bottom",
+        "value_mm": 46.0,
+        "tol_mm": 0.05
+      },
+      "kind": "constraint_satisfied",
+      "note": "the shelf's top face stands 46 mm above the post's base; the second equation that makes the pair unique"
+    }
+  ],
+  "joint_requirements": [],
+  "pose_requirements": [],
+  "motion_check_requirements": [],
+  "protected_paths": [],
+  "notes": "Difficulty 2. Corpus v6 (2026-08-30, SOLVER.md Gate G13C clauses 53-55, Stage 13C): the solve family's parameter-space task. THE POINT OF THE FAMILY: acceptance is graded on the rebuilt part and never on the proposal. `propose_placement` records a measurement artifact and applies nothing, so a run that produces a correct proposal WITHOUT rebuilding delivers no geometry and fails both proposal_requirements - which is the clause that keeps the loop broken. Nothing in the grader reads the proposal set; it would score identically if the run had never called the tool. The two requirements are a genuinely determined pair: the coincident mate gives shelf_z - post_h = 0 and the distance gives shelf_z + plate_t = 46, so shelf_z = post_h = 40.0 exactly, both well inside their declared bounds (0..60 and 5..60). The bar discriminates: seating without standing off leaves the pair anywhere on a line, and standing off without seating leaves a floating shelf, so neither requirement alone can be satisfied by accident. CHECKS keep the single-part facts the two distances cannot see - the 50 x 50 footprint, the 12 x 12 section, both sealed and genus 0 - and deliberately pin NO solved height, since a check that pinned the answer would grade the author's arithmetic and pass a run that hard-coded 40 without seating anything. Budget derivation (measured policy, VALIDATION.md \u00a77, 2026-08-25): no archived observe-mode journals exist for this task yet, so only the hand-count binds - record_requirements 1, build_part 2, declare_constraint 2, propose_placement 1, set_params 2, build_part 2, check_assembly 1, run_checks 1, inspect_part 1 = 13 calls; ceil(1.3 x 13) = 17. Recalibrate against the observed passing max after the first archived sweep, per the measured-budget policy.",
+  "dfm_requirements": [],
+  "drawing_requirements": [],
+  "metadata_requirements": []
+}

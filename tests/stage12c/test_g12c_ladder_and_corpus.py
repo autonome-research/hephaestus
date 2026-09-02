@@ -44,7 +44,16 @@ CORPUS_VARIANTS: Path = REPO / "server" / "tests" / "fixtures" / "corpus_variant
 SCAN_PAIR: frozenset[str] = frozenset({"scan-socket-cuff", "scan-boss-relief"})
 
 #: The public corpus after this stage: twenty-one (v4) plus the scan pair.
+#: The live count moved again on 2026-08-30
+#: when SOLVER.md §11 (Stage 13C, G13C clause 54) added the solve family, so
+#: this clause states its own delta plus what was declared after it — an
+#: absolute total here would have made "no later stage may ever add a task"
+#: this suite's claim, which it never was.
 CORPUS_SIZE_V5: int = 23
+
+#: Declared after Stage 12C and accounted for by name. An UNACCOUNTED addition
+#: still turns this suite red, which is the property the count was for.
+CORPUS_ADDED_AFTER_V5: frozenset[str] = frozenset({"solve-shelf-height", "solve-boss-fit"})
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -573,20 +582,29 @@ def test_the_fixture_scan_is_synthesized_from_an_analytic_solid() -> None:
 
 def test_the_public_corpus_is_twenty_three_with_the_scan_pair() -> None:
     prose = {task.id for task in load_tasks(specs=("prose",))}
-    assert len(prose) == CORPUS_SIZE_V5
+    assert len(prose - CORPUS_ADDED_AFTER_V5) == CORPUS_SIZE_V5
+    assert prose >= CORPUS_ADDED_AFTER_V5, "a named later addition that vanished is drift too"
     assert prose >= SCAN_PAIR
     seeded = {task.id for task in load_tasks(specs=("seeded",))}
     assert {f"{task_id}@seeded" for task_id in SCAN_PAIR} <= seeded
-    assert len(seeded) == CORPUS_SIZE_V5
+    assert len(seeded - {f"{t}@seeded" for t in CORPUS_ADDED_AFTER_V5}) == CORPUS_SIZE_V5
+    # And G6 still pins the LIVE count as a literal. The needle below moved to
+    # prose when Stage 13C legitimately carried ``CORPUS_SIZE`` past 23, which
+    # left that one row with no number in it; this restores the numeric half
+    # without pinning a constant that a later stage is entitled to move.
+    g6 = (REPO / "tests/stage6/test_g6_corpus_v1.py").read_text(encoding="utf-8")
+    assert f"CORPUS_SIZE = {len(prose)}" in g6, (
+        "tests/stage6 no longer pins the public corpus count as a literal"
+    )
 
 
 @pytest.mark.parametrize(
     ("path", "needle"),
     [
-        ("tests/stage6/test_g6_corpus_v1.py", "CORPUS_SIZE = 23"),
+        ("tests/stage6/test_g6_corpus_v1.py", "brings it to twenty-three"),
         ("server/tests/test_bench_corpus.py", "CORPUS_V5_ADDITIONS"),
-        ("tests/stage9c/test_corpus_mechanisms.py", "corpus v5 is twenty-three public tasks"),
-        ("tests/stage11c/test_g11c_corpus.py", "CORPUS_SIZE_NOW: int = 23"),
+        ("tests/stage9c/test_corpus_mechanisms.py", "corpus v5 adds the scan family"),
+        ("tests/stage11c/test_g11c_corpus.py", "added the scan family"),
     ],
 )
 def test_every_repointed_count_pin_cites_this_stage(path: str, needle: str) -> None:
@@ -629,7 +647,14 @@ def test_each_new_task_refuses_the_clinical_reading_in_its_own_notes() -> None:
 
 
 def test_the_scan_family_is_the_corpus_pair_and_the_vocabulary_is_closed() -> None:
-    """The split cannot drift away from the corpus it claims to measure."""
+    """The split cannot drift away from the corpus it claims to measure.
+
+    This clause is about the SCAN family's registration, so it asserts that and
+    not the size of the vocabulary: Stage 13C registered a third family
+    (SOLVER.md §11, G13C clause 55) and a clause that had pinned the whole
+    mapping would have read "no later stage may ever add a family", which was
+    never Stage 12C's claim.
+    """
     from hephaestus.bench.scoring import CORPUS_FAMILIES, FAMILY_SCAN, SCAN_FAMILY_TASKS
 
     assert set(SCAN_FAMILY_TASKS) == set(SCAN_PAIR)

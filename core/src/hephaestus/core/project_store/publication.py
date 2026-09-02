@@ -73,6 +73,7 @@ __all__ = [
     "PublicationKind",
     "PublicationOutcome",
     "Publisher",
+    "build_bundle",
     "current_pointer",
 ]
 
@@ -89,6 +90,55 @@ EXPORT_REF_PREFIX = f"artifact:{EXPORT_ARTIFACT_KIND}:"
 SOURCE_MAP_REF_PREFIX = "artifact:source-map:"
 
 PublicationKind = Literal["current", "preview", "failed", "raced"]
+
+
+def build_bundle(build: UnpublishedBuild, published: BuildResult, audit_revision: int) -> JSONValue:
+    """The bundle document publication records ABOUT one build.
+
+    Extracted from the current-pointer flip at 13C because a **preview** build
+    needs the same document and never got one: ``publish_build(preview=True)``
+    stores the §8 ``BuildResult`` and returns, so a preview carried no §7
+    geometry index — and ``SOLVER.md`` §2C measures candidates on exactly those
+    previews (``core/assembly.py``'s ``PublishedBuild``). Without this, a
+    parameter-space anchor resolved to nothing and the solve reported
+    ``unaddressable_anchor`` for a tag the build had certainly placed.
+
+    One definition rather than two: a second, preview-shaped bundle would be a
+    second answer to "which selectors does this artifact admit", and the whole
+    point of recording the index is that anchor resolution happens long after
+    the worker that knew the labels has exited.
+    """
+    return {
+        "kind": "build_bundle",
+        "part": published.part,
+        "result": published.to_json(),
+        "artifact_ref": published.artifact_ref,
+        "tag_fingerprints": descriptors_to_json(build.tag_fingerprints),
+        # ASSEMBLY.md §2: the §7 namespace this build published. Recorded
+        # beside the fingerprints because both answer the same question
+        # about a *reloaded* artifact — which selectors it admits — that the
+        # BRep bytes themselves cannot: constraint anchors are resolved
+        # against a build long after the worker that knew its labels
+        # and tags has exited.
+        "geometry_index": dict(build.geometry_index_json or {}),
+        "consumed_hc": dict(build.consumed_hc),
+        # MESH_INGEST.md §1.4 / §12 item 15: the SECOND hash, recorded
+        # beside the first rather than in place of it.
+        # ``result.input_hashes.imports`` is the raw file bytes and stays
+        # the invalidation key; this is geometry identity, and it is what
+        # lets two builds of one part say "the file changed, the geometry
+        # did not" instead of leaving a reader to guess from a moved input
+        # hash. It is an explanatory fact and never an invalidation key —
+        # reversing that would let a normalizer decide what counts as a
+        # changed build, which is the authority INGEST.md §1 keeps in the
+        # raw bytes.
+        "mesh_canonical_hashes": _mesh_hashes(build),
+        # MESH_INGEST.md §4.3: surfaced, never blocking. A reviewer must SEE
+        # that a part's geometry came out of a scan; this spec adds no new
+        # never-green rule for it.
+        "geometry_source": _geometry_source(build),
+        "audit_revision": audit_revision,
+    }
 
 
 def current_pointer(part: str) -> str:
@@ -537,37 +587,7 @@ class Publisher:
     ) -> PublicationOutcome:
         part = build.result.part
         published = replace(build.result, current=True)
-        bundle: JSONValue = {
-            "kind": "build_bundle",
-            "part": part,
-            "result": published.to_json(),
-            "artifact_ref": published.artifact_ref,
-            "tag_fingerprints": descriptors_to_json(build.tag_fingerprints),
-            # ASSEMBLY.md §2: the §7 namespace this build published. Recorded
-            # beside the fingerprints because both answer the same question
-            # about a *reloaded* artifact — which selectors it admits — that the
-            # BRep bytes themselves cannot: constraint anchors are resolved
-            # against a current build long after the worker that knew its labels
-            # and tags has exited.
-            "geometry_index": dict(build.geometry_index_json or {}),
-            "consumed_hc": dict(build.consumed_hc),
-            # MESH_INGEST.md §1.4 / §12 item 15: the SECOND hash, recorded
-            # beside the first rather than in place of it.
-            # ``result.input_hashes.imports`` is the raw file bytes and stays
-            # the invalidation key; this is geometry identity, and it is what
-            # lets two builds of one part say "the file changed, the geometry
-            # did not" instead of leaving a reader to guess from a moved input
-            # hash. It is an explanatory fact and never an invalidation key —
-            # reversing that would let a normalizer decide what counts as a
-            # changed build, which is the authority INGEST.md §1 keeps in the
-            # raw bytes.
-            "mesh_canonical_hashes": _mesh_hashes(build),
-            # MESH_INGEST.md §4.3: surfaced, never blocking. A reviewer must SEE
-            # that a part's geometry came out of a scan; this spec adds no new
-            # never-green rule for it.
-            "geometry_source": _geometry_source(build),
-            "audit_revision": self.projections.state().audit_revision,
-        }
+        bundle = build_bundle(build, published, self.projections.state().audit_revision)
         bundle_blob = self._store.blobs.put(canonical_json(bundle).encode("utf-8"))
         payload: JSONValue = {
             "kind": "build_publication",

@@ -26,6 +26,12 @@ mixin per domain so each domain reads independently:
 ``_assembly``    the ``ASSEMBLY.md`` §3 constraint quartet: thin ops over the
                  project's generational constraint set and the engine evaluator,
                  keeping the tool surface's refusal vocabulary and nothing else.
+``_solve``       the ``SOLVER.md`` §11 solving tools: ``solve_pose`` (13A),
+                 ``propose_placement`` and ``read_proposals`` (13B) — thin ops
+                 over ``hephaestus.core.placement``. ``solve_pose`` writes
+                 nothing at all; ``propose_placement`` writes exactly one
+                 thing, an immutable proposal document, and NOTHING applies
+                 it. Writeback is refused, structurally.
 ``_motion``      the ``KINEMATICS.md`` §6 Stage 9A kinematics tools: thin ops
                  over the generational joint and pose sets and the engine
                  motion evaluator, keeping the tool surface's refusal
@@ -189,6 +195,7 @@ from ._requirements import (
     entry_views,
     ledger_state,
 )
+from ._solve import SolveOps
 
 __all__ = [
     "ALIGN_MODES",
@@ -249,6 +256,7 @@ __all__ = [
     "RequirementCite",
     "RequirementEntry",
     "Sheet",
+    "SolveOps",
     "active_run",
     "active_run_id",
     "answer_text",
@@ -307,6 +315,7 @@ class CadOps(
     RequirementOps,
     AssemblyOps,
     MotionOps,
+    SolveOps,
     ReferenceOps,
     DimensionFindingOps,
     DfmOps,

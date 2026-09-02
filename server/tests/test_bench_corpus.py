@@ -187,13 +187,26 @@ CORPUS_V5_ADDITIONS: tuple[tuple[str, int], ...] = (
     ("scan-boss-relief", 15),
 )
 
-#: The whole public split as it stands (v1 + the v2, v3, v4 and v5 additions).
+#: Corpus v6 (2026-08-30, SOLVER.md §11 / Stage 13C, G13C clause 54): the solve
+#: family, whose acceptance is graded on the REBUILT part and never on the
+#: proposal — a run that produces a correct proposal without rebuilding fails
+#: the task, which is the clause that keeps the loop broken. Budgets are dated
+#: hand-count derivations per the 2026-08-25 measured-budget policy; no
+#: observe-mode journals exist for them yet, and each task.json's ``notes``
+#: carries the derivation.
+CORPUS_V6_ADDITIONS: tuple[tuple[str, int], ...] = (
+    ("solve-shelf-height", 17),
+    ("solve-boss-fit", 15),
+)
+
+#: The whole public split as it stands (v1 + the v2..v6 additions).
 CORPUS: tuple[tuple[str, int], ...] = (
     CORPUS_V1
     + CORPUS_V2_ADDITIONS
     + CORPUS_V3_ADDITIONS
     + CORPUS_V4_ADDITIONS
     + CORPUS_V5_ADDITIONS
+    + CORPUS_V6_ADDITIONS
 )
 
 #: Tasks whose acceptance re-runs a DFM rule pack. Predicates are registry
@@ -321,10 +334,10 @@ def test_corpus_is_the_nineteen_public_tasks() -> None:
     additions are still exactly :data:`CORPUS_V1_TASKS`.
     """
     prose = {task_id for task_id, _ in CORPUS}
-    assert len(prose) == 23, (
-        "corpus v5 is twenty-three public tasks (v1 + the ingest and assembly pairs "
+    assert len(prose) == 25, (
+        "corpus v6 is twenty-five public tasks (v1 + the ingest and assembly pairs "
         "+ the Stage 9C mechanism trio + the Stage 11 component pair + the Stage 12C "
-        "scan family; MESH_INGEST.md §7.5, G12C clause 50)"
+        "scan family + the Stage 13C solve family; SOLVER.md §11, G13C clause 54)"
     )
     # The gated split is exactly the public tasks…
     assert set(task_ids(specs=("prose",))) == prose
@@ -441,6 +454,7 @@ def test_every_budget_meets_the_measured_calibration_floor(
         + CORPUS_V3_ADDITIONS
         + CORPUS_V4_ADDITIONS
         + CORPUS_V5_ADDITIONS
+        + CORPUS_V6_ADDITIONS
     }
     for task_id, _budget in CORPUS:
         budget = tasks[task_id].budget_tool_calls

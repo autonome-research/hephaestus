@@ -89,6 +89,41 @@ one could only ever compare two measurements. Nothing in this vocabulary is a
 clinical claim (`MESH_INGEST.md` §11.3): a clearance is a geometric distance at
 named samples, and no entry may be read as evidence that a socket *fits*.
 
+### Corpus families: `solve-*` (2026-08-30, `SOLVER.md` §11)
+
+The `solve-*` family (`solve-shelf-height`, `solve-boss-fit`) is the Stage 13C
+addition, on exactly the terms Stages 11 and 12C took: **solve-prose and
+solve-seeded are each their own split, each baselined on its own first
+measurement with the reference model at ≥ 3 seeds, neither compared against nor
+averaged into the v1/v2/v3 baselines.** The existing 0.70 prose bar keys on its
+own coverage constant and is **not** diluted — `split_name` carves these runs
+out before the aggregate is formed, so the dilution cannot arrive through the
+plumbing either. The baseline is recorded in `solve_baseline.json`, is never a
+gate input, and a first measurement thinner than three seeds per task is refused
+by name (`insufficient_solve_seeds`) rather than written. Re-baselining any
+combined bar is its own explicit future amendment.
+
+What this family measures that nothing before it did is **the closed loop being
+broken on purpose.** `propose_placement` (`SOLVER.md` §2) computes candidate
+placements and records them as a measurement artifact that *nothing applies*;
+the run has to read the proposal and author the edit itself. So acceptance uses
+the `proposal_requirements` vocabulary in `task.json` and is graded on the
+**rebuilt part**, never on the proposal: the named constraint ids must measure
+`satisfied` through the ordinary engine path after the run has applied the
+proposal by authoring it. A run that produces a perfectly correct proposal and
+stops there has delivered no geometry and fails — which is the whole point, and
+is asserted directly by G13C clause 53. Nothing in the grader opens the proposal
+set; it would score identically if the run had never called the tool, because
+grading the computation instead of the geometry is `VALIDATION.md` §1's
+self-referential trap one level up.
+
+The vocabulary is closed at one kind (`constraint_satisfied`) and carries no
+`expect` field, deliberately: `constraint_requirements` admits `violated` and
+`unresolvable` because a task may legitimately require that a mate be
+*checkable*, while here the only meaningful acceptance is that the delivered
+geometry satisfies the mate — an entry that could pass while the mate stayed
+violated would be a solve task a proposal alone could clear.
+
 ### Acceptance checks are functional, never reproductive (2026-07-26)
 
 The corpus fell into the same self-referential trap this document describes for
@@ -363,6 +398,15 @@ The two states stay apart, because they call for different fixes: `violated`
 says the delivered geometry does not meet a declared mate, `unresolvable` says
 the mate was never checked — and an unchecked constraint is not a passing one.
 Only the operator may waive either, and a waiver is recorded as a waiver.
+
+A placement proposal (`SOLVER.md` §8) is delivered to the reviewer as a fact
+about a computation, never as a constraint verdict; it clears nothing, and no
+verdict is solicited or accepted for a proposal id (amendment 2026-08-30 with
+Stage 13B). A violated constraint with a `converged_at_tolerance` proposal
+against it is still a blocking finding — the proposal is a suggestion nobody
+has acted on, and the row clears only the two ways any finding does: a later
+successful build that measures otherwise, or an explicit operator dismissal.
+No new blocking rule arrives with it.
 
 A motion check in any non-success state at termination review — `violated`,
 `not_reached_at_samples`, or `unresolvable` — is likewise a **blocking finding

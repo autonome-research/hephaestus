@@ -1010,6 +1010,29 @@ def _minimal_args(tool: str) -> dict[str, Any]:
         },
         "update_coupling": {"id": "cp-drive", "patch": {"note": "n"}, "reason": "fixture"},
         "read_couplings": {},
+        # SOLVER.md §11 (Stage 13A) — the pose solver is equally unreachable
+        # without CadOps: it measures against published artifacts, and writes
+        # nothing at all either way.
+        "solve_pose": {
+            "targets": [{"form": "constraint", "constraint_id": "c-mount"}],
+            "tol": 0.001,
+            "weighting": "unit_scaled_v1",
+            "regularization": "min_norm_from_start",
+            "provenance": {"assumed": True, "reason": "fixture"},
+        },
+        # SOLVER.md §11 (Stage 13B) — the placement proposer and the proposal
+        # reader, unreachable for the same reason: both speak about published
+        # artifacts, and neither applies anything either way.
+        "propose_placement": {
+            "space": "transform",
+            "constraints": ["c-mount"],
+            "free": ["widget"],
+            "tol": 0.001,
+            "weighting": "unit_scaled_v1",
+            "regularization": "min_norm_from_start",
+            "provenance": {"assumed": True, "reason": "fixture"},
+        },
+        "read_proposals": {},
         "run_checks": {"name": "widget"},
         "record_requirements": {
             "entries": [

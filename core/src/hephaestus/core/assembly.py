@@ -104,6 +104,7 @@ __all__ = [
     "PartGeometry",
     "PoseResidual",
     "PoseVerdict",
+    "PublishedBuild",
     "UnresolvableAnchorError",
     "UnresolvableReason",
     "addressing_refusal",
@@ -570,6 +571,29 @@ class PartGeometry:
 # shared anchor resolution
 
 
+@dataclass(frozen=True)
+class PublishedBuild:
+    """One published build and the bundle publication recorded about it.
+
+    The pair :meth:`AnchorResolver._load_part` normally reads off the current
+    pointer, handed in explicitly instead. ``SOLVER.md`` §2C needs exactly
+    this: a parameter-space iterate is a **preview** build (``tool_schema.md:
+    238-240`` — a transient-override build "create[s] a preview artifact and
+    therefore always return[s] ``current=false``"), so the geometry a candidate
+    is measured on is by construction *not* the current one, and a resolver
+    that could only see the current pointer could not measure a candidate at
+    all.
+
+    Supplying the pair rather than a part name is what keeps this honest: the
+    caller says which build it is measuring, and :attr:`PartGeometry.artifact_
+    ref` then names that build in every record downstream, so nothing can
+    report a preview measurement as a fact about the published design.
+    """
+
+    result: BuildResult
+    bundle: Mapping[str, JSONValue]
+
+
 class AnchorResolver:
     """One evaluation's addressable view of the project's CURRENT artifacts.
 
@@ -584,12 +608,22 @@ class AnchorResolver:
     """
 
     def __init__(
-        self, layout: ProjectLayout, store: OpStore, publisher: Publisher, scratch: Path
+        self,
+        layout: ProjectLayout,
+        store: OpStore,
+        publisher: Publisher,
+        scratch: Path,
+        builds: Mapping[str, PublishedBuild] | None = None,
     ) -> None:
         self.layout = layout
         self._store = store
         self._publisher = publisher
         self._scratch = scratch
+        #: Parts to resolve against a NAMED published build instead of the
+        #: current pointer (``SOLVER.md`` §2C's preview iterates). Empty for
+        #: every ordinary evaluation, which is why 8C and Stage 9 evidence is
+        #: untouched by this parameter existing.
+        self._builds: Mapping[str, PublishedBuild] = dict(builds or {})
         self._cache: dict[str, PartGeometry | UnresolvableAnchorError] = {}
 
     def locate(self, part: str, selector: str) -> tuple[PartGeometry, Resolution]:
@@ -636,7 +670,8 @@ class AnchorResolver:
                 "missing_part",
                 f"no part {part!r} in this project (parts: {', '.join(known) or 'none'})",
             )
-        result = self._publisher.current_result(part)
+        named = self._builds.get(part)
+        result = self._publisher.current_result(part) if named is None else named.result
         if result is None or result.artifact_ref is None:
             raise UnresolvableAnchorError(
                 "no_current_build",
@@ -650,7 +685,9 @@ class AnchorResolver:
             )
         shape = cast("Any", load_brep_shape(self._store.blobs.get(blob), scratch_dir=self._scratch))
         solids = tuple(cast("list[Any]", shape.solids()))
-        bundle = self._publisher.current_bundle(part) or {}
+        bundle = (
+            (self._publisher.current_bundle(part) or {}) if named is None else dict(named.bundle)
+        )
         index = _published_index(bundle, result)
         runs, partition = _solid_runs(index, result, len(solids))
         return PartGeometry(

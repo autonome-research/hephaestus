@@ -53,8 +53,42 @@ SPDX-License-Identifier: Apache-2.0
 > stages (solver, CAM, physics) are untouched and every decision in §4 other than
 > D3 still stands as recommendation, not ruling.
 
-**Date: 2026-08-28. Status: PROPOSAL for three of the five specs; superseded for
-`PARTS_STORE.md` and `MESH_INGEST.md`, promoted on 2026-08-29 — see the notes
+> **2026-08-30 — pose solving and placement proposal crossed the amendment
+> boundary, third in the recommended order, and it carried the one rule
+> reversal in the frontier set.** `SOLVER.md` is now **normative** and
+> `mission_plan.md` carries a dated **Stage 13 — Pose solving and placement
+> proposal** block citing it, with gate summaries for G13A/G13B/G13C (56
+> clauses: 17 / 26 / 13). Four consequences for readers. **(a)** §3.3's
+> ready-to-paste block is superseded by the landed text and is retained only as
+> the drafting record; its `Stage 12` heading, its `G12A`–`G12C` gate names, its
+> `tests/stage12*` suite paths, its "17 / 26 / 13" clause *attribution* to the
+> wrong sub-stage numbers and its 2026-08-28 date are all stale, and the landed
+> stage is **Stage 13 / G13A–G13C**, with the three suites named for 13A–13C
+> rather than 12A–12C (`tests/stage13*`).
+> **(b) D1 is decided: option (c), the proposal-only reversal, with (d) —
+> writeback — refused in the amendment's own text.** Both tightenings D1
+> recommended were applied: 13A's two target forms are held apart and separately
+> gated, and the writeback refusal lives in `mission_plan.md`'s own words rather
+> than only in `SOLVER.md`, so a later drafter must reverse a dated operator
+> amendment rather than a paragraph. **(c)** The landed block goes materially
+> beyond §3.3 in ways a reader must take from `mission_plan.md` rather than from
+> here: the base tool count is **54**, not the 53 this document recorded, so the
+> pins move **54 → 55 at 13A and 55 → 57 at 13B** rather than 53 → 56 in one
+> step; the three sentences scoped by the amendment (`ASSEMBLY.md` §1,
+> `KINEMATICS.md` §0, `tool_schema.md`'s `check_assembly`) land **with the plan
+> block itself**, ahead of 13A rather than inside it; determinism is tiered per
+> **block** rather than per solve; and a citation audit is a precondition on
+> every sub-stage. **(d)** D5's discipline was honoured — six confirmed findings
+> (three blocking, three major) closed by tightening, then independently audited
+> clause by clause, with seven further defects found inside the closures and
+> closed with them. Two of those were counting assertions reality contradicted
+> and would have failed on landing. The two remaining stages (CAM, physics) are
+> untouched and every decision in §4 other than D1 and D3 still stands as
+> recommendation, not ruling.
+
+**Date: 2026-08-28. Status: PROPOSAL for two of the five specs; superseded for
+`PARTS_STORE.md`, `MESH_INGEST.md` and `SOLVER.md`, promoted on 2026-08-29,
+2026-08-29 and 2026-08-30 — see the notes
 above. Nothing here is normative and nothing here amends anything.** Five normative
 specifications have been drafted and revised
 against the codebase — `PHYSICS.md`, `SOLVER.md`, `MESH_INGEST.md`,
@@ -499,6 +533,11 @@ strictly ordered.
 
 ### 3.3 Stage 12 — pose and placement solving
 
+**SUPERSEDED 2026-08-30** by the landed `mission_plan.md` **Stage 13** block.
+Retained as the drafting record only; its stage number, gate names, suite
+paths, sub-stage clause counts and tool-count arithmetic are all stale — see
+the dated note at the top of this document.
+
 ```markdown
 ## Stage 12 — Pose solving and placement proposal (amendment 2026-08-28, maintainer-directed)
 
@@ -661,6 +700,12 @@ Each is a question, its options, and a recommendation. None of them is a spec
 author's to settle.
 
 ### D1 — Does the solver's reversal of the `ASSEMBLY.md` no-solver rule stand?
+
+**DECIDED 2026-08-29, landed 2026-08-30: option (c), with (d) refused in the
+amendment's own text.** The question and its options are retained below as the
+record of what was decided; the ruling and its binding terms live in
+`mission_plan.md`'s **Stage 13** block, and both recommended tightenings were
+applied.
 
 `ASSEMBLY.md:55-57` says, in the imperative: "**NO SOLVER.** Scripts position
 geometry; constraints verify, they never move anything. A constraint that

@@ -126,11 +126,19 @@ def test_the_corpus_count_pin_is_nineteen_with_the_mechanism_trio() -> None:
     # Repointed again 2026-08-29 (MESH_INGEST.md §7.5, Stage 12C / G12C clause
     # 50): corpus v5 adds the scan family `scan-socket-cuff` and
     # `scan-boss-relief`. What THIS clause pins is still unchanged.
-    assert len(prose) == 23, "corpus v5 is twenty-three public tasks (MESH_INGEST.md Stage 12)"
+    # Repointed a third time 2026-08-30 (Stage 13C, SOLVER.md §11 / G13C clause
+    # 54): corpus v6 adds the solve family `solve-shelf-height` and
+    # `solve-boss-fit`, whose acceptance is graded on the REBUILT part and never
+    # on the proposal. What THIS clause pins is still unchanged.
+    assert len(prose) == 25, (
+        "corpus v6 is twenty-five public tasks (SOLVER.md Stage 13C, 2026-08-30: the "
+        "solve family solve-shelf-height and solve-boss-fit, on top of MESH_INGEST.md "
+        "Stage 12's twenty-three)"
+    )
     assert prose >= MECHANISM_TRIO
     seeded = {task.id for task in load_tasks(specs=("seeded",))}
     assert {f"{task_id}@seeded" for task_id in MECHANISM_TRIO} <= seeded
-    assert len(seeded) == 23
+    assert len(seeded) == 25
 
 
 def _assert_hinge_acceptance(task: BenchTask, report: GradeReport) -> None:

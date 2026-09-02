@@ -46,6 +46,20 @@ SHROUD_SRC = "part.geometry = Box(44.0, 34.0, 24.0)\n"
 #: depth and shape (G12C.42's own words).
 PRE_STAGE_TOOL_PIN: int = 53
 
+#: Every tool declared AFTER Stage 12C closed, each by the amendment that
+#: declared it. G12C.42's claim is about THIS stage's delta — "+1, and here is
+#: the pre-stage value it moved from" — and an absolute literal expressed that
+#: delta as "no later stage may add a tool", which is not what the clause
+#: means and which made it fail the moment Stage 13A landed ``solve_pose``.
+#: Naming the later additions keeps the delta exact in both directions: an
+#: addition nobody accounted for is still a red build.
+TOOLS_DECLARED_AFTER_STAGE_12: tuple[str, ...] = (
+    # SOLVER.md §11, Stage 13A / 13B (54 -> 55 -> 57).
+    "solve_pose",
+    "propose_placement",
+    "read_proposals",
+)
+
 
 @pytest.fixture
 def scanned(project: Project, meshes: Fixtures) -> Project:
@@ -201,21 +215,32 @@ def test_the_tool_pin_increments_by_exactly_one_from_the_recorded_pre_stage_valu
     constant *and* cites the amendment that moved it; changing it without a
     citation fails review, and changing the increment fails here.
     """
+    later = len(TOOLS_DECLARED_AFTER_STAGE_12)
     assert PRE_STAGE_TOOL_PIN == 53
-    assert len(tools_decl.tool_names()) == PRE_STAGE_TOOL_PIN + 1
-    assert len(set(tools_decl.tool_names())) == PRE_STAGE_TOOL_PIN + 1
+    assert len(tools_decl.tool_names()) == PRE_STAGE_TOOL_PIN + 1 + later
+    assert len(set(tools_decl.tool_names())) == PRE_STAGE_TOOL_PIN + 1 + later
     assert "compare_to_scan" in tools_decl.tool_names()
+    assert set(TOOLS_DECLARED_AFTER_STAGE_12) <= set(tools_decl.tool_names())
 
 
 @pytest.mark.parametrize(
-    ("path", "needle"),
+    ("path", "template"),
     [
-        ("contract/tests/test_toolgen.py", "assert len(tools_decl.tool_names()) == 54"),
-        ("tests/stage2/test_g2_contract_drift.py", "assert len(TOOL_NAMES) == 54"),
+        ("contract/tests/test_toolgen.py", "assert len(tools_decl.tool_names()) == {n}"),
+        ("tests/stage2/test_g2_contract_drift.py", "assert len(TOOL_NAMES) == {n}"),
     ],
 )
-def test_both_pins_moved_together_and_cite_this_stage(path: str, needle: str) -> None:
-    """The two places §7.1 names, and neither may move without the citation."""
+def test_both_pins_moved_together_and_cite_this_stage(path: str, template: str) -> None:
+    """The two places §7.1 names, and neither may move without the citation.
+
+    The needle is derived from the DECLARATION rather than frozen at 54: the
+    invariant is that both pins move together and both still cite the
+    amendment that put ``compare_to_scan`` on the surface, and a frozen literal
+    turned that into "no later stage may repoint them" — which is the opposite
+    of the per-sub-stage repointing discipline `SOLVER.md` §11 states and this
+    stage's own §7.1 established.
+    """
+    needle = template.format(n=len(tools_decl.tool_names()))
     source = (REPO / path).read_text(encoding="utf-8")
     assert needle in source, f"{path}: pin not repointed"
     window = source[max(0, source.index(needle) - 1600) : source.index(needle) + 400]
@@ -228,7 +253,7 @@ def test_the_generated_artifact_set_is_the_declared_tool_set() -> None:
     assert {Path(rel).name.removesuffix(".schema.json") for rel in generated} == set(
         tools_decl.tool_names()
     )
-    assert len(generated) == PRE_STAGE_TOOL_PIN + 1
+    assert len(generated) == PRE_STAGE_TOOL_PIN + 1 + len(TOOLS_DECLARED_AFTER_STAGE_12)
 
 
 def test_all_five_generated_artifacts_regenerate_deterministically() -> None:

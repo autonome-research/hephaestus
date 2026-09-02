@@ -55,13 +55,39 @@ def _result_variants(tool: str) -> list[dict[str, Any]]:
 # the declared surface
 
 
+#: What the declared surface stood at when Stage 11 closed. Stage 11 added
+#: nothing to it — the component-store capability lands in the RESULTS, not on
+#: the surface — and 53 -> 54 was Stage 12C's ``compare_to_scan``
+#: (``MESH_INGEST.md`` §7.2), a different stage's declared addition.
+TOOL_PIN_AT_STAGE_11: int = 54
+
+#: Every tool declared AFTER Stage 11 closed, each by the amendment that
+#: declared it. This list is what keeps the clause below a claim about **this**
+#: stage's delta rather than a claim that no later stage may ever add a tool:
+#: an addition nobody accounted for still fails, and one that is accounted for
+#: is named here beside its spec.
+TOOLS_DECLARED_AFTER_STAGE_11: tuple[str, ...] = (
+    # SOLVER.md §11, Stage 13A / 13B (54 -> 55 -> 57).
+    "solve_pose",
+    "propose_placement",
+    "read_proposals",
+)
+
+
 def test_the_tool_count_is_not_moved_by_this_stage() -> None:
-    """No tool is added HERE: the capability lands in the results, not on the
-    surface. The literal moved 53 -> 54 with MESH_INGEST.md §7.2 (Stage 12C,
-    ``compare_to_scan``), which is a different stage's declared addition.
+    """No tool is added HERE: the capability lands in the results, not on the surface.
+
+    Stated as a DELTA rather than as an absolute literal, because an absolute
+    literal says "no later stage may add a tool" — which this gate never meant,
+    and which made it fail the moment Stage 13A landed ``solve_pose``. The
+    delta is asserted exactly: the surface is what Stage 11 left plus the
+    later additions named above and nothing else, so an unaccounted tool is
+    still a red build and a later stage that adds one has to say so here.
     """
-    assert len(tools_decl.tool_names()) == 54
-    assert "compare_to_scan" in tools_decl.tool_names()
+    declared = set(tools_decl.tool_names())
+    assert "compare_to_scan" in declared
+    assert set(TOOLS_DECLARED_AFTER_STAGE_11) <= declared
+    assert len(declared) == TOOL_PIN_AT_STAGE_11 + len(TOOLS_DECLARED_AFTER_STAGE_11)
 
 
 def test_the_generated_artifacts_regenerate_identically_with_the_field_present() -> None:

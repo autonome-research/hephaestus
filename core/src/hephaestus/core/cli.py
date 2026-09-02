@@ -736,6 +736,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     cli_cam.add_subparsers(sub)
 
+    # Stage 13A pose-solving verb (heph solve pose): the operator's half of
+    # SOLVER.md §2A. It PROPOSES and writes nothing - no pose declaration, no
+    # artifact, no generation - so there is no --apply here and never will be
+    # under this stage's mandate. Same lazy-kernel rule as the motion verbs:
+    # the solver's independent verification pass binds the geometry kernel.
+    from hephaestus.core import cli_solve
+
+    cli_solve.add_subparsers(sub)
+    cli_solve.add_proposal_subparser(sub)
+
     # Stage 2 agent verb (heph agent) ships with the server package; the engine
     # CLI stays Node-free and fully functional when it is not installed.
     try:

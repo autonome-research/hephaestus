@@ -1,0 +1,34 @@
+{
+  "id": "solve-boss-fit",
+  "prompt": "This project already has both parts; nothing needs modelling. `boss` is a 30 x 30 x 12 mm housing with a through bore of radius `hc.bore_r` (8.0 mm), and `cap` is a flange with a spigot that drops into it. The spigot's radius is the bounded parameter `spigot_r`, and at the value it ships with (8.0 mm) the spigot is exactly the bore: no clearance at all.\n\nDeliver geometry in which the spigot is a slip fit in the bore - a radial clearance (bore radius minus spigot radius) of between 0.15 mm and 0.35 mm.\n\nDo not guess the radius. Declare the fit with `declare_constraint` (id it `spigot_fits`, kind `fit`, a = `boss:boss_bore`, b = `cap:cap_spigot`, min_mm 0.15, max_mm 0.35), then call `propose_placement` with `space=\"parameters\"`, `free=[\"cap.spigot_r\"]` and that constraint id to have the engine measure the value for you. (A `fit` carries no gradient under a rigid motion, so it is an objective term in parameter space and nowhere else.)\n\nThe proposal is a MEASUREMENT and nothing applies it - no tool writes a parameter for you. Applying it is your act: read the proposed value out of the result and author it, with `set_params` or by editing the declaration, then rebuild the cap. You are graded on the rebuilt geometry, so a correct proposal you never applied scores nothing.\n\nBuild both parts when the geometry is right.",
+  "budget_tool_calls": 15,
+  "required_checks": [
+    "solve_boss_fit"
+  ],
+  "export_requirements": [],
+  "render_requirements": [],
+  "scan_requirements": [],
+  "constraint_requirements": [],
+  "proposal_requirements": [
+    {
+      "entry": {
+        "id": "spigot_fits",
+        "kind": "fit",
+        "a": "boss:boss_bore",
+        "b": "cap:cap_spigot",
+        "min_mm": 0.15,
+        "max_mm": 0.35
+      },
+      "kind": "constraint_satisfied",
+      "note": "the spigot is a slip fit in the bore; measured on the REBUILT parts, never on a proposal"
+    }
+  ],
+  "joint_requirements": [],
+  "pose_requirements": [],
+  "motion_check_requirements": [],
+  "protected_paths": [],
+  "notes": "Difficulty 2. Corpus v6 (2026-08-30, SOLVER.md Gate G13C clauses 53-55, Stage 13C): the solve family's fit task, and the one that exercises the kind SOLVER.md \u00a73.2 admits in parameter space and REFUSES in transform space. `fit` measures hole_radius - shaft_radius, which no rigid motion changes (`not_an_objective_kind(pose_invariant)` in 2B); a Param change is exactly what does move it, so it is a legitimate objective term here. THE POINT OF THE FAMILY: acceptance is graded on the rebuilt part and never on the proposal - a run that produces a correct proposal WITHOUT rebuilding delivers no geometry and fails the requirement. Nothing in the grader reads the proposal set. The window is a genuine window and not a point: bore 8.0 minus spigot in [7.65, 7.85] lands anywhere in 0.15..0.35, so a solver that drove to one particular clearance would be inventing an intent the declaration does not carry, and the reference and variant solutions deliberately land on different legal values (7.75 and 7.7). The bar discriminates: the shipped 8.0 measures 0.0 and fails, and 6.0 (the Param's floor) measures 2.0 and fails too, so neither bound of the knob is a free pass. CHECKS keep the single-part facts a fit cannot see - a fit is pose-invariant and says nothing about whether the cap still has its flange - with a material budget that rejects a flangeless cap (3079 mm^3) while admitting the whole legal spigot range (336 mm^3 across min..max). Budget derivation (measured policy, VALIDATION.md \u00a77, 2026-08-25): no archived observe-mode journals exist for this task yet, so only the hand-count binds - record_requirements 1, build_part 2, declare_constraint 1, propose_placement 1, set_params 1, build_part 1, check_assembly 1, run_checks 1, inspect_part 1 = 10 calls; ceil(1.3 x 10) = 13, raised to 15 for the one repair round a fit window this tight is likely to need. Recalibrate against the observed passing max after the first archived sweep, per the measured-budget policy.",
+  "dfm_requirements": [],
+  "drawing_requirements": [],
+  "metadata_requirements": []
+}

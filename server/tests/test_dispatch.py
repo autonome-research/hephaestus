@@ -380,6 +380,30 @@ _ARGS: dict[str, dict[str, object]] = {
     },
     "update_coupling": {"id": "cp-drive", "patch": {"note": "n"}, "reason": "matrix fixture"},
     "read_couplings": {},
+    # SOLVER.md §11 (Stage 13A): the pose solver, same rule again - availability
+    # is what this matrix asserts, not the answer. Weighting and regularization
+    # are REQUIRED and un-defaulted by the schema, so even the availability
+    # fixture has to declare them.
+    "solve_pose": {
+        "targets": [{"form": "constraint", "constraint_id": "c-mount"}],
+        "tol": 0.001,
+        "weighting": "unit_scaled_v1",
+        "regularization": "min_norm_from_start",
+        "provenance": {"assumed": True, "reason": "matrix fixture"},
+    },
+    # SOLVER.md §11 (Stage 13B): the placement proposer and the proposal
+    # reader. Same rule again - availability is what this matrix asserts, not
+    # the answer.
+    "propose_placement": {
+        "space": "transform",
+        "constraints": ["c-mount"],
+        "free": ["widget"],
+        "tol": 0.001,
+        "weighting": "unit_scaled_v1",
+        "regularization": "min_norm_from_start",
+        "provenance": {"assumed": True, "reason": "matrix fixture"},
+    },
+    "read_proposals": {},
 }
 
 

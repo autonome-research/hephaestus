@@ -188,6 +188,7 @@ __all__ = [
     "motion_status",
     "normalize_findings",
     "open_dimension_findings",
+    "open_proposals",
     "posed_scene_renders",
     "run_review_ladder",
     "scan_evidence",
@@ -523,6 +524,15 @@ class ReviewContext:
     #: with its method fields intact. Empty means no part imports a scan, never
     #: "the scans are fine".
     scans: tuple[ScanEvidence, ...] = ()
+    #: ``SOLVER.md`` §8/§11 and the ``VALIDATION.md`` §5 amendment of
+    #: 2026-08-30: open placement proposals, delivered as **labeled
+    #: non-evidence**. A proposal is a fact about a *computation*, never a
+    #: constraint verdict: it clears nothing, no verdict is solicited or
+    #: accepted for a proposal id, and a violated constraint with a converged
+    #: proposal against it is still a blocking finding — the proposal is a
+    #: suggestion nobody has acted on. Empty means no proposal is recorded,
+    #: never "the placements are fine".
+    proposals: tuple[Mapping[str, JSONValue], ...] = ()
 
     def __post_init__(self) -> None:
         self.assert_excludes_agent_checks()
@@ -561,6 +571,7 @@ class ReviewContext:
             "motion_timeouts": [dict(timeout) for timeout in self.motion_timeouts],
             "posed_renders": [render.to_json() for render in self.posed_renders],
             "scans": [scan.to_json() for scan in self.scans],
+            "proposals": [dict(entry) for entry in self.proposals],
         }
 
     def prompt(self) -> str:
@@ -602,7 +613,13 @@ class ReviewContext:
             "are FACTS for you to read, not verdicts and not blocking by rule. "
             "A distance is never evidence of fit: rectification is clinical "
             "judgement this harness cannot verify, so do not report a socket as "
-            "fitting a limb whatever the numbers say. You have no "
+            "fitting a limb whatever the numbers say. Any entries under "
+            "'proposals' are PLACEMENT PROPOSALS and are NOT EVIDENCE: each is "
+            "a fact about a computation that nobody has acted on, never a "
+            "constraint verdict. A proposal clears nothing — a violated "
+            "constraint with a converged proposal against it is still blocking "
+            "— and no verdict is solicited or accepted for a proposal id, so "
+            "do not return a finding for one. You have no "
             "other tools and cannot change the project.\n\n"
             f"{json.dumps(self.to_json(), indent=2, sort_keys=True)}\n\n"
             "Return ONE JSON object and nothing else:\n"
@@ -729,6 +746,48 @@ def build_review_context(
         motion_timeouts=timeouts,
         posed_renders=posed_scene_renders(cad, kinematics, checks),
         scans=scan_evidence(cad, names),
+        proposals=open_proposals(cad),
+    )
+
+
+def open_proposals(cad: object) -> tuple[Mapping[str, JSONValue], ...]:
+    """Open placement proposals, read at review time as labeled NON-evidence.
+
+    ``SOLVER.md`` §11's ladder-integration bullet and the ``VALIDATION.md`` §5
+    amendment. Read, not measured and not re-solved: a proposal is an immutable
+    record of a computation, and re-running it here would make the reviewer's
+    context depend on a solve nobody asked for. Withdrawn proposals are left
+    out — the reviewer is shown what the project currently proposes, and a
+    withdrawn proposal is a claim it stopped making (the full generational
+    history stays readable through ``read_proposals``).
+
+    **No new blocking rule comes with this.** A violated constraint is blocking
+    because ``assembly_review_findings`` says so; a proposal against it changes
+    nothing, which is the whole point of delivering it as a fact rather than as
+    a verdict.
+    """
+    from hephaestus.core.project_store.proposals import ProposalSet, proposal_views
+
+    layout = getattr(cad, "layout", None)
+    store = getattr(cad, "_store", None)
+    if layout is None or store is None:  # pragma: no cover - a seam without a store
+        return ()
+    from hephaestus.core.project_store.publication import Publisher
+
+    proposals = ProposalSet(layout, store)
+    state = proposals.state()
+    if not state.open:
+        return ()
+    publisher = Publisher(layout, store)
+
+    def current(part: str) -> str | None:
+        result = publisher.current_result(part)
+        return None if result is None else result.artifact_ref
+
+    open_ids = [entry.id for entry in state.open]
+    return tuple(
+        {**view, "evidence": False, "kind": "placement_proposal"}
+        for view in proposal_views(state, current, ids=open_ids)
     )
 
 

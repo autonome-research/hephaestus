@@ -39,6 +39,7 @@ from hephaestus.geom.mesh import MESH_UNITS
 
 __all__ = [
     "PROMPT_SUFFIXES",
+    "PROPOSAL_CHECK_KINDS",
     "SCAN_CHECK_KINDS",
     "SEEDED_SUFFIX",
     "SPECS",
@@ -53,6 +54,7 @@ __all__ = [
     "MetadataRequirement",
     "MotionCheckRequirement",
     "PoseRequirement",
+    "ProposalRequirement",
     "RenderRequirement",
     "ScanRequirement",
     "base_task_id",
@@ -605,6 +607,87 @@ class ScanRequirement:
         return out
 
 
+#: The closed ``proposal_requirements`` acceptance vocabulary (``SOLVER.md``
+#: §11, G13C clause 53). One kind, deliberately: the only thing this family
+#: grades is whether the delivered geometry measures ``satisfied``.
+PROPOSAL_CHECK_KINDS: Final[tuple[str, ...]] = ("constraint_satisfied",)
+
+
+@dataclass(frozen=True)
+class ProposalRequirement:
+    """One constraint a solve task's REBUILT geometry must satisfy.
+
+    ``SOLVER.md`` §11's bench bullet, and it exists to keep one loop broken:
+    **acceptance is graded on the rebuilt part, never on the proposal.** A
+    ``propose_placement`` result is a measurement artifact that nothing
+    applies; a run that produces a perfectly good proposal and stops there has
+    delivered no geometry, and this requirement fails it — which is the whole
+    point of the family. Only an authored edit, rebuilt and re-measured through
+    the ordinary engine path, moves the constraint to ``satisfied``.
+
+    Mechanically it is :class:`ConstraintRequirement`'s twin and is graded by
+    the same evaluator (the task's entry is installed over whatever the run
+    declared, and evaluated through
+    :class:`~hephaestus.core.assembly.AssemblyEvaluator`). It is a separate
+    vocabulary rather than a flag on that one because the two say different
+    things about a task: a ``constraint_requirement`` says "these parts must
+    mate", and a ``proposal_requirement`` says "these parts must mate *after
+    you have applied a proposal by authoring it*" — the second is the
+    closed-loop break and a reader of ``task.json`` should be able to see which
+    is being asked.
+
+    ``expect`` is deliberately absent. ``ConstraintRequirement`` admits
+    ``violated`` and ``unresolvable`` because a task may legitimately require a
+    mate be *checkable*; here the only meaningful acceptance is that the
+    delivered geometry satisfies it, and an entry that could pass while the
+    mate stays violated would be a solve task a proposal alone could clear.
+    """
+
+    #: The ``ASSEMBLY.md`` §1 entry, minus provenance (supplied below).
+    entry: Mapping[str, Any]
+    kind: str = "constraint_satisfied"
+    note: str = ""
+
+    @property
+    def id(self) -> str:
+        return str(self.entry["id"])
+
+    def declaration(self) -> dict[str, Any]:
+        """The entry as declared into the graded project (the task's own)."""
+        declared = dict(self.entry)
+        declared.setdefault(
+            "provenance",
+            {"assumed": True, "reason": "declared by the bench task's acceptance spec"},
+        )
+        return declared
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> ProposalRequirement:
+        raw = data.get("entry")
+        if not isinstance(raw, dict):
+            raise ValueError(
+                "a proposal requirement needs an 'entry' object (SOLVER.md §11): the "
+                "constraint the REBUILT geometry must satisfy"
+            )
+        entry = cast("Mapping[str, Any]", raw)
+        for field_name in ("id", "kind", "a", "b"):
+            if not entry.get(field_name):
+                raise ValueError(f"proposal requirement entry is missing {field_name!r}")
+        kind = str(data.get("kind", "constraint_satisfied"))
+        if kind not in PROPOSAL_CHECK_KINDS:
+            raise ValueError(
+                f"proposal requirement kind must be one of {list(PROPOSAL_CHECK_KINDS)}, got "
+                f"{kind!r} (SOLVER.md §11: the vocabulary is closed)"
+            )
+        return cls(entry=dict(entry), kind=kind, note=str(data.get("note", "")))
+
+    def to_json(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"entry": dict(self.entry), "kind": self.kind}
+        if self.note:
+            out["note"] = self.note
+        return out
+
+
 @dataclass(frozen=True)
 class MetadataRequirement:
     """§5.2 manufacturing metadata the graded part must really carry.
@@ -749,6 +832,11 @@ class BenchTask:
     #: grader measures through ``compare_to_scan`` against the scan the task
     #: seeded into ``imports/``.
     scans: tuple[ScanRequirement, ...] = ()
+    #: ``SOLVER.md`` §11 (Stage 13C, corpus v6): constraints the run's own
+    #: REBUILT geometry must satisfy after it has applied a proposal by
+    #: authoring the edit. Graded through the ordinary engine path, never from
+    #: the proposal — a run cannot pass by producing a good proposal.
+    proposals: tuple[ProposalRequirement, ...] = ()
     #: Seeded, task-owned files (inspection gauges, broken fixtures) restored
     #: from ``seed/`` before grading, so a run cannot pass by editing them.
     protected_paths: tuple[str, ...] = ()
@@ -794,6 +882,11 @@ class BenchTask:
                     names.add(anchor.split(":", 1)[0])
         for scan in self.scans:
             names.add(scan.part)
+        for proposal in self.proposals:
+            for side in ("a", "b"):
+                anchor = str(proposal.entry.get(side, ""))
+                if anchor:
+                    names.add(anchor.split(":", 1)[0])
         for check in self.motion_checks:
             for field_name in ("a", "b", "anchor"):
                 anchor = str(check.entry.get(field_name, "") or "")
@@ -894,6 +987,7 @@ class BenchTask:
         poses_raw = data.get("pose_requirements", [])
         motion_checks_raw = data.get("motion_check_requirements", [])
         scans_raw = data.get("scan_requirements", [])
+        proposals_raw = data.get("proposal_requirements", [])
         task = cls(
             id=task_id,
             directory=directory,
@@ -940,6 +1034,10 @@ class BenchTask:
                 ScanRequirement.from_json(cast("Mapping[str, Any]", item))
                 for item in cast("Sequence[Any]", scans_raw)
             ),
+            proposals=tuple(
+                ProposalRequirement.from_json(cast("Mapping[str, Any]", item))
+                for item in cast("Sequence[Any]", proposals_raw)
+            ),
             protected_paths=tuple(
                 str(item) for item in cast("Sequence[Any]", data.get("protected_paths", []))
             ),
@@ -971,6 +1069,7 @@ class BenchTask:
             "pose_requirements": [p.to_json() for p in self.poses],
             "motion_check_requirements": [m.to_json() for m in self.motion_checks],
             "scan_requirements": [s.to_json() for s in self.scans],
+            "proposal_requirements": [p.to_json() for p in self.proposals],
             "protected_paths": list(self.protected_paths),
         }
 

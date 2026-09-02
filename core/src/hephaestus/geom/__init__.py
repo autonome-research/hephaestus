@@ -18,7 +18,7 @@ Contract for this package (enforced by
   face records, packed layouts); manufacturability verdicts belong to the DFM
   rule packs and the checks engine that consume them.
 
-Nine services, re-exported here as one public surface:
+Ten services, nine of them re-exported here as one public surface:
 
 * :mod:`hephaestus.geom.metrics` — the §8 ``Metrics`` record and the
   addressing-layer geometry index over a labeled part compound;
@@ -46,6 +46,23 @@ Nine services, re-exported here as one public surface:
   frames, applied to shapes as placed copies for posed measurement. No
   solver and no dynamics — posed evaluation only — and an out-of-limits
   parameter is a named refusal, never a clamp.
+* :mod:`hephaestus.geom.solve` — least-squares solving over declared
+  residuals (``SOLVER.md`` §§3-6): the reformulated residuals of §3.3 with the
+  closed-form identities back to the engine's own numbers, fixed-order
+  rank-revealing QR, and a weighted Levenberg-Marquardt iteration. It proposes
+  and never decides: no verdict is spelled there, no geometry is moved, and
+  the candidate it returns is believed only after
+  :mod:`hephaestus.core.placement` re-measures it through
+  :mod:`hephaestus.geom.constraints` in another process.
+
+  **It is deliberately NOT re-exported below**, and it is the only service
+  that is not. ``SOLVER.md`` §7.1 requires the verification pass to run in a
+  process whose import closure EXCLUDES the solver — that is the whole reason
+  its answer is worth anything — and that pass imports
+  :mod:`hephaestus.geom`. Re-exporting ``solve`` here would pull it into the
+  closure through the package ``__init__`` and quietly make the exclusion
+  false while every test still passed. Import it as
+  ``hephaestus.geom.solve``; the omission is the guarantee.
 
 Historic import paths (``hephaestus.core.kernel``, ``hephaestus.core.kerf``,
 ``hephaestus.core.nesting``) still resolve: they are compatibility facades that
@@ -98,12 +115,15 @@ from hephaestus.geom.constraints import (
     clearance_min_residual,
     coincident_residual,
     concentric_residual,
+    cylinder_of,
+    direction_of,
     distance_residual,
     evaluate_residual,
     fit_residual,
     no_interference_residual,
     parallel_residual,
     perpendicular_residual,
+    plane_of,
 )
 from hephaestus.geom.kerf import (
     KERF_UNCOMPENSATED,
@@ -300,8 +320,10 @@ __all__ = [
     "coincident_residual",
     "compose_transforms",
     "concentric_residual",
+    "cylinder_of",
     "cylindrical_faces",
     "derive_coupled_values",
+    "direction_of",
     "distance",
     "distance_residual",
     "downward_faces",
@@ -329,6 +351,7 @@ __all__ = [
     "parallel_residual",
     "perpendicular_residual",
     "planar_faces",
+    "plane_of",
     "principal_alignment",
     "read_step",
     "read_step_bytes",

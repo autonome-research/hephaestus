@@ -183,6 +183,20 @@ CAD_TOOLS: frozenset[str] = frozenset(
         "declare_coupling",
         "update_coupling",
         "read_couplings",
+        # SOLVER.md §11 (Stage 13A) — the pose solver. Part AND orchestrator on
+        # the 8C quartet rationale: cheap, reversible, and measured against
+        # geometry the model did not choose. It is the one tool here that is
+        # not even reversible-because-writable — it writes NOTHING at all.
+        "solve_pose",
+        # SOLVER.md §11 (Stage 13B) — the placement proposer and the proposal
+        # reader. Both route to CadOps; which PROFILES may call them is a
+        # separate decision the declaration carries (`propose_placement` is
+        # orchestrator-only, because it reasons across parts and spends a
+        # project-scoped budget; `read_proposals` is on both, for the reason
+        # every 8C/9A read tool is: generational state is honest only if every
+        # generation stays readable). Neither applies anything.
+        "propose_placement",
+        "read_proposals",
         "read_artifact",
         # INGEST.md §2 — read-only, freely retryable. There is deliberately no
         # `add_reference`: registration is operator-side, so the model's only
@@ -553,6 +567,9 @@ class ToolDispatcher:
             "declare_coupling": self._declare_coupling,
             "update_coupling": self._update_coupling,
             "read_couplings": self._read_couplings,
+            "solve_pose": self._solve_pose,
+            "propose_placement": self._propose_placement,
+            "read_proposals": self._read_proposals,
             "read_artifact": self._read_artifact,
             "list_references": self._list_references,
             "read_reference": self._read_reference,
@@ -1022,6 +1039,36 @@ class ToolDispatcher:
         elif raw is not None:
             raise DispatchError("invalid_params", "check_motion ids must be an array")
         return cad.check_motion(ids)
+
+    # -- pose solving (SOLVER.md §11) --------------------------------------
+
+    def _solve_pose(
+        self, _p: Principal, cad: CadOps, arguments: dict[str, Any], _inv: Invocation
+    ) -> dict[str, Any]:
+        # SOLVER.md §2A. The whole grammar is validated one layer down, where
+        # the refusal names live; passing the arguments through unshaped is
+        # deliberate, so this layer cannot quietly repair a request the engine
+        # would have refused by name.
+        return cad.solve_pose(arguments)
+
+    def _propose_placement(
+        self, _p: Principal, cad: CadOps, arguments: dict[str, Any], _inv: Invocation
+    ) -> dict[str, Any]:
+        # SOLVER.md §2B. The proposal is a MEASUREMENT: nothing here applies
+        # it, and there is no path from this call to a script, a parameter or a
+        # republished artifact.
+        return cad.propose_placement(arguments)
+
+    def _read_proposals(
+        self, _p: Principal, cad: CadOps, arguments: dict[str, Any], _inv: Invocation
+    ) -> dict[str, Any]:
+        raw = arguments.get("ids")
+        ids: list[str] | None = None
+        if isinstance(raw, list):
+            ids = [str(item) for item in cast("list[Any]", raw)]
+        elif raw is not None:
+            raise DispatchError("invalid_params", "read_proposals ids must be an array")
+        return cad.read_proposals(ids, include_documents=bool(arguments.get("include_documents")))
 
     # -- artifacts ---------------------------------------------------------
 

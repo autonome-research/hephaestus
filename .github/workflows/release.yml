@@ -572,6 +572,7 @@ jobs:
             "stage gates 11A-11C"         # G11A, G11B, G11C Tier 1
             "stage gates 12A-12C"         # G12A, G12B, G12C (mesh + scan ingest)
             "stage12 measurements (pinned image)"  # G12A.19, G12B.25/33, G12C.45
+            "stage gates 13A-13C"         # G13A (pose), G13B (proposal), G13C (params + corpus)
             "render goldens (pinned image)"  # G1 goldens, G4.7, G4 e2e
             "agent (node)"                # GS pins / sidecar toolchain
             "web (node)"                  # Stage 4 web/ pins + bundle build

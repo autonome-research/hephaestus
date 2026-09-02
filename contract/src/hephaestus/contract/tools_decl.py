@@ -3126,6 +3126,332 @@ def _generate_doc() -> ToolDecl:
     )
 
 
+# --------------------------------------------------------------------------
+# Stage 13A: pose solving (``SOLVER.md`` §§2A, 11)
+
+#: One target a pose solve drives towards. Two forms, discriminated by
+#: ``form`` and never merged: an **anchor-to-point** target is the inverse of
+#: ``reach`` and touches no constraint set, while a **constraint-id** target
+#: drives joint motion until a declared 8C constraint measures satisfied - the
+#: act ``ASSEMBLY.md`` §1 forbade outright until the 2026-08-30 amendment
+#: scoped it. Keeping them apart in the grammar is what lets the result keep
+#: them apart in the verdict: ``pose_found`` is an existence claim and belongs
+#: only to the first, ``pose_converged_at_tolerance`` only to the second.
+_SOLVE_TARGET: Final[JsonSchema] = {
+    "anyOf": [
+        _obj(
+            {
+                "form": {"const": "anchor_point"},
+                "id": _ident(),
+                "anchor": _CONSTRAINT_ANCHOR,
+                "point_mm": {
+                    "type": "array",
+                    "items": _NUM,
+                    "minItems": 3,
+                    "maxItems": 3,
+                },
+                "tol_mm": {"type": "number", "exclusiveMinimum": 0},
+            },
+            ["form", "id", "anchor", "point_mm", "tol_mm"],
+        ),
+        _obj(
+            {
+                "form": {"const": "constraint"},
+                "constraint_id": _ident(),
+            },
+            ["form", "constraint_id"],
+        ),
+    ]
+}
+
+#: One declared start. ``SOLVER.md`` §5: starts are declared and reported,
+#: every result names the one that produced it, and there are no random
+#: restarts - an RNG would break the §9 determinism tier and would let a rerun
+#: quietly change the answer. A caller who wants coverage declares more starts.
+_SOLVE_START: Final[JsonSchema] = _obj(
+    {
+        "id": _ident(),
+        "values": {"anyOf": [_dict(_NUM), {"type": "null"}], "default": None},
+    },
+    ["id"],
+)
+
+
+def _solve_pose() -> ToolDecl:
+    # SOLVER.md §11. Part and orchestrator profiles, on the 8C quartet
+    # rationale (ASSEMBLY.md:105-112): cheap, reversible, and measured against
+    # geometry the model did not choose. It WRITES NOTHING - no proposal
+    # artifact, no pose declaration, no generation - so there is no
+    # `sequential` mutation to serialise and no state for a repeat call to
+    # disturb.
+    return ToolDecl(
+        name="solve_pose",
+        summary=(
+            "Solve free joint parameters for declared targets; a verified proposal, "
+            "never applied (SOLVER.md §2A)."
+        ),
+        params=_obj(
+            {
+                "targets": {"type": "array", "items": _SOLVE_TARGET, "minItems": 1},
+                "free_joints": {
+                    "anyOf": [{"type": "array", "items": _JOINT_ID}, {"type": "null"}],
+                    "default": None,
+                },
+                "starts": {
+                    "anyOf": [{"type": "array", "items": _SOLVE_START}, {"type": "null"}],
+                    "default": None,
+                },
+                # Weighting and regularisation are REQUIRED and echoed, never
+                # defaulted: a residual vector mixing mm and deg has no
+                # canonical norm (COMPARE.md:34-36, "alignment is a declared
+                # choice, NEVER a silent normalization"), and which null-space
+                # member comes back is a design decision, not a numerical
+                # detail.
+                "weighting": _enum(["unit_scaled_v1", "declared"]),
+                "weights": {
+                    "anyOf": [
+                        _obj({"mm": _NUM, "deg": _NUM}, ["mm", "deg"]),
+                        {"type": "null"},
+                    ],
+                    "default": None,
+                },
+                "regularization": _enum(["min_norm_from_start"]),
+                "tol": {"type": "number", "exclusiveMinimum": 0},
+                "provenance": _CONSTRAINT_PROVENANCE,
+                "ceiling": {"anyOf": [_INT, {"type": "null"}], "default": None},
+            },
+            ["targets", "weighting", "regularization", "tol", "provenance"],
+        ),
+        result=_ok(
+            {
+                "status": {"const": "ok"},
+                # One of the SEVEN pose spellings (SOLVER.md §6.1). Refusals do
+                # NOT appear here: a ceiling or a kernel disagreement decided
+                # nothing, and giving it a verdict spelling would let it be read
+                # as an outcome (core/motion.py:1489-1498).
+                "verdict": _STR,
+                "space": {"const": "pose"},
+                "detail": _STR,
+                "assignments": {"type": "array", "items": _dict()},
+                # The two blocks of the solve record, each stating its own
+                # determinism tier (SOLVER.md §9): `solver_core` is D1 for a
+                # kernel-free pose iteration GIVEN the extracted frames it
+                # carries, `verification` is unconditionally D2 because it is
+                # kernel measurement.
+                "solver_core": _dict(),
+                "verification": _dict(),
+                "request": _dict(),
+                "artifact_refs": _dict(_STR),
+                "constraint_generation": _INT,
+                "joint_generation": _INT,
+                # Set only on the `unresolvable` verdict - the one spelling
+                # that is both a verdict (SOLVER.md §6.1, verdict 6) and a
+                # resolution-time refusal name (§6.3). Declared here rather
+                # than left to ride the open result shape, because a reader
+                # who sees `verdict: "unresolvable"` has to be told where the
+                # reason is.
+                "reason": _STR,
+                "subject": _STR,
+            },
+            [
+                "status",
+                "verdict",
+                "space",
+                "assignments",
+                "solver_core",
+                "verification",
+            ],
+        ),
+        profiles=("part", "orchestrator"),
+        sequential=False,
+        idempotent=True,
+    )
+
+
+#: One free-part variable name: ``<part>.tx|ty|tz|rx|ry|rz`` (``SOLVER.md``
+#: §2B). Translations are mm, rotations are a degree-valued rotation vector.
+_SOLVE_VARIABLE: Final[JsonSchema] = {
+    "type": "string",
+    "pattern": r"^[A-Za-z_][A-Za-z0-9_]*\.(tx|ty|tz|rx|ry|rz)$",
+}
+
+
+def _propose_placement() -> ToolDecl:
+    # SOLVER.md §11. ORCHESTRATOR PROFILE ONLY: it reasons across parts and
+    # spends a project-scoped budget, the same rationale that makes
+    # project-scoped `set_params` and `run_checks` orchestrator-only
+    # (tool_schema.md:126-132). It writes ONE thing and only one - an immutable
+    # proposal document - and applies NOTHING: no script, no parameter, no
+    # republished artifact, no build made current.
+    return ToolDecl(
+        name="propose_placement",
+        summary=(
+            "Propose rigid placements for declared free parts as a verified, "
+            "provenance-carrying artifact that nothing applies (SOLVER.md §2B)."
+        ),
+        params=_obj(
+            {
+                # SOLVER.md §11. "parameters" landed at 13C as an ENUM VALUE
+                # on this tool rather than as a fourth tool: the 8A/8B lever
+                # says put the capability in an existing enum, on the
+                # `layout="nested_sheet"` precedent (tool_schema.md:1409-1433),
+                # because each tool costs five generated drift-tested
+                # artifacts, a per-profile decision and a normative heading.
+                # The tool count is unchanged at 57.
+                "space": _enum(["transform", "parameters"]),
+                "constraints": {
+                    "type": "array",
+                    "items": _CONSTRAINT_ID,
+                    "minItems": 1,
+                },
+                # Transform space: part names. Parameter space: `<part>.<param>`
+                # or `hc.<param>` — the two spellings a script already uses to
+                # READ a Param (script_contract.md §3, §4), so a request names
+                # a knob the way the author's own code does.
+                "free": {
+                    "type": "array",
+                    "items": {"type": "string", "pattern": r"^[A-Za-z_][A-Za-z0-9_.]*$"},
+                    "minItems": 1,
+                },
+                "ground": {
+                    "anyOf": [{"type": "array", "items": _ident()}, {"type": "null"}],
+                    "default": None,
+                },
+                "starts": {
+                    "anyOf": [{"type": "array", "items": _SOLVE_START}, {"type": "null"}],
+                    "default": None,
+                },
+                # SOLVER.md §4.2 step 4: transform space is unbounded UNLESS
+                # the request declares a box. A bound is never clamped in
+                # silence - a variable that reaches one comes back in
+                # `bounds_active`.
+                "box": {
+                    "anyOf": [
+                        {
+                            "type": "object",
+                            "propertyNames": _SOLVE_VARIABLE,
+                            "additionalProperties": {
+                                "type": "array",
+                                "items": {"anyOf": [_NUM, {"type": "null"}]},
+                                "minItems": 2,
+                                "maxItems": 2,
+                            },
+                        },
+                        {"type": "null"},
+                    ],
+                    "default": None,
+                },
+                "weighting": _enum(["unit_scaled_v1", "declared"]),
+                "weights": {
+                    "anyOf": [
+                        _obj({"mm": _NUM, "deg": _NUM}, ["mm", "deg"]),
+                        {"type": "null"},
+                    ],
+                    "default": None,
+                },
+                "regularization": _enum(["min_norm_from_start"]),
+                "tol": {"type": "number", "exclusiveMinimum": 0},
+                "provenance": _CONSTRAINT_PROVENANCE,
+                "ceiling": {"anyOf": [_INT, {"type": "null"}], "default": None},
+                # SOLVER.md §10's 2C budget: a cap on total preview builds
+                # across one parameter-space solve's iteration, because each
+                # iterate is a build and an unbounded 2C solve is an unbounded
+                # number of kernel evaluations. Refused in transform space,
+                # whose iteration issues no build at all.
+                "build_budget": {"anyOf": [_INT, {"type": "null"}], "default": None},
+            },
+            ["space", "constraints", "free", "weighting", "regularization", "tol", "provenance"],
+        ),
+        result=_ok(
+            {
+                "status": {"const": "ok"},
+                # One of the SIX transform-space spellings (SOLVER.md §6.1).
+                # Refusals do NOT appear here.
+                "verdict": _STR,
+                "space": _STR,
+                "detail": _STR,
+                # The proposal this solve was recorded as. There is no
+                # `apply`, no `suggested_edit` and no source text anywhere in
+                # it: the document schema is additionalProperties: false at
+                # every level, so the field cannot be emitted, and every tool
+                # input schema is too, so none can be requested.
+                "proposal_id": _STR,
+                "proposal_ref": _STR,
+                # SOLVER.md §9: where this run's per-iteration replay evidence
+                # was stored. Evidence about a RUN, never about the design.
+                "solver_trace_ref": _STR,
+                "placements": {"type": "array", "items": _dict()},
+                # SOLVER.md §3.2/§8: which requested terms are a LOCAL model
+                # (every `distance` term, admitted only in parameter space).
+                # Disclosed rather than absorbed.
+                "nonsmooth_terms": {"type": "array", "items": _STR},
+                "solver_core": _dict(),
+                "verification": _dict(),
+                "request": _dict(),
+                "artifact_refs": _dict(_STR),
+                "constraint_generation": _INT,
+                "joint_generation": _INT,
+                "reason": _STR,
+                "subject": _STR,
+            },
+            [
+                "status",
+                "verdict",
+                "space",
+                "placements",
+                "solver_core",
+                "verification",
+            ],
+        ),
+        profiles=("orchestrator",),
+        # It advances a proposal GENERATION, so it serialises like every other
+        # generational write here (`declare_constraint`, `declare_joint`,
+        # `declare_pose`): two concurrent calls would race the pointer swap.
+        # Idempotent because the id is derived from the document's own content
+        # hash - an identical solve records the identical proposal rather than
+        # a second one.
+        sequential=True,
+        idempotent=True,
+    )
+
+
+def _read_proposals() -> ToolDecl:
+    # The 8C read-tool shape: generational state is honest only if every
+    # generation stays readable, so WITHDRAWN proposals come back with their
+    # reasons. Reading never measures and never re-solves; `stale` is computed
+    # by comparing each proposal's bound artifact refs against the parts'
+    # current ones, which is a read-time FACT and never a refusal.
+    return ToolDecl(
+        name="read_proposals",
+        summary="Read recorded placement proposals with their staleness (SOLVER.md §8).",
+        params=_obj(
+            {
+                "ids": {
+                    "anyOf": [{"type": "array", "items": _ident()}, {"type": "null"}],
+                    "default": None,
+                },
+                # A proposal document is large; the index rows are what a
+                # reader normally wants. Asking for the documents is explicit.
+                "include_documents": {"type": "boolean", "default": False},
+            },
+            [],
+        ),
+        result=_ok(
+            {
+                "status": {"const": "ok"},
+                "generation": _INT,
+                "artifact_ref": {"anyOf": [_STR, {"type": "null"}]},
+                "proposals": {"type": "array", "items": _dict()},
+                "documents": _dict(),
+            },
+            ["status", "generation", "proposals"],
+        ),
+        profiles=("part", "orchestrator"),
+        sequential=False,
+        idempotent=False,
+    )
+
+
 TOOLS: Final[tuple[ToolDecl, ...]] = (
     _create_part(),
     _read_part(),
@@ -3176,6 +3502,9 @@ TOOLS: Final[tuple[ToolDecl, ...]] = (
     _declare_coupling(),
     _update_coupling(),
     _read_couplings(),
+    _solve_pose(),
+    _propose_placement(),
+    _read_proposals(),
     _load_skill(),
     _list_skills(),
     _list_references(),

@@ -388,8 +388,9 @@ no joints declared
 ```
 
 Joints and poses are **declared by the agent**, through the `declare_joint` /
-`declare_pose` tools — there is no per-script joint syntax and no solver:
-scripts position geometry, poses exist only inside an evaluation
+`declare_pose` tools — there is no per-script joint syntax and no solver **in
+this surface**: `heph solve` (Stage 13, `SOLVER.md`) proposes and writes
+nothing; scripts position geometry, poses exist only inside an evaluation
 (`KINEMATICS.md` §1). `--json` emits the machine form.
 
 ### `heph motion` / `heph motion check`
@@ -425,6 +426,179 @@ $ heph cam emit plate --out plate.dxf --json
 `--json` is the machine record (kerf source, contours, DXF hash). The DXF
 is always written. A part whose `part.process` is not `laser_cut` or
 `waterjet` is refused by name.
+
+### `heph solve pose`
+
+Solve declared free joint parameters for declared targets — a constraint id, a
+point an anchor must reach, or both — and print the solve record: the verdict,
+every returned assignment, and the residuals an independent process re-measured
+(`SOLVER.md` §2A).
+
+```console
+$ heph solve pose --constraint c-align --joint j-elbow \
+    --tol 1e-4 --weighting unit_scaled_v1 \
+    --regularization min_norm_from_start --requirement R-7
+verdict: pose_converged_at_tolerance
+every objective constraint re-measures satisfied through the ordinary engine
+path, every residual is inside the declared tolerance, and the Jacobian has
+full column rank at the solution. Evidence about this iterate from this start;
+it claims nothing about uniqueness beyond the local basin
+  [0] from as_built: j-elbow=30
+  c-align (parallel): satisfied, measured 8.5e-07 deg
+
+nothing was written: applying this is an authoring act (declare_pose)
+```
+
+**The solver proposes; nothing applies it.** There is no `--apply`, no
+`--declare-pose` and no `--write`: this verb creates no artifact, declares no
+pose, advances no generation and republishes nothing. Turning a solved
+assignment into project state is an explicit authoring act through
+`declare_pose`, so it arrives in git as a diff a reviewer can read. **Writeback
+is refused**: no inverse from a solved value to a script expression is
+computed, offered or guessed.
+
+`--weighting` and `--regularization` are required and echoed, never defaulted —
+a residual vector mixing mm and deg has no canonical norm, and which member of
+a positive-dimensional solution set comes back is a design decision. Provenance
+is compulsory (`--requirement ID`, or `--assumed --reason TEXT`). Repeat
+`--start ID=JOINT:VALUE,...` to declare more starts; there are no random
+restarts, and two starts that converge apart return
+`multiple_poses_from_starts` with **both** answers and neither chosen.
+
+Exit 0 only for `pose_found` and `pose_converged_at_tolerance`; 1 for every
+other verdict — an under-determined answer and a multiplicity are facts to
+read, not passes — and for a named refusal (`iteration_ceiling`,
+`solver_timeout`, `rank_undecidable`, `solver_residual_disagreement`), which is
+never printed as a verdict because a refused solve decided nothing. `--json`
+emits the machine form.
+
+### `heph solve placement`
+
+Propose a rigid transform per declared free part, so that declared constraints
+would measure satisfied, and record it as an immutable proposal artifact
+(`SOLVER.md` §2B).
+
+```console
+$ heph solve placement --constraint c-seat --constraint c-bore \
+    --constraint c-face --free lug --tol 1e-4 \
+    --weighting unit_scaled_v1 --regularization min_norm_from_start \
+    --requirement R-7
+verdict: converged_at_tolerance
+every objective constraint re-measures satisfied through the ordinary engine
+path, every residual is inside the declared tolerance, and the Jacobian has
+full column rank at the solution. Evidence about this iterate from this start;
+it claims nothing about uniqueness beyond the local basin
+proposal: p-3f21c8b4d0e7 (artifact:placement-proposal:sha256:3f21c8b4…)
+  [0] from as_built:
+      lug: move (+10, +10, -30) mm, turn 0 deg about [0, 0, 1]
+  c-seat (coincident): satisfied, measured 1.04e-05 mm
+  c-bore (concentric): satisfied, measured 6.67e-06 mm
+  (not an objective term) c-clear (no_interference): violated
+
+nothing was applied: this is a measurement. Authoring the edit
+(edit_part / set_params) is how a placement becomes geometry
+```
+
+**The solver proposes; nothing applies it.** There is no `--apply`, no
+`--write` and no `--accept`: this verb writes exactly one thing, an immutable
+proposal document, and that document is a *measurement*. No script is edited,
+no parameter set, no artifact republished, no build made current, and the
+constraint's own `AssemblyStatus` row keeps saying `violated` until a rebuilt
+script measures otherwise. **Writeback is refused**: there is no inverse from a
+transform to a script expression — the +10 mm above can be authored as an `hc`
+name, a `Param`, a literal or a new expression, three of which change other
+parts — so none is computed, offered or guessed.
+
+Every part the named constraints anchor that is not `--free` is **ground**, and
+at least one must be. A part that rides a declared joint may not be free (its
+placement is forward kinematics'; solve it with `heph solve pose`), and a
+pose-bound constraint is not an objective term here. Kinds whose residual
+carries no gradient in this space are refused **by name with their reason** —
+`no_interference` and `clearance_min` are flat plateaus, `distance` is a kernel
+extremum, `fit` is pose-invariant — and are nevertheless *evaluated* at the
+returned solution and reported, which is why the example above shows an
+interference beside four satisfied mates.
+
+`--bound VAR=MIN:MAX` bounds one free variable (`<part>.tx|ty|tz|rx|ry|rz`);
+transform space is otherwise unbounded, and a bound is never clamped in
+silence — a variable that reaches one comes back in the record's active list.
+Exit 0 only for `converged_at_tolerance`; 1 for every other verdict and for
+every named refusal.
+
+### `heph solve params`
+
+Propose a value per declared free `Param`, so that declared constraints would
+measure satisfied, and record it as an immutable proposal artifact
+(`SOLVER.md` §2C).
+
+```console
+$ heph solve params --constraint shelf_seats --constraint shelf_stands \
+    --free hc.shelf_z --free post.post_h --tol 1e-3 \
+    --weighting unit_scaled_v1 --regularization min_norm_from_start \
+    --requirement R-4
+verdict: converged_at_tolerance
+every objective constraint re-measures satisfied through the ordinary engine
+path, every residual is inside the declared tolerance, and the Jacobian has
+full column rank at the solution. Evidence about this iterate from this start;
+it claims nothing about uniqueness beyond the local basin
+proposal: p-9c04ab71fe32 (artifact:placement-proposal:sha256:9c04ab71…)
+  [0] from as_built:
+      hc.shelf_z = 40.0000  [declared 0 .. 60]
+      post.post_h = 40.0000  [declared 5 .. 60]
+  shelf_seats (coincident): satisfied, measured 2.5e-05 mm
+  shelf_stands (distance): satisfied, measured 46.0000 mm
+  nonsmooth terms: shelf_stands
+  (a `distance` term is a LOCAL model - SOLVER.md §3.2)
+  preview builds issued: 25 (none of them current, none persisted)
+
+nothing was applied: this is a measurement. Authoring the change
+(set_params / edit_part) is how a proposed value becomes geometry
+```
+
+A free variable is spelled the way a script already reads it: `<part>.<param>`
+for a part's own `PARAMS`, `hc.<param>` for `globals.py`'s. A name that is not
+a declared `Param` is refused `unknown_param`; a `globals.py` **derived
+constant** — a real `hc` name with no `min`/`max` — is refused
+`unbounded_param` rather than given an invented range.
+
+**Every candidate is a preview build**, which is how a candidate is evaluated
+at all, and a preview is never current and never persists an override: the
+project's geometry and parameters are exactly where they were when the verb
+started. That also makes this the one solve verb that spends kernel time per
+iterate, so `--build-budget N` caps the iteration's total preview builds;
+exhausting it is a named refusal carrying the best iterate and its verified
+residuals, never a verdict.
+
+`fit` and `distance` are objective terms here and nowhere else — a `Param`
+change moves both, where a rigid motion moves neither smoothly — and a
+`distance` term is reported in `nonsmooth_terms` with the local-model caveat,
+because a descent over a function with a kink in it is valid in a
+neighbourhood and claims nothing beyond one. A constraint no free parameter
+moves, and that does not already hold, is `unresolvable(no_free_variable_affects)`
+naming that constraint: parameter space can only reach placements the author
+parameterised, and that limitation is reported rather than routed around.
+
+**Nothing applies it, here either.** There is no `--apply` and no `--set`:
+turning a proposed value into project state is an authoring act through
+`set_params` or an edit to the declaration, and which of those the author
+meant is not this verb's to guess.
+
+### `heph proposals`
+
+List recorded placement proposals with their read-time staleness — withdrawn
+ones included, with their reasons.
+
+```console
+$ heph proposals
+generation: 2
+  p-3f21c8b4d0e7  converged_at_tolerance  transform  parts: lug
+  p-9c04ab117e52  underdetermined_at_tolerance  transform  parts: lug  [stale (base)]
+```
+
+Reading never measures and never re-solves. `stale` is a **fact, not a
+refusal**: a proposal that was valid when written and whose bound artifact refs
+have since moved stays readable, and the changed parts are named so a reader
+knows what to re-run. `--json` emits the machine form.
 
 ### `heph registry {list,publish,pin,update,verify}`
 

@@ -189,6 +189,7 @@ __all__ = [
     "SweepResult",
     "SweepSample",
     "SweepVerdict",
+    "anchor_center",
     "check_motion",
     "check_motion_with_results",
     "evaluate_motion_checks",
@@ -728,6 +729,18 @@ def _anchor_center(shape: Any) -> Vec3:
     )
 
 
+def anchor_center(shape: Any) -> Vec3:
+    """Public name for :func:`_anchor_center` (``SOLVER.md`` §2A).
+
+    Stage 13's anchor-to-point target is the inverse of ``reach``, and its
+    residual is taken on exactly this reference point — so the solver and the
+    independent verification pass have to agree on what "where the anchor is"
+    means. Exporting the one implementation is what makes that agreement
+    structural rather than a coincidence two call sites keep by hand.
+    """
+    return _anchor_center(shape)
+
+
 # --------------------------------------------------------------------------
 # resolution
 
@@ -1196,6 +1209,72 @@ class MotionResolution:
             raise BoundPoseError(pose_id, "joint_limit_exceeded", exc.message) from exc
         except JointDeclarationError as exc:  # pragma: no cover - frames are our own
             raise BoundPoseError(pose_id, "invalid_pose", exc.message) from exc
+        return {part: world.get(part, IDENTITY_TRANSFORM) for part in parts}
+
+    def chain_joints(self, parts: Sequence[str]) -> tuple[str, ...]:
+        """The joint ids on ``parts``' parent chains, root-first, deduplicated.
+
+        Public because ``SOLVER.md`` §2A solves for joint parameters and has to
+        know which joints can move a given anchor: exactly the ones this walk
+        names. A part in no chain is static and contributes none.
+        """
+        chain: dict[str, None] = {}
+        for part in parts:
+            current = part
+            visited: set[str] = set()
+            while current in self._parent_of and current not in visited:
+                visited.add(current)
+                entry = self._parent_of[current]
+                chain[entry.id] = None
+                current = entry.anchors[0].part
+        return tuple(reversed(tuple(chain)))
+
+    def transforms_at(
+        self, values: Mapping[str, float], parts: Sequence[str]
+    ) -> dict[str, RigidTransform]:
+        """World transform per part at an arbitrary FREE assignment.
+
+        :meth:`transforms` answers this for a *declared* pose; Stage 13
+        (``SOLVER.md`` §2A) needs the same answer for an assignment nobody has
+        declared yet, and one implementation of "where does each part sit at
+        this assignment" is the whole point of ``KINEMATICS.md`` §2. Couplings
+        are derived first and limit-checked exactly as
+        :meth:`derive_values` does — a solved assignment is a pose, and a pose
+        outside a declared limit is refused, never clamped.
+
+        Raises :class:`BoundPoseError` (``pose_id`` empty: no pose is named)
+        when a chain joint is unresolvable or a value is out of limits.
+        """
+        from hephaestus.geom import (
+            IDENTITY_TRANSFORM,
+            JointDeclarationError,
+            JointLimitError,
+            forward_kinematics,
+        )
+
+        try:
+            full = self.derive_values(values)
+        except JointLimitError as exc:
+            raise BoundPoseError("", "joint_limit_exceeded", exc.message) from exc
+        except JointDeclarationError as exc:
+            raise BoundPoseError("", "invalid_pose", exc.message) from exc
+        chain = self.chain_joints(parts)
+        for joint_id in chain:
+            failure = self._joint_failures.get(joint_id)
+            if failure is not None:
+                raise BoundPoseError(
+                    "",
+                    "unresolvable_joint",
+                    f"joint {joint_id!r} is unresolvable ({failure[0]}): {failure[1]}",
+                )
+        frames = tuple(self._frames[joint_id] for joint_id in chain)
+        fk_values = {joint_id: full[joint_id] for joint_id in chain if joint_id in full}
+        try:
+            world = forward_kinematics(frames, fk_values)
+        except JointLimitError as exc:
+            raise BoundPoseError("", "joint_limit_exceeded", exc.message) from exc
+        except JointDeclarationError as exc:  # pragma: no cover - frames are our own
+            raise BoundPoseError("", "invalid_pose", exc.message) from exc
         return {part: world.get(part, IDENTITY_TRANSFORM) for part in parts}
 
 

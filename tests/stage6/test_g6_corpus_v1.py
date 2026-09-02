@@ -71,7 +71,13 @@ from hephaestus.core.executor.sandbox.bwrap import find_bwrap
 #: clause 50, the same "repointed with this stage cited" rule): the scan family
 #: ``scan-socket-cuff`` and ``scan-boss-relief`` brings it to twenty-three, and
 #: G12C.51 keeps that family in its own split for the same reason again.
-CORPUS_SIZE = 23
+#: Repointed again 2026-08-30 (Stage 13C, SOLVER.md §11 / G13C clause 54, the
+#: same "corpus-count pins repointed with this stage cited" rule): the solve
+#: family ``solve-shelf-height`` and ``solve-boss-fit`` brings it to
+#: twenty-five, and G13C.55 keeps that family in its own split for the same
+#: reason a third time — the 0.70 bar still keys on the v1 coverage and is
+#: still not diluted.
+CORPUS_SIZE = 25
 
 #: The Stage 6 additions the clause names by role.
 DFM_REPAIR_TASK = "dfm-repair"
@@ -103,7 +109,8 @@ def test_the_public_corpus_loads_with_a_reference_solution_each(
     corpus-v3 mechanism tasks (KINEMATICS.md §6), twenty-one with the
     corpus-v4 component pair (2026-08-29, PARTS_STORE.md G11C clause 13),
     twenty-three with the corpus-v5 scan family (2026-08-29, MESH_INGEST.md
-    §7.5 / G12C clause 50). The
+    §7.5 / G12C clause 50), twenty-five with the corpus-v6 solve family
+    (2026-08-30, SOLVER.md §11 / G13C clause 54). The
     v1 dozen the G6 measurement stands on are all still present (the
     meta-suite asserts the subset).
     """

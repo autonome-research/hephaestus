@@ -52,9 +52,27 @@ generations, provenance on every entry). Each entry:
 - **Provenance is mandatory**: a constraint cites a ledger requirement id or
   is `assumed` with a reason — the same honesty taxonomy as `VALIDATION.md`
   §2, because a constraint IS an interpretation of intent.
-- **NO SOLVER.** Scripts position geometry; constraints verify, they never
-  move anything. A constraint that requires motion to satisfy is simply
-  unsatisfied. (A placement solver, if ever, is a separate stage.)
+- **NO SOLVER MOVES GEOMETRY.** Scripts position geometry; constraints verify,
+  they never move anything. A constraint that requires motion to satisfy is
+  simply unsatisfied. A placement solver PROPOSES: Stage 13 (`SOLVER.md`)
+  computes candidate placements as a measured, provenance-carrying artifact
+  that no tool applies. A constraint's verdict is still produced only by
+  measuring delivered geometry; a proposal is never a verdict, never clears a
+  violated row, and nothing in Stage 13 writes a script, a parameter, or an
+  artifact.
+
+  (Amendment 2026-08-30, `mission_plan.md` §"Stage 13", operator-directed. The
+  first two sentences of this bullet are unchanged and stay normative
+  verbatim — they are the rule, and Stage 13 does not touch them. What the
+  amendment replaced is this bullet's old closing parenthesis, "(A placement
+  solver, if ever, is a separate stage.)", which pre-authorised exactly this
+  route; the separate stage is Stage 13 and the parenthesis is spent. The
+  scope of the reversal is *proposal only*: writeback stays refused, and no
+  code path in Stage 13 computes, offers or guesses an inverse from a
+  transform to a script expression. Applying a proposal is an authoring act
+  through the ordinary `edit_part` / `write_part` / `set_params` path, so
+  scripts remain the sole authority on position and the diff stays
+  reviewable.)
 
 ## 2. Evaluation: residuals in geom, verdicts in the engine
 
@@ -105,7 +123,14 @@ generations, provenance on every entry). Each entry:
 
 ## 4. What deliberately does NOT change
 
-No placement solver. No kinematics, no motion studies **in 8C** (amendment
+No placement solver **in 8C** (amendment 2026-08-30 with Stage 13B:
+proposal-only placement solving is Stage 13 per `SOLVER.md`; nothing in
+Stage 13 moves what a script authored. `propose_placement` computes candidate
+transforms and stores them as a measured, provenance-carrying artifact that no
+tool applies — the `AssemblyStatus` row keeps saying `violated` until a rebuilt
+script measures otherwise, and writeback is refused: no inverse from a
+transform to a script expression is computed, offered or guessed). No
+kinematics, no motion studies **in 8C** (amendment
 2026-08-26: posed evaluation of declared joints is Stage 9 per
 `KINEMATICS.md`; the no-solver rule is unchanged — nothing in Stage 9 moves
 what a script authored). No per-script

@@ -338,6 +338,41 @@ jobs:
       - run: uv sync --dev
       - run: uv run pytest tests/stage12a tests/stage12b tests/stage12c -q
 
+  # ------------------------------------------------------ stage gates 13A-13C --
+  # Gates G13A (pose solving, 17 clauses), G13B (placement proposal, 26) and
+  # G13C (parameter space and the corpus half, 13) - SOLVER.md "Gates". Mission
+  # rule 1 makes a gate a command, so all three suites run on every PR here
+  # rather than on a developer's machine. The lane is RENAMED as each sub-stage
+  # lands: a lane naming a suite that does not exist is a red build, not a
+  # placeholder.
+  #
+  # Prerequisites, and why each one: bubblewrap plus unrestricted unprivileged
+  # user namespaces, because the surface clauses drive the eight fixture parts
+  # through the model's own `build_part` on the real dispatcher, which runs the
+  # executor under the sandbox. No Mesa: nothing here renders.
+  #
+  # The determinism clauses (13A.13, 13B.37, 13C.50) spawn second interpreters
+  # and the verification pass (SOLVER.md §7) spawns one per solve, so this lane
+  # is process-heavy. 13C is also the first solve suite that spends KERNEL time
+  # per iterate - every 2C candidate is a preview build (SOLVER.md §2C) - so the
+  # timeout moves from 45 to 75 minutes against the ~20 the three suites take
+  # locally. The number is the measurement's, not a guess: a lane that times out
+  # is a red build that says nothing about the gate.
+  stages13:
+    name: stage gates 13A-13C
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: sandbox prerequisites
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: uv sync --dev
+      - run: uv run pytest tests/stage13a tests/stage13b tests/stage13c -q
+
   # ------------------------------------ stage 12 measurements (pinned image) --
   # The lane that RE-TAKES, in the image CI pulls by digest, the four Stage 12
   # measurements whose clauses say "in the pinned image": G12A.19, G12B.25,

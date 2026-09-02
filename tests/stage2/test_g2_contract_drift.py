@@ -353,8 +353,13 @@ def test_committed_schema_files_match_the_declared_surface() -> None:
     # (declare_coupling / update_coupling / read_couplings, §5/§6);
     # +1 for MESH_INGEST.md §7.2 compare_to_scan (Stage 12C) — the amendment
     # manifest's `tool_schema.md` row, and the only tool the whole mesh-ingest
-    # stage adds.
-    assert len(TOOL_NAMES) == 54
+    # stage adds;
+    # +1 for SOLVER.md §11 solve_pose (Stage 13A) and +2 for SOLVER.md §11
+    # propose_placement / read_proposals (Stage 13B) — repointed with the
+    # sub-stage that ships each tool, per SOLVER.md §11's per-sub-stage pin
+    # discipline (13C adds none: its parameter space is an enum value on
+    # propose_placement, not a fourth tool).
+    assert len(TOOL_NAMES) == 57
 
 
 def test_sequential_declarations_cover_the_normative_list() -> None:
@@ -403,6 +408,12 @@ def test_orchestrator_only_families_are_declared_orchestrator_only() -> None:
         "delegate_part_agent",
         "get_delegation_status",
         "cancel_delegation",
+        # SOLVER.md §11 (Stage 13B): `propose_placement` reasons ACROSS parts
+        # and spends a project-scoped budget, the same rationale that makes
+        # project-scoped `set_params` and `run_checks` orchestrator-only
+        # (tool_schema.md:126-132). A part agent that could propose placements
+        # for parts it does not own would be interpreting a system it cannot see.
+        "propose_placement",
     }
     # The requirement ledger is the orchestrator's and a delegated part agent's
     # (VALIDATION.md §2/§3); a quick-edit session never authors interpretation.
@@ -451,6 +462,17 @@ def test_orchestrator_only_families_are_declared_orchestrator_only() -> None:
         "declare_coupling",
         "update_coupling",
         "read_couplings",
+        # SOLVER.md §11 (Stage 13A): `solve_pose` sits on the same pair for the
+        # same 8C-quartet reason (ASSEMBLY.md:105-112) — cheap, reversible, and
+        # measured against geometry the model did not choose. Reversible is an
+        # understatement here: it writes nothing at all.
+        "solve_pose",
+        # SOLVER.md §11 (Stage 13B): `read_proposals` joins them for the 8C
+        # read-tool reason — generational state is honest only if every
+        # generation stays readable. `propose_placement` does NOT: it is
+        # orchestrator-only, below, because it reasons across parts and spends
+        # a project-scoped budget.
+        "read_proposals",
     }
     for name in TOOL_NAMES:
         profiles = set(tools_decl.get_tool(name).profiles)

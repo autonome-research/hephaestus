@@ -13539,6 +13539,693 @@
         "hephaestus.dev/result-schema": {
           "additionalProperties": true,
           "properties": {
+            "artifact_refs": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "assignments": {
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "constraint_generation": {
+              "type": "integer"
+            },
+            "detail": {
+              "type": "string"
+            },
+            "joint_generation": {
+              "type": "integer"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "request": {
+              "type": "object"
+            },
+            "solver_core": {
+              "type": "object"
+            },
+            "space": {
+              "const": "pose"
+            },
+            "status": {
+              "const": "ok"
+            },
+            "subject": {
+              "type": "string"
+            },
+            "verdict": {
+              "type": "string"
+            },
+            "verification": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "status",
+            "verdict",
+            "space",
+            "assignments",
+            "solver_core",
+            "verification"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": true,
+          "maxUtf8Fields": {},
+          "name": "solve_pose",
+          "profiles": [
+            "part",
+            "orchestrator"
+          ],
+          "sequential": false
+        }
+      },
+      "description": "Solve free joint parameters for declared targets; a verified proposal, never applied (SOLVER.md §2A).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "ceiling": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "free_joints": {
+            "anyOf": [
+              {
+                "items": {
+                  "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "provenance": {
+            "additionalProperties": false,
+            "properties": {
+              "assumed": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "requirement": {
+                "anyOf": [
+                  {
+                    "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "regularization": {
+            "enum": [
+              "min_norm_from_start"
+            ],
+            "type": "string"
+          },
+          "starts": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                      "type": "string"
+                    },
+                    "values": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": {
+                            "type": "number"
+                          },
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "targets": {
+            "items": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "anchor": {
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*(:[^\\s:]+)?$",
+                      "type": "string"
+                    },
+                    "form": {
+                      "const": "anchor_point"
+                    },
+                    "id": {
+                      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                      "type": "string"
+                    },
+                    "point_mm": {
+                      "items": {
+                        "type": "number"
+                      },
+                      "maxItems": 3,
+                      "minItems": 3,
+                      "type": "array"
+                    },
+                    "tol_mm": {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "form",
+                    "id",
+                    "anchor",
+                    "point_mm",
+                    "tol_mm"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "constraint_id": {
+                      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                      "type": "string"
+                    },
+                    "form": {
+                      "const": "constraint"
+                    }
+                  },
+                  "required": [
+                    "form",
+                    "constraint_id"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "tol": {
+            "exclusiveMinimum": 0,
+            "type": "number"
+          },
+          "weighting": {
+            "enum": [
+              "unit_scaled_v1",
+              "declared"
+            ],
+            "type": "string"
+          },
+          "weights": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "deg": {
+                    "type": "number"
+                  },
+                  "mm": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "mm",
+                  "deg"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "targets",
+          "weighting",
+          "regularization",
+          "tol",
+          "provenance"
+        ],
+        "type": "object"
+      },
+      "name": "solve_pose"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact_refs": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "constraint_generation": {
+              "type": "integer"
+            },
+            "detail": {
+              "type": "string"
+            },
+            "joint_generation": {
+              "type": "integer"
+            },
+            "nonsmooth_terms": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "placements": {
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "proposal_id": {
+              "type": "string"
+            },
+            "proposal_ref": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "request": {
+              "type": "object"
+            },
+            "solver_core": {
+              "type": "object"
+            },
+            "solver_trace_ref": {
+              "type": "string"
+            },
+            "space": {
+              "type": "string"
+            },
+            "status": {
+              "const": "ok"
+            },
+            "subject": {
+              "type": "string"
+            },
+            "verdict": {
+              "type": "string"
+            },
+            "verification": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "status",
+            "verdict",
+            "space",
+            "placements",
+            "solver_core",
+            "verification"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": true,
+          "maxUtf8Fields": {},
+          "name": "propose_placement",
+          "profiles": [
+            "orchestrator"
+          ],
+          "sequential": true
+        }
+      },
+      "description": "Propose rigid placements for declared free parts as a verified, provenance-carrying artifact that nothing applies (SOLVER.md §2B).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "box": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "type": "array"
+                },
+                "propertyNames": {
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\.(tx|ty|tz|rx|ry|rz)$",
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "build_budget": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "ceiling": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "constraints": {
+            "items": {
+              "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$",
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "free": {
+            "items": {
+              "pattern": "^[A-Za-z_][A-Za-z0-9_.]*$",
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "ground": {
+            "anyOf": [
+              {
+                "items": {
+                  "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "provenance": {
+            "additionalProperties": false,
+            "properties": {
+              "assumed": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "requirement": {
+                "anyOf": [
+                  {
+                    "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,31}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "regularization": {
+            "enum": [
+              "min_norm_from_start"
+            ],
+            "type": "string"
+          },
+          "space": {
+            "enum": [
+              "transform",
+              "parameters"
+            ],
+            "type": "string"
+          },
+          "starts": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                      "type": "string"
+                    },
+                    "values": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": {
+                            "type": "number"
+                          },
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tol": {
+            "exclusiveMinimum": 0,
+            "type": "number"
+          },
+          "weighting": {
+            "enum": [
+              "unit_scaled_v1",
+              "declared"
+            ],
+            "type": "string"
+          },
+          "weights": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "deg": {
+                    "type": "number"
+                  },
+                  "mm": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "mm",
+                  "deg"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "space",
+          "constraints",
+          "free",
+          "weighting",
+          "regularization",
+          "tol",
+          "provenance"
+        ],
+        "type": "object"
+      },
+      "name": "propose_placement"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact_ref": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "documents": {
+              "type": "object"
+            },
+            "generation": {
+              "type": "integer"
+            },
+            "proposals": {
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "status": {
+              "const": "ok"
+            }
+          },
+          "required": [
+            "status",
+            "generation",
+            "proposals"
+          ],
+          "type": "object"
+        },
+        "hephaestus.dev/tool": {
+          "idempotent": false,
+          "maxUtf8Fields": {},
+          "name": "read_proposals",
+          "profiles": [
+            "part",
+            "orchestrator"
+          ],
+          "sequential": false
+        }
+      },
+      "description": "Read recorded placement proposals with their staleness (SOLVER.md §8).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "include_documents": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "read_proposals"
+    },
+    {
+      "_meta": {
+        "hephaestus.dev/result-schema": {
+          "additionalProperties": true,
+          "properties": {
             "artifact_ref": {
               "type": "string"
             },

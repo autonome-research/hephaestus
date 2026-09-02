@@ -908,9 +908,26 @@ reason — readable. A revision without a `reason`, a patch of `id`, and a patch
 withdrawal naming an unknown id are refused (`invalid_constraint` /
 `unknown_constraint`).
 
-**There is no solver.** Scripts position geometry; constraints verify, they never
-move anything, and a constraint that would need motion to satisfy is simply
-unsatisfied. `check_assembly` resolves each anchor against the parts' **current
+**No solver moves geometry.** Scripts position geometry; constraints verify, they
+never move anything, and a constraint that would need motion to satisfy is simply
+unsatisfied. A placement solver PROPOSES: Stage 13 (`SOLVER.md`) computes
+candidate placements as a measured, provenance-carrying artifact that no tool
+applies. A constraint's verdict is still produced only by measuring delivered
+geometry; a proposal is never a verdict, never clears a violated row, and nothing
+in Stage 13 writes a script, a parameter, or an artifact. (Amendment 2026-08-30,
+`mission_plan.md` §"Stage 13", `ASSEMBLY.md` §1. The sentence this replaced —
+"There is no solver." — was true when it was written and became false the moment
+the plan opened Stage 13; it is scoped here rather than deleted, in the same
+change that landed the rule amendment, because a normative tool document
+carrying a solve surface and an un-scoped denial of solvers would contradict
+itself. **A Stage 13 tool heading lands only with the sub-stage that ships the
+tool**: `solve_pose` arrived with 13A, and `propose_placement` /
+`read_proposals` with 13B, which is when they began to exist — so the declared
+surface in this document is always exactly the surface that exists. The same
+rule governs an enum value: `space: "parameters"` is 13C's extension and landed
+with 13C, in the change that shipped parameter-space solving, adding no fourth
+tool.) `check_assembly` resolves
+each anchor against the parts' **current
 successful build artifacts** and reports each constraint as
 `satisfied | violated | unresolvable`. `unresolvable` is its own state, never
 silently skipped and never conflated with `violated`; its `reason` names what is
@@ -1177,6 +1194,263 @@ already taken (`motion: null` meaning never evaluated, which is not a pass).
 Reading never measures; withdrawing a coupling frees its child from the next
 evaluation on. The operator-side coupling table is `heph motion` (`--json`
 carries `coupling_generation` + `couplings`), per `KINEMATICS.md` §6.
+
+## Pose solving (`SOLVER.md` §2A, Stage 13A)
+
+**The solver PROPOSES.** `solve_pose` computes joint parameter values that
+would make declared targets measure satisfied, re-measures its own answer
+through the ordinary `check_assembly` / `check_motion` path in a **separate
+process**, and hands the result back as a measurement. **Nothing applies it**:
+no tool, CLI verb or agent path writes a script, writes a parameter,
+republishes a transformed artifact, or makes any build current. Applying a
+solved assignment stays an authoring act through `declare_pose` / `edit_part` /
+`set_params`, so scripts remain the sole authority on position and the diff
+keeps carrying intent. **Writeback is refused**: no inverse from a transform to
+a script expression is computed, offered or guessed, and the refusal is
+structural — the record has no field through which source text could be
+emitted, and every tool input schema is `additionalProperties: false`, so none
+could be requested.
+
+### solve_pose
+```
+solve_pose(targets: [{form: "anchor_point", id, anchor, point_mm, tol_mm}
+                     |{form: "constraint", constraint_id}],
+           free_joints: [str]|null = null,
+           starts: [{id, values}]|null = null,
+           weighting: "unit_scaled_v1"|"declared",
+           weights: {mm, deg}|null = null,
+           regularization: "min_norm_from_start",
+           tol: number,
+           provenance: {requirement?, assumed?, reason?},
+           ceiling: int|null = null)
+    -> {status: "ok", verdict, space: "pose", detail,
+        assignments: [{from_start, values, distance_from_as_built,
+                       iterations, limits_active, dof_remaining, chosen}],
+        solver_core, verification, request, artifact_refs,
+        constraint_generation, joint_generation, reason, subject}
+```
+Two target forms, and they are not interchangeable. An **anchor-to-point**
+target is the inverse of `reach` (`KINEMATICS.md` §4): it reads no constraint
+set, and its residual is taken on the anchor's reference point rather than on
+the shape-to-point extremum `reach` measures — the extremum is
+`kernel_extremum` by `SOLVER.md` §3.2's own taxonomy, and the reference-point
+error is both smooth and stricter, so a solve that reaches it has reached the
+point. A **constraint-id** target drives joint motion until a declared 8C
+constraint measures satisfied, which is the act `ASSEMBLY.md` §1 forbade in
+those words until the 2026-08-30 amendment scoped it.
+
+`weighting` and `regularization` are **required and echoed, never defaulted**:
+a residual vector mixing mm and deg has no canonical norm (`COMPARE.md`'s rule
+— alignment is a declared choice, never a silent normalization), and which
+member of a positive-dimensional solution set comes back is a design decision.
+`starts` defaults to the single `as_built` start; there are no random restarts,
+so a caller who wants coverage declares more starts and every result names the
+one that produced it.
+
+`verdict` is one of **seven** spellings and no others (`SOLVER.md` §6.1):
+`pose_found` (an anchor-to-point target is an existence claim, so one verified
+achieving assignment is proof), `pose_converged_at_tolerance` (constraint-id
+targets only — every objective constraint re-measures `satisfied is True`
+through the ordinary engine path, every residual is inside tolerance, and the
+Jacobian has full column rank), `pose_underdetermined_at_tolerance` (carrying
+`dof_remaining` and a NAMED direction basis: reporting one point of a continuum
+as *the* answer is a claim the mathematics does not support),
+`multiple_poses_from_starts` (**all** solutions returned, ranked by distance
+from `as_built`, none marked `chosen`), `no_pose_found_from_starts` — never
+"infeasible", a local method's silence is evidence about one basin —
+`pose_overconstrained_at_residual_floor` (stationary above tolerance at full
+rank, with **no culprit constraint named**), and `unresolvable` with its
+`reason` and `subject`, reusing the 8C anchor-resolution vocabulary verbatim.
+
+`verification` carries what a **separate process** measured through
+`geom.evaluate_residual` — the re-measured `ConstraintResidual` per constraint
+with `satisfied`, every class-predicate value beside its declared bound, and
+the excluded kinds' outcomes at the solution. The verdict is read from
+`satisfied`, never from the residual number: a `coincident` pair flush in the
+right plane and facing the wrong way measures a zero gap and is still not a
+mate. Disagreement between the solver's own number and the kernel's beyond
+`VERIFY_EPS` refuses the whole result `solver_residual_disagreement` and emits
+no verdict. `solver_core` and `verification` each state their own
+`determinism_tier` (`SOLVER.md` §9): `solver_core` is `D1` — byte-reproducible
+— for a kernel-free pose iteration **given the extracted frames it carries**,
+and `verification` is always `D2`, because it is kernel measurement.
+
+**Refusals are not verdicts** and never appear in that tuple:
+`invalid_solve_request(reason)` at request time (`no_free_variables`,
+`unknown_joint`, `unknown_constraint`, `withdrawn_constraint`,
+`not_an_objective_kind(plateau|kernel_extremum|pose_invariant)`,
+`undeclared_weighting`, `undeclared_regularization`, `missing_provenance`,
+`tolerance_below_determinism_floor`), and at run time `iteration_ceiling`,
+`solver_timeout`, `rank_undecidable` and `solver_residual_disagreement`, each
+CARRYING the best iterate and its independently re-measured residuals. A killed
+solve decided nothing, and giving a ceiling a verdict spelling would let it be
+read as an outcome. Nothing is written by any of them, or by a success.
+Observed equivalent: `Solve Pose`.
+
+## Placement proposal (`SOLVER.md` §2B/§2C, Stages 13B and 13C)
+
+**The output is a measurement artifact, and nothing applies it.**
+`propose_placement` computes a rigid transform per declared free part that
+would make declared constraints measure satisfied, re-measures its own answer
+in a **separate process** through the ordinary `check_assembly` path, and
+stores the result as an immutable, content-addressed proposal document. It
+writes exactly that one thing. No tool, CLI verb or agent path writes a part
+script, writes a parameter, republishes a transformed artifact, or makes any
+build current, and **the `AssemblyStatus` row keeps saying `violated`** until a
+rebuilt script measures otherwise — a proposal is never a verdict and clears
+nothing.
+
+**Writeback is refused, and the refusal is structural rather than a promise.**
+There is no inverse from a transform to a script expression: a +0.42 mm X delta
+can be authored as a change to an `hc` name, a `Param`, a literal or a new
+expression — four different design intents, three of which change other parts —
+and Stage 13 refuses to guess which. The proposal document schema is
+`additionalProperties: false` **at every level** and every document is
+validated against it before it is stored, so a `suggested_edit` field cannot be
+emitted; every tool input schema in this repo is `additionalProperties: false`,
+so none can be requested. Applying a proposal is an authoring act through
+`edit_part` / `write_part` / `set_params`, where it lands in git as a diff a
+reviewer can read.
+
+### propose_placement
+```
+propose_placement(space: "transform"|"parameters",
+                  constraints: [constraint_id],
+                  free: [part] | [param],
+                  ground: [part]|null = null,
+                  starts: [{id, values}]|null = null,
+                  box: {"<part>.tx|ty|tz|rx|ry|rz": [min|null, max|null]}|null = null,
+                  weighting: "unit_scaled_v1"|"declared",
+                  weights: {mm, deg}|null = null,
+                  regularization: "min_norm_from_start",
+                  tol: number,
+                  provenance: {requirement?, assumed?, reason?},
+                  ceiling: int|null = null,
+                  build_budget: int|null = null)
+    -> {status: "ok", verdict, space, detail,
+        proposal_id, proposal_ref, solver_trace_ref,
+        placements: [{from_start,
+                      parts: [{part, rows, translation_mm, axis, angle_deg}],
+                      parameters: [{name, scope, part, param, value, min, max,
+                                    integral}],
+                      distance_from_as_built, iterations, dof_remaining,
+                      bounds_active, chosen}],
+        nonsmooth_terms: [constraint_id],
+        solver_core, verification, request, artifact_refs,
+        constraint_generation, joint_generation, reason, subject}
+```
+**Orchestrator profile only**: it reasons across parts and spends a
+project-scoped budget, the rationale that makes project-scoped `set_params` and
+`run_checks` orchestrator-only. Free variables are `SE(3)` per part in `free`;
+every other part the named constraints anchor is **ground**, and at least one
+must be (`no_ground_part`) — a system with no ground has a six-dimensional
+trivial null space and every reported solution would be an arbitrary member of
+it. A part that rides a declared joint may not be free
+(`free_part_is_jointed`): its placement is owned by forward kinematics, and
+letting a transform and a joint both claim it would create a second home for
+one part's position inside a single evaluation. A pose-bound constraint may not
+be an objective term here
+(`pose_bound_constraint_in_transform_space`) — composing a free transform with
+an FK transform makes the returned number attributable to neither.
+
+`weighting` and `regularization` are **required and echoed, never defaulted**,
+and `box` is optional because transform space is otherwise unbounded: a bound
+is never clamped in silence, so a variable that reaches one comes back in
+`bounds_active`.
+
+### `space: "parameters"` (`SOLVER.md` §2C, Stage 13C)
+
+The 13C extension is an **enum value on this tool, not a fourth tool** — the
+`layout="nested_sheet"` precedent — so the model surface stays at 57. Free
+variables are declared `Param`s, spelled the way a script already reads them:
+`<part>.<param>` for a part's own `PARAMS`, `hc.<param>` for `globals.py`'s.
+Each stays strictly inside its declared `min`/`max`, and a solution sitting on
+one comes back in `bounds_active` rather than being clamped in silence.
+
+The exchange of fields between the two spaces is refused rather than ignored,
+by name, because a declared limit nothing spends is a limit a reader would
+believe was enforced: `box` and `ground` are transform space's alone (a
+`Param`'s own `min`/`max` IS its box, and parameter space holds no part still),
+and `build_budget` is parameter space's alone — a transform iteration issues no
+build at all, while **every parameter-space candidate is a preview build**
+(§`build_part`: a transient-override build creates a preview artifact and
+therefore always returns `current=false`). Nothing is made current, no override
+is persisted, and the project's parameters are exactly where they were when the
+call started. `build_budget` caps the iteration's total preview builds; budget
+exhaustion is `build_budget_exhausted` carrying the best iterate and its
+verified residuals, and a candidate that does not build is
+`unbuildable_parameter_iterate` carrying the build's own error record — both
+refusals, neither a verdict.
+
+Two more constraint kinds are objective terms here and nowhere else, and the
+asymmetry is the reason `SOLVER.md` §3.2 names a *reason* per exclusion rather
+than listing kinds: `fit` (`hole_radius − shaft_radius` is unchanged by any
+rigid motion, so it is `pose_invariant` in transform space and a legitimate
+term here) and `distance` (a kernel extremum, admitted here because every 2C
+derivative is a finite difference anyway, and **disclosed** — every result
+naming one lists it in `nonsmooth_terms`). The two plateau kinds
+(`no_interference`, `clearance_min`) stay refused in both spaces and are still
+evaluated at the returned solution. A constraint no free parameter moves and
+that does not already hold is `unresolvable(no_free_variable_affects)`, naming
+the constraint: parameter space can only reach placements the author
+parameterised, and that limitation is reported rather than routed around.
+
+Both blocks of a 2C solve record carry `determinism_tier: "D2"` — the
+iteration is kernel-touched by construction, so no digit is claimed
+byte-reproducible; what is reproducible is the verdict spelling, the
+independently re-measured residuals within tolerance and on the same side of
+it, the active bounds and `dof_remaining`, and the bound input refs.
+
+`verdict` is one of **six** spellings and no others, the same six in both
+spaces (`SOLVER.md` §6.1):
+`converged_at_tolerance` — never "solved", and it requires every objective
+constraint to re-measure `satisfied is True` through the ordinary engine path,
+which residual-within-tolerance does **not** imply for `coincident` or
+`concentric`; `underdetermined_at_tolerance` (carrying `dof_remaining` and a
+NAMED basis of the free directions — reporting one point of a continuum as
+*the* answer is a claim the mathematics does not support, and a lone mate of
+any analytic kind lands here by construction);
+`multiple_solutions_from_starts` (**all** solutions returned, ranked by
+distance from as-built, none marked `chosen`); `no_placement_found_from_starts`
+— never "infeasible", a local method's silence is evidence about one basin;
+`overconstrained_at_residual_floor` (stationary above tolerance at full rank,
+with **no culprit constraint named**); and `unresolvable` with its `reason` and
+`subject`, reusing the 8C anchor-resolution vocabulary verbatim.
+
+`verification` carries what a separate process measured through
+`geom.evaluate_residual`, including **all eight kinds** — the plateau and
+pose-invariant kinds that cannot steer the iteration are evaluated at the
+solution anyway, so a proposal that satisfies four mates and drives two solids
+into each other reports `no_interference` violated beside them. Refusals are
+not verdicts and never appear in that tuple: `invalid_solve_request(reason)`
+at request time (`no_ground_part`, `free_part_is_jointed`,
+`free_part_in_no_constraint`, `pose_bound_constraint_in_transform_space`,
+`unknown_constraint`, `withdrawn_constraint`,
+`not_an_objective_kind(plateau|kernel_extremum|pose_invariant)`,
+`undeclared_weighting`, `undeclared_regularization`, `missing_provenance`,
+`tolerance_below_determinism_floor`, `no_free_variables`), and at run time
+`iteration_ceiling`, `solver_timeout`, `rank_undecidable`, `non_rigid_iterate`
+and `solver_residual_disagreement`, each CARRYING the best iterate and its
+independently re-measured residuals. Observed equivalent: `Propose Placement`.
+
+### read_proposals
+```
+read_proposals(ids: [proposal_id]|null = null, include_documents: bool = false)
+    -> {status: "ok", generation, artifact_ref,
+        proposals: [{id, ref, space, verdict, constraint_generation,
+                     joint_generation, artifact_refs, parts, constraints,
+                     stale, changed_refs, withdrawn?, withdrawn_reason?}],
+        documents?}
+```
+Both profiles. Reading never measures and never re-solves. `stale` is a
+read-time **fact**, never a refusal: a proposal that was valid when written and
+whose bound artifact refs have since moved stays readable, and `changed_refs`
+names which parts moved so a reader knows what to re-run. Withdrawn proposals
+come back with their reasons — generational state is honest only if every
+generation stays readable. No tool accepts a proposal id where a constraint id
+is expected, and no verdict is solicited or accepted for one. Observed
+equivalent: `Read Proposals`.
+
 
 ## Knowledge and registries
 

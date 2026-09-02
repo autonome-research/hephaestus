@@ -81,15 +81,20 @@ __all__ = [
     "DEFAULT_STEP_POLICY",
     "FAMILY_COMPONENT",
     "FAMILY_SCAN",
+    "FAMILY_SOLVE",
     "G2_AGGREGATE_THRESHOLD",
     "G6_AGGREGATE_THRESHOLD",
     "INSUFFICIENT_COMPONENT_SEEDS",
     "INSUFFICIENT_SCAN_SEEDS",
+    "INSUFFICIENT_SOLVE_SEEDS",
     "PERFECT_TASKS",
     "RUNS_FILENAME",
     "SCAN_BASELINE_FILENAME",
     "SCAN_BASELINE_MIN_SEEDS",
     "SCAN_FAMILY_TASKS",
+    "SOLVE_BASELINE_FILENAME",
+    "SOLVE_BASELINE_MIN_SEEDS",
+    "SOLVE_FAMILY_TASKS",
     "SEEDED_BASELINE_FILENAME",
     "SPEC_PROSE",
     "SPEC_SEEDED",
@@ -105,6 +110,7 @@ __all__ = [
     "load_run_records",
     "record_component_baseline",
     "record_scan_baseline",
+    "record_solve_baseline",
     "record_seeded_baseline",
     "score_directory",
     "score_records",
@@ -174,12 +180,27 @@ SCAN_FAMILY_TASKS: tuple[str, ...] = ("scan-socket-cuff", "scan-boss-relief")
 #: The scan family's name, and the prefix of its split names.
 FAMILY_SCAN = "scan"
 
+#: The Stage 13 solve family (``SOLVER.md`` §11, G13C clauses 53-55, corpus
+#: v6): two tasks whose acceptance is graded on the **rebuilt part** and never
+#: on the proposal. That is the closed-loop break made mechanical — a run
+#: cannot pass by producing a good proposal, only by delivering geometry — and
+#: it is why the family exists at all rather than the tasks joining the base
+#: corpus: nothing the historical baselines measured asked a model to read a
+#: measurement artifact and then author the edit itself.
+#: Closed vocabulary, same as above: a task joins the family by being named
+#: here.
+SOLVE_FAMILY_TASKS: tuple[str, ...] = ("solve-shelf-height", "solve-boss-fit")
+
+#: The solve family's name, and the prefix of its split names.
+FAMILY_SOLVE = "solve"
+
 #: The closed family vocabulary. G9C's mechanism family is deliberately absent:
 #: its split is G9C's own gate text to amend, and folding it in here would be
 #: this stage rewriting another stage's baseline rule.
 CORPUS_FAMILIES: Mapping[str, tuple[str, ...]] = {
     FAMILY_COMPONENT: COMPONENT_FAMILY_TASKS,
     FAMILY_SCAN: SCAN_FAMILY_TASKS,
+    FAMILY_SOLVE: SOLVE_FAMILY_TASKS,
 }
 
 #: Where the component family's first measurement is recorded (never a gate
@@ -205,6 +226,23 @@ SCAN_BASELINE_FILENAME = "scan_baseline.json"
 #: thin one would enshrine noise.
 SCAN_BASELINE_MIN_SEEDS = 3
 INSUFFICIENT_SCAN_SEEDS = "insufficient_scan_seeds"
+
+#: Where the solve family's first measurement is recorded (never a gate input,
+#: and never comparable to the v1/v2/v3 baselines) — ``SOLVER.md`` §11 / G13C
+#: clause 55, on the same G9C precedent Stages 11 and 12C followed.
+SOLVE_BASELINE_FILENAME = "solve_baseline.json"
+
+#: The solve family's seed floor and its named refusal. Same numbers and the
+#: same reasoning as the other two families': a first measurement is permanent,
+#: so a thin one would enshrine noise.
+#:
+#: ``insufficient_solve_seeds`` is deliberately NOT a member of any Stage 13
+#: SOLVE refusal vocabulary (``SOLVER.md`` §6.3's three closed lists). It is a
+#: BENCH-HARNESS refusal: no solve request can produce it, no proposal record
+#: carries it, and nothing in ``core.placement`` or ``geom.solve`` may emit it.
+#: Conflating the two vocabularies would make either one unfalsifiable.
+SOLVE_BASELINE_MIN_SEEDS = 3
+INSUFFICIENT_SOLVE_SEEDS = "insufficient_solve_seeds"
 
 
 def base_task_id(task_id: str) -> str:
@@ -861,6 +899,28 @@ def record_scan_baseline(score: BenchScore, path: Path) -> dict[str, Any] | None
         min_seeds=SCAN_BASELINE_MIN_SEEDS,
         refusal=INSUFFICIENT_SCAN_SEEDS,
         citation="MESH_INGEST.md §7.5 Gate G12C clause 51",
+    )
+
+
+def record_solve_baseline(score: BenchScore, path: Path) -> dict[str, Any] | None:
+    """The solve family's first measurement (``SOLVER.md`` §11, G13C clause 55).
+
+    Its own split per spec, its own first measurement at >= 3 seeds, its own
+    threshold — and **neither compared against nor averaged into** the v1/v2/v3
+    baselines. The existing 0.70 prose bar keys on its own coverage constant
+    and is not diluted, because :func:`split_name` carves these runs out
+    *before* the aggregate is formed: the dilution cannot arrive through the
+    plumbing either. Re-baselining any combined bar is its own future
+    amendment, and this function is not it.
+    """
+    return _record_family_baseline(
+        score,
+        path,
+        family=FAMILY_SOLVE,
+        tasks=SOLVE_FAMILY_TASKS,
+        min_seeds=SOLVE_BASELINE_MIN_SEEDS,
+        refusal=INSUFFICIENT_SOLVE_SEEDS,
+        citation="SOLVER.md §11 Gate G13C clause 55",
     )
 
 

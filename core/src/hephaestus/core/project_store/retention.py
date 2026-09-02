@@ -42,6 +42,7 @@ def protected_pointer_names(layout: ProjectLayout) -> tuple[str, ...]:
     from hephaestus.core.project_store.constraints import CONSTRAINTS_POINTER
     from hephaestus.core.project_store.kinematics import JOINTS_POINTER, POSES_POINTER
     from hephaestus.core.project_store.projections import SNAPSHOT_POINTER, STATE_POINTER
+    from hephaestus.core.project_store.proposals import PROPOSALS_POINTER
     from hephaestus.core.project_store.publication import current_pointer
     from hephaestus.core.project_store.references import REFERENCES_POINTER
 
@@ -62,6 +63,15 @@ def protected_pointer_names(layout: ProjectLayout) -> tuple[str, ...]:
         # root, with the parent chain reachable through its gc links.
         JOINTS_POINTER,
         POSES_POINTER,
+        # Placement proposals (``SOLVER.md`` §8) are MEASUREMENTS rather than
+        # design state - nothing applies one, and design state after Stage 13
+        # is exactly what it was before: scripts, globals.py and persisted
+        # params, in git. The live generation is a protected root anyway,
+        # because §8 promises every generation stays readable and a promise a
+        # GC pass can break is not one. Each generation and each proposal
+        # document is additionally pinned where it is written, so this is the
+        # second of two guarantees rather than the only one.
+        PROPOSALS_POINTER,
     ]
     for part in layout.part_names():
         names.append(current_pointer(part))

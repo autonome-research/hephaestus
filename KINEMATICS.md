@@ -42,10 +42,18 @@ published build artifacts so existing measurements (clearance, interference,
 distance, the whole 8C residual set) can be taken *at a configuration* or
 *over a sampled range of configurations*. It is not:
 
-- **A solver that positions authored geometry.** The 8C rule stands verbatim:
+- **A solver that MOVES authored geometry.** The 8C rule stands verbatim:
   scripts position geometry; nothing in Stage 9 moves what a script authored
   or republishes transformed artifacts. A pose exists only inside an
-  evaluation.
+  evaluation. Stage 13 (`SOLVER.md`) adds the inverse direction — **solving
+  for joint parameter values** (`SOLVER.md` §2A) and **proposing** part
+  placements (`SOLVER.md` §2B) — under the same rule: a solved pose is a
+  parameter assignment, which is exactly what a declared pose already is (§3
+  below), and a proposed placement is an artifact nobody applies. (Amendment
+  2026-08-30, `mission_plan.md` §"Stage 13", operator-directed. The sentence
+  above is unchanged and remains true of Stage 9 and of Stage 13 alike: the
+  reversal is *proposal only*, nothing in Stage 13 republishes transformed
+  artifacts or writes a script, and writeback is refused.)
 - **Dynamics or physics.** No masses-in-motion, forces, torques, friction, or
   time. Motor sizing, load cases, and FEA are a later stage (Stage 10
   candidate). Per-part mass under a rigid transform is pose-invariant, so
@@ -322,7 +330,10 @@ geometry the parts must get right, checkable today with 8C
 
 ## 7. What deliberately does NOT change
 
-No placement/assembly solver — authored positions stay authored. No dynamics,
+No placement/assembly solver **in Stage 9** — authored positions stay
+authored, in Stage 9 and in Stage 13 alike (`SOLVER.md` §1: Stage 13 proposes
+placements as an artifact nobody applies, and nothing in it republishes
+transformed geometry or writes a script). No dynamics,
 loads, FEA, or motor sizing. Declared state rides the ledger pattern (joint
 set, pose set, motion-check set, coupling set — four uses of it, or one
 namespaced store, an implementation choice this spec does not constrain);

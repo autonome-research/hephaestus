@@ -1,0 +1,78 @@
+{
+  "$id": "https://hephaestus.dev/schemas/tools/read_proposals.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Read recorded placement proposals with their staleness (SOLVER.md §8).",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "ids": {
+        "anyOf": [
+          {
+            "items": {
+              "pattern": "^[a-z][a-z0-9_]{0,63}$",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "include_documents": {
+        "default": false,
+        "type": "boolean"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "result": {
+    "additionalProperties": true,
+    "properties": {
+      "artifact_ref": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "documents": {
+        "type": "object"
+      },
+      "generation": {
+        "type": "integer"
+      },
+      "proposals": {
+        "items": {
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "status": {
+        "const": "ok"
+      }
+    },
+    "required": [
+      "status",
+      "generation",
+      "proposals"
+    ],
+    "type": "object"
+  },
+  "title": "read_proposals",
+  "x-hephaestus-tool": {
+    "idempotent": false,
+    "maxUtf8Fields": {},
+    "name": "read_proposals",
+    "profiles": [
+      "part",
+      "orchestrator"
+    ],
+    "sequential": false
+  }
+}

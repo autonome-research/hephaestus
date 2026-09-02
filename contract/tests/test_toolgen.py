@@ -95,7 +95,7 @@ def test_no_drift_between_declaration_and_tool_schema_md() -> None:
     assert decl.isdisjoint(excluded)
 
 
-def test_full_tool_surface_is_54_tools() -> None:
+def test_full_tool_surface_is_57_tools() -> None:
     # 27 Stage-2 tools, the Stage 2V requirement-ledger family, the Stage 6
     # manufacturing tools (run_dfm, generate_drawing, generate_doc), the
     # Stage 8A read-only reference pair (INGEST.md §2), the Stage 8B
@@ -112,8 +112,21 @@ def test_full_tool_surface_is_54_tools() -> None:
     # row: exactly ONE tool for the whole of Stage 12, because each tool costs
     # five drift-tested generated artifacts and a per-profile decision, and mesh
     # FACTS ride the build record and ``heph scan`` instead.
-    assert len(tools_decl.tool_names()) == 54
-    assert len(set(tools_decl.tool_names())) == 54
+    #
+    # 54 -> 55 by SOLVER.md §11 (Stage 13A): `solve_pose`, and the pin moves
+    # HERE, with the sub-stage that adds the tool, because `assert len(...) == N`
+    # on an existing suite fails the moment the tool lands and "existing suites
+    # stay green" would otherwise catch it late and painfully.
+    #
+    # 55 -> 57 by SOLVER.md §11 (Stage 13B): `propose_placement` (orchestrator
+    # only) and `read_proposals` (both profiles). 13C adds NO tool at all — its
+    # parameter space is an enum value on `propose_placement`'s `space`, the
+    # 8A/8B lever applied: put the capability in an existing enum, not on the
+    # surface, because each tool costs five drift-tested generated artifacts, a
+    # per-profile decision, dispatch tests on both profiles and a
+    # `tool_schema.md` heading under one drift gate.
+    assert len(tools_decl.tool_names()) == 57
+    assert len(set(tools_decl.tool_names())) == 57
     assert {"record_requirements", "read_requirements", "update_requirement"} <= set(
         tools_decl.tool_names()
     )
@@ -148,6 +161,9 @@ def test_full_tool_surface_is_54_tools() -> None:
         "update_coupling",
         "read_couplings",
     } <= set(tools_decl.tool_names())
+    # SOLVER.md §11 (Stage 13A): the pose solver. One tool, and it writes
+    # nothing - the reversal it rides on bought PROPOSING and nothing else.
+    assert {"solve_pose", "propose_placement", "read_proposals"} <= set(tools_decl.tool_names())
 
 
 def test_delegate_prompt_carries_max_utf8_keyword() -> None:

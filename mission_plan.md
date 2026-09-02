@@ -1346,6 +1346,598 @@ G12A/G12B/G12C and the suites this block names. `docs/frontier-staging-proposal.
 predates that resolution; it is superseded by the text above and retained only as
 the drafting record.
 
+## Stage 13 — Pose solving and placement proposal (amendment 2026-08-30, operator-directed)
+
+Frontier-capability work under the engine-first decision recorded for Stage 8 —
+the optimal CAD harness outranks the soonest release. Recorded on the operator's
+2026-08-29 approval of the recommended build order in
+`docs/frontier-staging-proposal.md`, which puts pose solving and placement
+proposal **third** of the five frontier capabilities, after the component store
+and mesh ingest, and opens it as its own gated stage under rule 5. Normative
+spec: `SOLVER.md`. Stage 13 lands in three gated sub-stages, strictly ordered.
+
+**This stage is not like the others, and the difference is the whole reason it
+needs its own paragraphs before any gate.** Every other frontier stage *adds* a
+capability the plan already anticipated. This one **reverses a rule five
+documents and four modules state in the imperative** — `ASSEMBLY.md` §1's "NO
+SOLVER" bullet, restated in `ASSEMBLY.md` §4, in `KINEMATICS.md` §0 and §7, in
+`tool_schema.md`'s `check_assembly` section, and as a module contract in
+`geom/constraints.py`, `geom/kinematics.py`, `core/assembly.py` and
+`core/motion.py`. Rule 5 is the only door, and the `ASSEMBLY.md` §1 bullet
+pre-authorised exactly this route in the same breath as the refusal — "(A
+placement solver, if ever, is a separate stage.)" — so this is the separate
+stage, and the parenthesis is now spent. **All four module contracts stand
+unamended**: the reversal is a document-level scoping, and the new Stage 13
+modules restate the rule rather than relax it.
+
+**D1, decided (operator, 2026-08-29).** `docs/frontier-staging-proposal.md` §4's
+D1 put four options to the operator: reject any solver; approve only the
+anchor-to-point pose solve, which needs no rule change; approve the
+proposal-only reversal in full; or approve that plus writeback. The operator
+approved **the proposal-only reversal, option (c), with (d) refused**, and
+bounded it in these terms:
+
+> The solver proposes. Its output is a measurement artifact carrying transforms
+> and provenance; nothing applies it; applying a proposal stays an authoring act
+> through the ordinary edit path, so scripts remain the sole authority on
+> position and the diff stays reviewable. Writeback is refused. A solver that
+> mutates published artifacts would make geometry authorless; that is the thing
+> the original rule protected and it survives intact.
+
+Both tightenings D1 recommended with the approval are applied. The first: 13A's
+two target forms are held apart and asserted by their own gate clauses — the
+anchor-to-point form is legal under the *unamended* rule and the constraint-id
+form is legal only under this amendment — so a reviewer can see exactly which
+clauses the reversal buys. `SOLVER.md` §2A records the one legal alternative,
+shipping anchor-to-point only and deferring constraint-id targets to 13B, and
+states that it is not taken, so the ordering is a decision rather than an
+oversight. The second: the writeback refusal is in the **plan**, below, and not
+only in the spec.
+
+### The reversal, in this plan's own words
+
+**THE SOLVER PROPOSES.** Its output is a measurement artifact carrying
+transforms and provenance. **Nothing applies a proposal.** No tool, no CLI verb
+and no agent path in Stage 13 writes a part script, writes a parameter,
+republishes a transformed artifact, or makes any build current; applying a
+proposal stays an **authoring act** through the ordinary
+`edit_part` / `write_part` / `set_params` surface, under the existing
+optimistic-hash, journal-backed, no-force-overwrite contract, and it shows up in
+git as a normal diff. **WRITEBACK IS REFUSED.** No code path in Stage 13
+computes, offers or guesses an inverse from a rigid transform to a script
+expression; a +0.42 mm X delta on a real bracket can be authored as a change to
+`hc.joint_clear`, to `hc.shelf_w`, to the part's own `p.wing`, or as a new
+literal — four different design intents, three of which change other parts —
+and Stage 13 refuses to guess which. The refusal is
+structural rather than a promise: the proposal document schema is
+`additionalProperties: false`, so a `suggested_edit` field cannot be emitted,
+and every tool input schema in this repository is `additionalProperties: false`,
+so one cannot be requested either.
+
+That is written here, in the plan, and not only in `SOLVER.md`, because the
+operator directed on 2026-08-29 that the writeback refusal live in the plan's own
+text: a rule that exists only in the spec it constrains is a rule with one
+reader, and a later drafter must now reverse a dated operator amendment rather
+than a paragraph. Writeback — a solver that authors a script edit — enters, if
+ever, only by a further amendment that reverses this sentence explicitly, and it
+would need `VALIDATION.md`'s dimension-findings discipline verbatim.
+
+**What the original rule protected, and that it survives.** The `NO SOLVER`
+sentence was short, and short rules are the ones a reversal quietly guts, so
+what it guarded is enumerated here rather than gestured at. **Scripts stay the
+sole authority on position**: no artifact is produced by anything but a script
+build, so a build's identity remains a function of its recorded `input_hashes`
+and a position originating anywhere else would not be named by that hash set.
+**Git keeps owning design state** (rule 6): a proposal is a *measurement*, in
+the same category as an `AssemblyStatus` or a `SolidDiff`, and design state
+after Stage 13 is exactly what it is today — scripts, `globals.py`, and
+persisted params, in git. No per-part placement is stored in `.heph/` or a
+ledger, which would be a second source of geometric truth. **The diff keeps
+carrying intent**: real placements are symbolic, a reviewer reads
+`Pos(hc.shelf_w / 2.0 + hc.joint_clear + p.wing / 2.0, 0, 0)` under a comment
+saying why, and nobody reads a 3×4 matrix — so a proposal deliberately ships
+**no** suggested source text. **One home per number** survives because nothing
+is written, so no solved literal can shadow an `hc` name the executor uses to
+mark consumers dirty. **The verdict vocabulary keeps meaning something**: a
+proposal's residuals are re-measured by the *existing* `core.assembly` evaluator
+in a separate process, the `AssemblyStatus` row is untouched, and it keeps
+saying `violated` until a rebuilt script measures otherwise. **The closed
+evaluation loop stays broken**, on the seam `VALIDATION.md` already uses for
+binding-dimension findings — a violated constraint clears in exactly two ways,
+a later successful build that measures otherwise or an explicit operator
+dismissal, and there is no model-facing write that clears one. **Requirement
+provenance stays compulsory**: a solve request cites a requirement id or is
+`assumed` with a reason, refused `missing_provenance` otherwise, because a solve
+is an interpretation of intent for the same reason a constraint is.
+
+The alternative that lost is named so the choice is legible: **mutating
+published artifacts** — republishing transformed geometry so a constraint
+measures satisfied — fails every property above, makes the constraint
+self-satisfied, and exports geometry no script produced. Stage 9 already refused
+a strictly weaker version of it. A solved placement is therefore **verified
+independently** by the existing constraint evaluator and never trusted because
+the solver said it converged; where the solver's own number and the kernel's
+disagree, the whole result is refused by name and no verdict is emitted.
+
+**Honesty vocabulary, binding on all three sub-stages.** Convergence,
+non-convergence, over-constraint, under-constraint and **multiplicity** are each
+their own named state, and a constraint system with many solutions never
+silently picks one: a positive-dimensional solution set is
+`underdetermined_at_tolerance` carrying `dof_remaining` and a named basis of the
+free directions, and two declared starts reaching genuinely different answers is
+`multiple_solutions_from_starts` with **all** of them returned and none chosen.
+A local method's silence is never infeasibility — the failure spelling is
+`no_placement_found_from_starts`, and "infeasible", "impossible" and "no
+solution exists" appear nowhere in a result. Refusals are not verdicts, on the
+`MotionTimeout` precedent: a killed solve decided nothing. And determinism is
+tiered **per block rather than per solve**, because the seam is kernel-touched
+versus not: a kernel-free `solver_core` is bit-reproducible in the pinned image
+and gated on the digits, while every `verification` block is D2 and the gate
+binds only what is genuinely reproducible — the verdict spelling, the
+re-measured residuals within tolerance and on the same side of it with identical
+`satisfied` flags, the active bounds and `dof_remaining`, and the bound input
+refs. Iteration counts, step sizes and returned digits are explicitly not gated
+in D2, and the spec says so rather than claiming uniform reproducibility.
+
+### The sub-stages and their gates
+
+- **13A — pose solving** (`SOLVER.md` §2A): inverse kinematics over declared
+  joint parameters, in both target forms — an anchor-to-point target (the
+  inverse of `reach`, which needs no rule change) and a constraint-id target
+  (which moves joints in order to satisfy a declared 8C constraint, and is legal
+  only under this amendment). `solve_pose` on both profiles, writing nothing:
+  no proposal artifact, no pose declaration, no generation. The solve record
+  carries its `solver_core` / `verification` blocks inline, so no G13A clause
+  reaches forward into 13B's store.
+
+  **Gate G13A** (Tier 1): `uv run pytest tests/stage13a -q` exits 0 per
+  `SOLVER.md` "Gates" — **17 clauses** (1–17). Forward kinematics as a *pure
+  function* to 1e-9 at fixed given joint values — the only 1e-9 in the gate, and
+  a claim about arithmetic, never about a solved quantity. Then both target
+  forms: `pose_found` with the target error **re-measured** through
+  `core.motion`'s resolution path and asserted `<= tol`, never 1e-9; and
+  `pose_converged_at_tolerance` on a constraint-id target with conjunct (i)
+  asserted **independently** — the constraint re-measures `satisfied is True`
+  through the ordinary `core.assembly` path, class predicates included, every
+  `values` entry recorded beside its declared bound. That constraint-id clause
+  is **not optional and not deferrable**: it is the sole reason the
+  `ASSEMBLY.md` §1 amendment lands at 13A, and a G13A that amended the
+  no-solver rule for a capability no clause exercises would buy the amendment on
+  credit. Also: the pose verdict tuple asserted verbatim and complete — seven
+  spellings, `pose_found` only for anchor-to-point and
+  `pose_converged_at_tolerance` only for constraint-id — with "solved",
+  "infeasible" and "holds" absent from every payload;
+  `no_pose_found_from_starts` on an out-of-reach target carrying every declared
+  start, and **not** spelled `violated`; `pose_underdetermined_at_tolerance`
+  with `dof_remaining == 1` and a named direction basis;
+  `multiple_poses_from_starts` on elbow-up/elbow-down with neither chosen;
+  a limit-blocked target reporting `limits_active` with no value clamped;
+  every reachable request-time refusal by name with nothing written, including
+  `tolerance_below_determinism_floor` and its superseded spelling asserted
+  absent from the source tree; `rank_undecidable` on a straddle fixture;
+  independent verification in a separate process with an injected solver-side
+  error producing `solver_residual_disagreement` and **no verdict**; the
+  import-closure assertion excluding `hephaestus.geom.solve` from the verifier;
+  `solver_timeout` and `iteration_ceiling` as named refusals absent from the
+  verdict tuple; per-block determinism with the recorded frames asserted
+  **equal first** as the precondition of the D1 claim and no `verification`
+  block claiming D1; the amendment-drift clause below; dispatch on both profiles
+  with no pose declared as a side effect; `heph solve pose`; and existing suites
+  stay green with the Stage 13 delta under `tests/stage9*` **asserted rather
+  than assumed**: `tests/stage9a` and `tests/stage9b` untouched, and the only
+  edit anywhere under `tests/stage9c` the corpus-count pin G13C clause 54
+  repoints, 23 → 25, held equal to the public corpus on disk. (This summary
+  read "`tests/stage9a`–`stage9c` unchanged" until 2026-09-01. The tree denied
+  it — 13C's two new public tasks had to move stage9c's pin — and no clause
+  asserted it, so it is tightened to the delta under mission rule 1 and G13A
+  now asserts the delta *and* this line. Nothing was deleted or relaxed; see
+  the closure record below and `SOLVER.md` clause 17.)
+
+- **13B — placement proposal, transform space** (`SOLVER.md` §2B, §7–§8): a
+  rigid transform per declared-free part, returned as a content-addressed,
+  provenance-carrying **proposal artifact** that no tool applies, with
+  `propose_placement` (orchestrator profile only) and `read_proposals` (both).
+
+  **Gate G13B** (Tier 1): `uv run pytest tests/stage13b -q` exits 0 per
+  `SOLVER.md` "Gates" — **26 clauses** (18–43). Each analytic objective kind on
+  a **full-column-rank** fixture, with the rank asserted explicitly rather than
+  inferred from the verdict, because a lone mate of any of those kinds is
+  rank-deficient by construction and no clause anywhere may demand a unique
+  transform from a positive-dimensional solution set — those land in
+  `underdetermined_at_tolerance` with their `dof_remaining` and named bases
+  instead. The reformulation-identity clause: the solver does not iterate on the
+  engine's `measured` expressions, because all four are non-smooth or singular
+  at exactly their own solutions, so each reformulated residual is mapped back
+  through its stated identity and asserted to reproduce the engine's number to
+  1e-9 — a pure-function claim — and each analytic Jacobian column is checked
+  against a central finite difference **within one declared tolerance of the
+  solution**, the neighbourhood where a clause evaluated at a comfortable
+  distance would prove nothing. The class-predicate clause carries both signs: a
+  zero-gap **same-facing** `coincident` pair is **not** a success, and with a
+  free rotational DOF the solver flips the part and returns
+  `converged_at_tolerance` — proving the predicate steers the iteration rather
+  than only failing it at verification. Also: `not_an_objective_kind` with each
+  reason string; the excluded kinds nevertheless **evaluated at the solution**,
+  so a proposal that satisfies four mates and drives two solids into each other
+  reports `no_interference` violated; `multiple_solutions_from_starts` on the
+  180°-flip bracket; `overconstrained_at_residual_floor` with stationarity
+  asserted and **no culprit constraint named**; the request-time refusals; the
+  `non_rigid_iterate` `SO(3)` clause; weighting and regularisation echoed per
+  component and refused when undeclared; independent verification with a
+  fault-injected disagreement; **the proposal is not a verdict** —
+  `check_assembly` still reports the constraint `violated` and no tool accepts a
+  proposal id where a constraint id is expected; **the proposal clears
+  nothing** — the reviewer harness still produces the blocking finding; provenance
+  and read-time staleness; **no writeback asserted structurally** rather than by
+  a refusal name, against the proposal schema's own `additionalProperties:
+  false` and the tool input schemas', with a fourth assertion keeping the
+  vocabulary closed in **both** directions; per-block determinism; bounded
+  execution; profile dispatch; the tool-count repoint; and 8C and Stage 9 wire
+  shapes byte-for-byte unchanged against recorded evidence.
+
+  **13B landed 2026-08-30, and four decisions inside it are recorded here
+  rather than left in the code.** (1) Clause 19's 1e-9 identity claim holds
+  verbatim for every *length* component, at the solution and away from it, and
+  for every *angular* component at a well-conditioned configuration — but **not**
+  for an angular component at the solution, and the reason is the very pathology
+  §3.3 exists to name: the engine measures an angle as `degrees(acos(dot))`,
+  whose derivative is unbounded as `dot → ±1`, so one ulp of `dot` becomes
+  `ulp / sin θ` of angle. At this gate's tightest fixture that is 1.2e-8 deg,
+  measured. The gate therefore declares a bound of 1e-6 deg for that case and
+  asserts it stays three orders below the tightest class-predicate bound any
+  design declares, so the comparison can never go vacuous. Demanding 1e-9 there
+  would be demanding of `acos` an accuracy it does not have — the same defect
+  the `tolerance_below_measurement_floor` rename corrects elsewhere, and it is
+  reported rather than absorbed. (2) `propose_placement` accepts the **declared
+  box** §4.2 step 4 already contemplates ("2B is unbounded unless the request
+  declares a box"), because clause 20's negative needs a transform-space system
+  in which "no free DOF can flip the part" is expressible at all; bounds are
+  never clamped in silence and a variable that reaches one comes back in
+  `bounds_active`. (3) `free_part_is_jointed` refuses a part named by an active
+  joint in **either** role, not only as a child: moving a joint's parent freely
+  while its subtree stays where forward kinematics put it would propose a
+  placement no kinematic chain can realise. That is stricter than §2B's
+  sentence, and it is named rather than silent. (4) A proposal is recorded for
+  every verdict that computed a placement and **not** for `unresolvable`, which
+  computed none — storing a proposal that proposes nothing would make the
+  proposal set answer a question it never asked. The CI lane is renamed
+  `stage gates 13A-13B` with the suite it now runs, on the rule the 13A note
+  records: a lane naming a suite that does not exist is a red build. (13C
+  renamed it again, to `stage gates 13A-13C`.)
+
+  **A defect 13A left behind, found here and fixed here rather than reported
+  and left red.** Two EARLIER stages pin the tool surface by absolute count —
+  `tests/stage11b`'s "no tool is added by this stage" (`== 54`) and G12C.42's
+  "the pin increments by exactly one from the recorded pre-stage value"
+  (`53 + 1`, plus two literal-needle assertions on the two repointed pins).
+  Both express a claim about **their own** stage's delta, and both wrote it as
+  an absolute literal, which says instead that no later stage may ever add a
+  tool. So 13A's `solve_pose` turned five of those assertions red the moment it
+  landed, and 13A's report claimed "existing suites stay green" without having
+  run either suite — the exact failure mode this plan's verification note warns
+  about, one passing file proving nothing about the ones nobody ran. 13B ran
+  them, found them red, and repaired both gates by stating the delta they
+  always meant: each now pins its own stage's value plus a NAMED list of the
+  tools declared after it, so an unaccounted addition is still a red build and
+  a later stage that adds one has to say so in that stage's own gate. Neither
+  claim is weakened; both are now falsifiable by the thing they were about.
+
+- **13C — parameter space and the bench** (`SOLVER.md` §2C, §11): free variables
+  that are declared `Param`s, evaluated by transient-override preview builds
+  that are `current=false` by existing contract and publish nothing —
+  `space: "parameters"` as an enum value on `propose_placement`, not a fourth
+  tool.
+
+  **Gate G13C** (Tier 1 + Tier 3): `uv run pytest tests/stage13c -q` exits 0 per
+  `SOLVER.md` "Gates" — **13 clauses** (44–56). A two-`Param` solve reaching a
+  hand-computed optimum to `PARAM_MATCH_EPS`, derived from the declared
+  tolerance and the fixture's recorded conditioning and **never** to 1e-9;
+  `fit` admitted here and asserted against 13B's refusal of the same kind;
+  `nonsmooth_terms` listing every `distance` term with the local-model caveat
+  stated; **every candidate build a preview** — `current == false` on every
+  build the solve issued, current artifact refs unchanged afterwards and no
+  parameter override persisted; `no_free_variable_affects` naming the insensitive
+  constraint rather than inventing a transform for a knob the author never made;
+  the parameter refusals and the no-clamping rule; `unbuildable_parameter_iterate`
+  and `build_budget_exhausted` carrying the best iterate and its verified
+  residuals; **D2 in both blocks**, with the test explicitly asserting no digit
+  equality anywhere and no 2C block claiming D1; the `space: "parameters"` enum
+  extension asserted to have been **absent** from the 13B enum, so that clause is
+  not vacuous, with the tool count unchanged at 57; `heph solve params`; and the
+  `solve-*` corpus family graded **through the engine path on the rebuilt part**
+  — a run that produces a correct proposal **without rebuilding fails the task**,
+  which is the closed-loop break made mechanical. Tier 3: **solve-prose and
+  solve-seeded are each their own split**, each baselined on its own first
+  measurement with the reference model at ≥ 3 seeds, neither compared against nor
+  averaged into the v1/v2/v3 baselines, carved out by `split_name` **before** the
+  aggregate is formed so the existing 0.70 prose bar keys on its own coverage and
+  cannot be diluted through the plumbing, with a first measurement thinner than
+  three seeds refused `insufficient_solve_seeds` and no baseline file written.
+  Re-baselining any combined bar is its own explicit future amendment.
+
+  **13C landed 2026-08-30, with six deviations recorded rather than absorbed.**
+  (1) A finite-difference gradient costs **`2n`** evaluations, not the `1 + n`
+  §10 wrote: the driver is the *central* difference `geom.solve` already owns
+  and G13B clause 19 holds the analytic Jacobians against, so a second
+  forward-difference implementation for the budget's sake would be a second
+  place for the step and the divisor to drift apart, and less accurate exactly
+  at the solution §3.3's argument is about. The real cost is below both numbers
+  because a part parameter cannot change another part's geometry, so a probe
+  rebuilds one part and an evaluation at inputs already built is cached; and
+  the §7 verification pass's builds are **not** charged to the iteration's
+  budget, because §10 already gives that pass its own wall-clock bound and
+  charging one ceiling against another would refuse a solve for the cost of
+  checking it. (2) `no_free_variable_affects` has a **second conjunct** the
+  §2C sentence does not state, and the one-conjunct reading is wrong: a
+  constraint that is already *satisfied* and moves for nothing is not
+  unreachable, it is reached — and a `fit` inside its declared window
+  contributes an identically flat residual by construction, so the naive test
+  would refuse a whole solve over a constraint that holds. The refusal fires
+  only when a source is flat in every free variable **and** at least one of its
+  components is outside its own declared bound. (3) `unbounded_param` names the
+  case that really exists — a `globals.py` **derived constant**, a readable
+  `hc` name with no declared box — because every `Param` proper is bounded by
+  construction, so the sentence's literal reading would have been a refusal
+  nothing could reach, the `no_writeback_grammar` defect over again. (4) `fit`
+  and `distance` needed §3.3 reformulations of their own, and §3.3 had none:
+  `distance`'s engine number kinks at exactly the declared separation, and
+  `fit`'s bound is a **window** rather than a tolerance, so its residual is a
+  deadband whose flat interior is what forced (2). Both identities are gated
+  like the other six. (5) §11's `budgets?` is spelled **`build_budget`**: there
+  is exactly one budget in this space, and an unnamed plural is a field no gate
+  clause can assert against. `box` and `ground` are refused in parameter space
+  and `build_budget` in transform space, by name rather than ignored, because a
+  declared limit nothing spends is a limit a reader would believe was enforced.
+  (6) A `Param` declares **no unit** (`script_contract.md` §3 is
+  `default`/`min`/`max`/`doc`/`step`), so §Gates' "in the declared units of
+  each `Param`" names a field that does not exist; `PARAM_MATCH_EPS` is
+  asserted in each `Param`'s own numeric scale and the variable's recorded unit
+  is the literal `"param"`, which says exactly that rather than claiming mm.
+
+  **Three things 13C had to repair rather than report.** A preview publication
+  stores the §8 `BuildResult` and stops — only a current-pointer flip wrote the
+  bundle document that carries a build's §7 geometry index — so a 2C candidate
+  had no namespace and every tag anchor came back `unaddressable_anchor` for a
+  tag the build had certainly placed; `build_bundle` is now one function both
+  paths call. And two earlier stages' family clauses pinned
+  `bench.scoring.CORPUS_FAMILIES` as an **exact mapping**, which says "no later
+  stage may ever register a family" — never Stage 11's or Stage 12C's claim,
+  and red the moment the solve family landed. Each now pins its own stage's
+  registration plus a **named** list of the families declared after it, so an
+  unaccounted family is still a red build. This is the 13B repair pattern
+  applied a second time, and the second occurrence is the argument for the
+  pattern: a count written as an absolute is a claim about every future stage.
+
+  **Two more the closing run found, both in the ceiling refusals §6.3 says
+  must carry evidence.** (1) `build_budget_exhausted` was coming back with no
+  best iterate at all. The base point's residual was being evaluated *after*
+  the finite-difference Jacobian, and `best_x` — the only thing such a refusal
+  can carry — is recorded by an evaluation, never by a probe that raised, so a
+  budget spent inside the first Jacobian left the refusal with a bare name.
+  The base evaluation now runs first; every build it needs is already in the
+  solve's own cache, so it costs nothing and the refusal carries what the
+  solve had reached. (2) `unbuildable_parameter_iterate` was firing only for a
+  candidate whose *script* raised. A candidate can instead build geometry the
+  kernel then refuses to **fingerprint** — `normal_at` on a zero-radius
+  cylinder's side face raises `StdFail_NotDone` out of OCP — which kills the
+  build worker, and `run_build` reports that as a raw `ValidationError` rather
+  than a failed `BuildResult`. Both are "a candidate whose preview build
+  failed" and both are now that named refusal, carrying the worker's own error
+  labelled `source: build_worker` so it is never mistaken for a script error.
+  `SandboxDeniedError` is deliberately not swallowed: an unavailable backend is
+  not a fact about the geometry.
+
+  **And the citation audit paid for itself a third time, on drift no Stage 13
+  edit caused.** `docs/cli.md`'s scoped "no solver" sentence moved 255 → 390
+  under this stage's own `heph solve` sections, and the four mission-rule
+  citations moved +8 lines each under an unrelated insertion into this file
+  made while the 13C suite was running. All five were re-resolved. The one
+  that broke was the citation to mission rule 1 — the rule that says a gate is
+  a command — which is the case the per-sub-stage audit exists for.
+
+  The CI lane is renamed `stage gates 13A-13C` with the suite it now runs, and
+  its timeout moves 45 → 75 minutes for a measured reason: 13C is the first
+  solve suite that spends kernel time per iterate, because every 2C candidate
+  is a preview build. A lane that times out is a red build that says nothing
+  about the gate.
+
+  **Status of clause 55's Tier 3 row, stated so no matrix can round it up
+  (2026-08-30).** The clause has two halves and they have two kinds of
+  evidence, exactly as G11C clause 12 and G12C clause 51 do. Its **machinery**
+  is Tier 1 and closed: the family and its splits, `record_solve_baseline`, the
+  ≥3-seed floor, the `insufficient_solve_seeds` refusal that writes nothing,
+  and the carve-out `split_name` performs before the aggregate is formed — all
+  pytest assertions, run by the `stage gates 13A-13C` CI job. Its **number** is
+  Tier 3 and **outstanding**: no `solve_baseline.json` exists, taking it is a
+  detached `heph bench run` at ≥3 seeds with the epoch's reference model
+  (rule 3) followed by `heph bench score`, and it is archived bench evidence
+  rather than a CI clause. No bench was run for this stage and no baseline
+  artifact was written or fabricated. The honest report of this row is
+  *machinery closed, measurement outstanding*, never green — and `heph bench
+  score` itself prints `solve family: NOT MEASURED … outstanding` on every
+  archive that ran no solve task, and `solve family: N runs measured, NOT
+  BASELINED` on one that ran too few, so the absence is stated by the tool that
+  reads the evidence and in the distinction that tells an operator which of the
+  two sweeps to take.
+
+**The document amendments this stage carries, each landing with its own
+machinery.** `ASSEMBLY.md` §1's `NO SOLVER` bullet, `KINEMATICS.md` §0's first
+bullet, and `tool_schema.md`'s `check_assembly` "There is no solver." sentence
+land **with this amendment**, ahead of 13A's code, and that ordering is
+deliberate rather than sloppy: 13A's constraint-id target does exactly what
+`ASSEMBLY.md:56-57` forbids as written, so shipping 13A first would be a
+sub-stage of machinery its own binding rule prohibits, and a normative tool
+document carrying a `solve_pose` signature block beside an un-scoped "There is
+no solver." would contradict itself for the whole duration of a *passing* G13A.
+None of the three sentences is deleted; each is **scoped**, keeps its
+no-writeback force, and gains a dated pointer to Stage 13. G13A clause 14
+asserts all three as landed text, plus a `solve_pose` heading with no un-scoped
+denial beside it, the tool-count repoint, this block's writeback refusal present
+**in `mission_plan.md`'s own words** rather than as a citation, and the
+citation audit below. `ASSEMBLY.md` §4's "No placement solver." and
+`KINEMATICS.md` §7's "No placement/assembly solver" are scoped at **13B**, where
+transform-space placement actually ships. **A fourth sentence, found while this
+block was being written and recorded rather than quietly fixed**:
+`docs/cli.md`'s `heph joints` section says "there is no per-script joint syntax
+and no solver", which is true today and becomes false when 13A ships
+`heph solve pose`. It is scoped at **13A**, not here, because unlike the other
+three it names a CLI surface rather than a rule, and scoping it before the verb
+exists would describe machinery that does not — and G13A clause 14 asserts the
+pair there the same way it does for `tool_schema.md`. `VALIDATION.md` §5 (proposals
+delivered to the reviewer explicitly as non-evidence) and the three
+`tool_schema.md` tool headings land with the sub-stages that ship them;
+`VALIDATION.md` §1 gains the corpus split at 13C. **`script_contract.md` changes
+nothing**, and it is named here because silence in an amendment manifest is a
+claim: part scripts declare no solve, `PARAMS` and `hc` are untouched, the
+`CHECKS` facade gains **no** solver surface in either scope — a predicate that
+could read a proposal would let an acceptance check pass on a computation
+instead of on geometry — and the 13C parameter solve rides `build_part`'s
+existing transient-override preview contract without amending it.
+
+**The tool-surface pin moves per sub-stage: 54 → 55 at 13A, 55 → 57 at 13B.**
+Three tools land (`solve_pose`, `propose_placement`, `read_proposals`) and 13C
+adds none — its space is an enum value on an existing tool, the 8A/8B lever
+applied. The base is **54**, not the 53 `SOLVER.md` carried when it was drafted:
+Stage 12C's `compare_to_scan` moved it, and G12C.42 recorded that move with its
+pre-stage constant. Because both pins are literal `assert len(...) == N` on an
+existing suite, **each sub-stage repoints them as it lands** or "existing suites
+stay green" fails on the sub-stage that adds the tool. **This block edits no
+other stage's gate text**, G12C's constants included.
+
+**A citation audit is a precondition on every sub-stage.** `SOLVER.md` was
+drafted at `ab0cf66`, before Stage 11 (`d9d845f`) and Stage 12 (`668064f`)
+landed, and those stages amended five of the documents it cites by line — roughly
+thirty of its citations had drifted by up to 550 lines, two of them
+load-bearing rather than cosmetic, because a gate clause that greps a line
+number is a clause nobody can write once the number moves. All of them were
+re-resolved against `HEAD` on 2026-08-30 before this block landed, and every
+sub-stage re-runs the audit mechanically as part of its own gate, in two halves:
+every `file:line` citation in `SOLVER.md` resolves **by range** inside the file
+it names, and every citation in that document's **anchor register** resolves to
+text containing its registered anchor. Documents drift under other stages; a
+spec that cites them by line has to be re-measured, not trusted.
+
+**The anchor half was tightened on 2026-09-01, under rule 1.** Both this
+paragraph and `SOLVER.md` used to state it as a universal — *every* citation
+resolving to text containing its anchor — which no gate can assert, because a
+line number carries no per-citation expectation a parser can derive; the
+machinery underneath it checked ranges universally and anchors over a list
+curated inside two test files. An independent verifier found the gap, and rule 1
+resolves ambiguity by **tightening, never waiving**: the anchor half is now
+scoped to an enumerated register that lives in the normative document
+(`SOLVER.md`'s Amendment manifest), all three sub-stages parse that register
+rather than keeping private lists, and each asserts that the list it checks *is*
+the register. No clause was deleted and none was relaxed — the claim now made
+is the claim now asserted, which is more than the old sentence ever bought.
+
+**A second independent pass on 2026-09-01 returned two further findings, and
+both closed by tightening as well.** (1) **The epsilons were letting the solver
+grade itself.** G13B clause 18 and G13C clause 44 each derive their accuracy
+bound as `tol * FACTOR * kappa`, and `SOLVER.md`'s Gates preamble says the
+*fixture* records `kappa`; both implementations read it from the record instead
+— the solver's own reported conditioning, pinned by nothing — so a solver
+reporting an inflated number would have widened the tolerance it was being
+graded against with the gate still green. It sat ~700x from vacuous in the
+shipped tree and would have been undetectable if it moved, which is the
+self-grading shape §7's independent verification exists to refuse, arriving
+through the gate's own arithmetic instead of through the measurement. The
+conditioning is now recorded per fixture *as arithmetic* — `12/π` and `6√2/π` at
+13B, exactly `2` at 13C, each derived from the part dimensions and the
+`unit_scaled_v1` weights — the epsilons are derived from the recording, and the
+solver's report is separately held to it within a declared band. Both suites
+also assert the rule over their own source, so the next call site cannot regress
+quietly. (2) **A gate sentence the tree contradicted.** G13A clause 17 claimed
+"`tests/stage9a`–`stage9c` unchanged"; 13C's two new corpus tasks had to move
+stage9c's count pin, and no clause asserted the sentence at all, so a passing
+G13A coexisted with a normative sentence its own tree denied — the drift shape
+this stage's per-sub-stage audit exists to catch, arriving in the gate text
+rather than in a citation. It is tightened to the delta (9a and 9b untouched;
+stage9c's corpus pin repointed by 13C clause 54, 23 → 25) and G13A now asserts
+that delta, holding the pin equal to the public corpus on disk rather than to a
+literal. *That closure needed a second pass, and the second pass is the
+instructive one:* it was applied to `SOLVER.md` and to this record, while the
+**plan's own G13A gate summary** — hundreds of lines above, and the block a verifier is
+sent to read — still carried the superseded absolute verbatim, so the plan
+contradicted itself for the length of a green matrix. It survived because
+clause 14 asserted only the writeback refusal in this file and nothing asserted
+the plan's gate summaries. Both are now closed: the summary states the delta,
+and clause 14 asserts the summary *and* that the old absolute appears in this
+file only in quotation marks, as the dated record of what was replaced.
+**Neither closure deleted or relaxed a clause**, and the count stands
+at **56**.
+
+**Findings discipline (D5), satisfied before this block landed.** The adversarial
+pass against `SOLVER.md` returned six confirmed findings — three blocking, three
+major — and an independent audit then read each closure against the code it
+cites rather than taking the fix author's word. All six were closed by
+**tightening**; no gate clause was deleted or weakened, and the count stands at
+**56** (G13A 17, G13B 26, G13C 13). The closures worth recording here, because
+each is a trap a later implementer would otherwise fall into: a solver graded on
+`ConstraintResidual.slack` would have reported a bracket lying flush in the
+right plane and **facing the wrong way** as converged, since `coincident`'s
+`slack` is `tol_mm - gap` while its `satisfied` is `gap <= tol_mm and opposed` —
+so the verdict is read from `satisfied`, and the class predicates were given real
+gradients so the solver can flip the part rather than only failing it at
+verification; gate clauses demanding 1e-9 of *solved* quantities were replaced
+with per-fixture epsilons derived from the declared tolerance and the recorded
+conditioning, since residual accuracy and solution accuracy are different
+quantities related by the conditioning; the determinism tier was re-cut from
+whole solves to **blocks**, because the earlier draft gated a pose solve at D1
+on digits that come out of kernel anchor resolution; the four admitted kinds
+were shown to be non-smooth or singular at exactly their own solutions — the
+same defect used to *exclude* `distance` — and each gained a smooth
+reformulation with a gated closed-form identity back to the engine's number; a
+refusal name asserted in three places but listed in no closed set was **removed**
+rather than listed, because it was unreachable through any input schema and a
+schema that cannot express the field is a stronger guarantee than a refusal
+nobody can trigger; and the amendment ordering was moved forward to 13A for the
+reason stated above. The audit found seven further defects inside those closures
+and closed them with them, including two counting assertions that reality
+contradicted — the tool surface is 54, not 53, and **zero** of the 54 result
+schemas are closed rather than "all 53 are `additionalProperties: true`" — both
+of which would have failed on landing rather than degraded quietly.
+`SOLVER.md` is promoted from DRAFT to normative by this amendment.
+
+**Gates are commands here too, and the lane lands with the first sub-stage that
+has a suite to run.** No Stage 13 suite exists yet — this block is the
+amendment, not the machinery — so `.github/workflows/ci.yml` is unchanged by it
+and `release.yml`'s prior-gate list is unchanged with it. **13A adds both, in
+one change**: a lane on the pattern the Stage 11 and Stage 12 lanes
+established, plus that check name in `release.yml`'s prior-gate list, because
+`tests/stage7h::test_the_prior_gate_check_names_every_ci_job` asserts set
+equality between the two and a lane added without the list entry turns a green
+gate red. Rule 1 is the reason the lane is not optional: three Tier 1 gates
+that only ever pass on a developer's machine are not gates yet.
+
+**The lane that landed is named `stage gate 13A`, not the `stage gates 13A-13C`
+this paragraph first prescribed, and the correction is deliberate** (amended
+with 13A, 2026-08-30). A lane runs the suites it names, and only
+`tests/stage13a` exists — the same paragraph's own rule is that "a lane naming
+a suite that does not exist is a red build, not a placeholder", so a label
+claiming 13B and 13C would have been that failure in the job title instead of
+the command. Stage 12 set the precedent exactly: its lane was `stage gates
+12A-12B` until 12C shipped its suite, and the rename rode the change that added
+it. 13B and 13C rename this one the same way, and the `release.yml` entry moves
+with it in the same change, because the set-equality assertion above is what
+makes forgetting either half loud.
+
+**Numbering, unchanged from the Stage 11 block that settled it.** D4 option (a)
+holds: `SOLVER.md` is document **15** and **Stage 13**, with the gate names
+G13A/G13B/G13C and the suites this block names.
+`docs/frontier-staging-proposal.md` §3.3's ready-to-paste block labels this
+capability "Stage 12" and its gates "G12A"–"G12C" because it predates that
+resolution and predates the six findings; it is superseded by the text above and
+retained only as the drafting record. Computer-aided manufacturing (`CAM.md`)
+remains Stage 14 and structural analysis (`PHYSICS.md`) Stage 15.
+
+Signpost, so the stage list is not read as the whole shipped surface: a 2D
+laser/waterjet cut-file path (`heph cam emit`, DXF-only, no machine program)
+and the `cnc_router`/`waterjet` DFM packs shipped as issue-driven engine work
+outside any stage heading (issues #28/#30, commits `f318dbd`/`9a68bb2`). They
+are ordinary tested engine code, not gate evidence. `CAM.md` §2 blesses the 2D
+substance and its §1.4 records the prior claim on the `heph cam emit` verb
+name, which the Stage 14 landing must reconcile.
+
 ## Mission-wide rules
 
 1. **Gates are commands.** Every criterion above maps to a CI job; the

@@ -111,12 +111,15 @@ __all__ = [
     "clearance_min_residual",
     "coincident_residual",
     "concentric_residual",
+    "cylinder_of",
+    "direction_of",
     "distance_residual",
     "evaluate_residual",
     "fit_residual",
     "no_interference_residual",
     "parallel_residual",
     "perpendicular_residual",
+    "plane_of",
 ]
 
 # --------------------------------------------------------------------------
@@ -490,6 +493,29 @@ def _line_direction(shape: AnyShape) -> Vec3 | None:
         elif abs(abs(_dot(direction, found)) - 1.0) > PLANE_NORMAL_EPS:
             return None
     return found
+
+
+def plane_of(shape: AnyShape, *, kind: str, side: Literal["a", "b"]) -> PlanarFaceRecord:
+    """Public name for :func:`_plane_of` (``SOLVER.md`` §4.2 step 1).
+
+    Stage 13 extracts frames ONCE, before any iteration, and then transports
+    them in closed form — so it needs exactly the class resolution the
+    evaluators use, not a second one that could disagree about which plane a
+    shape stands for. Re-implementing "the one plane this shape means" beside
+    this module would be the drift mission rule 6 forbids, so the resolution is
+    exported rather than copied. Same shape, same refusals, same tie-breaks.
+    """
+    return _plane_of(shape, kind=kind, side=side)
+
+
+def cylinder_of(shape: AnyShape, *, kind: str, side: Literal["a", "b"]) -> CylinderRecord:
+    """Public name for :func:`_cylinder_of` (the :func:`plane_of` rationale)."""
+    return _cylinder_of(shape, kind=kind, side=side)
+
+
+def direction_of(shape: AnyShape, *, kind: str, side: Literal["a", "b"]) -> tuple[Vec3, str]:
+    """Public name for :func:`_direction_of` (the :func:`plane_of` rationale)."""
+    return _direction_of(shape, kind=kind, side=side)
 
 
 def _require_solids(shape: AnyShape, *, kind: str, side: Literal["a", "b"]) -> None:

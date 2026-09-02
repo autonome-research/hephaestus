@@ -74,6 +74,10 @@ class GradeReport:
     metadata: tuple[Mapping[str, Any], ...] = ()
     #: ``ASSEMBLY.md`` §3: one record per declared constraint, with its residual.
     constraints: tuple[Mapping[str, Any], ...] = ()
+    #: ``SOLVER.md`` §11 (G13C clause 53): one record per proposal requirement,
+    #: measured on the REBUILT geometry. Kept beside ``constraints`` rather than
+    #: folded into it so the archive says which acceptance a row came from.
+    proposals: tuple[Mapping[str, Any], ...] = ()
     #: ``KINEMATICS.md`` §6 (Stage 9C): one record per declared joint / pose /
     #: motion check, each carrying the engine outcome it was judged on.
     joints: tuple[Mapping[str, Any], ...] = ()
@@ -120,6 +124,7 @@ class GradeReport:
             "drawings": [dict(d) for d in self.drawings],
             "metadata": [dict(m) for m in self.metadata],
             "constraints": [dict(c) for c in self.constraints],
+            "proposals": [dict(p) for p in self.proposals],
             "joints": [dict(j) for j in self.joints],
             "poses": [dict(p) for p in self.poses],
             "motion_checks": [dict(m) for m in self.motion_checks],
@@ -1024,6 +1029,86 @@ def _validate_constraints(cad: CadOps, task: BenchTask) -> tuple[list[dict[str, 
     return records, reasons
 
 
+def _validate_proposals(cad: CadOps, task: BenchTask) -> tuple[list[dict[str, Any]], list[str]]:
+    """Grade a solve task on its REBUILT geometry (``SOLVER.md`` §11).
+
+    The clause that keeps the loop broken. A ``propose_placement`` result is a
+    measurement artifact nothing applies, so a run that produced a correct
+    proposal and stopped there has delivered no geometry — and this pass fails
+    it, by name, on the constraint the task owns. Only an authored edit,
+    rebuilt and re-measured through the ordinary engine path, moves the row to
+    ``satisfied``.
+
+    Nothing here reads a proposal. The grader does not open the proposal set,
+    does not look at a proposal id, and would score identically if the run had
+    never called the tool: the acceptance is about the parts, and the parts are
+    what ``grade`` already rebuilt. Reading the proposal would be grading the
+    computation instead of the geometry, which is ``VALIDATION.md`` §1's
+    self-referential trap one level up.
+
+    Mechanically this is :func:`_validate_constraints` over a different
+    requirement list, and it is a separate pass rather than a merged one so a
+    failed solve task fails under a reason token that says which acceptance it
+    was — ``proposal_not_applied`` rather than ``constraint_violated``.
+    """
+    if not task.proposals:
+        return [], []
+    records: list[dict[str, Any]] = []
+    reasons: list[str] = []
+    constraints = cad.constraint_set()
+    declared = constraints.state().by_id
+    for requirement in task.proposals:
+        entry = requirement.declaration()
+        try:
+            if requirement.id in declared:
+                patch = {key: value for key, value in entry.items() if key != "id"}
+                patch["withdrawn"] = False
+                constraints.update(
+                    requirement.id,
+                    patch,
+                    "replaced by the bench task's acceptance constraint",
+                    op_id=f"bench-proposal-{uuid.uuid4().hex}",
+                )
+            else:
+                constraints.declare(entry, op_id=f"bench-proposal-{uuid.uuid4().hex}")
+        except Exception as exc:
+            records.append(
+                {"requirement": requirement.to_json(), "error": f"{type(exc).__name__}: {exc}"}
+            )
+            reasons.append(f"harness_error:proposal_undeclarable:{requirement.id}")
+            continue
+        records.append({"requirement": requirement.to_json()})
+    wanted = [
+        requirement.id for requirement in task.proposals if not _errored(records, requirement.id)
+    ]
+    if not wanted:
+        return records, reasons
+    try:
+        status = cad.assembly_evaluator().evaluate(wanted, record=False)
+    except Exception as exc:  # pragma: no cover - a broken store, not a verdict
+        reasons.append(f"harness_error:proposal_evaluation_failed:{type(exc).__name__}")
+        return records, reasons
+    outcomes = {outcome.id: outcome for outcome in status.constraints}
+    for record in records:
+        requirement_id = str(cast("Mapping[str, Any]", record["requirement"])["entry"]["id"])
+        outcome = outcomes.get(requirement_id)
+        if outcome is None:
+            if "error" not in record:  # pragma: no cover - evaluate() covers every id
+                reasons.append(f"harness_error:proposal_not_evaluated:{requirement_id}")
+            continue
+        record["outcome"] = outcome.to_json()
+        if outcome.state == "satisfied":
+            continue
+        if outcome.state == "unresolvable":
+            # Never conflated with a violation: nothing was measured at all.
+            reasons.append(f"proposal_unresolvable:{requirement_id}:{outcome.reason}")
+        else:
+            # The token says what actually failed: the geometry the run
+            # DELIVERED does not satisfy the mate. A proposal alone never can.
+            reasons.append(f"proposal_not_applied:{requirement_id}:{outcome.measured}")
+    return records, reasons
+
+
 def _errored(records: Sequence[Mapping[str, Any]], constraint_id: str) -> bool:
     """True when declaring this constraint already failed (nothing to evaluate)."""
     for record in records:
@@ -1089,6 +1174,7 @@ def grade(
     drawings: list[dict[str, Any]] = []
     metadata: list[dict[str, Any]] = []
     constraints: list[dict[str, Any]] = []
+    proposals: list[dict[str, Any]] = []
     joints: list[dict[str, Any]] = []
     poses: list[dict[str, Any]] = []
     motion_checks: list[dict[str, Any]] = []
@@ -1148,6 +1234,12 @@ def grade(
             constraint_records, constraint_reasons = _validate_constraints(cad, task)
             constraints = constraint_records
             reasons.extend(constraint_reasons)
+            # SOLVER.md §11: after the constraints, because a solve task's
+            # acceptance is the same engine path over the same rebuilt parts —
+            # only the reason token and the record it lands in differ.
+            proposal_records, proposal_reasons = _validate_proposals(cad, task)
+            proposals = proposal_records
+            reasons.extend(proposal_reasons)
             # MESH_INGEST.md §7.5: measured last, because it is the most
             # expensive acceptance in the list and the cheap structural ones
             # should have already named anything wrong with the geometry.
@@ -1177,6 +1269,7 @@ def grade(
         drawings=tuple(drawings),
         metadata=tuple(metadata),
         constraints=tuple(constraints),
+        proposals=tuple(proposals),
         joints=tuple(joints),
         poses=tuple(poses),
         motion_checks=tuple(motion_checks),

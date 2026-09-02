@@ -316,6 +316,56 @@ def _steps() -> list[Step]:
         ),
         ("read_couplings", lambda seen: {}),
         ("check_motion", lambda seen: {}),
+        # -- pose solving (SOLVER.md §2A, Stage 13A). Same shape as the joint
+        # and motion-check steps above and for the same reason: this one-part
+        # project has no second part to anchor a joint frame on, so the solve
+        # honestly comes back `unresolvable` — verdict SIX of the closed
+        # seven-spelling pose set (§6.1), reported IN the record rather than
+        # hidden behind a transport error, exactly as an unresolvable
+        # constraint row is. It writes nothing either way, which is the whole
+        # of what the no-solver amendment bought.
+        (
+            "solve_pose",
+            lambda seen: {
+                "targets": [
+                    {
+                        "form": "anchor_point",
+                        "id": "t_mount",
+                        "anchor": "widget",
+                        "point_mm": [0.0, 0.0, 10.0],
+                        "tol_mm": 0.05,
+                    }
+                ],
+                "free_joints": ["j-mount"],
+                "tol": 0.01,
+                "weighting": "unit_scaled_v1",
+                "regularization": "min_norm_from_start",
+                "provenance": {"requirement": "R1"},
+            },
+        ),
+        # -- placement proposal (SOLVER.md §2B, Stage 13B). This one-part
+        # project's only declared constraint is a `distance`, which §3.2
+        # refuses as an objective term in transform space by name and with its
+        # reason (`kernel_extremum`: `measure.distance` is piecewise smooth
+        # with a witness pair that switches discontinuously as surfaces slide,
+        # and the kink sits exactly where mates live). So the honest answer
+        # here is that named refusal, arriving as a tool error rather than as a
+        # verdict — a refusal is NOT a verdict, and dressing one as an outcome
+        # is what SOLVER.md §6.3 exists to prevent. Nothing is written either
+        # way, and `read_proposals` below confirms it: no proposal exists.
+        (
+            "propose_placement",
+            lambda seen: {
+                "space": "transform",
+                "constraints": ["c-widget-solid"],
+                "free": ["widget"],
+                "tol": 0.01,
+                "weighting": "unit_scaled_v1",
+                "regularization": "min_norm_from_start",
+                "provenance": {"requirement": "R1"},
+            },
+        ),
+        ("read_proposals", lambda seen: {}),
         ("run_checks", lambda seen: {"scope": "part", "name": "widget"}),
         (
             "read_artifact",
@@ -707,6 +757,19 @@ def test_every_generated_tool_flows_through_the_real_bridge(surface: G2Harness) 
     [sweep_row] = cast("list[Any]", motion_checked["results"])
     assert sweep_row["id"] == "mc-travel" and sweep_row["verdict"] == "unresolvable"
     assert motion_checked["results_ref"].startswith("artifact:motion-results:")
+    # Stage 13B: the placement proposer refused BY NAME with its reason, and
+    # nothing was written - `read_proposals` shows an empty generation 0. A
+    # refusal is not a verdict and a refused solve records no proposal, which
+    # is what makes "the output is an artifact nothing applies" checkable from
+    # the other side: there is no artifact at all.
+    proposed = cast("dict[str, Any]", seen["propose_placement"])
+    refusal = str(proposed.get("_text") or proposed)
+    assert "not_an_objective_kind" in refusal, proposed
+    assert "kernel_extremum" in refusal, proposed
+    proposals_read = cast("dict[str, Any]", seen["read_proposals"])
+    assert proposals_read["status"] == "ok"
+    assert proposals_read["proposals"] == [] and proposals_read["generation"] == 0
+
     assert seen["run_checks"]["checks"]["wide_enough"]["pass"] is True
     assert seen["read_artifact"]["total_bytes"] > 0
 
