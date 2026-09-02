@@ -32,6 +32,9 @@ import styles from "./ViewCube.module.css";
  * changes is where they sit. The shipped 4×2 grid put `+Y` and `-Y` on different
  * rows and stood `front` — a named view — beside `+Z`, an axis. `null` is an
  * empty cell of the cross, not a ninth camera.
+ *
+ * §5.5 C19: the named-views row lives INSIDE the view-cube plate — one plate,
+ * one shadow, one bounding box in the corner (`[data-view-cube]` is that box).
  */
 const CROSS: readonly (StandardView | null)[] = [
   "+Y",

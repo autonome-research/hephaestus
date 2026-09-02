@@ -39,7 +39,10 @@
   width: 10px;
   height: 10px;
   flex: none;
-  background: var(--accent);
+  /* §3.9 (C28), amended 2026-09-02: accent ink/fill renders only on interactive
+     elements or the link recipe — "there is no third case". The product glyph
+     is inert, so it takes the strong ink, not the accent fill. */
+  background: var(--ink-strong);
   clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
 }
 

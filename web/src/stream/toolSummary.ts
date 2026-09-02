@@ -23,12 +23,13 @@
 // chip. Nothing is dropped from the DOM.
 //
 // **2. The headline is chosen from the document, never composed.** `summaryOf`
-// picks fields the document actually carries, prefers the ones that answer "what
-// happened" (`status`, then the subject, then a message), and prints the rest as
-// a COUNT. It never re-words a value, never counts anything the server did not
-// send, and returns `null` rather than inventing a sentence when a document
-// carries nothing legible — §4.4's discipline: a summary that had to be guessed
-// at is not a summary, and the collapsed field list below it is the answer.
+// picks fields the document actually carries, in §7.2 C23's closed order —
+// status → message → name → `*_ref` (abbreviated per §4.1(a)) → bare counters
+// last. It never re-words a value, never counts anything the server did not
+// send, and returns empty `parts` rather than inventing a sentence when a
+// document carries nothing legible — §4.4's discipline: a summary that had to
+// be guessed at is not a summary, and the collapsed field list below it is the
+// answer (the opaque fallback, unchanged by the amendment).
 
 import { formatRef } from "../system/format";
 import { fieldDisplay, type ToolResultDocument } from "./toolResult";
@@ -49,41 +50,50 @@ export const DIGEST_GLYPHS = 18;
 export const SUMMARY_FIELDS_MAX = 2;
 
 /**
- * Fields that answer "what happened", in the order a reader asks it.
+ * §7.2 (C23, amended 2026-09-02): the headline field priority is CLOSED and
+ * ORDERED — "(1) a `status` field, (2) a `message` field, (3) a `name` field,
+ * (4) `*_ref` fields (abbreviated per §4.1(a)), (5) bare counters last."
  *
- * Not a schema and not a closed set: a document that carries none of these is
- * summarised from its own first legible field instead (see `summaryOf`). The
- * list only decides *precedence* among keys the document already has, so it can
- * never name a field the payload lacks — §7.2's groundedness, applied to the
+ * The tiers below are that order made total over the keys the build actually
+ * sees: `state` reads with `status` (both answer "what happened"), `reason`
+ * with `message` (both carry the sentence), and the operand keys (`part`,
+ * `path`, `file`, …) with `name` (each names the subject). The priority only
+ * decides *precedence* among keys the document already has, so it can never
+ * name a field the payload lacks — §7.2's groundedness, applied to the
  * headline as well as to the field set.
  */
-export const HEADLINE_FIELDS: readonly string[] = [
-  "part",
+export const STATUS_FIELDS: readonly string[] = ["status", "state"];
+export const MESSAGE_FIELDS: readonly string[] = ["message", "reason"];
+export const NAME_FIELDS: readonly string[] = [
   "name",
+  "part",
   "path",
   "file",
   "question",
   "artifact",
-  "message",
-  "reason",
-  "state",
 ];
 
+/** C23 tier (4): a reference field, headlined ABBREVIATED per §4.1(a). */
+export function isRefField(field: string): boolean {
+  return field.endsWith("_ref");
+}
+
 /**
- * Result keys that answer "how much / which generation", not "which operand".
- *
- * These stay behind the disclosure. Putting `line_count` or `status` on the
- * face is what made three `read_part` chips identical (#48). `status` is
- * already the chip badge.
+ * C23 tier (5): bare counters, LAST — "counts of things summarize a document
+ * least, which is §0.2b's 'a count is not a fact' applied to the headline."
+ * A counter reaches the headline only when no field of any earlier tier did
+ * (the testable: a document carrying both a `message` and a counter headlines
+ * the message and not the counter). Putting `line_count` on the face is what
+ * made three `read_part` chips identical (#48).
  */
-export const HEADLINE_METADATA: ReadonlySet<string> = new Set([
-  "status",
+export const COUNTER_FIELDS: ReadonlySet<string> = new Set([
   "line_count",
   "lines",
   "truncated",
   "generation",
   "current",
   "count",
+  "total",
 ]);
 
 /** Call-argument keys that name the operand the operator already knows. */
@@ -168,21 +178,55 @@ function headlineValue(value: unknown): string | null {
 }
 
 /**
- * The chip's headline for one parsed result document.
+ * A `*_ref` field's headline form: abbreviated per §4.1(a) (C23 tier 4).
  *
- * Precedence first, then the document's own insertion order for whatever is
- * left, so a tool whose result carries none of `HEADLINE_FIELDS` still gets a
- * line out of its own first legible field rather than nothing.
+ * An opaque digest under a `*_ref` key IS the field's value and may headline —
+ * shortened head-and-tail by `displayValue`, whole value intact on the field
+ * row's `title` — where the same digest under any other key still never does.
+ */
+function refHeadlineValue(value: unknown): string | null {
+  if (typeof value !== "string") return headlineValue(value);
+  const trimmed = value.trim();
+  if (isOpaqueDigest(trimmed)) return displayValue(trimmed).text;
+  return headlineValue(value);
+}
+
+/**
+ * The chip's headline for one parsed result document, in C23's closed order:
+ * status → message → name → `*_ref` fields → bare counters last.
+ *
+ * Within a tier, tier order first, then the document's own insertion order for
+ * whatever is left, so a tool whose result carries none of the named fields
+ * still gets a line out of its own first legible field rather than nothing.
+ * Counters are strictly LAST: they join the headline only when every earlier
+ * tier produced nothing. A document with nothing legible at all still returns
+ * empty `parts` — the opaque fallback is unchanged.
  */
 export function summaryOf(doc: ToolResultDocument, fields: readonly string[]): ToolSummary {
+  const named = new Set([...STATUS_FIELDS, ...MESSAGE_FIELDS, ...NAME_FIELDS]);
+  const refs = fields.filter((field) => !named.has(field) && isRefField(field));
+  const others = fields.filter(
+    (field) => !named.has(field) && !isRefField(field) && !COUNTER_FIELDS.has(field),
+  );
   const ordered = [
-    ...HEADLINE_FIELDS.filter((field) => fields.includes(field)),
-    ...fields.filter((field) => !HEADLINE_FIELDS.includes(field) && !HEADLINE_METADATA.has(field)),
+    ...STATUS_FIELDS.filter((field) => fields.includes(field)),
+    ...MESSAGE_FIELDS.filter((field) => fields.includes(field)),
+    ...NAME_FIELDS.filter((field) => fields.includes(field)),
+    ...refs,
+    ...others,
   ];
   const parts: SummaryPart[] = [];
   for (const field of ordered) {
     if (parts.length === SUMMARY_FIELDS_MAX) break;
-    if (HEADLINE_METADATA.has(field)) continue;
+    const value = isRefField(field) ? refHeadlineValue(doc[field]) : headlineValue(doc[field]);
+    if (value === null) continue;
+    parts.push({ field, value });
+  }
+  if (parts.length > 0) return { parts, fields: fields.length };
+  // Tier (5): bare counters, only because nothing else could headline.
+  for (const field of fields) {
+    if (!COUNTER_FIELDS.has(field)) continue;
+    if (parts.length === SUMMARY_FIELDS_MAX) break;
     const value = headlineValue(doc[field]);
     if (value === null) continue;
     parts.push({ field, value });

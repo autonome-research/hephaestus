@@ -76,7 +76,11 @@
    reports." */
 
 .chip {
-  border: 1px solid var(--border-strong);
+  /* §4.7 (C11), amended 2026-09-02: a finished, successful tool card rests on
+     the SEAM border. `--border-strong` on every chip made a transcript of
+     routine successes read as a wall of detached cards; detachment is now the
+     exception's signal, per §3.10's own split. */
+  border: 1px solid var(--border);
   border-radius: var(--radius-card);
   background: var(--surface-raised);
   padding: var(--space-3);
@@ -84,6 +88,15 @@
   flex-direction: column;
   gap: var(--gap-stack);
   min-width: 0;
+}
+
+/* §4.7 (C11): only a NON-TERMINAL or FAILED chip detaches. The status set here
+   is closed — `running | error | unknown` and nothing else draws
+   `--border-strong`; `ok` rests on the seam rule above. */
+.chip[data-status="running"],
+.chip[data-status="error"],
+.chip[data-status="unknown"] {
+  border-color: var(--border-strong);
 }
 
 .chipHeader {
@@ -106,6 +119,42 @@
   composes: data from "../../system/type.module.css";
   flex: none;
   color: var(--ink-muted);
+}
+
+/* ---- §7.2 (C4): the cycle group -------------------------------------
+   First pair full, then one compact line per subsequent pair. */
+
+.cycle {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-stack);
+  min-width: 0;
+}
+
+/* One compact line: name, ×N ordinal, badge — nothing else, and the clause's
+   own ceiling: ≤ 1.5× target-min = 36px tall. */
+.cycleLine {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--gap-inline);
+  min-width: 0;
+  padding: var(--space-1) var(--space-3);
+  max-block-size: 36px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+}
+
+/* A folded pair behind the first pair's disclosure: its text row and its
+   chip's Detail, relocated — never elided (C5). */
+.cycleFold {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-stack);
+  border-inline-start: 2px solid var(--border);
+  padding-inline-start: var(--space-2);
 }
 
 /* ---- the headline: what a successful call reported ------------------
@@ -252,8 +301,14 @@ details[open] > .rawSummary::before {
   min-width: 0;
 }
 
+/* §3.9 (C28), amended 2026-09-02: accent is a promise of interaction, and a
+   reference field name is inert text — the named offender was exactly this
+   rule, which drew `snapshot_ref` and its siblings in `--accent` with no
+   activation behind the colour. The `data-field-reference` attribute stays
+   (it is the machine-readable fact); the ink is de-accented to `.code` at
+   `--ink-muted` like every other inert identifier. */
 .field[data-field-reference="true"] .fieldName {
-  color: var(--accent);
+  color: var(--ink-muted);
 }
 
 .fieldName {
@@ -493,6 +548,56 @@ details[open] > .rawSummary::before {
   border-top: 1px dashed var(--border-strong);
   padding-top: var(--space-2);
   color: var(--ink-muted);
+}
+
+/* §7.3, amended 2026-09-02 (C1/C2): the local prompt echo — the operator's own
+   words, on screen from Send. The `unrecorded` marker in `.code` muted is the
+   category's visible-at-rest honesty disclosure; the accessible equivalent is
+   a visually-hidden span, because `title` alone is unreachable from keyboard,
+   touch, and most screen readers. */
+.localPrompt {
+  composes: body from "../../system/type.module.css";
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-stack);
+}
+
+.localPromptText {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ink-base);
+}
+
+.presentationMarker {
+  composes: code from "../../system/type.module.css";
+  color: var(--ink-muted);
+}
+
+/* §7.3, amended 2026-09-02 (C21): the run-start boundary is a rule line
+   drawing the run id in `.code` and nothing else — not a card. The
+   rule-line-plus-run-id IS its visible-at-rest marker. */
+.runStart {
+  composes: code from "../../system/type.module.css";
+  margin: var(--space-2) 0 0;
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-1);
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+
+/* The accessible not-a-recorded-event statement, off the visual canvas but in
+   the accessibility tree (§3.9's colour-is-never-alone, applied to honesty). */
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 /* §7.4: `resyncing` is visible. A labelled gap beats a silent one. */

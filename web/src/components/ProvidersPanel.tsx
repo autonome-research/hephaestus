@@ -34,13 +34,38 @@
 //   redirection is not available; a loud one is." The list is a file a reviewer
 //   can read, and this is the panel that reads it back.
 //
+// AMENDED 2026-09-02 (§0.2c — C9, C13, C14):
+//
+// * **`primary` is availability, not invitation** (§23.8, C9). The sign-in
+//   action renders `data-variant="primary"` ONLY while the composer carries
+//   `data-disabled-reason="agent_unavailable"` — the runtime's own *current*
+//   answer, read from `stream/composerGate.ts`'s store, which the mounted
+//   composer publishes. The struck alternative — keying off "no usable
+//   provider row" — read last-observed health, which is never current, and
+//   could mint a second primary beside an enabled Send. In every other state,
+//   including every credential rejected or expired (§23.10 fails the next run;
+//   it never disables the composer), the action is `secondary` like rotate and
+//   the health axis carries the bad news. While the exception holds, C8
+//   (§4.7) demotes the disabled Send, so the shell count stays at one — and at
+//   most ONE sign-in action here is promoted, for the same reason.
+// * **One `MODEL PROVIDERS` section, at most one resting eyebrow** (C13). The
+//   `SIGN IN` eyebrow and its duplicate heading do not render in any state;
+//   provider rows, the sign-in/rotate action, and the discovery affordance are
+//   children of the one titled section, and the discovery eyebrow waits for
+//   the details face.
+// * **The discovery button carries its privacy fact at rest** (C14). One
+//   ≤ 20-word caption — reads-home-dir-only-on-press, nothing-used-until-
+//   adopted — visible whenever the control renders, as a recorded exception to
+//   §0.2b's quiet resting path. The fuller §23.5 mechanism stays behind the
+//   disclosure.
+//
 // DOM contract, consumed by `providers.spec.ts`: `data-provider`,
 // `data-provider-source`, `data-provider-health`, `data-provider-available`,
 // `data-discovery`, `data-discovery-kind`, `data-discovery-adopt`,
 // `data-providers-empty`, `data-providers-attach`, `data-auth-linked`.
 // Selectors read attributes, never copy (§3).
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { WorkspaceError } from "../api/client";
 import { attachAgent } from "../api/attach";
@@ -55,6 +80,7 @@ import {
   type ProvidersDocument,
 } from "../api/providers";
 import { copy } from "../copy";
+import { composerGateStore, signInPrimary } from "../stream/composerGate";
 import {
   Button,
   Chip,
@@ -119,6 +145,16 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const document_: ProvidersDocument | null = query.data ?? null;
 
+  // §23.8 (C9): the ONE fact the exception keys off — the composer's current
+  // `data-disabled-reason`, published by the mounted composer. Never derived
+  // from this panel's own rows: health is last observed, not current.
+  const gateReason = useSyncExternalStore(
+    composerGateStore.subscribe,
+    composerGateStore.getSnapshot,
+    composerGateStore.getSnapshot,
+  );
+  const signInLoud = signInPrimary(gateReason);
+
   const reload = async (): Promise<void> => {
     await client.invalidateQueries({ queryKey: keys.providers() });
   };
@@ -163,7 +199,7 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
         className={styles["panel"]}
         data-providers-collapsed=""
       >
-        <PanelHeader title={copy.providers.title} eyebrow={copy.providers.eyebrow} />
+        <PanelHeader title={copy.providers.title} />
         <PanelBody className={styles["body"]}>
           <PanelNote>{refusal ?? note}</PanelNote>
         </PanelBody>
@@ -180,9 +216,11 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
       className={styles["panel"]}
       {...(detailsOpen ? { "data-providers-expanded": "" } : { "data-providers-collapsed": "" })}
     >
+      {/* §23.8 (C13): the one heading. No eyebrow here — the resting face
+          carries at most one, and it belongs to a *group* below, never to a
+          `SIGN IN` restatement of this title. */}
       <PanelHeader
         title={copy.providers.title}
-        eyebrow={copy.providers.eyebrow}
         actions={
           <Button
             variant="quiet"
@@ -290,13 +328,31 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
             />
           </div>
         ) : (
-          <PanelSection eyebrow={copy.providers.title}>
-            {rows.map((row) => (
+          // §23.8 (C13): the rows are children of the ONE titled section. The
+          // eyebrow that used to sit here rendered this panel's own title a
+          // second time — the §0.2b "the word 'session' four times" defect,
+          // replayed with "provider" — so no eyebrow names the group at all.
+          <div data-provider-rows="">
+            {rows.map((row, index) => (
               <ProviderRowView
                 key={row.id}
                 row={row}
                 busy={busy}
                 compact={!detailsOpen}
+                // §23.8 (C9) / §4.7 (C8): while the composer is
+                // `agent_unavailable`, exactly ONE sign-in action takes
+                // `primary` — the first row still without a credential, else
+                // the first row — because the shell-wide count-of-one is the
+                // clause, not "every sign-in shouts".
+                signInVariant={
+                  signInLoud &&
+                  index ===
+                    (rows.some((r) => r.source === "none")
+                      ? rows.findIndex((r) => r.source === "none")
+                      : 0)
+                    ? "primary"
+                    : "secondary"
+                }
                 onOpenDetails={() => {
                   setDetailsOpen(true);
                 }}
@@ -311,14 +367,17 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
                 }}
               />
             ))}
-          </PanelSection>
+          </div>
         )}
 
         {/* §23.0's success condition: the attach that makes sessions reachable
             is an action on this panel, not a restart in a terminal. */}
         {document_.attach.attached ? null : (
+          // §4.7 (C8): `secondary`. The attach re-read is a remedy, not the
+          // sign-in action C9 promotes, and a primary here would stand beside
+          // the promoted Sign-in as a second accent fill.
           <Button
-            variant="primary"
+            variant="secondary"
             onClick={() => {
               act(async () => {
                 await attachAgent();
@@ -377,18 +436,27 @@ interface ProviderRowViewProps {
   readonly row: ProviderRow;
   readonly busy: boolean;
   readonly compact: boolean;
+  /**
+   * §23.8 (C9): `primary` ONLY while the composer's current
+   * `data-disabled-reason` is `agent_unavailable`, and then on at most one
+   * row. The panel holds the predicate; this row only draws its verdict.
+   */
+  readonly signInVariant: "primary" | "secondary";
   readonly onOpenDetails: () => void;
   readonly onSignIn: () => void;
   readonly onSignOut: () => void;
 }
 
 function ProviderRowView(props: ProviderRowViewProps): React.JSX.Element {
-  const { row, busy, compact, onOpenDetails, onSignIn, onSignOut } = props;
+  const { row, busy, compact, signInVariant, onOpenDetails, onSignIn, onSignOut } = props;
   const signedIn = row.source !== "none";
   const actions = (
     <div className={styles["actions"]}>
+      {/* C9: sign-in/rotate is `secondary` in every state — all credentials
+          rejected included, where the health axis carries the bad news — and
+          `primary` only under the composer's own `agent_unavailable`. */}
       <Button
-        variant={signedIn ? "secondary" : "primary"}
+        variant={signInVariant}
         onClick={onSignIn}
         data-provider-signin={row.id}
       >
@@ -522,8 +590,12 @@ interface DiscoverySectionProps {
 function DiscoverySection(props: DiscoverySectionProps): React.JSX.Element | null {
   const { offers, busy, compact, signedIn, onDiscover, onAdopt } = props;
   if (compact && signedIn) return null;
-  return (
-    <PanelSection eyebrow={copy.providers.discover.title}>
+  // §23.8 (C13): at rest this group carries NO eyebrow — the panel's resting
+  // face allows at most one, and the discovery affordance is a child of the
+  // one titled section. The eyebrow returns with the details face, where the
+  // fuller §23.5 note also lives.
+  const body = (
+    <>
       {compact ? null : <PanelNote>{copy.providers.discover.note}</PanelNote>}
       {busy ? (
         <Button variant="secondary" disabled reason={copy.providers.dialog.waiting}>
@@ -534,6 +606,12 @@ function DiscoverySection(props: DiscoverySectionProps): React.JSX.Element | nul
           {copy.providers.discover.action}
         </Button>
       )}
+      {/* §23.8 (C14): the privacy fact where the finger hovers, VISIBLE AT
+          REST — a recorded exception to §0.2b's quiet resting path. ≤ 20
+          words, both halves: reads-home-dir-only-on-press,
+          nothing-used-until-adopted. It does not grow; the mechanism's long
+          form stays behind the disclosure above. */}
+      <PanelNote data-discovery-caption="">{copy.providers.discover.caption}</PanelNote>
       {offers === null ? null : offers.length === 0 ? (
         <PanelNote>{copy.providers.discover.empty}</PanelNote>
       ) : (
@@ -576,10 +654,12 @@ function DiscoverySection(props: DiscoverySectionProps): React.JSX.Element | nul
               ]}
             />
             {/* Unmistakably an act: nothing adopts on render, on hover, or on
-                selection (§23.14 item 19). */}
+                selection (§23.14 item 19). §4.7 (C8): `secondary` — adopting
+                is not the shell's one primary, which is Send (or, under
+                `agent_unavailable`, the sign-in action). */}
             <div className={styles["actions"]}>
               <Button
-                variant="primary"
+                variant="secondary"
                 onClick={() => {
                   onAdopt(offer);
                 }}
@@ -591,6 +671,13 @@ function DiscoverySection(props: DiscoverySectionProps): React.JSX.Element | nul
           </div>
         ))
       )}
-    </PanelSection>
+    </>
+  );
+  return compact ? (
+    <div className={styles["discovery"]} data-discovery-section="">
+      {body}
+    </div>
+  ) : (
+    <PanelSection eyebrow={copy.providers.discover.title}>{body}</PanelSection>
   );
 }

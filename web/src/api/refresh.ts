@@ -77,6 +77,87 @@ export function partNames(document: PartsDocument | undefined): readonly string[
   return document?.parts.map((row) => row.name) ?? [];
 }
 
+/**
+ * §7A.11 (C7): the per-part build ref, keyed by name, from ONE server
+ * projection. `GET /parts` already serves `content_hash` and `snapshot_ref`
+ * per row; both are folded into the diffed value so a change to either marks
+ * the row. The separator is U+0000, the same never-in-a-hash byte
+ * `state/visibility.ts` uses.
+ */
+export function partRefs(document: PartsDocument | undefined): ReadonlyMap<string, string> {
+  const refs = new Map<string, string>();
+  for (const row of document?.parts ?? []) {
+    refs.set(row.name, `${row.content_hash}\u0000${row.snapshot_ref}`);
+  }
+  return refs;
+}
+
+/**
+ * Names whose build ref changed across the turn — created parts included,
+ * removed parts not (there is no row left to mark). Both arguments are
+ * `partRefs` of server projections, before-snapshot and after-fetch; nothing
+ * here reads a tool result, and the answer carries no value — only names.
+ */
+export function changedPartNames(
+  before: ReadonlyMap<string, string>,
+  after: ReadonlyMap<string, string>,
+): readonly string[] {
+  const changed: string[] = [];
+  for (const [name, ref] of after) {
+    if (before.get(name) !== ref) changed.push(name);
+  }
+  return changed;
+}
+
+type Listener = () => void;
+
+/**
+ * §7A.11 (C7): which Parts-rail rows the LAST agent turn changed.
+ *
+ * The store is written by exactly one producer — `refreshAfterTurn`'s
+ * two-projection diff — and cleared by exactly two things: the operator
+ * clicking a marked row (`clear`), and the next turn's settle (`settle`, which
+ * REPLACES the set with whatever that turn changed, so an empty diff clears
+ * everything). History load, resync, pin movement, and re-renders never touch
+ * it. The set is a marker, not a value: it says *this changed*, never what it
+ * is now.
+ */
+class TurnChangedStore {
+  #names: ReadonlySet<string> = new Set();
+  readonly #listeners = new Set<Listener>();
+
+  subscribe = (listener: Listener): (() => void) => {
+    this.#listeners.add(listener);
+    return () => {
+      this.#listeners.delete(listener);
+    };
+  };
+
+  getSnapshot = (): ReadonlySet<string> => this.#names;
+
+  /** The next turn's settle: re-mark exactly what THAT turn changed. */
+  settle(names: readonly string[]): void {
+    if (names.length === 0 && this.#names.size === 0) return;
+    this.#names = new Set(names);
+    this.#emit();
+  }
+
+  /** The operator clicked the row: that row's marker, and only it, goes. */
+  clear(name: string): void {
+    if (!this.#names.has(name)) return;
+    const next = new Set(this.#names);
+    next.delete(name);
+    this.#names = next;
+    this.#emit();
+  }
+
+  #emit(): void {
+    for (const listener of this.#listeners) listener();
+  }
+}
+
+export const turnChangedStore = new TurnChangedStore();
+
 /** Names in `after` that were not in `before` — both lists are server projections. */
 export function createdPartNames(
   before: readonly string[],
@@ -118,12 +199,19 @@ export function adoptCreatedPart(store: WorkspaceStore, created: readonly string
  * make the agent's own latency the operator's.
  */
 export function refreshAfterTurn(client: QueryClient, part: string | null): void {
-  const before = partNames(client.getQueryData<PartsDocument>(keys.parts()));
+  const snapshot = client.getQueryData<PartsDocument>(keys.parts());
+  const before = partNames(snapshot);
+  const beforeRefs = partRefs(snapshot);
   for (const queryKey of refreshKeys(part)) {
     void client.invalidateQueries({ queryKey });
   }
   void client.invalidateQueries({ queryKey: keys.parts(), refetchType: "all" }).then(() => {
-    const after = partNames(client.getQueryData<PartsDocument>(keys.parts()));
+    const fetched = client.getQueryData<PartsDocument>(keys.parts());
+    const after = partNames(fetched);
+    // §7A.11 (C7): the same snapshot/diff, one more field — per-part build
+    // refs. Two server projections across a refetch, never a tool result;
+    // `settle` REPLACES the set, so this is also what clears last turn's marks.
+    turnChangedStore.settle(changedPartNames(beforeRefs, partRefs(fetched)));
     adoptCreatedPart(workspaceStore, createdPartNames(before, after));
   });
 }

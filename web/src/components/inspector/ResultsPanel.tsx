@@ -46,6 +46,7 @@ import {
   metricLabel,
   metricUnit,
 } from "../../system";
+import { formatSolids } from "../../system/format";
 import { Fact } from "../Fact";
 import { useWorkspace } from "../../state/react";
 import { visibilityKey, visibilityStore } from "../../state/visibility";
@@ -126,6 +127,15 @@ export function ResultsView({ part, build, hidden, onToggle }: ResultsViewProps)
           <EmptyState icon="alert" title={copy.results.failedTitle} body={copy.results.failed} />
         ) : (
           <>
+            {/* §6.1 (C16): the visibility toggles form a COLUMN. The verb is
+                printed exactly once, here in the column header, and never in a
+                row — each row's compact toggle carries the complete accessible
+                name (`Hide <label>` / `Show <label>`) instead. The header word
+                is presentation for sighted scanning; it is aria-hidden so a
+                screen reader hears each toggle's own full name, once. */}
+            <div className={styles["listHeader"]} aria-hidden="true" data-visibility-header="">
+              <span className={styles["toggleHeader"]}>{copy.results.hideHeader}</span>
+            </div>
             <ul className={styles["list"]}>
               {build.geometries.map((geometry, index) => {
                 const isHidden = hidden.has(visibilityKey(part, geometry.label));
@@ -150,7 +160,9 @@ export function ResultsView({ part, build, hidden, onToggle }: ResultsViewProps)
                       value={geometry.solids}
                       className={styles["muted"]}
                     >
-                      {`${String(geometry.solids)} ${copy.results.solids}`}
+                      {/* §6.1 (C17): `1 solid`, `N solids` — the unit word
+                          inflects in `format.ts`, the served count does not. */}
+                      {formatSolids(geometry.solids)}
                     </Fact>
                     {geometry.solids > 1 ? (
                       <Chip title={copy.results.groupNote} data-geometry-group="">
@@ -160,11 +172,17 @@ export function ResultsView({ part, build, hidden, onToggle }: ResultsViewProps)
                     <Button
                       variant="toggle"
                       pressed={isHidden}
+                      icon={isHidden ? "dash" : "dot"}
+                      iconLabel={
+                        isHidden
+                          ? copy.results.showSolid(geometry.label)
+                          : copy.results.hideSolid(geometry.label)
+                      }
+                      title={isHidden ? copy.results.show : copy.results.hide}
+                      className={styles["visibilityToggle"]}
                       onClick={onToggle === undefined ? undefined : () => onToggle(geometry.label)}
                       data-visibility-toggle={geometry.label}
-                    >
-                      {isHidden ? copy.results.show : copy.results.hide}
-                    </Button>
+                    />
                   </li>
                 );
               })}
@@ -184,8 +202,17 @@ export function ResultsView({ part, build, hidden, onToggle }: ResultsViewProps)
 
             {metrics === null ? null : (
               <PanelSection eyebrow={copy.results.metricsHeading}>
-                <DataTable
-                  rows={Object.keys(metrics)
+                {/* §4.7 (C27): the METRICS table renders two label/value/unit
+                    column groups when the inspector drawer's CONTENT width is
+                    ≥640px, single column below. The switch is a container
+                    query on this wrapper — the drawer's own measured width, a
+                    container fact, never a new viewport-breakpoint authority.
+                    Layout only: rows, `<Fact>` sources, and `format.ts`
+                    boundaries are byte-identical in both forms. */}
+                <div className={styles["metricsHost"]} data-metrics-split="">
+                  <DataTable
+                    split
+                    rows={Object.keys(metrics)
                     .sort()
                     .map((name) => ({
                       key: name,
@@ -198,7 +225,8 @@ export function ResultsView({ part, build, hidden, onToggle }: ResultsViewProps)
                       unit: metricUnit(name) ?? "",
                       attrs: { "data-metric": name },
                     }))}
-                />
+                  />
+                </div>
               </PanelSection>
             )}
           </>

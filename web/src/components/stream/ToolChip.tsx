@@ -87,7 +87,8 @@ import { StatusBadge } from "../../system";
 import { EventImageInline } from "./EventImage";
 import { parseToolResult, referenceFields } from "../../stream/toolResult";
 import { chipHeadline, displayValue, type ToolSummary } from "../../stream/toolSummary";
-import type { ChipMember, ChipStatus, TranscriptItem } from "../../stream/transcript";
+import type { ChipMember, ChipStatus, CyclePair, TranscriptItem } from "../../stream/transcript";
+import { TextBlock } from "./ThoughtSection";
 import styles from "./Transcript.module.css";
 
 export interface ToolChipProps {
@@ -98,6 +99,15 @@ export interface ToolChipProps {
   readonly status: ChipStatus;
   /** §7.2 (a)'s repeat group, first member included. `null` for a lone chip. */
   readonly repeat?: readonly ChipMember[] | null;
+  /**
+   * §7.2 (C4): the cycle group's SUBSEQUENT pairs, when this chip is the first
+   * pair of one. Their text rows and their chips' Detail render behind this
+   * chip's disclosure, in order, so one disclosure opens the whole cycle —
+   * relocated, never elided (C5). The folded text rows keep their own
+   * `data-event-id` spans, and each fold's distinct argument documents render
+   * exactly as a repeat group's do. `null` for a chip outside any cycle.
+   */
+  readonly cycle?: readonly CyclePair[] | null;
   readonly children?: React.ReactNode;
 }
 
@@ -181,6 +191,11 @@ export function argumentBlocks(members: readonly ChipMember[]): readonly Argumen
   return order.map((text) => ({ text, count: counts.get(text) ?? 1 }));
 }
 
+/** A cycle pair's chip as its member list — the whole ×N row when it is one. */
+function cycleMembers(pair: CyclePair): readonly ChipMember[] {
+  return pair.chip.repeat ?? [{ call: pair.chip.call, result: pair.chip.result }];
+}
+
 export function ToolChip({
   toolName,
   call,
@@ -188,6 +203,7 @@ export function ToolChip({
   images,
   status,
   repeat = null,
+  cycle = null,
   children,
 }: ToolChipProps): React.JSX.Element {
   // The disclosure's own state, because §7.2 (b) makes the field count a thing
@@ -205,6 +221,7 @@ export function ToolChip({
   const fieldState = parsed === null ? undefined : parsed.state;
   const args = callPayload?.args;
   const argBlocks = argumentBlocks(members);
+  const folds: readonly CyclePair[] = cycle ?? [];
   const doc = parsed !== null && parsed.state === "parsed" ? parsed.doc : null;
   // A coalesced row headlines the SHARED DOCUMENT (§7.2 (a)). The call operand
   // is a fact about one call, and the members' calls need not agree on it.
@@ -287,8 +304,10 @@ export function ToolChip({
 
       {/* One disclosure for the wire format: the call's arguments and every key
           of the result document. Collapsed, and the `data-field` nodes inside
-          are in the DOM whether it is open or not (see the module header). */}
-      {argBlocks.length === 0 && parsed?.state !== "parsed" ? null : (
+          are in the DOM whether it is open or not (see the module header). A
+          cycle's folded pairs live here too (C4), so the disclosure mounts
+          whenever there is a fold to hold. */}
+      {argBlocks.length === 0 && parsed?.state !== "parsed" && folds.length === 0 ? null : (
         <details
           className={styles["detail"]}
           data-chip-detail=""
@@ -337,6 +356,30 @@ export function ToolChip({
               })}
             </dl>
           )}
+          {/* §7.2 (C4/C5): the cycle's folded pairs — each subsequent pair's
+              text row (its own `data-event-id` spans intact) and its chip's
+              Detail, in order. The shared result document's `data-field`
+              nodes render once, above, exactly as a repeat group's do; the
+              folded members' distinct argument documents render here. Text
+              content is relocated, never elided. */}
+          {folds.map((pair, index) => (
+            <div
+              key={pair.chip.key}
+              className={styles["cycleFold"]}
+              data-cycle-fold={String(index + 2)}
+            >
+              <TextBlock items={pair.text.items} />
+              {argumentBlocks(cycleMembers(pair)).map((block) => (
+                <div key={block.text} className={styles["args"]}>
+                  <span className={styles["argsLabel"]}>{copy.stream.chip.arguments}</span>
+                  {block.count > 1 ? (
+                    <span className={styles["chipRepeat"]}>×{block.count}</span>
+                  ) : null}
+                  <code className={styles["argsBody"]}>{block.text}</code>
+                </div>
+              ))}
+            </div>
+          ))}
         </details>
       )}
 

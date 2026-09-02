@@ -6,7 +6,12 @@
  * only; the slider and its editable readout are `system/Input.module.css`'s.
  */
 
+/* §5.5 C18: one occupant of the viewport's bottom flex band — `flex: 1` with a
+   120px minimum track, so the slider takes the width the legend and the section
+   control leave. Collapsed to its disclosure it stops stretching. */
 .control {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: var(--gap-inline);
@@ -15,8 +20,14 @@
   border-radius: var(--radius-card);
   background: var(--surface-overlay);
   box-shadow: var(--elev-popover);
+  pointer-events: auto;
+}
+
+.control[data-explode-collapsed] {
+  flex: 0 0 auto;
 }
 
 .slider {
-  min-width: 140px;
+  flex: 1 1 auto;
+  min-width: 120px;
 }

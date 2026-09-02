@@ -60,15 +60,25 @@ export interface DataTableProps {
   readonly rows: readonly DataRow[];
   /** `dl` for facts about one thing, `div` inside a list. Default `dl`. */
   readonly as?: "dl" | "div" | undefined;
+  /**
+   * §4.7 (C27), LAYOUT ONLY: when set, the table renders two label/value/unit
+   * column groups side by side once the nearest size container is ≥640px wide,
+   * filling row-first, sharing one grid so values align within each group;
+   * below 640px it is the single-column form unchanged. The caller supplies
+   * the container (`container-type: inline-size` on a wrapper) — the switch
+   * reads that container's own measured width, never a viewport breakpoint.
+   * A split table declares its own tracks rather than subgridding the panel.
+   */
+  readonly split?: boolean | undefined;
   readonly className?: string | undefined;
 }
 
-export function DataTable({ rows, as = "dl", className }: DataTableProps): React.JSX.Element {
+export function DataTable({ rows, as = "dl", split, className }: DataTableProps): React.JSX.Element {
   const Tag = as;
   const Name = as === "dl" ? "dt" : "span";
   const Value = as === "dl" ? "dd" : "span";
   return (
-    <Tag className={cx(styles["table"], className)}>
+    <Tag className={cx(styles["table"], split === true ? styles["split"] : undefined, className)}>
       {rows.map((row) => (
         <div key={row.key} className={styles["row"]} {...(row.attrs ?? {})}>
           <Name className={cx(styles["label"], roles["label"])}>{row.label}</Name>

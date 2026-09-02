@@ -38,3 +38,10 @@
   margin: 0;
   color: var(--ink-base);
 }
+
+/* §7A.11 (C7): the transient turn-changed marker — quiet by design. It rides
+   the accent-muted text tone rather than a fill of its own; the loud carrier
+   is the word plus `data-turn-changed` on the row, which the e2e reads. */
+.turnChanged {
+  color: var(--ink-muted);
+}

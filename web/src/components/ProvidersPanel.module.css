@@ -52,6 +52,16 @@
   min-width: 0;
 }
 
+/*
+ * §23.8 (C13): the discovery group's RESTING face — no eyebrow, so no
+ * `PanelSection`; the same stack gap, and nothing else. The details face
+ * still uses `PanelSection`, whose eyebrow is the one the panel may spend.
+ */
+.discovery {
+  display: grid;
+  gap: var(--gap-stack);
+}
+
 /* A refusal is WORDS (§3.13.2): this sets spacing and a role, nothing else. */
 .refusal {
   composes: body from "../system/type.module.css";

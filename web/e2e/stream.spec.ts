@@ -155,6 +155,69 @@ test("reopening loads the multi-page transcript and matches the archive (G4.9, G
   for (const id of rendered) expect(id).toContain("@");
   for (const id of rendered) expect(id).not.toContain("#");
 
+  // §7.3 C2/C21 + §8 C3 (amended 2026-09-02): no presentation row is ever
+  // reconstructed on reopen — the echo is one tab's memory of one send, and a
+  // reopened transcript's run structure is the ordinal namespace, which has no
+  // runs to mark. The user-prompt absence notice renders instead, and its
+  // resting face speaks plainly (C24): the spec-internal vocabulary lives on
+  // `title` only, which is non-empty.
+  await expect(page.locator('[data-row="local-prompt"]')).toHaveCount(0);
+  await expect(page.locator('[data-row="run-start"]')).toHaveCount(0);
+  const notice = page.locator('[data-absence="user_prompt"]');
+  await expect(notice).toHaveCount(1);
+  await expect(notice).not.toContainText("event vocabulary");
+  expect(await notice.getAttribute("title")).toBeTruthy();
+  await expect(page.locator('[data-absence="terminal"]')).not.toContainText("run-end band");
+
+  // G4.11's amended matcher rule, both ways: the by-name skip covers exactly
+  // the two presentation rows plus §8's honesty rows — any OTHER `data-row`
+  // element that carries no event id (itself or within) is a mismatch.
+  const idlessRows = await page
+    .locator('[data-testid="transcript"] [data-row]')
+    .evaluateAll((nodes) =>
+      nodes
+        .filter(
+          (node) =>
+            !node.hasAttribute("data-event-id") &&
+            node.querySelector("[data-event-id], [data-event-ids]") === null,
+        )
+        .map((node) => node.getAttribute("data-row") ?? ""),
+    );
+  for (const name of idlessRows) {
+    expect(["local-prompt", "run-start", "absence", "seam", "resync"]).toContain(name);
+  }
+
+  // §7.4 C20 (amended 2026-09-02): the Latest pill lives in the gutter, off
+  // the cards — both sides of the mount condition, then the pairwise
+  // non-intersection over this chip-dense fixture.
+  await expect(page.locator("[data-jump-latest]")).toHaveCount(0); // followed: never mounted
+  await page.locator("[data-transcript-scroll]").evaluate((node) => {
+    node.scrollTop = 0; // leave the newest row: following stops
+  });
+  const pill = page.locator("[data-jump-latest]");
+  await expect(pill).toHaveCount(1);
+  const pillBox = await pill.boundingBox();
+  expect(pillBox).not.toBeNull();
+  const cardBoxes = await page
+    .locator("[data-tool-name], [data-row]")
+    .evaluateAll((nodes) =>
+      nodes.map((node) => {
+        const box = node.getBoundingClientRect();
+        return { x: box.x, y: box.y, width: box.width, height: box.height };
+      }),
+    );
+  expect(cardBoxes.length).toBeGreaterThan(0);
+  for (const box of cardBoxes) {
+    const disjoint =
+      (pillBox?.x ?? 0) >= box.x + box.width ||
+      (pillBox?.x ?? 0) + (pillBox?.width ?? 0) <= box.x ||
+      (pillBox?.y ?? 0) >= box.y + box.height ||
+      (pillBox?.y ?? 0) + (pillBox?.height ?? 0) <= box.y;
+    expect(disjoint, "the Latest pill overlaps a transcript row").toBe(true);
+  }
+  await pill.click();
+  await expect(page.locator("[data-jump-latest]")).toHaveCount(0); // following again
+
   await archive(page, testInfo, "g4.9-reopened-transcript");
 });
 
@@ -202,8 +265,21 @@ test("every chip carries its required and referenced result fields (G4.D)", asyn
   let degraded = 0;
   for (const call of calls) {
     const callId = call.tool_call_id ?? "";
-    const chip = chipForCall(page, callId);
     const toolName = String((call.payload ?? {})["name"] ?? "");
+    // §7.2 C4/C5 (amended 2026-09-02): a call folded into a cycle group is
+    // addressed by its COMPACT LINE's `data-tool-call-ids`, while the shared
+    // contract — name, status, the byte-identical document's `data-field`
+    // nodes — rides the cycle's FIRST chip, rendered once. The contract is
+    // therefore asserted on that chip for folded members.
+    const folded = page.locator(`[data-cycle-line][data-tool-call-ids~="${callId}"]`);
+    const chip =
+      (await folded.count()) > 0
+        ? page
+            .locator(
+              `li[data-row="cycle"]:has([data-cycle-line][data-tool-call-ids~="${callId}"]) [data-tool-name]`,
+            )
+            .first()
+        : chipForCall(page, callId);
     await expect(chip).toHaveAttribute("data-tool-name", toolName);
 
     const result = results.get(callId);
@@ -314,6 +390,31 @@ test("repeated identical calls coalesce, and the resting face drops the field co
     expect(chip.count).toContain(`×${chip.repeat}`);
     addressed += chip.callIds.length;
   }
+
+  // §7.2 C4/C5 (amended 2026-09-02): the fixture's scan/narrate loop also
+  // folds into cycle groups — subsequent (chip, text) pairs render as compact
+  // lines, each carrying its pair's tool-call ids and event ids (call AND
+  // result per member), so no coalescing of either kind swallows a call.
+  const compact = await page
+    .locator(`li[data-row="cycle"]:has([data-tool-name="${tool}"]) [data-cycle-line]`)
+    .evaluateAll((nodes) =>
+      nodes.map((node) => ({
+        ordinal: node.getAttribute("data-cycle-line"),
+        events: (node.getAttribute("data-event-ids") ?? "").split(" ").filter((id) => id !== ""),
+        callIds: (node.getAttribute("data-tool-call-ids") ?? "")
+          .split(" ")
+          .filter((id) => id !== ""),
+        text: node.textContent ?? "",
+      })),
+    );
+  for (const line of compact) {
+    expect(line.callIds.length).toBeGreaterThan(0);
+    // One call and one result event per member: relocation, not elision.
+    expect(line.events).toHaveLength(line.callIds.length * 2);
+    expect(line.text).toContain(`×${line.ordinal ?? ""}`);
+    expect(line.text).toContain(tool);
+    addressed += line.callIds.length;
+  }
   expect(addressed, "a coalesced row swallowed a call").toBe(calls);
 
   // §7.2 (b): with every disclosure closed the field count is nowhere in the
@@ -398,9 +499,10 @@ test("the stream column says 'session' once above the transcript (§7.1, §4.1(e
   const create = page.locator("[data-session-create], [data-session-create-menu]");
   await expect(create).toHaveCount(1);
   // The worded pair is not drawn beside the strip in any form: every worded
-  // create action carries `data-create-profile`, and none is mounted.
-  // (A session TAB may read "New session" — that is a session's name, not a
-  // create control, which is why this reads the control's own hook.)
+  // create action carries `data-create-profile`, and none is mounted. (§7.1
+  // C6, amended 2026-09-02: a session tab may no longer read "New session"
+  // either — no tab's accessible name is string-equal to a create-control
+  // label, asserted below.)
   await expect(page.locator("[data-create-profile]")).toHaveCount(0);
   await expect(page.locator("[data-session-create-open]")).toHaveCount(0);
   // A part is selected here (the route names one), so the `+` has two entries
@@ -420,17 +522,70 @@ test("the stream column says 'session' once above the transcript (§7.1, §4.1(e
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
 
-  // §4.1(e): the eyebrow band holds exactly one child, the collapse control,
-  // and does not draw the column's name — which stays on the `aside`.
+  // §7.1 C6 (amended 2026-09-02), both sides: every rendered tab's accessible
+  // name is a noun phrase that is not string-equal to any create-control label.
+  const tabNames = await page
+    .locator("[data-session-tab]")
+    .evaluateAll((nodes) =>
+      nodes.map((node) => node.getAttribute("aria-label") ?? node.textContent ?? ""),
+    );
+  expect(tabNames.length).toBeGreaterThan(0);
+  for (const name of tabNames) {
+    expect(name).not.toBe("");
+    expect(name).not.toBe("New session");
+    expect(name).not.toBe("Start a session");
+    expect(name).not.toMatch(/^Ask about /);
+  }
+
+  // §3.9 C29: the `+` is a quiet button with a worded accessible name, never a
+  // bare accent glyph.
+  await expect(create).toHaveAttribute("data-variant", "quiet");
+  const createName = await create.getAttribute("aria-label");
+  expect(createName).toBeTruthy();
+  expect(createName).not.toBe("+");
+
+  // §4.1(h), amended 2026-09-02 (C25): the eyebrow band is struck as a band.
+  // The collapse control is a descendant of the session tab strip and its last
+  // interactive element; the column's name stays on the `aside`.
   const collapse = page.locator("[data-stream-collapse]");
   await expect(collapse).toHaveCount(1);
   await expect(column).toHaveAttribute("aria-label", "Agent");
-  const bandChildren = await collapse.evaluate((node) => {
-    const band = node.parentElement;
-    return { children: band?.childElementCount ?? -1, text: (band?.textContent ?? "").trim() };
+  const placement = await collapse.evaluate((node) => {
+    const strip = node.closest("[data-session-strip]");
+    if (strip === null) return null;
+    const interactive = [...strip.querySelectorAll("button, a[href], [tabindex]")];
+    return { last: interactive[interactive.length - 1] === node };
   });
-  expect(bandChildren.children).toBe(1);
-  expect(bandChildren.text).toBe("");
+  expect(placement).toEqual({ last: true });
+
+  // C25's count: above the transcript scroll region the strip leads, and the
+  // only element that may follow it is the NAMED exception row — the one
+  // hosting the §7.4 badge / `[data-resync-count]` / §8 historyBar. In the
+  // steady state (stream `live`, no fault, no §8(a) condition) that row is not
+  // mounted and the strip is alone.
+  const chromeRows = await page.locator('[data-testid="stream-panel"]').evaluate((panel) => {
+    const main = panel.querySelector("[data-stream-main]");
+    const rows: string[] = [];
+    for (const child of panel.children) {
+      if (child === main) break;
+      if (child.getAttribute("data-session-strip") !== null) {
+        rows.push("strip");
+      } else if (
+        child.querySelector("[data-stream-state], [data-history-bar], [data-resync-count]") !==
+        null
+      ) {
+        rows.push("exception");
+      } else {
+        rows.push(child.tagName);
+      }
+    }
+    return rows;
+  });
+  expect(chromeRows[0]).toBe("strip");
+  expect(chromeRows.length).toBeLessThanOrEqual(2);
+  if (chromeRows.length === 2) expect(chromeRows[1]).toBe("exception");
+  // And the steady state proper is asserted where the fixture guarantees it:
+  // G4.8's live-socket test reads `[data-stream-state]` count 0.
 });
 
 // --------------------------------------------------------------------------
@@ -503,6 +658,15 @@ test("a session started by `heph agent` streams live into the panel (G4.8)", asy
       timeout: 120_000,
     });
     await expect(page.locator("[data-terminal-backpressure]")).toHaveCount(0);
+
+    // §7.3 C1/C21 (amended 2026-09-02), the observer's negative halves: this
+    // browser did not send the prompt, so it mints NO local-prompt echo — an
+    // observer has no local text to echo — and, having attached with no
+    // previous rendered live row and no echo to license one, it honestly
+    // renders this first run with no top boundary. Boundaries begin at the
+    // next run change, which this single-run test never reaches.
+    await expect(page.locator('[data-row="local-prompt"]')).toHaveCount(0);
+    await expect(page.locator('[data-row="run-start"]')).toHaveCount(0);
 
     await archive(page, testInfo, "g4.8-live-stream");
   } finally {

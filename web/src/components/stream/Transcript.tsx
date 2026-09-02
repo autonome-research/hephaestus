@@ -13,8 +13,9 @@
 import { readAudit, readTerminal } from "../../api/events";
 import { copy } from "../../copy";
 import type { RuntimeFault } from "../../stream/runtimeFault";
-import type { PanelRow, TranscriptItem } from "../../stream/transcript";
+import type { CyclePair, PanelRow, TranscriptItem } from "../../stream/transcript";
 import { runsWithTerminal } from "../../stream/transcript";
+import { StatusBadge } from "../../system";
 import { AskUserWidget } from "./AskUserWidget";
 import { TextBlock, ThoughtSection } from "./ThoughtSection";
 import { EventImageInline } from "./EventImage";
@@ -32,7 +33,20 @@ export function Transcript({
   return (
     <ol className={styles["transcript"]} data-testid="transcript">
       {rows.map((row) => (
-        <li key={row.key} className={styles["row"]} data-row={row.row}>
+        <li
+          key={row.key}
+          className={styles["row"]}
+          data-row={row.row}
+          // §7.3 (C2/C21): the presentation rows' DOM contract rides the same
+          // element as `data-row`, so the archive matcher's by-name skip
+          // (`local-prompt`, `run-start`) and the contract attributes are one
+          // node. Neither ever carries `data-event-id` — the guard cuts both
+          // ways, and the matcher treats any OTHER id-less `data-row` as a
+          // mismatch.
+          {...(row.row === "local-prompt" ? { "data-local-echo": "1" } : {})}
+          {...(row.row === "run-start" ? { "data-run-id": row.runId } : {})}
+          {...(row.row === "cycle" ? { "data-cycle": String(row.pairs.length) } : {})}
+        >
           <Row row={row} runtimeFault={runtimeFault} terminals={terminals} />
         </li>
       ))}
@@ -67,6 +81,33 @@ function Row({
           repeat={row.repeat ?? null}
         />
       );
+    case "cycle": {
+      // §7.2 (C4): the first pair in full — its chip (or ×N row) and its text
+      // row — then one compact line per subsequent pair. The folded text rows
+      // and the chips' Detail render behind the FIRST pair's disclosure, so
+      // one disclosure opens the whole cycle. C5: every member event id and
+      // tool-call id stays in the DOM — the compact lines carry their pair's,
+      // the folded text keeps its own spans.
+      const [first, ...rest] = row.pairs;
+      if (first === undefined) return null;
+      return (
+        <div className={styles["cycle"]}>
+          <ToolChip
+            toolName={first.chip.toolName}
+            call={first.chip.call}
+            result={first.chip.result}
+            images={first.chip.images}
+            status={first.chip.status}
+            repeat={first.chip.repeat ?? null}
+            cycle={rest}
+          />
+          <TextBlock items={first.text.items} />
+          {rest.map((pair, index) => (
+            <CycleLine key={pair.chip.key} pair={pair} ordinal={index + 2} />
+          ))}
+        </div>
+      );
+    }
     case "ask": {
       const runId = (row.question ?? row.call ?? row.answer)?.runId ?? null;
       return (
@@ -127,6 +168,29 @@ function Row({
           {copy.stream.seam}
         </p>
       );
+    case "local-prompt":
+      // §7.3 (C2): the sent text verbatim, with the category's visible-at-rest
+      // marker (`unrecorded`, `.code` muted) and its accessible equivalent —
+      // `title` carries the long form and is never the only copy.
+      return (
+        <div className={styles["localPrompt"]} title={copy.stream.localEcho.title}>
+          <span className={styles["presentationMarker"]} aria-hidden="true">
+            {copy.stream.localEcho.marker}
+          </span>
+          <span className={styles["visuallyHidden"]}>{copy.stream.localEcho.accessible}</span>
+          <span className={styles["localPromptText"]}>{row.text}</span>
+        </div>
+      );
+    case "run-start":
+      // §7.3 (C21): a rule line drawing the run id in `.code` and nothing
+      // else. The rule-line-plus-run-id IS the visible-at-rest marker; the
+      // accessible equivalent still states the not-a-recorded-event fact.
+      return (
+        <p className={styles["runStart"]} title={copy.stream.runStart.title}>
+          <span className={styles["visuallyHidden"]}>{copy.stream.runStart.accessible}</span>
+          {row.runId}
+        </p>
+      );
     case "resync":
       return (
         <p
@@ -150,6 +214,51 @@ function Row({
     default:
       return null;
   }
+}
+
+/**
+ * §7.2 (C4): one compact line for a cycle group's subsequent pair — the tool
+ * name, the running `×N` ordinal, the shared status badge, and nothing else,
+ * ≤ 1.5× target-min (36px) tall (`Transcript.module.css`).
+ *
+ * C5: the line renders this pair's chip, so it carries every member event id
+ * in `data-event-ids` (call and result, repeat members included) and every
+ * tool-call id in `data-tool-call-ids` — a compact line that lost an id would
+ * fail §7.2 (a)'s set-equality testable. The pair's TEXT events are not here:
+ * their content and ids render behind the first pair's disclosure, where the
+ * folded rows keep their own `data-event-id` spans.
+ */
+function CycleLine({
+  pair,
+  ordinal,
+}: {
+  readonly pair: CyclePair;
+  readonly ordinal: number;
+}): React.JSX.Element {
+  const members = pair.chip.repeat ?? [{ call: pair.chip.call, result: pair.chip.result }];
+  const eventIds: string[] = [];
+  const callIds: string[] = [];
+  for (const member of members) {
+    eventIds.push(member.call.eventId);
+    if (member.result !== null && member.result.eventId !== member.call.eventId) {
+      eventIds.push(member.result.eventId);
+    }
+    if (member.call.toolCallId !== null) callIds.push(member.call.toolCallId);
+  }
+  return (
+    <p
+      className={styles["cycleLine"]}
+      data-cycle-line={String(ordinal)}
+      data-event-ids={eventIds.join(" ")}
+      {...(callIds.length === 0 ? {} : { "data-tool-call-ids": callIds.join(" ") })}
+    >
+      <span className={styles["chipName"]}>{pair.chip.toolName}</span>
+      <span className={styles["chipRepeat"]}>×{ordinal}</span>
+      <StatusBadge status={pair.chip.status}>
+        {copy.stream.chip.status[pair.chip.status]}
+      </StatusBadge>
+    </p>
+  );
 }
 
 /**

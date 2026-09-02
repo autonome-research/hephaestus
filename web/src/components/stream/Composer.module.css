@@ -65,26 +65,38 @@
   text-decoration: line-through;
 }
 
-/* ---- the composer meta line (§7A.10(d)) ----------------------------- */
-
 /*
- * Quiet inline text: the model the turn will reach, and the keyboard binding
- * once the box is in use. Not a control row — nothing here is pressable.
+ * The model id, inline at the context row's right end (§7A.10, C15 — the meta
+ * line it used to sit on is struck). `margin-inline-start: auto` is what puts
+ * it at the right end of the flex line; the face is `.code` via the `<Fact
+ * mono>` it wraps, and the ink is muted here because the id is quiet text,
+ * not a control.
  */
-.meta {
-  composes: label from "../../system/type.module.css";
-  margin: 0;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2);
-  min-width: 0;
-  color: var(--ink-muted);
-}
-
 .model {
   min-width: 0;
   overflow-wrap: anywhere;
+  margin-inline-start: auto;
+  color: var(--ink-muted);
+}
+
+/* ---- the input row (§7A.10, C15) ------------------------------------ */
+
+/*
+ * The second of the two counted resting rows: the textarea with Send
+ * right-aligned on the same row, at the input's trailing edge. `flex-end`
+ * keeps Send on the input's last line as the box grows to three rows in use.
+ */
+.inputRow {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* The TextInput's own root, told to take the row's remaining width. */
+.grow {
+  flex: 1;
+  min-width: 0;
 }
 
 /* ---- the context chip row (§7A.3), behind the summary line ---------- */
@@ -119,8 +131,13 @@
   text-decoration: line-through;
 }
 
-/* ---- the actions row ------------------------------------------------ */
+/* ---- the exception action row (§7A.10(b), C15) ---------------------- */
 
+/*
+ * NOT a resting row. C15's negative half: at rest no action row mounts, empty
+ * or otherwise — this band exists only while an exceptional state (Cancel
+ * while a run is cancellable) has a control to put in it.
+ */
 .actions {
   display: flex;
   flex-wrap: wrap;
@@ -134,13 +151,6 @@
   composes: body from "../../system/type.module.css";
   margin: 0;
   color: var(--ink-base);
-}
-
-/* The keyboard binding, once the box is in use. Muted: it is an affordance
-   note, not a fact about the project. It composes no type role of its own —
-   `.meta`, the line it sits on, carries one. */
-.hint {
-  color: var(--ink-muted);
 }
 
 .refusal {

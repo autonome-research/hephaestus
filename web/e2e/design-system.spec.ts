@@ -342,11 +342,17 @@ test("the shell grid matches §4.1's table at five widths and never overflows", 
   }
   await archive(page, testInfo, "design-breakpoints");
 
-  // Above 1280: three columns, the stream at its full width.
+  // Above 1280: three columns. §4.1(g), amended 2026-09-02 (C12): the expanded
+  // track is `clamp(360px, 30vw, 420px)` — at ≥1400px it measures the 420px
+  // maximum, at the 1280px boundary it measures 30vw = 384px, and at every
+  // expanded width it is ≥360px, with no horizontal body scroll (asserted for
+  // all five widths below).
   expect(measured[1440]?.columns).toBe(3);
   expect(measured[1280]?.columns).toBe(3);
-  expect(measured[1440]?.stream).toBeGreaterThan(300);
-  expect(measured[1280]?.stream).toBeGreaterThan(300);
+  expect(measured[1440]?.stream).toBe(420);
+  expect(measured[1280]?.stream).toBe(384);
+  expect(measured[1440]?.stream).toBeGreaterThanOrEqual(360);
+  expect(measured[1280]?.stream).toBeGreaterThanOrEqual(360);
 
   // 1279 and 1024: still three columns, and the stream is the docked strip —
   // the band where the shipped CSS and the shipped `useState` disagreed.
@@ -520,6 +526,134 @@ test("every status the fixture reaches carries an icon AND a word (§3.13.2)", a
   // sixth-status distinctness is `test/system/badge.test.tsx`'s, deliberately.
   const byStatus = new Map(badges.map((badge) => [badge.status, badge.icon]));
   expect(new Set(byStatus.values()).size).toBe(byStatus.size);
+});
+
+// ---------------------------------------------------------------------------
+// §3.9 (C28), amended 2026-09-02 — accent is a promise of interaction. The
+// computed-style sweep §3.14 gains: every rendered node drawing `--accent` ink
+// or fill must be, or sit inside, an interactive element or the link recipe —
+// "there is no third case". Swept over what the fixture reaches, like every
+// other browser half of §3.14: a transcript full of reference fields (the
+// named offender's habitat) plus the composer, the tabs and the header mark.
+
+test("accent ink/fill renders only on interactive elements or the link recipe (§3.9 C28)", async ({
+  page,
+}, testInfo) => {
+  await open(page, route(PART, { s: "sess-workspace-orchestrator" }));
+  await expect(page.locator("[data-history-state]")).toHaveAttribute(
+    "data-history-state",
+    "complete",
+    { timeout: 120_000 },
+  );
+  // Open one chip's disclosure so the reference-field names — the named
+  // offender — hold rendered boxes the sweep can see.
+  const buildChip = page.locator("article[data-tool-name='build_part']").first();
+  await buildChip.locator("[data-chip-detail] summary").click();
+  await expect(buildChip.locator("[data-field-reference] dt").first()).toBeVisible();
+
+  const sweep = await page.evaluate(() => {
+    const probe = document.createElement("div");
+    probe.style.color = "var(--accent)";
+    probe.style.backgroundColor = "var(--accent)";
+    document.body.appendChild(probe);
+    const style = getComputedStyle(probe);
+    const accentInk = style.color;
+    const accentFill = style.backgroundColor;
+    probe.remove();
+
+    const INTERACTIVE =
+      "a, button, summary, input, select, textarea, [tabindex], " +
+      "[role='button'], [role='link'], [role='tab'], [role='slider'], " +
+      "[role='checkbox'], [role='menuitem'], [role='option']";
+    const offenders: string[] = [];
+    let accented = 0;
+    let interactiveAccented = 0;
+    for (const element of document.querySelectorAll<HTMLElement>("body *")) {
+      const box = element.getBoundingClientRect();
+      if (box.width === 0 || box.height === 0) continue;
+      const computed = getComputedStyle(element);
+      if (computed.visibility === "hidden") continue;
+      const drawsInk = computed.color === accentInk;
+      const drawsFill = computed.backgroundColor === accentFill;
+      if (!drawsInk && !drawsFill) continue;
+      // Inherited ink only counts where a glyph is actually drawn.
+      const ownText = [...element.childNodes].some(
+        (node) => node.nodeType === Node.TEXT_NODE && (node.textContent ?? "").trim() !== "",
+      );
+      if (drawsInk && !drawsFill && !ownText) continue;
+      accented += 1;
+      if (element.closest(INTERACTIVE) !== null) {
+        interactiveAccented += 1;
+        continue;
+      }
+      offenders.push(
+        `${element.tagName.toLowerCase()}${element.className ? `.${String(element.className)}` : ""}` +
+          ` ink=${String(drawsInk)} fill=${String(drawsFill)}`,
+      );
+    }
+    // The struck offender, checked by name: a reference-field label is inert
+    // and must compute to the muted code ink, never to accent.
+    const fieldName = document.querySelector("[data-field-reference] dt");
+    const fieldInk = fieldName === null ? null : getComputedStyle(fieldName).color;
+    return { accentInk, offenders, accented, interactiveAccented, fieldInk };
+  });
+  await archive(page, testInfo, "design-accent-sweep");
+
+  // The negative half: no inert node bought the colour.
+  expect(sweep.offenders, "accent on a node that answers no activation").toEqual([]);
+  // The positive half, so the sweep is not vacuously green: the page does draw
+  // accent, and every accented node sat inside an interactive element.
+  expect(sweep.accented).toBeGreaterThan(0);
+  expect(sweep.interactiveAccented).toBe(sweep.accented);
+  // And the named offender's replacement, checked directly.
+  expect(sweep.fieldInk).not.toBeNull();
+  expect(sweep.fieldInk).not.toBe(sweep.accentInk);
+});
+
+// §4.7 (C11), amended 2026-09-02 — a finished, successful tool card rests on
+// the seam border; only `running` / `error` / `unknown` detach. The archived
+// orchestrator transcript holds both sides of the rule: 100+ `ok` chips and
+// exactly one `error` chip.
+
+test("ok chips rest on --border and only the error chip detaches (§4.7 C11)", async ({
+  page,
+}) => {
+  await open(page, route(PART, { s: "sess-workspace-orchestrator" }));
+  await expect(page.locator("[data-history-state]")).toHaveAttribute(
+    "data-history-state",
+    "complete",
+    { timeout: 120_000 },
+  );
+  await expect(page.locator("[data-tool-name][data-status='ok']").first()).toBeVisible();
+
+  const borders = await page.evaluate(() => {
+    const probe = document.createElement("div");
+    probe.style.borderColor = "var(--border)";
+    document.body.appendChild(probe);
+    const seam = getComputedStyle(probe).borderTopColor;
+    probe.style.borderColor = "var(--border-strong)";
+    const strong = getComputedStyle(probe).borderTopColor;
+    probe.remove();
+    const chips = [...document.querySelectorAll<HTMLElement>("article[data-tool-name]")].map(
+      (chip) => ({
+        status: chip.getAttribute("data-status"),
+        border: getComputedStyle(chip).borderTopColor,
+      }),
+    );
+    return { seam, strong, chips };
+  });
+
+  expect(borders.seam).not.toBe(borders.strong);
+  const ok = borders.chips.filter((chip) => chip.status === "ok");
+  const loud = borders.chips.filter((chip) => chip.status !== "ok");
+  expect(ok.length).toBeGreaterThan(0);
+  expect(loud.length).toBeGreaterThan(0);
+  // In a transcript of ok chips, no chip's computed border equals
+  // --border-strong — and every non-ok chip's does, exactly.
+  for (const chip of ok) expect(chip.border, "an ok chip detached").toBe(borders.seam);
+  for (const chip of loud) {
+    expect(chip.border, `a ${String(chip.status)} chip rested on the seam`).toBe(borders.strong);
+  }
 });
 
 test("the sprite is the only icon source, and it is inline (§3.12)", async ({ page }) => {

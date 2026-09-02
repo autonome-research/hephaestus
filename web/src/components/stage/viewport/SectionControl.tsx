@@ -25,6 +25,7 @@
 // drift. The control resolves the midpoint against the loaded scene's bounds and
 // writes the resolved number.
 
+import { useState } from "react";
 import { copy } from "../../../copy";
 import { useWorkspace, workspaceStore } from "../../../state/react";
 import { Button, Select, Slider } from "../../../system";
@@ -44,6 +45,12 @@ export interface SceneBounds {
 export interface SectionControlProps {
   /** The loaded scene's bounds, or `null` before a GLB is up. */
   readonly bounds: SceneBounds | null;
+  /**
+   * §5.5 C18: below its derived step of the band's yield ladder the section
+   * control folds to a disclosure — AFTER the explode slider, before the
+   * legend. The cut itself (`section_plane`, `channel_overlay`) is untouched.
+   */
+  readonly yielded?: boolean | undefined;
 }
 
 const AXIS_INDEX: Readonly<Record<SectionAxis, 0 | 1 | 2>> = { X: 0, Y: 1, Z: 2 };
@@ -62,9 +69,11 @@ function axisRange(bounds: SceneBounds | null, axis: SectionAxis): {
   return { min, max, step: span > 0 ? Math.max(span / 200, 0.001) : 0.5 };
 }
 
-export function SectionControl({ bounds }: SectionControlProps): React.JSX.Element {
+export function SectionControl({ bounds, yielded = false }: SectionControlProps): React.JSX.Element {
   const spec = useWorkspace((s) => s.section_plane);
   const overlay = useWorkspace((s) => s.channel_overlay);
+  /** The C18 disclosure's own open state — a person may still want the row. */
+  const [open, setOpen] = useState(false);
   const plane = spec === null ? null : parseSectionPlane(spec);
   const axis: SectionAxis = plane?.axis ?? "Z";
   const sign: 1 | -1 = plane?.sign ?? 1;
@@ -92,6 +101,32 @@ export function SectionControl({ bounds }: SectionControlProps): React.JSX.Eleme
           }}
         >
           {copy.viewport.section.enable}
+        </Button>
+      </div>
+    );
+  }
+
+  if (yielded && !open) {
+    // §5.5 C18: the band yields the CONTROL, never the cut — the plane spec
+    // stays on the attribute and the workspace state is untouched.
+    return (
+      <div
+        className={styles["control"]}
+        data-section-control="on"
+        data-section-plane={plane.spec}
+        data-section-yielded=""
+        title={copy.viewport.section.yielded}
+      >
+        <Button
+          variant="quiet"
+          expanded={false}
+          data-section-disclose=""
+          title={copy.viewport.section.yielded}
+          onClick={() => {
+            setOpen(true);
+          }}
+        >
+          {copy.viewport.section.disclose}
         </Button>
       </div>
     );

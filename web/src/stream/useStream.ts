@@ -28,6 +28,7 @@ import { fetchHistoryPage, fetchThread, type ThreadDocument } from "../api/sessi
 import { workspaceToken } from "../api/token";
 import { emptyHistory, loadHistory, type HistoryProgress } from "./history";
 import {
+  appendEcho,
   clearLiveRun,
   disconnected,
   emptyLive,
@@ -70,6 +71,11 @@ export interface StreamView {
   readonly runId: string | null;
   /** Forget `runId` on submit so Cancel cannot target a finished turn. */
   readonly clearRunId: () => void;
+  /**
+   * §7A.5 (C1): append the local-prompt echo on Send — originating tab only,
+   * because only this tab's composer calls it with text this tab holds.
+   */
+  readonly echo: (text: string) => void;
   /** Live `terminal` frames seen; §7A.11's read-refresh trigger. */
   readonly terminals: number;
   readonly error: Error | null;
@@ -204,6 +210,17 @@ export function useStream(sessionId: string | null): StreamView {
     }));
   }, [sessionId]);
 
+  const echo = useCallback(
+    (text: string) => {
+      if (sessionId === null) return;
+      setLive((prev) => ({
+        sid: sessionId,
+        value: appendEcho(prev.sid === sessionId ? prev.value : CONNECTING, text),
+      }));
+    },
+    [sessionId],
+  );
+
   return {
     rows: panelRows(shownHistory.items, shownLive.entries),
     status: shownLive.status,
@@ -214,6 +231,7 @@ export function useStream(sessionId: string | null): StreamView {
     resyncs: shownLive.resyncs,
     runId: shownLive.runId,
     clearRunId,
+    echo,
     terminals: shownLive.terminals,
     error: shownError ?? shownHistory.error,
   };

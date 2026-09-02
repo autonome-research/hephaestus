@@ -387,6 +387,224 @@ describe("consecutive identical successful calls coalesce (§7.2 (a))", () => {
   });
 });
 
+describe("cycle groups: (chip, text) pairs coalesce from the third pair (§7.2 C4/C5)", () => {
+  const RUN = "run-cycle0000000";
+  const DOC = { status: "ok", total: 1 };
+
+  /** One `tool_call` + `tool_result` + narration `text_delta` triple. */
+  function cyclePair(
+    index: number,
+    patch: {
+      readonly tool?: string;
+      readonly doc?: unknown;
+      readonly isError?: boolean | null;
+      readonly narration?: string;
+    } = {},
+  ): TranscriptItem[] {
+    const tool = patch.tool ?? "list_project_checks";
+    const callId = `cy-${String(index)}`;
+    return [
+      liveItem({
+        run_id: RUN,
+        seq: index * 3,
+        kind: "tool_call",
+        session_id: "sess-cycle",
+        tool_call_id: callId,
+        payload: { name: tool, arguments: {} },
+      }),
+      liveItem({
+        run_id: RUN,
+        seq: index * 3 + 1,
+        kind: "tool_result",
+        session_id: "sess-cycle",
+        tool_call_id: callId,
+        payload: {
+          toolName: tool,
+          isError: patch.isError === undefined ? false : patch.isError,
+          text: JSON.stringify(patch.doc ?? DOC),
+        },
+      }),
+      liveItem({
+        run_id: RUN,
+        seq: index * 3 + 2,
+        kind: "text_delta",
+        session_id: "sess-cycle",
+        payload: { text: patch.narration ?? `Still scanning (${String(index)}).` },
+      }),
+    ];
+  }
+
+  function triples(n: number): TranscriptItem[] {
+    return Array.from({ length: n }, (_, index) => cyclePair(index)).flat();
+  }
+
+  it("folds three (chip, text) pairs into ONE cycle row, first pair intact", () => {
+    const rows = groupRows(triples(3));
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    if (row?.row !== "cycle") throw new Error("expected a cycle row");
+    expect(row.pairs).toHaveLength(3);
+    expect(row.toolName).toBe("list_project_checks");
+    // The first pair is the full pair, exactly as ungrouped.
+    expect(row.pairs[0]?.chip.call.eventId).toBe(`${RUN}#0`);
+    expect(row.pairs[0]?.text.items[0]?.eventId).toBe(`${RUN}#2`);
+    // The row anchors on the first pair's chip, so addressing still resolves.
+    expect(row.key).toBe(`${RUN}#0`);
+  });
+
+  it("two pairs are two pairs — the threshold is three (the negative half, count)", () => {
+    const rows = groupRows(triples(2));
+    expect(rows.some((row) => row.row === "cycle")).toBe(false);
+    expect(rows.filter((row) => row.row === "chip")).toHaveLength(2);
+    expect(rows.filter((row) => row.row === "text")).toHaveLength(2);
+  });
+
+  it("loses NOTHING the DOM discipline tracks: every event of every pair is in the row (C5)", () => {
+    const items = triples(3);
+    const row = groupRows(items)[0];
+    if (row?.row !== "cycle") throw new Error("expected a cycle row");
+    const held = new Set<string>();
+    for (const pair of row.pairs) {
+      const members = pair.chip.repeat ?? [{ call: pair.chip.call, result: pair.chip.result }];
+      for (const member of members) {
+        held.add(member.call.eventId);
+        if (member.result !== null) held.add(member.result.eventId);
+      }
+      for (const item of pair.text.items) held.add(item.eventId);
+    }
+    expect([...held].sort()).toEqual(items.map((item) => item.eventId).sort());
+  });
+
+  it("accepts a ×N repeat group as a pair's chip member (chip-or-repeat-group)", () => {
+    // Two back-to-back identical calls coalesce into one ×2 row (§7.2 (a));
+    // that ROW, plus its narration, is one pair of the cycle.
+    const [callA, resultA] = cyclePair(0);
+    const doubled = [
+      ...(callA === undefined || resultA === undefined ? [] : [callA, resultA]),
+      ...cyclePair(1),
+      ...cyclePair(2),
+      ...cyclePair(3),
+    ];
+    const rows = groupRows(doubled);
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    if (row?.row !== "cycle") throw new Error("expected a cycle row");
+    expect(row.pairs).toHaveLength(3);
+    expect(row.pairs[0]?.chip.repeat?.length).toBe(2);
+  });
+
+  it("does not require the narration to repeat byte-identically", () => {
+    const rows = groupRows([
+      ...cyclePair(0, { narration: "Scanning." }),
+      ...cyclePair(1, { narration: "Scanning again." }),
+      ...cyclePair(2, { narration: "And once more." }),
+    ]);
+    expect(rows[0]?.row).toBe("cycle");
+  });
+
+  describe("the negative half, the same four ways as (a) — a cycle does NOT form when", () => {
+    it("any chip member's status is not ok — repeated failures never fold", () => {
+      const rows = groupRows([
+        ...cyclePair(0),
+        ...cyclePair(1),
+        ...cyclePair(2, { isError: true }),
+      ]);
+      expect(rows.some((row) => row.row === "cycle")).toBe(false);
+      expect(rows.filter((row) => row.row === "chip")).toHaveLength(3);
+    });
+
+    it("any result document differs in a byte", () => {
+      const rows = groupRows([
+        ...cyclePair(0),
+        ...cyclePair(1, { doc: { ...DOC, total: 2 } }),
+        ...cyclePair(2),
+      ]);
+      expect(rows.some((row) => row.row === "cycle")).toBe(false);
+    });
+
+    it("the tool names differ", () => {
+      const rows = groupRows([
+        ...cyclePair(0),
+        ...cyclePair(1, { tool: "read_part" }),
+        ...cyclePair(2),
+      ]);
+      expect(rows.some((row) => row.row === "cycle")).toBe(false);
+    });
+
+    it("an item of a third kind falls between the pairs", () => {
+      const thought = liveItem({
+        run_id: RUN,
+        seq: 900,
+        kind: "thought",
+        session_id: "sess-cycle",
+        payload: { text: "Considering." },
+      });
+      const rows = groupRows([
+        ...cyclePair(0),
+        thought,
+        ...cyclePair(1),
+        ...cyclePair(2),
+      ]);
+      expect(rows.some((row) => row.row === "cycle")).toBe(false);
+    });
+
+    it("a labelled resync break falls between the pairs", () => {
+      const rows = liveRows([
+        ...cyclePair(0).map((item) => ({ entry: "event", item }) as const),
+        { entry: "break", resync: { key: "r1", outcome: "gap", after: null } },
+        ...cyclePair(1).map((item) => ({ entry: "event", item }) as const),
+        ...cyclePair(2).map((item) => ({ entry: "event", item }) as const),
+      ]);
+      expect(rows.some((row) => row.row === "cycle")).toBe(false);
+    });
+
+    it("a §7.3 presentation row falls between the pairs", () => {
+      const rows = liveRows([
+        ...cyclePair(0).map((item) => ({ entry: "event", item }) as const),
+        { entry: "echo", key: "echo-1", text: "again please" },
+        ...cyclePair(1).map((item) => ({ entry: "event", item }) as const),
+        ...cyclePair(2).map((item) => ({ entry: "event", item }) as const),
+      ]);
+      expect(rows.some((row) => row.row === "cycle")).toBe(false);
+      expect(rows.some((row) => row.row === "local-prompt")).toBe(true);
+    });
+
+    it("the pairs lie on opposite sides of the §8 seam", () => {
+      const history = cyclePair(0).map((item) =>
+        historicalItem(
+          {
+            run_id: "sess-cycle",
+            seq: item.seq,
+            kind: item.rawKind,
+            ...(item.toolCallId === null ? {} : { tool_call_id: item.toolCallId }),
+            payload: item.payload,
+          },
+          "sess-cycle",
+        ),
+      );
+      const rows = panelRows(history, [
+        ...cyclePair(1).map((item) => ({ entry: "event", item }) as const),
+        ...cyclePair(2).map((item) => ({ entry: "event", item }) as const),
+      ]);
+      expect(rows.some((row) => row.row === "cycle")).toBe(false);
+      expect(rows.some((row) => row.row === "seam")).toBe(true);
+    });
+  });
+
+  it("a cycle whose fourth chip lacks its narration stays maximal at the pairs it has", () => {
+    const [call, result] = cyclePair(3);
+    const rows = groupRows([
+      ...triples(3),
+      ...(call === undefined || result === undefined ? [] : [call, result]),
+    ]);
+    const cycle = rows.find((row) => row.row === "cycle");
+    if (cycle?.row !== "cycle") throw new Error("expected a cycle row");
+    expect(cycle.pairs).toHaveLength(3);
+    // The unpaired chip renders as its own row — outside the group, not lost.
+    expect(rows.filter((row) => row.row === "chip")).toHaveLength(1);
+  });
+});
+
 describe("runsWithTerminal — sidecar death never mints one (#50)", () => {
   it("collects only live terminal rows", () => {
     const ended = liveItem({
@@ -439,3 +657,137 @@ function surfaces(rows: readonly PanelRow[]): Set<string> {
   }
   return found;
 }
+
+// ---------------------------------------------------------------------------
+// §7.3 C1/C2/C21 and §8 C3 — the presentation rows, both halves of every rule
+// ---------------------------------------------------------------------------
+
+describe("the local prompt echo and the run-start boundary (amended 2026-09-02)", () => {
+  const delta = (runId: string, seq: number): TranscriptItem =>
+    liveItem({
+      run_id: runId,
+      seq,
+      kind: "text_delta",
+      session_id: fixture.session_id,
+      payload: { text: `t${String(seq)}` },
+    });
+  const event = (runId: string, seq: number): { entry: "event"; item: TranscriptItem } => ({
+    entry: "event",
+    item: delta(runId, seq),
+  });
+  const echo = (key: string, text: string): { entry: "echo"; key: string; text: string } => ({
+    entry: "echo",
+    key,
+    text,
+  });
+  const gap = (key: string): { entry: "break"; resync: { key: string; outcome: "gap"; after: null } } => ({
+    entry: "break",
+    resync: { key, outcome: "gap", after: null },
+  });
+  const names = (rows: readonly PanelRow[]): string[] => rows.map((row) => row.row);
+  const starts = (rows: readonly PanelRow[]) =>
+    rows.filter((row) => row.row === "run-start");
+
+  it("renders the echo verbatim at the tail, before any frame (C1)", () => {
+    const rows = liveRows([echo("echo:0", "add a 3mm fillet")]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toEqual({ row: "local-prompt", key: "echo:0", text: "add a 3mm fillet" });
+  });
+
+  it("licenses exactly one run-start from the echo — C21's base case", () => {
+    const rows = liveRows([echo("echo:0", "p"), event("run-a", 0), event("run-a", 1)]);
+    expect(names(rows)).toEqual(["local-prompt", "run-start", "text"]);
+    expect(starts(rows)[0]?.runId).toBe("run-a");
+  });
+
+  it("mints no boundary with no previous rendered live row and no echo (mid-run attach)", () => {
+    // An observer attaching mid-run honestly renders the run in progress with
+    // no top boundary — the frames it never held cannot license a row.
+    const rows = liveRows([event("run-a", 5), event("run-a", 6)]);
+    expect(starts(rows)).toHaveLength(0);
+  });
+
+  it("mints by comparison on a run change, and never within a run", () => {
+    // Observer: no echo, two runs → exactly one boundary, at the change.
+    const rows = liveRows([event("run-a", 5), event("run-b", 0), event("run-b", 1)]);
+    expect(starts(rows)).toHaveLength(1);
+    expect(starts(rows)[0]?.runId).toBe("run-b");
+    expect(names(rows)).toEqual(["text", "run-start", "text"]);
+  });
+
+  it("renders, in the originating tab, two runs as exactly two boundaries with distinct ids", () => {
+    // The amendment's own testable: the first echo-licensed, the second by
+    // comparison.
+    const rows = liveRows([
+      echo("echo:0", "p"),
+      event("run-a", 0),
+      event("run-a", 1),
+      event("run-b", 0),
+    ]);
+    expect(starts(rows).map((row) => row.runId)).toEqual(["run-a", "run-b"]);
+  });
+
+  it("consumes the license on the first frame: a same-run frame after a mid-live echo mints nothing new", () => {
+    // Second Send while the previous run's frames are still arriving: the echo
+    // stands, but no boundary is minted within a run, and the next run change
+    // still mints exactly one (by comparison).
+    const rows = liveRows([
+      event("run-a", 0),
+      echo("echo:0", "p2"),
+      event("run-a", 1),
+      event("run-b", 0),
+    ]);
+    expect(starts(rows).map((row) => row.runId)).toEqual(["run-b"]);
+  });
+
+  it("terminates derivation at a resync seam exactly as at the §8 seam (C21)", () => {
+    // Same run resumes after the break → no boundary; a DIFFERENT run's first
+    // frame after the break mints none either, because run ids are never
+    // compared across a gap in which boundary events may have been lost.
+    const sameRun = liveRows([event("run-a", 0), gap("r1"), event("run-a", 1)]);
+    expect(starts(sameRun)).toHaveLength(0);
+    const newRun = liveRows([event("run-a", 0), gap("r1"), event("run-b", 0)]);
+    expect(starts(newRun)).toHaveLength(0);
+    // Derivation restarts from the frames after the refill.
+    const later = liveRows([event("run-a", 0), gap("r1"), event("run-b", 0), event("run-c", 0)]);
+    expect(starts(later).map((row) => row.runId)).toEqual(["run-c"]);
+  });
+
+  it("keeps the echo's license across a break — the Send is a held fact, not a comparison", () => {
+    const rows = liveRows([echo("echo:0", "p"), gap("r1"), event("run-a", 0)]);
+    expect(names(rows)).toEqual(["local-prompt", "resync", "run-start", "text"]);
+  });
+
+  it("mints no presentation row from history — reopen renders notices, not echoes (C3)", () => {
+    const rows = historicalRows(historyItems());
+    expect(rows.some((row) => row.row === "local-prompt" || row.row === "run-start")).toBe(false);
+    // The reopen user-prompt absence notice renders unchanged and true.
+    expect(rows[0]).toEqual({ row: "absence", key: "absence:user_prompt", absence: "user_prompt" });
+  });
+
+  it("keeps every presentation row out of the history prefix and off the seam (C3)", () => {
+    const rows = panelRows(historyItems(), [echo("echo:0", "p"), event("run-a", 0)]);
+    const seamAt = rows.findIndex((row) => row.row === "seam");
+    expect(seamAt).toBeGreaterThan(-1);
+    const prefix = rows.slice(0, seamAt);
+    expect(prefix.some((row) => row.row === "local-prompt" || row.row === "run-start")).toBe(false);
+    // The first live row after the seam is the echo, then its licensed boundary.
+    expect(names(rows.slice(seamAt + 1, seamAt + 3))).toEqual(["local-prompt", "run-start"]);
+  });
+
+  it("carries no event id on either presentation row, and loses none to them", () => {
+    const entries = [echo("echo:0", "p"), event("run-a", 0), event("run-b", 0)];
+    const rows = liveRows(entries);
+    for (const row of rows) {
+      if (row.row === "local-prompt" || row.row === "run-start") {
+        expect("items" in row || "item" in row || "call" in row).toBe(false);
+      }
+    }
+    // The §7.2 id-set discipline: every event's id survives into some row.
+    const ids = new Set<string>();
+    for (const row of rows) {
+      if (row.row === "text") for (const item of row.items) ids.add(item.eventId);
+    }
+    expect(ids).toEqual(new Set(["run-a#0", "run-b#0"]));
+  });
+});

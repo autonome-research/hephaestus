@@ -47,6 +47,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { WorkspaceError } from "../../../api/client";
 import { copy } from "../../../copy";
+import { useBuild } from "../../../api/queries";
 import { useWorkspace, workspaceStore } from "../../../state/react";
 import { NoWebglError, ViewportEngine } from "../../../viewport/engine";
 import { parseSectionPlane } from "../../../viewport/section";
@@ -65,7 +66,15 @@ import { SectionPlate } from "./SectionPlate";
 import { ViewCube } from "./ViewCube";
 import styles from "./Viewport.module.css";
 
-type GlbState = "no-pin" | "loading" | "stale" | "ready" | "refused" | "no-webgl" | "empty";
+type GlbState =
+  | "no-pin"
+  | "loading"
+  | "stale"
+  | "ready"
+  | "refused"
+  | "no-webgl"
+  | "empty"
+  | "not-built";
 
 /** One sprite id per named absence. `ready` never reaches the empty state. */
 const ABSENCE_ICON: Readonly<Record<Exclude<GlbState, "ready">, IconId>> = {
@@ -75,7 +84,41 @@ const ABSENCE_ICON: Readonly<Record<Exclude<GlbState, "ready">, IconId>> = {
   refused: "alert",
   "no-webgl": "alert",
   empty: "cube",
+  "not-built": "cube",
 };
+
+/**
+ * §5.5 C10 — which absence an EMPTY PIN composes to.
+ *
+ * `not-built` renders when the pin holds no artifact AND the selected part's
+ * build state is `not_built` — the state where the well is empty because this
+ * part has simply never been built — and in NO other state: with no part
+ * selected, `no-pin` renders as before, and a part with a failed build (or a
+ * build projection that has not answered, or refused to) stays `no-pin` here
+ * and renders its failure where failures render. The build status is a server
+ * projection (`GET /parts/{part}/build`); this function composes, it does not
+ * derive (§1). Exported so both halves of the never-renders rule are testable
+ * without a WebGL context.
+ */
+export function emptyPinAbsence(
+  part: string | null,
+  buildStatus: string | undefined,
+): "no-pin" | "not-built" {
+  return part !== null && buildStatus === "not_built" ? "not-built" : "no-pin";
+}
+
+/**
+ * §5.5 C18 — the named stage width below which the bottom band yields, and the
+ * fixed order it yields in: the explode slider collapses to its disclosure
+ * first, then the section control, and the legend yields last, because a
+ * readout that lies about camera scale is worse than a missing control.
+ * 560px is the named threshold (the width at which 120px of explode track no
+ * longer fits beside the other two); the later steps are derived from the
+ * remaining occupants' natural widths. Nothing yields above 560px.
+ */
+export const BAND_YIELD_WIDTH = 560;
+const SECTION_YIELD_WIDTH = 450;
+const LEGEND_YIELD_WIDTH = 330;
 
 /**
  * The states whose TITLE is the whole fact, so the plate prints no sentence.
@@ -97,10 +140,40 @@ const TITLE_IS_ENOUGH: ReadonlySet<GlbState> = new Set<GlbState>(["no-pin", "loa
 export function ViewportAbsence({
   state,
   refusalReason,
+  part = null,
 }: {
   readonly state: Exclude<GlbState, "ready">;
   readonly refusalReason: string | null;
+  /** The selected part's name — a server fact — for the `not-built` state. */
+  readonly part?: string | null;
 }): React.JSX.Element {
+  if (state === "not-built") {
+    // §5.5 C10: the title names the part and the state; the body is exactly
+    // the two remedies — ask the agent below, or `heph build <part>` (the
+    // command in `.code`). Both facts are server projections; composed here.
+    const name = part ?? "";
+    return (
+      <div className={styles["absent"]} data-viewport-absence="not-built">
+        <div className={styles["absencePlate"]}>
+          <EmptyState
+            icon={ABSENCE_ICON[state]}
+            title={copy.viewport.notBuilt.title(name)}
+            body={
+              <>
+                <p>{copy.viewport.notBuilt.ask}</p>
+                <p>
+                  {copy.viewport.notBuilt.run}{" "}
+                  <Chip tone="code" data-not-built-command="">
+                    {copy.viewport.notBuilt.command(name)}
+                  </Chip>
+                </p>
+              </>
+            }
+          />
+        </div>
+      </div>
+    );
+  }
   const prose = !TITLE_IS_ENOUGH.has(state) || refusalReason !== null;
   return (
     <div className={styles["absent"]} data-viewport-absence={state}>
@@ -154,6 +227,10 @@ export function Viewport(): React.JSX.Element {
     appearanceStore.getSnapshot,
   );
   const glb = useGlb(artifactRef);
+  // §5.5 C10: the `not-built` absence needs the selected part's build STATE,
+  // and only while the pin is empty — with an artifact pinned the projection
+  // is irrelevant to the well and the query stays off.
+  const build = useBuild(part, artifactRef === null);
 
   const hostRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -178,6 +255,8 @@ export function Viewport(): React.JSX.Element {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [bounds, setBounds] = useState<SceneBounds | null>(null);
   const [scale, setScale] = useState(0);
+  /** §5.5 C18: the stage column's width, for the bottom band's yield ladder. */
+  const [stageWidth, setStageWidth] = useState<number | null>(null);
   /** §3.11.5's grid spacing, so the readout describes the grid it is next to. */
   const [step, setStep] = useState(0);
   // The ref whose geometry the engine last finished loading. It is written only
@@ -241,10 +320,12 @@ export function Viewport(): React.JSX.Element {
       const rect = host.getBoundingClientRect();
       engineRef.current?.resize(rect.width, rect.height);
       setScale(engineRef.current?.scale() ?? 0);
+      setStageWidth(rect.width);
     });
     observer.observe(host);
     const rect = host.getBoundingClientRect();
     engineRef.current?.resize(rect.width, rect.height);
+    setStageWidth(rect.width);
     return () => {
       observer.disconnect();
     };
@@ -351,7 +432,10 @@ export function Viewport(): React.JSX.Element {
     webglError !== null
       ? "no-webgl"
       : artifactRef === null
-        ? "no-pin"
+        ? // §5.5 C10: an empty pin composes to `not-built` only when the
+          // selected part's build state IS `not_built` — never over a failure
+          // (status `error` keeps `no-pin`) or a no-selection state.
+          emptyPinAbsence(part, build.data?.status)
         : glb.isError || loadError !== null
           ? "refused"
           : glb.data === undefined
@@ -378,6 +462,9 @@ export function Viewport(): React.JSX.Element {
    */
   const hasGeometry = state === "ready" || state === "stale";
 
+  /** C18's yield ladder input: unmeasured means "wide" — nothing yields early. */
+  const bandWidth = stageWidth ?? Number.POSITIVE_INFINITY;
+
   return (
     <div
       ref={hostRef}
@@ -402,7 +489,7 @@ export function Viewport(): React.JSX.Element {
         // with a shape, an icon, a heading and its prose in a legible ink. The
         // shipped absence was an italic 3.10:1 sentence in the middle of a black
         // rectangle, which reads as a bug rather than as a designed state.
-        <ViewportAbsence state={state} refusalReason={refusalReason} />
+        <ViewportAbsence state={state} refusalReason={refusalReason} part={part} />
       )}
 
       {sectionState === "preview" ? (
@@ -432,17 +519,33 @@ export function Viewport(): React.JSX.Element {
               answer is a pure function of state we already hold. Off is the same
               as "no framing": the readout must not describe a grid the operator
               has hidden. */}
-          <GridReadout scale={scale} step={displayedRef === null || !appearance.grid ? 0 : step} />
           <AppearanceControls canFit={displayedRef !== null && state === "ready"} onFit={onFit} />
-          <div className={styles["controls"]}>
+          {/* §5.5 C18: the bottom overlays share ONE flex band — the legend at
+              `flex: none` (a readout never stretches), the explode slider at
+              `flex: 1` with a 120px minimum track, the section control at its
+              natural size. Below 560px of stage column the band yields in a
+              fixed order — explode to its disclosure first, then the section
+              control, the legend last — and no bottom overlay is ever
+              absolutely positioned over another. */}
+          <div className={styles["band"]} data-viewport-band="">
+            {bandWidth < LEGEND_YIELD_WIDTH ? null : (
+              <GridReadout
+                scale={scale}
+                step={displayedRef === null || !appearance.grid ? 0 : step}
+              />
+            )}
             <ExplodeSlider
               noop={glb.data !== undefined && glb.data.geometry.mesh_count <= 1}
+              yielded={bandWidth < BAND_YIELD_WIDTH}
             />
             {/* The bounds belong to the *loaded* GLB: while none is loaded the
                 control seats its offset on its own fallback range rather than on
                 the previous artifact's, which would name a plane in the wrong
                 model. */}
-            <SectionControl bounds={glb.data === undefined ? null : bounds} />
+            <SectionControl
+              bounds={glb.data === undefined ? null : bounds}
+              yielded={bandWidth < SECTION_YIELD_WIDTH}
+            />
           </div>
         </>
       )}

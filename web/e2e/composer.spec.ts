@@ -112,15 +112,58 @@ test.describe("§7A.12 case 1 — the blank canvas reaches the workspace", () =>
       "data-composer-model",
       "heph-fake-model",
     );
-    // §7A.10(a), amended 2026-09-01: the RESTING action row is one button.
-    // Cancel does not mount while nothing is cancellable (§7A.10(b)) and the
-    // state attribute says so with no control present, and the chip form does
-    // not mount while the disclosure is collapsed (§7A.3(c)).
+    // §7A.10, amended 2026-09-02 (§0.2c, C15): the resting composer is TWO
+    // rows, counted. The model id's box lies within the context row's box;
+    // Send's box lies within the input row's box; and the restated (a)
+    // testable holds against the row that mounts — the input row holds
+    // exactly one button-role element, and it is Send.
+    await expect(
+      composer.locator("[data-context-summary] [data-composer-model]"),
+    ).toHaveCount(1);
+    await expect(
+      composer.locator("[data-composer-input-row] [data-composer-send]"),
+    ).toHaveCount(1);
+    expect(
+      await composer.locator("[data-composer-input-row] button, [data-composer-input-row] [role='button']").count(),
+    ).toBe(1);
+    const modelBox = await composer.locator("[data-composer-model]").boundingBox();
+    const contextBox = await composer.locator("[data-context-summary]").boundingBox();
+    const sendBox = await composer.locator("[data-composer-send]").boundingBox();
+    const inputRowBox = await composer.locator("[data-composer-input-row]").boundingBox();
+    expect(modelBox).not.toBeNull();
+    expect(contextBox).not.toBeNull();
+    expect(sendBox).not.toBeNull();
+    expect(inputRowBox).not.toBeNull();
+    const within = (
+      inner: { x: number; y: number; width: number; height: number },
+      outer: { x: number; y: number; width: number; height: number },
+    ): boolean =>
+      inner.y >= outer.y - 1 &&
+      inner.y + inner.height <= outer.y + outer.height + 1 &&
+      inner.x >= outer.x - 1 &&
+      inner.x + inner.width <= outer.x + outer.width + 1;
+    expect(within(modelBox!, contextBox!)).toBe(true);
+    expect(within(sendBox!, inputRowBox!)).toBe(true);
+    // C15's negative half: no third row mounts at rest — no meta line, no
+    // empty action row. Cancel does not mount while nothing is cancellable
+    // (§7A.10(b)) and the state attribute says so with no control present,
+    // and the chip form does not mount while the disclosure is collapsed
+    // (§7A.3(c)).
+    expect(
+      await composer.evaluate((form) => form.children.length),
+    ).toBe(2);
     await expect(composer).toHaveAttribute("data-cancel-state", "unavailable");
     await expect(composer.locator("[data-composer-cancel]")).toHaveCount(0);
     await expect(composer.locator("[data-context-chips]")).toHaveCount(0);
     await expect(composer.locator("[data-context-summary]")).toHaveCount(1);
 
+    // §7A.3, amended 2026-09-02 (§0.2c, C22): with no selection in workspace
+    // state, the RESTING line mounts no Add-current-view — the gap the line
+    // copy exists for is not this one. The disclosure's own copy remains the
+    // route on the blank canvas.
+    await expect(
+      composer.locator("[data-context-summary] [data-context-add-view]"),
+    ).toHaveCount(0);
     await expect(composer.locator("[data-context-disclose]")).toHaveCount(1);
     await composer.locator("[data-context-disclose]").click();
     await expect(composer.locator("[data-context-add-view]")).toHaveCount(1);
@@ -134,14 +177,40 @@ test.describe("§7A.12 case 1 — the blank canvas reaches the workspace", () =>
       .fill(`${world().composer.sentinel} please make me a part`);
     await composer.locator("[data-composer-send]").click();
 
+    // §7A.5 (C1, amended 2026-09-02): the sent words appear the moment they
+    // are sent. The local-prompt echo renders immediately on Send — the model
+    // round-trip has not settled — carrying the sent text verbatim, C2's DOM
+    // contract, the visible-at-rest `unrecorded` marker, and NO event id.
+    const echoRow = page.locator('[data-row="local-prompt"]');
+    await expect(echoRow).toHaveCount(1);
+    await expect(echoRow).toHaveAttribute("data-local-echo", "1");
+    await expect(echoRow).toContainText("please make me a part");
+    await expect(echoRow).toContainText("unrecorded");
+    expect(await echoRow.getAttribute("data-event-id")).toBeNull();
+
     // The turn's events reach the transcript.
     await expect(page.locator("[data-tool-name]").first()).toBeVisible({ timeout: 120_000 });
+
+    // §7.3 (C21): the echo licensed exactly one run-start boundary for the
+    // first frame — the originating tab's turn edge, marked from both sides.
+    const boundary = page.locator('[data-row="run-start"]');
+    await expect(boundary).toHaveCount(1);
+    expect(await boundary.getAttribute("data-run-id")).toBeTruthy();
+    expect(await boundary.getAttribute("data-event-id")).toBeNull();
 
     // THE CLAUSE. §7A.11: refetch, never merge — so the tree gains the part
     // because the client re-read `GET /parts`, not because it patched a list
     // from a tool result. No reload happens anywhere in this test.
     const treeRow = page.locator(`[role="tree"] [data-part="${newPart}"]`);
     await expect(treeRow).toHaveCount(1, { timeout: 60_000 });
+
+    // §7A.11 (C7, amended 2026-09-02): after settle, exactly the created
+    // part's row carries the transient `data-turn-changed` — the diff of two
+    // server projections across the refetch, created parts included; rows the
+    // turn did not touch are never marked.
+    const marked = page.locator('[role="tree"] [data-turn-changed]');
+    await expect(marked).toHaveCount(1, { timeout: 60_000 });
+    expect(await marked.getAttribute("data-part")).toBe(newPart);
 
     // …and it is selectable, which is the other half of "appears in the tree".
     // Selecting it moves §4.5's addressed part, which is the observable form of
@@ -153,6 +222,10 @@ test.describe("§7A.12 case 1 — the blank canvas reaches the workspace", () =>
       { timeout: 30_000 },
     );
     await expect(treeRow).toHaveAttribute("aria-selected", "true");
+
+    // C7's first exit: clicking the row clears its marker — and nothing else
+    // in this test's remaining reads may re-mint it.
+    await expect(page.locator('[role="tree"] [data-turn-changed]')).toHaveCount(0);
 
     // The server agrees, which is what makes the DOM assertion a projection
     // rather than a claim about the DOM alone (§14's rule for this suite).

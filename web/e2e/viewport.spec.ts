@@ -495,6 +495,102 @@ test("the section plane renders a golden-matched server plate (G4.7)", async ({
 });
 
 // --------------------------------------------------------------------------
+// §5.5 C18/C19 — the viewport overlays are pairwise non-intersecting, at the
+// steady width and at the band's yield width. The same assertion style as
+// §7.4's C20 pill clause, stated once per surface set.
+
+interface Box {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+function intersects(a: Box, b: Box): boolean {
+  return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+}
+
+/** §5.5 C19's named surface set. The section plate header joins when mounted. */
+const OVERLAY_SURFACES = [
+  "[data-view-cube]",
+  "[data-appearance]",
+  "[data-grid-readout]",
+  "[data-explode-t]",
+  "[data-section-control]",
+  "[data-section-plate]",
+] as const;
+
+async function overlayBoxes(page: Page): Promise<{ selector: string; box: Box }[]> {
+  const found: { selector: string; box: Box }[] = [];
+  for (const selector of OVERLAY_SURFACES) {
+    const locator = page.locator(selector).first();
+    if ((await locator.count()) === 0) continue;
+    const box = await locator.boundingBox();
+    if (box !== null) found.push({ selector, box });
+  }
+  return found;
+}
+
+function assertPairwiseDisjoint(boxes: readonly { selector: string; box: Box }[]): void {
+  for (let i = 0; i < boxes.length; i += 1) {
+    for (let j = i + 1; j < boxes.length; j += 1) {
+      const a = boxes[i];
+      const b = boxes[j];
+      if (a === undefined || b === undefined) continue;
+      expect(
+        intersects(a.box, b.box),
+        `${a.selector} intersects ${b.selector}: ${JSON.stringify(a.box)} vs ${JSON.stringify(b.box)}`,
+      ).toBe(false);
+    }
+  }
+}
+
+test("viewport overlays are pairwise non-intersecting at 1280x800 and at the yield width (§5.5 C18/C19)", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await open(page, route(PART, { tab: "viewport", t: "0" }));
+  await awaitViewport(page);
+
+  // C19: `front` lives INSIDE the one view-cube plate — one bounding box in
+  // the corner, so the pairwise sweep below covers it by construction.
+  const cube = page.locator("[data-view-cube]");
+  await expect(cube).toHaveCount(1);
+  await expect(cube.locator('[data-view="front"]')).toHaveCount(1);
+
+  const steady = await overlayBoxes(page);
+  expect(
+    steady.length,
+    `expected the resting overlay set, saw ${steady.map((entry) => entry.selector).join(", ")}`,
+  ).toBeGreaterThanOrEqual(5);
+  assertPairwiseDisjoint(steady);
+
+  // C18's yield width: shrink the window until the stage column measures below
+  // the named 560px. The stage does not shrink 1:1 with the window (the rail
+  // and stream have their own floors), so walk down and measure.
+  const viewport = page.locator('[data-testid="viewport"]');
+  let window = 1280;
+  await expect
+    .poll(
+      async () => {
+        const box = await viewport.boundingBox();
+        if (box !== null && box.width < 560) return true;
+        window -= 80;
+        if (window < 500) return "cannot reach the yield width";
+        await page.setViewportSize({ width: window, height: 800 });
+        return false;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+
+  // The fixed order's first step: the explode slider collapsed to its
+  // disclosure (the fixture has ≥3 solids, so this is the C18 yield, not #60).
+  await expect(page.locator("[data-explode-collapsed]")).toHaveCount(1);
+  assertPairwiseDisjoint(await overlayBoxes(page));
+});
+
+// --------------------------------------------------------------------------
 
 function distance(
   a: readonly [number, number, number] | null | undefined,

@@ -39,6 +39,17 @@
 // measurement of anything in the model (the same line §7A.3 already draws for
 // `hidden_labels`).
 
+// AMENDED 2026-09-02 (§0.2c, C22). `addViewOnLine` is the pure half of "Add
+// current view surfaces where the gap is visible": the one moment the
+// affordance matters on the RESTING line is when a selection exists in
+// workspace state and the envelope carries neither `view` nor `selection` —
+// the gap the operator would otherwise have to open the disclosure to see.
+// The negative halves live here too, as the same predicate returning false:
+// members already in the envelope, no selection, or the disclosure open (the
+// form's copy of the control is showing). Activation is the component's job
+// and does exactly what the form's copy does — it adds members to the `added`
+// set, computing nothing (§1).
+
 import type { ContextEnvelope, ContextMember } from "../api/sessions";
 import type { WorkspaceState } from "../state/workspace";
 
@@ -199,6 +210,39 @@ export function envelopeFor(
     envelope.focus !== undefined ||
     (added.has("view") && envelope.view !== undefined);
   return namesAReference ? envelope : null;
+}
+
+// ---------------------------------------------------------------------------
+// §7A.3 (C22) — "Add current view" on the resting line
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether `[data-context-add-view]` renders on the RESTING summary line
+ * (§7A.3, amended 2026-09-02 (§0.2c, C22)).
+ *
+ * True exactly when the gap the affordance exists to close is visible: a
+ * selection exists in workspace state, and the envelope carries **neither**
+ * `view` nor `selection`. False — the clause's stated negative halves — when
+ * the members are already in the envelope, when no selection exists, or while
+ * the disclosure is open, because the form's own copy of the control is
+ * showing then and two live copies of one affordance is the same control
+ * twice.
+ *
+ * A projection, not a policy: it reads the envelope this form would POST and
+ * the client's own disclosure flag, and computes nothing (§1). The (d)
+ * testables are untouched — `data-context-keys` still names exactly what
+ * would be sent, before and after the add.
+ */
+export function addViewOnLine(
+  envelope: ContextEnvelope | null,
+  hasSelection: boolean,
+  disclosed: boolean,
+): boolean {
+  if (disclosed) return false;
+  if (!hasSelection) return false;
+  const viewAbsent = envelope === null || envelope.view === undefined;
+  const selectionAbsent = envelope === null || envelope.selection === undefined;
+  return viewAbsent && selectionAbsent;
 }
 
 // ---------------------------------------------------------------------------

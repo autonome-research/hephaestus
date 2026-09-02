@@ -35,6 +35,37 @@ test("Export and BOM sit in header chrome, not only the inspector", async ({ pag
   await archive(page, testInfo, "export-bom-chrome");
 });
 
+test("Export and BOM are icon+word at ≥1280px, icon-only below, same name (§4.1(i) C26)", async ({
+  page,
+}) => {
+  await open(page, route(PART, { tab: "viewport" }));
+  const controls = ["[data-chrome-export]", "[data-chrome-bom]"] as const;
+
+  await page.setViewportSize({ width: 1440, height: 800 });
+  const wordedNames: string[] = [];
+  for (const selector of controls) {
+    const control = page.locator(selector);
+    await expect(control).toBeVisible();
+    await expect(control.locator("svg[data-icon]")).toHaveCount(1);
+    // A visible text node equal to the control's accessible name.
+    const word = ((await control.textContent()) ?? "").trim();
+    expect(word).not.toBe("");
+    expect(await control.getAttribute("aria-label")).toBeNull();
+    wordedNames.push(word);
+  }
+
+  await page.setViewportSize({ width: 1200, height: 800 });
+  for (const [index, selector] of controls.entries()) {
+    const control = page.locator(selector);
+    // Still visible, unmoved behind no overflow — icon-only, word on the name.
+    await expect(control).toBeVisible();
+    await expect(control.locator("svg[data-icon]")).toHaveCount(1);
+    expect(((await control.textContent()) ?? "").trim()).toBe("");
+    // C26's testable: the accessible name is identical in both forms.
+    expect(await control.getAttribute("aria-label")).toBe(wordedNames[index]);
+  }
+});
+
 test("chrome Export is bound to the pin the server named", async ({ page }, testInfo) => {
   const build = await api<BuildDocument>(`/parts/${PART}/build`);
   expect(build.artifact_ref).toMatch(/^artifact:build:/);

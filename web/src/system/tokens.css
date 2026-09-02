@@ -362,7 +362,14 @@
 
   /* ---- metrics: §4.1's shell, as numbers ------------------------------- */
   --rail-width: 280px;
-  --stream-width: 420px;
+  /* §4.1(g), amended 2026-09-02 (C12): the EXPANDED stream track breathes with
+     the window through the one rule that already owns the grid — this token is
+     consumed only by `Shell.module.css`'s `data-stream`-driven
+     `grid-template-columns`, so the clamp adds no second authority and no
+     media query. 30vw of the 1280px collapse boundary is 384px; the diagram's
+     420px is this clamp's maximum. The boundary itself and the 44px strip are
+     unchanged. */
+  --stream-width: clamp(360px, 30vw, 420px);
   --stream-strip-width: 44px;
   --header-height: 44px;
   /* §4.1(c): the drawer is an EXPLICIT height, not a `minmax` floor. Height is

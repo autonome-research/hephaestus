@@ -244,7 +244,7 @@ describe("the transcript's honesty rows (§8, §7.4)", () => {
     const document_ = renderRows(panelRows(historyItems, liveEntries));
     expect(document_.querySelectorAll("[data-absence]")).toHaveLength(2);
     expect(document_.querySelector('[data-absence="user_prompt"]')?.textContent ?? "").toContain(
-      "Prompts are not part of the recorded event vocabulary",
+      "Prompts aren't recorded",
     );
     expect(document_.querySelectorAll("[data-seam]")).toHaveLength(1);
   });
@@ -268,7 +268,7 @@ describe("the transcript's honesty rows (§8, §7.4)", () => {
     const document_ = renderRows(panelRows(historyItems, []));
     expect(document_.querySelectorAll("[data-terminal-state]")).toHaveLength(0);
     expect(document_.querySelector('[data-absence="terminal"]')?.textContent ?? "").toContain(
-      "no run-end band",
+      "doesn't show how the run ended",
     );
   });
 
@@ -281,6 +281,17 @@ describe("the transcript's honesty rows (§8, §7.4)", () => {
    * deletion §8's absence rule forbids. A build that dropped `absenceDetail`
    * would pass every assertion above this block.
    */
+  it("keeps spec-internal vocabulary off every resting notice's visible face (§8 C24)", () => {
+    // "no resting named-absence notice's visible text contains the strings
+    // 'event vocabulary' or 'run-end band'; each notice's `title` is non-empty."
+    const document_ = renderRows(panelRows(historyItems, []));
+    for (const notice of document_.querySelectorAll("[data-absence]")) {
+      expect(notice.textContent ?? "").not.toContain("event vocabulary");
+      expect(notice.textContent ?? "").not.toContain("run-end band");
+      expect(notice.getAttribute("title") ?? "").not.toBe("");
+    }
+  });
+
   it("draws the short absence sentence and keeps the long form on title", () => {
     const document_ = renderRows(panelRows(historyItems, []));
     const terminal = document_.querySelector('[data-absence="terminal"]');
@@ -413,3 +424,107 @@ describe("the session tabs (§7.1, G4.10)", () => {
 function liveRowsOf(entries: readonly LiveEntry[]): readonly PanelRow[] {
   return panelRows([], entries);
 }
+
+describe("the presentation rows' DOM contract (§7.3 C2/C21, amended 2026-09-02)", () => {
+  const withEcho: LiveEntry[] = [
+    { entry: "echo", key: "echo:0", text: "chamfer the lid, 0.5 mm" },
+    ...liveEntries,
+  ];
+
+  it("renders the echo with its contract: data-row, data-local-echo, verbatim text", () => {
+    const document_ = renderRows(liveRowsOf(withEcho));
+    const echo = document_.querySelector('[data-row="local-prompt"]');
+    expect(echo).not.toBeNull();
+    expect(echo?.getAttribute("data-local-echo")).toBe("1");
+    expect(echo?.textContent ?? "").toContain("chamfer the lid, 0.5 mm");
+  });
+
+  it("marks the echo unrecorded on its visible face, not on title alone", () => {
+    const document_ = renderRows(liveRowsOf(withEcho));
+    const echo = document_.querySelector('[data-row="local-prompt"]');
+    // The visible-at-rest marker word, C2 verbatim.
+    expect(echo?.textContent ?? "").toContain(copy.stream.localEcho.marker);
+    // The accessible not-a-recorded-event equivalent, in the DOM as text.
+    expect(echo?.textContent ?? "").toContain(copy.stream.localEcho.accessible);
+    // `title` carries only the long form — and it is non-empty.
+    expect(echo?.querySelector("[title]")?.getAttribute("title")).toBe(copy.stream.localEcho.title);
+  });
+
+  it("renders the run-start boundary as a rule line carrying only the run id", () => {
+    const document_ = renderRows(liveRowsOf(withEcho));
+    const boundary = document_.querySelector('[data-row="run-start"]');
+    expect(boundary).not.toBeNull();
+    expect(boundary?.getAttribute("data-run-id")).toBe(fixture.run_id);
+    expect(boundary?.textContent ?? "").toContain(fixture.run_id);
+    expect(boundary?.textContent ?? "").toContain(copy.stream.runStart.accessible);
+  });
+
+  it("gives neither presentation row an event id, and loses no real id to them", () => {
+    // C2/C21's shared testable: across any transcript, every local-prompt and
+    // run-start element carries no data-event-id, and the §7.2 id-set equality
+    // still holds on a transcript containing both.
+    const document_ = renderRows(liveRowsOf(withEcho));
+    for (const row of document_.querySelectorAll(
+      '[data-row="local-prompt"], [data-row="run-start"]',
+    )) {
+      expect(row.hasAttribute("data-event-id")).toBe(false);
+      expect(row.querySelector("[data-event-id]")).toBeNull();
+    }
+    const domIds = new Set<string>();
+    for (const node of document_.querySelectorAll("[data-event-id], [data-event-ids]")) {
+      const single = node.getAttribute("data-event-id");
+      if (single !== null) domIds.add(single);
+      for (const id of (node.getAttribute("data-event-ids") ?? "").split(" ")) {
+        if (id !== "") domIds.add(id);
+      }
+    }
+    for (const item of liveItems) {
+      if (item.kind === "progress") continue; // droppable by §7.3, no row
+      expect(domIds.has(item.eventId), item.eventId).toBe(true);
+    }
+  });
+
+  it("names every id-less data-row: the matcher's by-name skip covers the DOM (G4.11)", () => {
+    // The amendment's guard cuts both ways: any data-row other than the two
+    // named presentation rows either carries an id itself or is pure layout
+    // over id-carrying children. This walks the rendered transcript and
+    // asserts the by-name skip list is exhaustive.
+    const document_ = renderRows(panelRows(historyItems, withEcho));
+    const skip = new Set(["local-prompt", "run-start", "absence", "seam", "resync"]);
+    for (const row of document_.querySelectorAll("[data-row]")) {
+      const name = row.getAttribute("data-row") ?? "";
+      if (skip.has(name)) continue;
+      const carries =
+        row.querySelector("[data-event-id], [data-event-ids]") !== null ||
+        row.hasAttribute("data-event-id");
+      expect(carries, `id-less event row: ${name}`).toBe(true);
+    }
+  });
+
+  it("renders no presentation row in the history prefix, and the notice beside the echo stays (§8 C3)", () => {
+    const rows = panelRows(historyItems, withEcho);
+    const seamAt = rows.findIndex((row) => row.row === "seam");
+    expect(seamAt).toBeGreaterThan(-1);
+    const prefix = rows.slice(0, seamAt);
+    expect(prefix.some((row) => row.row === "local-prompt" || row.row === "run-start")).toBe(false);
+    // The reopen absence notice renders unchanged and true in the same
+    // transcript that carries the echo: the echo does not make it false.
+    const document_ = renderRows(rows);
+    expect(document_.querySelector('[data-absence="user_prompt"]')?.textContent).toBe(
+      copy.stream.absence.user_prompt,
+    );
+    expect(document_.querySelector('[data-row="local-prompt"]')).not.toBeNull();
+  });
+
+  it("renders the observer tab's reopen with the notice and no echo — byte-identical notice (§8 C3)", () => {
+    // Two-tab testable: the second tab has history only (no echo entry — the
+    // echo is never minted by history, resync, or observer tabs).
+    const observer = renderRows(panelRows(historyItems, []));
+    expect(observer.querySelector('[data-row="local-prompt"]')).toBeNull();
+    expect(observer.querySelector('[data-row="run-start"]')).toBeNull();
+    const originating = renderRows(panelRows(historyItems, withEcho));
+    expect(observer.querySelector('[data-absence="user_prompt"]')?.textContent).toBe(
+      originating.querySelector('[data-absence="user_prompt"]')?.textContent,
+    );
+  });
+});

@@ -33,16 +33,17 @@
 }
 
 /*
- * One row for both header facts: §8's page counter on the left, §7.4's stream
- * state (or the runtime fault that outranks it) on the right. The counter used
- * to own a full-width bordered row of its own for one short sentence, which at
- * 1280×800 is ~28px of an ~800px column spent on furniture.
+ * §4.1(h) C25's exception row, directly below the tab strip: §7.4's stream
+ * state (or the runtime fault that outranks it) leading, then the resync
+ * readout, then §8's page counter — one shared row when both mount. The
+ * counter used to own a full-width bordered row of its own for one short
+ * sentence, which at 1280×800 is ~28px of an ~800px column spent on furniture.
  */
 .header {
   flex: none;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: var(--gap-inline);
   padding: var(--space-1) var(--space-3);
   min-height: var(--target-min);
@@ -75,6 +76,17 @@
   display: flex;
   align-items: center;
   padding-left: var(--space-2);
+}
+
+/*
+ * §4.1(h) C25: the collapse chevron is the strip's TRAILING item — after the
+ * `+`, pushed to the row's far edge so it reads as column chrome rather than
+ * as a create action, and the strip's last interactive element in every state.
+ */
+.tabsCollapse {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
 }
 
 /* The `+` anchors its menu; the menu is drawn only while open (§7.1(b)(2)). */
@@ -152,16 +164,26 @@
   flex-direction: column;
 }
 
+/*
+ * §7.4 C20 (amended 2026-09-02): the Latest pill lives in the GUTTER, off the
+ * cards. The scroller reserves a trailing strip — the edge the scrollbar owns —
+ * by padding, so no chip, text row, or presentation row extends into it; the
+ * pill anchors inside that strip, written vertically so a word fits a gutter.
+ * Its bounding box therefore intersects no row's at any scroll position.
+ */
 .scroll {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+  padding-right: var(--space-5);
 }
 
-.jumpLatest {
+.scrollHost .jumpLatest {
   position: absolute;
-  right: var(--space-2);
+  right: var(--space-0);
   bottom: var(--space-2);
+  writing-mode: vertical-rl;
+  padding: var(--space-2) var(--space-0);
 }
 
 /* Empty state, tabs, transcript — the region that takes the leftover height and

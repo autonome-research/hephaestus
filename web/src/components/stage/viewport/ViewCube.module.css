@@ -13,8 +13,12 @@
  * The vocabulary stays CLOSED at `cameras.py`'s eight names (§5.5 survives); the
  * LAYOUT becomes a 3×3 orientation cross with `front` on its own named-views
  * row, and selected state becomes the accent-QUIET fill `Button` already owns.
+ * §5.5 C19 pins where the named row lives: INSIDE the view-cube plate.
  */
 
+/* §5.5 C19: `front` joins the view-cube PLATE. The named-views row keeps its
+   own row (§4.7's category split survives) but the chrome moves up: ONE plate,
+   one shadow, one bounding box in the corner — not two stacked plates. */
 .cube {
   position: absolute;
   top: var(--space-3);
@@ -22,7 +26,12 @@
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: var(--gap-stack);
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-card);
+  background: var(--surface-overlay);
+  box-shadow: var(--elev-popover);
 }
 
 /* The orientation cross. Row 1: +Z. Row 2: -X · iso · +X. Row 3: -Z.
@@ -32,21 +41,11 @@
   display: grid;
   grid-template-columns: repeat(3, auto);
   gap: 2px; /* one-off: a control cluster is tighter than --gap-stack */
-  padding: var(--space-1);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-card);
-  background: var(--surface-overlay);
-  box-shadow: var(--elev-popover);
 }
 
 .named {
   display: flex;
   gap: 2px; /* one-off: matches the cross above it */
-  padding: var(--space-1);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-card);
-  background: var(--surface-overlay);
-  box-shadow: var(--elev-popover);
 }
 
 .free {

@@ -1,8 +1,11 @@
 // Copyright 2026 The Hephaestus Authors
 // SPDX-License-Identifier: Apache-2.0
 //
-// The Stream header row (INTERFACE.md §7.4, §8, both amended 2026-09-01 under
-// §0.2b — the badge and the page counter are exception-only).
+// The Stream column's EXCEPTION ROW (INTERFACE.md §7.4, §8, both amended
+// 2026-09-01 under §0.2b — the badge and the page counter are exception-only;
+// §4.1(h) C25, amended 2026-09-02, gives the row its named home: directly
+// below the session tab strip and above the transcript scroll region, one
+// shared row when both mount, badge leading).
 //
 // A SEPARATE COMPONENT, and the reason is testability rather than taste.
 // `StreamPanel` mounts a query client, a socket and the workspace store, so the
@@ -70,25 +73,12 @@ export function StreamHeader({
 
   return (
     <div className={styles["header"]}>
-      {/* §8(a): a read that did not complete stays loud, and a bounded walk says
-          how many pages of recorded transcript sit above what is drawn. The
-          count that used to render for every session — "1 page of recorded
-          transcript" — is a row spent saying there is nothing to say. */}
-      {bar && history !== null ? (
-        <span className={styles["historyBar"]} data-history-bar={history.state}>
-          {/* A failed read has no count to report, and "0 pages" beside a
-              stated failure claims a number the load never reached. The
-              panel root's `data-history-pages` still carries the count. */}
-          {history.state === "failed"
-            ? copy.stream.historyFailed
-            : copy.stream.historyPages(history.pages)}
-        </span>
-      ) : null}
-
-      {/* §7.4(a): four states and a runtime fault. When a fault is known the
-          badge shows THAT, because it is the fact that changes what the
-          operator does next; the socket's own answer stays on the panel root's
-          `data-stream`, so a reader inspecting the DOM can tell them apart. */}
+      {/* §4.1(h) C25: one shared exception row directly below the tab strip,
+          BADGE LEADING — §7.4(a): four states and a runtime fault. When a
+          fault is known the badge shows THAT, because it is the fact that
+          changes what the operator does next; the socket's own answer stays on
+          the panel root's `data-stream`, so a reader inspecting the DOM can
+          tell them apart. */}
       {badge ? (
         <Badge
           status={fault !== null ? "error" : STREAM_STATUS[status]}
@@ -102,6 +92,21 @@ export function StreamHeader({
       {count ? (
         <span className={styles["resyncCount"]} data-resync-count={resyncs}>
           {resyncs}
+        </span>
+      ) : null}
+
+      {/* §8(a): a read that did not complete stays loud, and a bounded walk says
+          how many pages of recorded transcript sit above what is drawn. The
+          count that used to render for every session — "1 page of recorded
+          transcript" — is a row spent saying there is nothing to say. */}
+      {bar && history !== null ? (
+        <span className={styles["historyBar"]} data-history-bar={history.state}>
+          {/* A failed read has no count to report, and "0 pages" beside a
+              stated failure claims a number the load never reached. The
+              panel root's `data-history-pages` still carries the count. */}
+          {history.state === "failed"
+            ? copy.stream.historyFailed
+            : copy.stream.historyPages(history.pages)}
         </span>
       ) : null}
     </div>

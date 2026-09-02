@@ -43,6 +43,7 @@ import { defaultModel, modelsFrom, showModelChrome } from "../../src/stream/comp
 import {
   CHIP_ORDER,
   SUMMARY_ORDER,
+  addViewOnLine,
   chipsFor,
   envelopeFor,
   summaryFor,
@@ -411,22 +412,69 @@ describe("the DOM contract", () => {
     expect(html).toContain("data-composer-cancel");
   });
 
-  it("has exactly one button-role element in the resting action row (§7A.10(a))", () => {
-    // The clause's own test, scoped to the ACTION ROW as §7A.10(a)'s testable
-    // now says (amended 2026-09-01 to match its own normative sentence): (c)
-    // puts `[data-context-disclose]` inside the same <form>, attached to the
-    // summary line, so a form-scoped count is two at rest by design. Send is
-    // the one action; Cancel is absent because the state is not `available`.
+  it("has exactly one button-role element in the resting input row (§7A.10(a))", () => {
+    // The clause's own test, restated 2026-09-02 (§0.2c, C15) to the INPUT
+    // ROW — the action row it used to query no longer mounts at rest, and a
+    // query against a row that does not mount returns zero, not one. (c)
+    // still puts `[data-context-disclose]` inside the same <form>, attached
+    // to the summary line, so a form-scoped count is two at rest by design;
+    // the rule is that the row holding the send target holds exactly one.
     const html = markup();
     const host = document.createElement("div");
     host.innerHTML = html;
-    const actions = host.querySelector("[data-composer-send]")?.parentElement;
-    expect(actions).not.toBeNull();
-    expect(actions?.querySelectorAll("button, [role='button']").length).toBe(1);
+    const row = host.querySelector("[data-composer-input-row]");
+    expect(row).not.toBeNull();
+    expect(row?.contains(host.querySelector("[data-composer-input]"))).toBe(true);
+    const buttons = row?.querySelectorAll("button, [role='button']");
+    expect(buttons?.length).toBe(1);
+    expect(buttons?.[0]?.hasAttribute("data-composer-send")).toBe(true);
     // Send keeps disabled-with-reason: a PRIMARY action that vanished would
     // leave no target for "why can't I send?", which is the opposite case
     // from Cancel.
     expect(host.querySelector("[data-composer-send]")?.getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("is exactly two rows at rest with a model selected, and mounts no third (C15)", () => {
+    // §7A.10's 2026-09-02 amendment, both halves. POSITIVE: the form's
+    // directly rendered rows number two — the context row (§7A.3(a)'s summary
+    // line, hosting the model id at its right end) and the input row (the
+    // textarea with Send on the same row). NEGATIVE: no meta line and no
+    // action row mounts at rest, empty or otherwise.
+    const html = markup({}, { providers: providersDocument() });
+    const host = document.createElement("div");
+    host.innerHTML = html;
+    const form = host.querySelector("[data-composer]");
+    expect(form).not.toBeNull();
+    const rows = [...(form?.children ?? [])];
+    expect(rows).toHaveLength(2);
+    // Row 1 is the context row and the model id lies within it.
+    expect(rows[0]?.hasAttribute("data-context-summary")).toBe(true);
+    const model = form?.querySelector("[data-composer-model]");
+    expect(model).not.toBeNull();
+    expect(rows[0]?.contains(model ?? null)).toBe(true);
+    // Row 2 is the input row and Send lies within it.
+    expect(rows[1]?.hasAttribute("data-composer-input-row")).toBe(true);
+    expect(rows[1]?.contains(form?.querySelector("[data-composer-send]") ?? null)).toBe(true);
+    // The struck third rows stay struck.
+    expect(html).not.toContain("data-composer-hint");
+    expect(html).not.toContain("data-composer-cancel");
+  });
+
+  it("adds the Cancel row only as the running exception (C15's loud path)", () => {
+    // The exception half of the two-row rule: exceptional states add their
+    // rows AS SPECIFIED and stay loud. Cancel's row mounts while a run is
+    // cancellable (§7A.10(b)) — and it is a third row then, outside the input
+    // row, so the restated (a) count still holds during the exception.
+    const html = markup({ liveRunId: "run-live", streamLive: true }, { providers: providersDocument() });
+    const host = document.createElement("div");
+    host.innerHTML = html;
+    const form = host.querySelector("[data-composer]");
+    expect([...(form?.children ?? [])].length).toBe(3);
+    const cancel = form?.querySelector("[data-composer-cancel]");
+    expect(cancel).not.toBeNull();
+    expect(host.querySelector("[data-composer-input-row]")?.contains(cancel ?? null)).toBe(false);
+    const row = host.querySelector("[data-composer-input-row]");
+    expect(row?.querySelectorAll("button, [role='button']").length).toBe(1);
   });
 
   it("puts no data-source on any context chip", () => {
@@ -502,7 +550,10 @@ describe("the DOM contract", () => {
     expect(toggle?.closest("[data-context-summary]")).not.toBeNull();
   });
 
-  it("draws the model as quiet text in the meta line, not a chip in the actions (§7A.10(d))", () => {
+  it("draws the model as quiet text at the context row's right end (§7A.10(d), C15)", () => {
+    // AMENDED 2026-09-02 (§0.2c, C15): the meta line is struck; the model
+    // id's home is the context row — one line answers both "what will be
+    // sent" and "to what".
     const html = markup({}, { providers: providersDocument() });
     const host = document.createElement("div");
     host.innerHTML = html;
@@ -511,8 +562,11 @@ describe("the DOM contract", () => {
     // drawing moved. `providers.models.id` is a server fact (§4.6).
     expect(model?.getAttribute("data-composer-provider")).toBe("heph-fake");
     expect(model?.querySelector("[data-source='providers.models.id']")).not.toBeNull();
-    expect(model?.closest("[data-composer-send]")).toBeNull();
-    expect(host.querySelector("[data-composer-send]")?.parentElement?.contains(model!)).toBe(false);
+    // Its box lies within the context row's box, and nowhere near the input
+    // row or a control.
+    expect(model?.closest("[data-context-summary]")).not.toBeNull();
+    expect(model?.closest("[data-composer-input-row]")).toBeNull();
+    expect(model?.closest("button, [role='button']")).toBeNull();
   });
 });
 
@@ -590,6 +644,62 @@ describe("the resting context summary", () => {
     const summary = summaryFor(envelopeFor(state, [], NOTHING), chipsFor(state, []), NOTHING);
     expect(summary.removed).toEqual([]);
     expect(summary.keys).toContain("part");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §7A.3 (C22) — "Add current view" surfaces where the gap is visible
+
+describe("the resting line's Add current view predicate", () => {
+  const SELECTION = {
+    selection_id: "12",
+    kind: "face",
+    bundle_ref: "artifact:selection-bundle:x",
+  } as const;
+
+  it("renders exactly when view and selection are absent and a selection exists", () => {
+    // The one moment the affordance matters: the operator excluded both
+    // members, so the envelope carries neither, and the resting line shows
+    // the gap without the disclosure open.
+    const state = stateWith({ part: "tread", selection: SELECTION });
+    const dropped: ReadonlySet<ContextMember> = new Set(["view", "selection"]);
+    const envelope = envelopeFor(state, [], dropped);
+    expect(envelope?.view).toBeUndefined();
+    expect(envelope?.selection).toBeUndefined();
+    expect(addViewOnLine(envelope, true, false)).toBe(true);
+    // The null-envelope shape of the same gap: everything dropped.
+    expect(addViewOnLine(null, true, false)).toBe(true);
+  });
+
+  it("does not render when the members are already in the envelope", () => {
+    // Negative half 1. A selection that exists and was not dropped puts both
+    // members in the envelope, and there is no gap to close.
+    const state = stateWith({ part: "tread", selection: SELECTION });
+    const envelope = envelopeFor(state, [], NOTHING);
+    expect(envelope?.view).toBeDefined();
+    expect(envelope?.selection).toBeDefined();
+    expect(addViewOnLine(envelope, true, false)).toBe(false);
+    // …and one member alone is not the gap: `view` present, selection dropped.
+    const halfDropped = envelopeFor(state, [], new Set<ContextMember>(["selection"]));
+    expect(halfDropped?.view).toBeDefined();
+    expect(addViewOnLine(halfDropped, true, false)).toBe(false);
+  });
+
+  it("does not render when no selection exists", () => {
+    // Negative half 2 — the blank canvas included: `envelope === null` with no
+    // selection is not the C22 gap, it is §7A.3's blank canvas, and the
+    // disclosure's own copy is the route to Add current view there.
+    expect(addViewOnLine(null, false, false)).toBe(false);
+    const state = stateWith({ part: "tread" });
+    expect(addViewOnLine(envelopeFor(state, [], NOTHING), false, false)).toBe(false);
+  });
+
+  it("does not render while the disclosure is open", () => {
+    // Negative half 3: the form's copy of the control is showing, and two
+    // live copies of one affordance is the same control twice.
+    const state = stateWith({ part: "tread", selection: SELECTION });
+    const dropped: ReadonlySet<ContextMember> = new Set(["view", "selection"]);
+    expect(addViewOnLine(envelopeFor(state, [], dropped), true, true)).toBe(false);
   });
 });
 
@@ -1061,6 +1171,52 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     await act(async () => undefined);
   });
 
+  it("appends the local-prompt echo on Send, verbatim, before the POST settles (§7A.5 C1)", async () => {
+    // The echo is minted from the textarea's own value on the same submit that
+    // calls `sessionPromptStore.remember` — not from the response.
+    let resolveTurn: (value: PromptDocument) => void = () => undefined;
+    vi.mocked(sendPrompt).mockImplementation(
+      () => new Promise<PromptDocument>((resolve) => (resolveTurn = resolve)),
+    );
+    const onEcho = vi.fn();
+    const root = mount({ onEcho });
+    type(root, "Chamfer the lid, 0.5 mm.");
+    pressEnter(root);
+    expect(onEcho).toHaveBeenCalledExactlyOnceWith("Chamfer the lid, 0.5 mm.");
+    resolveTurn({
+      status: "ok",
+      session_id: "sess-1",
+      run_id: "run-1",
+      run_status: "completed",
+      terminal: null,
+      events: [],
+      context: null,
+    });
+    await act(async () => undefined);
+    // The response settles the turn; it does not mint a second echo.
+    expect(onEcho).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves the echo standing beside data-send-state=unknown on a lost POST (C1/C2)", async () => {
+    // The negative half: nothing retracts the echo — the words were sent into
+    // uncertainty, and hiding them would un-say something the operator said.
+    vi.mocked(sendPrompt).mockRejectedValue(new Error("the POST did not come back"));
+    const onEcho = vi.fn();
+    const root = mount({ onEcho });
+    type(root, "Bump the kerf to 0.25 mm.");
+    pressEnter(root);
+    await act(async () => undefined);
+    expect(composer(root).getAttribute("data-send-state")).toBe("unknown");
+    expect(onEcho).toHaveBeenCalledTimes(1);
+    // A second, deliberate Send appends a second echo.
+    const retry = root.querySelector<HTMLButtonElement>("[data-composer-retry]");
+    act(() => {
+      retry?.click();
+    });
+    await act(async () => undefined);
+    expect(onEcho).toHaveBeenCalledTimes(2);
+  });
+
   it("summarises the envelope at rest and mounts NO chip row (§7A.3(a)(c))", () => {
     workspaceStore.reset({ ...DEFAULT_STATE, part: "kerf_card" });
     const root = mount();
@@ -1178,6 +1334,65 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     const line = root.querySelector("[data-context-summary]");
     expect(line?.querySelector('[data-context-removed="part"]')).not.toBeNull();
     expect(line?.querySelector('[data-context-removed="view"]')).not.toBeNull();
+  });
+
+  it("surfaces Add current view on the resting line exactly while the gap is visible (C22)", () => {
+    // §7A.3, amended 2026-09-02 (§0.2c, C22), against the live DOM: all three
+    // negative halves and the positive, in the order an operator reaches them.
+    workspaceStore.reset({
+      ...DEFAULT_STATE,
+      part: "kerf_card",
+      selection: { selection_id: "12", kind: "face", bundle_ref: "artifact:selection-bundle:x" },
+    });
+    const root = mount();
+    const lineAdd = (): HTMLButtonElement | null =>
+      root.querySelector<HTMLButtonElement>("[data-context-summary] [data-context-add-view]");
+    const keysNow = (): string[] =>
+      (root.querySelector("[data-context-summary]")?.getAttribute("data-context-keys") ?? "")
+        .split(" ")
+        .filter((key) => key !== "");
+
+    // SATISFIED: a live selection rides in the envelope with `view`, so there
+    // is no gap and the line mounts no control.
+    expect(keysNow()).toContain("selection");
+    expect(lineAdd()).toBeNull();
+
+    // Exclude both members through the form. While the disclosure is OPEN the
+    // line still mounts nothing — the form's copy of the control is showing,
+    // and two live copies of one affordance is the same control twice.
+    act(() => {
+      root.querySelector<HTMLButtonElement>("[data-context-disclose]")?.click();
+    });
+    act(() => {
+      root.querySelector<HTMLButtonElement>('[data-context-drop="view"]')?.click();
+    });
+    act(() => {
+      root.querySelector<HTMLButtonElement>('[data-context-drop="selection"]')?.click();
+    });
+    expect(lineAdd()).toBeNull();
+    expect(root.querySelector("[data-context-preview] [data-context-add-view]")).not.toBeNull();
+
+    // Close the disclosure: the gap is visible at rest and the affordance
+    // surfaces on the resting line, quiet, at the line's end.
+    act(() => {
+      root.querySelector<HTMLButtonElement>("[data-context-disclose]")?.click();
+    });
+    const control = lineAdd();
+    expect(control).not.toBeNull();
+    expect(control?.getAttribute("data-variant")).toBe("quiet");
+    expect(keysNow()).not.toContain("view");
+    expect(keysNow()).not.toContain("selection");
+
+    // ACTIVATE: exactly what the form's copy does — the members join the
+    // `added` set and hence `data-context-keys` — and the affordance unmounts
+    // from the line because the gap it closed is gone. The (d) equality is
+    // untouched: the keys name exactly what would be sent, before and after.
+    act(() => {
+      control?.click();
+    });
+    expect(lineAdd()).toBeNull();
+    expect(keysNow()).toContain("view");
+    expect(keysNow()).toContain("selection");
   });
 
   it("says the blank canvas in one word, and mounts no chip row (#79)", () => {

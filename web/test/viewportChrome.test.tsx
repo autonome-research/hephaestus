@@ -25,8 +25,14 @@ import { createRoot, type Root } from "react-dom/client";
 import { act } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import { Viewport, ViewportAbsence } from "../src/components/stage/viewport/Viewport";
+import {
+  Viewport,
+  ViewportAbsence,
+  emptyPinAbsence,
+} from "../src/components/stage/viewport/Viewport";
 import { ExplodeSlider } from "../src/components/stage/viewport/ExplodeSlider";
+import { SectionControl } from "../src/components/stage/viewport/SectionControl";
+import { ViewCube } from "../src/components/stage/viewport/ViewCube";
 import { DEFAULT_STATE } from "../src/state/workspace";
 import { workspaceStore } from "../src/state/react";
 
@@ -135,6 +141,98 @@ describe("ViewportAbsence — a title that is the whole fact is the whole state"
   it("still shows a refusal reason on a state that would otherwise be title-only", () => {
     const host = plate("no-pin", "malformed_gltf");
     expect(host.querySelector('[data-refusal-reason="malformed_gltf"]')).not.toBeNull();
+  });
+});
+
+describe("the not-built absence — §5.5 C10, both halves of the never-renders rule", () => {
+  it("composes to not-built ONLY when a part is selected AND its build state is not_built", () => {
+    expect(emptyPinAbsence("tread", "not_built")).toBe("not-built");
+    // The negative half, case by case: no selection, a failed build, an
+    // unanswered projection — every one stays `no-pin`, never `not-built`.
+    expect(emptyPinAbsence(null, "not_built")).toBe("no-pin");
+    expect(emptyPinAbsence("tread", "error")).toBe("no-pin");
+    expect(emptyPinAbsence("tread", "ok")).toBe("no-pin");
+    expect(emptyPinAbsence("tread", undefined)).toBe("no-pin");
+  });
+
+  it("names the part in the title and carries exactly the two remedies in the body", () => {
+    const host = document.createElement("div");
+    host.innerHTML = renderToStaticMarkup(
+      <ViewportAbsence state="not-built" refusalReason={null} part="tread" />,
+    );
+    expect(host.querySelector('[data-viewport-absence="not-built"]')).not.toBeNull();
+    // The title names the part — a server fact, composed not derived.
+    const title = host.querySelector("[data-density] > p")?.textContent ?? "";
+    expect(title).toContain("tread");
+    // Remedy one: the agent below. Remedy two: the CLI command, in `.code`.
+    const body = host.querySelector("[data-density] > div")?.textContent ?? "";
+    expect(body).toContain("agent");
+    expect(host.querySelector("[data-not-built-command]")?.textContent).toBe("heph build tread");
+  });
+});
+
+describe("ViewCube — front joins the plate (§5.5 C19)", () => {
+  it("renders the named-views row inside the ONE [data-view-cube] box", () => {
+    const host = document.createElement("div");
+    host.innerHTML = renderToStaticMarkup(<ViewCube />);
+    const cubes = host.querySelectorAll("[data-view-cube]");
+    expect(cubes).toHaveLength(1);
+    // `front` — the one named view — is inside the same bounding box as the
+    // orientation cross, not a free-floating control beside it.
+    expect(cubes[0]?.querySelector('[data-view="front"]')).not.toBeNull();
+    expect(cubes[0]?.querySelector('[data-view="iso"]')).not.toBeNull();
+  });
+});
+
+describe("the bottom band yields in C18's fixed order (§5.5)", () => {
+  afterEach(() => {
+    workspaceStore.reset(DEFAULT_STATE);
+  });
+
+  it("explode collapses to its disclosure when yielded, and not otherwise", () => {
+    const host = document.createElement("div");
+    host.innerHTML = renderToStaticMarkup(<ExplodeSlider yielded />);
+    expect(host.querySelector("[data-explode-collapsed]")).not.toBeNull();
+    expect(host.querySelector("[data-testid='explode-slider']")).toBeNull();
+
+    const wide = document.createElement("div");
+    wide.innerHTML = renderToStaticMarkup(<ExplodeSlider yielded={false} />);
+    expect(wide.querySelector("[data-explode-collapsed]")).toBeNull();
+    expect(wide.querySelector("[data-testid='explode-slider']")).not.toBeNull();
+  });
+
+  it("the section control folds to a disclosure when yielded, keeping the cut on the attribute", () => {
+    // `renderToStaticMarkup` reads the SERVER snapshot (DEFAULT_STATE), so a
+    // non-default plane needs a client mount.
+    workspaceStore.reset({ ...DEFAULT_STATE, section_plane: "+Z@0" });
+    const mountWith = (yielded: boolean): HTMLElement => {
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      const root = createRoot(host);
+      act(() => {
+        root.render(<SectionControl bounds={null} yielded={yielded} />);
+      });
+      return host;
+    };
+
+    const host = mountWith(true);
+    const control = host.querySelector("[data-section-yielded]");
+    expect(control).not.toBeNull();
+    // The band yields the CONTROL, never the cut.
+    expect(control?.getAttribute("data-section-plane")).toBe("+Z@0");
+    expect(host.querySelector("[data-testid='section-axis']")).toBeNull();
+    expect(host.querySelector("[data-section-disclose]")).not.toBeNull();
+
+    const wide = mountWith(false);
+    expect(wide.querySelector("[data-section-yielded]")).toBeNull();
+    expect(wide.querySelector("[data-testid='section-axis']")).not.toBeNull();
+  });
+
+  it("a yielded section control with NO cut keeps the plain enable button", () => {
+    const host = document.createElement("div");
+    host.innerHTML = renderToStaticMarkup(<SectionControl bounds={null} yielded />);
+    expect(host.querySelector("[data-section-yielded]")).toBeNull();
+    expect(host.querySelector("[data-testid='section-enable']")).not.toBeNull();
   });
 });
 

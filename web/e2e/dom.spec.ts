@@ -117,6 +117,57 @@ test("the Results panel renders the same geometries the tree does (G4.2)", async
   expect(labels).toEqual(build.geometries.map((geometry) => geometry.label));
 });
 
+test("the visibility column prints its verb once and its toggles stay compact (§6.1 C16)", async ({
+  page,
+}) => {
+  const build = await api<BuildDocument>(`/parts/${PART}/build`);
+  await openInspector(page, "results");
+  const panel = page.locator("[data-inspector-panel='results']");
+  // The verb renders exactly once, in the column header — never in a row.
+  await expect(panel.locator("[data-visibility-header]")).toHaveCount(1);
+  const toggles = panel.locator("[data-visibility-toggle]");
+  await expect(toggles).toHaveCount(build.geometry_count);
+  for (const toggle of await toggles.all()) {
+    // ≤ 2× target-min (48px), no visible word, complete accessible name.
+    const box = await toggle.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box?.width ?? Infinity).toBeLessThanOrEqual(48);
+    expect((await toggle.textContent())?.trim()).toBe("");
+    const name = (await toggle.getAttribute("aria-label")) ?? "";
+    const label = (await toggle.getAttribute("data-visibility-toggle")) ?? "";
+    expect(label).not.toBe("");
+    expect(name).toContain(label);
+  }
+});
+
+test("METRICS splits into two column groups only when the drawer is wide (§4.7 C27)", async ({
+  page,
+}) => {
+  await openInspector(page, "results");
+  const wrapper = page.locator("[data-inspector-panel='results'] [data-metrics-split]");
+  await expect(wrapper).toBeVisible();
+  /** Distinct row left-offsets at a forced container width. */
+  const groupCount = async (width: string): Promise<number> => {
+    await wrapper.evaluate((node, w) => {
+      (node as HTMLElement).style.width = w;
+    }, width);
+    return wrapper.evaluate((node) => {
+      const lefts = new Set<number>();
+      for (const row of node.querySelectorAll("[data-metric]")) {
+        lefts.add(Math.round(row.getBoundingClientRect().left));
+      }
+      return lefts.size;
+    });
+  };
+  // ≥640px of CONTAINER width: two label/value/unit groups, row-first.
+  expect(await groupCount("800px")).toBe(2);
+  // Below it: the single-column form, unchanged.
+  expect(await groupCount("500px")).toBe(1);
+  await wrapper.evaluate((node) => {
+    (node as HTMLElement).style.removeProperty("width");
+  });
+});
+
 // --------------------------------------------------------------------------
 // G4.3 — the properties panel shows all metadata fields
 

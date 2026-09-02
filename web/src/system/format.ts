@@ -63,6 +63,16 @@ export function metricLabel(key: string): string {
 }
 
 /**
+ * A solids count with its unit word inflected (§6.1, C17): `1 solid`,
+ * `N solids` for N≠1. "`1 solids` does not ship." The count itself is always
+ * the served number — only the unit word inflects, and it inflects HERE,
+ * because this file is already the one place a number becomes a string.
+ */
+export function formatSolids(count: number): string {
+  return count === 1 ? "1 solid" : `${String(count)} solids`;
+}
+
+/**
  * Significant digits for display. Six is enough to distinguish any measurement
  * this workspace reports and short enough to scan in a column.
  */
@@ -180,6 +190,19 @@ export function formatObservedAt(epochSeconds: number, now: Date = new Date()): 
     return new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(deltaDays, "day");
   }
   return at.toLocaleDateString();
+}
+
+/**
+ * A created time as `hh:mm`, for the §7.1 C6 no-remembered-prompt tab title
+ * (`orchestrator · 14:32`). Deliberately not `formatObservedAt`: a tab title is
+ * a stable name, and a name that mutates from a clock into "yesterday" as the
+ * page sits open renames the tab under the reader. Presentation only — the
+ * epoch stays on the projection.
+ */
+export function formatClock(epochSeconds: number): string {
+  const at = new Date(epochSeconds * 1000);
+  if (Number.isNaN(at.getTime())) return String(epochSeconds);
+  return `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
 }
 
 /** A byte count, for the §8 pager. Decimal units, because the server counts bytes. */

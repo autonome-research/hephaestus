@@ -7,7 +7,11 @@
  * four classes with one shared `border` declaration — is gone.
  */
 
+/* §5.5 C18: one occupant of the viewport's bottom flex band, at its natural
+   size — never stretched, never absolutely stacked over a neighbour. */
 .control {
+  flex: none;
+  pointer-events: auto;
   display: flex;
   align-items: center;
   gap: var(--gap-inline);

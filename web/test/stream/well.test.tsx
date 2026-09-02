@@ -222,8 +222,8 @@ describe("the well spends its height on the transcript", () => {
     expect(panel).toContain("const stripCreate");
     expect(panel).toMatch(/fault === null && \(cannotPrompt \|\| rows\.length > 0\)/);
     expect(panel).toContain("create={stripCreate}");
-    const afterTabs = panel.slice(panel.indexOf("<SessionTabs"));
-    expect(afterTabs).not.toContain("{createAction}");
+    const tabsRegion = panel.slice(panel.indexOf("<SessionTabs"), panel.indexOf("<StreamHeader"));
+    expect(tabsRegion).not.toContain("{createAction}");
   });
 
   it("focuses the composer after New session (#61)", () => {
@@ -238,6 +238,20 @@ describe("the well spends its height on the transcript", () => {
     expect(panel).toContain("data-transcript-scroll");
     expect(panel).toContain("data-jump-latest");
     expect(source("components/stream/StreamHeader.tsx")).toContain("copy.stream.historyFailed");
+  });
+
+  it("anchors the Latest pill in the scroll gutter, off the cards (§7.4 C20)", () => {
+    // The scroller reserves a trailing strip by padding, and the pill anchors
+    // inside it, written vertically so a word fits a gutter. The pairwise
+    // non-intersection half is the e2e (`stream.spec.ts`); this is the
+    // mechanism that makes it hold at every scroll position.
+    expect(stream).toMatch(/\.scroll\s*\{[^}]*padding-right:\s*var\(--space-5\)/);
+    const pill = stream.slice(stream.indexOf(".scrollHost .jumpLatest"));
+    expect(pill).toMatch(/position:\s*absolute/);
+    expect(pill).toMatch(/writing-mode:\s*vertical-rl/);
+    expect(pill).toMatch(/right:\s*var\(--space-0\)/);
+    // Mount condition unchanged: only while the view is not following.
+    expect(panel).toMatch(/\{following \? null : \(/);
   });
 
   it("states a failed read in one string, and keeps no second spelling of it", () => {
@@ -334,7 +348,10 @@ describe("the session tab row is a name, not three metadata strings", () => {
     expect(button?.getAttribute("data-thread-state")).toBe("unlinked");
     expect(button?.textContent ?? "").not.toMatch(/no parent/i);
     expect(button?.textContent ?? "").toContain(copy.stream.projectSession);
-    expect(button?.textContent ?? "").toContain(copy.composer.createOrchestrator);
+    // §7.1 C6: the fallback title is the profile word, never the create
+    // affordance's wording.
+    expect(button?.textContent ?? "").toContain(copy.stream.profile.orchestrator);
+    expect(button?.textContent ?? "").not.toContain(copy.composer.createOrchestrator);
     expect(button?.getAttribute("title") ?? "").toContain("cannot be recovered");
     expect(button?.getAttribute("data-session-id")).toBe("sess-kerf");
   });
@@ -377,7 +394,11 @@ describe("the composer is usable, and says how it is used", () => {
 
   it("keeps the idle composer one row, and the hint out of it", () => {
     expect(composer).toMatch(/promptRows = promptFocused \|\| text\.trim\(\) !== "" \? 3 : 1/);
-    expect(composer).toMatch(/\{promptFocused \|\| text !== "" \? \(/);
+    // AMENDED 2026-09-02 (§0.2c, C15): the meta line that used to carry the
+    // hint is struck outright — the keyboard binding lives on Send's `title`
+    // and no `data-composer-hint` row mounts in any state.
+    expect(composer).not.toContain("data-composer-hint");
+    expect(composer).toMatch(/title=\{sendHint\}/);
   });
 });
 
@@ -650,6 +671,23 @@ describe("the create affordance is one `+` in the strip (§7.1(b))", () => {
     }
   });
 
+  it("is a quiet button with a worded accessible name, never a bare `+` (§3.9 C29)", () => {
+    // Both halves: the control matches the quiet-button recipe (control
+    // surface, `--border-control`, focus ring come with `data-variant`), and
+    // its accessible name is a non-empty phrase that is not the literal glyph.
+    for (const part of [null, "kerf_card"]) {
+      const drawn = strip(part);
+      const button = drawn.querySelector("button");
+      expect(button?.getAttribute("data-variant"), String(part)).toBe("quiet");
+      const name = button?.getAttribute("aria-label") ?? "";
+      expect(name, String(part)).not.toBe("");
+      expect(name, String(part)).not.toBe("+");
+      // No unbordered accent glyph: the `+` is an Icon inside a Button, not a
+      // text node.
+      expect(button?.textContent ?? "", String(part)).not.toContain("+");
+    }
+  });
+
   it("activates the one create directly when no part is selected", () => {
     // A menu with one entry is a click that reports nothing. The `+` IS the
     // action, and it keeps the hook that addresses it.
@@ -735,27 +773,104 @@ describe("the create affordance is one `+` in the strip (§7.1(b))", () => {
   });
 });
 
-describe("the shell's eyebrow keeps its control and loses its label (§4.1(e), (f))", () => {
+describe("§4.1(h) C25 — the eyebrow band is struck; the chevron joins the strip", () => {
   const shell = source("components/Shell.tsx");
-  const band = shell.slice(
-    shell.indexOf('<div className={styles["streamHeader"]}>'),
-    shell.indexOf("<StreamPanel />"),
-  );
+  const panel = source("components/stream/StreamPanel.tsx");
 
-  it("draws no title in the band, and keeps the column's name on the aside", () => {
-    expect(band).not.toContain("copy.stream.title");
-    expect(band).not.toContain("streamTitle");
+  it("renders no streamHeader band and no collapse control in the shell", () => {
+    // The negative half: no element above the transcript matches the former
+    // `streamHeader`, in source or stylesheet, and the shell no longer mounts
+    // the chevron — the strip does.
+    expect(shell).not.toContain("streamHeader");
+    expect(shell).not.toContain("data-stream-collapse");
+    expect(shell).not.toContain("streamTitle");
     expect(shell).toContain('aria-label={copy.stream.title}');
-    expect(source("components/Shell.module.css")).not.toContain(".streamTitle");
+    expect(css("components/Shell.module.css")).not.toContain(".streamHeader");
+    expect(css("components/Shell.module.css")).not.toContain(".streamTitle");
   });
 
-  it("holds exactly one child element, and it is the collapse affordance", () => {
-    expect(band).toContain("data-stream-collapse");
-    expect(band.match(/<[A-Za-z]/g) ?? []).toHaveLength(2); // the band and its one child
-    expect(band).toContain("iconLabel={copy.stream.collapse}");
+  it("mounts the chevron from the panel, as the strip's trailing item", () => {
+    // The hook, the recipe and the accessible name survive the move verbatim.
+    expect(panel).toContain('data-stream-collapse=""');
+    expect(panel).toContain("iconLabel={copy.stream.collapse}");
+    expect(panel).toContain('icon="chevron-right"');
+    expect(panel).toContain("collapse={collapseControl}");
+    expect(panel.match(/data-stream-collapse/g) ?? []).toHaveLength(1);
   });
 
-  it("renders the band only while the column is expanded", () => {
+  it("mounts the strip first and the exception row directly below it", () => {
+    // C25's named home: SessionTabs, then StreamHeader (§7.4 badge +
+    // `[data-resync-count]` + §8 historyBar), then the transcript region.
+    const stripAt = panel.indexOf("<SessionTabs");
+    const exceptionAt = panel.indexOf("<StreamHeader");
+    const mainAt = panel.indexOf("data-stream-main");
+    expect(stripAt).toBeGreaterThan(-1);
+    expect(exceptionAt).toBeGreaterThan(stripAt);
+    expect(mainAt).toBeGreaterThan(exceptionAt);
+  });
+
+  it("places the chevron inside the strip, as its last interactive element", () => {
+    const collapseNode = (
+      <button type="button" data-stream-collapse="" aria-label={copy.stream.collapse} />
+    );
+    // Both sides: with and without the `+`, the chevron is a descendant of the
+    // strip and the last interactive element in it.
+    for (const create of [
+      undefined,
+      <SessionCreateAction
+        key="create"
+        profiles={[]}
+        part={null}
+        pending={false}
+        onCreate={() => undefined}
+      />,
+    ]) {
+      const drawn = parse(
+        renderToStaticMarkup(
+          <SessionTabs
+            tabs={[tab()]}
+            sessions={[row()]}
+            selected="sess-kerf"
+            onSelect={() => undefined}
+            bounded={false}
+            create={create}
+            collapse={collapseNode}
+          />,
+        ),
+      );
+      const strip = drawn.querySelector("[data-session-strip]");
+      const chevron = drawn.querySelector("[data-stream-collapse]");
+      expect(chevron).not.toBeNull();
+      expect(chevron?.closest("[data-session-strip]")).toBe(strip);
+      const interactive = [...(strip?.querySelectorAll("button") ?? [])];
+      expect(interactive[interactive.length - 1]).toBe(chevron);
+      if (create !== undefined) {
+        // After the `+` (§7.1(b)): the create precedes the chevron.
+        const plus = drawn.querySelector("[data-session-create]");
+        expect(plus).not.toBeNull();
+        expect(interactive.indexOf(plus as HTMLButtonElement)).toBeLessThan(
+          interactive.indexOf(chevron as HTMLButtonElement),
+        );
+      }
+    }
+  });
+
+  it("leads the shared exception row with the badge (C25)", () => {
+    const both = header({
+      status: "resyncing",
+      history: history({ pages: 3, state: "truncated" }),
+      resyncs: 1,
+    });
+    const rowEl = both.body.firstElementChild;
+    const children = [...(rowEl?.children ?? [])];
+    expect(children[0]?.hasAttribute("data-stream-state")).toBe(true);
+    const badgeAt = children.findIndex((node) => node.hasAttribute("data-stream-state"));
+    const barAt = children.findIndex((node) => node.hasAttribute("data-history-bar"));
+    expect(badgeAt).toBeGreaterThan(-1);
+    expect(barAt).toBeGreaterThan(badgeAt);
+  });
+
+  it("renders the panel only while the column is expanded", () => {
     expect(shell).toMatch(/\{shell\.streamOpen \? \(/);
   });
 

@@ -16,6 +16,7 @@ import { SOURCING_FIELDS } from "../src/api/types";
 import { ExportChrome } from "../src/components/chrome/ExportChrome";
 import { PartChrome } from "../src/components/chrome/PartChrome";
 import { exportBlocker } from "../src/components/inspector/ExportPanel";
+import { shellStore } from "../src/state/shell";
 import { INSPECTOR_TABS } from "../src/state/workspace";
 
 function render(element: ReactElement): Document {
@@ -124,14 +125,20 @@ describe("sourcing field set — declared manufacturing identity only", () => {
   });
 });
 
-describe("header chrome — two visible icon-only controls, pin-bound", () => {
-  function partChrome(): Document {
+describe("header chrome — two visible controls, pin-bound (§4.1(i) C26)", () => {
+  function partChrome(width = 1440): Document {
+    // C26: the labels collapse at the SAME boundary the Stream does — the
+    // shell store's band, §4.1(a)'s one breakpoint authority. The test drives
+    // the store the way `useBreakpoint` does, then restores the wide band.
+    shellStore.applyWidth(width);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    return render(
+    const dom = render(
       <QueryClientProvider client={client}>
         <PartChrome />
       </QueryClientProvider>,
     );
+    shellStore.applyWidth(1440);
+    return dom;
   }
 
   it("renders Export and BOM as distinct clickable buttons, not an overflow", () => {
@@ -149,18 +156,31 @@ describe("header chrome — two visible icon-only controls, pin-bound", () => {
     expect(exportBtn).not.toBe(bomBtn);
   });
 
-  it("is icon-only: each control has an icon and no printed word", () => {
-    const dom = partChrome();
-    const exportBtn = dom.querySelector("[data-chrome-export]");
-    const bomBtn = dom.querySelector("[data-chrome-bom]");
-    expect(exportBtn?.querySelector("svg[data-icon]")).not.toBeNull();
-    expect(bomBtn?.querySelector("svg[data-icon]")).not.toBeNull();
-    expect(exportBtn?.textContent?.trim()).toBe("");
-    expect(bomBtn?.textContent?.trim()).toBe("");
-    expect(exportBtn?.getAttribute("aria-label") ?? "").not.toBe("");
-    expect(bomBtn?.getAttribute("aria-label") ?? "").not.toBe("");
-    expect(exportBtn?.getAttribute("title") ?? "").not.toBe("");
-    expect(bomBtn?.getAttribute("title") ?? "").not.toBe("");
+  it("renders icon AND word at the wide band, name equal to the visible word", () => {
+    const dom = partChrome(1440);
+    for (const selector of ["[data-chrome-export]", "[data-chrome-bom]"]) {
+      const control = dom.querySelector(selector);
+      expect(control?.querySelector("svg[data-icon]"), selector).not.toBeNull();
+      const word = control?.textContent?.trim() ?? "";
+      expect(word, selector).not.toBe("");
+      // The accessible name IS the content: no aria-label competes with it.
+      expect(control?.getAttribute("aria-label"), selector).toBeNull();
+      expect(control?.getAttribute("title") ?? "", selector).not.toBe("");
+    }
+  });
+
+  it("renders icon-only below 1280px, with the SAME accessible name", () => {
+    const wide = partChrome(1440);
+    const narrow = partChrome(1200);
+    for (const selector of ["[data-chrome-export]", "[data-chrome-bom]"]) {
+      const wordedName = wide.querySelector(selector)?.textContent?.trim() ?? "";
+      const control = narrow.querySelector(selector);
+      expect(control?.querySelector("svg[data-icon]"), selector).not.toBeNull();
+      expect(control?.textContent?.trim(), selector).toBe("");
+      // C26's testable: the accessible name is identical in both forms.
+      expect(control?.getAttribute("aria-label"), selector).toBe(wordedName);
+      expect(control?.getAttribute("title") ?? "", selector).not.toBe("");
+    }
   });
 
   it("still sends the workspace pin and does not grow a third egress surface", () => {

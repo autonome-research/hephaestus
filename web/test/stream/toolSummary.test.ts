@@ -101,16 +101,54 @@ describe("a value is elided for reading and never destroyed", () => {
   });
 });
 
-describe("the headline is drawn from the document, never composed", () => {
-  it("leads with the fields that answer what happened", () => {
+describe("the headline is drawn from the document, never composed (C23's closed order)", () => {
+  it("leads with status, then the subject — C23 tiers (1) and (3)", () => {
     const parsed = parseToolResult(READ_PART);
     if (parsed.state !== "parsed") throw new Error("fixture does not parse");
     const summary = summaryOf(parsed.doc, parsed.fields);
-    expect(summary.parts.map((part) => part.field)).toEqual(["part"]);
-    expect(summary.parts.map((part) => part.value)).toEqual(["kerf_card"]);
+    expect(summary.parts.map((part) => part.field)).toEqual(["status", "part"]);
+    expect(summary.parts.map((part) => part.value)).toEqual(["ok", "kerf_card"]);
     // The count is the document's own, so the disclosure below the headline can
     // be labelled without the chip recounting anything.
     expect(summary.fields).toBe(4);
+  });
+
+  it("orders status before message before name — C23's fixed priority", () => {
+    const doc = { name: "kerf_card", message: "rebuilt", status: "ok" };
+    const summary = summaryOf(doc, Object.keys(doc));
+    // SUMMARY_FIELDS_MAX is 2, so the line is the two highest tiers in order.
+    expect(summary.parts.map((part) => part.field)).toEqual(["status", "message"]);
+  });
+
+  it("renders the message and not the counter — C23's own testable", () => {
+    // "Bare counters last — counts of things summarize a document least." A
+    // counter never joins the line when any earlier tier could fill it.
+    const doc = { message: "two solids fused", count: 2 };
+    const summary = summaryOf(doc, Object.keys(doc));
+    expect(summary.parts.map((part) => part.field)).toEqual(["message"]);
+    expect(summary.parts.map((part) => part.field)).not.toContain("count");
+  });
+
+  it("headlines a bare counter only when NOTHING else in the document can", () => {
+    // The other side of tier (5): counters are last, not never. A document
+    // that carries only counters still gets a line rather than the opaque
+    // fallback, because the fallback is for documents with nothing legible.
+    const doc = { line_count: 65 };
+    const summary = summaryOf(doc, Object.keys(doc));
+    expect(summary.parts).toEqual([{ field: "line_count", value: "65" }]);
+  });
+
+  it("headlines a *_ref field ABBREVIATED per §4.1(a) — C23 tier (4)", () => {
+    const ref = "artifact:build:sha256:83f4822a7943a7baf11b29d15c8af23c341fb4c0bfff352ac44a3";
+    const doc = { artifact_ref: ref };
+    const summary = summaryOf(doc, Object.keys(doc));
+    expect(summary.parts.map((part) => part.field)).toEqual(["artifact_ref"]);
+    const value = summary.parts[0]?.value ?? "";
+    // Shortened by the ONE abbreviation recipe (§4.1(a)'s `formatRef`, via
+    // `displayValue`) — never the whole digest, never an invented form.
+    expect(value.length).toBeLessThan(ref.length);
+    expect(value.length).toBeLessThanOrEqual(DIGEST_GLYPHS);
+    expect(value).toBe(displayValue(ref).text);
   });
 
   it("never puts a digest on the headline", () => {
@@ -144,12 +182,15 @@ describe("the headline is drawn from the document, never composed", () => {
   });
 
   it("prints NO headline rather than a guessed one when every value is opaque", () => {
-    // §4.4's discipline: a summary that had to be invented is not a summary.
-    // The chip renders a stated sentence about the absence and points at the
-    // disclosure holding the identities.
+    // §4.4's discipline: a summary that had to be invented is not a summary —
+    // the opaque fallback C23 leaves unchanged. Only a `*_ref` key licenses an
+    // abbreviated digest on the line; the same digests under non-ref keys
+    // still never headline, and the chip renders a stated sentence about the
+    // absence, pointing at the disclosure holding the identities.
     const doc = {
-      artifact_ref: "artifact:build:sha256:83f4822a7943a7baf11b29d15c8af23c341fb4c0bfff352ac44a3",
-      project_snapshot_ref: "artifact:snapshot:sha256:aa11bb22cc33dd44ee55ff6677889900aabbccdd",
+      part_param_state_hash:
+        "sha256:83f4822a7943a7baf11b29d15c8af23c341fb4c0bfff352ac44a3f67d4bac82b",
+      snapshot_hash: "aa11bb22cc33dd44ee55ff6677889900aabbccddaa11bb22cc33dd44ee55ff66",
     };
     const summary = summaryOf(doc, Object.keys(doc));
     expect(summary.parts).toEqual([]);
@@ -161,9 +202,12 @@ describe("the headline is drawn from the document, never composed", () => {
     expect(summaryOf(doc, Object.keys(doc)).parts).toEqual([]);
   });
 
-  it("does not headline result metadata the operator already has on the badge", () => {
+  it("keeps counters off the line whenever a named tier filled it (C23 tier 5)", () => {
+    // `status` is tier (1) and headlines; `line_count`, `truncated`,
+    // `generation` and `current` are counters and stay behind the disclosure
+    // — even with a headline slot still free.
     const doc = { status: "ok", line_count: 65, truncated: false, generation: 3, current: true };
-    expect(summaryOf(doc, Object.keys(doc)).parts).toEqual([]);
+    expect(summaryOf(doc, Object.keys(doc)).parts).toEqual([{ field: "status", value: "ok" }]);
   });
 });
 

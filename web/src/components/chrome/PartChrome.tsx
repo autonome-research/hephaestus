@@ -6,8 +6,16 @@
 // §22.7 put export in an inspector tab and said the header gains nothing.
 // Issue #12 amended that: two simple controls sit in chrome, bound to the
 // thing on screen, not only a buried tab. They stay two distinct, visible,
-// clickable buttons — icon-only so the pin dominates the 44px bar. There is
-// no overflow, menu, or extra click in front of them.
+// clickable buttons. There is no overflow, menu, or extra click in front of
+// them.
+//
+// §4.1(i) (C26, "icon-only" struck): at viewport widths ≥1280px both controls
+// render the sprite icon AND the visible word; below 1280px they are icon-only
+// with the word on `aria-label`/`title`. The labels collapse at the same
+// boundary the Stream does — `useShell`'s band, §4.1(a)'s one breakpoint
+// authority — never a media query of this component's own. The accessible name
+// is IDENTICAL in both forms: the visible word and the icon-only `aria-label`
+// are the same `copy.chrome` string.
 //
 // Both buttons still send the workspace pin; they do not resolve "current"
 // at click time. Export opens a compact format+run dialog. BOM opens the
@@ -18,7 +26,7 @@
 import { useState } from "react";
 import { copy } from "../../copy";
 import { workspaceStore } from "../../state/react";
-import { Button, Popover } from "../../system";
+import { Button, Popover, useShell } from "../../system";
 import { ExportChrome } from "./ExportChrome";
 import { useExportActions } from "../inspector/ExportPanel";
 import { SourcingPanel } from "../inspector/SourcingPanel";
@@ -29,6 +37,9 @@ type ChromeDialog = "export" | "sourcing" | null;
 export function PartChrome(): React.JSX.Element {
   const [open, setOpen] = useState<ChromeDialog>(null);
   const { part, pinned, pinMode, history, onExport, onDownload } = useExportActions();
+  // C26: icon+word at ≥1280px, icon-only below — `band === "wide"` is exactly
+  // the ≥1280px predicate `state/shell.ts` already owns (BREAKPOINT_STREAM).
+  const worded = useShell().band === "wide";
 
   const close = (): void => {
     setOpen(null);
@@ -43,23 +54,27 @@ export function PartChrome(): React.JSX.Element {
       <Button
         variant="quiet"
         icon="download"
-        iconLabel={copy.chrome.exportTitle}
+        {...(worded ? {} : { iconLabel: copy.chrome.export })}
         data-chrome-export=""
         title={copy.chrome.exportTitle}
         onClick={() => {
           setOpen("export");
         }}
-      />
+      >
+        {worded ? copy.chrome.export : undefined}
+      </Button>
       <Button
         variant="quiet"
         icon="file"
-        iconLabel={copy.chrome.bomTitle}
+        {...(worded ? {} : { iconLabel: copy.chrome.bom })}
         data-chrome-bom=""
         title={copy.chrome.bomTitle}
         onClick={() => {
           setOpen("sourcing");
         }}
-      />
+      >
+        {worded ? copy.chrome.bom : undefined}
+      </Button>
 
       <Popover
         open={open === "export"}

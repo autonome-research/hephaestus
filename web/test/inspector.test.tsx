@@ -42,6 +42,7 @@ import provenanceOwnedJson from "./fixtures/provenance_owned.json";
 import provenanceTaggedJson from "./fixtures/provenance_tagged.json";
 import provenanceUnattributedJson from "./fixtures/provenance_unattributed.json";
 
+import { formatSolids } from "../src/system/format";
 import { visibilityKey } from "../src/state/visibility";
 import { ResultsView } from "../src/components/inspector/ResultsPanel";
 import { PropertiesView } from "../src/components/inspector/PropertiesPanel";
@@ -229,6 +230,80 @@ describe("ResultsView renders the build result (§6.1)", () => {
     );
     expect(hiding.querySelector("[data-results-hidden-note]")).not.toBeNull();
     expect(hiding.querySelectorAll("[data-results-hidden-note]")).toHaveLength(1);
+  });
+
+  it("prints the visibility verb once, in the column header, never per row (C16)", () => {
+    const host = render(<ResultsView part="panel" build={build} hidden={new Set()} />);
+    // Exactly one header, and it is the one place a visible word about the
+    // toggles renders at rest.
+    expect(host.querySelectorAll("[data-visibility-header]")).toHaveLength(1);
+    const headerWord = host.querySelector("[data-visibility-header]")?.textContent?.trim() ?? "";
+    expect(headerWord).not.toBe("");
+    // No row's toggle prints a word: the control is compact, icon-carried.
+    for (const toggle of host.querySelectorAll("[data-visibility-toggle]")) {
+      expect(toggle.textContent?.trim(), toggle.outerHTML).toBe("");
+      expect(toggle.querySelector("svg[data-icon]")).not.toBeNull();
+    }
+  });
+
+  it("gives each toggle a complete accessible name carrying its solid's label (C16)", () => {
+    const first = build.geometries[0];
+    const label = first?.label ?? "";
+    const shown = render(<ResultsView part="panel" build={build} hidden={new Set()} />);
+    for (const geometry of build.geometries) {
+      const name =
+        shown
+          .querySelector(`[data-visibility-toggle="${geometry.label}"]`)
+          ?.getAttribute("aria-label") ?? "";
+      expect(name).toContain(geometry.label);
+    }
+    // Both sides: the name flips with the state, and both forms carry the label.
+    const hidden = render(
+      <ResultsView part="panel" build={build} hidden={new Set([visibilityKey("panel", label)])} />,
+    );
+    const shownName =
+      shown.querySelector(`[data-visibility-toggle="${label}"]`)?.getAttribute("aria-label") ?? "";
+    const hiddenName =
+      hidden.querySelector(`[data-visibility-toggle="${label}"]`)?.getAttribute("aria-label") ?? "";
+    expect(hiddenName).toContain(label);
+    expect(hiddenName).not.toBe(shownName);
+    // The toggle stays a toggle: pressed tracks hidden.
+    expect(
+      hidden.querySelector(`[data-visibility-toggle="${label}"]`)?.getAttribute("aria-pressed"),
+    ).toBe("true");
+  });
+
+  it("inflects the solids unit word — `1 solid`, never `1 solids` (C17)", () => {
+    // The fixture's entries are all single-solid, which is exactly the case
+    // the clause exists for. The served count is untouched (`data-value`
+    // above); only the unit word inflects, in `format.ts`.
+    expect(formatSolids(1)).toBe("1 solid");
+    expect(formatSolids(2)).toBe("2 solids");
+    expect(formatSolids(0)).toBe("0 solids");
+    const host = render(<ResultsView part="panel" build={build} hidden={new Set()} />);
+    const single = build.geometries.find((entry) => entry.solids === 1);
+    expect(single).toBeDefined();
+    const rendered = [...host.querySelectorAll('[data-source="build.geometries[].solids"]')].map(
+      (node) => node.textContent?.trim() ?? "",
+    );
+    expect(rendered).toEqual(build.geometries.map((entry) => formatSolids(entry.solids)));
+    for (const text of rendered) expect(text).not.toBe("1 solids");
+  });
+
+  it("wraps METRICS in its own size container, layout only (C27)", () => {
+    const host = render(<ResultsView part="panel" build={build} hidden={new Set()} />);
+    // One wrapper, one table inside it: the two-column-group switch is a
+    // container query on the wrapper, so BOTH forms are this same DOM — the
+    // split is CSS, and rows, sources, and values are byte-identical.
+    const wrapper = host.querySelector("[data-metrics-split]");
+    expect(wrapper).not.toBeNull();
+    expect(wrapper?.querySelectorAll("[data-metric]").length).toBe(
+      Object.keys(build.metrics ?? {}).length,
+    );
+    // Every metric row still lives inside the container the query measures.
+    for (const row of host.querySelectorAll("[data-metric]")) {
+      expect(wrapper?.contains(row)).toBe(true);
+    }
   });
 
   it("names the absence when a part has no current build", () => {

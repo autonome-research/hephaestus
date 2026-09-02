@@ -34,8 +34,9 @@
 // is an empty-honest absence. Git dirty stays in `GitDirty` (§13.1); this
 // tree does not hide `.heph/` rows.
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { useBuild, useParts } from "../../api/queries";
+import { turnChangedStore } from "../../api/refresh";
 import { copy } from "../../copy";
 import type { PartSummary } from "../../api/types";
 import { useWorkspace, workspaceStore } from "../../state/react";
@@ -73,6 +74,14 @@ export function ProjectTree(): React.JSX.Element {
   const parts = useParts();
   const dirty = useDirtyIndex();
   const selected = useWorkspace((s) => s.part);
+  // §7A.11 (C7): the rows the last agent turn touched. The store is written by
+  // `refreshAfterTurn`'s two-projection diff and by nothing else, so history
+  // load, resync, and pin movement cannot mint a mark here.
+  const turnChanged = useSyncExternalStore(
+    turnChangedStore.subscribe,
+    turnChangedStore.getSnapshot,
+    turnChangedStore.getSnapshot,
+  );
   const [open, setOpen] = useState<ReadonlySet<ProjectTreeSection>>(() => new Set());
 
   const toggle = (id: ProjectTreeSection): void => {
@@ -132,6 +141,7 @@ export function ProjectTree(): React.JSX.Element {
               part={part}
               dirty={dirty}
               selected={selected === part.name}
+              changed={turnChanged.has(part.name)}
             />
           ))}
           <ProjectSectionList open={open} onToggle={toggle} />
@@ -197,9 +207,11 @@ interface PartNodeProps {
   readonly part: PartSummary;
   readonly dirty: DirtyIndex;
   readonly selected: boolean;
+  /** §7A.11 (C7): this row's build ref changed across the last agent turn. */
+  readonly changed: boolean;
 }
 
-function PartNode({ part, dirty, selected }: PartNodeProps): React.JSX.Element {
+function PartNode({ part, dirty, selected, changed }: PartNodeProps): React.JSX.Element {
   // The build is fetched for the selected part only. A rail that fetched every
   // part's build on mount would turn opening a project into N builds' worth of
   // reads for rows nobody has looked at yet.
@@ -216,6 +228,10 @@ function PartNode({ part, dirty, selected }: PartNodeProps): React.JSX.Element {
 
   const open = (): void => {
     setExpanded(true);
+    // C7: clicking the row is one of the marker's two exits (the other is the
+    // next turn's settle). Nothing else clears it — not re-renders, not
+    // selection arriving from elsewhere.
+    turnChangedStore.clear(part.name);
     workspaceStore.update({ part: part.name, selection: null, measure: null });
   };
 
@@ -234,9 +250,22 @@ function PartNode({ part, dirty, selected }: PartNodeProps): React.JSX.Element {
       onSelect={open}
       data-part={part.name}
       data-tree-row="part"
+      {...(changed ? { "data-turn-changed": "" } : {})}
       label={<Fact source="parts[].name" value={part.name} className={styles["partName"]} />}
       trailing={
         <>
+          {/* C7: the quiet marker. A word, not a bare dot (§4.7's trailing
+              rule), and it renders no value — it says *this changed*; the
+              value is behind the click, on the server projection. */}
+          {changed ? (
+            <Chip
+              className={styles["turnChanged"]}
+              title={copy.rail.turnChangedTitle}
+              data-turn-marker=""
+            >
+              {copy.rail.turnChanged}
+            </Chip>
+          ) : null}
           {entry === undefined ? null : <DirtyMarker entry={entry} />}
           {selected && built !== undefined ? (
             built.status === "not_built" ? (

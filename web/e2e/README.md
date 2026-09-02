@@ -157,7 +157,10 @@ a gate cannot read a row that is not mounted (§7.4(b), §8(c)) —
 `[data-testid="transcript"]`, `[data-history-bar]` and `[data-stream-state]`
 (the two DRAWN exceptions, absent in the steady state),
 `[data-session-create]` / `[data-session-ask]` / `[data-session-create-menu]`,
-`[data-stream-collapse]`, `[data-session-tab]` with
+`[data-session-strip]` with `[data-stream-collapse]` as its last interactive
+element (§4.1(h) C25 — the former `streamHeader` band is struck),
+`[data-jump-latest]` anchored in the transcript scroll gutter (§7.4 C20),
+`[data-session-tab]` with
 `data-thread-depth` / `data-thread-kind`, `[data-event-id]`+`data-surface`,
 `[data-tool-name]`+`data-status`+`data-tool-call-id` (with §7.2 (a)'s
 `data-chip-repeat` / `data-event-ids` / `data-tool-call-ids` on a coalesced

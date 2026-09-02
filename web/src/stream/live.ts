@@ -184,11 +184,36 @@ function lastPendingBreak(entries: readonly LiveEntry[]): number {
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry === undefined) continue;
+    // A C2 echo between the break and the next frame is not evidence about
+    // the stream's continuity — it is the operator typing while the socket
+    // reattaches — so the walk looks past it to the break awaiting a verdict.
+    if (entry.entry === "echo") continue;
     if (entry.entry === "event") return -1;
     if (entry.resync.outcome === "pending") return i;
     return -1;
   }
   return -1;
+}
+
+/**
+ * §7A.5 (C1): the originating tab's Send appends the local-prompt echo entry —
+ * the sent text verbatim, at the live suffix's tail.
+ *
+ * Appended, never inserted, and never removed by anything in this module: a
+ * lost POST leaves it standing (the words were sent into uncertainty, and
+ * hiding them would un-say something the operator said — the composer's
+ * `data-send-state="unknown"` renders beside it). A second Send appends a
+ * second echo. Nothing here is called by history load, a resync, or an
+ * observer tab — only the composer's own submit reaches it, which is what
+ * makes the echo a presentation row minted from held state (§7.3's C2).
+ */
+export function appendEcho(state: LiveState, text: string): LiveState {
+  let echoes = 0;
+  for (const entry of state.entries) if (entry.entry === "echo") echoes += 1;
+  return {
+    ...state,
+    entries: [...state.entries, { entry: "echo", key: `echo:${String(echoes)}`, text }],
+  };
 }
 
 /**

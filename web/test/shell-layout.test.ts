@@ -24,14 +24,31 @@ describe("shell layout — usable at 1280px, not a 2400px desk", () => {
   const tokens = css("system/tokens.css");
   const shell = css("components/Shell.module.css");
 
-  it("keeps the §4.1 column budget at or under 1280px", () => {
+  it("keeps the §4.1 column budget at or under 1280px, with the §4.1(g) clamp", () => {
     const rail = /--rail-width:\s*(\d+)px/.exec(tokens);
-    const stream = /--stream-width:\s*(\d+)px/.exec(tokens);
+    // §4.1(g), amended 2026-09-02 (C12): the expanded stream track is
+    // `clamp(360px, 30vw, 420px)` — the diagram's 420px is the clamp's MAXIMUM.
+    const stream = /--stream-width:\s*clamp\(\s*(\d+)px,\s*(\d+)vw,\s*(\d+)px\s*\)/.exec(tokens);
     expect(rail?.[1]).toBe("280");
-    expect(stream?.[1]).toBe("420");
-    expect(Number(rail?.[1]) + Number(stream?.[1])).toBeLessThanOrEqual(1280);
-    // Stage gets the remainder: 1280 - 280 - 420 = 580, matching §4.1's table.
-    expect(1280 - Number(rail?.[1]) - Number(stream?.[1])).toBe(580);
+    expect(stream?.[1]).toBe("360");
+    expect(stream?.[2]).toBe("30");
+    expect(stream?.[3]).toBe("420");
+    // At the 1280px collapse boundary the clamp yields 30vw = 384px, so the
+    // three columns fit with the stage at 1280 - 280 - 384 = 616px.
+    const atBoundary = Math.max(360, Math.min(0.3 * 1280, 420));
+    expect(atBoundary).toBe(384);
+    expect(Number(rail?.[1]) + atBoundary).toBeLessThanOrEqual(1280);
+  });
+
+  it("writes the clamp into the data-stream-driven rule's token, not a media query (§4.1(g))", () => {
+    // The negative half, stated: no media query implements the clamp — §4.1(a)'s
+    // "no media query that changes `grid-template-columns`" survives verbatim,
+    // and the grid rule still reads the one token the clamp lives in.
+    expect(shell).not.toMatch(/@media[^{]*\{[^}]*grid-template-columns/);
+    expect(shell).toMatch(
+      /grid-template-columns:\s*var\(--rail-width\)\s+minmax\(0,\s*1fr\)\s+var\(--stream-width\)/,
+    );
+    expect(tokens).not.toMatch(/--stream-width:\s*420px/);
   });
 
   it("lets every column shrink below min-content so a chip cannot blow the grid", () => {

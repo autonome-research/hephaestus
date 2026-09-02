@@ -91,6 +91,40 @@
 // `data-send-state`, `data-composer-state`, `data-disabled-reason`, every
 // `data-context-key`/`-value`/`-count` and the model attribution are all still
 // minted; what was dropped is a count nobody read and two normal-state words.
+//
+// **8. AMENDED 2026-09-02 (§0.2c, C15/C22) — the resting composer is two rows,
+// counted, and Add current view surfaces where the gap is visible.**
+//
+// * §7A.10 (C15): the 2026-09-01 amendment's four-high stack collapses to two
+//   rows. The CONTEXT ROW is §7A.3(a)'s summary line with the model id inline
+//   at its right end — `[data-composer-model]` keeps every attribute, its
+//   `<Fact>` attribution and its mount condition; only the placement moved,
+//   and (d)'s meta-line placement is struck. The INPUT ROW holds the textarea
+//   with Send right-aligned on the same row. No third row mounts at rest: no
+//   meta line, no empty action row — the keyboard hint lives on Send's
+//   `title`. Exceptional states stay loud and add their rows as specified:
+//   Cancel while cancellable (§7A.6), the disabled reason, and C1's
+//   `data-send-state="unknown"` note. §7A.10(a)'s testable is restated to the
+//   input row: count one button-role element, and it is the Send hook.
+//   (Send's and the input's DOM hooks are spelled only in the JSX below, on
+//   purpose — source order of the hooks is itself a testable.)
+// * §7A.3 (C22): `[data-context-add-view]` renders on the resting summary
+//   line exactly when `view` and `selection` are absent from the envelope and
+//   a selection exists — `stream/composerContext.ts`'s `addViewOnLine` is the
+//   predicate — and unmounts when satisfied, when no selection exists, or
+//   while the disclosure is open. Activating it does exactly what the form's
+//   copy does: it adds the members to the `added` set, computing nothing (§1).
+//   `data-context-keys` equality is untouched.
+//
+// **9. AMENDED 2026-09-02 (§0.2c, C8/C9) — one primary per shell, and it is
+// Send.** The steady-state shell has exactly one `data-variant="primary"` and
+// it is the Send hook. (Spelled without the literal here on purpose: source
+// order of the hooks is itself a testable.) The sole exception keys off THIS form's
+// current `data-disabled-reason="agent_unavailable"` — never last-observed
+// provider health, which the review fix struck — during which the
+// still-mounted Send demotes to `secondary` and the ProvidersPanel's Sign-in
+// takes `primary`. The reason is published through
+// `stream/composerGate.ts`'s store so both surfaces read one fact.
 
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -109,9 +143,22 @@ import { copy } from "../../copy";
 import { Button, Chip, CHIP_REF_WIDTH, EmptyState, TextInput, formatRef } from "../../system";
 import { useWorkspaceState } from "../../state/react";
 import { labelsForPart, visibilityStore } from "../../state/visibility";
-import { defaultModel, modelsFrom, showModelChrome } from "../../stream/composerChrome";
-import { canSendTurn, cancelAvailability, isComposable, isSendKey } from "../../stream/composerGate";
 import {
+  defaultModel,
+  modelsFrom,
+  showModelChrome,
+  type ComposerModel,
+} from "../../stream/composerChrome";
+import {
+  canSendTurn,
+  cancelAvailability,
+  composerGateStore,
+  isComposable,
+  isSendKey,
+  signInPrimary,
+} from "../../stream/composerGate";
+import {
+  addViewOnLine,
   chipsFor,
   envelopeFor,
   summaryFor,
@@ -175,6 +222,14 @@ export interface ComposerProps {
    * offer Cancel against a finished run (#99).
    */
   readonly onForgetLiveRun?: (() => void) | undefined;
+  /**
+   * §7A.5 (C1): append the local-prompt echo row on Send — the sent text
+   * verbatim, minted from the textarea's own value, the one fact this clause
+   * touches that the tab holds without the server's help. Fired on the same
+   * submit that calls `sessionPromptStore.remember`, before the POST, so the
+   * operator's words are on screen for the whole model round-trip.
+   */
+  readonly onEcho?: ((text: string) => void) | undefined;
   /**
    * Incremented after `POST /sessions` so the new session's box is focused
    * (#61). `0` / omitted means "do not steal focus".
@@ -279,6 +334,11 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   const selectedModel = defaultModel(models);
   const promptRows = promptFocused || text.trim() !== "" ? 3 : 1;
 
+  // §7A.3 (C22): ONE handler for both copies of the affordance. The line's
+  // copy and the form's copy do exactly the same thing — un-drop and add the
+  // members — and neither touches the disclosure: the form's copy only exists
+  // while it is already open, and the line's copy closing the gap is what
+  // unmounts it, not a disclosure it never asked for.
   const addCurrentView = useCallback(() => {
     setDropped((previous) => {
       const next = new Set(previous);
@@ -292,8 +352,12 @@ export function Composer(props: ComposerProps): React.JSX.Element {
       if (state.selection !== null) next.add("selection");
       return next;
     });
-    setDisclosed(true);
   }, [state.selection]);
+
+  // §7A.3 (C22): the resting line's copy renders exactly while the gap it
+  // closes is visible. The predicate (and its three negative halves) is
+  // `stream/composerContext.ts`'s to decide; this is a rendering of it.
+  const addViewLine = addViewOnLine(envelope, state.selection !== null, disclosed);
 
   // -- the two closed vocabularies (§7A.10) -------------------------------
   //
@@ -320,6 +384,22 @@ export function Composer(props: ComposerProps): React.JSX.Element {
           ? "sending"
           : "running"
         : "idle";
+
+  // §4.7 (C8) / §23.8 (C9): the composer's CURRENT `data-disabled-reason` is
+  // the one condition the single-primary exception may key off — never
+  // last-observed health, which the review fix struck. It is published to the
+  // gate store so the ProvidersPanel reads the same fact the operator sees on
+  // this form's own attribute; unmount resets it, because an unmounted
+  // composer has no current reason for an exception to hold against.
+  useEffect(() => {
+    composerGateStore.publish(disabledReason);
+  }, [disabledReason]);
+  useEffect(
+    () => () => {
+      composerGateStore.publish(null);
+    },
+    [],
+  );
 
   // WHAT `disabled` DISABLES. §7A.5 says the composer "disables while any run
   // is live"; that is about SENDING. `stream/composerGate.ts` carries the
@@ -427,6 +507,11 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     // Remember the opening line before the POST returns so the session tab
     // retitles on this frame. History will never echo the prompt back.
     sessionPromptStore.remember(sessionId, text);
+    // §7A.5 (C1): the echo renders now, not on the response — the dead gap
+    // between Send and the first frame is closed by the operator's own words.
+    // Nothing retracts it: a lost POST leaves it standing beside
+    // `data-send-state="unknown"` (C2's negative half).
+    props.onEcho?.(text);
     setCancelNote(null);
     // Forget the previous run *before* the POST. Otherwise Cancel is aimed
     // at a finished id for the whole window until the first new frame (#99).
@@ -625,13 +710,18 @@ export function Composer(props: ComposerProps): React.JSX.Element {
           present members in the fixed order, `+N` for the remainder, and any
           member the operator excluded, said out loud (§7A.3(e)). The toggle is
           attached to it: §7A.10(c) makes the line and the toggle one
-          affordance, so the chip form and the composed preview open together. */}
+          affordance, so the chip form and the composed preview open together.
+          C15 seats the model id at this line's right end, and C22 mounts the
+          Add-current-view control here exactly while the gap it closes is
+          visible. */}
       <ContextSummaryLine
         summary={summary}
         disclosed={disclosed}
         onToggle={() => {
           setDisclosed((open) => !open);
         }}
+        onAddView={addViewLine ? addCurrentView : null}
+        model={modelChrome && selectedModel !== null ? selectedModel : null}
       />
 
       {/* §7A.3(c): the editable chip form IS the disclosure. It does not mount
@@ -654,61 +744,42 @@ export function Composer(props: ComposerProps): React.JSX.Element {
         </ul>
       ) : null}
 
-      <TextInput
-        label={copy.composer.label}
-        hideLabel
-        multiline
-        rows={promptRows}
-        value={text}
-        onChange={setText}
-        onFocus={() => {
-          setPromptFocused(true);
-        }}
-        onBlur={() => {
-          setPromptFocused(false);
-        }}
-        onKeyDown={onPromptKey}
-        placeholder={copy.composer.placeholder}
-        disabled={!composable || post.phase === "sending"}
-        inputRef={inputRef}
-        data-composer-input=""
-      />
-
-      {/* §7A.10(d): the model is quiet inline text in the meta line, not a
-          bordered `Chip` in the action row. Its attributes and its `<Fact>`
-          attribution are unchanged — `providers.models.id` is a server fact and
-          §4.6 governs it — and it renders under exactly the condition it did.
-          The keyboard binding joins it here, and only once the box is in use:
-          §7A's idle composer is one row and a permanent hint under it is a
-          second. The line itself does not mount when it would be empty. */}
-      {(modelChrome && selectedModel !== null) || promptFocused || text !== "" ? (
-        <p className={styles["meta"]}>
-          {modelChrome && selectedModel !== null ? (
-            <span
-              className={styles["model"]}
-              title={copy.composer.model}
-              data-composer-model={selectedModel.id}
-              data-composer-provider={selectedModel.providerId}
-            >
-              <Fact mono source="providers.models.id" value={selectedModel.id}>
-                {selectedModel.id}
-              </Fact>
-            </span>
-          ) : null}
-          {promptFocused || text !== "" ? (
-            <span className={styles["hint"]} data-composer-hint="">
-              {sendHint}
-            </span>
-          ) : null}
-        </p>
-      ) : null}
-
-      {/* §7A.10(a): in the resting state this row holds exactly one element with
-          a button role. Cancel joins it the instant a run this tab can cancel is
-          in flight (§7A.10(b)) and leaves again when it is not. */}
-      <div className={styles["actions"]}>
+      {/* §7A.10 (C15): the INPUT ROW — the textarea with Send right-aligned on
+          the same row, at the input's trailing edge, not in a row of its own.
+          §7A.10(a)'s restated testable is scoped here: in the resting state
+          this row holds exactly one element with a button role, and it is the
+          Send button below. The keyboard hint lives on Send's `title` — the
+          meta line that used to carry it no longer mounts. */}
+      <div className={styles["inputRow"]} data-composer-input-row="">
+        <TextInput
+          label={copy.composer.label}
+          hideLabel
+          multiline
+          rows={promptRows}
+          value={text}
+          onChange={setText}
+          onFocus={() => {
+            setPromptFocused(true);
+          }}
+          onBlur={() => {
+            setPromptFocused(false);
+          }}
+          onKeyDown={onPromptKey}
+          placeholder={copy.composer.placeholder}
+          disabled={!composable || post.phase === "sending"}
+          inputRef={inputRef}
+          className={styles["grow"]}
+          data-composer-input=""
+        />
+        {/* §4.7 (C8): Send is the shell's ONE primary in the steady state. It
+            demotes to `secondary` — while staying mounted, per §7A.10(a) — for
+            exactly as long as this form carries
+            `data-disabled-reason="agent_unavailable"`, because that is the one
+            state in which Sign-in (§23.8, C9) takes `primary` instead. Every
+            other disabled reason keeps Send primary: a disabled-with-reason
+            primary is the operator's target for "why can't I send?". */}
         <Button
-          variant="primary"
+          variant={signInPrimary(disabledReason) ? "secondary" : "primary"}
           type="button"
           title={sendHint}
           data-composer-send=""
@@ -717,12 +788,18 @@ export function Composer(props: ComposerProps): React.JSX.Element {
         >
           {post.phase === "sending" ? copy.composer.sending : copy.composer.send}
         </Button>
-        {cancellable ? (
+      </div>
+
+      {/* §7A.10(b) / C15's negative half: Cancel's row is an EXCEPTION and
+          mounts only while a run this tab can cancel is in flight — at rest no
+          action row exists at all, empty or otherwise. */}
+      {cancellable ? (
+        <div className={styles["actions"]}>
           <Button variant="secondary" onClick={cancelTurn} data-composer-cancel="">
             {copy.composer.cancel}
           </Button>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
 
       {/* §7A.5: a lost POST leaves the text in the box and states that the turn
           may have started. The retry is the OPERATOR's, deliberately: an
@@ -822,8 +899,21 @@ function ContextSummaryLine(props: {
   readonly summary: ContextSummary;
   readonly disclosed: boolean;
   readonly onToggle: () => void;
+  /**
+   * §7A.3 (C22): non-null exactly while the resting line renders
+   * `[data-context-add-view]` — the caller holds the predicate
+   * (`addViewOnLine`) and this line only draws its verdict.
+   */
+  readonly onAddView: (() => void) | null;
+  /**
+   * §7A.10 (C15): the model id, inline at the line's right end — `.code` at
+   * `--ink-muted`, every attribute and the `<Fact>` attribution of clause (d)
+   * unchanged; only the placement is new. `null` under exactly the conditions
+   * the struck meta line left it out: no model selected, or model chrome off.
+   */
+  readonly model: ComposerModel | null;
 }): React.JSX.Element {
-  const { summary, disclosed, onToggle } = props;
+  const { summary, disclosed, onToggle, onAddView, model } = props;
   const empty = summary.tokens.length === 0 && summary.remaining === 0 && summary.removed.length === 0;
   return (
     <p
@@ -872,6 +962,30 @@ function ContextSummaryLine(props: {
       >
         {disclosed ? copy.composer.discloseHide : copy.composer.disclose}
       </Button>
+      {/* §7A.3 (C22): the gap-closing affordance, quiet, at the line's end.
+          Mounted iff the caller's predicate said the gap is visible; it does
+          exactly what the form's copy does and computes nothing. */}
+      {onAddView !== null ? (
+        <Button variant="quiet" onClick={onAddView} data-context-add-view="">
+          {copy.composer.addCurrentView}
+        </Button>
+      ) : null}
+      {/* §7A.10 (C15): the model id at the context row's right end — one line
+          answers both "what will be sent" and "to what". `providers.models.id`
+          is a server fact and §4.6 governs it, so the `<Fact>` attribution
+          stays. */}
+      {model !== null ? (
+        <span
+          className={styles["model"]}
+          title={copy.composer.model}
+          data-composer-model={model.id}
+          data-composer-provider={model.providerId}
+        >
+          <Fact mono source="providers.models.id" value={model.id}>
+            {model.id}
+          </Fact>
+        </span>
+      ) : null}
     </p>
   );
 }
@@ -944,8 +1058,13 @@ export function NewSessionAction(props: {
   // §7A.2 affordance dies with the read that reported the fault.
   return (
     <div className={styles["create"]} data-session-create="">
+      {/* §4.7 (C8): `secondary`, deliberately. The composer mounts in every
+          state (§7A.1) and its Send keeps `primary` through `no_session`, so a
+          primary here would be a second accent fill in the same frame — the
+          exact defect C8 closes. The invitation's prominence is its position
+          and its words, not the loudest variant. */}
       <Button
-        variant="primary"
+        variant="secondary"
         title={
           orchestrator !== undefined
             ? copy.composer.profileWhat(

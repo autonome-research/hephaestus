@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import type { EventFrame } from "../../src/api/events";
 import {
+  appendEcho,
   clearLiveRun,
   disconnected,
   emptyLive,
@@ -116,6 +117,44 @@ describe("a resync always leaves a labelled break", () => {
     state = disconnected(state, "reconnecting");
     expect(state.entries.some((entry) => entry.entry === "break")).toBe(false);
     expect(state.status).toBe("reconnecting");
+  });
+});
+
+describe("the local prompt echo entry (§7A.5 C1)", () => {
+  it("appends the echo at the tail, verbatim, with a stable key", () => {
+    let state = emptyLive("live");
+    state = receive(state, frame(0));
+    state = appendEcho(state, "add a 3mm fillet");
+    const tail = state.entries[state.entries.length - 1];
+    expect(tail).toEqual({ entry: "echo", key: "echo:0", text: "add a 3mm fillet" });
+    // A second Send appends a second echo with a distinct key.
+    state = appendEcho(state, "and mirror it");
+    const next = state.entries[state.entries.length - 1];
+    expect(next).toEqual({ entry: "echo", key: "echo:1", text: "and mirror it" });
+  });
+
+  it("is never removed: a resync and later frames leave every echo standing", () => {
+    // C2's negative half — a lost POST does not remove it, and nothing in this
+    // reducer can. There is no remove path at all; this proves append-only
+    // survival through the two mutations the reducer does perform.
+    let state = emptyLive("live");
+    state = appendEcho(state, "p");
+    state = resync(state);
+    state = receive(state, frame(0));
+    expect(state.entries.filter((entry) => entry.entry === "echo")).toHaveLength(1);
+    expect(liveRows(state.entries).filter((row) => row.row === "local-prompt")).toHaveLength(1);
+  });
+
+  it("does not stand between a pending break and its verdict", () => {
+    // Operator types while the socket reattaches: the echo lands after the
+    // break, and the next frame still decides the break's outcome.
+    let state = emptyLive("live");
+    state = receive(state, frame(0));
+    state = resync(state);
+    state = appendEcho(state, "typed during the resync");
+    state = receive(state, frame(1));
+    const marker = state.entries.find((entry) => entry.entry === "break");
+    expect(marker?.resync.outcome).toBe("contiguous");
   });
 });
 

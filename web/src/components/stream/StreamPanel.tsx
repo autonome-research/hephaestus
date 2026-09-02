@@ -74,6 +74,7 @@ import { useParts } from "../../api/queries";
 import { copy } from "../../copy";
 import { Button, EmptyState, tabControlId } from "../../system";
 import { useWorkspace, workspaceStore } from "../../state/react";
+import { shellStore } from "../../state/shell";
 import { sessionEmptyBody, sessionEmptyKind } from "../../stream/sessionEmpty";
 import { useStream } from "../../stream/useStream";
 import { useFollowScroll } from "../../stream/followScroll";
@@ -267,6 +268,23 @@ export function StreamPanel(): React.JSX.Element {
     ) : null;
   const emptyInvitation = !unavailable && rows.length === 0 && sessions.isFetched;
 
+  // §4.1(h) C25: the collapse affordance is the session tab strip's TRAILING
+  // item — the former `streamHeader` band is struck. The shell still owns the
+  // open/closed state (`state/shell.ts` is §4.1(a)'s one breakpoint authority);
+  // this panel only places the control. It rides IN the strip in every state
+  // the panel draws, so collapsing the column never requires a session.
+  const collapseControl = (
+    <Button
+      variant="quiet"
+      icon="chevron-right"
+      iconLabel={copy.stream.collapse}
+      onClick={() => {
+        shellStore.setStreamOpen(false);
+      }}
+      data-stream-collapse=""
+    />
+  );
+
   return (
     <div
       className={styles["panel"]}
@@ -281,13 +299,38 @@ export function StreamPanel(): React.JSX.Element {
       {...(emptyInvitation ? { "data-stream-empty": "" } : {})}
       {...(cannotPrompt ? { "data-session-cannot-prompt": "" } : {})}
     >
-      {/* The column's name is already on the shell's own header row; repeating
-          it here would put "Agent" twice above one transcript. This row carries
-          §7.4's stream state and §8's page count — and, since 2026-09-01, it
-          carries them only when one of them is an exception, so the steady state
-          spends no height on a badge saying nothing is wrong. With no session
-          there is nothing to report at all. `StreamHeader` returns null when the
-          row would be empty; `agent_unavailable` has no history to count. */}
+      {/* §4.1(h) C25: in the steady state, exactly ONE row of chrome above the
+          transcript — the session tab strip (tabs, `+`, chevron). The strip is
+          mounted in every state the panel draws, so the collapse control never
+          disappears with the session list: with nothing to list it is a strip
+          of zero tabs holding the chevron.
+
+          §7.1(b), amended: the create rides IN the strip as a `+` rather than
+          as a band under it, so "New session" and "Ask about <part>" are not
+          printed a second time beneath a list whose every row is already a
+          session (#70). */}
+      <SessionTabs
+        tabs={tabs}
+        sessions={rows}
+        selected={selected}
+        bounded={stream.threadBounded}
+        panelId="transcript-panel"
+        create={stripCreate}
+        collapse={collapseControl}
+        onSelect={(sessionId) => {
+          workspaceStore.update({ session: sessionId });
+        }}
+      />
+
+      {/* §4.1(h) C25's named exception row, DIRECTLY BELOW the tab strip and
+          above the transcript scroll region: §7.4(a)'s stream-state badge with
+          its `[data-resync-count]` readout and §8(a)'s `historyBar`, one shared
+          row when both mount, badge leading — in exactly and only the states
+          those clauses name. Since 2026-09-01 the row mounts only when one of
+          them is an exception, so the steady state spends no height on a badge
+          saying nothing is wrong. With no session there is nothing to report at
+          all. `StreamHeader` returns null when the row would be empty;
+          `agent_unavailable` has no history to count. */}
       {selected === null ? null : (
         <StreamHeader
           status={stream.status}
@@ -363,30 +406,6 @@ export function StreamPanel(): React.JSX.Element {
               action={createAction}
             />
           )
-        ) : !unavailable ? (
-          <>
-            {/* §7A.2 / #70: both create affordances stay reachable after the
-                first session exists. Send does not create a session. When
-                the current tab cannot prompt, the create is the recovery,
-                not only the empty-list invitation. The fault band already
-                carries it when a runtime fault is showing.
-
-                §7.1(b), amended: it rides IN the strip as a `+` rather than as
-                a band under it, so "New session" and "Ask about <part>" are not
-                printed a second time beneath a list whose every row is already
-                a session. */}
-            <SessionTabs
-              tabs={tabs}
-              sessions={rows}
-              selected={selected}
-              bounded={stream.threadBounded}
-              panelId="transcript-panel"
-              create={stripCreate}
-              onSelect={(sessionId) => {
-                workspaceStore.update({ session: sessionId });
-              }}
-            />
-          </>
         ) : null}
 
         {createError !== null ? (
@@ -443,6 +462,7 @@ export function StreamPanel(): React.JSX.Element {
         streamLive={stream.status === "live"}
         terminals={stream.terminals}
         onForgetLiveRun={stream.clearRunId}
+        onEcho={stream.echo}
         focusNonce={focusNonce}
         onRuntimeFault={reportFault}
         sessionTitle={sessionTitle}

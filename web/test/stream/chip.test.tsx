@@ -170,9 +170,12 @@ describe("§7.2's field contract survives the disclosure", () => {
       payload: {
         toolName: "build_part",
         isError: false,
+        // A non-ref hash key: C23's tier (4) licenses only `*_ref` keys onto
+        // the line abbreviated, so this document still has nothing legible and
+        // the opaque fallback renders unchanged.
         text: JSON.stringify({
-          artifact_ref:
-            "artifact:build:sha256:83f4822a7943a7baf11b29d15c8af23c341fb4c0bfff352ac44a3f67d4bac82b",
+          build_state_hash:
+            "sha256:83f4822a7943a7baf11b29d15c8af23c341fb4c0bfff352ac44a3f67d4bac82b",
         }),
       },
     });
@@ -191,8 +194,8 @@ describe("§7.2's field contract survives the disclosure", () => {
     expect(parsed.querySelector("[data-chip-summary]")?.getAttribute("data-chip-summary")).toBe(
       "opaque",
     );
-    // The ref is still a `data-field` node, so containment holds.
-    expect(parsed.querySelectorAll('[data-field="artifact_ref"]')).toHaveLength(1);
+    // The hash is still a `data-field` node, so containment holds.
+    expect(parsed.querySelectorAll('[data-field="build_state_hash"]')).toHaveLength(1);
   });
 });
 
@@ -328,6 +331,133 @@ describe("a repeat group renders as one row, and drops no id (§7.2 (a))", () =>
       expect(chip.hasAttribute("data-chip-repeat")).toBe(false);
       expect(chip.getAttribute("data-tool-call-id")).toBeTruthy();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §7.2 C4/C5, amended 2026-09-02: cycle groups
+// ---------------------------------------------------------------------------
+
+const CYCLE_RUN = "run-cycle0000000";
+const CYCLE_DOC = { status: "ok", total: 1 };
+
+/** `n` (identical ok call+result, narration) triples, back to back. */
+function cycleItems(n: number, fail: (index: number) => boolean = () => false): TranscriptItem[] {
+  const items: TranscriptItem[] = [];
+  for (let index = 0; index < n; index += 1) {
+    items.push(
+      liveItem({
+        run_id: CYCLE_RUN,
+        seq: index * 3,
+        kind: "tool_call",
+        session_id: SESSION,
+        tool_call_id: `cy-${String(index)}`,
+        payload: { name: "list_project_checks", arguments: { probe: index } },
+      }),
+      liveItem({
+        run_id: CYCLE_RUN,
+        seq: index * 3 + 1,
+        kind: "tool_result",
+        session_id: SESSION,
+        tool_call_id: `cy-${String(index)}`,
+        payload: {
+          toolName: "list_project_checks",
+          isError: fail(index),
+          text: JSON.stringify(CYCLE_DOC),
+        },
+      }),
+      liveItem({
+        run_id: CYCLE_RUN,
+        seq: index * 3 + 2,
+        kind: "text_delta",
+        session_id: SESSION,
+        payload: { text: `Narration ${String(index)}.` },
+      }),
+    );
+  }
+  return items;
+}
+
+describe("a cycle group renders first pair full, then compact lines (§7.2 C4)", () => {
+  const items = cycleItems(3);
+  const document_ = renderRows(groupRows(items));
+
+  it("renders one full chip, the first pair's text row, and one compact line per subsequent pair", () => {
+    const row = document_.querySelector('[data-row="cycle"]');
+    expect(row).not.toBeNull();
+    expect(row?.getAttribute("data-cycle")).toBe("3");
+    // Exactly one full chip — the first pair's — and two compact lines.
+    expect(row?.querySelectorAll("[data-tool-name]")).toHaveLength(1);
+    const lines = [...(row?.querySelectorAll("[data-cycle-line]") ?? [])];
+    expect(lines.map((line) => line.getAttribute("data-cycle-line"))).toEqual(["2", "3"]);
+    // The running ×N ordinal, the tool name, the shared status badge — and
+    // nothing else: no summary, no fields, no disclosure of its own.
+    for (const [index, line] of lines.entries()) {
+      expect(line.textContent ?? "").toContain("list_project_checks");
+      expect(line.textContent ?? "").toContain(`×${String(index + 2)}`);
+      expect(line.querySelector("[data-chip-status]")?.getAttribute("data-chip-status")).toBe("ok");
+      expect(line.querySelector("[data-chip-summary]")).toBeNull();
+      expect(line.querySelector("[data-field]")).toBeNull();
+      expect(line.querySelector("[data-chip-detail]")).toBeNull();
+    }
+  });
+
+  it("folds the subsequent text rows and Detail behind the FIRST pair's one disclosure", () => {
+    const row = document_.querySelector('[data-row="cycle"]');
+    // One disclosure opens the whole cycle.
+    expect(row?.querySelectorAll("[data-chip-detail]")).toHaveLength(1);
+    const detail = row?.querySelector("[data-chip-detail]");
+    const folds = [...(detail?.querySelectorAll("[data-cycle-fold]") ?? [])];
+    expect(folds.map((fold) => fold.getAttribute("data-cycle-fold"))).toEqual(["2", "3"]);
+    // Text content is RELOCATED, never elided (C5): the folded narration is in
+    // the DOM, with its own event id span.
+    expect(folds[0]?.textContent ?? "").toContain("Narration 1.");
+    expect(folds[1]?.textContent ?? "").toContain("Narration 2.");
+    expect(folds[0]?.querySelector(`[data-event-id="${CYCLE_RUN}#5"]`)).not.toBeNull();
+    // The first pair's own narration renders in place, outside the disclosure.
+    const fullText = [...(row?.querySelectorAll("p") ?? [])].find((node) =>
+      (node.textContent ?? "").includes("Narration 0."),
+    );
+    expect(fullText).toBeDefined();
+    expect(fullText?.closest("[data-chip-detail]")).toBeNull();
+  });
+
+  it("keeps the transcript-wide id set equal to the events' — C5's testable", () => {
+    const rendered = new Set<string>();
+    for (const node of document_.querySelectorAll("[data-event-id], [data-event-ids]")) {
+      const single = node.getAttribute("data-event-id");
+      if (single !== null) rendered.add(single);
+      for (const id of (node.getAttribute("data-event-ids") ?? "").split(" ")) {
+        if (id !== "") rendered.add(id);
+      }
+    }
+    expect([...rendered].sort()).toEqual(items.map((item) => item.eventId).sort());
+  });
+
+  it("carries each folded pair's event ids and tool-call ids on its compact line", () => {
+    const lines = [...document_.querySelectorAll("[data-cycle-line]")];
+    expect(lines[0]?.getAttribute("data-event-ids")).toBe(`${CYCLE_RUN}#3 ${CYCLE_RUN}#4`);
+    expect(lines[0]?.getAttribute("data-tool-call-ids")).toBe("cy-1");
+    expect(lines[1]?.getAttribute("data-event-ids")).toBe(`${CYCLE_RUN}#6 ${CYCLE_RUN}#7`);
+    expect(lines[1]?.getAttribute("data-tool-call-ids")).toBe("cy-2");
+    // The first pair's chip still anchors `data-event-id`, unchanged.
+    expect(
+      document_.querySelector('[data-row="cycle"] [data-tool-name]')?.getAttribute("data-event-id"),
+    ).toBe(`${CYCLE_RUN}#0`);
+  });
+
+  it("renders each folded pair's distinct argument document in its fold — the chips' Detail", () => {
+    const detail = document_.querySelector('[data-row="cycle"] [data-chip-detail]');
+    // Each member sent a distinct `probe`, and each fold names its own.
+    expect(detail?.querySelector('[data-cycle-fold="2"]')?.textContent ?? "").toContain('"probe":1');
+    expect(detail?.querySelector('[data-cycle-fold="3"]')?.textContent ?? "").toContain('"probe":2');
+  });
+
+  it("does NOT fold when a member failed — the negative half in the DOM", () => {
+    const failed = renderRows(groupRows(cycleItems(3, (index) => index === 2)));
+    expect(failed.querySelector('[data-row="cycle"]')).toBeNull();
+    expect(failed.querySelectorAll("[data-cycle-line]")).toHaveLength(0);
+    expect(failed.querySelectorAll("[data-tool-name]")).toHaveLength(3);
   });
 });
 
@@ -510,5 +640,11 @@ describe("the field grid cannot collapse a track to zero again", () => {
     expect(css).toMatch(/\.field\s*\{[^}]*min-width:\s*0/);
     expect(css).toMatch(/\.fieldValue\s*\{[^}]*min-width:\s*0/);
     expect(css).toMatch(/\.fieldValue\s*\{[^}]*overflow-wrap:\s*anywhere/);
+  });
+
+  it("caps a cycle's compact line at 1.5× target-min — 36px (§7.2 C4)", () => {
+    // jsdom cannot measure the box, so the ceiling is asserted on the CSS
+    // that ships, in this file's own idiom.
+    expect(css).toMatch(/\.cycleLine\s*\{[^}]*max-block-size:\s*36px/);
   });
 });

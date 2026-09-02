@@ -24,8 +24,10 @@ import {
   canSendTurn,
   cancelAvailability,
   COMPOSABLE_REASONS,
+  composerGateStore,
   isComposable,
   isSendKey,
+  signInPrimary,
 } from "../../src/stream/composerGate";
 
 describe("which disabled reasons still admit typing", () => {
@@ -51,6 +53,41 @@ describe("which disabled reasons still admit typing", () => {
 
   it("is enabled with no reason at all", () => {
     expect(isComposable(null)).toBe(true);
+  });
+});
+
+describe("the C8/C9 single-primary exception gate (§4.7, §23.8)", () => {
+  it("promotes Sign-in ONLY under the composer's current agent_unavailable", () => {
+    // The struck condition read last-observed provider health; the restated
+    // one reads the composer's own current reason. Both sides:
+    expect(signInPrimary("agent_unavailable")).toBe(true);
+    expect(signInPrimary(null)).toBe(false);
+    expect(signInPrimary("no_session")).toBe(false);
+    expect(signInPrimary("run_in_flight")).toBe(false);
+  });
+
+  it("classifies every reason in the closed vocabulary, exactly one loud", () => {
+    const loud = DISABLED_REASONS.filter((reason) => signInPrimary(reason));
+    expect(loud).toEqual(["agent_unavailable"]);
+  });
+
+  it("publishes the composer's reason to subscribers and resets to null", () => {
+    const seen: (string | null)[] = [];
+    const unsubscribe = composerGateStore.subscribe(() => {
+      seen.push(composerGateStore.getSnapshot());
+    });
+    try {
+      composerGateStore.publish("agent_unavailable");
+      expect(composerGateStore.getSnapshot()).toBe("agent_unavailable");
+      // Idempotent: republishing the same reason notifies nobody.
+      composerGateStore.publish("agent_unavailable");
+      composerGateStore.publish(null);
+      expect(composerGateStore.getSnapshot()).toBeNull();
+      expect(seen).toEqual(["agent_unavailable", null]);
+    } finally {
+      unsubscribe();
+      composerGateStore.publish(null);
+    }
   });
 });
 

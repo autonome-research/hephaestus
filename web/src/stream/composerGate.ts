@@ -73,6 +73,55 @@ export function canSendTurn(input: {
   return input.text.trim() !== "";
 }
 
+// -- the C8/C9 exception gate (§4.7, §23.8; AMENDED 2026-09-02 §0.2c) -------
+//
+// "Exactly one `data-variant="primary"` per shell, and in the steady state it
+// is `[data-composer-send]`." The sole exception keys off the composer's OWN
+// current `data-disabled-reason="agent_unavailable"` — never off last-observed
+// provider health, which the review fix struck: health is *last observed*,
+// never *current*, so a health predicate could hold while the composer is
+// enabled and mint two primaries. The composer is the only surface that knows
+// its current reason, and the ProvidersPanel is the other surface that must
+// read it, so the reason is published here — one store, one writer (the
+// mounted composer), read by both.
+
+let gateReason: DisabledReason | null = null;
+const gateListeners = new Set<() => void>();
+
+/**
+ * The composer's current `data-disabled-reason`, published by the mounted
+ * `Composer` on every change and reset to `null` on unmount — an unmounted
+ * composer has no current reason, so no exception can key off it.
+ */
+export const composerGateStore = {
+  publish(reason: DisabledReason | null): void {
+    if (reason === gateReason) return;
+    gateReason = reason;
+    for (const listener of gateListeners) listener();
+  },
+  subscribe(listener: () => void): () => void {
+    gateListeners.add(listener);
+    return () => {
+      gateListeners.delete(listener);
+    };
+  },
+  getSnapshot(): DisabledReason | null {
+    return gateReason;
+  },
+};
+
+/**
+ * C8/C9's one predicate, spelled once. While it is `true` the provider
+ * Sign-in action takes `primary` and the still-mounted Send demotes to
+ * `secondary`; in every other state — including every credential
+ * `rejected`/`expired`, which never disables the composer (§23.10) — Send is
+ * the one primary and Sign-in renders `secondary` with the health axis
+ * carrying the bad news.
+ */
+export function signInPrimary(reason: DisabledReason | null): boolean {
+  return reason === "agent_unavailable";
+}
+
 /** Closed reasons Cancel names when it is not available (§7A.5, §7A.6). */
 export const CANCEL_REASONS = ["cancelIdle", "cancelNoRun", "cancelNoStream"] as const;
 export type CancelReason = (typeof CANCEL_REASONS)[number];

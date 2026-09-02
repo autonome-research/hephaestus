@@ -154,26 +154,55 @@ export interface ChipMember {
   readonly result: TranscriptItem | null;
 }
 
+export interface TextRow {
+  readonly row: "text";
+  readonly key: string;
+  readonly items: readonly TranscriptItem[];
+}
+
+export interface ChipRow {
+  readonly row: "chip";
+  readonly key: string;
+  readonly toolName: string;
+  readonly call: TranscriptItem;
+  readonly result: TranscriptItem | null;
+  readonly images: readonly TranscriptItem[];
+  readonly status: ChipStatus;
+  /**
+   * §7.2 (a): every member of this repeat group, in render order, the first
+   * one included — `call` and `result` above are that first member's.
+   *
+   * Present **only** when the group has two or more members: "N=1 draws no
+   * count", so a lone chip carries no `repeat` and renders exactly as it
+   * did before the amendment.
+   */
+  readonly repeat?: readonly ChipMember[];
+}
+
+/** One (chip-or-repeat-group, text-row) pair of a §7.2 C4 cycle group. */
+export interface CyclePair {
+  readonly chip: ChipRow;
+  readonly text: TextRow;
+}
+
 export type TranscriptRow =
-  | { readonly row: "text"; readonly key: string; readonly items: readonly TranscriptItem[] }
+  | TextRow
   | { readonly row: "thought"; readonly key: string; readonly items: readonly TranscriptItem[] }
+  | ChipRow
   | {
-      readonly row: "chip";
+      /**
+       * §7.2 (amended 2026-09-02, C4): a cycle group — three or more
+       * consecutive (chip-or-repeat-group, text-row) pairs, one tool, all
+       * `ok`, results byte-identical after canonical-JSON serialization. The
+       * first pair renders in full; each subsequent pair renders as one
+       * compact line, its text row and Detail folded behind the first pair's
+       * disclosure. C5: no event id or tool-call id leaves the DOM — the
+       * text is relocated, never elided.
+       */
+      readonly row: "cycle";
       readonly key: string;
       readonly toolName: string;
-      readonly call: TranscriptItem;
-      readonly result: TranscriptItem | null;
-      readonly images: readonly TranscriptItem[];
-      readonly status: ChipStatus;
-      /**
-       * §7.2 (a): every member of this repeat group, in render order, the first
-       * one included — `call` and `result` above are that first member's.
-       *
-       * Present **only** when the group has two or more members: "N=1 draws no
-       * count", so a lone chip carries no `repeat` and renders exactly as it
-       * did before the amendment.
-       */
-      readonly repeat?: readonly ChipMember[];
+      readonly pairs: readonly CyclePair[];
     }
   | {
       readonly row: "ask";
@@ -420,7 +449,7 @@ export function groupRows(items: readonly TranscriptItem[]): readonly Transcript
     }
   }
   closeRuns();
-  return coalesceRepeats(rows);
+  return coalesceCycles(coalesceRepeats(rows));
 }
 
 // ---------------------------------------------------------------------------
@@ -521,6 +550,68 @@ export function coalesceRepeats(rows: readonly TranscriptRow[]): readonly Transc
   return out;
 }
 
+/**
+ * §7.2 (C4): "a cycle group coalesces from the second repetition of the pair" —
+ * the threshold is three pairs, because two occurrences are not yet a cycle.
+ */
+export const CYCLE_MIN_PAIRS = 3;
+
+/**
+ * §7.2 (C4): fold each maximal run of ≥3 consecutive (chip-or-repeat-group,
+ * text-row) pairs — one tool, all `ok`, results byte-identical after
+ * canonical-JSON serialization — into one `cycle` row.
+ *
+ * The chip half of a pair reuses `repeatSignature` verbatim, so the negative
+ * half is (a)'s, stated the same four ways: no group forms if any chip
+ * member's status is not `ok` (two failed calls never coalesce, even when
+ * identical), if any result document differs in a byte, if the interleaved
+ * text rows are joined by any item of a third kind (`thought`, `image`,
+ * `question`, `answer`, `audit`, `terminal` — each is a row of its own kind
+ * here and breaks the chip/text alternation), or across a seam — the §8 seam,
+ * a resync break and the §7.3 presentation rows are all appended around this
+ * function's output by `liveRows`/`panelRows`, so a group can never span one.
+ *
+ * The text rows are NOT required to be identical: the cycle is defined by its
+ * chip members (C4 conditions name the chip member only), and the narration
+ * between repeats is exactly the content C5 relocates behind the first pair's
+ * disclosure rather than eliding.
+ *
+ * Like `coalesceRepeats`, a rendering operation: it computes nothing, merges
+ * no payloads, and never produces a document no server sent (§1).
+ */
+export function coalesceCycles(rows: readonly TranscriptRow[]): readonly TranscriptRow[] {
+  const out: TranscriptRow[] = [];
+  let index = 0;
+  while (index < rows.length) {
+    const pairs: CyclePair[] = [];
+    let signature: string | null = null;
+    let next = index;
+    while (next + 1 < rows.length) {
+      const chip = rows[next];
+      const text = rows[next + 1];
+      if (chip === undefined || chip.row !== "chip") break;
+      if (text === undefined || text.row !== "text") break;
+      const candidate = repeatSignature(chip);
+      if (candidate === null) break;
+      if (signature === null) signature = candidate;
+      else if (candidate !== signature) break;
+      pairs.push({ chip, text });
+      next += 2;
+    }
+    const first = pairs[0];
+    if (first !== undefined && pairs.length >= CYCLE_MIN_PAIRS) {
+      out.push({ row: "cycle", key: first.chip.key, toolName: first.chip.toolName, pairs });
+      index = next;
+      continue;
+    }
+    const row = rows[index];
+    if (row === undefined) break;
+    out.push(row);
+    index += 1;
+  }
+  return out;
+}
+
 function chipRow(draft: ChipDraft): TranscriptRow {
   return {
     row: "chip",
@@ -605,16 +696,44 @@ export interface ResyncBreak {
   readonly after: { readonly run_id: string; readonly seq: number } | null;
 }
 
+/**
+ * §7.3 (amended 2026-09-02, §0.2c) — the presentation-row category, closed at
+ * exactly two members.
+ *
+ * A presentation row is a transcript row the client mints from state it
+ * already holds — never from computing over payloads, never from a fact the
+ * server did not send this tab. It carries NO `data-event-id`, appears in no
+ * `data-event-ids` list, and is excluded BY NAME from every event-id equality
+ * testable: the archive matcher skips exactly `local-prompt` and `run-start`;
+ * any other id-less `data-row` element is a mismatch, and a presentation row
+ * that carries an event id is a build error. It never enters history and never
+ * crosses the wire, and it states its own nature on its visible face (a
+ * marker in `.code` at `--ink-muted` plus an accessible equivalent), with
+ * `title` carrying only the long form.
+ */
+export const PRESENTATION_ROWS = ["local-prompt", "run-start"] as const;
+export type PresentationRowName = (typeof PRESENTATION_ROWS)[number];
+
 export type PanelRow =
   | TranscriptRow
   | { readonly row: "absence"; readonly key: string; readonly absence: HistoricalAbsence }
   | { readonly row: "seam"; readonly key: string }
-  | { readonly row: "resync"; readonly key: string; readonly resync: ResyncBreak };
+  | { readonly row: "resync"; readonly key: string; readonly resync: ResyncBreak }
+  /** C2: the local prompt echo — the sent text verbatim, originating tab only. */
+  | { readonly row: "local-prompt"; readonly key: string; readonly text: string }
+  /** C21: the run-start boundary — a rule line carrying the run id, derived. */
+  | { readonly row: "run-start"; readonly key: string; readonly runId: string };
 
 /**
  * The historical **prefix**: the omitted-prompts note, the rows, the
  * no-terminal-band note. Empty history contributes no rows at all — a project
  * with nothing to reopen should not be told what it is missing.
+ *
+ * §8's C3: NO presentation row renders in the history prefix, ever. History
+ * has no echoes (the §2.8 ordinal namespace records no prompts) and no
+ * run-start rows (it has no runs to mark), so both notices stay true on every
+ * reopen — this function is where that is enforced, by construction: its
+ * input is events only, and it mints nothing but the two named absences.
  */
 export function historicalRows(items: readonly TranscriptItem[]): readonly PanelRow[] {
   if (items.length === 0) return [];
@@ -625,20 +744,47 @@ export function historicalRows(items: readonly TranscriptItem[]): readonly Panel
   ];
 }
 
-/** One entry of the live suffix: an event, or the labelled break of a resync. */
+/**
+ * One entry of the live suffix: an event, the labelled break of a resync, or
+ * the C2 local-prompt echo the originating tab appended on Send. The echo is
+ * an *entry* rather than a row so that it holds its place in arrival order —
+ * "at the live suffix's tail" is a fact about when Send happened relative to
+ * the frames around it.
+ */
 export type LiveEntry =
   | { readonly entry: "event"; readonly item: TranscriptItem }
-  | { readonly entry: "break"; readonly resync: ResyncBreak };
+  | { readonly entry: "break"; readonly resync: ResyncBreak }
+  | { readonly entry: "echo"; readonly key: string; readonly text: string };
 
 /**
  * The live **suffix**, with each resync break rendered in place.
  *
  * Grouping never spans a break: a paragraph that flowed across a labelled gap
  * would be the silent join §8 forbids.
+ *
+ * §7.3's C21 lives here: a run-start boundary row is minted when a live
+ * frame's `run_id` differs from the run id of the previous rendered live row —
+ * derived purely from entries this tab already holds, rendered before that
+ * frame's row. THE BASE CASE: with no previous rendered live row (the §8 seam,
+ * a fresh attach, a resync refill — `prevRunId === null` below) no boundary is
+ * minted by comparison, because there is nothing held to compare and §8's C3
+ * forbids reaching across a seam for one. The one licensed exception: the C2
+ * echo — itself a held fact, the Send this tab performed — licenses exactly
+ * one run-start row for the first frame that follows it. The license survives
+ * the seams (the §8 seam and a resync break terminate *comparison*, not the
+ * held fact of the Send), and it is consumed by the first frame whether or
+ * not a boundary mints, so it can never license a second. The honest
+ * consequence: an observer that attaches mid-run renders the run in progress
+ * with no top boundary, and gains boundaries from the next run change onward.
+ * None is minted within a run; none is reconstructed from history.
  */
 export function liveRows(entries: readonly LiveEntry[]): readonly PanelRow[] {
   const rows: PanelRow[] = [];
   let batch: TranscriptItem[] = [];
+  /** Run id of the previous rendered live *frame* row; `null` past a seam. */
+  let prevRunId: string | null = null;
+  /** A C2 echo stands with no frame after it yet (C21's licensed exception). */
+  let echoLicense = false;
   const flush = (): void => {
     if (batch.length === 0) return;
     rows.push(...groupRows(batch));
@@ -648,9 +794,30 @@ export function liveRows(entries: readonly LiveEntry[]): readonly PanelRow[] {
     if (entry.entry === "break") {
       flush();
       rows.push({ row: "resync", key: entry.resync.key, resync: entry.resync });
+      // C21: a resync seam is a derivation boundary exactly as the §8 seam is.
+      // Run ids are never compared across a gap in which boundary events may
+      // have been lost; derivation restarts from the frames after it.
+      prevRunId = null;
       continue;
     }
-    batch.push(entry.item);
+    if (entry.entry === "echo") {
+      flush();
+      rows.push({ row: "local-prompt", key: entry.key, text: entry.text });
+      echoLicense = true;
+      continue;
+    }
+    const item = entry.item;
+    // Comparison when there is a previous rendered live row; the echo license
+    // alone in the base case. Never within a run: same-run frames after an
+    // echo consume the license without minting.
+    const boundary = prevRunId !== null ? item.runId !== prevRunId : echoLicense;
+    if (boundary && item.runId !== prevRunId) {
+      flush();
+      rows.push({ row: "run-start", key: `run-start:${item.eventId}`, runId: item.runId });
+    }
+    prevRunId = item.runId;
+    echoLicense = false;
+    batch.push(item);
   }
   flush();
   return rows;

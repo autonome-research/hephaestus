@@ -193,20 +193,11 @@
 /* ---- the stream's two states -------------------------------------------- */
 
 /*
- * §4.1(e), amended 2026-09-01: the band keeps its CONTROL and loses its LABEL,
- * so it holds one collapse button and nothing else. Its height is one control
- * rather than a row of type, and the column's name for assistive technology
- * stays on the `aside`'s `aria-label` — where it always was.
+ * §4.1(h), amended 2026-09-02 (C25): `.streamHeader` is struck as a band. The
+ * collapse control is the session tab strip's trailing item, styled where the
+ * strip lives (`stream/Stream.module.css`); the expanded column's only chrome
+ * above the transcript is the strip itself.
  */
-.streamHeader {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--gap-inline);
-  padding: var(--space-1) var(--space-2);
-  border-bottom: 1px solid var(--border);
-  min-height: var(--target-min);
-}
 
 .strip {
   display: flex;

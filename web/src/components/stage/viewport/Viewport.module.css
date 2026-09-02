@@ -2,10 +2,11 @@
  * Copyright 2026 The Hephaestus Authors
  * SPDX-License-Identifier: Apache-2.0
  *
- * INTERFACE.md §4.1: the view cube sits top-right, the grid readout
- * bottom-left. The canvas fills the region and every overlay is absolutely
- * positioned over it, so a screenshot of the canvas alone (which is what §5.4's
- * delta reads) contains no chrome.
+ * INTERFACE.md §4.1: the view cube sits top-right; the bottom edge is §5.5
+ * C18's one flex band (legend, explode, section). The canvas fills the region
+ * and the overlays sit over it — but no bottom overlay is absolutely
+ * positioned over ANOTHER — so a screenshot of the canvas alone (which is what
+ * §5.4's delta reads) contains no chrome.
  *
  * The well is `--viewport-ground` (the light modeling grid), not
  * `--surface-canvas`. That chrome-adjacent rung stays dark for NoToken and
@@ -61,13 +62,21 @@
   gap: var(--space-1);
 }
 
-.controls {
+/* §5.5 C18: the bottom overlays — legend, explode, section — share ONE flex
+   band. The band itself is absolutely seated on the well's bottom edge, but no
+   occupant is absolutely positioned over another: they are flex siblings, so
+   they cannot stack. The legend is `flex: none` in its own module, the explode
+   slider `flex: 1` with a 120px minimum track, the section control natural. */
+.band {
   position: absolute;
+  left: var(--space-3);
   right: var(--space-3);
   bottom: var(--space-3);
   display: flex;
-  flex-direction: column;
   align-items: flex-end;
   gap: var(--gap-inline);
-  max-width: calc(100% - var(--space-6));
+  /* The band is a layout row, not a hit target: the well's canvas stays
+     orbitable between the plates. The interactive occupants restore their own
+     `pointer-events: auto`; the legend keeps `none`, as before. */
+  pointer-events: none;
 }

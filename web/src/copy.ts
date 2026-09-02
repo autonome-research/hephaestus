@@ -249,6 +249,14 @@ export const copy = {
     geometryCount: "geometries",
     notBuilt: "not built",
     buildFailed: "build failed",
+    /**
+     * §7A.11 (C7): the transient marker on a rail row whose build ref changed
+     * across the last agent turn. It says *this changed*, never what it is now
+     * — the value is behind the row, on the server projection the click
+     * refetches. One word on the face; the sentence rides `title`.
+     */
+    turnChanged: "changed",
+    turnChangedTitle: "This part's build changed during the last agent turn.",
   },
 
   /** §13.1: dirtiness is a `git status` fact, and it says which side is dirty. */
@@ -365,6 +373,18 @@ export const copy = {
         "Rendered images from the server are still available through the inspector.",
       empty: "This build has no solids to draw.",
     },
+    /**
+     * §5.5 (C10): the `not-built` absence names the part and both ways out.
+     * The part name is a server projection (`GET /parts`,
+     * `GET /parts/{part}/build`); the body is exactly the two remedies, each
+     * in the reader's own vocabulary — the agent below, or the CLI.
+     */
+    notBuilt: {
+      title: (part: string): string => `${part} has not been built`,
+      ask: "Ask the agent in the stream below to build it.",
+      run: "Or run",
+      command: (part: string): string => `heph build ${part}`,
+    },
     /** §5.5: a screen-space readout, never a measurement, never a <Fact>. */
     readout: {
       view: "View",
@@ -452,6 +472,10 @@ export const copy = {
       label: "Section",
       enable: "Cut a section",
       disable: "Clear the section",
+      /** §5.5 C18: the band yields the control, never the cut. */
+      disclose: "Show section",
+      yielded:
+        "The stage is too narrow for the full section control. The cut itself is unchanged.",
       axis: "Axis",
       side: "Remove",
       offset: "Position",
@@ -510,7 +534,6 @@ export const copy = {
   results: {
     heading: "Geometry",
     count: "geometries",
-    solids: "solids",
     /** §4.7's EmptyState: an absence is a composed state with a heading. */
     notBuiltTitle: "Not built",
     failedTitle: "Build failed",
@@ -523,6 +546,16 @@ export const copy = {
     show: "Show in the viewport",
     hide: "Hide in the viewport",
     hidden: "hidden",
+    /**
+     * §6.1 (C16): the visibility toggles form a COLUMN whose header carries the
+     * verb ONCE; no row prints it. Each row's compact toggle keeps a complete
+     * accessible name — `Hide <solid label>` / `Show <solid label>` — because a
+     * column of controls whose names are all "toggle" is a screen-reader row
+     * lottery.
+     */
+    hideHeader: "Hide",
+    hideSolid: (label: string): string => `Hide ${label}`,
+    showSolid: (label: string): string => `Show ${label}`,
     /**
      * The count of this part's hidden entries, beside the toggles that produce
      * it. It used to live in the viewport's grid readout, which §5.5 defines as
@@ -917,6 +950,17 @@ export const copy = {
       delegation: "delegated by",
     },
     /**
+     * AMENDED 2026-09-02 (§7.1 C6) — a tab is named for what it is, never for
+     * the button that makes one. These are the session-kind nouns for the
+     * no-remembered-prompt fallback title (`tread · quick edit`): noun phrases
+     * from server facts, distinct by construction from every create-control
+     * label (`createOrchestrator`, `createPart`, `createMenu`).
+     */
+    tabKind: {
+      quick_edit: "quick edit",
+      delegation: "delegated",
+    },
+    /**
      * §2.8's thread state. The unlinked word is not a visible subtitle.
      *
      * "threaded" beside a tab that is visibly indented under its parent
@@ -977,16 +1021,42 @@ export const copy = {
      * transcript it annotates. The fuller reading is `absenceDetail`, on
      * `title` — a notice deleted rather than shortened fails §8's absence rule.
      */
+    /*
+     * AMENDED 2026-09-02 (§8 C24) — the resting face states the plain fact.
+     * Spec-internal terms ("event vocabulary", "run-end band") render only on
+     * `title` via `absenceDetail`; nothing about when a notice renders changed
+     * and no notice is removed.
+     */
     absence: {
-      user_prompt:
-        "Prompts are not part of the recorded event vocabulary, so this transcript shows the agent's side only.",
-      terminal: "Run outcomes are recorded live, so a reopened transcript shows no run-end band.",
+      user_prompt: "Prompts aren't recorded, so this transcript shows only the agent's side.",
+      terminal: "This reopened transcript doesn't show how the run ended.",
     },
     absenceDetail: {
       user_prompt:
         "The recorded event vocabulary has no user_prompt kind, so what was typed into the composer is not recoverable from a reopened transcript and is not reconstructed here.",
       terminal:
         "Run outcomes are recorded live and are not part of a reopened transcript, so no run-end band is shown here. Nothing below implies a run is still open.",
+    },
+
+    /**
+     * §7.3's presentation rows (amended 2026-09-02, C1/C2/C21): the two
+     * client-minted rows state their own nature on their visible face — a
+     * marker word in `.code` muted plus an accessible not-a-recorded-event
+     * equivalent — and `title` carries only the long form, because a
+     * disclosure only a hovering mouse can read is not a disclosure.
+     */
+    localEcho: {
+      /** The visible-at-rest marker word, C2's contract verbatim. */
+      marker: "unrecorded",
+      accessible: "Typed on this page; not a recorded event.",
+      title:
+        "This prompt was typed on this page and is not a recorded event: prompts are never part of the recorded transcript, so this row exists only in the tab that sent it and will not appear on reopen.",
+    },
+    runStart: {
+      label: "run",
+      accessible: "Turn boundary drawn by this page; not a recorded event.",
+      title:
+        "A new run began here. This boundary is derived by this page from the live frames it already holds; it is not a recorded event and is never reconstructed from a reopened transcript.",
     },
 
     /** §7.4 / §2.7: a resync is labelled, and never healed from history. */
@@ -1399,7 +1469,10 @@ export const copy = {
    */
   providers: {
     title: "Model providers",
-    eyebrow: "Sign in",
+    // The `SIGN IN` eyebrow and its duplicate heading are STRUCK from the
+    // rendered surface (§23.8, C13, 2026-09-02): the rail is ONE section,
+    // titled once, with at most one resting eyebrow. No aria-label reads the
+    // old string, so its key is gone rather than retained.
     /**
      * The rail at 800px cannot host the full configuration table, allowlist
      * note, and discovery explainer at once — those put Sign-in at ~3000px.
@@ -1474,6 +1547,16 @@ export const copy = {
     discover: {
       title: "Already on this machine",
       action: "Look for existing sign-ins",
+      /**
+       * §23.8 (C14): the discover control's resting caption — ≤ 20 words,
+       * naming BOTH halves of the §23.5 contract (reads the home directory
+       * only on press; nothing found is used until adopted). A deliberate,
+       * recorded exception to §0.2b's quiet resting path: what a control will
+       * read off the machine is a fact the operator is entitled to before the
+       * press. The negative half is tested — a caption that grows past 20
+       * words fails the build.
+       */
+      caption: "Reads your home directory only when pressed. Nothing found is used until you adopt it.",
       /** §15.41: nothing here runs on mount, on a timer, or on hover. */
       note:
         "This reads your home directory only when you press the button, and only to list what it finds. Nothing is used until you adopt it.",

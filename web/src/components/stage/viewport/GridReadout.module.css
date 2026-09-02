@@ -10,10 +10,11 @@
  * inks that clear the floor there. The shipped readout used `--ink-3`.
  */
 
+/* §5.5 C18: the legend is one occupant of the viewport's bottom flex band —
+   `flex: none`, because a readout never stretches — no longer absolutely
+   positioned (no bottom overlay ever sits over another). */
 .readout {
-  position: absolute;
-  left: var(--space-3);
-  bottom: var(--space-3);
+  flex: none;
   display: flex;
   flex-direction: column;
   gap: 2px; /* one-off: two readout lines sit tighter than --gap-stack */

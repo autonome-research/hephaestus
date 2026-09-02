@@ -175,25 +175,13 @@ export function Shell(): React.JSX.Element {
 
         <aside className={styles["stream"]} aria-label={copy.stream.title}>
           {shell.streamOpen ? (
-            <>
-              {/* §4.1(e), amended 2026-09-01: the eyebrow keeps its control and
-                  loses its label. `copy.stream.title` is the `aside`'s
-                  `aria-label` above and is not drawn again here — an `Agent`
-                  eyebrow over a `SESSIONS` heading over a session tab was three
-                  bands naming the same column. Exactly one child element. */}
-              <div className={styles["streamHeader"]}>
-                <Button
-                  variant="quiet"
-                  icon="chevron-right"
-                  iconLabel={copy.stream.collapse}
-                  onClick={() => {
-                    shellStore.setStreamOpen(false);
-                  }}
-                  data-stream-collapse=""
-                />
-              </div>
-              <StreamPanel />
-            </>
+            /* §4.1(h), amended 2026-09-02 (C25): the eyebrow band is struck AS
+               A BAND. The collapse control renders as the trailing item of the
+               session tab strip inside `StreamPanel`, keeping its hook and its
+               `iconLabel` name; the `aside` keeps `copy.stream.title` as its
+               `aria-label` above. In the steady state exactly one row of chrome
+               renders above the transcript — the strip itself. */
+            <StreamPanel />
           ) : (
             // §4.1: the strip is a CONTROL. Focus alone expands it, because a
             // composer cannot live in 44px and a tab stop that leads into a

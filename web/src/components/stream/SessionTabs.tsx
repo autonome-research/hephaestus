@@ -21,9 +21,15 @@
 // The widget is `TabBar`: roving tabindex, arrows, Home/End, Tab leaves the
 // list. The transcript is the `tabpanel` this list controls (#68).
 //
-// The visible label is the first prompt this page sent, the bound part, or
-// "New session". The UUID stays on `title` / `data-session-id`. History omits
-// prompts, so the first line is remembered on Send (`sessionPrompts.ts`).
+// The visible label is the first prompt this page sent, or (§7.1 C6, amended
+// 2026-09-02) a noun phrase composed from server facts only — never a
+// create-control label. The UUID stays on `title` / `data-session-id`. History
+// omits prompts, so the first line is remembered on Send (`sessionPrompts.ts`).
+//
+// §4.1(h) C25 (amended 2026-09-02): `[data-stream-collapse]` is the strip's
+// TRAILING item, after the §7.1(b) `+` — the former `streamHeader` band above
+// this strip is struck, so in the steady state this strip is the one row of
+// chrome above the transcript.
 
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { copy } from "../../copy";
@@ -54,6 +60,13 @@ export interface SessionTabsProps {
    * decides where it sits. `undefined` is the state where the panel says no.
    */
   readonly create?: ReactNode;
+  /**
+   * §4.1(h) C25: the stream collapse affordance, as the strip's trailing item —
+   * after the `+`, the strip's last interactive element in every state. The
+   * shell owns the open/closed state; the strip only decides where the control
+   * sits.
+   */
+  readonly collapse?: ReactNode;
 }
 
 function labelFor(
@@ -80,6 +93,7 @@ export function SessionTabs({
   bounded,
   panelId,
   create,
+  collapse,
 }: SessionTabsProps): React.JSX.Element {
   const byId = new Map(sessions.map((row) => [row.session_id, row]));
   const selectedId = selected ?? tabs[0]?.session_id ?? "";
@@ -102,7 +116,7 @@ export function SessionTabs({
   }, [selectedLabel]);
 
   return (
-    <div className={styles["tabs"]}>
+    <div className={styles["tabs"]} data-session-strip="">
       {/* §7.1(a), amended 2026-09-01: THE HEADING DOES NOT RENDER, in any state.
           It was an `<h2>` over a list whose `aria-label` is the same string —
           the word "session" printed twice above a strip whose every row is one.
@@ -143,11 +157,18 @@ export function SessionTabs({
           };
         })}
       />
-      {/* The strip's last item (§7.1(b)). Outside the `tablist`, because a
-          create is not a session and a roving tabindex over the tabs must not
-          walk onto it. */}
-      {create === undefined || create === null ? null : (
-        <div className={styles["tabsCreate"]}>{create}</div>
+      {/* The strip's trailing row (§7.1(b), §4.1(h) C25): the `+`, then the
+          collapse chevron as the strip's LAST interactive element in every
+          state. Outside the `tablist`, because neither is a session and a
+          roving tabindex over the tabs must not walk onto them. */}
+      {(create === undefined || create === null) &&
+      (collapse === undefined || collapse === null) ? null : (
+        <div className={styles["tabsCreate"]}>
+          {create}
+          {collapse === undefined || collapse === null ? null : (
+            <div className={styles["tabsCollapse"]}>{collapse}</div>
+          )}
+        </div>
       )}
     </div>
   );

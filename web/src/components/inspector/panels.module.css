@@ -78,6 +78,39 @@
   text-decoration: line-through;
 }
 
+/* §6.1 (C16): the visibility column. The verb renders ONCE, in this header —
+   never in a row — and each row's toggle is a compact control no wider than
+   2× target-min (48px), its complete name on `aria-label`. The header shares
+   the rows' horizontal padding so the word sits over the column it names. */
+.listHeader {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 var(--space-2);
+}
+
+.toggleHeader {
+  composes: label from "../../system/type.module.css";
+  inline-size: calc(2 * var(--target-min));
+  text-align: center;
+  color: var(--ink-muted);
+}
+
+.visibilityToggle {
+  flex: none;
+  inline-size: calc(2 * var(--target-min));
+  max-inline-size: calc(2 * var(--target-min));
+  justify-content: center;
+  padding-inline: 0;
+}
+
+/* §4.7 (C27): the METRICS table's size container. The two-column-group switch
+   reads THIS element's measured inline size — the drawer's own content width —
+   never a viewport breakpoint. */
+.metricsHost {
+  container-type: inline-size;
+  min-width: 0;
+}
+
 /* ---- findings ------------------------------------------------------------ */
 
 /* §3.10: a card that must read as detached takes `--border-strong`. It is a

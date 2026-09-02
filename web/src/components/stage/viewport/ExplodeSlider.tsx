@@ -34,27 +34,35 @@ const STEP = 0.01;
 
 export function ExplodeSlider({
   noop = false,
+  yielded = false,
 }: {
   /** A 1-solid sheet: explode does nothing, so the slider starts collapsed (#60). */
   readonly noop?: boolean | undefined;
+  /**
+   * §5.5 C18: below the 560px stage width the band yields in a fixed order and
+   * the explode slider collapses to its disclosure FIRST. The disclosure still
+   * opens on request; nothing about `explode_t` changes.
+   */
+  readonly yielded?: boolean | undefined;
 }): React.JSX.Element {
   const t = useWorkspace((s) => s.explode_t);
   const [open, setOpen] = useState(false);
-  const collapsed = noop && t === 0 && !open;
+  const collapsed = ((noop && t === 0) || yielded) && !open;
 
   if (collapsed) {
+    const why = noop ? copy.viewport.explode.noop : copy.viewport.explode.explain;
     return (
       <div
         className={styles["control"]}
         data-explode-t={t}
         data-explode-collapsed=""
-        title={copy.viewport.explode.noop}
+        title={why}
       >
         <Button
           variant="quiet"
           expanded={false}
           data-explode-disclose=""
-          title={copy.viewport.explode.noop}
+          title={why}
           onClick={() => {
             setOpen(true);
           }}

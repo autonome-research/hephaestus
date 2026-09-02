@@ -277,6 +277,74 @@ sequence" allocation is extended by that one item and by no other.
 | Meta-copy length | **§7.4**, **§8**, **§7A.10** | C21-C22 |
 | Spec repairs (a) header contradiction, (b) unread count, (c) dead surface | **§4.1**, **§7.1**, **§7A.10** | C10, C12, C23-C26 |
 
+### 0.2c The 2026-09-02 refinement round — the quiet column answers back
+
+The 2026-09-01 amendment shipped, and the same reviewer took the amended build
+through one full working session — send, watch, reopen, sign in, export — and
+filed twenty findings (R1-R20, three tiers). This section is the review record;
+every finding lands below as a dated amendment block in the section it binds,
+each clause stated in both directions per §0.2b's rule: when a thing renders,
+when it must NOT, and what the DOM carries either way. Clause numbers C1-C29
+are scoped to this record, exactly as §0.2b's C1-C26 are scoped to that one.
+
+**The one hard question this round had to answer, and the answer.** Two of the
+findings (R1, R13) ask the transcript to draw rows for things that are **not
+recorded events**: the operator's own just-typed prompt, and the boundary where
+one run's frames end and the next begin. §8 is built on the opposite promise —
+history is honest about what it does *not* hold, user prompts included, and the
+reopened transcript says so in place. The reconciliation is a new, named
+category: the **client-minted presentation row** (§7.3's amendment defines it).
+A presentation row is layout, not testimony: it is derived only from what this
+tab itself already holds (the text in its own textarea; the `run_id` on frames
+already rendered), it carries no `data-event-id`, it is excluded by name from
+every event-id equality testable (§7.2, G4.11), it never enters history, and it
+says what it is on its own face (`data-local-echo`, `data-row="run-start"`,
+a visible-at-rest marker word plus an accessible not-a-recorded-event
+statement — `title` carries only the long form, never the sole copy, because
+`title` is unreachable without a mouse). §8's absence notice
+remains true **verbatim** after this amendment, and a testable in §8's block
+says so. Nothing in this category is a fact about the engine; both rows restate
+what the client was already showing, one screen-height earlier.
+
+**Vocabulary used by more than one clause, fixed here once.** *Target-min* is
+the §4.7 minimum control height, **24px**; a clause bounding a row at
+"≤ 1.5× target-min" bounds it at 36px. *Shell* is the §4.1 grid — header plus
+the three columns and the drawer — rendered once per workspace. *Usable
+provider row* is a §23.8 row whose source axis is not `none` and whose
+health axis is not `rejected`/`expired` — a descriptive term only: C8/C9's
+`primary` exception keys off the composer's current
+`data-disabled-reason="agent_unavailable"`, never off this health-derived
+predicate, because health is last-observed and cannot stand in for the
+runtime's current answer.
+
+**Where the amendment lands.** No section is renumbered, no gate text is
+edited, and no §19 item is allocated: every clause is a tightening of an
+existing surface under G4/G5's existing deliverables. Superseded text is struck
+in place, never silently rewritten.
+
+| R | Finding | Amendment block | Clauses |
+|---|---|---|---|
+| R1 | Local prompt echo | **§7A.5**, **§7.3**, **§8** | C1-C3 |
+| R2 | Cycle coalescing | **§7.2** | C4-C5 |
+| R3 | Session tab labels | **§7.1** | C6 |
+| R4 | Turn-changed markers | **§7A.11** | C7 |
+| R5 | Accent hierarchy | **§4.7**, **§23.8** | C8-C9 |
+| R6 | Empty-state remedies | **§5.5** | C10 |
+| R7 | ok-card demotion | **§4.7** | C11 |
+| R8 | Stream width | **§4.1** | C12 |
+| R9 | Provider rail consolidation | **§23.8** | C13-C14 |
+| R10 | Composer two rows | **§7A.10** | C15 |
+| R11 | Geometry-table visibility column | **§6.1** | C16-C17 |
+| R12 | Viewport overlay contract | **§5.5**, **§7.4** | C18-C20 |
+| R13 | Run-start boundaries | **§7.3** | C21 |
+| R14 | Add-current-view placement | **§7A.3** | C22 |
+| R15 | Chip headline priority | **§7.2** | C23 |
+| R16 | Plain-language absence notices | **§8** | C24 |
+| R17 | Stream chevron band | **§4.1** | C25 |
+| R18 | Export/BOM labels | **§4.1** | C26 |
+| R19 | Metrics grid | **§4.7** | C27 |
+| R20 | Accent lint | **§3.9** | C28-C29 |
+
 ---
 
 ## 1. The boundary, stated as a test
@@ -1249,6 +1317,35 @@ The shipped `--glyph-*` values survive verbatim and move into the sprite
 and the shipped token file's own header already claims "every badge carries a
 glyph and a label".
 
+**AMENDED 2026-09-02 (§0.2c, R20) — accent is a promise of interaction, and the
+build broke the promise both ways.** §3.10 already gives the rule its border
+form (`--border-control` for interactive controls *and only* interactive
+controls); this clause states the ink/fill form and names the two shipped
+violations.
+
+**(C28) Accent renders only on interactive elements — or on the named link
+recipe.** An element drawing `--accent` ink or an accent fill either (i) has an
+interactive role (button, link, tab, slider, or an ARIA equivalent), or (ii) is
+a **link-recipe** text token: accent ink, underline on hover/focus, a real
+navigation or resolve action on activation, and a `title` naming where it goes.
+There is no third case. **Named offender:** `snapshot_ref` values rendered in
+accent as inert text. Each such ref either becomes a link-recipe token whose
+activation drives the existing resolve/navigate path for that ref kind, or it
+is de-accented to `.code` at `--ink-muted` like every other inert identifier.
+**The negative half:** no inert element — `Chip`, `Field` value, `Badge` word,
+plain prose — draws accent ink or fill in any state; §3.14's mechanical checks
+gain this as a sweep over computed styles (accented nodes must satisfy (i) or
+(ii)), and a build with an accented `<span>` that answers no click fails it.
+
+**(C29) The bare `+` is a button and must say so.** The §7.1(b) session-strip
+`+` control takes the **`quiet` Button recipe** (§4.7): control surface,
+`--border-control`, focus ring, ≥ 24px target — never a bare accent glyph on
+the panel fill — and carries an accessible name (`copy.stream.create`'s
+existing wording) via `aria-label`. **Testable:** the `+` control matches the
+quiet-button selector contract, exposes a non-empty accessible name that is not
+the literal `+`, and no interactive element in the strip renders as an
+unbordered accent glyph.
+
 ### 3.10 Elevation, radius, border, focus, motion
 
 **Elevation** is the six-rung surface ladder plus exactly two shadows
@@ -1529,7 +1626,7 @@ the right are dead in a 44px bar. It becomes `auto 1fr auto`, left-aligned on
 one baseline, reading ~~**identity → pin → icon-only Export/BOM → build
 state**~~ **STRUCK 2026-09-01, repair (a): a four-element reading order whose
 fourth element no longer exists.** The order is **identity → pin (build state
-inside it) → icon-only Export/BOM**, with one
+inside it) → ~~icon-only~~ Export/BOM** *(2026-09-02, C26)*, with one
 dominant element in the pin chip (the ref, in `.code`) and `ARTIFACT PIN`
 demoted to a title attribute. **Copy defect, fixed at the same time:**
 `copy.ts`:58 (`pin.current`) and :62 (`buildState.current`) are two different
@@ -1582,9 +1679,10 @@ measuring the document — including §3.13.1's contrast sweep, which skips a bo
 only at 2px or smaller. `data-build-state` is minted on the pin chip and on
 nothing inside it.
 
-Export and BOM remain **two visible icon-only controls** in the bar
+Export and BOM remain **two visible ~~icon-only~~ controls** in the bar
 (`[data-chrome-export]` / `[data-chrome-bom]`, issue #12). Neither is moved
-behind an overflow.
+behind an overflow. *("icon-only" STRUCK 2026-09-02 (§0.2c, C26) — the label
+rule below is the normative reading.)*
 
 **AMENDED 2026-09-01 (second amendment of this date) — the shell's own labels
 stop competing with the stream's content.** §0.2b's measurement: above the first
@@ -1619,7 +1717,11 @@ with the Stream expanded, `[data-stream-collapse]` is present and the
 `streamHeader` band has exactly one child element; no visible text node in the
 band renders `copy.stream.title`. The band's height is one control, not a row of
 type. §3.13's accessible-name floor is unchanged: removing a *visible* duplicate
-of an `aria-label` is not removing the name.
+of an `aria-label` is not removing the name. *(SUPERSEDED IN PART 2026-09-02
+(§0.2c, C25): the band itself no longer renders — clause (h) below moves the
+collapse affordance into the session tab strip. Every non-band obligation of
+this clause — the hook, the accessible names, the no-visible-title rule —
+survives in (h).)*
 
 **(f) The unread count is DEFERRED, explicitly, and is not a live clause.** The
 struck breakpoint phrase promised an unread count on the 44px collapsed strip
@@ -1637,6 +1739,57 @@ strip and nothing else** — no count, no dot, no badge. Should the count be
 wanted, it re-enters as a §19 item with a server-side or explicitly
 workspace-state-backed read watermark, and only then. It is recorded in §19 so
 it is not lost.
+
+**AMENDED 2026-09-02 (§0.2c) — three shell measurements from the refinement
+round.**
+
+**(g) C12 — the Stream track breathes with the window, through the mechanism
+that already exists.** The fixed `420px` STREAM track becomes
+**`clamp(360px, 30vw, 420px)`**, written into the `data-stream`-driven
+`grid-template-columns` rule that amendment (a) already made the sole authority.
+**The negative half:** no media query is added for this — (a)'s "no media query
+that changes `grid-template-columns`" survives verbatim, and a build that
+implements the clamp as a breakpoint has reintroduced the two-authority defect
+(a) closed. The 1280px collapse boundary and the 44px strip are unchanged; the
+clamp governs the *expanded* track only. The diagram's `420px` is read as this
+clamp's maximum. **Testable:** at 1280px window width the expanded stream track
+measures 384px (30vw); at ≥1400px it measures 420px; at every expanded width it
+is ≥360px, and the body never scrolls horizontally.
+
+**(h) C25 — the stream has exactly one header row, and the chevron joins it.**
+Amendment (e) left the collapse affordance a **band of its own** — one control
+tall, above the session strip. That band is now **struck as a band**: the
+`streamHeader` element does not render, and `[data-stream-collapse]` renders as
+the **trailing item of the session tab strip**, after the §7.1(b) `+` control,
+keeping its hook, its `iconLabel` accessible name, and the `aside`'s
+`aria-label` exactly as (e) specified. **Normative both ways, scoped to the
+steady state:** with the Stream expanded, **in the steady state** — stream
+`live`, no runtime fault, no §8(a) historyBar condition — exactly **one** row
+of chrome renders above the transcript: the session tab strip (tabs, `+`,
+chevron); no element above the transcript matches the former `streamHeader`;
+with the Stream collapsed, the 44px strip is unchanged from (f). **The
+exceptional elements keep their loudness and gain a named home:** the §7.4(a)
+stream-state badge with its `[data-resync-count]` readout, and the §8(a)
+`historyBar`, mount as an **exception row directly below the tab strip and
+above the transcript scroll region** — one shared row when both mount, badge
+leading — exactly and only in the states those clauses already name. This is
+the C15 pattern: the steady state is counted, the exceptions are exceptions
+by name and stay loud; nothing in this clause re-scopes when §7.4 or §8
+mounts anything. **Testable:** in the steady state, count the Stream column's
+children above the transcript scroll region — one; inducing `resyncing` or a
+failed history read adds exactly one exception row below the tab strip;
+`[data-stream-collapse]` is a descendant of the tab strip and is its last
+interactive element in every state.
+
+**(i) C26 — Export and BOM are icon+word at full width, icon-only under
+pressure.** At viewport widths **≥1280px** `[data-chrome-export]` and
+`[data-chrome-bom]` each render the sprite icon **and** the visible word;
+**below 1280px** they render icon-only, word on `aria-label`/`title` — the
+labels collapse at the same boundary the Stream does, one breakpoint authority
+(§4.1(a)), not a new one. Both stay visible, unmoved, at every width; the
+accessible name is identical in both forms. **Testable:** at 1440px both
+controls have a visible text node equal to their accessible name; at 1200px
+neither has a visible text node, and both accessible names are unchanged.
 
 ### 4.2 Panel inventory (closed for Stage 4/5)
 
@@ -1923,6 +2076,66 @@ yet made, not a capability gap.**
 `SignInDialog` (§23.8)** are built on these primitives from their first commit
 and declare no colour, type, or border of their own.
 
+**AMENDED 2026-09-02 (§0.2c) — three primitive tightenings from the refinement
+round.**
+
+**(C8) One `primary` per shell, and it is Send.** `Button`'s "one per surface
+at most" let every panel mint its own loudest control, and the build shipped
+four accent fills competing in one frame. Tightened: **at most one element with
+`data-variant="primary"` renders in the shell at a time, and in the steady
+state it is the composer's `[data-composer-send]`.** The one sanctioned
+exception is C9 (§23.8): ~~while **no usable provider row exists** (§0.2c's
+definition), the provider **Sign in** action may render `primary` … and the
+composer is disabled with `agent_unavailable` at that moment~~ *(condition
+STRUCK and restated 2026-09-02 (§0.2c review fix): observed health is *last
+observed*, never *current* (§23.8), so a health predicate cannot guarantee the
+composer's state — the two clauses could both hold and mint two primaries)* —
+while the composer carries **`data-disabled-reason="agent_unavailable"`** (the
+runtime's own answer: no sidecar, no configured provider — §7A.2), the
+provider **Sign in** action renders `primary`, and **the disabled
+`[data-composer-send]` demotes to `data-variant="secondary"` for exactly as
+long as that reason holds** — it stays mounted per §7A.10(a) (a vanished
+primary leaves no target for "why can't I send?"), but a disabled control is
+not the surface's next step and does not keep the loudest variant. The instant
+`agent_unavailable` clears, Send re-takes `primary` and Sign in renders
+`secondary` (rotate already does). A provider whose every credential is
+`rejected`/`expired` does **not** trigger the exception: §23.10 fails the next
+run and flips the health axis, it never disables the composer, so Send stays
+the one primary and Sign in stays `secondary` with its health facts loud.
+Dialogs are their own surface: a `primary` inside an open modal
+(`SignInDialog`, `ConflictDialog`) does not count against the shell, because
+the modal *is* the shell while it traps focus. **Testable:** with
+`data-disabled-reason` null, `document.querySelectorAll('[data-variant="primary"]')`
+outside open dialogs has length 1 and it is `[data-composer-send]`; with
+`data-disabled-reason="agent_unavailable"`, it has length 1, it is the sign-in
+action, and `[data-composer-send]` is present with `data-variant="secondary"`;
+with every credential rejected but the composer enabled, it has length 1 and
+it is `[data-composer-send]`.
+
+**(C11) A finished, successful tool card rests on the seam border.** `ToolChip`
+"a raised card" was implemented as `--border-strong` on every chip, so a
+transcript of routine successes read as a wall of detached cards. Tightened
+per §3.10's own split: a chip whose `data-status` is **`ok`** draws its card
+edge with **`--border`** (the seam token); only a chip whose status is
+**non-terminal or failed** — `running`, `error`, or `unknown` — draws
+`--border-strong`. The raised fill, radius, and every §7.2 attribute are
+unchanged; what changes is that detachment is now the *exception's* signal,
+which is §0.2b's discipline applied to a border. **Testable:** in a transcript
+of `ok` chips no chip's computed border colour equals `--border-strong`;
+induce one `error` chip and exactly that chip's does.
+
+**(C27) Metrics become a key/value grid when the drawer is wide enough to hold
+one.** The `DataTable` carrying `BuildResult.metrics` in `ResultsPanel` (the
+METRICS block) renders **two label/value/unit column groups side by side when
+the inspector drawer's content width is ≥ 640px**, filling row-first, sharing
+one `subgrid` so values align within each group; below 640px it renders the
+single-column form unchanged. This is layout only: row content, `<Fact>`
+sources, `format.ts` boundaries, and tabular alignment are untouched, and the
+switch reads the drawer's own measured width — a container fact, not a new
+breakpoint authority. **Testable:** with the drawer at 800px content width, the
+metrics rows occupy two column groups and no group's value column jogs; at
+500px, one.
+
 ---
 
 ## 5. Viewport and the render division of labour
@@ -2154,6 +2367,49 @@ header shows `stale` with the ref it is showing. `architecture.md` §3 already
 guarantees a long build never blocks inspection; the UI's job is to express
 "stale but valid" rather than to blank the canvas. It never blanks.
 
+**AMENDED 2026-09-02 (§0.2c) — the absence gets its remedies, and the overlays
+get a layout contract.**
+
+**(C10) The `not-built` absence names the part and both ways out.** The
+2026-09-01 amendment's composed-absence vocabulary gains one key, closing at
+`no-pin` · `loading` · **`not-built`** (plus the fault states it already
+carried). `not-built` renders **when the pin holds no artifact AND the selected
+part's build state is `not_built`** — the state where the well is empty because
+this part has simply never been built — and in no other state: with no part
+selected, `no-pin` renders as before, and a part with a failed build renders
+the failure, never this. Its `EmptyState` names the part in the `.title`
+("**`<part>` has not been built**") and its `.body` is exactly the two
+remedies, each in the reader's own vocabulary: **ask the agent in the stream
+below**, and **run `heph build <part>`** (the command in `.code`). Both facts
+in the heading — the part name and the state — are server projections
+(`GET /parts`, `GET /parts/{part}/build`); the client composes, it does not
+derive (§1). **Testable:** select an unbuilt part with no pin — the well
+carries one `EmptyState` whose title contains the part name and whose body
+contains both remedy strings; build the part — the state unmounts.
+
+**(C18) The bottom overlays share one flex band and a stated yield order.** The
+viewport's bottom edge — grid readout (the legend), explode slider, section
+control — renders as **one flex row**: the legend at `flex: none` (it is a
+readout and never stretches), the explode slider at `flex: 1` with a
+**120px minimum track**, the section control at its natural size. Below a
+named stage width — **560px of stage column**, the width at which 120px of
+track no longer fits beside the other two — the band yields in a fixed order:
+the explode slider collapses to its disclosure first, then the section control,
+and the legend yields last, because a readout that lies about camera scale is
+worse than a missing control. **The negative half:** no bottom overlay is ever
+absolutely positioned over another, and nothing yields above 560px.
+
+**(C19) `front` joins the view-cube plate, and nothing overlaps anything.** The
+§4.7 ViewCube spec already moved `front` onto "a separate named-views row";
+this clause pins where that row lives: **inside the view-cube plate** (§3.10's
+overlay surface), not as a free-floating control — one plate, one shadow, one
+bounding box in the corner. **Testable, and it covers the whole overlay
+contract:** an e2e asserts, on a `ready` canvas at 1280×800 and at the 560px
+yield width, that the bounding boxes of the view-cube plate, the appearance
+cluster, the grid readout, the explode slider, the section control, and the
+section plate header are **pairwise non-intersecting** — the same assertion
+style as §7.4's C20 pill clause, stated once per surface set.
+
 ---
 
 ## 6. Results, properties, checks, DFM
@@ -2184,6 +2440,29 @@ is no mechanism to touch. The claim is worth making the moment it is load
 bearing, which is the moment an entry is hidden: it is one sentence now, carried
 on `[data-results-hidden-note]`, printed only while this part has a hidden entry.
 `not_built` says what it is and stops.
+
+**AMENDED 2026-09-02 (§0.2c) — the geometry table's visibility column, and one
+word.**
+
+**(C16) Per-row visibility is a compact toggle column with the verb in the
+header.** §5.4's per-solid toggles rendered as a full worded button per row,
+so the verb "hide" was printed once per solid down the table. Tightened: the
+toggles form a **column** whose header carries the verb **once**, and each
+row's control is a compact toggle **no wider than 2× target-min (48px, §0.2c)**
+with no per-row visible word. The accessible name stays complete per row:
+**`Hide <part solid label>`** (flipping to `Show …` while hidden), exposed via
+`aria-label`, because a column of controls whose names are all "toggle" is a
+screen-reader row lottery. Every row keeps `data-geometry-index`, and G4.5's
+mechanism (§5.4) is untouched — this clause moves pixels, not evidence.
+**Testable:** the visibility column header renders the verb exactly once; no
+row renders it visibly; each row's toggle measures ≤48px wide and exposes an
+accessible name containing its solid's label.
+
+**(C17) `1 solids` does not ship.** The geometry-count line pluralizes:
+`1 solid`, `N solids` for N≠1. The count itself is the served `geometry_count`
+in every case (§6.1's tightening above); only the unit word inflects, in
+`format.ts`, which is already the one place a number becomes a string.
+**Testable:** a one-solid fixture renders `1 solid` and never `1 solids`.
 
 ### 6.2 Properties
 
@@ -2311,6 +2590,33 @@ tab strip**, not as a band below it. **Normative, and each half is testable:**
 it is the store the plural describes. The rename is mechanical — no exported
 symbol changes — and a build in which two modules under `stream/` differ only by
 a trailing `s` fails this clause.
+
+**AMENDED 2026-09-02 (§0.2c, C6) — a tab is named for what it is, never for the
+button that makes one.** The remembered-first-line store (`sessionPromptStore`,
+§7.1(c)) titles a tab the operator has prompted from; a tab with **no**
+remembered first prompt was falling back to the create affordances' copy, so a
+freshly attached session and the button that creates one read as the same
+thing. Normative:
+
+1. A tab with no remembered first line titles itself as a **noun phrase
+   composed from server facts only**: the session's profile word plus its
+   created time (`orchestrator · 14:32`), or, for a part-bound session, the
+   part's name with the session kind (`tread · quick edit`) — facts the thread
+   and session projections already serve (§2.8). It **re-words nothing and
+   derives nothing** (§1); `hh:mm` formatting is presentation in `format.ts`.
+2. **No rendered tab's accessible name is string-equal to any create-control
+   label** — not `copy.stream.createOrchestrator`, not `copy.stream.createPart`
+   (nor their `New session` / `Ask about <part>` menu forms, §7.1(b)) — in any
+   state. A tab that names itself after a verb phrase for creating sessions
+   fails this clause; this is the testable, run over every tab the fixture can
+   produce.
+3. The **quick-edit child** tab's fallback follows rule 1's part form and is
+   visually distinct from the `+` menu entry that spawns one — distinct string,
+   distinct element — so the tree never shows the affordance and its product
+   wearing one label.
+
+Nothing changes for a tab **with** a remembered first line: it titles by that
+line, truncated, exactly as shipped.
 
 ### 7.2 The tool chip contract
 
@@ -2517,6 +2823,56 @@ construction (`stream/transcript.ts`'s `PanelRow`), not inside a chip, because a
 chip cannot see its neighbours and a chip that could would be reading the
 transcript.
 
+**AMENDED 2026-09-02 (§0.2c) — cycles coalesce the way repeats do, and the
+headline gets an order.** The 2026-09-01 clause (a) covers a run of identical
+chips with nothing between them; the build's actual noise is one step more
+structured — the agent loops *tool call, short narration, same tool call, same
+narration* — and (a)'s "no item of any other kind between them" correctly
+refuses to touch it. This block extends the same discipline to that shape
+rather than loosening (a).
+
+**(C4) A cycle group coalesces from the second repetition of the pair.** Define
+a **cycle group**: a maximal run of **three or more** consecutive
+(chip-or-repeat-group, text-row) *pairs* in render order, where every pair's
+chip member shares one `data-tool-name`, every chip member has
+`data-status="ok"`, and every chip member's §7.2 result document is
+**byte-identical after canonical-JSON serialization** across the group. A cycle
+group renders as: the **first pair in full**, exactly as ungrouped — its chip
+(or ×N row) and its text row — then **one compact line per subsequent pair**:
+the tool name, the running `×N` ordinal, the shared status badge, and nothing
+else, each compact line **≤ 1.5× target-min (36px, §0.2c) tall**. The
+subsequent pairs' **text rows and the chips' Detail render behind the first
+pair's disclosure**, in order, so one disclosure opens the whole cycle.
+**The negative half, same four ways as (a):** no group forms if any chip
+member's status is not `ok`, if any result document differs in a byte, if the
+interleaved text rows are joined by any item of a third kind (`thought`,
+`image`, `question`, `answer`, `audit`, `terminal`, a resync seam, the §8 seam,
+or a §7.3 presentation row), or across that seam. Two pairs are two pairs —
+the threshold is three, because two occurrences are not yet a cycle.
+
+**(C5) A cycle group loses nothing the DOM discipline tracks.** Every clause of
+(a)'s id rule applies unchanged: the first pair's chip anchors `data-event-id`;
+every member event of the group — chip **and** text events, compact lines
+included — appears in `data-event-ids` (and tool-call ids in
+`data-tool-call-ids`) on the elements that render them; and the (a) testable's
+set equality over the whole transcript holds identically for a transcript
+containing cycle groups. Text content is never dropped: the folded text rows
+render inside the disclosure with their own `data-event-id` spans, exactly as
+§8's grouping rule already requires. A cycle rendering that elides a text
+row's content, rather than relocating it behind the disclosure, fails this
+clause and §4.4 together.
+
+**(C23) The headline field priority is closed and ordered.** The one-line
+headline `stream/toolSummary.ts` computes chooses its fields in this order and
+no other: **(1) a `status` field, (2) a `message` field, (3) a `name` field,
+(4) `*_ref` fields (abbreviated per §4.1(a)), (5) bare counters last** —
+counts of things summarize a document least, which is §0.2b's "a count is not a
+fact" applied to the headline. A document with none of these renders
+`data-chip-summary="opaque"` exactly as before; the priority adds no new
+sentence, it orders the existing choice. **Testable:** for a fixture document
+carrying both a `message` and a counter, the headline renders the message and
+not the counter.
+
 ### 7.3 Kinds
 
 - `text_delta` → streamed assistant text.
@@ -2556,9 +2912,101 @@ transcript.
   transcript shows no terminal band and says so once, in place, rather than
   implying the run is still open.
 
+**AMENDED 2026-09-02 (§0.2c) — two rows that are not kinds: the client-minted
+presentation row.** Everything above is an **event** — testimony from the
+server, carrying an id. This amendment defines a second, closed category with
+exactly **two** members, and the category's rules come before its members
+because the rules are what keep §8 true:
+
+A **presentation row** is a transcript row the client mints from state it
+already holds — never from computing over payloads, never from a fact the
+server did not send this tab. It carries **no `data-event-id`**, appears in no
+`data-event-ids` list, and is **excluded by name** from every event-id equality
+testable (§7.2(a), C5, G4.11's archive match). ~~The archive matcher skips
+`[data-row]` elements that carry no event id~~ *(STRUCK 2026-09-02 (§0.2c
+review fix): a shape predicate would silently skip a buggy event row that
+dropped its id — exactly the information loss the match exists to catch)* —
+**the archive matcher skips exactly `[data-row="local-prompt"]` and
+`[data-row="run-start"]`, by name; any other `[data-row]` element that
+carries no event id is a mismatch**, and a presentation row that carries an
+event id is a build error (the guard cuts both ways). It never enters
+history, never crosses the wire, and **states its own nature on its visible
+face, not on `title` alone**: each presentation row renders a visible-at-rest
+marker word in `.code` at `--ink-muted` (the echo row's marker reads
+`unrecorded`; the run-start row's rule-line-plus-run-id *is* its marker) paired
+with an accessible equivalent — visually-hidden text or `aria-description`
+carrying the not-a-recorded-event statement — because `title` is unreachable
+from keyboard, touch, and most screen readers, and a disclosure only a hovering
+mouse can read is not a disclosure (§3.9's colour-is-never-alone discipline,
+applied to honesty). `title` keeps the long form. §8's recorded-event honesty
+rules are not relaxed one word by this category — see §8's C3.
+
+**(C2 — member one: the local prompt echo.** DOM: `data-row="local-prompt"`,
+`data-local-echo="1"`.) On Send, the originating tab appends one presentation
+row carrying the **sent text verbatim**, at the live suffix's tail, with the
+category's visible-at-rest marker (`unrecorded`, `.code` muted) and its
+accessible equivalent stating it was **typed on this page and is not a
+recorded event** — a `title` carries the long form, per the category rule
+above, never the only copy.
+§7A.5's amendment states when it is minted and what it marks; the rules here
+state what it is. **The negative halves:** it renders only in the tab that sent
+the prompt (an observer tab has no local text to echo, and echoing another
+tab's would require inventing it); it is never re-rendered from history on
+reopen — the §8 user-prompt absence notice renders there, unchanged and still
+true; and a failed POST does not remove it, because the text was typed whether
+or not the turn started (`data-send-state="unknown"` renders beside it, §7A.5).
+
+**(C21 — member two: the run-start boundary.** DOM: `data-row="run-start"`,
+`data-run-id="run-…"`.) The transcript mints a boundary row **when a live
+frame's envelope `run_id` differs from the run id of the previous rendered
+live row** — derived purely from frames the tab already holds and rendered
+before that frame's row. Because the rule reads only held frames, **observer
+tabs gain every comparison-derived boundary** the originating tab draws, with
+no new state and no watermark (the one boundary they lack is the
+echo-licensed first one — the base case below).
+
+**The base case, stated because the comparison rule is undefined without one:**
+when there is **no previous rendered live row** — the first frame after the §8
+seam, after a tab attaches, or after a resync refill — **no boundary is minted
+by comparison**, because there is nothing held to compare and §8's C3 forbids
+reaching across the seam for one. The one licensed exception: in the
+originating tab, **the C2 echo licenses exactly one run-start row** for the
+first frame that follows it — the Send this tab performed is itself a held
+fact, so the boundary is still derived from local state, and the pair marks
+the turn edge from both sides. The honest consequence for every other tab is
+stated, not papered over: **an observer that attaches mid-run renders the run
+in progress with no top boundary** — the frames it never held cannot license a
+row — and gains boundaries from the next run change onward. ~~no row is minted
+for the first live row after the §8 seam when it continues the same run
+already rendered~~ *(STRUCK 2026-09-02 (§0.2c review fix): "when it continues
+the same run" is decidable only by the cross-seam comparison C3 forbids; the
+base case above replaces it unconditionally — the first live row after the
+seam never mints a comparison-derived boundary, echo-licensed or nothing)*.
+**A resync seam is a derivation boundary exactly as the §8 seam is** (§7.2
+already names the two seams as distinct): the refill's first frame mints no
+boundary by comparison — run ids are never compared across a gap in which
+boundary events may have been lost — and derivation restarts from the frames
+after it.
+
+**The negative halves:** none is minted within a
+run; none is reconstructed from history (a reopened transcript's run structure
+is the §2.8 ordinal namespace, which has no runs to mark); and the row draws
+the run id in `.code` and nothing else — it is a rule line, not a card.
+**Testable, both members:** across any transcript, every `[data-row="local-prompt"]`
+and `[data-row="run-start"]` element carries no `data-event-id`; the §7.2 id-set
+equality passes on a transcript containing both; two consecutive runs in
+one live session render, **in the originating tab**, exactly two
+`[data-row="run-start"]` rows with their distinct run ids (the first
+echo-licensed, the second by comparison); and an observer tab attached mid-run
+renders no `[data-row="run-start"]` row until the next run change, then
+exactly one per change.
+
 ### 7.4 Stream states
 
-Closed vocabulary on the Stream header: `live`, `reconnecting`, `resyncing`,
+Closed vocabulary on the Stream header *(host note, 2026-09-02 (§0.2c, C25):
+the `streamHeader` band is struck — "Stream header" here and in (a) below now
+names §4.1(h)'s exception row, directly below the tab strip; mount conditions
+unchanged)*: `live`, `reconnecting`, `resyncing`,
 `historical`, `detached`. `resyncing` is §2.7's close-and-refill state and is
 **visible** — a silent gap in a transcript the user believes is complete is
 worse than a labelled one.
@@ -2604,6 +3052,19 @@ vocabulary so a future state cannot land without copy. **The cause is never
 shortened away:** `runtimeFault`'s three-word verdicts, `resync.gap`'s statement
 that events are *not recovered*, and §7A.8's named `cause` all survive; what is
 cut is the paragraph explaining the mechanism, which belongs on `title`.
+
+**AMENDED 2026-09-02 (§0.2c, C20) — the Latest pill lives in the gutter, off
+the cards.** `[data-jump-latest]` floated over the transcript's content column
+and landed on top of tool cards. Normative: the pill anchors **in the
+transcript's scroll-gutter edge** — the strip the scrollbar owns, at the
+column's trailing edge — with a stated clearance: its bounding box intersects
+**no** chip, text row, or presentation row at any scroll position. Its mount
+condition is unchanged (it renders only while the view is not following the
+latest row, and never while followed — the §0.2b discipline already applied to
+it). **Testable:** with the transcript scrolled up over a chip-dense fixture,
+`getBoundingClientRect` of `[data-jump-latest]` intersects no
+`[data-tool-name]` card's box — the same pairwise non-intersection assertion
+§5.5's C19 states for the viewport overlays.
 
 ---
 
@@ -2886,6 +3347,24 @@ line **says so** — the removed key renders struck or as an explicit
 selection" is a fact about what is being sent, and the quiet path is only for
 the envelope the workspace state implies.
 
+**AMENDED 2026-09-02 (§0.2c, C22) — "Add current view" surfaces where the gap
+is visible.** The explicit add affordance (`[data-context-add-view]`, issue
+#13) rendered only inside the expanded chip form, so the one moment it matters
+— a selection exists, the envelope carries no `view`/`selection`, and the
+resting line shows the gap — required opening the disclosure to fix. Normative:
+**when `view` and `selection` are absent from the envelope and a selection
+exists in workspace state, `[data-context-add-view]` renders on the resting
+context summary line** (§7A.3(a)), as a quiet control at the line's end, in
+addition to its place in the expanded form. **The negative halves:** it does
+not render on the line when the members are already in the envelope, when no
+selection exists, or while the disclosure is open (the form's copy of it is
+showing); and activating it does exactly what the form's copy does — adds the
+members to the `added` set — computing nothing (§1). The (d) testables are
+unchanged: the line's `data-context-keys` still names exactly what would be
+sent, before and after the add. **Testable:** pin a build, make a selection,
+leave `view` un-added — the resting line renders the affordance; activate it —
+the affordance unmounts from the line and `view` joins `[data-context-keys]`.
+
 ### 7A.4 Where the composed block goes — and the one field it must never touch
 
 The sidecar's `session.prompt` takes `{session_id, run_id, prompt}` and nothing
@@ -3002,6 +3481,37 @@ must tell them apart. The composer disables while any run is live, whoever
 started it, and names which session holds it. **When §19.23 lands, the guard
 narrows to per-session and `run_in_flight` keeps its meaning** — the scope
 changes, the vocabulary does not.
+
+**AMENDED 2026-09-02 (§0.2c, C1) — the sent words appear the moment they are
+sent, and they mark the turn's start.** Between Send and the first `/events`
+frame the originating tab drew **nothing**: the textarea cleared on the POST
+response, the transcript's tail was the previous turn, and for one model
+round-trip the operator's own words existed nowhere on screen. Normative:
+
+1. **On Send** — the same submit that calls `sessionPromptStore.remember`
+   (`Composer.tsx`) — the tab appends the §7.3 **local-prompt presentation
+   row** (`data-row="local-prompt"`, `data-local-echo="1"`, C2's contract) to
+   the live suffix, carrying the sent text verbatim. It is minted from the
+   textarea's own value, the one fact this clause touches that the tab holds
+   without the server's help — which is why it is a presentation row and not
+   an event.
+2. **The echo is the turn-start marker for the originating tab.** It renders
+   immediately, so the dead gap between Send and the first frame is closed by
+   the operator's own words rather than by a spinner; the echo then **licenses**
+   the first frame's C21 run-start row, which lands directly after it — C21's
+   base case: with no previous rendered live row to compare against, the echo
+   is the held fact that permits the boundary. The named limit above (cancel
+   unavailable until the first frame) is unchanged — the echo marks the turn,
+   it does not stand in for the run id.
+3. **The negative halves are C2's,** restated where they bind the send path: a
+   lost POST leaves the echo standing with `data-send-state="unknown"` rendered
+   beside it (the words were sent into uncertainty, and hiding them would
+   un-say something the operator said); a second Send appends a second echo;
+   and no echo is ever minted by history load, resync, or an observer tab.
+
+**Testable:** submit against a slow fake model — `[data-row="local-prompt"]`
+containing the prompt text renders before any frame arrives; reopen the session
+— no such row renders, and §8's user-prompt absence notice does.
 
 ### 7A.6 Cancellation, and what a `4409` does to a run this tab started
 
@@ -3253,15 +3763,21 @@ the block is now conditional per §7A.3(c) and the form gains
 **(a) Send is the only resting button.** In the resting state
 (`data-composer-state="idle"`, no run in flight) the composer's action row
 contains **exactly one** element with a button role: `[data-composer-send]`.
-**Testable:** query the **action row** for button-role elements in the resting
-state and the count is one. *The scope is the action row, not the form: (c)
+**Testable:** ~~query the **action row** for button-role elements in the
+resting state and the count is one~~ *(STRUCK and restated 2026-09-02 (§0.2c,
+C15): the resting composer has no action row — C15 seats Send on the input
+row, and a query against a row that does not mount returns zero, not one)* —
+query the **input row** (the row holding the textarea) for button-role
+elements in the resting state and the count is one, and it is
+`[data-composer-send]`. *The scope is the input row, not the form: (c)
 places `[data-context-disclose]` inside the same `<form>`, attached to the
 summary line, so a form-scoped query returns two at rest by design. The rule
-this clause states is that the row of actions holds one target, and the testable
-now says the same thing the normative sentence above says.* Send keeps its existing disabled-with-reason behaviour when it
+this clause states is that the row holding the send target holds exactly
+one.* Send keeps its existing disabled-with-reason behaviour when it
 cannot send — a *primary* action that vanishes would leave an operator with no
 target for the question "why can't I send?", which is the opposite case from
-Cancel.
+Cancel (though while disabled for `agent_unavailable` it demotes to
+`data-variant="secondary"` — §4.7's C8).
 
 **(b) Cancel mounts only while cancellable** — §7A.6's amendment, restated here
 as the DOM half: `[data-composer-cancel]` exists in the DOM **iff**
@@ -3279,8 +3795,10 @@ entry point moves.
 **(d) The model chip stays as quiet text.** `[data-composer-model]` /
 `[data-composer-provider]` keep their attributes and their `<Fact>` attribution
 — `providers.models.id` is a server fact and §4.6 governs it — but the chip
-renders as **quiet inline text** in the composer's meta line, not as a bordered
-`Chip` in the action row. It renders **only when a model is selected and model
+renders as **quiet inline text** ~~in the composer's meta line~~ *(placement
+STRUCK 2026-09-02 (§0.2c, C15): the meta line is gone; the chip's home is the
+context row's right end — see the 2026-09-02 amendment below)*, not as a
+bordered `Chip` in the action row. It renders **only when a model is selected and model
 chrome is enabled**, exactly as today; nothing about *when* it renders changes.
 
 **(e) Dead surface, repair (c) — remove or wire, and this document chooses.**
@@ -3319,6 +3837,34 @@ lost-POST statement ("the turn may have started"), §7A.8's `cause`, and every
 disabled *reason* are **exempt** — they are the exceptional path, and this
 amendment shortens the resting path only.
 
+**AMENDED 2026-09-02 (§0.2c, C15) — the resting composer is two rows, counted.**
+The 2026-09-01 amendment took the composer to one summary line, an input, and
+one button, and the build still stacked them four high: context line, input,
+a meta line for the model chip, an action row for Send. Normative — the resting
+composer is **exactly two rows below the context line's top edge**:
+
+1. **The context row** is §7A.3(a)'s summary line, and the **model id renders
+   inline at its right end** — `[data-composer-model]` /
+   `[data-composer-provider]` as `.code` at `--ink-muted`, keeping every
+   attribute, `<Fact>` attribution, and mount condition of clause (d) above;
+   only the placement is new (and (d)'s meta-line placement is struck). One
+   line answers both "what will be sent" and "to what".
+2. **The input row** holds the textarea with **`[data-composer-send]`
+   right-aligned on the same row**, at the input's trailing edge — not in a row
+   of its own. Clause (a)'s one-resting-button rule is unchanged in substance,
+   and its testable is struck-and-restated in place to scope to this input
+   row — the action row it queried no longer mounts at rest; this clause
+   states where that button sits.
+
+**The negative half:** in the resting state no third row mounts — no meta line,
+no empty action row — and the composer's rendered height is the context row
+plus the input row and nothing else. Exceptional states may add their rows as
+specified (Cancel while running, §7A.6; the disabled reason; C1's
+`data-send-state="unknown"` note), because they are exceptions and stay loud.
+**Testable:** in the resting state with a model selected, the composer form's
+directly rendered rows number two; the model id's box lies within the context
+row's box; Send's box lies within the input row's box.
+
 ### 7A.11 The read-refresh boundary — the turn's effect on the rest of the workspace
 
 *(2026-08-28 review addition. Without this the section answers complaint 1 as
@@ -3352,6 +3898,33 @@ and never re-points the workspace at a build the operator did not choose.
 §7A.12 case 1 ends by asserting the new part appears in `[role=tree]`, is
 selectable, and its build renders — because "the agent said it worked" is not
 what complaint 1 asked for.
+
+**AMENDED 2026-09-02 (§0.2c, C7) — the rail says which parts the turn touched.**
+`refreshAfterTurn` (`api/refresh.ts`) already snapshots the parts projection
+before the refetch and diffs part *names* after it, to adopt a created part.
+Normative extension, same mechanism, one more field: the snapshot/diff extends
+to **per-part build refs** (the `content_hash`/`snapshot_ref` the `GET /parts`
+projection already serves), and every Parts-rail row whose ref changed across
+the turn — created parts included — gains a **transient `data-turn-changed`**
+attribute with a quiet marker in the row.
+
+- **Cleared on either of two things and nothing else:** the operator clicking
+  that row, or the next turn's settle (the next `refreshAfterTurn` diff, which
+  re-marks whatever *that* turn changed). It survives unrelated re-renders; it
+  is per-row, not per-panel.
+- **Server projections only, and the 7A.11 boundary is intact:** the marker is
+  a diff of **two server projections across a refetch** — before-snapshot and
+  after-fetch — never a read of tool results, and it renders no value: it says
+  *this changed*, not *what it is now*, so `no-derived-fact` has nothing to
+  catch. Refetch-never-merge is unchanged in every particular.
+- **The negative half:** a turn that changed no part's ref marks no row; a row
+  is never marked by history load, resync, pin movement, or another tab's
+  activity this tab did not refetch across; and the marker never renders on a
+  part the diff did not name.
+
+**Testable:** run §7A.12 case 1 — after settle, exactly the created part's row
+carries `data-turn-changed`; click it — the attribute is gone; run a second
+turn touching a different part — the marks move.
 
 ### 7A.12 E2E cases
 
@@ -3459,6 +4032,44 @@ this clause together.
 (a)(1) is read from the panel's own paging state — which page the panel has
 rendered against the count the server's cursor walk reported — and never from
 counting events or comparing ordinals across the history/live seam (§1).
+
+**AMENDED 2026-09-02 (§0.2c) — the presentation rows do not dent this section,
+and the notices speak plainly.**
+
+**(C3) §7.3's presentation rows and this section, reconciled by name.** The
+local prompt echo (C2) and the run-start boundary (C21) are **live-suffix
+presentation, not recorded events**, and every rule above survives them
+verbatim: the user-prompt absence notice **still renders on every reopen and is
+still true** — history still omits prompts by design, and the echo, which never
+enters history, does not make the notice false in the tab that drew it, because
+the notice describes the *recorded transcript* and the echo says on its own
+face that it is not part of one. No presentation row renders in the history
+prefix, crosses the seam, or is reconstructed on reopen; the seam itself
+terminates any C21 derivation (a run id is never compared across it — C21's
+base case states the consequence: the first live row after the seam mints no
+comparison-derived boundary, and only the originating tab's C2 echo licenses
+one). A build
+that persists either row, or that drops the absence notice on the ground that
+the echo "already shows the prompt", fails this clause — the echo is one tab's
+memory of one send, and the notice is the truth about every other tab and every
+later reopen. **Testable:** originate a turn, reopen the session in a second
+tab — the second tab renders the absence notice and no
+`[data-row="local-prompt"]`; the first tab renders both, and the notice's text
+is byte-identical in the two tabs.
+
+**(C24) A resting notice states the plain fact; the vocabulary words move to
+`title`.** Clause (d) bounded the notices' length; this clause bounds their
+register. The resting face of each named-absence notice (and of the §7.3
+terminal-absence sentence) uses **plain words for what the reader is missing**
+— "Prompts aren't recorded, so this transcript shows only the agent's side",
+"This reopened transcript doesn't show how the run ended" — and spec-internal
+terms such as **"event vocabulary"**, **"run-end band"**, "durable kinds", and
+section numbers render **only in the element's `title`**, where (d) already
+sends the long form. Nothing about *when* a notice renders changes, and no
+notice is removed — (d)'s once-per-transcript, in-place rule is re-affirmed a
+second time. **Testable:** no resting named-absence notice's visible text
+contains the strings "event vocabulary" or "run-end band"; each notice's
+`title` is non-empty.
 
 ---
 
@@ -5597,6 +6208,58 @@ the provider id and the source state, which are not secret at all. **A read side
 that returns no credential material at all** is a property worth more than the
 convenience, and §23.13 shows exactly what it buys. Pi's own contract points the
 same way: its read side returns `CredentialInfo`, never `Credential`.
+
+**AMENDED 2026-09-02 (§0.2c) — one section, one eyebrow, and the privacy fact
+where the finger hovers.**
+
+**(C13) The provider rail is ONE `MODEL PROVIDERS` section.** The shipped panel
+rendered the providers heading, then a separate `SIGN IN` eyebrow with its own
+duplicate heading, then the discovery section under a third eyebrow — the
+§0.2b "the word 'session' four times" defect, replayed with "provider".
+Normative: the rail renders **one** section titled by `copy.providers.title`,
+carrying **at most one eyebrow** in its resting face; the `SIGN IN` eyebrow and
+its duplicate heading **do not render in any state** and their copy keys are
+struck from the rendered surface (retained in `copy.ts` only if an `aria-label`
+still reads them, per the §7.1(a) precedent). Provider rows, the sign-in/rotate
+action, and the discovery affordance are children of that one section.
+**Testable:** the rendered ProvidersPanel contains at most one eyebrow-role
+element at rest, and no two visible headings in it render the same string.
+
+**(C14) The discovery button carries its privacy fact at rest.** §23's
+discovery is the one control in the workspace that reads the operator's home
+directory, and its explanation lived in a collapsed explainer. Normative: the
+discover button renders, **visible at rest as its caption**, one sentence of
+**≤ 20 words** stating exactly the §23.5 contract: it **reads the home
+directory only when pressed, and nothing found is used until adopted**. The
+caption is the resting face; the fuller §23.5 mechanism stays on
+`title`/disclosure. This is a deliberate, recorded **exception to §0.2b's
+quiet-resting-path discipline**: what a control will read off the machine is a
+fact the operator is entitled to *before* the press, so it is load-bearing at
+rest in the way a count never is. **The negative half:** the caption does not
+grow — a build whose caption exceeds 20 words or two lines fails; and no other
+resting caption is added to the panel by analogy without its own recorded
+exception. **Testable:** with the panel at rest, the discover control's visible
+caption is ≤20 words and names both halves (read-on-press, unused-until-adopt).
+
+**(C9) `primary` is availability, not invitation.** The sign-in action renders
+`data-variant="primary"` **only while the composer carries
+`data-disabled-reason="agent_unavailable"`** — the runtime's own current
+answer, read from the same composer contract the operator sees. ~~"only while
+no usable provider row exists — source `none`, or health `rejected`/`expired`
+on every row"~~ *(condition STRUCK 2026-09-02 (§0.2c review fix): health is
+*last observed*, never *current* (this section's own decision), so an
+every-row-rejected panel can coexist with an enabled composer — §23.10 fails
+the next run, it does not disable sending — and keying `primary` off observed
+health would mint a second primary beside an active Send)*. In every other
+state — including all credentials rejected or expired — it renders `secondary`
+like rotate, and the health axis, not the variant, carries the bad news. While
+the exception holds, C8 (§4.7) demotes the disabled `[data-composer-send]` to
+`secondary`, so the shell-wide count stays at one; the count-of-one testable
+lives there. **Testable here:** fixture with an accepted key — the
+sign-in/rotate action's `data-variant` is not `primary`; fixture with no
+`providers.json` credentials (composer `agent_unavailable`) — it is; fixture
+with a configured provider whose health is `rejected` and the composer enabled
+— it is not.
 
 ### 23.9 Sign-out and rotation
 

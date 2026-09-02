@@ -10,7 +10,7 @@
 
 import type { SessionRow } from "../api/sessions";
 import { copy } from "../copy";
-import { formatObservedAt } from "../system/format";
+import { formatClock } from "../system/format";
 import { originPart, type ThreadTab } from "./thread";
 
 const UUID =
@@ -58,21 +58,51 @@ function boundPart(input: SessionTitleInput): string | null {
 }
 
 /**
+ * The session-kind noun beside a part-bound fallback title (§7.1 C6):
+ * the thread edge's kind when the server recorded one, else the profile word.
+ * `null` when neither fact is served — the part name then stands alone rather
+ * than borrowing a word the server never said.
+ */
+function sessionKindWord(input: SessionTitleInput): string | null {
+  if (input.kind === "quick_edit" || input.kind === "delegation") {
+    return copy.stream.tabKind[input.kind];
+  }
+  return profileWord(input.profile);
+}
+
+/** The server's profile word, through §7.1's copy map when it is a known one. */
+function profileWord(profile: string | null | undefined): string | null {
+  if (profile === null || profile === undefined || profile === "") return null;
+  if (profile === "orchestrator" || profile === "part" || profile === "quick_edit") {
+    return copy.stream.profile[profile];
+  }
+  return profile;
+}
+
+/**
  * The human label for one session tab. Never a UUID.
  *
- * Precedence is what the operator can recognise: their own words, then the
- * part they asked about, then the create affordance plus a time. A long
- * prompt is clipped; the fallback is never `session.id.slice`.
+ * Precedence is what the operator can recognise: their own words, then a noun
+ * phrase composed from server facts only (§7.1 C6, amended 2026-09-02): the
+ * part's name with the session kind (`tread · quick edit`), or the profile
+ * word with the created time (`orchestrator · 14:32`). A long prompt is
+ * clipped; the fallback is never `session.id.slice` — and never a
+ * create-control label: a tab named after the button that makes one reads as
+ * the button, which is the collision C6 strikes.
  */
 export function sessionLabel(input: SessionTitleInput): string {
   const prompt = firstPromptLine(input.firstPrompt);
   if (prompt !== null) return clipLabel(prompt);
   const part = boundPart(input);
-  if (part !== null) return copy.composer.createPart(part);
-  if (input.createdAt !== null && input.createdAt !== undefined) {
-    return `${copy.composer.createOrchestrator} · ${formatObservedAt(input.createdAt, input.now)}`;
+  if (part !== null) {
+    const kind = sessionKindWord(input);
+    return kind === null ? part : `${part} · ${kind}`;
   }
-  return copy.composer.createOrchestrator;
+  const profile = profileWord(input.profile) ?? copy.stream.projectSession;
+  if (input.createdAt !== null && input.createdAt !== undefined) {
+    return `${profile} · ${formatClock(input.createdAt)}`;
+  }
+  return profile;
 }
 
 /** Chrome `document.title` for a conversation. Never the raw session id. */
@@ -107,7 +137,10 @@ export function holderSessionTitle(
   ) {
     return resolved;
   }
-  return copy.composer.createOrchestrator;
+  // §7.1 C6: the fallback is a noun phrase, never a create-control label — a
+  // holder sentence reading "New session is running" named the button, not the
+  // session.
+  return copy.stream.projectSession;
 }
 
 /** Tooltip / `title`: the UUID, plus the unlinked reason when that is a fact. */

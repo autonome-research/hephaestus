@@ -55,10 +55,12 @@ afterEach(() => {
 
 describe("session tab labels are human (#51)", () => {
   it("never uses the UUID as the visible label", () => {
-    expect(sessionLabel({ sessionId: UUID })).toBe(copy.composer.createOrchestrator);
+    // §7.1 C6: with no server fact at all, the fallback is still a noun
+    // phrase, never the create affordance's wording.
+    expect(sessionLabel({ sessionId: UUID })).toBe(copy.stream.projectSession);
     expect(sessionLabel({ sessionId: UUID })).not.toContain("dd5ec5c0");
     expect(sessionLabel({ sessionId: OTHER, firstPrompt: OTHER })).toBe(
-      copy.composer.createOrchestrator,
+      copy.stream.projectSession,
     );
   });
 
@@ -86,8 +88,9 @@ describe("session tab labels are human (#51)", () => {
   });
 
   it("rejects a holder title that is still the session id (#66)", () => {
-    expect(holderSessionTitle(UUID, UUID)).toBe(copy.composer.createOrchestrator);
-    expect(holderSessionTitle(UUID, "Ask about kerf_coupon")).toBe("Ask about kerf_coupon");
+    // §7.1 C6: the holder fallback is a noun phrase, not a create-control label.
+    expect(holderSessionTitle(UUID, UUID)).toBe(copy.stream.projectSession);
+    expect(holderSessionTitle(UUID, "tread · quick edit")).toBe("tread · quick edit");
   });
 
   it("keeps the browser tab title off the raw id", () => {
@@ -101,7 +104,7 @@ describe("session tab labels are human (#51)", () => {
     expect(document.title).toBe(defaultDocumentTitle());
   });
 
-  it("prefers the first prompt line, then the bound part, then New session", () => {
+  it("prefers the first prompt line, then a server-fact noun phrase (§7.1 C6)", () => {
     expect(
       sessionLabel({
         sessionId: UUID,
@@ -109,20 +112,68 @@ describe("session tab labels are human (#51)", () => {
         part: "kerf_card",
       }),
     ).toBe("Widen the kerf.");
-    expect(sessionLabel({ sessionId: UUID, part: "kerf_card" })).toBe(
-      copy.composer.createPart("kerf_card"),
+    // Part form: the part's name with the session kind — never `Ask about …`.
+    expect(sessionLabel({ sessionId: UUID, part: "kerf_card", profile: "part" })).toBe(
+      `kerf_card · ${copy.stream.profile.part}`,
     );
-    expect(sessionLabel({ sessionId: UUID, origin: { part: "tread" } })).toBe(
-      copy.composer.createPart("tread"),
+    expect(sessionLabel({ sessionId: UUID, origin: { part: "tread" }, kind: "quick_edit" })).toBe(
+      `tread · ${copy.stream.tabKind.quick_edit}`,
+    );
+    // With neither kind nor profile served, the part name stands alone rather
+    // than borrowing a word the server never said.
+    expect(sessionLabel({ sessionId: UUID, part: "kerf_card" })).toBe("kerf_card");
+  });
+
+  it("titles an untitled session by profile word plus created hh:mm (§7.1 C6)", () => {
+    const created = Date.UTC(2026, 8, 1, 12, 0, 0) / 1000;
+    const label = sessionLabel({
+      sessionId: UUID,
+      profile: "orchestrator",
+      createdAt: created,
+    });
+    expect(label.startsWith(`${copy.stream.profile.orchestrator} · `)).toBe(true);
+    expect(label).toMatch(/ · \d{2}:\d{2}$/);
+    expect(label).not.toContain(UUID);
+    // Without a created time the profile word stands alone.
+    expect(sessionLabel({ sessionId: UUID, profile: "orchestrator" })).toBe(
+      copy.stream.profile.orchestrator,
     );
   });
 
-  it("adds a relative time to an untitled orchestrator when the edge has one", () => {
-    const now = new Date("2026-09-01T15:00:00Z");
-    const created = Date.UTC(2026, 8, 1, 12, 0, 0) / 1000;
-    const label = sessionLabel({ sessionId: UUID, createdAt: created, now });
-    expect(label.startsWith(`${copy.composer.createOrchestrator} · `)).toBe(true);
-    expect(label).not.toContain(UUID);
+  it("never titles any tab with a create-control label (§7.1 C6, both sides)", () => {
+    // The testable, run over every fixture shape the label function can see:
+    // no fallback title is string-equal to any create affordance's wording.
+    const createLabels = [
+      copy.composer.createOrchestrator,
+      copy.composer.createPart("kerf_card"),
+      copy.composer.createPart("tread"),
+      copy.stream.createMenu,
+    ];
+    const fixtures = [
+      sessionLabel({ sessionId: UUID }),
+      sessionLabel({ sessionId: UUID, profile: "orchestrator" }),
+      sessionLabel({ sessionId: UUID, profile: "orchestrator", createdAt: 1_756_728_000 }),
+      sessionLabel({ sessionId: UUID, part: "kerf_card" }),
+      sessionLabel({ sessionId: UUID, part: "kerf_card", profile: "part" }),
+      sessionLabel({ sessionId: UUID, part: "tread", kind: "quick_edit" }),
+      sessionLabel({ sessionId: UUID, part: "tread", kind: "delegation" }),
+      sessionLabel({ sessionId: UUID, profile: "quick_edit", part: "tread" }),
+      holderSessionTitle(UUID, UUID),
+      holderSessionTitle(UUID, null),
+    ];
+    for (const label of fixtures) {
+      for (const forbidden of createLabels) {
+        expect(label).not.toBe(forbidden);
+      }
+      // And the positive half: it is a non-empty noun phrase, not a UUID.
+      expect(label).not.toBe("");
+      expect(label).not.toContain(UUID);
+    }
+    // The quick-edit child's fallback follows the part form — a distinct
+    // string from the `+` menu entry that spawns one (rule 3).
+    expect(sessionLabel({ sessionId: UUID, part: "tread", kind: "quick_edit" })).not.toBe(
+      copy.composer.createPart("tread"),
+    );
   });
 
   it("remembers only the first prompt this page sent", () => {
@@ -153,7 +204,7 @@ describe("a root tab does not say no parent (#62, #66)", () => {
 
   it("looks up a human title for the in-flight holder, not the raw id", () => {
     const title = titleForSession(UUID, [row({ part: "kerf_card", profile: "part" })], [tab()]);
-    expect(title).toBe(copy.composer.createPart("kerf_card"));
+    expect(title).toBe(`kerf_card · ${copy.stream.profile.part}`);
     expect(title).not.toBe(UUID);
   });
 });

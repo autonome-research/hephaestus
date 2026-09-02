@@ -66,3 +66,27 @@
   max-width: 68ch;
   color: var(--ink-base);
 }
+
+/* §4.7 (C27): the split table (METRICS) declares its own three tracks — it
+   sits inside an `inline-size` container wrapper, not directly on the panel's
+   grid, so `subgrid` has no parent tracks to inherit. Single column below
+   640px of CONTAINER width; two label/value/unit groups at or above it. The
+   rows keep `grid-template-columns: subgrid` against THIS grid, so values
+   align within each group and never jog. Layout only. */
+.split {
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+}
+
+@container (min-width: 640px) {
+  .split {
+    grid-template-columns:
+      max-content minmax(0, 1fr) max-content
+      max-content minmax(0, 1fr) max-content;
+  }
+
+  /* Row-first fill: each row spans one three-track group and auto-places into
+     the next free slot, so consecutive rows alternate left group, right group. */
+  .split > .row {
+    grid-column: span 3;
+  }
+}
