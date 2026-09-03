@@ -78,6 +78,7 @@ export function Inspector(): React.JSX.Element {
         id="inspector-panel"
         aria-labelledby={tabControlId("data-inspector-tab", tab)}
         data-inspector-panel={tab}
+        data-overlay-scroll=""
       >
         {tab === "results" ? (
           <ResultsPanel />

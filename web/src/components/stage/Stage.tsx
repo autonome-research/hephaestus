@@ -131,6 +131,7 @@ export function Stage(): React.JSX.Element {
           role="tabpanel"
           id="stage-panel"
           aria-labelledby={tabControlId("data-stage-tab", tab)}
+          data-overlay-scroll=""
         >
           {tab === "script" ? (
             <ScriptWorkspace />

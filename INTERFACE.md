@@ -1384,10 +1384,17 @@ block is kept verbatim.
 **AMENDED 2026-09-03 — shell scrollbars are overlay indicators.** The rail,
 stream well, Results drawer, stage scroller, and any other shell overflow
 overlay a **1–2px** position cue. They do not reserve a classic OS track
-(~15px) that eats layout at 1280×800. Overflow still scrolls (wheel, trackpad,
-keyboard). Native `scrollbar-width: thin` / `::-webkit-scrollbar` at 1–2px /
-overlay scrollbars are the permitted forms. **The negative half:** do not hide
-overflow so content is unreachable, and do not draw a custom 15px track.
+that eats layout at 1280×800. Overflow still scrolls (wheel, trackpad,
+keyboard). **Overlay vs thin-track:** `scrollbar-width: thin` is not overlay.
+On a classic-track OS it still reserves the native scrollbar (~10px; measured
+11px on the parts rail and 10px on Results) and wins over a 2px
+`::-webkit-scrollbar` rule. Permitted forms: `scrollbar-width: none` with
+`scrollbar-gutter: auto` (never `stable`), native overlay scrollbars, or a
+**1–2px absolutely positioned** cue that is not in the flow. **The negative
+half:** do not hide overflow so content is unreachable, do not leave
+`scrollbar-width: thin` if it reserves layout, and do not draw a custom 15px
+track. **Testable:** the scroller's layout width equals its content box
+(`offsetWidth − clientWidth` is borders only), or `overflow` is overlay.
 
 ### 3.11 The viewport is not chrome — the one problem no CSS solves
 

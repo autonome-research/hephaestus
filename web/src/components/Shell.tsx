@@ -28,13 +28,14 @@
 // focusing or activating the strip expands the column, "because a composer
 // cannot live in 44px" (§7A.1).
 
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { useProjectRefresh } from "../api/projectRefresh";
 import { useProject } from "../api/queries";
 import { copy } from "../copy";
 import { useWorkspace } from "../state/react";
 import { shellStore } from "../state/shell";
 import { Button, Icon, useBreakpoint } from "../system";
+import { bindOverlayScrollTree } from "../system/overlayScroll";
 import roles from "../system/type.module.css";
 import { Header } from "./Header";
 import { RefusalBanner } from "./RefusalBanner";
@@ -72,6 +73,11 @@ export function Shell(): React.JSX.Element {
   };
 
   const railOverlayOpen = shell.railOverlay && shell.railOpen;
+
+  // Overlay scroll cues (#115 leftover). Native thumbs are hidden globally so
+  // they take no layout; this binds the 2px absolutely positioned cue on every
+  // `[data-overlay-scroll]` that mounts — rail, well, Results, stage.
+  useLayoutEffect(() => bindOverlayScrollTree(document), []);
 
   // §3.13.4: the overlay closes on Escape and hands focus back to its opener.
   // A surface that covers a third of the stage and cannot be dismissed from the
@@ -137,7 +143,12 @@ export function Shell(): React.JSX.Element {
           />
         ) : null}
 
-        <nav ref={railRef} className={styles["rail"]} aria-label={copy.rail.title}>
+        <nav
+          ref={railRef}
+          className={styles["rail"]}
+          aria-label={copy.rail.title}
+          data-overlay-scroll=""
+        >
           {shell.railOverlay ? (
             <div className={styles["railHead"]}>
               <Button
