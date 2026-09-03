@@ -33,6 +33,7 @@ import {
 import { ExplodeSlider } from "../src/components/stage/viewport/ExplodeSlider";
 import { SectionControl } from "../src/components/stage/viewport/SectionControl";
 import { ViewCube } from "../src/components/stage/viewport/ViewCube";
+import { copy } from "../src/copy";
 import { DEFAULT_STATE } from "../src/state/workspace";
 import { workspaceStore } from "../src/state/react";
 
@@ -182,6 +183,18 @@ describe("ViewCube — front joins the plate (§5.5 C19)", () => {
     expect(cubes[0]?.querySelector('[data-view="front"]')).not.toBeNull();
     expect(cubes[0]?.querySelector('[data-view="iso"]')).not.toBeNull();
   });
+
+  it("is a 3D cube in the tab order with an accessible name; axis buttons are gone", () => {
+    const host = document.createElement("div");
+    host.innerHTML = renderToStaticMarkup(<ViewCube />);
+    const cube = host.querySelector("[data-view-cube]");
+    expect(cube?.getAttribute("tabindex")).toBe("0");
+    expect(cube?.getAttribute("aria-label")).toBe(copy.viewport.viewCube.label);
+    const labels = [...host.querySelectorAll("button")].map((button) => button.textContent ?? "");
+    for (const axis of ["+Y", "+Z", "-X", "+X", "-Z", "-Y"]) {
+      expect(labels).not.toContain(axis);
+    }
+  });
 });
 
 describe("the bottom band yields in C18's fixed order (§5.5)", () => {
@@ -228,11 +241,12 @@ describe("the bottom band yields in C18's fixed order (§5.5)", () => {
     expect(wide.querySelector("[data-testid='section-axis']")).not.toBeNull();
   });
 
-  it("a yielded section control with NO cut keeps the plain enable button", () => {
+  it("a yielded section control with NO cut collapses to its disclosure", () => {
     const host = document.createElement("div");
     host.innerHTML = renderToStaticMarkup(<SectionControl bounds={null} yielded />);
     expect(host.querySelector("[data-section-yielded]")).toBeNull();
-    expect(host.querySelector("[data-testid='section-enable']")).not.toBeNull();
+    expect(host.querySelector("[data-testid='section-enable']")).toBeNull();
+    expect(host.querySelector("[data-section-disclose]")).not.toBeNull();
   });
 });
 

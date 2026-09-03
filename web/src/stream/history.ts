@@ -27,7 +27,7 @@
 // forever. Reaching the bound is reported as a **stated truncation**, not as a
 // completed load — §4.4's discipline applied to paging.
 
-import type { HistoryPageDocument } from "../api/sessions";
+import type { HistoryPageDocument, HistoryUserPrompt } from "../api/sessions";
 import { historicalItem, type TranscriptItem } from "./transcript";
 
 /**
@@ -41,13 +41,14 @@ export type HistoryLoadState = "loading" | "complete" | "truncated" | "failed";
 
 export interface HistoryProgress {
   readonly items: readonly TranscriptItem[];
+  readonly userPrompts: readonly HistoryUserPrompt[];
   readonly pages: number;
   readonly state: HistoryLoadState;
   readonly error: Error | null;
 }
 
 export function emptyHistory(): HistoryProgress {
-  return { items: [], pages: 0, state: "loading", error: null };
+  return { items: [], userPrompts: [], pages: 0, state: "loading", error: null };
 }
 
 export type PageFetcher = (
@@ -71,11 +72,12 @@ export async function loadHistory(
   signal?: { readonly aborted: boolean },
 ): Promise<HistoryProgress> {
   const items: TranscriptItem[] = [];
+  const userPrompts: HistoryUserPrompt[] = [];
   let cursor: string | null = null;
   let pages = 0;
   for (;;) {
     if (signal?.aborted === true) {
-      return { items, pages, state: "loading", error: null };
+      return { items, userPrompts, pages, state: "loading", error: null };
     }
     let page: HistoryPageDocument;
     try {
@@ -83,6 +85,7 @@ export async function loadHistory(
     } catch (cause) {
       const progress: HistoryProgress = {
         items,
+        userPrompts,
         pages,
         state: "failed",
         error: cause instanceof Error ? cause : new Error(String(cause)),
@@ -95,10 +98,14 @@ export async function loadHistory(
       // The page's own `session_id`, not the frame's `run_id` — §2.8's misnomer.
       items.push(historicalItem(frame, page.session_id));
     }
+    for (const prompt of page.user_prompts ?? []) {
+      userPrompts.push(prompt);
+    }
     const finished = page.done || page.cursor === null;
     const bounded = !finished && pages >= MAX_HISTORY_PAGES;
     const progress: HistoryProgress = {
       items: [...items],
+      userPrompts: [...userPrompts],
       pages,
       state: finished ? "complete" : bounded ? "truncated" : "loading",
       error: null,

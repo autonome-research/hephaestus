@@ -155,12 +155,21 @@ describe("pairing and grouping (§7.2, §7.3)", () => {
 });
 
 describe("the panel's rows (§8)", () => {
-  it("names the two absences a reopened transcript cannot fill", () => {
+  it("restores operator prompts in the historical prefix and mints no hedge", () => {
+    const rows = historicalRows(historyItems(), [{ seq: 0, text: "Add a 2 mm chamfer." }]);
+    expect(rows.filter((row) => row.row === "absence")).toEqual([]);
+    expect(rows[0]).toEqual({
+      row: "user-prompt",
+      key: "user-prompt:0",
+      text: "Add a 2 mm chamfer.",
+      eventId: `${historyItems()[0]?.sessionId ?? ""}@prompt:0`,
+    });
+    expect(rows.some((row) => row.row === "user-prompt")).toBe(true);
+  });
+
+  it("names no absences on a reopened transcript", () => {
     const rows = historicalRows(historyItems());
-    const absences = rows.filter((row) => row.row === "absence").map((row) => row.absence);
-    expect(absences).toEqual(["user_prompt", "terminal"]);
-    expect(rows[0]?.row).toBe("absence");
-    expect(rows[rows.length - 1]?.row).toBe("absence");
+    expect(rows.filter((row) => row.row === "absence")).toEqual([]);
   });
 
   it("says nothing about absences when there is no history to reopen", () => {
@@ -758,11 +767,10 @@ describe("the local prompt echo and the run-start boundary (amended 2026-09-02)"
     expect(names(rows)).toEqual(["local-prompt", "resync", "run-start", "text"]);
   });
 
-  it("mints no presentation row from history — reopen renders notices, not echoes (C3)", () => {
-    const rows = historicalRows(historyItems());
+  it("mints no presentation row from history — reopen restores recorded prompts (C3)", () => {
+    const rows = historicalRows(historyItems(), [{ seq: 0, text: "Add a 2 mm chamfer." }]);
     expect(rows.some((row) => row.row === "local-prompt" || row.row === "run-start")).toBe(false);
-    // The reopen user-prompt absence notice renders unchanged and true.
-    expect(rows[0]).toEqual({ row: "absence", key: "absence:user_prompt", absence: "user_prompt" });
+    expect(rows[0]?.row).toBe("user-prompt");
   });
 
   it("keeps every presentation row out of the history prefix and off the seam (C3)", () => {

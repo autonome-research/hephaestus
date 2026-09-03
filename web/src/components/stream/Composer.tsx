@@ -134,6 +134,7 @@ import { refreshAfterTurn } from "../../api/refresh";
 import { attachAgent, type AttachProjection, isAttachCause } from "../../api/attach";
 import {
   cancelRun,
+  createSession,
   previewContext,
   sendPrompt,
   type ContextDocument,
@@ -141,7 +142,7 @@ import {
 } from "../../api/sessions";
 import { copy } from "../../copy";
 import { Button, Chip, CHIP_REF_WIDTH, EmptyState, TextInput, formatRef } from "../../system";
-import { useWorkspaceState } from "../../state/react";
+import { useWorkspaceState, workspaceStore } from "../../state/react";
 import { labelsForPart, visibilityStore } from "../../state/visibility";
 import {
   defaultModel,
@@ -501,61 +502,67 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     // button would be one the keyboard walks past; a gate that lived only
     // here would leave Send looking enabled while a click did nothing (#44).
     if (!canSendTurn({ disabledReason, text, sending: post.phase === "sending" })) return;
-    // Narrowing for `sendPrompt` below: `sessionId === null` is `no_session`
-    // and is already refused by `canSendTurn`.
-    if (sessionId === null) return;
-    // Remember the opening line before the POST returns so the session tab
-    // retitles on this frame. History will never echo the prompt back.
-    sessionPromptStore.remember(sessionId, text);
-    // §7A.5 (C1): the echo renders now, not on the response — the dead gap
-    // between Send and the first frame is closed by the operator's own words.
-    // Nothing retracts it: a lost POST leaves it standing beside
-    // `data-send-state="unknown"` (C2's negative half).
-    props.onEcho?.(text);
+    // `no_session` is typable: Send creates the appropriate session (part if
+    // one is selected, else a project/orchestrator session) and then posts.
+    const opening = text;
     setCancelNote(null);
-    // Forget the previous run *before* the POST. Otherwise Cancel is aimed
-    // at a finished id for the whole window until the first new frame (#99).
     liveRunIdRef.current = null;
     props.onForgetLiveRun?.();
     setPost({ phase: "sending" });
-    void sendPrompt(sessionId, text, envelope)
-      .then((document) => {
-        // §7A.6: THE PROMPT RESPONSE IS THE AUTHORITY THAT THE TURN IS OVER.
-        // Not the `terminal` event, which is live-only and never appears in a
-        // history page — a tab that resynced across the end of its own run
-        // could lose it, and does not need it.
-        setPost({ phase: "idle" });
-        setText("");
-        // A turn that completed is a runtime that is answering; the well's
-        // fault band is retracted by the same evidence that would have raised
-        // it. Nothing here decides whether one was showing.
-        props.onRuntimeFault?.(null);
-        // §7A.11: refetch the server projection. Never a merge of the turn's
-        // tool results, and never a move of the pin.
-        refreshAfterTurn(client, state.part);
-        props.onTurnSettled?.();
-        void document;
+
+    const postPrompt = (sid: string): void => {
+      sessionPromptStore.remember(sid, opening);
+      props.onEcho?.(opening);
+      void sendPrompt(sid, opening, envelope)
+        .then((document) => {
+          setPost({ phase: "idle" });
+          setText("");
+          props.onRuntimeFault?.(null);
+          refreshAfterTurn(client, state.part);
+          props.onTurnSettled?.();
+          void document;
+        })
+        .catch((cause: unknown) => {
+          const fault = runtimeFaultOf(cause);
+          if (fault !== null) props.onRuntimeFault?.(fault);
+          const next = promptFailurePost(cause);
+          if (next === "unknown") {
+            setPost({ phase: "unknown", ...(fault !== null ? { runtimeFault: true } : {}) });
+            return;
+          }
+          if (next === "idle") {
+            setPost({ phase: "idle" });
+            return;
+          }
+          if (cause instanceof WorkspaceError) {
+            setPost({
+              phase: "refused",
+              reason: cause.reason,
+              message: cause.message,
+              data: cause.data,
+            });
+            return;
+          }
+          setPost({ phase: "unknown" });
+        });
+    };
+
+    if (sessionId !== null) {
+      postPrompt(sessionId);
+      return;
+    }
+
+    const profile = state.part !== null ? "part" : "orchestrator";
+    void createSession(profile, state.part)
+      .then((created) => {
+        workspaceStore.update({ session: created.session_id });
+        void client.invalidateQueries({ queryKey: ["sessions"] });
+        postPrompt(created.session_id);
       })
       .catch((cause: unknown) => {
         const fault = runtimeFaultOf(cause);
         if (fault !== null) props.onRuntimeFault?.(fault);
-        const next = promptFailurePost(cause);
-        if (next === "unknown") {
-          // Unnamed 5xx: the turn may have started. `data-send-state="unknown"`
-          // is the §7A.5 recovery. The fault band states the 5xx; do not also
-          // paint a footer that restates it or says "Send again".
-          setPost({ phase: "unknown", ...(fault !== null ? { runtimeFault: true } : {}) });
-          return;
-        }
-        if (next === "idle") {
-          // Named liveness (`process_down`, `timeout`): the band already said
-          // the run is gone. Idle, not refused — a refused footer would be
-          // the HTTP 500 sitting under Send.
-          setPost({ phase: "idle" });
-          return;
-        }
         if (cause instanceof WorkspaceError) {
-          // A NAMED refusal is an answer, and it keeps the operator's text.
           setPost({
             phase: "refused",
             reason: cause.reason,
@@ -564,8 +571,6 @@ export function Composer(props: ComposerProps): React.JSX.Element {
           });
           return;
         }
-        // The POST did not come back. §7A.5: the turn MAY have started, so it
-        // is not retried automatically and the stream is named as the authority.
         setPost({ phase: "unknown" });
       });
   }, [disabledReason, sessionId, text, post.phase, envelope, client, state.part, props]);

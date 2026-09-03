@@ -12,6 +12,7 @@
 
 import { readAudit, readTerminal } from "../../api/events";
 import { copy } from "../../copy";
+import { Markdown } from "../../stream/markdown";
 import type { RuntimeFault } from "../../stream/runtimeFault";
 import type { CyclePair, PanelRow, TranscriptItem } from "../../stream/transcript";
 import { runsWithTerminal } from "../../stream/transcript";
@@ -44,6 +45,7 @@ export function Transcript({
           // ways, and the matcher treats any OTHER id-less `data-row` as a
           // mismatch.
           {...(row.row === "local-prompt" ? { "data-local-echo": "1" } : {})}
+          {...(row.row === "user-prompt" ? { "data-event-id": row.eventId } : {})}
           {...(row.row === "run-start" ? { "data-run-id": row.runId } : {})}
           {...(row.row === "cycle" ? { "data-cycle": String(row.pairs.length) } : {})}
         >
@@ -169,16 +171,26 @@ function Row({
         </p>
       );
     case "local-prompt":
-      // §7.3 (C2): the sent text verbatim, with the category's visible-at-rest
-      // marker (`unrecorded`, `.code` muted) and its accessible equivalent —
-      // `title` carries the long form and is never the only copy.
+      // §7.3 (C2): the sent text, markdown-rendered, with the category's
+      // visible-at-rest marker and its accessible equivalent.
       return (
-        <div className={styles["localPrompt"]} title={copy.stream.localEcho.title}>
+        <div className={styles["localPrompt"]} title={copy.stream.localEcho.title} data-markdown="">
           <span className={styles["presentationMarker"]} aria-hidden="true">
             {copy.stream.localEcho.marker}
           </span>
           <span className={styles["visuallyHidden"]}>{copy.stream.localEcho.accessible}</span>
-          <span className={styles["localPromptText"]}>{row.text}</span>
+          <div className={styles["localPromptText"]}>
+            <Markdown text={row.text} />
+          </div>
+        </div>
+      );
+    case "user-prompt":
+      return (
+        <div className={styles["userPrompt"]} data-markdown="">
+          <span className={styles["visuallyHidden"]}>{copy.stream.userPrompt.accessible}</span>
+          <div className={styles["localPromptText"]}>
+            <Markdown text={row.text} />
+          </div>
         </div>
       );
     case "run-start":

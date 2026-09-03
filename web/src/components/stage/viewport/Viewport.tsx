@@ -545,6 +545,7 @@ export function Viewport(): React.JSX.Element {
             <SectionControl
               bounds={glb.data === undefined ? null : bounds}
               yielded={bandWidth < SECTION_YIELD_WIDTH}
+              noop={glb.data !== undefined && glb.data.geometry.mesh_count <= 1}
             />
           </div>
         </>

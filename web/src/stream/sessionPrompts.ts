@@ -3,15 +3,12 @@
 //
 // First-prompt memory for session tab titles (#51).
 //
-// History omits `user_prompt` by design (`transcript.ts` HISTORICAL_ABSENCES),
-// so the tab cannot read the operator's words back from `GET …/history`. The
-// page that *sent* the prompt still has them, and that is enough to retitle
-// the tab on the same frame as Send — without a reload, and without minting
-// an event kind.
-//
-// First write wins. A later turn is not a new conversation; the tab keeps
-// the line the operator opened with. The snapshot is replaced, never mutated,
-// so `useSyncExternalStore` identity comparison is a correct change test.
+// A page-local supplement for the current page's first prompt — not the
+// source of truth. After reload, `useStream` restores the opening line from
+// `GET …/history`'s additive `user_prompts` field via `remember`. First write
+// wins. A later turn is not a new conversation; the tab keeps the line the
+// operator opened with. The snapshot is replaced, never mutated, so
+// `useSyncExternalStore` identity comparison is a correct change test.
 
 import { firstPromptLine } from "./sessionTitle";
 

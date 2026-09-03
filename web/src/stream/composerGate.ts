@@ -11,14 +11,14 @@
 //
 // **1. `disabled` is not one state.** §7A.10's `data-disabled-reason` vocabulary
 // is closed at three, and the shipped composer treated all three identically:
-// the textarea turned off for each. That is right for two of them and produced a
-// dead end for the third. `agent_unavailable` and `no_session` mean *there is
-// nowhere to send this*, so a live text box would be collecting words for no
-// recipient. `run_in_flight` means *there is somewhere and it is busy* — the
-// refusal's own copy says "wait for it to finish, or cancel it", and waiting is
-// exactly when an operator writes the next message. With the box disabled, Send
-// disabled and Cancel reporting `unavailable`, that refusal had no transition out
-// of it at all short of switching session tabs.
+// the textarea turned off for each. That is right for `agent_unavailable` —
+// there is nowhere to send — and produced two dead ends. `run_in_flight` means
+// *there is somewhere and it is busy*: the refusal's own copy says "wait for it
+// to finish, or cancel it", and waiting is exactly when an operator writes the
+// next message. `no_session` means *Send will open the appropriate session*
+// (Ask about the selected part, else a project session) and then post — one
+// gesture, so the box stays live. With the box off, Send off and Cancel
+// reporting `unavailable`, those refusals had no transition out of them at all.
 //
 // **2. Enter sends.** §7A says nothing about keys, which is why the shipped
 // composer had none: every turn cost a trip from the keyboard to the pointer,
@@ -31,12 +31,13 @@ import type { DisabledReason } from "../components/stream/Composer";
 /**
  * The `data-disabled-reason` values that still admit typing.
  *
- * A one-member set today, and it is written as a set rather than as `reason ===
- * "run_in_flight"` because the interesting property is the PARTITION of §7A.10's
- * closed vocabulary: every reason is either "nowhere to send" or "somewhere,
- * busy", and a fourth reason added later has to be put on one side of it.
+ * Written as a set rather than as a pair of `===` checks because the interesting
+ * property is the PARTITION of §7A.10's closed vocabulary: every reason is
+ * either "nowhere to send" (`agent_unavailable`) or "the box stays live"
+ * (`run_in_flight`, `no_session`), and a fourth reason added later has to land
+ * on one side of it.
  */
-export const COMPOSABLE_REASONS: readonly DisabledReason[] = ["run_in_flight"];
+export const COMPOSABLE_REASONS: readonly DisabledReason[] = ["run_in_flight", "no_session"];
 
 /** May the operator type? `null` is enabled; see `COMPOSABLE_REASONS`. */
 export function isComposable(reason: DisabledReason | null): boolean {
@@ -68,7 +69,9 @@ export function canSendTurn(input: {
   readonly text: string;
   readonly sending: boolean;
 }): boolean {
-  if (input.disabledReason !== null) return false;
+  if (input.disabledReason === "agent_unavailable" || input.disabledReason === "run_in_flight") {
+    return false;
+  }
   if (input.sending) return false;
   return input.text.trim() !== "";
 }

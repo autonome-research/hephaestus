@@ -112,10 +112,21 @@ export interface ThreadDocument {
  * fields (`agent/src/session/history.ts::HistoryPage`) and neither is rewritten
  * anywhere between there and here.
  */
+/** One operator prompt restored from history, keyed to the next event `seq`. */
+export interface HistoryUserPrompt {
+  readonly seq: number;
+  readonly text: string;
+}
+
 export interface HistoryPageDocument {
   readonly status: "ok";
   readonly session_id: string;
   readonly events: readonly HistoryEventFrame[];
+  /**
+   * Additive field: operator turns recorded beside the event page. Omitted by
+   * older sidecars; never shifts event identities (G4.11).
+   */
+  readonly user_prompts?: readonly HistoryUserPrompt[];
   readonly cursor: string | null;
   readonly done: boolean;
 }

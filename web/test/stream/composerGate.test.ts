@@ -46,8 +46,8 @@ describe("which disabled reasons still admit typing", () => {
     expect(isComposable("run_in_flight")).toBe(true);
   });
 
-  it("turns it off when there is genuinely nowhere to send", () => {
-    expect(isComposable("no_session")).toBe(false);
+  it("keeps the box live with no session, so the first send can start one", () => {
+    expect(isComposable("no_session")).toBe(true);
     expect(isComposable("agent_unavailable")).toBe(false);
   });
 
@@ -117,12 +117,12 @@ describe("which keystroke sends a turn", () => {
 });
 
 describe("Send and Cancel share one predicate each", () => {
-  it("lets Send start a turn only when there is a session, text, and no in-flight POST", () => {
+  it("lets Send start a turn when there is text and the stream is usable", () => {
     const ok = { disabledReason: null, text: "Add a 2 mm chamfer.", sending: false };
     expect(canSendTurn(ok)).toBe(true);
     expect(canSendTurn({ ...ok, text: "   " })).toBe(false);
     expect(canSendTurn({ ...ok, sending: true })).toBe(false);
-    expect(canSendTurn({ ...ok, disabledReason: "no_session" })).toBe(false);
+    expect(canSendTurn({ ...ok, disabledReason: "no_session" })).toBe(true);
     expect(canSendTurn({ ...ok, disabledReason: "run_in_flight" })).toBe(false);
     expect(canSendTurn({ ...ok, disabledReason: "agent_unavailable" })).toBe(false);
   });

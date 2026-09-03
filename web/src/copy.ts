@@ -449,8 +449,17 @@ export const copy = {
       },
     },
     viewCube: {
-      label: "Standard views",
+      label: "View cube",
       namedLabel: "Named views",
+      iso: "iso",
+      faces: {
+        front: "Front",
+        back: "Back",
+        right: "Right",
+        left: "Left",
+        top: "Top",
+        bottom: "Bottom",
+      },
       free: "Free orbit",
       /** §5.5: an orbited camera is still nameable, and the name is shown. */
       freeExplain:
@@ -1012,20 +1021,10 @@ export const copy = {
       "Show the newest turn. Following stopped when this transcript was scrolled up.",
 
     /**
-     * §8's named absences: what a reopened transcript cannot contain.
-     *
-     * AMENDED 2026-09-01 (§8(d)) — one short sentence each, in the transcript's
-     * own type role. The notices are re-affirmed, not relaxed: each still
-     * renders exactly once, in place, and neither is removed. What changed is
-     * that `terminal` stopped being a 28-word blockquote interrupting the
-     * transcript it annotates. The fuller reading is `absenceDetail`, on
-     * `title` — a notice deleted rather than shortened fails §8's absence rule.
-     */
-    /*
-     * AMENDED 2026-09-02 (§8 C24) — the resting face states the plain fact.
-     * Spec-internal terms ("event vocabulary", "run-end band") render only on
-     * `title` via `absenceDetail`; nothing about when a notice renders changed
-     * and no notice is removed.
+     * §8's named absences — kept as unused house copy so the keys stay in
+     * `copy.ts`. AMENDED 2026-09-03: neither sentence renders in the well.
+     * Operator prompts restore from history's `user_prompts`; a finished turn
+     * looks finished. The terminal hedge belongs in application logs, not here.
      */
     absence: {
       user_prompt: "Prompts aren't recorded, so this transcript shows only the agent's side.",
@@ -1051,6 +1050,9 @@ export const copy = {
       accessible: "Typed on this page; not a recorded event.",
       title:
         "This prompt was typed on this page and is not a recorded event: prompts are never part of the recorded transcript, so this row exists only in the tab that sent it and will not appear on reopen.",
+    },
+    userPrompt: {
+      accessible: "Operator prompt, recorded in this session's history.",
     },
     runStart: {
       label: "run",

@@ -240,11 +240,11 @@ describe("the ask_user widget (§7.3)", () => {
 });
 
 describe("the transcript's honesty rows (§8, §7.4)", () => {
-  it("names both absences and puts a visible seam between the surfaces", () => {
+  it("puts a visible seam between the surfaces and draws no absence hedge", () => {
     const document_ = renderRows(panelRows(historyItems, liveEntries));
-    expect(document_.querySelectorAll("[data-absence]")).toHaveLength(2);
-    expect(document_.querySelector('[data-absence="user_prompt"]')?.textContent ?? "").toContain(
-      "Prompts aren't recorded",
+    expect(document_.querySelectorAll("[data-absence]")).toHaveLength(0);
+    expect(document_.body.textContent ?? "").not.toContain(
+      "This reopened transcript doesn't show how the run ended.",
     );
     expect(document_.querySelectorAll("[data-seam]")).toHaveLength(1);
   });
@@ -264,43 +264,27 @@ describe("the transcript's honesty rows (§8, §7.4)", () => {
     expect(marker?.textContent ?? "").toContain(`${fixture.run_id}#6`);
   });
 
-  it("renders no terminal band in the historical prefix, and says why", () => {
+  it("renders no terminal band and no reopen hedge in the historical prefix", () => {
     const document_ = renderRows(panelRows(historyItems, []));
     expect(document_.querySelectorAll("[data-terminal-state]")).toHaveLength(0);
-    expect(document_.querySelector('[data-absence="terminal"]')?.textContent ?? "").toContain(
-      "doesn't show how the run ended",
+    expect(document_.querySelector("[data-absence]")).toBeNull();
+    expect(document_.body.textContent ?? "").not.toContain(
+      "This reopened transcript doesn't show how the run ended.",
     );
   });
 
-  /*
-   * §8(d) and §7.4(d), amended 2026-09-01 — shortened, not deleted.
-   *
-   * Both halves are asserted here because only one of them is obvious. That
-   * the drawn sentence is short is what the amendment asked for; that the
-   * paragraph is still reachable is what keeps the change from being the
-   * deletion §8's absence rule forbids. A build that dropped `absenceDetail`
-   * would pass every assertion above this block.
-   */
-  it("keeps spec-internal vocabulary off every resting notice's visible face (§8 C24)", () => {
-    // "no resting named-absence notice's visible text contains the strings
-    // 'event vocabulary' or 'run-end band'; each notice's `title` is non-empty."
+  it("keeps the run-ended hedge out of the document (§8 C24)", () => {
     const document_ = renderRows(panelRows(historyItems, []));
-    for (const notice of document_.querySelectorAll("[data-absence]")) {
-      expect(notice.textContent ?? "").not.toContain("event vocabulary");
-      expect(notice.textContent ?? "").not.toContain("run-end band");
-      expect(notice.getAttribute("title") ?? "").not.toBe("");
-    }
+    expect(document_.querySelectorAll("[data-absence]")).toHaveLength(0);
+    expect(document_.body.textContent ?? "").not.toContain("event vocabulary");
+    expect(document_.body.textContent ?? "").not.toContain("run-end band");
+    expect(document_.body.textContent ?? "").not.toContain(copy.stream.absence.terminal);
   });
 
-  it("draws the short absence sentence and keeps the long form on title", () => {
+  it("does not draw the user-prompt absence sentence", () => {
     const document_ = renderRows(panelRows(historyItems, []));
-    const terminal = document_.querySelector('[data-absence="terminal"]');
-    expect(terminal?.textContent).toBe(copy.stream.absence.terminal);
-    expect(terminal?.getAttribute("title")).toBe(copy.stream.absenceDetail.terminal);
-    // The notice renders exactly once, in place — §8(d) re-affirms that.
-    expect(document_.querySelectorAll('[data-absence="terminal"]')).toHaveLength(1);
-    const prompts = document_.querySelector('[data-absence="user_prompt"]');
-    expect(prompts?.getAttribute("title")).toBe(copy.stream.absenceDetail.user_prompt);
+    expect(document_.querySelector("[data-absence]")).toBeNull();
+    expect(document_.body.textContent ?? "").not.toContain(copy.stream.absence.user_prompt);
   });
 
   it("keeps the break's verdict drawn and its mechanism on title", () => {
@@ -501,30 +485,27 @@ describe("the presentation rows' DOM contract (§7.3 C2/C21, amended 2026-09-02)
     }
   });
 
-  it("renders no presentation row in the history prefix, and the notice beside the echo stays (§8 C3)", () => {
+  it("renders no presentation row in the history prefix; the echo stays live-only (§8 C3)", () => {
     const rows = panelRows(historyItems, withEcho);
     const seamAt = rows.findIndex((row) => row.row === "seam");
     expect(seamAt).toBeGreaterThan(-1);
     const prefix = rows.slice(0, seamAt);
     expect(prefix.some((row) => row.row === "local-prompt" || row.row === "run-start")).toBe(false);
-    // The reopen absence notice renders unchanged and true in the same
-    // transcript that carries the echo: the echo does not make it false.
     const document_ = renderRows(rows);
-    expect(document_.querySelector('[data-absence="user_prompt"]')?.textContent).toBe(
-      copy.stream.absence.user_prompt,
-    );
+    expect(document_.querySelector("[data-absence]")).toBeNull();
     expect(document_.querySelector('[data-row="local-prompt"]')).not.toBeNull();
   });
 
-  it("renders the observer tab's reopen with the notice and no echo — byte-identical notice (§8 C3)", () => {
+  it("renders the observer tab's reopen with no echo and no absence hedge (§8 C3)", () => {
     // Two-tab testable: the second tab has history only (no echo entry — the
     // echo is never minted by history, resync, or observer tabs).
     const observer = renderRows(panelRows(historyItems, []));
     expect(observer.querySelector('[data-row="local-prompt"]')).toBeNull();
     expect(observer.querySelector('[data-row="run-start"]')).toBeNull();
+    expect(observer.querySelector("[data-absence]")).toBeNull();
     const originating = renderRows(panelRows(historyItems, withEcho));
-    expect(observer.querySelector('[data-absence="user_prompt"]')?.textContent).toBe(
-      originating.querySelector('[data-absence="user_prompt"]')?.textContent,
-    );
+    expect(originating.querySelector("[data-absence]")).toBeNull();
+    expect(observer.body.textContent ?? "").not.toContain(copy.stream.absence.user_prompt);
+    expect(originating.body.textContent ?? "").not.toContain(copy.stream.absence.user_prompt);
   });
 });

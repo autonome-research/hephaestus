@@ -155,19 +155,34 @@ test("reopening loads the multi-page transcript and matches the archive (G4.9, G
   for (const id of rendered) expect(id).toContain("@");
   for (const id of rendered) expect(id).not.toContain("#");
 
-  // §7.3 C2/C21 + §8 C3 (amended 2026-09-02): no presentation row is ever
+  // §7.3 C2/C21 + §8 C3 (amended 2026-09-03): no presentation row is ever
   // reconstructed on reopen — the echo is one tab's memory of one send, and a
   // reopened transcript's run structure is the ordinal namespace, which has no
-  // runs to mark. The user-prompt absence notice renders instead, and its
-  // resting face speaks plainly (C24): the spec-internal vocabulary lives on
-  // `title` only, which is non-empty.
+  // runs to mark. Named-absence hedges left the well: operator turns restore
+  // from history's `user_prompts`, and a finished turn looks finished.
   await expect(page.locator('[data-row="local-prompt"]')).toHaveCount(0);
   await expect(page.locator('[data-row="run-start"]')).toHaveCount(0);
-  const notice = page.locator('[data-absence="user_prompt"]');
-  await expect(notice).toHaveCount(1);
-  await expect(notice).not.toContainText("event vocabulary");
-  expect(await notice.getAttribute("title")).toBeTruthy();
-  await expect(page.locator('[data-absence="terminal"]')).not.toContainText("run-end band");
+  await expect(page.locator('[data-absence="user_prompt"]')).toHaveCount(0);
+  await expect(page.locator('[data-absence="terminal"]')).toHaveCount(0);
+  await expect(page.locator("body")).not.toContainText(
+    "This reopened transcript doesn't show how the run ended.",
+  );
+  await expect(page.locator('[data-testid="transcript"] [data-markdown]').first()).toBeVisible();
+
+  const sessionBefore = page.url();
+  expect(sessionBefore).toContain(`s=${ORCHESTRATOR}`);
+  await page.reload();
+  await expect(page.locator('[data-testid="stream-panel"]')).toBeVisible({ timeout: 60_000 });
+  await expect(page.locator('[data-testid="stream-panel"]')).toHaveAttribute(
+    "data-history-state",
+    "complete",
+    { timeout: 120_000 },
+  );
+  expect(page.url()).toContain(`s=${ORCHESTRATOR}`);
+  await expect(page.locator(`[data-session-tab="${ORCHESTRATOR}"]`)).toHaveCount(1);
+  await expect(page.locator("body")).not.toContainText(
+    "This reopened transcript doesn't show how the run ended.",
+  );
 
   // G4.11's amended matcher rule, both ways: the by-name skip covers exactly
   // the two presentation rows plus §8's honesty rows — any OTHER `data-row`

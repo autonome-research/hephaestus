@@ -687,6 +687,7 @@ peer.on("history.page", (params) => {
   );
   return {
     events: page.events.map(wireEvent),
+    user_prompts: page.userPrompts.map((prompt) => ({ seq: prompt.seq, text: prompt.text })),
     cursor: page.cursor,
     done: page.done,
   };

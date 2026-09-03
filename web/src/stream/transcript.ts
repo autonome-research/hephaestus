@@ -40,6 +40,7 @@ import {
   type EventKind,
   type HistoryEventFrame,
 } from "../api/events";
+import type { HistoryUserPrompt } from "../api/sessions";
 
 export type Surface = "live" | "historical";
 
@@ -643,23 +644,22 @@ function askRow(draft: AskDraft): TranscriptRow {
 // ---------------------------------------------------------------------------
 
 /**
- * The kinds a reopened transcript **cannot** contain, each rendered as a named
- * absence rather than as nothing (§8).
+ * The kinds a reopened transcript used to announce as named absences (§8).
  *
- * `user_prompt` — normalization omits prompts by design, so the transcript shows
- * the agent's side and says so once, in place.
- * `terminal` — pump-minted and live-only, so a reopened transcript shows no
- * terminal band and says so rather than implying the run is still open.
+ * AMENDED 2026-09-03 — both notices left the well. Operator prompts restore
+ * from history's additive `user_prompts` field; a finished turn looks finished
+ * (last tool chip or assistant markdown) without a "reopened transcript" hedge.
+ * The type stays so a stale fixture can still name a key; the panel no longer
+ * mints either row.
  *
- * `question` / `answer` are absent too, but they have a *rendering*: §7.3 has the
- * reopened widget rebuilt from the `ask_user` call and result, marked
- * `data-widget-source="tool_result"`, so the widget itself carries the
- * statement and a third absence row would repeat it. `progress` is absent and
- * that is the correct rendering anyway (§7.3), so it is not announced as a loss.
- * `image` bytes are absent per-image and the placeholder says so in place.
+ * `question` / `answer` have a *rendering*: §7.3 rebuilds the widget from the
+ * `ask_user` call and result. `progress` is absent and that is the correct
+ * rendering. `image` bytes are absent per-image and the placeholder says so.
  */
 export const HISTORICAL_ABSENCES = ["user_prompt", "terminal"] as const;
 export type HistoricalAbsence = (typeof HISTORICAL_ABSENCES)[number];
+
+export type { HistoryUserPrompt };
 
 /** §7.4's closed vocabulary on the Stream header. */
 export const STREAM_STATES = [
@@ -721,27 +721,77 @@ export type PanelRow =
   | { readonly row: "resync"; readonly key: string; readonly resync: ResyncBreak }
   /** C2: the local prompt echo — the sent text verbatim, originating tab only. */
   | { readonly row: "local-prompt"; readonly key: string; readonly text: string }
+  /**
+   * A recorded operator turn restored from history. Carries a historical
+   * identity (`<session_id>@prompt:<seq>`) so G4.11's idless-row skip list
+   * does not need widening.
+   */
+  | {
+      readonly row: "user-prompt";
+      readonly key: string;
+      readonly text: string;
+      readonly eventId: string;
+    }
   /** C21: the run-start boundary — a rule line carrying the run id, derived. */
   | { readonly row: "run-start"; readonly key: string; readonly runId: string };
 
 /**
- * The historical **prefix**: the omitted-prompts note, the rows, the
- * no-terminal-band note. Empty history contributes no rows at all — a project
- * with nothing to reopen should not be told what it is missing.
+ * The historical **prefix**: recorded events interleaved with restored
+ * operator prompts. Empty history contributes no rows at all.
  *
- * §8's C3: NO presentation row renders in the history prefix, ever. History
- * has no echoes (the §2.8 ordinal namespace records no prompts) and no
- * run-start rows (it has no runs to mark), so both notices stay true on every
- * reopen — this function is where that is enforced, by construction: its
- * input is events only, and it mints nothing but the two named absences.
+ * AMENDED 2026-09-03 — no named-absence hedge. Prompts come back from the
+ * additive `user_prompts` field (seq-stable; G4.11's event archive is
+ * untouched). A finished turn is the last chip or the last assistant
+ * markdown; the well does not narrate what a reopen cannot show.
+ *
+ * §8's C3 still holds for *presentation* rows: no `local-prompt` echo and no
+ * `run-start` boundary is reconstructed here. `user-prompt` is a recorded
+ * turn with a historical identity, not a client-minted echo.
  */
-export function historicalRows(items: readonly TranscriptItem[]): readonly PanelRow[] {
-  if (items.length === 0) return [];
-  return [
-    { row: "absence", key: "absence:user_prompt", absence: "user_prompt" },
-    ...groupRows(items),
-    { row: "absence", key: "absence:terminal", absence: "terminal" },
-  ];
+export function historicalRows(
+  items: readonly TranscriptItem[],
+  prompts: readonly HistoryUserPrompt[] = [],
+): readonly PanelRow[] {
+  if (items.length === 0 && prompts.length === 0) return [];
+  const sessionId = items[0]?.sessionId ?? "";
+  const grouped = groupRows(items);
+  if (prompts.length === 0) return grouped;
+
+  const rows: PanelRow[] = [];
+  let promptIndex = 0;
+  let groupIndex = 0;
+  const promptRow = (prompt: HistoryUserPrompt): PanelRow => ({
+    row: "user-prompt",
+    key: `user-prompt:${prompt.seq}`,
+    text: prompt.text,
+    eventId: `${sessionId}@prompt:${prompt.seq}`,
+  });
+  const firstSeq = (row: TranscriptRow): number => {
+    if (row.row === "text" || row.row === "thought") return row.items[0]?.seq ?? 0;
+    if (row.row === "chip") return row.call.seq;
+    if (row.row === "cycle") return row.pairs[0]?.chip.call.seq ?? 0;
+    if (row.row === "ask") return (row.call ?? row.question ?? row.answer)?.seq ?? 0;
+    if (row.row === "image" || row.row === "audit" || row.row === "terminal" || row.row === "unknown") {
+      return row.item.seq;
+    }
+    return 0;
+  };
+
+  while (groupIndex < grouped.length || promptIndex < prompts.length) {
+    const group = grouped[groupIndex];
+    const prompt = prompts[promptIndex];
+    const groupSeq = group === undefined ? Number.POSITIVE_INFINITY : firstSeq(group);
+    if (prompt !== undefined && prompt.seq <= groupSeq) {
+      rows.push(promptRow(prompt));
+      promptIndex += 1;
+      continue;
+    }
+    if (group !== undefined) {
+      rows.push(group);
+      groupIndex += 1;
+    }
+  }
+  return rows;
 }
 
 /**
@@ -832,8 +882,9 @@ export function liveRows(entries: readonly LiveEntry[]): readonly PanelRow[] {
 export function panelRows(
   history: readonly TranscriptItem[],
   live: readonly LiveEntry[],
+  prompts: readonly HistoryUserPrompt[] = [],
 ): readonly PanelRow[] {
-  const before = historicalRows(history);
+  const before = historicalRows(history, prompts);
   const after = liveRows(live);
   if (before.length === 0 || after.length === 0) return [...before, ...after];
   return [...before, { row: "seam", key: "seam" }, ...after];

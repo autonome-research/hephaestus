@@ -51,6 +51,11 @@ export interface SectionControlProps {
    * legend. The cut itself (`section_plane`, `channel_overlay`) is untouched.
    */
   readonly yielded?: boolean | undefined;
+  /**
+   * A simple plate: section starts collapsed so it does not crowd the band
+   * (#113). The enable control is one click behind the disclosure.
+   */
+  readonly noop?: boolean | undefined;
 }
 
 const AXIS_INDEX: Readonly<Record<SectionAxis, 0 | 1 | 2>> = { X: 0, Y: 1, Z: 2 };
@@ -69,7 +74,11 @@ function axisRange(bounds: SceneBounds | null, axis: SectionAxis): {
   return { min, max, step: span > 0 ? Math.max(span / 200, 0.001) : 0.5 };
 }
 
-export function SectionControl({ bounds, yielded = false }: SectionControlProps): React.JSX.Element {
+export function SectionControl({
+  bounds,
+  yielded = false,
+  noop = false,
+}: SectionControlProps): React.JSX.Element {
   const spec = useWorkspace((s) => s.section_plane);
   const overlay = useWorkspace((s) => s.channel_overlay);
   /** The C18 disclosure's own open state — a person may still want the row. */
@@ -89,6 +98,23 @@ export function SectionControl({ bounds, yielded = false }: SectionControlProps)
   };
 
   if (plane === null) {
+    if ((noop || yielded) && !open) {
+      return (
+        <div className={styles["control"]} data-section-control="off" data-section-collapsed="">
+          <Button
+            variant="quiet"
+            expanded={false}
+            data-section-disclose=""
+            title={copy.viewport.section.disclose}
+            onClick={() => {
+              setOpen(true);
+            }}
+          >
+            {copy.viewport.section.disclose}
+          </Button>
+        </div>
+      );
+    }
     return (
       <div className={styles["control"]} data-section-control="off">
         <Button
