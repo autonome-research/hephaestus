@@ -20,6 +20,7 @@
 // *presence of a body*, and the two title-only cases as its absence.
 
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it, afterEach } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createRoot, type Root } from "react-dom/client";
@@ -202,7 +203,7 @@ describe("ViewCube — front joins the plate (§5.5 C19)", () => {
     // The permit table allows `--accent-ink` only on `--accent`. The cube
     // selected state is an accent-quiet fill; its words stay `--ink-strong`.
     const css = readFileSync(
-      new URL("../src/components/stage/viewport/ViewCube.module.css", import.meta.url),
+      join(process.cwd(), "src/components/stage/viewport/ViewCube.module.css"),
       "utf8",
     );
     expect(css).not.toMatch(/color:\s*var\(--accent-ink\)/);
