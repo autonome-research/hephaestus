@@ -265,18 +265,18 @@ describe("the bottom band yields in C18's fixed order (§5.5)", () => {
   });
 });
 
-describe("ExplodeSlider — a 1-solid sheet starts collapsed (#60)", () => {
+describe("ExplodeSlider — a 1-solid sheet hides explode (#60, #113 leftover)", () => {
   afterEach(() => {
     workspaceStore.reset(DEFAULT_STATE);
   });
 
-  it("keeps data-explode-t and hides the slider when explode cannot separate anything", () => {
+  it("unmounts explode when it cannot separate anything", () => {
     const host = document.createElement("div");
     host.innerHTML = renderToStaticMarkup(<ExplodeSlider noop />);
-    expect(host.querySelector("[data-explode-t]")?.getAttribute("data-explode-t")).toBe("0");
-    expect(host.querySelector("[data-explode-collapsed]")).not.toBeNull();
+    expect(host.querySelector("[data-explode-t]")).toBeNull();
+    expect(host.querySelector("[data-explode-collapsed]")).toBeNull();
     expect(host.querySelector("[data-testid='explode-slider']")).toBeNull();
-    expect(host.querySelector("[data-explode-disclose]")).not.toBeNull();
+    expect(host.querySelector("[data-explode-disclose]")).toBeNull();
   });
 
   it("shows the slider when explode can separate solids", () => {
@@ -284,5 +284,19 @@ describe("ExplodeSlider — a 1-solid sheet starts collapsed (#60)", () => {
     host.innerHTML = renderToStaticMarkup(<ExplodeSlider />);
     expect(host.querySelector("[data-explode-collapsed]")).toBeNull();
     expect(host.querySelector("[data-testid='explode-slider']")).not.toBeNull();
+  });
+});
+
+describe("SectionControl — a 1-solid sheet hides section (#113 leftover)", () => {
+  afterEach(() => {
+    workspaceStore.reset(DEFAULT_STATE);
+  });
+
+  it("unmounts section when there is no cut on a one-solid plate", () => {
+    const host = document.createElement("div");
+    host.innerHTML = renderToStaticMarkup(<SectionControl bounds={null} noop />);
+    expect(host.querySelector("[data-section-control]")).toBeNull();
+    expect(host.querySelector("[data-section-disclose]")).toBeNull();
+    expect(host.querySelector("[data-testid='section-enable']")).toBeNull();
   });
 });

@@ -66,6 +66,33 @@ a {
   color: var(--accent);
 }
 
+/*
+ * Overlay scrollbars (#115, INTERFACE.md §3.10). A classic OS track is a
+ * ~15px chrome strip on every panel at 1280×800. Shell scrollers (rail,
+ * well, Results, stage, any overflow:auto inside the shell) keep overflow
+ * reachable and overlay a 1–2px cue instead. `scrollbar-width: thin` plus
+ * a 2px `::-webkit-scrollbar` are the permitted native forms; a custom
+ * 15px track is not. TabBar's `scrollbar-width: none` stays more specific
+ * than `*` and still hides its own strip.
+ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ink-faint) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 2px;
+  height: 2px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--ink-faint);
+}
+
 /* §3.10's motion block, kept verbatim. */
 @media (prefers-reduced-motion: reduce) {
   *,

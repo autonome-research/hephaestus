@@ -65,20 +65,6 @@
   text-decoration: line-through;
 }
 
-/*
- * The model id, inline at the context row's right end (§7A.10, C15 — the meta
- * line it used to sit on is struck). `margin-inline-start: auto` is what puts
- * it at the right end of the flex line; the face is `.code` via the `<Fact
- * mono>` it wraps, and the ink is muted here because the id is quiet text,
- * not a control.
- */
-.model {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  margin-inline-start: auto;
-  color: var(--ink-muted);
-}
-
 /* ---- the input row (§7A.10, C15) ------------------------------------ */
 
 /*

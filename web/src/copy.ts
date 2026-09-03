@@ -1400,19 +1400,17 @@ export const copy = {
     discloseFailed: "The preview could not be composed.",
 
     /**
-     * Session chrome (issue #13). Model identifiers come from
-     * `GET /providers` — the text is the provider's own model id, not a
-     * house name. Effort is not a prompt field (§7A.3) and is not
-     * projected. DFM copy below labels the two §6.4 inspector actions
-     * (`[dfm] auto_run` + `run_dfm`); the composer does not host them.
+     * Session chrome (issue #13 / #114). Model identifiers still come from
+     * `GET /providers` — never a house name — but the idle composer does not
+     * draw them. Effort is not a prompt field and is not projected.
+     * `model` / `noModels` left with the chip. DFM copy below labels the two
+     * §6.4 inspector actions; the composer does not host them.
      */
-    model: "Model",
     // `effort` / `effortOff` used to live here for a decision module that had
     // no surface. §7A.10(e)(1) removes the effort vocabulary outright — "a
     // closed vocabulary with no surface is a spec claim by implication" — so
     // the two words went with it rather than waiting for a control no clause
     // specifies.
-    noModels: "No models are declared in the provider configuration.",
     addCurrentView: "Add current view",
     addCurrentViewWhy:
       "Include this page's view and selection in the context the agent is told.",

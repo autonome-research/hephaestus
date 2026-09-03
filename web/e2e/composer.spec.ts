@@ -107,31 +107,16 @@ test.describe("§7A.12 case 1 — the blank canvas reaches the workspace", () =>
     await expect(composer).toHaveAttribute("data-composer-state", "idle");
     await expect(composer).toHaveAttribute("data-disabled-reason", "null");
     await expect(composer).toHaveAttribute("data-profile", "orchestrator");
-    // Issue #13: model id is the provider's own, never a house name.
-    await expect(composer.locator("[data-composer-model]")).toHaveAttribute(
-      "data-composer-model",
-      "heph-fake-model",
-    );
-    // §7A.10, amended 2026-09-02 (§0.2c, C15): the resting composer is TWO
-    // rows, counted. The model id's box lies within the context row's box;
-    // Send's box lies within the input row's box; and the restated (a)
-    // testable holds against the row that mounts — the input row holds
-    // exactly one button-role element, and it is Send.
-    await expect(
-      composer.locator("[data-context-summary] [data-composer-model]"),
-    ).toHaveCount(1);
+    // #114: idle composer is context + textarea + Send. No model chip.
+    await expect(composer.locator("[data-composer-model]")).toHaveCount(0);
     await expect(
       composer.locator("[data-composer-input-row] [data-composer-send]"),
     ).toHaveCount(1);
     expect(
       await composer.locator("[data-composer-input-row] button, [data-composer-input-row] [role='button']").count(),
     ).toBe(1);
-    const modelBox = await composer.locator("[data-composer-model]").boundingBox();
-    const contextBox = await composer.locator("[data-context-summary]").boundingBox();
     const sendBox = await composer.locator("[data-composer-send]").boundingBox();
     const inputRowBox = await composer.locator("[data-composer-input-row]").boundingBox();
-    expect(modelBox).not.toBeNull();
-    expect(contextBox).not.toBeNull();
     expect(sendBox).not.toBeNull();
     expect(inputRowBox).not.toBeNull();
     const within = (
@@ -142,7 +127,6 @@ test.describe("§7A.12 case 1 — the blank canvas reaches the workspace", () =>
       inner.y + inner.height <= outer.y + outer.height + 1 &&
       inner.x >= outer.x - 1 &&
       inner.x + inner.width <= outer.x + outer.width + 1;
-    expect(within(modelBox!, contextBox!)).toBe(true);
     expect(within(sendBox!, inputRowBox!)).toBe(true);
     // C15's negative half: no third row mounts at rest — no meta line, no
     // empty action row. Cancel does not mount while nothing is cancellable
