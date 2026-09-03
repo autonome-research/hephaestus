@@ -19,6 +19,7 @@
 // No assertion is on a string of UI copy (§3): the prose cases are asserted as
 // *presence of a body*, and the two title-only cases as its absence.
 
+import { readFileSync } from "node:fs";
 import { describe, expect, it, afterEach } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createRoot, type Root } from "react-dom/client";
@@ -194,6 +195,19 @@ describe("ViewCube — front joins the plate (§5.5 C19)", () => {
     for (const axis of ["+Y", "+Z", "-X", "+X", "-Z", "-Y"]) {
       expect(labels).not.toContain(axis);
     }
+  });
+
+  it("cube glyphs spend ink-strong, never accent-ink on accent-quiet (§3.9, §3.13.1)", () => {
+    // `--accent-ink` (#06121d) on `--accent-quiet` (#26374b) is 1.56:1.
+    // The permit table allows `--accent-ink` only on `--accent`. The cube
+    // selected state is an accent-quiet fill; its words stay `--ink-strong`.
+    const css = readFileSync(
+      new URL("../src/components/stage/viewport/ViewCube.module.css", import.meta.url),
+      "utf8",
+    );
+    expect(css).not.toMatch(/color:\s*var\(--accent-ink\)/);
+    expect(css).toMatch(/color:\s*var\(--ink-strong\)/);
+    expect(css).toMatch(/\[data-cube-current\][\s\S]*background:\s*var\(--accent-quiet\)/);
   });
 });
 

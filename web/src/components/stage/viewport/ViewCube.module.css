@@ -47,6 +47,10 @@
   padding: 0;
   border: 1px solid var(--border-control);
   background: var(--surface-control);
+  /* §3.9: `--accent-ink` is permitted only on `--accent`. Cube glyphs are
+     words, so they spend `--ink-strong` — the same pairing the pressed
+     toggle recipe uses on `--accent-quiet`. `--accent-ink` on
+     `--accent-quiet` is 1.56:1 and fails §3.13.1. */
   color: var(--ink-strong);
   cursor: pointer;
   backface-visibility: hidden;
@@ -71,15 +75,14 @@
   height: 16px;
   margin: 20px;
   border-radius: var(--radius-card);
-  background: var(--accent-quiet);
-  color: var(--accent-ink);
+  background: var(--surface-raised);
 }
 
 .face[data-cube-current],
 .edge[data-cube-current],
 .corner[data-cube-current] {
   background: var(--accent-quiet);
-  color: var(--accent-ink);
+  color: var(--ink-strong);
   border-color: var(--accent);
 }
 
