@@ -435,12 +435,11 @@ describe("the DOM contract", () => {
     expect(host.querySelector("[data-composer-send]")?.getAttribute("aria-disabled")).toBe("true");
   });
 
-  it("is exactly two rows at rest with a model selected, and mounts no third (C15)", () => {
-    // §7A.10's 2026-09-02 amendment, both halves. POSITIVE: the form's
+  it("is exactly two rows at rest, and mounts no model chip (C15, issue 114)", () => {
+    // §7A.10's 2026-09-02 amendment, plus issue 114. POSITIVE: the form's
     // directly rendered rows number two — the context row (§7A.3(a)'s summary
-    // line, hosting the model id at its right end) and the input row (the
-    // textarea with Send on the same row). NEGATIVE: no meta line and no
-    // action row mounts at rest, empty or otherwise.
+    // line) and the input row (the textarea with Send on the same row).
+    // NEGATIVE: no meta line, no action row, no model/effort vocabulary.
     const html = markup({}, { providers: providersDocument() });
     const host = document.createElement("div");
     host.innerHTML = html;
@@ -448,15 +447,12 @@ describe("the DOM contract", () => {
     expect(form).not.toBeNull();
     const rows = [...(form?.children ?? [])];
     expect(rows).toHaveLength(2);
-    // Row 1 is the context row and the model id lies within it.
     expect(rows[0]?.hasAttribute("data-context-summary")).toBe(true);
-    const model = form?.querySelector("[data-composer-model]");
-    expect(model).not.toBeNull();
-    expect(rows[0]?.contains(model ?? null)).toBe(true);
-    // Row 2 is the input row and Send lies within it.
+    expect(form?.querySelector("[data-composer-model]")).toBeNull();
+    expect(html).not.toContain("gpt-5.5");
+    expect(html).not.toContain("data-composer-provider");
     expect(rows[1]?.hasAttribute("data-composer-input-row")).toBe(true);
     expect(rows[1]?.contains(form?.querySelector("[data-composer-send]") ?? null)).toBe(true);
-    // The struck third rows stay struck.
     expect(html).not.toContain("data-composer-hint");
     expect(html).not.toContain("data-composer-cancel");
   });
@@ -551,23 +547,17 @@ describe("the DOM contract", () => {
     expect(toggle?.closest("[data-context-summary]")).not.toBeNull();
   });
 
-  it("draws the model as quiet text at the context row's right end (§7A.10(d), C15)", () => {
-    // AMENDED 2026-09-02 (§0.2c, C15): the meta line is struck; the model
-    // id's home is the context row — one line answers both "what will be
-    // sent" and "to what".
+  it("mounts no model chip at rest, even when a runtime is attached (issue 114)", () => {
     const html = markup({}, { providers: providersDocument() });
     const host = document.createElement("div");
     host.innerHTML = html;
-    const model = host.querySelector("[data-composer-model]");
-    // Every attribute and the `<Fact>` attribution are unchanged; only the
-    // drawing moved. `providers.models.id` is a server fact (§4.6).
-    expect(model?.getAttribute("data-composer-provider")).toBe("heph-fake");
-    expect(model?.querySelector("[data-source='providers.models.id']")).not.toBeNull();
-    // Its box lies within the context row's box, and nowhere near the input
-    // row or a control.
-    expect(model?.closest("[data-context-summary]")).not.toBeNull();
-    expect(model?.closest("[data-composer-input-row]")).toBeNull();
-    expect(model?.closest("button, [role='button']")).toBeNull();
+    expect(host.querySelector("[data-composer-model]")).toBeNull();
+    expect(host.querySelector("[data-composer-provider]")).toBeNull();
+    expect(html).not.toContain("gpt-5.5");
+    expect(html).not.toMatch(/<select\b/i);
+    expect(host.querySelector("[data-composer-input]")).not.toBeNull();
+    expect(host.querySelector("[data-composer-send]")).not.toBeNull();
+    expect(host.querySelector("[data-context-summary]")).not.toBeNull();
   });
 });
 
@@ -750,10 +740,11 @@ describe("session chrome from GET /providers", () => {
     expect(html).not.toContain("data-context-add-view");
   });
 
-  it("renders the declared model id as a projection, not a picker, when a runtime is attached", () => {
+  it("does not rest a model chip or picker when a runtime is attached (issue 114)", () => {
     const html = markup({}, { providers: providersDocument() });
-    expect(attribute(html, "data-composer-model")).toBe("heph-fake-model");
-    expect(attribute(html, "data-composer-provider")).toBe("heph-fake");
+    expect(html).not.toContain("data-composer-model");
+    expect(html).not.toContain("data-composer-provider");
+    expect(html).not.toContain("gpt-5.5");
     // §7A.3's prompt body is `{text, context?}`. A Select here would write
     // nothing and read as hosted-chat chrome.
     expect(html).not.toMatch(/<select\b/i);
@@ -796,29 +787,35 @@ describe("session chrome from GET /providers", () => {
     expect(chrome).not.toContain("parseModelKey");
     expect(copy.composer).not.toHaveProperty("effort");
     expect(copy.composer).not.toHaveProperty("effortOff");
+    expect(copy.composer).not.toHaveProperty("model");
+    expect(copy.composer).not.toHaveProperty("noModels");
   });
 
-  // §7A.10(e)(1)'s testable, stated as the rule rather than as a list: "every
-  // symbol exported from `composerChrome.ts` has at least one importer under
-  // `web/src`". A decision module is a claim about a surface; one nothing
-  // imports is a claim the codebase cannot support, and the list of orphans
-  // grows back unless something counts them.
-  it("exports nothing from composerChrome.ts that no src module imports", () => {
+  // §7A.10(e)(1), amended 2026-09-03 (issue 114): the idle composer no longer
+  // imports this module. Remaining helpers stay as the GET /providers
+  // projection and must be imported from src or test.
+  it("exports nothing from composerChrome.ts that no src or test module imports", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const src = join(here, "../../src");
+    const testRoot = join(here, "..");
     const chrome = readFileSync(join(src, "stream/composerChrome.ts"), "utf8");
     const values = [...chrome.matchAll(/^export (?:const|function|class) (\w+)/gm)].map(
       (match) => match[1] ?? "",
     );
     expect(values.length).toBeGreaterThan(0);
-    const sources = sourceFiles(src).filter((file) => !file.endsWith("composerChrome.ts"));
+    const sources = [
+      ...sourceFiles(src).filter((file) => !file.endsWith("composerChrome.ts")),
+      ...sourceFiles(testRoot),
+    ];
     const corpus = sources.map((file) => readFileSync(file, "utf8")).join("\n");
     for (const symbol of values) {
       expect(
         new RegExp(`\\b${symbol}\\b`).test(corpus),
-        `${symbol} is exported from composerChrome.ts and imported by nothing under src/`,
+        `${symbol} is exported from composerChrome.ts and imported by nothing under src/ or test/`,
       ).toBe(true);
     }
+    const composer = readFileSync(join(src, "components/stream/Composer.tsx"), "utf8");
+    expect(composer).not.toContain("data-composer-model");
     // A TYPE export is held to the neighbouring rule rather than to this one,
     // and §7A.10(e)(1)'s testable now splits the two kinds itself rather than
     // leaving the split to this comment (amended 2026-09-01):

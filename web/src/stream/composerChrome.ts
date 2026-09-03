@@ -81,12 +81,16 @@ export function defaultModel(models: readonly ComposerModel[]): ComposerModel | 
 }
 
 /**
- * Whether the composer may render the model projection.
+ * Whether a surface may name the model projection.
  *
  * False when the runtime is missing (`agent_unavailable`) or when the
  * providers document names no models. A chip over an empty set — or a
  * Select that wrote nothing — would read as a signed-in agent that is
  * not there.
+ *
+ * #114: the idle composer no longer mounts this projection. The helper
+ * stays so a caller cannot invent a house name or a picker; the rail's
+ * Model providers section is the resting place for the attached runtime.
  */
 export function showModelChrome(
   agentUnavailable: boolean,

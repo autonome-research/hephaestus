@@ -163,11 +163,33 @@ export function isSessionRoot(tab: Pick<ThreadTab, "parent_session_id" | "depth"
  * An orchestrator root is a project session, not "no parent". Linked children
  * keep the server's profile / edge kind. The unlinked word is never the
  * visible subtitle — `data-thread-state` still carries it.
+ *
+ * #112: C6 already puts the kind word on a part-bound fallback label
+ * (`kerf_coupon · part`). Printing the same profile word again as trailing
+ * meta concatenates `part part`. One kind word, once: if the label already
+ * carries this word, meta is empty.
  */
 export function sessionTabMeta(
   tab: ThreadTab,
   row: SessionRow | undefined,
+  firstPrompt?: string | null,
 ): string | null {
+  const raw = rawSessionTabMeta(tab, row);
+  if (raw === null) return null;
+  const label = sessionLabel({
+    sessionId: tab.session_id,
+    profile: row?.profile ?? null,
+    part: row?.part ?? originPart(tab.origin ?? {}),
+    kind: tab.kind,
+    origin: tab.origin,
+    createdAt: tab.created_at ?? null,
+    firstPrompt: firstPrompt ?? null,
+  });
+  if (label === raw || label.endsWith(` · ${raw}`)) return null;
+  return raw;
+}
+
+function rawSessionTabMeta(tab: ThreadTab, row: SessionRow | undefined): string | null {
   if (row?.profile === "orchestrator" || (row === undefined && isSessionRoot(tab))) {
     return copy.stream.projectSession;
   }

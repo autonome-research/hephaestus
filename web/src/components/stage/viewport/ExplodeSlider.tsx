@@ -44,10 +44,14 @@ export function ExplodeSlider({
    * opens on request; nothing about `explode_t` changes.
    */
   readonly yielded?: boolean | undefined;
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   const t = useWorkspace((s) => s.explode_t);
   const [open, setOpen] = useState(false);
-  const collapsed = ((noop && t === 0) || yielded) && !open;
+  // #113 leftover: a one-solid sheet has nothing to separate. Hide the
+  // control entirely while explode is a no-op and t is still 0. An engaged
+  // t (URL / prior drag) stays mounted so the operator can collapse it.
+  if (noop && t === 0 && !open) return null;
+  const collapsed = yielded && !open;
 
   if (collapsed) {
     const why = noop ? copy.viewport.explode.noop : copy.viewport.explode.explain;

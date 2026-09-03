@@ -82,10 +82,9 @@
 //   one that vanished would leave the operator with no target for "why can't I
 //   send?" — the opposite case from Cancel.
 // * §7A.10(c)(d): the disclosure is a compact quiet toggle attached to the
-//   summary line (one affordance), and the model chip is quiet inline text in
-//   the meta line rather than a bordered `Chip` in the action row. Every
-//   attribute — `data-context-disclose`, `data-composer-model`, its `<Fact>`
-//   attribution — is unchanged; only where they are drawn moves.
+//   summary line (one affordance). The model chip is retired (#114): idle
+//   chrome is context + textarea + Send. Model identity lives on the rail's
+//   Model providers. `data-context-disclose` is unchanged.
 //
 // NOTHING LEFT THE DOM (§0.2b's governing discipline). `data-cancel-state`,
 // `data-send-state`, `data-composer-state`, `data-disabled-reason`, every
@@ -96,14 +95,12 @@
 // counted, and Add current view surfaces where the gap is visible.**
 //
 // * §7A.10 (C15): the 2026-09-01 amendment's four-high stack collapses to two
-//   rows. The CONTEXT ROW is §7A.3(a)'s summary line with the model id inline
-//   at its right end — `[data-composer-model]` keeps every attribute, its
-//   `<Fact>` attribution and its mount condition; only the placement moved,
-//   and (d)'s meta-line placement is struck. The INPUT ROW holds the textarea
-//   with Send right-aligned on the same row. No third row mounts at rest: no
-//   meta line, no empty action row — the keyboard hint lives on Send's
-//   `title`. Exceptional states stay loud and add their rows as specified:
-//   Cancel while cancellable (§7A.6), the disabled reason, and C1's
+//   rows. The CONTEXT ROW is §7A.3(a)'s summary line — no model id at rest
+//   (#114). The INPUT ROW holds the textarea with Send right-aligned on the
+//   same row. No third row mounts at rest: no meta line, no empty action row,
+//   no model chip — the keyboard hint lives on Send's `title`. Exceptional
+//   states stay loud and add their rows as specified: Cancel while
+//   cancellable (§7A.6), the disabled reason, and C1's
 //   `data-send-state="unknown"` note. §7A.10(a)'s testable is restated to the
 //   input row: count one button-role element, and it is the Send hook.
 //   (Send's and the input's DOM hooks are spelled only in the JSX below, on
@@ -129,7 +126,6 @@
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { WorkspaceError } from "../../api/client";
-import { useProviders } from "../../api/queries";
 import { refreshAfterTurn } from "../../api/refresh";
 import { attachAgent, type AttachProjection, isAttachCause } from "../../api/attach";
 import {
@@ -144,12 +140,6 @@ import { copy } from "../../copy";
 import { Button, Chip, CHIP_REF_WIDTH, EmptyState, TextInput, formatRef } from "../../system";
 import { useWorkspaceState, workspaceStore } from "../../state/react";
 import { labelsForPart, visibilityStore } from "../../state/visibility";
-import {
-  defaultModel,
-  modelsFrom,
-  showModelChrome,
-  type ComposerModel,
-} from "../../stream/composerChrome";
 import {
   canSendTurn,
   cancelAvailability,
@@ -170,7 +160,6 @@ import { sessionPromptStore } from "../../stream/sessionPrompts";
 import { holderSessionTitle } from "../../stream/sessionTitle";
 import { promptFailurePost, runtimeFaultOf, type RuntimeFault } from "../../stream/runtimeFault";
 import type { ContextMember } from "../../api/sessions";
-import { Fact } from "../Fact";
 import styles from "./Composer.module.css";
 
 /** §7A.10's closed `data-composer-state` vocabulary. */
@@ -319,20 +308,15 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     [envelope, chips, dropped],
   );
 
-  // -- session chrome (issue #13) ----------------------------------------
+  // -- session chrome (issue #13, retired #114) --------------------------
   //
-  // Model is a projection of `GET /providers`. It renders only when a
-  // runtime is attached *and* that document named at least one model; a
-  // picker over an empty set — or a Select that wrote nothing — would read
-  // as a signed-in agent that is not there. The first declared model id is
-  // the identifier. Effort is not a prompt field and is not projected.
-  // DFM lives on the inspector panel (§6.4): two controls, never a composer
-  // Plan switch. Idle chrome here is the optional model chip + prompt +
-  // Send/Cancel/disclose.
-  const providers = useProviders();
-  const models = useMemo(() => modelsFrom(providers.data), [providers.data]);
-  const modelChrome = showModelChrome(agentUnavailable, models);
-  const selectedModel = defaultModel(models);
+  // Model is a projection of `GET /providers`. The idle composer no longer
+  // draws it: the rail's Model providers section already names the attached
+  // runtime (`openai-codex`). A resting `gpt-5.5` chip next to Send was
+  // leftover vocabulary after the model/effort surface retired. Effort is
+  // not a prompt field. DFM lives on the inspector panel (§6.4): two
+  // controls, never a composer Plan switch. Idle chrome here is context +
+  // prompt + Send. Cancel mounts only while cancellable (§7A.6).
   const promptRows = promptFocused || text.trim() !== "" ? 3 : 1;
 
   // §7A.3 (C22): ONE handler for both copies of the affordance. The line's
@@ -716,9 +700,8 @@ export function Composer(props: ComposerProps): React.JSX.Element {
           member the operator excluded, said out loud (§7A.3(e)). The toggle is
           attached to it: §7A.10(c) makes the line and the toggle one
           affordance, so the chip form and the composed preview open together.
-          C15 seats the model id at this line's right end, and C22 mounts the
-          Add-current-view control here exactly while the gap it closes is
-          visible. */}
+          C22 mounts the Add-current-view control here exactly while the gap
+          it closes is visible. No model id at rest (#114). */}
       <ContextSummaryLine
         summary={summary}
         disclosed={disclosed}
@@ -726,7 +709,6 @@ export function Composer(props: ComposerProps): React.JSX.Element {
           setDisclosed((open) => !open);
         }}
         onAddView={addViewLine ? addCurrentView : null}
-        model={modelChrome && selectedModel !== null ? selectedModel : null}
       />
 
       {/* §7A.3(c): the editable chip form IS the disclosure. It does not mount
@@ -910,15 +892,8 @@ function ContextSummaryLine(props: {
    * (`addViewOnLine`) and this line only draws its verdict.
    */
   readonly onAddView: (() => void) | null;
-  /**
-   * §7A.10 (C15): the model id, inline at the line's right end — `.code` at
-   * `--ink-muted`, every attribute and the `<Fact>` attribution of clause (d)
-   * unchanged; only the placement is new. `null` under exactly the conditions
-   * the struck meta line left it out: no model selected, or model chrome off.
-   */
-  readonly model: ComposerModel | null;
 }): React.JSX.Element {
-  const { summary, disclosed, onToggle, onAddView, model } = props;
+  const { summary, disclosed, onToggle, onAddView } = props;
   const empty = summary.tokens.length === 0 && summary.remaining === 0 && summary.removed.length === 0;
   return (
     <p
@@ -974,22 +949,6 @@ function ContextSummaryLine(props: {
         <Button variant="quiet" onClick={onAddView} data-context-add-view="">
           {copy.composer.addCurrentView}
         </Button>
-      ) : null}
-      {/* §7A.10 (C15): the model id at the context row's right end — one line
-          answers both "what will be sent" and "to what". `providers.models.id`
-          is a server fact and §4.6 governs it, so the `<Fact>` attribution
-          stays. */}
-      {model !== null ? (
-        <span
-          className={styles["model"]}
-          title={copy.composer.model}
-          data-composer-model={model.id}
-          data-composer-provider={model.providerId}
-        >
-          <Fact mono source="providers.models.id" value={model.id}>
-            {model.id}
-          </Fact>
-        </span>
       ) : null}
     </p>
   );

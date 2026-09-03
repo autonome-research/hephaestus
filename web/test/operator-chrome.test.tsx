@@ -513,7 +513,30 @@ describe("composer chrome — talking surface, not a Plan/DFM toolbar", () => {
     // else at rest. The model moved to the meta line, the disclosure to the
     // summary line, and Cancel mounts only while a run is cancellable.
     expect(composer).toContain("data-context-summary");
-    expect(composer).not.toMatch(/<Chip[\s\S]{0,80}data-composer-model/);
+    expect(composer).not.toContain("data-composer-model");
+  });
+});
+
+describe("shell scrollbars overlay the panel and do not eat layout (issue 115)", () => {
+  it("uses a 1–2px overlay cue, not a classic OS track", () => {
+    const global = css("global.css");
+    expect(global).toMatch(/scrollbar-width:\s*thin/);
+    expect(global).toMatch(/\*::-webkit-scrollbar\s*\{[^}]*width:\s*2px/);
+    expect(global).toMatch(/\*::-webkit-scrollbar\s*\{[^}]*height:\s*2px/);
+    expect(global).toMatch(/::-webkit-scrollbar-track\s*\{[^}]*background:\s*transparent/);
+    expect(global).not.toMatch(/scrollbar-gutter:\s*stable/);
+    expect(global).not.toMatch(/::-webkit-scrollbar[^{]*\{[^}]*width:\s*1[5-9]px/);
+  });
+
+  it("keeps overflow reachable on the rail, well, Results, and stage", () => {
+    const shell = css("components/Shell.module.css");
+    const stream = css("components/stream/Stream.module.css");
+    const inspector = css("components/stage/Inspector.module.css");
+    const stage = css("components/stage/Stage.module.css");
+    expect(shell).toMatch(/\.rail\s*\{[^}]*overflow-y:\s*auto/);
+    expect(stream).toMatch(/\.scroll\s*\{[^}]*overflow:\s*auto/);
+    expect(inspector).toMatch(/\.content\s*\{[^}]*overflow:\s*auto/);
+    expect(stage).toMatch(/\.content\s*\{[^}]*overflow:\s*auto/);
   });
 });
 

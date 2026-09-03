@@ -1381,6 +1381,14 @@ viewport camera change instantly — an instrument that eases a number into plac
 has made the reader wait to trust it. The existing `prefers-reduced-motion`
 block is kept verbatim.
 
+**AMENDED 2026-09-03 — shell scrollbars are overlay indicators.** The rail,
+stream well, Results drawer, stage scroller, and any other shell overflow
+overlay a **1–2px** position cue. They do not reserve a classic OS track
+(~15px) that eats layout at 1280×800. Overflow still scrolls (wheel, trackpad,
+keyboard). Native `scrollbar-width: thin` / `::-webkit-scrollbar` at 1–2px /
+overlay scrollbars are the permitted forms. **The negative half:** do not hide
+overflow so content is unreachable, and do not draw a custom 15px track.
+
 ### 3.11 The viewport is not chrome — the one problem no CSS solves
 
 `viewport/engine.ts`:74 reads `const BACKGROUND = new Color("#0d0f12")` and its
@@ -2338,9 +2346,11 @@ buttons (`+Y` `+Z` `-X` `iso` `+X` `-Z` `-Y`) and the free-floating `front`
 companion are gone. The control is one `[data-view-cube]` group with an
 accessible name, in the tab order: faces, edges, and corners are selectable.
 `iso` is a cube corner (and still carries `data-view="iso"`). C19's `front`
-hit stays inside the same plate. A one-solid sheet may collapse explode and
-section when they are no-ops (#113); that is overlay crowding, not a second
-camera control.
+hit stays inside the same plate. A one-solid sheet **unmounts** explode and
+section while they are no-ops and not engaged (#113 leftover): no "Show
+explode" / "Show section" disclosure on a single solid. An engaged `explode_t`
+or `section_plane` stays mounted so the operator can reset it. That is overlay
+crowding, not a second camera control. The cube itself is unchanged.
 
 **Appearance cluster — operator chrome, bound to the pin.** A small control
 strip on the viewport drives the display authorship §3.11 already specified:
@@ -2628,6 +2638,13 @@ thing. Normative:
 
 Nothing changes for a tab **with** a remembered first line: it titles by that
 line, truncated, exactly as shipped.
+
+**AMENDED 2026-09-03 — one kind word, once (#112).** Rule 1's part-bound
+fallback `{part} · {kind}` is the whole heading. The tab's trailing meta does
+not print the same profile/kind word again. Either the label carries
+`kerf_coupon · part` and meta is empty, or the label is `kerf_coupon` and
+meta is `part`. A first-prompt title may still carry `part` as meta — that is
+one kind word, not two. The UUID stays on `title` / `data-session-id`.
 
 ### 7.2 The tool chip contract
 
@@ -3820,14 +3837,15 @@ row. It renders as a **compact, quiet toggle attached to the summary line of
 The `POST /context/preview` behaviour above is entirely unchanged; only its
 entry point moves.
 
-**(d) The model chip stays as quiet text.** `[data-composer-model]` /
+**(d) The model chip does not rest.** ~~`[data-composer-model]` /
 `[data-composer-provider]` keep their attributes and their `<Fact>` attribution
 — `providers.models.id` is a server fact and §4.6 governs it — but the chip
-renders as **quiet inline text** ~~in the composer's meta line~~ *(placement
-STRUCK 2026-09-02 (§0.2c, C15): the meta line is gone; the chip's home is the
-context row's right end — see the 2026-09-02 amendment below)*, not as a
-bordered `Chip` in the action row. It renders **only when a model is selected and model
-chrome is enabled**, exactly as today; nothing about *when* it renders changes.
+renders as **quiet inline text**~~ *(STRUCK 2026-09-03, #114: the idle
+composer mounts no model/effort vocabulary. Model identity lives on the rail's
+Model providers section. Do not invent a picker; do not put model on
+`POST /sessions/{id}/prompt`.)* The projection helpers in
+`stream/composerChrome.ts` remain: identifiers still come from `GET /providers`,
+never house names. They are not drawn at rest.
 
 **(e) Dead surface, repair (c) — remove or wire, and this document chooses.**
 Three groups, each with a stated disposition, because an exported symbol nothing
@@ -3840,16 +3858,15 @@ imports is a claim the codebase makes and cannot support:
    / `parseModelKey` are **removed unless the model selector wires them in the
    same change** — the selector's option identity is `providerId/modelId`
    either way, and if it is wired it is wired through these functions rather
-   than through a second inline spelling of the same join. **Testable, split by
-   export kind because the two kinds carry different claims:** every **value**
-   export of `composerChrome.ts` (`const`, `function`, `class`) has at least one
-   importer under `web/src`; every **type** export appears in the signature of
-   at least one value this module exports. *A value nothing imports is dead
-   code. A type nothing imports may still be load-bearing — `modelsFrom` returns
-   `ComposerModel[]`, and a return type a caller cannot name is a worse
-   interface than one no caller spells out. Requiring an importer for the type
-   would force either an unused import or an anonymous return, so the rule for
-   types is nameability, not importers.*
+   than through a second inline spelling of the same join. **AMENDED 2026-09-03
+   (#114):** the idle composer no longer imports or mounts this module — the
+   resting chip is gone. The remaining projection helpers (`modelsFrom`,
+   `defaultModel`, `showModelChrome`) stay as the GET /providers decision
+   module and are imported from tests. **Testable, split by export kind:**
+   every **value** export of `composerChrome.ts` has at least one importer
+   under `web/src` or `web/test`; every **type** export appears in the
+   signature of at least one value this module exports. Composer source does
+   not contain `data-composer-model`.
 2. `copy.ts` — `selectSessionTitle` (:859) and `selectSession` (:860) have no
    importer and are **removed**; `historyFailedShort` (:912) is **removed if its
    only reader is a test**, and the test asserts against `historyFailed`
@@ -3871,12 +3888,9 @@ one button, and the build still stacked them four high: context line, input,
 a meta line for the model chip, an action row for Send. Normative — the resting
 composer is **exactly two rows below the context line's top edge**:
 
-1. **The context row** is §7A.3(a)'s summary line, and the **model id renders
-   inline at its right end** — `[data-composer-model]` /
-   `[data-composer-provider]` as `.code` at `--ink-muted`, keeping every
-   attribute, `<Fact>` attribution, and mount condition of clause (d) above;
-   only the placement is new (and (d)'s meta-line placement is struck). One
-   line answers both "what will be sent" and "to what".
+1. **The context row** is §7A.3(a)'s summary line. ~~The model id renders
+   inline at its right end~~ *(STRUCK 2026-09-03, #114 — see clause (d). The
+   idle line answers "what will be sent"; "to what" lives on the rail.)*
 2. **The input row** holds the textarea with **`[data-composer-send]`
    right-aligned on the same row**, at the input's trailing edge — not in a row
    of its own. Clause (a)'s one-resting-button rule is unchanged in substance,
@@ -3885,13 +3899,13 @@ composer is **exactly two rows below the context line's top edge**:
    states where that button sits.
 
 **The negative half:** in the resting state no third row mounts — no meta line,
-no empty action row — and the composer's rendered height is the context row
-plus the input row and nothing else. Exceptional states may add their rows as
-specified (Cancel while running, §7A.6; the disabled reason; C1's
-`data-send-state="unknown"` note), because they are exceptions and stay loud.
-**Testable:** in the resting state with a model selected, the composer form's
-directly rendered rows number two; the model id's box lies within the context
-row's box; Send's box lies within the input row's box.
+no empty action row, **no model chip** — and the composer's rendered height is
+the context row plus the input row and nothing else. Exceptional states may
+add their rows as specified (Cancel while running, §7A.6; the disabled reason;
+C1's `data-send-state="unknown"` note), because they are exceptions and stay
+loud. **Testable:** in the resting state the composer form's directly rendered
+rows number two; Send's box lies within the input row's box;
+`[data-composer-model]` is not in the form.
 
 **AMENDED 2026-09-03 — the textarea stays typable.** `data-disabled-reason`
 may still be `no_session` when no tab is selected, and Send stays

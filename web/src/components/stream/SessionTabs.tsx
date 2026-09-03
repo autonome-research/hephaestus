@@ -135,8 +135,9 @@ export function SessionTabs({
         tabs={tabs.map((tab) => {
           const row = byId.get(tab.session_id);
           const part = row?.part ?? originPart(tab.origin);
-          const label = labelFor(tab, row, firstPrompts[tab.session_id] ?? null);
-          const meta = sessionTabMeta(tab, row);
+          const firstPrompt = firstPrompts[tab.session_id] ?? null;
+          const label = labelFor(tab, row, firstPrompt);
+          const meta = sessionTabMeta(tab, row, firstPrompt);
           return {
             id: tab.session_id,
             label,

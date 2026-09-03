@@ -337,6 +337,9 @@ describe("the session tab row is a name, not three metadata strings", () => {
     expect(button?.getAttribute("data-thread-state")).toBe("linked");
     expect(button?.textContent ?? "").not.toContain(copy.stream.threadState.linked);
     expect(button?.textContent ?? "").toContain("kerf_card");
+    // Issue 112: one kind word. Label carries `kerf_card · part`; meta is empty.
+    expect(button?.textContent ?? "").toBe(`kerf_card · ${copy.stream.profile.part}`);
+    expect(button?.textContent ?? "").not.toMatch(/part part/);
   });
 
   it("does not call a root 'no parent' — a root is not a missing parent", () => {

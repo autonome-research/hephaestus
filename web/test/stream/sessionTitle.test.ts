@@ -202,6 +202,20 @@ describe("a root tab does not say no parent (#62, #66)", () => {
     expect(meta).not.toMatch(/no parent/i);
   });
 
+  it("does not print the kind word twice on a part-bound fallback (issue 112)", () => {
+    // C6's label is already `kerf_coupon · part`. Trailing meta must not
+    // restated `part` beside it.
+    const partTab = tab({ kind: null });
+    const partRow = row({ profile: "part", part: "kerf_coupon" });
+    expect(sessionLabel({ sessionId: UUID, part: "kerf_coupon", profile: "part" })).toBe(
+      `kerf_coupon · ${copy.stream.profile.part}`,
+    );
+    expect(sessionTabMeta(partTab, partRow)).toBeNull();
+    expect(sessionTabMeta(partTab, partRow)).not.toBe(copy.stream.profile.part);
+    // A first prompt hides the fallback; meta may then carry the one kind word.
+    expect(sessionTabMeta(partTab, partRow, "Widen the kerf.")).toBe(copy.stream.profile.part);
+  });
+
   it("looks up a human title for the in-flight holder, not the raw id", () => {
     const title = titleForSession(UUID, [row({ part: "kerf_card", profile: "part" })], [tab()]);
     expect(title).toBe(`kerf_card · ${copy.stream.profile.part}`);

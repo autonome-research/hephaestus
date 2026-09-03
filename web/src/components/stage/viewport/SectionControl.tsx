@@ -78,7 +78,7 @@ export function SectionControl({
   bounds,
   yielded = false,
   noop = false,
-}: SectionControlProps): React.JSX.Element {
+}: SectionControlProps): React.JSX.Element | null {
   const spec = useWorkspace((s) => s.section_plane);
   const overlay = useWorkspace((s) => s.channel_overlay);
   /** The C18 disclosure's own open state — a person may still want the row. */
@@ -98,7 +98,11 @@ export function SectionControl({
   };
 
   if (plane === null) {
-    if ((noop || yielded) && !open) {
+    // #113 leftover: a one-solid plate does not greet the operator with
+    // section chrome. Hide while there is no cut. An engaged plane stays
+    // mounted so the cut can be cleared.
+    if (noop && !open) return null;
+    if (yielded && !open) {
       return (
         <div className={styles["control"]} data-section-control="off" data-section-collapsed="">
           <Button
