@@ -63,7 +63,8 @@
 }
 
 .text a {
-  color: var(--accent);
+  color: var(--ink-strong);
+  text-decoration: underline;
 }
 
 .eventAnchor {
@@ -109,7 +110,8 @@
 }
 
 .thoughtBody a {
-  color: var(--accent);
+  color: var(--ink-strong);
+  text-decoration: underline;
 }
 
 /* ---- §7.2's chip ----------------------------------------------------
@@ -627,7 +629,8 @@ details[open] > .rawSummary::before {
 }
 
 .localPromptText a {
-  color: var(--accent);
+  color: var(--ink-strong);
+  text-decoration: underline;
 }
 
 .presentationMarker {

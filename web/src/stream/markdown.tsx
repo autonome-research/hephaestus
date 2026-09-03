@@ -85,7 +85,7 @@ function blocks(source: string): Block[] {
     }
     const heading = /^(#{1,3})\s+(.+)$/.exec(line);
     if (heading !== null) {
-      out.push({ type: "heading", level: heading[1]?.length, lines: [heading[2] ?? ""] });
+      out.push({ type: "heading", level: heading[1]?.length ?? 1, lines: [heading[2] ?? ""] });
       i += 1;
       continue;
     }

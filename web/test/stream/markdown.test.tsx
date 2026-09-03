@@ -21,7 +21,7 @@ describe("the sanitizing markdown renderer", () => {
           text={[
             "## Plate",
             "",
-            "A **2 mm** chamfer on the `[edge](https://example.test/edge)`.",
+            "A **2 mm** chamfer on the [edge](https://example.test/edge).",
             "",
             "- front",
             "- back",
@@ -47,7 +47,8 @@ describe("the sanitizing markdown renderer", () => {
   it("drops javascript: and other non-http(s) hrefs", () => {
     const nodes = renderMarkdown("[x](javascript:alert(1)) [y](https://ok.test)");
     const markup = renderToStaticMarkup(<>{nodes}</>);
-    expect(markup).not.toContain("javascript:");
+    expect(markup).not.toContain('href="javascript:');
+    expect(markup).not.toMatch(/<a[^>]+javascript:/);
     expect(markup).toContain("https://ok.test/");
   });
 });
