@@ -134,6 +134,31 @@ describe("shell scroller layout — no classic gutter (issue 115 leftover)", () 
     expect(el.offsetWidth).toBe(before);
     expect(el.offsetWidth).toBe(el.clientWidth);
   });
+
+  it("updates the cue when overflow appears after bind", async () => {
+    const el = mountScroller();
+    bindOverlayScrollTree(document);
+    expect(el.style.getPropertyValue("--overlay-scroll-height")).toBe("0px");
+    let scrollTop = 0;
+    Object.defineProperties(el, {
+      clientHeight: { configurable: true, get: () => 80 },
+      scrollHeight: { configurable: true, get: () => 400 },
+      scrollTop: {
+        configurable: true,
+        get: () => scrollTop,
+        set: (value: number) => {
+          scrollTop = value;
+        },
+      },
+    });
+    const extra = document.createElement("div");
+    extra.style.height = "200px";
+    el.appendChild(extra);
+    await Promise.resolve();
+    expect(Number.parseFloat(el.style.getPropertyValue("--overlay-scroll-height"))).toBeGreaterThan(
+      0,
+    );
+  });
 });
 
 describe("overlayThumbAlong", () => {

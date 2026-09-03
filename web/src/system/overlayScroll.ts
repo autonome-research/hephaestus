@@ -81,13 +81,26 @@ export function bindOverlayScrollCue(el: HTMLElement): () => void {
   const sync = (): void => {
     syncOverlayScrollCue(el);
   };
+  const watch = (node: Element): void => {
+    ro?.observe(node);
+  };
   sync();
   el.addEventListener("scroll", sync, { passive: true });
   const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(sync);
   ro?.observe(el);
+  for (const child of el.children) watch(child);
+  // Content in the rail / Results arrives after mount (queries). The scroller's
+  // own box does not resize; scrollHeight does. Watch the tree so the cue
+  // appears when overflow begins.
+  const mo = typeof MutationObserver === "undefined" ? null : new MutationObserver(() => {
+    for (const child of el.children) watch(child);
+    sync();
+  });
+  mo?.observe(el, { childList: true, subtree: true });
   return () => {
     el.removeEventListener("scroll", sync);
     ro?.disconnect();
+    mo?.disconnect();
   };
 }
 
