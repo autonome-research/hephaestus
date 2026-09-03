@@ -265,7 +265,7 @@ describe("the bottom band yields in C18's fixed order (§5.5)", () => {
   });
 });
 
-describe("ExplodeSlider — a 1-solid sheet hides explode (#60, #113 leftover)", () => {
+describe("ExplodeSlider — a 1-solid sheet hides explode (issue 60, issue 113 leftover)", () => {
   afterEach(() => {
     workspaceStore.reset(DEFAULT_STATE);
   });
@@ -287,7 +287,7 @@ describe("ExplodeSlider — a 1-solid sheet hides explode (#60, #113 leftover)",
   });
 });
 
-describe("SectionControl — a 1-solid sheet hides section (#113 leftover)", () => {
+describe("SectionControl — a 1-solid sheet hides section (issue 113 leftover)", () => {
   afterEach(() => {
     workspaceStore.reset(DEFAULT_STATE);
   });

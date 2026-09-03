@@ -435,8 +435,8 @@ describe("the DOM contract", () => {
     expect(host.querySelector("[data-composer-send]")?.getAttribute("aria-disabled")).toBe("true");
   });
 
-  it("is exactly two rows at rest, and mounts no model chip (C15, #114)", () => {
-    // §7A.10's 2026-09-02 amendment, plus #114. POSITIVE: the form's
+  it("is exactly two rows at rest, and mounts no model chip (C15, issue 114)", () => {
+    // §7A.10's 2026-09-02 amendment, plus issue 114. POSITIVE: the form's
     // directly rendered rows number two — the context row (§7A.3(a)'s summary
     // line) and the input row (the textarea with Send on the same row).
     // NEGATIVE: no meta line, no action row, no model/effort vocabulary.
@@ -547,7 +547,7 @@ describe("the DOM contract", () => {
     expect(toggle?.closest("[data-context-summary]")).not.toBeNull();
   });
 
-  it("mounts no model chip at rest, even when a runtime is attached (#114)", () => {
+  it("mounts no model chip at rest, even when a runtime is attached (issue 114)", () => {
     const html = markup({}, { providers: providersDocument() });
     const host = document.createElement("div");
     host.innerHTML = html;
@@ -740,7 +740,7 @@ describe("session chrome from GET /providers", () => {
     expect(html).not.toContain("data-context-add-view");
   });
 
-  it("does not rest a model chip or picker when a runtime is attached (#114)", () => {
+  it("does not rest a model chip or picker when a runtime is attached (issue 114)", () => {
     const html = markup({}, { providers: providersDocument() });
     expect(html).not.toContain("data-composer-model");
     expect(html).not.toContain("data-composer-provider");
@@ -791,7 +791,7 @@ describe("session chrome from GET /providers", () => {
     expect(copy.composer).not.toHaveProperty("noModels");
   });
 
-  // §7A.10(e)(1), amended 2026-09-03 (#114): the idle composer no longer
+  // §7A.10(e)(1), amended 2026-09-03 (issue 114): the idle composer no longer
   // imports this module. Remaining helpers stay as the GET /providers
   // projection and must be imported from src or test.
   it("exports nothing from composerChrome.ts that no src or test module imports", () => {

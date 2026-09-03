@@ -517,7 +517,7 @@ describe("composer chrome — talking surface, not a Plan/DFM toolbar", () => {
   });
 });
 
-describe("shell scrollbars overlay the panel and do not eat layout (#115)", () => {
+describe("shell scrollbars overlay the panel and do not eat layout (issue 115)", () => {
   it("uses a 1–2px overlay cue, not a classic OS track", () => {
     const global = css("global.css");
     expect(global).toMatch(/scrollbar-width:\s*thin/);

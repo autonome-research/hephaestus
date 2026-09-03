@@ -202,7 +202,7 @@ describe("a root tab does not say no parent (#62, #66)", () => {
     expect(meta).not.toMatch(/no parent/i);
   });
 
-  it("does not print the kind word twice on a part-bound fallback (#112)", () => {
+  it("does not print the kind word twice on a part-bound fallback (issue 112)", () => {
     // C6's label is already `kerf_coupon · part`. Trailing meta must not
     // restated `part` beside it.
     const partTab = tab({ kind: null });
