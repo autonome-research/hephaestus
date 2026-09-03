@@ -27,6 +27,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchHistoryPage, fetchThread, type ThreadDocument } from "../api/sessions";
 import { workspaceToken } from "../api/token";
 import { emptyHistory, loadHistory, type HistoryProgress } from "./history";
+import { sessionPromptStore } from "./sessionPrompts";
 import {
   appendEcho,
   clearLiveRun,
@@ -122,7 +123,12 @@ export function useStream(sessionId: string | null): StreamView {
       sessionId,
       fetchHistoryPage,
       (progress) => {
-        if (!signal.aborted) setHistory({ sid: sessionId, value: progress });
+        if (signal.aborted) return;
+        setHistory({ sid: sessionId, value: progress });
+        // First write wins: restore tab titles from the server, not the page store.
+        for (const prompt of progress.userPrompts) {
+          sessionPromptStore.remember(sessionId, prompt.text);
+        }
       },
       signal,
     );
@@ -222,7 +228,7 @@ export function useStream(sessionId: string | null): StreamView {
   );
 
   return {
-    rows: panelRows(shownHistory.items, shownLive.entries),
+    rows: panelRows(shownHistory.items, shownLive.entries, shownHistory.userPrompts),
     status: shownLive.status,
     history: shownHistory,
     tabs: shownThread.tabs,

@@ -226,11 +226,12 @@ export function StreamPanel(): React.JSX.Element {
     refreshAfterTurn(client, part);
   }, [fault, client, part]);
 
-  // §7A.2: `POST /sessions` is reached from exactly two affordances, both
-  // explicit — never on focus, never on a first keystroke, never as recovery
-  // from a failed prompt. At-least-once is the stated consequence and the UI
-  // carries it: a duplicate create is an extra *idle* session, and there is no
-  // route that closes one, so none is offered.
+  // §7A.2: `POST /sessions` is reached from explicit operator actions — the
+  // empty-state / New session pair, Ask about <part>, and the composer's first
+  // Send when no session is selected. Never on focus, never on a first
+  // keystroke, never as recovery from a failed prompt. At-least-once is the
+  // stated consequence and the UI carries it: a duplicate create is an extra
+  // *idle* session, and there is no route that closes one, so none is offered.
   const create = useCallback(
     (profile: "orchestrator" | "part", boundPart: string | null) => {
       setCreating(true);
@@ -451,8 +452,9 @@ export function StreamPanel(): React.JSX.Element {
       </div>
 
       {/* §7A.1: the composer is the LAST CHILD of the STREAM column, one per
-          session tab, and it renders in every state — including the two where
-          it is disabled, because that is exactly where its reason is needed. */}
+          session tab, and it renders in every state — including
+          `agent_unavailable`, because that is exactly where its reason is
+          needed. `no_session` stays typable: the first Send creates then posts. */}
       <Composer
         sessionId={selected}
         profile={activeProfile}

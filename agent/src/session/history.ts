@@ -61,6 +61,31 @@ interface PiUserMessage {
 }
 type PiMessage = PiAssistantMessage | PiToolResultMessage | PiUserMessage;
 
+/** One recorded operator prompt, keyed to the next normalized event's `seq`. */
+export interface HistoryUserPrompt {
+  readonly seq: number;
+  readonly text: string;
+}
+
+/** Recover the operator's words from a Pi user message. */
+export function userPromptText(content: unknown): string | null {
+  if (typeof content === "string") {
+    const text = content.trim();
+    return text === "" ? null : text;
+  }
+  if (!Array.isArray(content)) return null;
+  const parts: string[] = [];
+  for (const item of content) {
+    if (item === null || typeof item !== "object") continue;
+    const record = item as { type?: unknown; text?: unknown };
+    if (record.type === "text" && typeof record.text === "string" && record.text !== "") {
+      parts.push(record.text);
+    }
+  }
+  const text = parts.join("").trim();
+  return text === "" ? null : text;
+}
+
 /**
  * Recover a historical `tool_result`'s failure flag (INTERFACE.md §7.2, §19.13).
  *
@@ -115,8 +140,9 @@ function makeEvent(
 /**
  * Normalize an ordered list of session entries into public Hephaestus events.
  * Deterministic: identical entries always yield identical events + seq numbers,
- * which is what makes cursors restart-stable. User prompts are not part of the
- * public event vocabulary and are omitted; compaction entries surface as audit.
+ * which is what makes cursors restart-stable. Compaction entries surface as
+ * audit. User prompts travel beside the page as the additive `user_prompts`
+ * field and do not enter this event sequence.
  *
  * **IDENTITY NAMESPACE (INTERFACE.md §2.8).** The `runId` parameter is a
  * misnomer kept for compatibility: every production caller (`main.ts`'s
@@ -164,9 +190,43 @@ export function normalizeEntries(entries: readonly SessionEntry[], runId: string
         if (item.type === "image") emit("image", { mimeType: item.mimeType }, message.toolCallId);
       }
     }
-    // user messages: prompts, not public events — omitted.
+    // user messages: recorded beside the page (`extractUserPrompts`), not here.
   }
   return events;
+}
+
+/**
+ * Walk the same entries `normalizeEntries` does and collect operator prompts
+ * at the **current** seq — the next event that would be emitted. Prompts do
+ * not consume a seq, so the event archive is unchanged.
+ */
+export function extractUserPrompts(entries: readonly SessionEntry[]): HistoryUserPrompt[] {
+  const prompts: HistoryUserPrompt[] = [];
+  let seq = 0;
+  for (const entry of entries) {
+    if (entry.type === "compaction") {
+      seq += 1;
+      continue;
+    }
+    if (entry.type !== "message") continue;
+    const message = entry.message as unknown as PiMessage;
+    if (message.role === "user") {
+      const text = userPromptText(message.content);
+      if (text !== null) prompts.push({ seq, text });
+      continue;
+    }
+    if (message.role === "assistant") {
+      for (const item of message.content) {
+        if (item.type === "text" || item.type === "thinking" || item.type === "toolCall") seq += 1;
+      }
+    } else if (message.role === "toolResult") {
+      seq += 1;
+      for (const item of message.content) {
+        if (item.type === "image") seq += 1;
+      }
+    }
+  }
+  return prompts;
 }
 
 interface Cursor {
@@ -200,6 +260,11 @@ export interface HistoryPageRequest {
 
 export interface HistoryPage {
   readonly events: HephaestusEvent[];
+  /**
+   * Operator prompts belonging to this page, keyed to the next event `seq`.
+   * Additive: omitted by older clients, never shifts event identities.
+   */
+  readonly userPrompts: HistoryUserPrompt[];
   /** Opaque continuation token, or null when the frozen snapshot is exhausted. */
   readonly cursor: string | null;
   readonly done: boolean;
@@ -223,7 +288,7 @@ export function pageHistory(
 ): HistoryPage {
   const pageSize = options.pageSize ?? HISTORY_PAGE_SIZE;
   if (entries.length === 0) {
-    return { events: [], cursor: null, done: true };
+    return { events: [], userPrompts: [], cursor: null, done: true };
   }
 
   let hw: string;
@@ -243,12 +308,17 @@ export function pageHistory(
   // fall back to the full frozen set we do have.
   const frozen = hwIndex >= 0 ? entries.slice(0, hwIndex + 1) : entries.slice();
   const all = normalizeEntries(frozen, runId);
+  const prompts = extractUserPrompts(frozen);
 
   const page = all.slice(offset, offset + pageSize);
   const nextOffset = offset + page.length;
   const done = nextOffset >= all.length;
+  const userPrompts = prompts.filter(
+    (prompt) => prompt.seq >= offset && (prompt.seq < nextOffset || done),
+  );
   return {
     events: page,
+    userPrompts,
     cursor: done ? null : encodeCursor({ hw, offset: nextOffset }),
     done,
   };

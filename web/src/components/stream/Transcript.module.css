@@ -38,8 +38,40 @@
   composes: body from "../../system/type.module.css";
   margin: 0;
   color: var(--ink-strong);
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.text :is(h3, h4, h5) {
+  margin: 0 0 var(--space-2);
+  color: var(--ink-strong);
+}
+
+.text :is(p, ul, ol) {
+  margin: 0 0 var(--space-2);
+}
+
+.text :is(ul, ol) {
+  padding-inline-start: var(--space-3);
+}
+
+.text pre {
+  margin: 0 0 var(--space-2);
+  padding: var(--space-2);
+  overflow-x: auto;
+  background: var(--surface-raised);
+  border-radius: var(--radius-card);
+}
+
+.text a {
+  color: var(--ink-strong);
+  text-decoration: underline;
+}
+
+.eventAnchor {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
 }
 
 .thought {
@@ -66,8 +98,20 @@
   composes: body from "../../system/type.module.css";
   margin-top: var(--space-1);
   color: var(--ink-base);
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.thoughtBody :is(h3, h4, h5, p, ul, ol, pre) {
+  margin: 0 0 var(--space-2);
+}
+
+.thoughtBody :is(ul, ol) {
+  padding-inline-start: var(--space-3);
+}
+
+.thoughtBody a {
+  color: var(--ink-strong);
+  text-decoration: underline;
 }
 
 /* ---- §7.2's chip ----------------------------------------------------
@@ -555,7 +599,8 @@ details[open] > .rawSummary::before {
    category's visible-at-rest honesty disclosure; the accessible equivalent is
    a visually-hidden span, because `title` alone is unreachable from keyboard,
    touch, and most screen readers. */
-.localPrompt {
+.localPrompt,
+.userPrompt {
   composes: body from "../../system/type.module.css";
   margin: 0;
   display: flex;
@@ -564,9 +609,28 @@ details[open] > .rawSummary::before {
 }
 
 .localPromptText {
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
   color: var(--ink-base);
+}
+
+.localPromptText :is(p, ul, ol, pre) {
+  margin: 0 0 var(--space-2);
+}
+
+.localPromptText :is(ul, ol) {
+  padding-inline-start: var(--space-3);
+}
+
+.localPromptText pre {
+  padding: var(--space-2);
+  overflow-x: auto;
+  background: var(--surface-raised);
+  border-radius: var(--radius-card);
+}
+
+.localPromptText a {
+  color: var(--ink-strong);
+  text-decoration: underline;
 }
 
 .presentationMarker {

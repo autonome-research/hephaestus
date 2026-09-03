@@ -368,6 +368,48 @@ test.describe("§7A.12 case 2 — the context envelope", () => {
   });
 });
 
+test.describe("the composer stays typable with no session", () => {
+  test("the textarea is not disabled when GET /sessions is empty", async ({ page }) => {
+    await page.route("**/api/v1/sessions", async (route) => {
+      if (route.request().method() !== "GET") {
+        await route.continue();
+        return;
+      }
+      const path = new URL(route.request().url()).pathname.replace(/\/$/, "");
+      if (path !== "/api/v1/sessions") {
+        await route.continue();
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          status: "ok",
+          sessions: [],
+          profiles: [
+            {
+              profile: "orchestrator",
+              can_delegate: true,
+              part_scoped: false,
+              requires_part: false,
+            },
+            { profile: "part", can_delegate: false, part_scoped: true, requires_part: true },
+          ],
+        }),
+      });
+    });
+    await open(page, route(PART));
+    const composer = page.locator("[data-composer]");
+    await expect(composer).toHaveCount(1);
+    await expect(composer).toHaveAttribute("data-disabled-reason", "no_session");
+    const input = composer.locator("[data-composer-input]");
+    await expect(input).toBeEnabled();
+    await input.click();
+    await input.fill("Ask about this plate.");
+    await expect(input).toHaveValue("Ask about this plate.");
+  });
+});
+
 test.describe("§7A.12 case 7 — POST /sessions validation", () => {
   test("quick_edit is refused by name, pointing at the route that seeds one", async () => {
     // §7A.2's TIGHTENING. A bare create would produce that profile's

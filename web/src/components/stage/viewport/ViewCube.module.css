@@ -2,59 +2,93 @@
  * Copyright 2026 The Hephaestus Authors
  * SPDX-License-Identifier: Apache-2.0
  *
- * §4.7's ViewCube, reordered and DETUNED.
- *
- * The shipped grid was four columns reading `iso +X -X +Y / -Y +Z -Z front`, so
- * `+Y` and `-Y` landed on different rows and `front` sat beside `+Z` as a
- * different category of thing. Worse, the only selected signal was a SOLID
- * ACCENT FILL that was the loudest element in the entire application — in direct
- * violation of §3.3's principle 1, on a control whose job is orientation.
- *
- * The vocabulary stays CLOSED at `cameras.py`'s eight names (§5.5 survives); the
- * LAYOUT becomes a 3×3 orientation cross with `front` on its own named-views
- * row, and selected state becomes the accent-QUIET fill `Button` already owns.
- * §5.5 C19 pins where the named row lives: INSIDE the view-cube plate.
+ * §5.5's view cube — a 3D plate of faces, edges, and corners.
  */
 
-/* §5.5 C19: `front` joins the view-cube PLATE. The named-views row keeps its
-   own row (§4.7's category split survives) but the chrome moves up: ONE plate,
-   one shadow, one bounding box in the corner — not two stacked plates. */
 .cube {
   position: absolute;
   top: var(--space-3);
   right: var(--space-3);
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: var(--space-1);
-  padding: var(--space-1);
+  padding: var(--space-2);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-card);
   background: var(--surface-overlay);
   box-shadow: var(--elev-popover);
 }
 
-/* The orientation cross. Row 1: +Z. Row 2: -X · iso · +X. Row 3: -Z.
-   Columns 1 and 3 of rows 1 and 3 carry +Y / -Y, so the pair that is one axis
-   reads as one axis. */
-.cross {
-  display: grid;
-  grid-template-columns: repeat(3, auto);
-  gap: 2px; /* one-off: a control cluster is tighter than --gap-stack */
+.cube:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
-.named {
+.scene {
+  width: 72px;
+  height: 72px;
+  perspective: 240px;
+}
+
+.body {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  margin: 8px auto 0;
+  transform-style: preserve-3d;
+}
+
+.face,
+.edge,
+.corner {
+  position: absolute;
+  inset: 0;
   display: flex;
-  gap: 2px; /* one-off: matches the cross above it */
-}
-
-.free {
-  composes: label from "../../../system/type.module.css";
+  align-items: center;
+  justify-content: center;
   margin: 0;
-  color: var(--ink-base);
+  padding: 0;
+  border: 1px solid var(--border-control);
+  background: var(--surface-control);
+  /* §3.9: `--accent-ink` is permitted only on `--accent`. Cube glyphs are
+     words, so they spend `--ink-strong` — the same pairing the pressed
+     toggle recipe uses on `--accent-quiet`. `--accent-ink` on
+     `--accent-quiet` is 1.56:1 and fails §3.13.1. */
+  color: var(--ink-strong);
+  cursor: pointer;
+  backface-visibility: hidden;
 }
 
-.name {
-  composes: code from "../../../system/type.module.css";
+.face {
+  composes: label from "../../../system/type.module.css";
+  width: 56px;
+  height: 56px;
+}
+
+.edge {
+  width: 14px;
+  height: 56px;
+  margin-left: 21px;
+  background: var(--surface-raised);
+}
+
+.corner {
+  composes: eyebrow from "../../../system/type.module.css";
+  width: 16px;
+  height: 16px;
+  margin: 20px;
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+}
+
+.face[data-cube-current],
+.edge[data-cube-current],
+.corner[data-cube-current] {
+  background: var(--accent-quiet);
   color: var(--ink-strong);
+  border-color: var(--accent);
+}
+
+.face:focus-visible,
+.edge:focus-visible,
+.corner:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
 }

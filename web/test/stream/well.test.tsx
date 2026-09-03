@@ -537,7 +537,7 @@ function header(props: {
 }
 
 function history(patch: Partial<HistoryProgress>): HistoryProgress {
-  return { items: [], pages: 1, state: "complete", error: null, ...patch };
+  return { items: [], userPrompts: [], pages: 1, state: "complete", error: null, ...patch };
 }
 
 describe("the stream-state badge mounts only for an exceptional state (§7.4(a))", () => {

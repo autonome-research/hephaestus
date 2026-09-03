@@ -557,6 +557,11 @@ test("viewport overlays are pairwise non-intersecting at 1280x800 and at the yie
   const cube = page.locator("[data-view-cube]");
   await expect(cube).toHaveCount(1);
   await expect(cube.locator('[data-view="front"]')).toHaveCount(1);
+  await expect(cube).toHaveAttribute("aria-label", "View cube");
+  await expect(cube).toHaveAttribute("tabindex", "0");
+  for (const axis of ["+Y", "+Z", "-X", "+X", "-Z", "-Y"]) {
+    await expect(page.getByRole("button", { name: axis, exact: true })).toHaveCount(0);
+  }
 
   const steady = await overlayBoxes(page);
   expect(

@@ -56,7 +56,9 @@ manifest pattern:
   policy (§2.3, §2.5), which G5.19 forces.
 - `agent/src/session/history.ts` — the historical normalizer gains `isError`
   on `tool_result` (§7.2, §19), without which a reopened transcript would
-  render a failed tool as succeeded.
+  render a failed tool as succeeded. AMENDED 2026-09-03: history pages also
+  carry an additive `user_prompts` field (seq-stable; G4.11's event archive
+  is untouched) so a reopen can restore the operator's own turns.
 
 It amends **nothing** in `script_contract.md`, `VALIDATION.md`, `ASSEMBLY.md`,
 `COMPARE.md`, `INGEST.md`, `EXTERNAL_EVAL.md`, or `KINEMATICS.md`: the
@@ -2052,14 +2054,14 @@ character 120 inside JSON punctuation. The server already returns a typed error:
 `message` renders as the row value, `code` as a `Chip`, and the raw object goes
 behind a `<details>`.
 
-**`ViewCube` — reordered and detuned.** Eight mono buttons in a 4×2 grid
-currently read `iso +X -X +Y / -Y +Z -Z front`, so `+Y` and `-Y` land on
-different rows and `front` sits beside `+Z` as a different category of thing;
-the only selected signal is a solid accent fill that is the loudest element in
-the application, in direct violation of principle 1. The **vocabulary stays
-closed** at `cameras.py`'s eight names (§5.5 survives); the **layout** becomes a
-3×3 orientation cross with `front` on a separate named-views row, and selected
-state becomes an accent-quiet fill.
+**`ViewCube` — a 3D cube, not an axis-button cluster.** Eight mono buttons in a
+4×2 grid used to read `iso +X -X +Y / -Y +Z -Z front`. AMENDED 2026-09-03 —
+that labeled cluster is gone. The plate is a Smith-style 3D cube: faces, edges,
+and corners are selectable. Face hits write the closed `cameras.py` names
+(Front is `front` / `-Y`); the +++ corner is `iso`; other edges and corners
+write the `az<deg>_el<deg>` grammar so every click is a camera `heph render`
+can reproduce. `front` and `iso` stay addressable inside the one
+`[data-view-cube]` plate (C19). Selected state is an accent-quiet fill.
 
 **`ScriptEditor` status bar — two label fixes.** The bar reads
 `READ ONLY | 13 lines | cbe552b4cf cbe552b4cf`: two different refs both rendered
@@ -2330,6 +2332,15 @@ the UI is a view `heph render` can reproduce; free orbit snapshots the nearest
 `az/el` into workspace state, keeping every reachable camera nameable. The grid
 readout shows camera state and scale — a screen-space fact, never rendered
 through `<Fact>`.
+
+**AMENDED 2026-09-03 — the plate is a 3D view cube.** The seven labeled axis
+buttons (`+Y` `+Z` `-X` `iso` `+X` `-Z` `-Y`) and the free-floating `front`
+companion are gone. The control is one `[data-view-cube]` group with an
+accessible name, in the tab order: faces, edges, and corners are selectable.
+`iso` is a cube corner (and still carries `data-view="iso"`). C19's `front`
+hit stays inside the same plate. A one-solid sheet may collapse explode and
+section when they are no-ops (#113); that is overlay crowding, not a second
+camera control.
 
 **Appearance cluster — operator chrome, bound to the pin.** A small control
 strip on the viewport drives the display authorship §3.11 already specified:
@@ -2875,7 +2886,12 @@ not the counter.
 
 ### 7.3 Kinds
 
-- `text_delta` → streamed assistant text.
+- `text_delta` → streamed assistant text, **markdown-rendered** in the
+  transcript (headings, lists, fenced code, bold, http(s) links). The same
+  sanitizing renderer shapes operator prompt echoes and restored
+  `user-prompt` rows. Tool-chip JSON is never passed through it. House copy
+  stays in `copy.ts`; the renderer only shapes the model's (and the
+  operator's) own words.
 - `thought` → collapsed `ThoughtSection`, expandable, `data-event-id` present.
 - `image` → **live**: decoded from the event's base64 with its `mimeType` and
   shown inline; an oversized or undecodable payload renders a labelled
@@ -2909,8 +2925,11 @@ not the counter.
   user must be able to distinguish "the model stopped" from "the plumbing gave
   up". **Live only**: `terminal` is minted by the Python pump
   (`events.py`:264-275) and never appears in a history page, so a reopened
-  transcript shows no terminal band and says so once, in place, rather than
-  implying the run is still open.
+  transcript shows no terminal band. AMENDED 2026-09-03 — it does **not**
+  say so in the well. The reopen hedge ("This reopened transcript doesn't
+  show how the run ended.") belongs in application logs. A finished turn
+  looks finished: last tool chip or last assistant markdown. No RUN ENDED
+  essay is substituted.
 
 **AMENDED 2026-09-02 (§0.2c) — two rows that are not kinds: the client-minted
 presentation row.** Everything above is an **event** — testimony from the
@@ -2952,9 +2971,12 @@ above, never the only copy.
 state what it is. **The negative halves:** it renders only in the tab that sent
 the prompt (an observer tab has no local text to echo, and echoing another
 tab's would require inventing it); it is never re-rendered from history on
-reopen — the §8 user-prompt absence notice renders there, unchanged and still
-true; and a failed POST does not remove it, because the text was typed whether
-or not the turn started (`data-send-state="unknown"` renders beside it, §7A.5).
+reopen — AMENDED 2026-09-03: a reopen restores recorded operator turns from
+history's additive `user_prompts` as `[data-row="user-prompt"]` rows with a
+historical identity, not as this presentation echo, and it does not mint the
+old user-prompt absence notice; and a failed POST does not remove the echo,
+because the text was typed whether or not the turn started
+(`data-send-state="unknown"` renders beside it, §7A.5).
 
 **(C21 — member two: the run-start boundary.** DOM: `data-row="run-start"`,
 `data-run-id="run-…"`.) The transcript mints a boundary row **when a live
@@ -3172,7 +3194,13 @@ not know their session cannot delegate reads `scope_denied` as a broken product.
 **At-least-once is the stated consequence and the UI carries it** (§2.3): a
 duplicate create is an extra *idle* session. The composer therefore creates a
 session **only on an explicit operator action** — never on focus, never on first
-keystroke, never as recovery from a failed prompt. **Named refusal:** there is
+keystroke, never as recovery from a failed prompt. **AMENDED 2026-09-03 —
+Send is such an action.** Focusing and typing with no session selected is
+allowed; the textarea is not `disabled` for `no_session`. The first Send
+creates the appropriate session (Ask about the selected part if a part is
+selected, else a project/orchestrator session) and then posts the prompt —
+one gesture, not "click Ask about, then click the box." Focus alone still
+creates nothing. **Named refusal:** there is
 no route that closes a session and none is invented. An orphan is idle and
 harmless; `GET /sessions` lists it, and the panel says it can be left rather
 than offering a close button no route backs.
@@ -3429,12 +3457,10 @@ envelope full of them, yields `prompt_number_diff.numbers == []`. A third, added
 by the review, runs **two concurrent prompts on two sessions** and asserts each
 run's critique sees its own request.
 
-**Reopen honesty, and it costs nothing new.** §8 already records that user
-prompts are omitted from normalization by design and that the transcript says so
-once, in place. The context block is part of the user turn, so it is
-unrecoverable on reopen for **exactly** the reason prompts are, and is covered by
-the same named absence. No new absence state is minted and §15.10's ban on
-event-vocabulary extension is untouched: the block is never an event.
+**Reopen honesty, and it costs nothing new.** AMENDED 2026-09-03 — operator
+prompts restore from history's additive `user_prompts` field. The context
+block is still not an event (§15.10); it is part of the user turn and is not
+reconstructed as a second row. No named-absence notice is minted for either.
 
 ### 7A.5 Sending a turn: at-least-once, no key, and how a tab learns its own run id
 
@@ -3511,7 +3537,9 @@ round-trip the operator's own words existed nowhere on screen. Normative:
 
 **Testable:** submit against a slow fake model — `[data-row="local-prompt"]`
 containing the prompt text renders before any frame arrives; reopen the session
-— no such row renders, and §8's user-prompt absence notice does.
+— no such presentation row renders; recorded operator turns restore from
+history as `[data-row="user-prompt"]` when `user_prompts` is present, and
+the well does not draw the old user-prompt absence notice.
 
 ### 7A.6 Cancellation, and what a `4409` does to a run this tab started
 
@@ -3865,6 +3893,15 @@ specified (Cancel while running, §7A.6; the disabled reason; C1's
 directly rendered rows number two; the model id's box lies within the context
 row's box; Send's box lies within the input row's box.
 
+**AMENDED 2026-09-03 — the textarea stays typable.** `data-disabled-reason`
+may still be `no_session` when no tab is selected, and Send stays
+disabled-with-reason until there is text to send. The textarea itself is
+**not** `disabled` or `readOnly` for `no_session` or for idle: focusing and
+typing is allowed whenever the stream is usable (`agent_unavailable` is the
+one reason that still turns the box off). **Testable:** with
+`data-disabled-reason="no_session"`, `[data-composer-input]` is not
+`disabled`; a click focuses it and it accepts text.
+
 ### 7A.11 The read-refresh boundary — the turn's effect on the rest of the workspace
 
 *(2026-08-28 review addition. Without this the section answers complaint 1 as
@@ -3970,13 +4007,20 @@ Rules the client obeys and the e2e checks:
   visible seam, not a silent join. Within the live stream, terminal events sort
   last by their `seq = 2**62` minting — a statement about the live stream only,
   since no `terminal` ever appears in a history page (§7.3).
-- **Four kinds are unrecoverable from a reopened transcript**, and each renders
-  as a named absence rather than as nothing (§2.7's table):
-  - **user prompts** — normalization omits them by design; the transcript shows
-    the agent's side and **says so once, in place**;
+- **Four kinds used to be unrecoverable from a reopened transcript** (§2.7's
+  table). AMENDED 2026-09-03 — operator prompts restore from the additive
+  `user_prompts: [{seq, text}]` field on each history page (`seq` is the next
+  normalized event's seq; prompts do not consume a seq, so G4.11 event
+  identities stay identical). The other three stay honest limits, and **none
+  of them mint a well notice**:
+  - **user prompts** — restored from `user_prompts` as `[data-row="user-prompt"]`
+    with a historical identity (`<session_id>@prompt:<seq>`). The old
+    "Prompts aren't recorded…" sentence does not render. A sidecar that omits
+    the field is treated as `[]`;
   - **`question` / `answer`** — synthetic and live-only; a reopened
     `AskUserWidget` is rebuilt from the `ask_user` tool call/result (§7.3);
-  - **`terminal`** — pump-minted and live-only; no terminal band is shown;
+  - **`terminal`** — pump-minted and live-only; no terminal band is shown and
+    no reopen hedge is drawn;
   - **`progress`** — coalesced and never durable, which is the correct
     rendering anyway (§7.3).
   Plus **`image` bytes**: history retains `{mimeType}` only, so a reopened
@@ -4017,16 +4061,12 @@ row. **Testable:** with a one-page fixture, `[data-history-pages="1"]` is presen
 in the DOM and no element renders `copy.stream.historyPages(1)`; with a failed
 read, both the attribute and `copy.stream.historyFailed` render.
 
-**(d) The named-absence notices are one sentence each, and stay.** The four
-unrecoverable kinds above still each render as a named absence — that rule is
-re-affirmed, not relaxed. What changes is length: the run-outcomes explainer
-(`copy.ts`:920-922, "Run outcomes are recorded live and are not part of a
-reopened transcript…") stops rendering as a multi-line blockquote and renders as
-**one short sentence in the transcript's own type role**, with the fuller
-explanation on `title`. **Testable:** each named-absence notice is ≤25 words and
-one sentence; each still renders exactly once per transcript, in place, and none
-is removed. A notice deleted rather than shortened fails §8's absence rule and
-this clause together.
+**(d) The named-absence notices left the well.** AMENDED 2026-09-03 — the
+user-prompt and terminal hedges no longer render. Operator turns restore from
+`user_prompts`; a finished historical prefix looks finished. Copy keys may
+remain in `copy.ts` so the house deck stays one file; they are not drawn.
+**Testable:** `[data-absence]` has count 0; the string "This reopened
+transcript doesn't show how the run ended." is not in the document.
 
 **(e) "Not at latest" is a rendering fact, not a derived one.** The condition in
 (a)(1) is read from the panel's own paging state — which page the panel has
@@ -4038,38 +4078,26 @@ and the notices speak plainly.**
 
 **(C3) §7.3's presentation rows and this section, reconciled by name.** The
 local prompt echo (C2) and the run-start boundary (C21) are **live-suffix
-presentation, not recorded events**, and every rule above survives them
-verbatim: the user-prompt absence notice **still renders on every reopen and is
-still true** — history still omits prompts by design, and the echo, which never
-enters history, does not make the notice false in the tab that drew it, because
-the notice describes the *recorded transcript* and the echo says on its own
-face that it is not part of one. No presentation row renders in the history
-prefix, crosses the seam, or is reconstructed on reopen; the seam itself
-terminates any C21 derivation (a run id is never compared across it — C21's
-base case states the consequence: the first live row after the seam mints no
+presentation, not recorded events**. AMENDED 2026-09-03 — the user-prompt
+absence notice no longer renders. History restores recorded operator turns
+from `user_prompts` as `[data-row="user-prompt"]` (a historical identity, not
+a presentation row). The echo still never enters history and is never
+reconstructed on reopen. No presentation row renders in the history prefix,
+crosses the seam, or is reconstructed on reopen; the seam itself terminates
+any C21 derivation (a run id is never compared across it — C21's base case
+states the consequence: the first live row after the seam mints no
 comparison-derived boundary, and only the originating tab's C2 echo licenses
-one). A build
-that persists either row, or that drops the absence notice on the ground that
-the echo "already shows the prompt", fails this clause — the echo is one tab's
-memory of one send, and the notice is the truth about every other tab and every
-later reopen. **Testable:** originate a turn, reopen the session in a second
-tab — the second tab renders the absence notice and no
-`[data-row="local-prompt"]`; the first tab renders both, and the notice's text
-is byte-identical in the two tabs.
+one). **Testable:** originate a turn, reopen the session in a second tab —
+the second tab renders no `[data-row="local-prompt"]` and no `[data-absence]`;
+recorded operator text appears as `[data-row="user-prompt"]` when the sidecar
+sent `user_prompts`.
 
-**(C24) A resting notice states the plain fact; the vocabulary words move to
-`title`.** Clause (d) bounded the notices' length; this clause bounds their
-register. The resting face of each named-absence notice (and of the §7.3
-terminal-absence sentence) uses **plain words for what the reader is missing**
-— "Prompts aren't recorded, so this transcript shows only the agent's side",
-"This reopened transcript doesn't show how the run ended" — and spec-internal
-terms such as **"event vocabulary"**, **"run-end band"**, "durable kinds", and
-section numbers render **only in the element's `title`**, where (d) already
-sends the long form. Nothing about *when* a notice renders changes, and no
-notice is removed — (d)'s once-per-transcript, in-place rule is re-affirmed a
-second time. **Testable:** no resting named-absence notice's visible text
-contains the strings "event vocabulary" or "run-end band"; each notice's
-`title` is non-empty.
+**(C24) The reopen hedges do not enter the document.** AMENDED 2026-09-03 —
+the sentences this clause once required on the resting face ("Prompts aren't
+recorded…", "This reopened transcript doesn't show how the run ended") are
+not drawn. Spec-internal terms such as **"event vocabulary"** and
+**"run-end band"** stay out of the well as well. **Testable:** those strings
+are absent from the document on a reopened transcript.
 
 ---
 

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
   normalizeEntries,
+  extractUserPrompts,
   pageHistory,
   decodeCursor,
   HISTORY_PAGE_SIZE,
@@ -62,13 +63,13 @@ function toolResultWith(
   } as unknown as SessionEntry;
 }
 
-function userMsg(id: string): SessionEntry {
+function userMsg(id: string, text = "hi"): SessionEntry {
   return {
     type: "message",
     id,
     parentId: null,
     timestamp: "2026-07-24T00:00:00.000Z",
-    message: { role: "user", content: "hi" },
+    message: { role: "user", content: text },
   } as unknown as SessionEntry;
 }
 
@@ -157,7 +158,19 @@ describe("cursor paging over a frozen high-water mark", () => {
   const initial = Array.from({ length: 5 }, (_, i) => assistantText(`e${i}`, `t${i}`));
 
   it("empty history is done immediately", () => {
-    expect(pageHistory([], "r")).toEqual({ events: [], cursor: null, done: true });
+    expect(pageHistory([], "r")).toEqual({ events: [], userPrompts: [], cursor: null, done: true });
+  });
+
+  it("carries operator prompts beside the page without shifting event seqs", () => {
+    const entries = [
+      userMsg("u0", "Add a 2 mm chamfer."),
+      assistantText("a1", "done"),
+    ];
+    expect(extractUserPrompts(entries)).toEqual([{ seq: 0, text: "Add a 2 mm chamfer." }]);
+    const page = pageHistory(entries, "sess-1");
+    expect(page.events.map((e) => e.kind)).toEqual(["text_delta"]);
+    expect(page.events[0]?.seq).toBe(0);
+    expect(page.userPrompts).toEqual([{ seq: 0, text: "Add a 2 mm chamfer." }]);
   });
 
   it("freezes the high-water at the first page and never crosses it as the log grows", () => {

@@ -29,6 +29,7 @@ import { WorkspaceError } from "../../src/api/client";
 import {
   CONTEXT_MEMBERS,
   cancelRun,
+  createSession,
   sendPrompt,
   type ContextMember,
   type PromptDocument,
@@ -59,7 +60,7 @@ import { copy } from "../../src/copy";
 // wholesale stub would make that assertion about the stub.
 vi.mock("../../src/api/sessions", async (importOriginal) => {
   const actual = await importOriginal<typeof SessionsModule>();
-  return { ...actual, sendPrompt: vi.fn(), cancelRun: vi.fn() };
+  return { ...actual, sendPrompt: vi.fn(), cancelRun: vi.fn(), createSession: vi.fn() };
 });
 
 const NOTHING: ReadonlySet<ContextMember> = new Set();
@@ -362,8 +363,8 @@ describe("the DOM contract", () => {
     // §7A.8's argument generalised: a state that exists for a reason reads as
     // designed; the same state with its content missing reads as a bug.
     const html = markup({ sessionId: null });
-    expect(attribute(html, "data-composer-state")).toBe("disabled");
     expect(attribute(html, "data-disabled-reason")).toBe("no_session");
+    expect(html).not.toMatch(/<textarea[^>]*disabled/);
   });
 
   it("names agent_unavailable, its cause, and the path the server checked", () => {
@@ -912,6 +913,7 @@ afterEach(() => {
   unmount = null;
   vi.mocked(sendPrompt).mockReset();
   vi.mocked(cancelRun).mockReset();
+  vi.mocked(createSession).mockReset();
   workspaceStore.reset(DEFAULT_STATE);
   sessionPromptStore.reset();
 });
@@ -1145,6 +1147,39 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     });
     await act(async () => undefined);
     expect(vi.mocked(sendPrompt)).toHaveBeenCalledTimes(2);
+  });
+
+  it("creates a part session on first send when none is selected", async () => {
+    vi.mocked(createSession).mockResolvedValue({
+      status: "ok",
+      session_id: "sess-new",
+      profile: "part",
+      part: "tread",
+      resumed: false,
+    });
+    vi.mocked(sendPrompt).mockResolvedValue({
+      status: "ok",
+      session_id: "sess-new",
+      run_id: "run-1",
+      run_status: "completed",
+      terminal: null,
+      events: [],
+      context: null,
+    });
+    workspaceStore.reset({ ...DEFAULT_STATE, part: "tread" });
+    const root = mount({ sessionId: null });
+    expect(input(root).disabled).toBe(false);
+    type(root, "Ask about this plate.");
+    pressEnter(root);
+    await act(async () => undefined);
+    expect(vi.mocked(createSession)).toHaveBeenCalledWith("part", "tread");
+    expect(vi.mocked(sendPrompt)).toHaveBeenCalledWith(
+      "sess-new",
+      "Ask about this plate.",
+      expect.anything(),
+    );
+    expect(workspaceStore.getSnapshot().session).toBe("sess-new");
+    workspaceStore.reset(DEFAULT_STATE);
   });
 
   it("starts a turn from Send click, not only Enter (#44)", async () => {

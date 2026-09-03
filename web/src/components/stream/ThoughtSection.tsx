@@ -22,6 +22,7 @@
 
 import { readText } from "../../api/events";
 import { copy } from "../../copy";
+import { Markdown } from "../../stream/markdown";
 import type { TranscriptItem } from "../../stream/transcript";
 import styles from "./Transcript.module.css";
 
@@ -51,14 +52,15 @@ export function ThoughtSection({
           <span className={styles["thoughtCount"]}>{copy.stream.thoughtParts(items.length)}</span>
         )}
       </summary>
-      <div className={styles["thoughtBody"]}>
-        {single
-          ? text(first)
-          : items.map((item) => (
-              <span key={item.eventId} data-event-id={item.eventId}>
-                {text(item)}
-              </span>
+      <div className={styles["thoughtBody"]} data-markdown="">
+        {single ? null : (
+          <>
+            {items.map((item) => (
+              <span key={item.eventId} data-event-id={item.eventId} className={styles["eventAnchor"]} />
             ))}
+          </>
+        )}
+        <Markdown text={items.map(text).join("")} />
       </div>
     </details>
   );
@@ -71,21 +73,21 @@ export function TextBlock({
 }): React.JSX.Element | null {
   const first = items[0];
   if (first === undefined) return null;
-  const single = items.length === 1;
+  const joined = items.map(text).join("");
 
   return (
-    <p
+    <div
       className={styles["text"]}
       data-surface={first.surface}
-      {...(single ? { "data-event-id": first.eventId } : {})}
+      data-markdown=""
+      {...(items.length === 1 ? { "data-event-id": first.eventId } : {})}
     >
-      {single
-        ? text(first)
-        : items.map((item) => (
-            <span key={item.eventId} data-event-id={item.eventId}>
-              {text(item)}
-            </span>
-          ))}
-    </p>
+      {items.length > 1
+        ? items.map((item) => (
+            <span key={item.eventId} data-event-id={item.eventId} className={styles["eventAnchor"]} />
+          ))
+        : null}
+      <Markdown text={joined} />
+    </div>
   );
 }
