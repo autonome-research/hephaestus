@@ -74,4 +74,5 @@ emission (`heph cam emit`), and a scored agent bench — all in
 - [docs/cli.md](docs/cli.md) — every `heph` verb
 - [docs/mcp.md](docs/mcp.md) — optional MCP client setup
 - [docs/conventions.md](docs/conventions.md) — project layout and part scripts
+- [docs/README.md](docs/README.md) — complete documentation and specification-status index
 - [CONTRIBUTING.md](CONTRIBUTING.md) — checks, headers, clean-room boundary

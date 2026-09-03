@@ -18,7 +18,7 @@ $ pnpm --dir web build       # tsc --noEmit && vite build → web/dist
 $ pnpm --dir web typecheck
 $ pnpm --dir web lint
 $ pnpm --dir web test        # vitest: workspace state, URL, token handshake
-$ pnpm --dir web test:e2e    # Playwright — see e2e/README.md; RED until §14 lands
+$ pnpm --dir web test:e2e    # Playwright — see e2e/README.md; build first
 ```
 
 To drive it against a live project:
@@ -44,9 +44,12 @@ the built assets ship inside the wheel and `--web` serves them from
 | `src/api/` | The `/api/v1` fetch path, the §2.4 refusal envelope, the wire types, TanStack Query wiring |
 | `src/components/Fact.tsx` | §4.6's `<Fact>` primitive — the only element that may mint `data-source` |
 | `src/components/rail/` | §13's read-only half: part tree, git dirty markers, versions |
-| `src/components/stage/` | The Stage tabs and the read-only Monaco script viewer |
-| `src/stream/` | §7/§8's transcript model: event grouping, chip status, the tool-result field predicate, the resync reducer, the `/events` socket, history paging, threading |
-| `src/components/stream/` | The STREAM column: session tabs, tool chips, thought sections, images, the `ask_user` widget, the transcript |
+| `src/components/stage/` | Stage tabs, Monaco script view, viewport, and Inspector shell |
+| `src/components/inspector/` | Properties, checks, DFM, results, sourcing, provenance, and export panels |
+| `src/stream/` | §7/§8 transcript model plus composer context, gating, socket resync, history paging, and threading |
+| `src/components/stream/` | Session tabs, Composer, tool chips, thoughts, images, interactive `ask_user`, and transcript rendering |
+| `src/components/ProvidersPanel.tsx`, `src/components/SignInDialog.tsx` | Runtime attachment, provider selection, and credential flows |
+| `src/components/chrome/ExportChrome.tsx`, `src/api/exports.ts` | Export selection, admission, and download flows |
 | `eslint-rules/no-derived-fact.js` | §1's boundary, made mechanical |
 | `test/fixtures/record-normalized-events.mjs` | Records `normalized-events.json` by running the sidecar's own normalizers; see below |
 
@@ -111,10 +114,13 @@ change that caused it — the churn policy the render goldens use. It is **not**
 G4.11's event archive (`tests/stage4/goldens/events/`, server-side, over a real
 project); §14 forbids a browser-rendered golden family and this is not one.
 
-## Not built here
+## Implemented operator surfaces
 
-The Inspector's five panels, every mutation (including **answering** an
-`ask_user` widget, which §7.3 puts behind `POST /sessions/{id}/answer` and Stage
-5 owns — the widget renders and disables itself with a stated reason), the
-Composer, and the e2e suite. Each renders a named absence rather than an empty
-frame; §4.2's panel inventory is the closed list of what Stage 4/5 may add.
+The client now includes the Inspector panels, Composer and browser-created
+sessions, interactive `ask_user` answers, provider/runtime attachment and
+credential flows, export controls, and the Playwright acceptance suite. The
+suite map and its prerequisites live in [e2e/README.md](e2e/README.md).
+
+The architectural boundary is unchanged: the browser may initiate operations,
+but it does not compute geometry, verdicts, provenance, or derived engineering
+facts. Those remain server-owned and arrive through the documented API.

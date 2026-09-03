@@ -16,7 +16,8 @@ recommended execution order, allocated once across all five while every one was
 still a draft and no gate had ever run: `13 PARTS_STORE` (Stage 11), `14
 MESH_INGEST` (Stage 12), `15 SOLVER` (Stage 13), `16 CAM` (Stage 14), `17
 PHYSICS` (Stage 15). This document therefore holds document number `14`, stage
-`12`, the gate names `G12A`/`G12B`/`G12C` and the suites `tests/stage12{a,b,c}`.
+`12`, the gate names `G12A`/`G12B`/`G12C` and the suites `tests/stage12a`,
+`tests/stage12b`, and `tests/stage12c`.
 No draft may renumber unilaterally once any of the five is normative; a
 reordering is an amendment that moves every affected header together. Every
 cross-document clause below is written **relative** to whatever the predecessor

@@ -64,6 +64,10 @@ ROOT_DOCS: Final[tuple[str, ...]] = (
     "ASSEMBLY.md",
     "INGEST.md",
     "EXTERNAL_EVAL.md",
+    "KINEMATICS.md",
+    "PARTS_STORE.md",
+    "MESH_INGEST.md",
+    "SOLVER.md",
     "mission_plan.md",
 )
 
@@ -192,6 +196,10 @@ def _resolves(token: str) -> bool:
     to read in exchange for making this checker simpler.
     """
     path = token.split("::", 1)[0].rstrip("/")
+    # Design documents often cite an exact source line or range. The suffix is
+    # provenance, not part of the filesystem path (``module.py:12-18`` and
+    # ``module.py:12,19`` are both common in the specification set).
+    path = re.sub(r":\d+(?:[-,]\d+)*$", "", path)
     if not path:
         return True
     if (REPO_ROOT / path).exists():

@@ -39,12 +39,15 @@ $ pnpm --dir agent install --frozen-lockfile # the TypeScript agent
 Python is driven with `uv run …`; the two Node packages with
 `pnpm --dir agent …` and `pnpm --dir web …`.
 
-Default local checks (engine / CLI; no `web/` required):
+Default local checks (engine / CLI; no `web/` required). The root pytest
+configuration intentionally discovers the stage gates and `opstore/tests`; the
+second pytest command covers the package-local core, server, and contract suites:
 
 ```console
 $ uv run ruff check . && uv run ruff format --check .
 $ uv run pyright opstore core server
-$ uv run pytest -m "not slow"                # add -m slow for the wheel lanes
+$ uv run pytest -m "not slow"                # root stage gates + opstore tests
+$ uv run pytest core/tests server/tests contract/tests
 $ pnpm --dir agent typecheck && pnpm --dir agent test
 $ uv run python scripts/docs_check.py        # links, paths, and §refs
 $ uv run python scripts/license_headers.py --check

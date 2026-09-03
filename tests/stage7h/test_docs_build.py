@@ -172,6 +172,14 @@ def test_a_repository_path_that_does_not_exist_is_an_error(synthetic_repo: Path)
     assert docs_check.check([ok]) == []
 
 
+def test_source_line_citations_resolve_the_underlying_path(synthetic_repo: Path) -> None:
+    page = _doc(
+        synthetic_repo,
+        "# Page\n\nSee `core/real.py:1`, `core/real.py:1-2`, and `core/real.py:1,3`.\n",
+    )
+    assert docs_check.check([page]) == []
+
+
 def test_a_section_reference_past_the_end_of_a_document_is_an_error(
     synthetic_repo: Path,
 ) -> None:

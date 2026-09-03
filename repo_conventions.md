@@ -20,7 +20,7 @@ core/       Python ≥3.11. Deps: build123d, ocp, numpy, trimesh/pyrender (rende
 agent/      TypeScript on Node ≥22.19. Embedded Pi SDK sessions, generated CAD
             tools, Python JSON-RPC bridge client, and thread-phase workflows.
             Managed with pnpm; strict tsc and eslint.
-server/     Python. FastMCP + FastAPI + websockets; supervises the packaged
+server/     Python. FastMCP + Starlette + websockets; supervises the packaged
             Node agent sidecar over private JSON-RPC/stdio.
 web/        TypeScript, React 18, Vite, three.js, Monaco. pnpm workspace.
             (Stage 4: driven as `pnpm --dir web …` with its own lockfile, like
@@ -37,7 +37,8 @@ corpus/     public_fixtures/ contains clean-room CAD contract/e2e projects;
 tests/      stage0a, stage0b, stage1…stage7 mirror mission gates; opstore also
             has package-local tests; render/ goldens carry provenance sidecars.
 *.md        normative design/mission documents live at repo root in v0.1.
-docs/       generated/site-only mkdocs content and assets; links to root docs.
+docs/       Hand-written user/operator guides and the documentation index;
+            historical plans are retained there but are explicitly non-normative.
 ```
 
 ## Naming and packaging

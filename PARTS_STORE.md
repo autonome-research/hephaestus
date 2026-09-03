@@ -1437,7 +1437,7 @@ convention that unnamed machinery is a claim of existence.
     structural fasteners — authored geometry, records, interfaces, and
     provenance. This is the bulk of the calendar time and none of it is
     machinery.
-32. `PUBLISHING.md` component-authoring section, including the pos-invariant
+32. `registries/PUBLISHING.md` component-authoring section, including the pos-invariant
     selector authoring rule §2.1 names and `interface_placement_drift` can only
     partly enforce; `docs/registry-contributions.md` checklist items;
     `repo_conventions.md` and `CONTRIBUTING.md` clauses of §7.
