@@ -518,14 +518,26 @@ describe("composer chrome — talking surface, not a Plan/DFM toolbar", () => {
 });
 
 describe("shell scrollbars overlay the panel and do not eat layout (issue 115)", () => {
-  it("uses a 1–2px overlay cue, not a classic OS track", () => {
+  it("hides the classic track instead of leaving scrollbar-width: thin", () => {
+    // `thin` still reserved this box's 10px OS track and won over the 2px
+    // webkit rule. Overlay is `none` + `scrollbar-gutter: auto`, not thin.
     const global = css("global.css");
-    expect(global).toMatch(/scrollbar-width:\s*thin/);
-    expect(global).toMatch(/\*::-webkit-scrollbar\s*\{[^}]*width:\s*2px/);
-    expect(global).toMatch(/\*::-webkit-scrollbar\s*\{[^}]*height:\s*2px/);
-    expect(global).toMatch(/::-webkit-scrollbar-track\s*\{[^}]*background:\s*transparent/);
+    expect(global).toMatch(/scrollbar-width:\s*none/);
+    expect(global).toMatch(/scrollbar-gutter:\s*auto/);
+    expect(global).not.toMatch(/scrollbar-width:\s*thin/);
     expect(global).not.toMatch(/scrollbar-gutter:\s*stable/);
+    expect(global).toMatch(/\*::-webkit-scrollbar\s*\{[^}]*width:\s*0/);
+    expect(global).toMatch(/\*::-webkit-scrollbar\s*\{[^}]*height:\s*0/);
     expect(global).not.toMatch(/::-webkit-scrollbar[^{]*\{[^}]*width:\s*1[5-9]px/);
+  });
+
+  it("paints the 1–2px cue as an overlay, not in the flow", () => {
+    const global = css("global.css");
+    expect(global).toMatch(/\[data-overlay-scroll\]::after\s*\{[^}]*position:\s*absolute/);
+    expect(global).toMatch(/\[data-overlay-scroll\]::after\s*\{[^}]*width:\s*var\(--space-0\)/);
+    expect(global).toMatch(/\[data-overlay-scroll\]::after\s*\{[^}]*pointer-events:\s*none/);
+    const tokens = css("system/tokens.css");
+    expect(tokens).toMatch(/--space-0:\s*2px/);
   });
 
   it("keeps overflow reachable on the rail, well, Results, and stage", () => {
@@ -537,6 +549,20 @@ describe("shell scrollbars overlay the panel and do not eat layout (issue 115)",
     expect(stream).toMatch(/\.scroll\s*\{[^}]*overflow:\s*auto/);
     expect(inspector).toMatch(/\.content\s*\{[^}]*overflow:\s*auto/);
     expect(stage).toMatch(/\.content\s*\{[^}]*overflow:\s*auto/);
+  });
+
+  it("marks the shell scrollers for the overlay cue", () => {
+    const shell = readFileSync(join(webSrc, "components/Shell.tsx"), "utf8");
+    const stream = readFileSync(join(webSrc, "components/stream/StreamPanel.tsx"), "utf8");
+    const inspector = readFileSync(join(webSrc, "components/stage/Inspector.tsx"), "utf8");
+    const stage = readFileSync(join(webSrc, "components/stage/Stage.tsx"), "utf8");
+    const panel = readFileSync(join(webSrc, "system/Panel.tsx"), "utf8");
+    expect(shell).toContain("data-overlay-scroll");
+    expect(shell).toContain("bindOverlayScrollTree");
+    expect(stream).toContain("data-overlay-scroll");
+    expect(inspector).toContain("data-overlay-scroll");
+    expect(stage).toContain("data-overlay-scroll");
+    expect(panel).toContain("data-overlay-scroll");
   });
 });
 

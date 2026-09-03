@@ -86,7 +86,11 @@ export interface PanelBodyProps {
 }
 
 export function PanelBody({ className, children }: PanelBodyProps): React.JSX.Element {
-  return <div className={cx(styles["body"], className)}>{children}</div>;
+  return (
+    <div className={cx(styles["body"], className)} data-overlay-scroll="">
+      {children}
+    </div>
+  );
 }
 
 /**

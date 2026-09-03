@@ -67,22 +67,28 @@ a {
 }
 
 /*
- * Overlay scrollbars (#115, INTERFACE.md §3.10). A classic OS track is a
- * ~15px chrome strip on every panel at 1280×800. Shell scrollers (rail,
- * well, Results, stage, any overflow:auto inside the shell) keep overflow
- * reachable and overlay a 1–2px cue instead. `scrollbar-width: thin` plus
- * a 2px `::-webkit-scrollbar` are the permitted native forms; a custom
- * 15px track is not. TabBar's `scrollbar-width: none` stays more specific
- * than `*` and still hides its own strip.
+ * Overlay scrollbars (#115 leftover, INTERFACE.md §3.10).
+ *
+ * `scrollbar-width: thin` is not overlay. On a classic-track OS it still
+ * reserves the native scrollbar (~10px on this box — 11px on the parts
+ * rail, 10px on Results at 1280×800) and wins over a 2px
+ * `::-webkit-scrollbar` rule. Hide the classic thumb/track so they take
+ * no layout. Overflow stays reachable (wheel, trackpad, keyboard).
+ * `scrollbar-gutter: auto` so we never reserve a stable strip.
+ * Position cue: a 2px absolutely positioned overlay on
+ * `[data-overlay-scroll]`, not in the flow. A custom 15px track is not
+ * permitted. TabBar's `scrollbar-width: none` stays more specific than
+ * `*` and still hides its own strip.
  */
 * {
-  scrollbar-width: thin;
-  scrollbar-color: var(--ink-faint) transparent;
+  scrollbar-width: none;
+  scrollbar-gutter: auto;
 }
 
 *::-webkit-scrollbar {
-  width: 2px;
-  height: 2px;
+  width: 0;
+  height: 0;
+  background: transparent;
 }
 
 *::-webkit-scrollbar-track {
@@ -90,7 +96,22 @@ a {
 }
 
 *::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
+[data-overlay-scroll] {
+  position: relative;
+}
+
+[data-overlay-scroll]::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: var(--overlay-scroll-top, 0px);
+  width: var(--space-0);
+  height: var(--overlay-scroll-height, 0px);
   background: var(--ink-faint);
+  pointer-events: none;
 }
 
 /* §3.10's motion block, kept verbatim. */

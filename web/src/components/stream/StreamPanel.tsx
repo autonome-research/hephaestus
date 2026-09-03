@@ -432,7 +432,12 @@ export function StreamPanel(): React.JSX.Element {
                 selected === null ? undefined : tabControlId("data-session-tab", selected)
               }
             >
-              <div className={styles["scroll"]} ref={scrollRef} data-transcript-scroll="">
+              <div
+                className={styles["scroll"]}
+                ref={scrollRef}
+                data-transcript-scroll=""
+                data-overlay-scroll=""
+              >
                 <Transcript rows={stream.rows} runtimeFault={fault} />
               </div>
               {following ? null : (
