@@ -10,6 +10,8 @@
 // and tested there, so what the DOM says and what the model decided cannot drift
 // apart.
 
+import { useState } from "react";
+
 import { readAudit, readTerminal } from "../../api/events";
 import { copy } from "../../copy";
 import { Markdown } from "../../stream/markdown";
@@ -44,8 +46,32 @@ export function Transcript({
           // node. Neither ever carries `data-event-id` — the guard cuts both
           // ways, and the matcher treats any OTHER id-less `data-row` as a
           // mismatch.
-          {...(row.row === "local-prompt" ? { "data-local-echo": "1" } : {})}
+          // §7A.5, amended 2026-09-03: `data-echo-state` is UNCONDITIONAL and
+          // defaults to `sent`, while the row's `state` field stays optional.
+          // The split is deliberate — the model never asserts that a POST it
+          // learned nothing about succeeded, and the DOM never omits the
+          // attribute the state is read from. `data-refused-reason` carries the
+          // server's own reason word VERBATIM: never translated, never
+          // collapsed into a neighbour, and a reason this build has never heard
+          // of still renders, correctly, as itself.
+          {...(row.row === "local-prompt"
+            ? {
+                "data-local-echo": "1",
+                "data-echo-state": row.state ?? "sent",
+                ...(typeof row.refusedReason === "string"
+                  ? { "data-refused-reason": row.refusedReason }
+                  : {}),
+              }
+            : {})}
           {...(row.row === "user-prompt" ? { "data-event-id": row.eventId } : {})}
+          // §7.3(c), amended 2026-09-03: the outcome's state rides the ROW, beside
+          // `data-row="turn-outcome"`, and the row carries NO `data-event-id` —
+          // an outcome is not an event, and minting one for it would be the
+          // third identity §2.8 declines to invent. The state is also a WORD
+          // inside the row; this attribute is the machine-readable half only.
+          {...(row.row === "turn-outcome"
+            ? { "data-outcome-state": row.outcome.state }
+            : {})}
           {...(row.row === "run-start" ? { "data-run-id": row.runId } : {})}
           {...(row.row === "cycle" ? { "data-cycle": String(row.pairs.length) } : {})}
         >
@@ -165,33 +191,133 @@ function Row({
       );
     case "seam":
       // §8: "the boundary between them is a visible seam, not a silent join."
+      //
+      // §7.4, amended 2026-09-03: WHICH boundary it is decides the label. The
+      // kind is `stream/transcript.ts`'s decision, taken from held frames alone
+      // (`seamKind`); this row reads it and derives nothing. Painting "End of
+      // the recorded transcript" over a run this tab attached to mid-flight is
+      // a claim the tab has no basis for, and the reader who believes it reads
+      // a truncated run as a whole one.
       return (
-        <p className={styles["seam"]} data-seam="1">
-          {copy.stream.seam}
+        <p className={styles["seam"]} data-seam="1" data-seam-kind={row.kind}>
+          {row.kind === "mid-run" ? copy.stream.seamMidRun : copy.stream.seam}
         </p>
       );
     case "local-prompt":
       // §7.3 (C2): the sent text, markdown-rendered, with the category's
       // visible-at-rest marker and its accessible equivalent.
+      //
+      // §7A.5, amended 2026-09-03: a NAMED refusal adds a second marker word
+      // beside `unrecorded` and never removes the text — C2's never-removed
+      // rule is unchanged because the words were typed. The second marker is
+      // rendered here rather than left to `data-echo-state`, because an
+      // attribute is not an affordance and colour alone is not one either.
+      //
+      // §7.3(a), amended 2026-09-03: the echo is the OPERATOR speaking, and it
+      // now says so on its face — the `operator` role marker beside the
+      // category's own markers, and the shared `.operatorTurn` rule and indent
+      // (`Transcript.module.css`). A live echo and a restored prompt are the
+      // same voice from two sources, so they carry the same affordance; what
+      // differs is the `unrecorded` marker, which is about the ROW's status and
+      // not about who spoke.
       return (
-        <div className={styles["localPrompt"]} title={copy.stream.localEcho.title} data-markdown="">
-          <span className={styles["presentationMarker"]} aria-hidden="true">
-            {copy.stream.localEcho.marker}
-          </span>
-          <span className={styles["visuallyHidden"]}>{copy.stream.localEcho.accessible}</span>
-          <div className={styles["localPromptText"]}>
-            <Markdown text={row.text} />
+        <div className={styles["localPrompt"]} title={copy.stream.localEcho.title}>
+          <p className={styles["markerLine"]}>
+            <span className={styles["roleMarker"]} aria-hidden="true">
+              {copy.stream.userPrompt.marker}
+            </span>
+            <span className={styles["presentationMarker"]} aria-hidden="true">
+              {copy.stream.localEcho.marker}
+            </span>
+            <span className={styles["visuallyHidden"]}>{copy.stream.localEcho.accessible}</span>
+            {row.state === "refused" ? (
+              <span title={copy.stream.localEcho.refused.title}>
+                <span className={styles["presentationMarker"]} aria-hidden="true">
+                  {typeof row.refusedReason === "string" && row.refusedReason !== ""
+                    ? `${copy.stream.localEcho.refused.marker}: ${row.refusedReason}`
+                    : copy.stream.localEcho.refused.marker}
+                </span>
+                {/* The accessible half states the fact the marker word implies:
+                    the turn did NOT start. §3.9's colour-is-never-alone applied
+                    to honesty — the same rule C2's own equivalent exists for. */}
+                <span className={styles["visuallyHidden"]}>
+                  {copy.stream.localEcho.refused.accessible}
+                </span>
+              </span>
+            ) : null}
+          </p>
+          {/* §7.3, W4: the operator's own line breaks are CONTENT — they pressed
+              Return — so this caller asks for them. Agent prose does not, which
+              is markdown's own rule and the right one for a model that hard-wraps
+              its paragraphs. One flag, one renderer, so the sanitizing half
+              cannot diverge between the two voices. */}
+          <div className={styles["localPromptText"]} data-markdown="">
+            <Markdown text={row.text} preserveLineBreaks />
           </div>
         </div>
       );
     case "user-prompt":
+      // §7.3, amended 2026-09-03 — the restored operator turn, and the three
+      // things it must show.
+      //
+      // (a) ROLE IS VISIBLE AT REST: the `operator` marker word, in `.code` at
+      //     `--ink-muted`, plus the rule-and-indent of `.operatorTurn`. The
+      //     agent's own rows carry no marker, because the model is this
+      //     surface's default voice and a marker on every row is a marker on
+      //     none. `data-row` is NOT this affordance: an attribute cannot be
+      //     read by anyone looking at the screen.
+      // (b) THE ENVELOPE IS A CLOSED DISCLOSURE, below — never inline, and
+      //     never as the operator's words.
+      // (c) The outcome is its OWN row (`turn-outcome`), emitted by
+      //     `stream/transcript.ts` directly under this one.
       return (
-        <div className={styles["userPrompt"]} data-markdown="">
-          <span className={styles["visuallyHidden"]}>{copy.stream.userPrompt.accessible}</span>
-          <div className={styles["localPromptText"]}>
-            <Markdown text={row.text} />
-          </div>
+        <div className={styles["userPrompt"]}>
+          <p className={styles["markerLine"]} data-prompt-origin={row.origin ?? "operator"}>
+            <span className={styles["roleMarker"]} aria-hidden="true">
+              {row.origin === "agent"
+                ? copy.stream.userPrompt.markerAgent
+                : copy.stream.userPrompt.marker}
+            </span>
+            <span className={styles["visuallyHidden"]}>
+              {row.origin === "agent"
+                ? copy.stream.userPrompt.accessibleAgent
+                : copy.stream.userPrompt.accessible}
+            </span>
+          </p>
+          {row.textUnrecoverable ? (
+            // §2.8(3)'s honest answer. The record could not separate the
+            // operator's sentence from the server's projection, and a GUESS —
+            // stripping a heading, cutting at a blank line — would put the
+            // server's words in the operator's mouth some of the time and never
+            // say which times. A named absence is the only honest row here.
+            <p className={styles["promptTextAbsent"]} data-prompt-text="unrecoverable">
+              {copy.stream.userPrompt.unrecoverable}
+            </p>
+          ) : (
+            <div className={styles["localPromptText"]} data-markdown="">
+              {/* The typed line breaks, kept — see the local echo above. */}
+              <Markdown text={row.text} preserveLineBreaks />
+            </div>
+          )}
+          {row.envelope === null ? null : <PromptEnvelope envelope={row.envelope} />}
         </div>
+      );
+    case "turn-outcome":
+      // §7.3(c): one row, directly under its turn's prompt row and above that
+      // turn's replies, carrying the state AS A WORD and the house sentence.
+      // The recorded `message` renders VERBATIM BESIDE the sentence and never
+      // in place of it — the record's wording may be empty, absent or
+      // unhelpful, and the house sentence is what guarantees the row says
+      // something. Nothing here derives an outcome: this row exists only
+      // because `user_prompts[].outcome` was present in the record.
+      return (
+        <p className={styles["turnOutcome"]}>
+          <span className={styles["turnOutcomeState"]}>{row.outcome.state}</span>
+          <span>{copy.stream.turnOutcome[row.outcome.state]}</span>
+          {row.outcome.message === undefined || row.outcome.message === "" ? null : (
+            <span className={styles["turnOutcomeMessage"]}>{row.outcome.message}</span>
+          )}
+        </p>
       );
     case "run-start":
       // §7.3 (C21): a rule line drawing the run id in `.code` and nothing
@@ -226,6 +352,52 @@ function Row({
     default:
       return null;
   }
+}
+
+/**
+ * §7.3(b), amended 2026-09-03 — the workspace-context envelope, behind a
+ * closed-by-default disclosure inside the operator's row.
+ *
+ * THE LABEL NAMES THE AUTHOR. The block sits inside a row whose other words are
+ * the operator's, so a label reading "context" would read as something they
+ * wrote; `copy.stream.userPrompt.envelope.label` says whose projection it is,
+ * and the accessible equivalent says it again for a reader who never sees the
+ * summary's own phrasing in place.
+ *
+ * PREFORMATTED, NEVER MARKDOWN. §7.3(b) is explicit: the envelope opens with a
+ * `#` heading (`server/.../context.py`), so passing it through `Markdown` would
+ * mint an `<h1>` inside an operator's row — the server's projection wearing the
+ * loudest type on the surface, inside the words it is not. `<pre>` also keeps
+ * the block's own line breaks, which are its structure.
+ *
+ * `aria-expanded` is written from the element's OWN toggle state rather than
+ * assumed: a `<details>` that says `aria-expanded="false"` while standing open
+ * is worse than one that says nothing. It reuses §7A.3's disclosure BEHAVIOUR
+ * and none of its STATE — the composer's preview is about a turn being
+ * composed, this is a record of one already sent, and neither reads the other's
+ * flag.
+ */
+function PromptEnvelope({ envelope }: { readonly envelope: string }): React.JSX.Element {
+  const [open, setOpen] = useState(false);
+  return (
+    <details
+      className={styles["envelope"]}
+      data-prompt-envelope=""
+      aria-expanded={open}
+      title={copy.stream.userPrompt.envelope.title}
+      onToggle={(event) => {
+        setOpen(event.currentTarget.open);
+      }}
+    >
+      <summary className={styles["envelopeSummary"]}>
+        <span>{copy.stream.userPrompt.envelope.label}</span>
+        <span className={styles["visuallyHidden"]}>
+          {copy.stream.userPrompt.envelope.accessible}
+        </span>
+      </summary>
+      <pre className={styles["envelopeBody"]}>{envelope}</pre>
+    </details>
+  );
 }
 
 /**

@@ -474,7 +474,7 @@ describe("the presentation rows' DOM contract (§7.3 C2/C21, amended 2026-09-02)
     // over id-carrying children. This walks the rendered transcript and
     // asserts the by-name skip list is exhaustive.
     const document_ = renderRows(panelRows(historyItems, withEcho));
-    const skip = new Set(["local-prompt", "run-start", "absence", "seam", "resync"]);
+    const skip = new Set(["local-prompt", "run-start", "absence", "seam", "resync", "turn-outcome"]);
     for (const row of document_.querySelectorAll("[data-row]")) {
       const name = row.getAttribute("data-row") ?? "";
       if (skip.has(name)) continue;
@@ -507,5 +507,207 @@ describe("the presentation rows' DOM contract (§7.3 C2/C21, amended 2026-09-02)
     expect(originating.querySelector("[data-absence]")).toBeNull();
     expect(observer.body.textContent ?? "").not.toContain(copy.stream.absence.user_prompt);
     expect(originating.body.textContent ?? "").not.toContain(copy.stream.absence.user_prompt);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §7.3(a)(b)(c), amended 2026-09-03 — the restored operator turn's readable
+// DOM. `stream/transcript.ts` already emits `user-prompt` and `turn-outcome`
+// rows carrying `turn`, `text`, `textUnrecoverable`, `envelope`, `outcome`
+// (W3's handoff); `Transcript.tsx` does not yet render the role marker, the
+// envelope disclosure, or the outcome label — this section is red against
+// that gap and green once §7.3(a)/(b)/(c) land.
+// ---------------------------------------------------------------------------
+
+function textFrame(seq: number, text: string) {
+  return { run_id: fixture.session_id, seq, kind: "text_delta", payload: { text } };
+}
+
+function thoughtFrame(seq: number, text: string) {
+  return { run_id: fixture.session_id, seq, kind: "thought", payload: { text } };
+}
+
+describe("the restored operator row's role affordance (§7.3(a))", () => {
+  const promptRow: PanelRow = {
+    row: "user-prompt",
+    key: "user-prompt:0",
+    turn: 0,
+    text: "Reply with exactly the word PONG.",
+    textUnrecoverable: false,
+    envelope: null,
+    eventId: `${fixture.session_id}@turn:0`,
+  };
+  const textRows = groupRows([historicalItem(textFrame(0, "PONG"), fixture.session_id)]);
+
+  it("gives a user-prompt row a visible role marker a text row does not carry", () => {
+    // §7.3(a): the marker names the SPEAKER and is a rendered text node, not
+    // `data-row` alone and not colour alone. A visually-hidden span does not
+    // satisfy this — it must be readable at rest, so this walk explicitly
+    // excludes anything carrying a visually-hidden class.
+    const document_ = renderRows([promptRow, ...textRows]);
+    const promptLi = document_.querySelector('[data-row="user-prompt"]');
+    const textLi = document_.querySelector('[data-row="text"]');
+    expect(promptLi).not.toBeNull();
+    expect(textLi).not.toBeNull();
+    const leaves = [...(promptLi?.querySelectorAll("*") ?? [])].filter(
+      (node) => node.children.length === 0 && !/visuallyHidden/i.test(node.getAttribute("class") ?? ""),
+    );
+    const marker = leaves.map((node) => node.textContent?.trim()).find((text) => text === "operator");
+    expect(marker, promptLi?.outerHTML ?? "(no user-prompt row rendered)").toBe("operator");
+    // Control: the agent's own row carries no such word (§7.3(a): "a marker on
+    // every row is a marker on none").
+    expect(textLi?.textContent ?? "").not.toMatch(/\boperator\b/);
+  });
+
+  it("does not distinguish the two rows by colour or data-row alone", () => {
+    // The DOM-level half of the same rule: an attribute is not an affordance,
+    // so `data-row` differing is not sufficient — there must be a rendered
+    // text-node or box difference beyond it. This restates the positive
+    // assertion above as its own negative: strip `data-row` and the two rows'
+    // outerHTML must still differ by more than that one attribute's value.
+    const document_ = renderRows([promptRow, ...textRows]);
+    const promptLi = document_.querySelector('[data-row="user-prompt"]');
+    const textLi = document_.querySelector('[data-row="text"]');
+    const stripRow = (html: string): string => html.replace(/data-row="[^"]*"/g, "");
+    expect(stripRow(promptLi?.innerHTML ?? "a")).not.toBe(stripRow(textLi?.innerHTML ?? "b"));
+  });
+});
+
+describe("the envelope disclosure on a context-carrying prompt (§7.3(b))", () => {
+  const envelope = [
+    "# Workspace context",
+    "",
+    "Current file: plate.step",
+    "Selected edge: top outer.",
+  ].join("\n");
+  const row: PanelRow = {
+    row: "user-prompt",
+    key: "user-prompt:1",
+    turn: 1,
+    text: "Chamfer the top outer edge, 2 mm.",
+    textUnrecoverable: false,
+    envelope,
+    eventId: `${fixture.session_id}@turn:1`,
+  };
+
+  it("renders the operator's sentence as the row's visible text", () => {
+    const document_ = renderRows([row]);
+    const promptLi = document_.querySelector('[data-row="user-prompt"]');
+    expect(promptLi).not.toBeNull();
+    expect(promptLi?.textContent ?? "").toContain("Chamfer the top outer edge, 2 mm.");
+  });
+
+  it("puts the envelope behind a closed-by-default [data-prompt-envelope] disclosure", () => {
+    const document_ = renderRows([row]);
+    const promptLi = document_.querySelector('[data-row="user-prompt"]');
+    const disclosure = promptLi?.querySelector("[data-prompt-envelope]") ?? null;
+    expect(disclosure).not.toBeNull();
+    // §7.3(b): "a closed-by-default `[data-prompt-envelope]` disclosure with
+    // `aria-expanded`". A native <details> is the natural vehicle — closed by
+    // default means no `open` attribute in the static markup.
+    expect(disclosure?.tagName.toLowerCase()).toBe("details");
+    expect(disclosure?.hasAttribute("open")).toBe(false);
+    const expandable = disclosure?.hasAttribute("aria-expanded")
+      ? disclosure
+      : disclosure?.querySelector("[aria-expanded]");
+    expect(expandable?.getAttribute("aria-expanded")).toBe("false");
+    expect(disclosure?.textContent ?? "").toContain("Current file: plate.step");
+    // No id of its own — it is part of the user-prompt row, not a row.
+    expect(disclosure?.hasAttribute("data-event-id")).toBe(false);
+  });
+
+  it("carries no heading inside the operator's row (envelope is preformatted, never markdown)", () => {
+    // The envelope opens with a `#` heading. Passing it through the
+    // transcript's markdown renderer would mint an <h1>/<h3> inside an
+    // operator's row — §7.3(b) forbids exactly that.
+    const document_ = renderRows([row]);
+    const promptLi = document_.querySelector('[data-row="user-prompt"]');
+    expect(promptLi?.querySelector("h1, h2, h3, h4, h5, h6")).toBeNull();
+  });
+
+  it("keeps the operator's own sentence outside the disclosure, not behind a click", () => {
+    const document_ = renderRows([row]);
+    const promptLi = document_.querySelector('[data-row="user-prompt"]');
+    const disclosure = promptLi?.querySelector("[data-prompt-envelope]") ?? null;
+    const outside = (promptLi?.textContent ?? "").replace(disclosure?.textContent ?? "", "");
+    expect(outside).toContain("Chamfer the top outer edge, 2 mm.");
+  });
+});
+
+describe("the turn-outcome label (§7.3(c))", () => {
+  const cases: readonly { readonly state: "cancelled" | "error" | "interrupted"; readonly message: string }[] = [
+    { state: "cancelled", message: "Stopped by the operator before the model answered." },
+    { state: "error", message: "The model returned no content." },
+    { state: "interrupted", message: "The connection dropped before the run finished." },
+  ];
+
+  for (const { state, message } of cases) {
+    it(`labels a ${state} turn, carrying the state as a word and no event id`, () => {
+      const row: PanelRow = {
+        row: "turn-outcome",
+        key: "turn-outcome:2",
+        turn: 2,
+        outcome: { state, message },
+      };
+      const document_ = renderRows([row]);
+      const li = document_.querySelector('[data-row="turn-outcome"]');
+      expect(li).not.toBeNull();
+      expect(li?.getAttribute("data-outcome-state")).toBe(state);
+      expect((li?.textContent ?? "").trim().length).toBeGreaterThan(0);
+      // §7.3(c): the recorded message renders VERBATIM beside the house
+      // sentence, never substituted for it.
+      expect(li?.textContent ?? "").toContain(message);
+      // No `data-event-id`: it is a projection of the turn record, not an
+      // event (§7.3(c), §8(i)).
+      expect(li?.hasAttribute("data-event-id")).toBe(false);
+      expect(li?.querySelector("[data-event-id]")).toBeNull();
+    });
+  }
+
+  it("renders no outcome row when the outcome carries a message but an empty one is still shown", () => {
+    // The house sentence is what guarantees the row says something even when
+    // `message` is absent or empty (§7.3(c)).
+    const row: PanelRow = {
+      row: "turn-outcome",
+      key: "turn-outcome:3",
+      turn: 3,
+      outcome: { state: "cancelled" },
+    };
+    const document_ = renderRows([row]);
+    const li = document_.querySelector('[data-row="turn-outcome"]');
+    expect(li).not.toBeNull();
+    expect(li?.getAttribute("data-outcome-state")).toBe("cancelled");
+    expect((li?.textContent ?? "").trim().length).toBeGreaterThan(0);
+  });
+});
+
+describe("an empty thought run renders a named absence, not an empty disclosure", () => {
+  // W1 guards a genuinely empty `thinking` item at the source (no `thought`
+  // event is emitted for one) — this is the client's remaining obligation for
+  // whatever slips through: an old recording, a future emitter that regresses.
+  // "No empty 'Reasoning' disclosures" (W4 goal): a `<details>` with nothing
+  // readable inside is worse than nothing, because it invites a click that
+  // reveals nothing.
+  it("renders a non-empty thought normally, as the control", () => {
+    const item = historicalItem(thoughtFrame(0, "Check the tolerance stack first."), fixture.session_id);
+    const document_ = renderRows(groupRows([item]));
+    const details = document_.querySelector("[data-thought]");
+    expect(details).not.toBeNull();
+    expect(details?.textContent ?? "").toContain("Check the tolerance stack first.");
+  });
+
+  it("labels a zero-content thought run as a named absence rather than an empty body", () => {
+    const item = historicalItem(thoughtFrame(1, ""), fixture.session_id);
+    const document_ = renderRows(groupRows([item]));
+    const details = document_.querySelector("[data-thought]");
+    // Identity is still preserved (G4.11): the event happened and its id
+    // stays in the DOM even though there is nothing to disclose.
+    expect(details).not.toBeNull();
+    expect(details?.getAttribute("data-event-id")).toBe(item.eventId);
+    const body = details?.querySelector("[data-thought-empty], .thoughtBody") ?? details;
+    expect((body?.textContent ?? "").trim().length).toBeGreaterThan(0);
+    // Not a bare "Reasoning" label with nothing under it — some absence
+    // marker is present.
+    expect(details?.querySelector("[data-thought-empty]")).not.toBeNull();
   });
 });

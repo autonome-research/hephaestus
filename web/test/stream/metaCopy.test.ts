@@ -60,6 +60,8 @@ describe("§7.4(d) — the stream's meta-copy is one sentence", () => {
     ...entries("runtimeFaultWhy", copy.stream.runtimeFaultWhy),
     ["runtimeFaultNext", copy.stream.runtimeFaultNext],
     ...entries("resync", copy.stream.resync),
+    ["seamMidRun", copy.stream.seamMidRun],
+    ...entries("turnOutcome", copy.stream.turnOutcome),
   ];
 
   it.each(named)("%s is ≤25 words and one sentence", (label, value) => {

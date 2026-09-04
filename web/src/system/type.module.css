@@ -22,6 +22,18 @@
  * mechanically. There is exactly one 11px declaration in this file and the
  * check counts them.
  *
+ * ADDED 2026-09-03 — three PROSE-HEADING roles, for the markdown a transcript
+ * row carries (§7.3). They are not an eighth, ninth and tenth voice: they spend
+ * two steps the seven already own (15 and 13) and separate `##` from `###`
+ * with weight and case rather than a size the ramp does not have.
+ *
+ *   .proseH1   15 / 600  ui             markdown `#`
+ *   .proseH2   13 / 600  ui             markdown `##`
+ *   .proseH3   13 / 600  ui, uppercase  markdown `###` and every level below
+ *
+ * §3.8's table is the normative artefact and it lists seven; these three are
+ * new work and INTERFACE.md needs the rows. Reported, not assumed.
+ *
  * The two `:global` blocks at the end are the document's base type. They live
  * here rather than in `global.css` for one reason: this file is the declared
  * owner of type, and a base `font-size` on `body` is a type declaration like
@@ -86,6 +98,56 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   line-height: var(--line-tight);
+}
+
+/* ---- prose headings: markdown's own ramp, inside §3.8's (added 2026-09-03) --
+
+   THREE roles for six markdown levels. `#`..`###` get one each and `####`..
+   `######` map onto the third rather than being dropped or shrunk: a heading
+   smaller than the prose it introduces is not a heading, and §3.8's TIGHTENING
+   leaves the one step below body size to `.eyebrow`. So the ramp runs on two
+   axes instead of six sizes — 15/600, 13/600, 13/600 uppercase — and `###`
+   lands AT body size, never below it.
+
+   WHY `margin-block` LIVES WITH THE SIZES. A browser's default heading margin
+   is a multiple of the heading's OWN font-size, so leaving the defaults in
+   place gives the deepest, smallest heading the widest gap: the ramp inverted,
+   by a default nobody chose. The role owns its rhythm the way `.code` owns its
+   `word-break`. These are the only three roles here that do, and they are the
+   only three that are a *block* by definition.
+
+   These roles are for PROSE (`stream/markdown.tsx`). A panel header is still
+   `.title`; §7.3's transcript is the one surface where the author of the words
+   decides where a heading goes. */
+
+.proseH1 {
+  font-family: var(--font-ui);
+  /* The same step as `.title` — the largest thing a transcript row may say. */
+  font-size: var(--p-size-lg);
+  font-weight: 600;
+  line-height: var(--line-tight);
+  margin-block: var(--gap-group) var(--gap-stack);
+}
+
+.proseH2 {
+  font-family: var(--font-ui);
+  font-size: var(--p-size-md);
+  font-weight: 600;
+  line-height: var(--line-tight);
+  margin-block: var(--gap-group) var(--gap-stack);
+}
+
+/* `###` and deeper. Body size, so it is never smaller than what it introduces;
+   the uppercase and the tracking are what separate it from `.proseH2` without
+   spending a size step the ramp does not have. */
+.proseH3 {
+  font-family: var(--font-ui);
+  font-size: var(--p-size-md);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  line-height: var(--line-tight);
+  margin-block: var(--gap-group) var(--gap-stack);
 }
 
 /* ---- the document's base type ------------------------------------------- */

@@ -190,6 +190,38 @@ describe("session tab labels are human (#51)", () => {
   });
 });
 
+describe("the operator's sentence titles the tab, never the envelope (§2.8(3), §7A.4)", () => {
+  // The record separates `text` (the operator's own sentence) from `envelope`
+  // (§7A.3's workspace-context block, which OPENS WITH A HEADING). The split
+  // happens before this module ever sees the prompt — `useStream.ts` feeds
+  // only `user_prompts[].text` into the prompt store (never `envelope`, and
+  // never a `null` text) — so this is a confirmatory guard on the layer that
+  // actually renders the title: given the operator's own sentence, the label
+  // and the browser tab title are built from it, and neither is ever the
+  // heading line a context-carrying prompt would begin with.
+  it("titles the tab from the operator's own sentence, not a heading line", () => {
+    const sentence = "Reply with exactly the word PONG.";
+    const label = sessionLabel({ sessionId: UUID, firstPrompt: sentence });
+    expect(label).toBe(sentence);
+    expect(label.startsWith("#")).toBe(false);
+
+    applySessionDocumentTitle(label);
+    expect(document.title).toContain(sentence);
+    expect(document.title).not.toContain("Workspace context");
+  });
+
+  it("falls back to the noun-phrase name rather than a heading, when text is unrecoverable (null)", () => {
+    // §7A.4: "a `null` text falls back to §7.1's noun-phrase name." A caller
+    // that (incorrectly) forwarded the fused envelope text would produce
+    // "# Workspace context" as the first line; the honest `null` this module
+    // is actually fed instead falls through to the profile-word fallback.
+    const label = sessionLabel({ sessionId: UUID, firstPrompt: null });
+    expect(label).not.toContain("#");
+    expect(label).not.toMatch(/^#/);
+    expect(label).toBe(copy.stream.projectSession);
+  });
+});
+
 describe("a root tab does not say no parent (#62, #66)", () => {
   it("treats depth-0 with no parent as a root", () => {
     expect(isSessionRoot(tab())).toBe(true);

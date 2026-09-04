@@ -997,6 +997,19 @@ export const copy = {
 
     /** §8: history is the prefix, the live stream is the suffix, the join is seen. */
     seam: "End of the recorded transcript — everything below arrived live.",
+    /**
+     * §7.4, amended 2026-09-03: the seam over a run this tab did NOT hold from
+     * its start.
+     *
+     * `seam` claims the transcript ENDS here. On a mid-run attach that claim is
+     * false — output of the run below exists that this tab never received — and
+     * a reader who believes it reads a truncated run as a whole one. The tab
+     * decides which of the two it is from held frames alone (`transcript.ts`'s
+     * `seamKind`: a live run's `seq` starts at 0, so a first frame with
+     * `seq > 0` proves frames went by unseen).
+     */
+    seamMidRun:
+      "Attached while this run was in progress; earlier output of this run is not shown.",
     /*
      * `historyLoading` is REMOVED (§8(b), amended 2026-09-01): "the loading
      * ellipsis is not an exception — a transcript that is still filling is
@@ -1050,9 +1063,84 @@ export const copy = {
       accessible: "Typed on this page; not a recorded event.",
       title:
         "This prompt was typed on this page and is not a recorded event: prompts are never part of the recorded transcript, so this row exists only in the tab that sent it and will not appear on reopen.",
+      /**
+       * §7A.5, amended 2026-09-03: the SECOND marker word, for an echo whose
+       * POST the server refused by name.
+       *
+       * It sits beside `marker` rather than replacing it — the row is still an
+       * unrecorded local echo, and it is now also a turn that never started.
+       * `refused` and `unknown` stay two words for two different facts: an
+       * `unknown` POST MAY have started a turn (the stream is the authority), a
+       * refused one definitively did not and the text is still sendable. The
+       * server's own reason word renders beside this one, VERBATIM and never
+       * translated — a reason this build has never heard of still renders,
+       * correctly, as itself.
+       */
+      refused: {
+        /** The visible-at-rest marker word, in `.code` muted beside `marker`. */
+        marker: "refused",
+        accessible: "The server refused this prompt; this turn did not start.",
+        title:
+          "The server refused this prompt by name, so the turn did not start and nothing ran. The words above were typed on this page, are kept verbatim, and are still sendable; the word beside this one is the server's own reason, rendered as it was received.",
+      },
     },
     userPrompt: {
+      /**
+       * §7.3(a), added 2026-09-03 — the restored operator row's VISIBLE role
+       * marker: a short house word in `.code` at `--ink-muted`, paired with
+       * `accessible` below. Names the SPEAKER, not the medium: the agent's own
+       * rows carry no marker, because the model is this surface's default
+       * voice. Not a possessive, not a name, not "you".
+       */
+      marker: "operator",
       accessible: "Operator prompt, recorded in this session's history.",
+      /**
+       * §2.8(3), amended 2026-09-03 — the ONE user-role turn the sidecar writes
+       * itself: the continuation sentence of a transient retry. Same row shape,
+       * a different speaker, named so a machine's sentence is never shown as
+       * the operator's.
+       */
+      markerAgent: "agent",
+      accessibleAgent:
+        "Continuation prompt the agent runtime sent itself after a transient provider fault, not the operator's words.",
+      /**
+       * §7.3(b′): the restored row whose `text` is null. One sentence, in the
+       * §7.4(d) shape, saying what the record lacks rather than the bare word
+       * "unavailable".
+       */
+      unrecoverable:
+        "The operator's own sentence was not recorded separately for this turn, so it is not shown here.",
+      /**
+       * §7.3(b), added 2026-09-03 — the closed-by-default `[data-prompt-envelope]`
+       * disclosure inside a `user-prompt` row, when `envelope` is non-null.
+       *
+       * `label` must itself say this is the SERVER's projection, not the
+       * operator's own words — the disclosure sits inside the operator's row,
+       * where a bare "context" reads as something they wrote. `title` carries
+       * the mechanism (never markdown, opens with a `#` heading) for a reader
+       * who wants it.
+       */
+      envelope: {
+        label: "Workspace context this server sent",
+        accessible:
+          "Workspace context this server composed and sent with this turn, not the operator's own words.",
+        title:
+          "This block is the workspace-context projection the server composed and sent alongside the operator's message. It is shown here exactly as it was sent, as preformatted text rather than through this transcript's markdown renderer, and it is not something the operator wrote.",
+      },
+    },
+    /**
+     * §7.3(c), added 2026-09-03 — the `[data-row="turn-outcome"]` label under a
+     * turn that did not simply finish. One sentence each, the state as a word;
+     * absence of `outcome` on a turn means it completed, so no fourth key named
+     * "completed" belongs here. The server's own `message`, when recorded,
+     * renders VERBATIM BESIDE this sentence and never replaces it — the house
+     * sentence is what guarantees the row says something even when the
+     * recorded message is empty, absent, or unhelpful.
+     */
+    turnOutcome: {
+      cancelled: "This turn was cancelled before it finished.",
+      error: "This turn ended with an error.",
+      interrupted: "This turn was interrupted before it finished.",
     },
     runStart: {
       label: "run",
@@ -1139,6 +1227,16 @@ export const copy = {
     /** §7.3's kinds. */
     thought: "Reasoning",
     thoughtParts: (n: number): string => (n === 1 ? "1 part" : `${n} parts`),
+    /**
+     * W4: a named absence for a `thought` run whose joined text is empty.
+     *
+     * W1 guards this at the source — an empty `thinking` delta never reaches
+     * the wire (agent/src/session/history.ts) — so this is the client's own
+     * defensive floor for whatever gets through anyway: an empty `Reasoning`
+     * disclosure that opens on nothing reads as a broken control, not as "no
+     * reasoning happened here". This sentence renders in its place instead.
+     */
+    thoughtEmpty: "This model produced no reasoning text for this step.",
     audit: "Audit",
     unknownKind: "This event is outside the published event vocabulary and is shown unread.",
     image: {

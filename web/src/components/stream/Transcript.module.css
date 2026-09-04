@@ -34,37 +34,164 @@
 
 /* ---- text and reasoning -------------------------------------------- */
 
-.text {
-  composes: body from "../../system/type.module.css";
-  margin: 0;
-  color: var(--ink-strong);
+/*
+ * THE PROSE RULESET, HOISTED — one ruleset for every surface that renders
+ * `stream/markdown.tsx` output: the agent's reply (`.text`), its reasoning
+ * (`.thoughtBody`), and the operator's own words (`.localPromptText`).
+ *
+ * WHY hoist. There were three near-copies here and they had drifted: only
+ * `.text` styled headings, so a heading in an operator's prompt fell back to
+ * the user agent's own ramp; only `.text` and `.localPromptText` styled `pre`,
+ * so a fenced block inside a reasoning disclosure had no ground under it. A
+ * reader cannot tell whose paragraph is whose from the shape of a list, so the
+ * shape must not differ by speaker (§7.3: the renderer shapes "the model's (and
+ * the operator's) own words" — one renderer, one ruleset).
+ *
+ * WHITE SPACE IS NOT SET HERE, AND THAT IS THE DECISION. An operator's typed
+ * line breaks are content and a model's are not (a model hard-wraps its own
+ * paragraphs, and honouring those wraps would re-ragged every reply at whatever
+ * column it happened to choose). That is a difference between two CALLERS, not
+ * between two boxes, so it is carried by the renderer's `preserveLineBreaks`
+ * flag — which emits a real `<br>` — and never by a `white-space` value on a
+ * container. A stylesheet that also declared `pre-line` here would be a second
+ * authority over the same fact, and the two would drift.
+ *
+ * LIST MARKERS, likewise. `.transcript` sets `list-style: none` on the
+ * transcript's own `<ol>`, and `list-style-type` INHERITS — so every `<ul>` and
+ * `<ol>` the markdown renderer emitted anywhere under it drew no bullets and no
+ * numbers at all. The two rules below restore them inside prose only; the
+ * transcript's own list is unchanged.
+ */
+.prose {
   overflow-wrap: anywhere;
 }
 
-.text :is(h3, h4, h5) {
-  margin: 0 0 var(--space-2);
+/*
+ * A heading's BOX and ink, and ONLY those. Size, weight and case are the type
+ * file's (§3.14's `no-raw-type` reserves every type property to it), and the
+ * markdown renderer now hangs `.proseH1`/`.proseH2`/`.proseH3` on the heading
+ * elements it mints (`stream/markdown.tsx::MARKDOWN_HEADING_ROLES`) — which is
+ * why a `###` no longer lands below the ramp's floor on the user agent's own
+ * 0.83em ratio. This rule must therefore stay silent about type: adding a size
+ * here would override a role and put the ramp back in two places.
+ */
+.prose :is(h3, h4, h5) {
+  margin: var(--space-3) 0 var(--space-2);
   color: var(--ink-strong);
 }
 
-.text :is(p, ul, ol) {
+/* A reply that OPENS with a heading gets no leading gap: the row above it is
+   already a turn boundary. */
+.prose > :is(h3, h4, h5):first-child {
+  margin-top: 0;
+}
+
+.prose :is(p, ul, ol, pre) {
   margin: 0 0 var(--space-2);
 }
 
-.text :is(ul, ol) {
-  padding-inline-start: var(--space-3);
+.prose :is(ul, ol) {
+  padding-inline-start: var(--space-4);
 }
 
-.text pre {
-  margin: 0 0 var(--space-2);
+.prose ul {
+  list-style: disc outside;
+}
+
+.prose ol {
+  list-style: decimal outside;
+}
+
+.prose li {
+  margin-bottom: var(--space-1);
+}
+
+.prose pre {
   padding: var(--space-2);
   overflow-x: auto;
+  /* A fenced block is the one place the source's own spacing is the content. */
+  white-space: pre;
   background: var(--surface-raised);
   border-radius: var(--radius-card);
 }
 
-.text a {
+.prose a {
   color: var(--ink-strong);
   text-decoration: underline;
+}
+
+/*
+ * A quote is an aside INSIDE prose, so its rule is a hairline — deliberately
+ * lighter than the 2px `.operatorTurn` bar, which means a speaker.
+ */
+.prose blockquote {
+  margin: 0 0 var(--space-2);
+  border-inline-start: 1px solid var(--border);
+  padding-inline-start: var(--space-3);
+  color: var(--ink-base);
+}
+
+.prose hr {
+  margin: var(--space-3) 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+/*
+ * A GFM table in a 420px column (§4.1) is wider than the column more often than
+ * not. `display: block` makes the table its own scroll container, so a wide one
+ * scrolls inside the row instead of widening the panel and putting a horizontal
+ * scrollbar under the whole transcript.
+ */
+.prose table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  margin: 0 0 var(--space-2);
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.prose :is(th, td) {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  text-align: start;
+  vertical-align: top;
+}
+
+/* The renderer's own alignment row (`stream/markdown.tsx::alignAttribute`),
+   closed at three; a column with no alignment marker keeps `start`. */
+.prose :is(th, td)[data-align="right"] {
+  text-align: right;
+}
+
+.prose :is(th, td)[data-align="center"] {
+  text-align: center;
+}
+
+.prose th {
+  color: var(--ink-strong);
+}
+
+/* A code SPAN sits inside a sentence, so it takes a tint rather than the block
+   treatment `pre` gets; `pre > code` is excluded, or a fence would draw a card
+   inside a card. */
+.prose :not(pre) > code {
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+}
+
+/* The last block in a prose surface owns no trailing gap — the row gap does. */
+.prose > :last-child {
+  margin-bottom: 0;
+}
+
+.text {
+  composes: body from "../../system/type.module.css";
+  composes: prose;
+  margin: 0;
+  color: var(--ink-strong);
 }
 
 .eventAnchor {
@@ -74,9 +201,15 @@
   overflow: hidden;
 }
 
+/*
+ * The reasoning aside is SUBORDINATE to the reply it sits under, and it must
+ * not be confusable with the operator's own row, which now carries a 2px solid
+ * rule of its own (`.operatorTurn`). Two rows with the same rule are two rows
+ * with no rule. A dashed hairline says aside; the solid bar says speaker.
+ */
 .thought {
-  border-left: 2px solid var(--border-strong);
-  padding-left: var(--space-3);
+  border-inline-start: 1px dashed var(--border-strong);
+  padding-inline-start: var(--space-3);
 }
 
 .thoughtSummary {
@@ -96,22 +229,24 @@
 
 .thoughtBody {
   composes: body from "../../system/type.module.css";
+  composes: prose;
   margin-top: var(--space-1);
   color: var(--ink-base);
-  overflow-wrap: anywhere;
 }
 
-.thoughtBody :is(h3, h4, h5, p, ul, ol, pre) {
-  margin: 0 0 var(--space-2);
-}
-
-.thoughtBody :is(ul, ol) {
-  padding-inline-start: var(--space-3);
-}
-
-.thoughtBody a {
-  color: var(--ink-strong);
-  text-decoration: underline;
+/*
+ * §7.3, W4: a `thought` run whose joined text is empty renders a NAMED ABSENCE,
+ * never an empty body. An expandable "Reasoning" control that opens on nothing
+ * reads as a broken control rather than as "no reasoning text here", which is
+ * the §4.4 failure mode ("a state that exists for a reason reads as designed;
+ * the same state with its content missing reads as a bug"). The sidecar guards
+ * this at the source — an empty thinking delta emits no `thought` — so this is
+ * the client's own floor for whatever reaches it anyway.
+ */
+.thoughtAbsence {
+  composes: body from "../../system/type.module.css";
+  margin: 0;
+  color: var(--ink-muted);
 }
 
 /* ---- §7.2's chip ----------------------------------------------------
@@ -599,43 +734,188 @@ details[open] > .rawSummary::before {
    category's visible-at-rest honesty disclosure; the accessible equivalent is
    a visually-hidden span, because `title` alone is unreachable from keyboard,
    touch, and most screen readers. */
+
+/*
+ * §7.3(a), amended 2026-09-03 — THE OPERATOR'S ROWS ARE VISIBLE AS THE
+ * OPERATOR'S, AT REST, AND NOT BY COLOUR.
+ *
+ * What the 2026-09-02 reproduction found is that a restored prompt was
+ * typographically identical to the agent's reply: same face, same ink, same
+ * flush-left box, so only the invisible `data-row` attribute separated the two
+ * speakers. The clause is explicit that "an attribute is not an affordance" and
+ * that colour, weight or background alone does not satisfy it either.
+ *
+ * The affordance is therefore GEOMETRY plus a WORD: a solid inline-start rule
+ * and an indent that no agent row carries, and the `operator` marker rendered
+ * as text (`.roleMarker`). Either one alone would do the job for one kind of
+ * reader; both together do it for every kind, which is what §3.13(2)'s
+ * no-colour-only floor is actually asking for. Logical properties, so a future
+ * RTL locale indents from the correct side without a second rule.
+ */
+.operatorTurn {
+  /* THE RULE'S COLOUR IS AN INK, AND THAT IS MEASURED RATHER THAN CHOSEN.
+     §3.13(1) puts meaning-carrying non-text UI at >= 3:1 against its own
+     surface, and the line ladder has no rung that clears it here without
+     promising something false: `--border` measures 1.26:1 and `--border-strong`
+     1.75:1 against the stream panel's painted ground (#161a20), while
+     `--border-control` clears 5.01:1 but is §3.10's signal that a thing is
+     INTERACTIVE — spending it on a transcript row would promise a control that
+     is not there (§3.9's C28, in its border form). `--ink-muted` measures
+     7.01:1 on this surface and promises nothing, so the bar is drawn in it.
+     Reported as an open concern: the ladder is missing a non-interactive rung
+     that carries meaning, and this is the second surface to want one. */
+  border-inline-start: 2px solid var(--ink-muted);
+  padding-inline-start: var(--space-3);
+}
+
 .localPrompt,
 .userPrompt {
   composes: body from "../../system/type.module.css";
+  composes: operatorTurn;
   margin: 0;
   display: flex;
   flex-direction: column;
   gap: var(--gap-stack);
 }
 
+/* The row's marker words on one line: `operator`, and for a local echo the
+   `unrecorded` / `refused` markers beside it. They wrap rather than truncate —
+   a marker that fell off the end of the line would be a marker the reader
+   cannot see, which is the state this clause exists to retire. */
+.markerLine {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--gap-inline);
+  min-width: 0;
+}
+
+/*
+ * The role marker. `.code` at `--ink-muted`, on §7.3's presentation-marker
+ * precedent — deliberately the SAME treatment, even though a restored prompt is
+ * a recorded row and a presentation row is not: the two markers say different
+ * things but they are the same KIND of thing, a house word about the row, and
+ * spelling them differently would imply a distinction the reader would then
+ * have to learn.
+ */
+.roleMarker {
+  composes: code from "../../system/type.module.css";
+  color: var(--ink-muted);
+}
+
 .localPromptText {
-  overflow-wrap: anywhere;
+  composes: prose;
   color: var(--ink-base);
 }
 
-.localPromptText :is(p, ul, ol, pre) {
-  margin: 0 0 var(--space-2);
-}
-
-.localPromptText :is(ul, ol) {
-  padding-inline-start: var(--space-3);
-}
-
-.localPromptText pre {
-  padding: var(--space-2);
-  overflow-x: auto;
-  background: var(--surface-raised);
-  border-radius: var(--radius-card);
-}
-
-.localPromptText a {
-  color: var(--ink-strong);
-  text-decoration: underline;
+/* §2.8(3)'s honest answer, rendered: the record could not separate the
+   operator's sentence from the server's projection, so the row says the
+   sentence is unavailable rather than drawing a blank box or — far worse —
+   promoting the envelope into the operator's mouth. */
+.promptTextAbsent {
+  composes: body from "../../system/type.module.css";
+  margin: 0;
+  color: var(--ink-muted);
 }
 
 .presentationMarker {
   composes: code from "../../system/type.module.css";
   color: var(--ink-muted);
+}
+
+/*
+ * §7.3(b), amended 2026-09-03 — the workspace-context envelope, behind a
+ * closed-by-default disclosure INSIDE the operator's row.
+ *
+ * It reuses §7A.3's disclosure behaviour and the chip's marker mechanics
+ * (`display: flex` on a `<summary>` removes the native marker, so the ▸/▾ is
+ * drawn back) and none of either one's state. The body is `.code` with
+ * `white-space: pre-wrap` — the same treatment as `.raw`, for the same reason:
+ * it is a machine-composed block whose own line breaks ARE its content, and
+ * §7.3(b) forbids passing it through the markdown renderer at all.
+ */
+.envelope {
+  border-inline-start: 1px solid var(--border);
+  padding-inline-start: var(--space-2);
+}
+
+.envelopeSummary {
+  composes: label from "../../system/type.module.css";
+  cursor: pointer;
+  min-height: var(--target-min);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  list-style: none;
+  color: var(--ink-muted);
+}
+
+.envelopeSummary::-webkit-details-marker {
+  display: none;
+}
+
+.envelopeSummary::before {
+  content: "▸";
+  flex: none;
+}
+
+details[open] > .envelopeSummary::before {
+  content: "▾";
+}
+
+.envelopeBody {
+  composes: code from "../../system/type.module.css";
+  margin: var(--space-1) 0 0;
+  padding: var(--space-2);
+  max-height: 12rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--surface-raised);
+  border-radius: var(--radius-card);
+  color: var(--ink-base);
+}
+
+/*
+ * §7.3(c), amended 2026-09-03 — the label under a turn that did not simply
+ * finish, directly beneath its prompt row and above that turn's replies.
+ *
+ * NO STATE-KEYED COLOUR, on purpose. §3.9's discipline is that colour is never
+ * alone; the inverse temptation — three border hues for three states — would
+ * put the fact in the hue and leave the word decorative, and it would also
+ * split the attribute from its selector (the state rides the `<li>`, the class
+ * rides this element: exactly §3.2's `ChecksPanel` bug). The state is a WORD
+ * here, the house sentence spells it out, and the rule is the same weight for
+ * all three because all three mean the same thing to a reader scanning for
+ * where the answer stops being an answer.
+ */
+.turnOutcome {
+  composes: body from "../../system/type.module.css";
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--gap-inline);
+  min-width: 0;
+  border-inline-start: 2px solid var(--status-error-ink);
+  padding-inline-start: var(--space-3);
+  color: var(--ink-base);
+}
+
+.turnOutcomeState {
+  composes: code from "../../system/type.module.css";
+  flex: none;
+  color: var(--ink-muted);
+}
+
+/* The record's own wording, VERBATIM and BESIDE the house sentence — never in
+   place of it, because the recorded message may be empty or unhelpful. */
+.turnOutcomeMessage {
+  composes: code from "../../system/type.module.css";
+  min-width: 0;
+  color: var(--ink-base);
+  overflow-wrap: anywhere;
 }
 
 /* §7.3, amended 2026-09-02 (C21): the run-start boundary is a rule line

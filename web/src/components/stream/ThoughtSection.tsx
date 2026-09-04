@@ -38,6 +38,20 @@ export function ThoughtSection({
   const first = items[0];
   if (first === undefined) return null;
   const single = items.length === 1;
+  const joined = items.map(text).join("");
+  // §7.3, W4: an EMPTY run is a named absence, not an empty body. `Markdown`
+  // renders `""` as `null`, so the disclosure used to open on nothing at all —
+  // a control that appears broken rather than a state that reads as designed
+  // (§4.4). The row still renders: the events happened and their ids must stay
+  // in the DOM (G4.11 matches archived ids against the reopened transcript), so
+  // the honest move is to say what is missing, not to drop the row.
+  //
+  // The sidecar guards this at the source — an empty `thinking` item emits no
+  // `thought` event at all (`agent/src/session/history.ts`, W1) — so this is
+  // the client's own floor for a legacy record or an older bundle, not a
+  // duplicate of that fix. It says nothing about WHY the text is empty, because
+  // the client does not know.
+  const empty = joined.trim() === "";
 
   return (
     <details
@@ -52,7 +66,7 @@ export function ThoughtSection({
           <span className={styles["thoughtCount"]}>{copy.stream.thoughtParts(items.length)}</span>
         )}
       </summary>
-      <div className={styles["thoughtBody"]} data-markdown="">
+      <div className={styles["thoughtBody"]} {...(empty ? {} : { "data-markdown": "" })}>
         {single ? null : (
           <>
             {items.map((item) => (
@@ -60,7 +74,13 @@ export function ThoughtSection({
             ))}
           </>
         )}
-        <Markdown text={items.map(text).join("")} />
+        {empty ? (
+          <p className={styles["thoughtAbsence"]} data-thought-empty="1">
+            {copy.stream.thoughtEmpty}
+          </p>
+        ) : (
+          <Markdown text={joined} />
+        )}
       </div>
     </details>
   );
