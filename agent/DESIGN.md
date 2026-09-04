@@ -59,7 +59,11 @@ agent/                    pnpm package @hephaestus/agent (private, ESM, TS stric
       manager.ts          create/resume/cancel sessions; per-run
                           AbortController; session registry
       history.ts          history.page bridge method: Pi JSONL -> normalized
-                          events, high-water cursor frozen at first page
+                          events, high-water cursor frozen at first page;
+                          the `turn` ordinal on every event, the
+                          {turn, seq, text, envelope, outcome?} user_prompts
+                          entry, and the `after` tail read with its
+                          always-present endCursor (INTERFACE.md §2.8)
       context.ts          K=3 image eviction w/ text stubs, T=70% compaction
                           request with pinned CAD summary, 90% budget
                           escalation via ask_user
@@ -155,9 +159,14 @@ tests/stage2/             gate tests (pytest side)
 ## Wire protocol (frozen names; both sides implement exactly these)
 
 Python -> sidecar requests: `session.create {profile, part?, project_root,
-session_id?, resume?}`, `session.prompt {session_id, run_id, prompt, images?}`,
+session_id?, resume?}`, `session.prompt {session_id, run_id, prompt, images?,
+context?}` (`context` is §7A.4's workspace-context block, sent as its own
+user-role content block and recorded apart from `prompt` by §2.8(3)'s turn
+marker — never concatenated into `prompt`),
 `session.cancel {run_id}`, `session.compact {session_id}`, `history.page
-{session_id, cursor?}`, `query.snapshot {run_id, question, images}`,
+{session_id, cursor?, after?}` (`cursor` continues a frozen page walk, `after`
+is the tail read; both together are refused), `query.snapshot {run_id, question,
+images}`,
 `runtime.configure {providers, credentials}` (start-up only), `shutdown`.
 Sidecar -> Python requests: `py.tool_dispatch {session_id, run_id, tool,
 arguments, invocation}`, `py.jobstore_{get,put,list,delete,checkpoint}`,

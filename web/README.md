@@ -89,6 +89,31 @@ prefix, the socket its suffix, the boundary a **visible seam**, and a
 history — §2.7 is explicit that a dedupe across the two would never match
 (§2.7, §2.8, §8).
 
+**The prefix is segmented by turn before anything is grouped** (§8(f), amended
+2026-09-03). Every history event carries a `turn` ordinal and every
+`user_prompts` entry carries the same one, so `stream/transcript.ts` emits, per
+turn in ascending order: the `[data-row="user-prompt"]` row (identity
+`<session_id>@turn:<n>`), its `[data-row="turn-outcome"]` row when the record has
+one, then that turn's grouped rows. Consecutive text events never group across a
+turn boundary — that fusion is the defect the segmentation exists to end. Events
+carrying `turn: null` lead as a prologue with no prompt row; a sidecar too old to
+send `turn` falls back to segmenting at `user_prompts[].seq` by prompt index, and
+the two rules are never mixed within one page. **No run structure is
+reconstructed:** a turn is one thing the operator asked, a run is one live
+execution, and the prefix has only the first.
+
+**The seam says which boundary it is** (§7.4). `data-seam-kind` is `end` when
+this tab held the run below the seam from its first frame, and `mid-run` when it
+attached with the run already in progress — decided from held frames alone (a
+live run's `seq` starts at 0, so a first frame with `seq > 0` proves frames went
+by unseen), never from history.
+
+**The tail read is prefix material, and prompts fold by `turn`** (§8(h)). The
+panel retains a page's `end_cursor` and hands it back as `?after=` to read what
+was recorded since. Events never repeat; a **trailing zero-event turn does**,
+because it sits at the end mark and belongs to no later page — so tail output is
+folded into `user_prompts` **by `turn`, keeping the later copy**, never appended.
+
 **A tool chip never reads an unknown outcome as success.** `data-status` is
 `running | ok | error`, plus §7.2's own named fallback `unknown` for a historical
 result whose failure flag `normalizeEntries` could recover from neither Pi's

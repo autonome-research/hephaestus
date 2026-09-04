@@ -58,7 +58,10 @@ manifest pattern:
   on `tool_result` (§7.2, §19), without which a reopened transcript would
   render a failed tool as succeeded. AMENDED 2026-09-03: history pages also
   carry an additive `user_prompts` field (seq-stable; G4.11's event archive
-  is untouched) so a reopen can restore the operator's own turns.
+  is untouched) so a reopen can restore the operator's own turns — and, from
+  the second 2026-09-03 amendment, an additive `turn` ordinal on every event,
+  the operator's sentence separated from §7A.3's envelope, a turn's `outcome`,
+  and a tail-read request form (§2.8).
 
 It amends **nothing** in `script_contract.md`, `VALIDATION.md`, `ASSEMBLY.md`,
 `COMPARE.md`, `INGEST.md`, `EXTERNAL_EVAL.md`, or `KINEMATICS.md`: the
@@ -593,13 +596,61 @@ implementation happens to check".
 | Route | Returns |
 |---|---|
 | `GET /events` (WebSocket) | live normalized events (§2.7) |
-| `GET /sessions` | attachable sessions for the project |
-| `GET /sessions/{id}/history?cursor=` | `history_page` passthrough (§2.8) |
+| `GET /sessions` | attachable sessions for the project, each row marked readable or not (§2.8) |
+| `GET /sessions/{id}/history?cursor=` \| `?after=` | `history_page` passthrough; `after` is §2.8's tail read |
 | `GET /sessions/{id}/thread` | parent/child session edges (§2.8) |
 | `GET /git/status` | `{dirty[], clean, head, branch}` (§13.1) |
 | `GET /git/log?part=` | `[{sha, short, subject, author_date, tags[]}]` |
 | `GET /git/diff?part=&from=&to=` | bounded unified diff text |
 | `GET /git/tags` | `git tag -l` projection |
+
+**AMENDED 2026-09-03 — a listed session says whether it can be read.**
+`GET /sessions` is answered from the runtime's principal map, and nothing prunes
+it: one sidecar death leaves a row the panel keeps offering while
+`GET /sessions/{id}/history` answers `500` with no named reason, for a session
+whose transcript is intact on disk. Two things change and neither adds a route.
+First, the read path **re-adopts** — on a sidecar "unknown session" for an id the
+runtime holds a principal for, the server resumes that session once and retries
+(§2.8). Second, when the retry fails the session **stays listed and is marked**,
+because delisting it would erase a transcript that exists:
+
+```
+{session_id, profile, part, parent_session_id, thread_state,
+ readable: true | false,
+ unreadable_reason: null | "unknown_session" | "agent_unavailable"}
+```
+
+`readable` and `unreadable_reason` are **additive**, and `readable: true` means
+*not known to be unreadable* — stated that way because it is what the field can
+support. The listing never probes: probing would fan one `GET /sessions` out
+into one bridge call per session, and a list route that costs N round trips is a
+list route nobody calls. The mark is written when a call for that session
+actually failed after re-adoption, and cleared the moment one succeeds. The two
+reason names are exactly the two the session routes refuse by (§2.4), so a panel
+renders the same word whichever way it learns it — offering a row with its
+refusal named, rather than offering it as if it worked.
+
+**Where the mark lives, and why it is allowed to be forgotten.** It is a
+per-session mark with the retained `Principal`'s exact lifetime — same map, same
+lock, in memory — and a serving process that restarts starts with every row
+`readable: true`. *(RECONCILED 2026-09-03: an earlier draft of this paragraph
+said "a field **on** the retained `Principal`". It is held **beside** it —
+`BridgeRuntime._unreadable`, keyed by session id, written and read under the
+same `_lock` as `_principals` (`agent_bridge/app.py`) — and the spec is amended
+to the implementation rather than the other way round, because `Principal` is
+the **authz** identity `py.tool_dispatch` resolves a tool call against
+(`agent_bridge/dispatch.py`) and a cache of a read failure is not an authz fact.
+The observable listing shape is byte-identical either way, which is the only
+part of this a client can see.)* That is
+correct rather than a shortcut: the flag is a **cache of a failure**, not a fact
+about the transcript, and a new process has not tried yet. Its first read of
+that session re-adopts (§2.8(6)), which is the outcome the flag exists to spare
+the *repeat* caller — so the worst case of forgetting is one honest attempt, and
+the worst case of persisting it would be a session marked dead by a process that
+is gone. **Testable:** kill the sidecar, read a session's history, and the
+refusal's reason and that row's `unreadable_reason` are the same string; restore
+the sidecar, read again, and the row is `readable: true` with
+`unreadable_reason: null` without a restart.
 
 **Egress and credential reads — Stage 10A (§22) and Stage 10B (§23)**
 
@@ -673,6 +724,8 @@ HTTP status is a coarse envelope over the reason and never replaces it.
 | `session_busy`, `part_busy`, `key_expired`, `key_timestamp_skew`, `key_payload_mismatch` | 409 | full refusal payload verbatim |
 | snapshot ref past retention | 410 | `snapshot_expired` |
 | admission full (17th run) | 429 | `busy` |
+| **sidecar does not know a session the runtime lists, after one re-adoption attempt (§2.8)** | **404** | **`unknown_session`** + `{session_id}` |
+| **no sidecar can serve a session route — none attached, or one that cannot be started** | **503** | **`agent_unavailable`** + §7A.8's `cause` and `detail` (no `config_path` — see below) |
 | `TIMEOUT` / `PROCESS_DOWN` | 504 / 503 | reason verbatim |
 | **edit / param CAS conflict** | **200** | not an error — the discriminated result carrying `conflict{…}` |
 | **`capability_not_available` / `image_model_required`** | **200** | the discriminated `capability_error` *result* |
@@ -697,6 +750,44 @@ payload refusal, which is the one REST raises. MCP's own reason for that
 condition is the differently-named `idempotency_key_reuse`
 (`mcp/idempotency.py`:194); the two transports keep their own strings and
 neither is rewritten to match the other.
+
+**AMENDED 2026-09-03 — the two session refusals, and when each fires.** Both
+rows above name a condition that until now reached the client as an unnamed
+`500`: `SupervisorError` matched no branch in `refusal_for` and was re-raised
+(`http/errors.py`), so the panel rendered "The recorded transcript could not be
+read." forever over a session with 29 KB of intact conversation on disk. A
+refusal with no name is a refusal a client cannot act on, and this table exists
+to make that impossible.
+
+* **`unknown_session` (404)** fires on any session route that reaches the
+  sidecar with a session id — `history`, `prompt`, `cancel`, `answer`,
+  `compact` — when the sidecar answers `INVALID_PARAMS` naming an unknown
+  session **and** §2.8's single re-adoption attempt did not recover it, or when
+  the runtime holds no principal for the id at all. It is an addressing miss and
+  nothing more: the transcript may be perfectly intact on disk. `status_for_reason`'s
+  `unknown_…` family already returns 404, so this row records the status rather
+  than inventing it, and `web/src/stream/sessionPromptGate.ts` gains a real
+  server-side producer for the branch it has always handled.
+* **`agent_unavailable` (503)** is §7A.8's existing refusal, unchanged in
+  meaning and now reached by one more path: a sidecar that has died and cannot
+  be restarted to serve the read. Its `cause` for that path is `sidecar_failed`,
+  which is already in §7A.8's closed set — the vocabulary does not widen.
+  **RECONCILED 2026-09-03 — this path's body carries `cause` and `detail` and
+  deliberately NOT `config_path`,** which §7A.8's own attach refusal does carry.
+  The row above is corrected to say so. `http/errors.py` never opens the
+  providers file and the refusal is raised from a layer that holds no
+  `ProvidersState` handle, so the only way to fill the key here would be to copy
+  a value from elsewhere that this refusal cannot keep in sync — and a stale
+  `config_path` is worse than an absent one, because a client would act on it. A
+  client that reached a session route has already attached (§7A.8) and holds the
+  path from the answer that matters. **A consumer must therefore treat
+  `config_path` as present on the attach refusal and absent on this one**, not
+  as a guaranteed member of every `agent_unavailable` body.
+
+**The two are never collapsed.** `unknown_session` says *this session*;
+`agent_unavailable` says *this runtime*. They have different remedies (open
+another session versus fix the runtime), and a client that could not tell them
+apart would offer the wrong one.
 
 **TIGHTENING (binds G5.15).** The five-value `StaleReason` vocabulary is closed
 and must not be collapsed. `malformed` — which no gate clause names — is
@@ -954,6 +1045,15 @@ it changes what the archive is an archive *of*. No G4/G5 clause asks for a
 gap-healing resync, so buying that re-baseline here would be scope this stage
 did not earn. It is named in §21 as a risk, not smuggled in as an assumption.
 
+**The 2026-09-03 `turn` ordinal is not that rejected alternative, and the
+rejection stands.** §2.8 adds a **turn** ordinal to history — the index of the
+user message a recorded event belongs to. It reconstructs no run id, mints no
+per-run seq, moves no existing identity, and does nothing to make the two
+namespaces comparable: a history page still has no runs in it, and the client is
+still forbidden from healing a live gap from history. What it buys is the
+boundary a reopened transcript needs to render turn by turn (§8), which is a
+different problem from the one the paragraph above declines to solve.
+
 **Honest cost of a resync, stated as the surface actually supports it.** An
 earlier draft claimed "durable kinds are not lost". That is false, and it is
 the kind of overclaim §4.4 and §15 police elsewhere. `normalizeEntries` emits
@@ -1028,6 +1128,345 @@ matches render goldens: a re-baseline is its own PR carrying the normalization
 change that caused it. The e2e asserts the reopened transcript's IDs equal the
 archive **across a sidecar restart**, because restart-stability is the property
 the archive exists to defend.
+
+**AMENDED 2026-09-03 — the record gains a turn, and the page gains a tail.**
+*(The 2026-09-02 reproduction: a recorded three-turn chat reopened as prompt #1,
+one merged bubble carrying all three replies, then prompts #2 and #3 with
+nothing under them. The client's grouping was wrong and §8 fixes it — but the
+wire it grouped over carried no turn boundary to group by.* `normalizeEntries`
+*strips user messages out of the event array, and the only surrogate boundary —*
+`user_prompts[].seq` *— borrows the* **next** *event's seq, so it is non-unique
+when a turn produced nothing and absent entirely for a user message with no text
+part. Five things change. All are additive: no event kind is minted, no* `seq`
+*moves, and no page boundary moves.)*
+
+**(1) `turn` — an ordinal on every history event.** Every event on a history
+page carries `turn: <int> | null` — the **0-based index of the user message
+whose turn recorded it**, counted over the frozen entry slice. It is
+deterministic from that slice alone, so it is restart-stable for exactly the
+reason `seq` is, and it needs nothing written on disk: counting user messages is
+a property of the record, not a new fact about it. `null` — not `-1`, not `0` —
+for an event recorded **before the session's first user message** (a leading
+compaction audit, an entry written before anyone typed). A client renders those
+as a prologue with no prompt row; folding them into turn 0 would put output
+above the prompt that did not cause it, which is the whole defect this field
+exists to end.
+
+**Additive costs nothing here, and that was measured rather than assumed.**
+G4.11's archive projects a fixed key set — `event_id, session_id, page, seq,
+kind`, plus `tool_call_id` and `payload` when present
+(`tests/stage4/test_g4_event_archive.py`:98-106) — and drops every other key, so
+`turn` needs **no re-baseline**. What *would* re-baseline it is a change to
+`seq` numbering or to page boundaries, and this amendment makes neither.
+
+**`turn` is a field of the history page and of nothing else.** It never appears
+on a live frame. §2.7's frame vocabulary is closed and a turn is not a live
+fact: a run in flight has no recorded position to count to, and putting the
+field on the socket would hand every observer tab a second structure to group
+by across the §8 seam — the exact merge this document has refused twice. The
+implementation trap is named because it is one line wide: `wireEvent`
+(`agent/src/session/live.ts`:153) serves **both** the live `notify("event", …)`
+path (`main.ts`:85) and the history page's `page.events.map(wireEvent)`
+(`main.ts`:689), so stamping `turn` inside it would put the field on the wire in
+both directions. The history handler adds it **after** `wireEvent`, or through a
+history-only projection; `wireEvent` itself is unchanged. **Testable:** no frame
+delivered over `GET /events` carries a `turn` key, and every event on a history
+page carries one.
+
+**(2) A recorded prompt gains its own identity.** `user_prompts` entries become:
+
+```
+{turn:     <int>,            # 0-based, unique, strictly increasing in a session
+ seq:      <int>,            # unchanged: the ordinal of this turn's first event
+ text:     <string|null>,    # the operator's typed sentence, and nothing else
+ envelope: <string|null>,    # §7A.3's workspace-context block, when one was sent
+ outcome?: {state: "cancelled" | "error" | "interrupted", message?: <string>}}
+```
+
+**Every user message yields exactly one entry** — including a textless one
+(`text: null`) and a turn that produced zero events. That is the clause the old
+shape broke twice: a user message with no text part produced no entry at all,
+and two prompts around a silent turn shared one `seq`.
+
+- **`turn` is the identity.** `seq` is retained with its meaning unchanged,
+  because it is still the right key for ordering a prompt against events and
+  because the shipped client reads it — but it is explicitly **not unique** and
+  must never be used as an identity.
+- **`text` is the operator's own words and nothing else**, `null` when they are
+  not recoverable. Never a guess, and never the envelope wearing the operator's
+  name.
+- **`envelope` is the server's projection** (§7A.3), verbatim, `null` when the
+  turn carried none. It is not an event (§15.10 stands), it is not a second
+  prompt, and §7.3 says how it renders: behind a disclosure labelled as the
+  server's projection.
+- **`outcome` is absent for a turn that completed** and present for one that did
+  not, with a state from the closed triple: `cancelled` (the operator cancelled
+  it), `error` (it failed), and `interrupted` — *(RECONCILED 2026-09-03: an
+  earlier draft glossed `interrupted` as "the process died mid-turn, so no end
+  was recorded". That is one of its cases, not its definition, and the shipped
+  projection is wider. `interrupted` is the honest word for **the turn stopped
+  without finishing and the record names no better reason**: a process that died
+  mid-turn, a turn cut off at the model's output limit, a stop reason a future Pi
+  adds that this build has never heard of. It is the residual of (4)'s mapping,
+  and it is deliberately a residual rather than a guess — the alternative is
+  either inventing a fourth state per unknown reason or silently relabelling an
+  unfinished turn as complete.)* Absence means completed; it never means unknown,
+  and (4) states what makes that true.
+
+**(3) How the operator's words are recovered — and the one recovery that is
+forbidden.** Pi admits no genuinely separate second user-role text block:
+`AgentSession.sendUserMessage` joins a content array's text parts with `"\n"`
+and persists **one** text part (§7A.4's DEVIATION, verified on disk as a single
+588-character part). For a context-carrying turn the operator's sentence is
+therefore not separable from the envelope by reading the message back, and
+`user_prompts[].text` has been returning the whole `# Workspace context…` wall
+as if the operator had typed it — which then became the session tab's label and
+the document title on reload. The separation is **recorded at prompt time**
+instead: the sidecar appends a Pi `CustomEntry`
+(`sessionManager.appendCustomEntry`, `session-manager.d.ts`:219-220) with
+`customType` `hephaestus.turn.v1` and `data` `{turn, text, envelope}`,
+immediately before the user message it describes. A custom entry is excluded
+from LLM context by construction (same file, :56-63) and lives in the same
+JSONL, so it survives resume and keeps order.
+
+- **Binding.** A marker binds to the **next** user message entry after it. Its
+  own `turn` field is informational; on any disagreement the **positional count
+  wins**, because the count is deterministic from the frozen slice and a written
+  field is not. Any *other* entry arriving in between orphans it — the marker is
+  appended immediately before `sendUserMessage`, so anything else first means
+  this marker does not describe the next prompt. **ADDED 2026-09-03, the
+  invariant that keeps this safe, written down because it is invisible:** the
+  binding is correct only while **one** code path writes user messages to a
+  session. Today that holds — the prompt handler appends the marker and then
+  sends, and an orphaned marker (a send that threw before Pi persisted) is
+  harmless because the next prompt overwrites it before any user message
+  arrives. The day a **second** writer appears — a slash command, a hook, a
+  second retry site — a user message can reach the session with no marker of its
+  own while an orphan is pending, and turn N+1 renders turn N's sentence with
+  nothing failing anywhere. A second writer is therefore required to append its
+  own marker, and that requirement wants an assertion the day one lands.
+- **Both walks must skip it, and that is pinned rather than assumed.** A custom
+  entry is neither `message` nor `compaction`, so `normalizeEntries` and
+  `extractUserPrompts` already ignore it and no `seq` moves. The two walks
+  mirror each other's accounting, and mirrored accounting is exactly the kind of
+  thing that breaks silently — so a test asserts that appending markers changes
+  no event identity, and the G4.11 gate is run against an unmodified golden.
+- **Legacy fallback, per turn and not per session.** A user message with no
+  marker before it — every session that predates this change, and any turn whose
+  marker a compaction or a branch dropped — falls back to today's behaviour:
+  `text` is the whole joined text, `envelope` is `null`, `outcome` follows (4),
+  and `turn` is still the positional count. A legacy page is therefore exactly
+  today's page **plus** turn ordinals, which is what makes §8's segmentation
+  correct for records that will outnumber marked ones for a long time.
+- **Forbidden: recovering the sentence from a legacy record by stripping the
+  `# Workspace context` heading**, or any other regex over the block. The
+  block's tail is application-state dependent (`http/context.py`:377-379), so
+  there is no reliable terminator; a rule that guesses where the projection ends
+  would put the server's words in the operator's mouth some of the time and
+  never say which times. `text: null` is available and is the honest answer;
+  the fused legacy string is the second-most honest one. A guess is not on the
+  list.
+
+**RECONCILED 2026-09-03 — the one user message the operator did not write, and
+this clause does not yet cover it.** The single automatic transient retry
+(`agent/src/session/retry.ts`, EXTERNAL_EVAL.md §5) re-prompts the session with
+a sentence the **sidecar** composed: *"Your previous turn failed with a transient
+provider error; continue."* On a context-carrying turn it re-sends the workspace
+envelope with it. That is a real user-role entry on disk, so `walkEntries` counts
+it as a turn and (2)'s "every user message yields exactly one entry" produces a
+`user_prompts` row for it — with no marker before it, so it takes the legacy
+path, and §7.3(a) then renders the house word `operator` beside a sentence no
+operator typed. **This is a known divergence, recorded rather than papered over:
+the surface is shipped and this behaviour is what it does today.**
+
+The rule, once it is built: a user message the sidecar itself injected carries a
+marker that **says so**, and the discriminator is a new field rather than a new
+meaning for an old one. `hephaestus.turn.v1`'s `data` gains an optional
+`origin: "operator" | "agent"` — absent meaning `operator`, so every marker
+already on disk keeps exactly the meaning it has — and `user_prompts[]` projects
+the same optional field through. §7.3(a) then chooses the marker word from
+`origin` instead of assuming one, and the row renders the sentence honestly as
+the sidecar's.
+
+Two cheaper-looking answers are wrong and are named so they are not tried.
+**Suppressing the entry** breaks (2)'s exactly-one-entry rule and re-opens the
+hole where a turn's events have no prompt above them. **`text: null` alone**
+spends (2)'s `null`, which means *this record could not recover the sentence*, on
+a record that is complete and simply is not the operator's — two different facts
+that §7.3 must be able to render differently, collapsed into one word.
+
+Until that lands, a client reading a retry turn sees an operator row carrying the
+sidecar's continuation sentence. Naming the shape here is what stops the fix from
+being improvised at three boundaries independently; §21 carries it as a risk.
+
+**(4) A turn's outcome, from two sources named in order.** Pi persists
+`stopReason` and `errorMessage` on the assistant entry — a cancelled run's entry
+carries `stopReason: "aborted"` and `errorMessage: "Request was aborted"`
+alongside its partial content — while the sidecar's Pi-boundary adapter declares
+only `{role, content}`. So today a cancelled turn reopens rendered identically
+to a completed one and a truncated answer looks finished, which is a
+silently-dropped state of exactly the kind §7.2's `isError` recovery was
+corrected for. `outcome` is projected from, in this order:
+
+1. the turn's last assistant entry's `stopReason` / `errorMessage` — the branch
+   that works for every session **already on disk**, and the reason this is not
+   gated on markers;
+2. a sidecar-appended `hephaestus.turn_outcome.v1` custom entry
+   `{turn, state, message?}`, for a turn that ended with **no assistant entry at
+   all** — cancelled before the model answered, or failed before the first token
+   — where there is nothing on disk to read.
+
+A turn with neither carries no `outcome` and renders as completed. That is the
+only honest reading of a record that says nothing, and it is why (2)'s absence
+rule can mean *completed* rather than *unknown*.
+
+**RECONCILED 2026-09-03 — the `stopReason` mapping is pinned here rather than
+left to the implementation.** It shipped as one, a test pins it
+(`agent/test/session/history.test.ts`), and a mapping a test guards but no
+document states is a mapping that drifts on the next Pi upgrade with nothing to
+appeal to. Source (i), exactly:
+
+| persisted `stopReason` | projected `state` |
+|---|---|
+| `"stop"`, or no `stopReason` recorded at all | *(no `outcome` — the turn completed)* |
+| `"aborted"` | `cancelled` |
+| `"error"` | `error` |
+| anything else (`"length"`, `"toolUse"`, any reason a future Pi adds) | `interrupted` |
+
+`errorMessage` becomes `outcome.message` when it is a non-empty string and is
+omitted otherwise; a `message` is never synthesized from the state word, because
+§7.3(c) renders the house sentence and the record's own message side by side and
+a fabricated one would read as testimony. **The residual is the last row and it
+is deliberate:** an unrecognized stop reason resolves to `interrupted`, never to
+absence. Defaulting an unknown reason to "completed" would relabel an unfinished
+turn as finished — the exact silently-dropped state this clause exists to end —
+and minting a new state per unknown reason would make the closed triple open.
+
+**Source (ii) writes only `cancelled` or `error`, and never `interrupted`.**
+The marker is appended by the process that ran the turn, at the moment the run
+ends (`agent/src/main.ts`), so it is written from a `state` that is already known
+to be one of the two: a run that reached the append is a run whose end this
+process observed. `interrupted` is precisely the case where **no** end was
+observed, so there is nobody left to write the marker — it can only ever arrive
+through source (i)'s residual row. Stated because the two sources are otherwise
+symmetric and a reader would reasonably expect the marker to carry all three.
+
+**Source (i) wins whenever the turn has an assistant entry, and that ordering
+is load-bearing.** A cancel that raced a turn the model actually finished would
+otherwise relabel a completed turn from the marker, which is the same class of
+lie in the other direction.
+
+**(5) The tail read.** `history.page` gains an `after` request form, so a client
+can read what has been recorded **since what it already holds** without
+re-walking the session:
+
+```
+request:  {}                    first page — freeze a high-water mark at the last entry
+          {cursor: <token>}     continue inside that frozen snapshot        (unchanged)
+          {after:  <token>}     TAIL — freeze a NEW mark now, start at the ordinal named
+response: {events[], user_prompts[], cursor: <token>|null, done: <bool>,
+           end_cursor: <token>}
+```
+
+`end_cursor` is **always present and never null** — on every page, including the
+last — and names the ordinal after this page's last event. That is the durable
+end this section did not previously have: a completed walk returned
+`cursor: null` and left the client no token to resume from, so the only way to
+see a newly recorded turn was to re-walk and re-normalize the entire session.
+`cursor` keeps its exact meaning, `null` **iff** `done`, so nothing shipped
+moves.
+
+- Both tokens are opaque base64url, forwarded and returned unmodified — the
+  passthrough rule above is unchanged, and neither is ever decoded outside the
+  sidecar. Sending **both** `cursor` and `after` is refused `invalid_cursor`
+  (400, §2.4) rather than letting one silently win — and **RECONCILED
+  2026-09-03, the refusal has two producers and only one of them can make the
+  400.** `WorkspaceSessions.history` (`http/sessions.py`) raises it before the
+  bridge is touched, and that is the primary: it is the only layer that can spell
+  a §2.4 status. The sidecar refuses the same pair with an `INVALID_PARAMS`
+  `RpcError` (`agent/src/main.ts`) and is the **backstop** — for the day a new
+  caller forgets, and for `heph agent`, which does not pass through the HTTP
+  layer at all. The two are not required to share a message string and do not:
+  the wire contract is the reason token and the status, not the prose.
+- **Spelled the same at all three boundaries.** HTTP:
+  `GET /sessions/{id}/history?cursor=` **or** `?after=`, still with no page-size
+  parameter and still a passthrough — the route forwards whichever it was given
+  and returns the sidecar's document under the existing
+  `{status, session_id, …}` envelope. JSON-RPC `history.page`: `{session_id,
+  cursor?, after?}`. Inside the sidecar the `HistoryPage` value adds
+  `endCursor`, projected to `end_cursor` on the wire like every other
+  camel/snake pair at that boundary. The response document is therefore
+  `{status, session_id, events[], user_prompts[], cursor, done, end_cursor}` —
+  the first six exactly as shipped.
+- **Prior identities are unchanged, and that is a property of the record rather
+  than a promise this clause makes.** A historical `seq` is a session-cumulative
+  ordinal over an append-only log, so an event's ordinal cannot move as the
+  session grows: a tail read re-normalizes from entry zero and slices, and every
+  event it returns carries the identity it always had. `turn` is stable for the
+  same reason.
+- A tail read that finds more than one page of new events returns a `cursor` and
+  is walked exactly like a first page; the frozen-mark guarantee holds over the
+  newly frozen mark. An `after` beyond the current end returns no events,
+  `done: true`, and the same `end_cursor` it was given — byte-identical, so a
+  polling client's end mark is stable while the session is quiet.
+- **RECONCILED 2026-09-03 — `user_prompts` is NOT disjoint across a walk and its
+  tail, and a client must fold by `turn`.** A page carries the prompts whose
+  `seq` falls in it, and the last page of a walk also carries any prompt sitting
+  **at** the end mark — a trailing turn that has produced no events yet has
+  `seq === <total events>` and belongs to no later page. A subsequent `after`
+  read at that same mark returns it again. This is deliberate and it is the
+  price of (2)'s rule that a zero-event turn still reaches the client: there is
+  no ordinal that separates "already delivered" from "new" for a turn that has
+  minted no ordinal. **Events never repeat** — they are sliced by ordinal — so
+  the obligation is narrow and it is stated as an obligation: a client folding
+  tail output into a walk **deduplicates `user_prompts` by `turn`**, which is
+  exactly what §2.8(2) made the identity, and takes the **later** copy, since a
+  turn that has since acquired an `outcome` or events is the same turn better
+  known.
+- **It is a history read and it stays one.** §2.7's rule is untouched: history is
+  pre-attach backfill and is **never** used to close a live gap. §8 states the
+  one way a client may fold a finished run into its prefix, and what it must
+  drop first.
+
+**(6) A session the runtime lists must be readable, or refused by name.**
+`GET /sessions` is answered from the Python principal map; `history.page` needs
+the **sidecar's** own map, which a respawn leaves empty because the spawn hook
+replays only `runtime.configure`. One sidecar death therefore turned a session's
+history into a permanent, unnamed `500` while the panel went on offering the tab.
+Normative: on a sidecar "unknown session" for an id the runtime holds a principal
+for, the server **resumes that session once and retries the call**. If the retry
+succeeds the client never learns anything happened — which is the point, since
+`resume_session` already exists and until now had no production caller. If it
+fails, the route refuses `404 unknown_session` and the listing marks that row
+`readable: false` with the same reason (§2.3); if no sidecar can be reached or
+started, it is `503 agent_unavailable` with §7A.8's `cause`. **No route returns
+an unnamed `500` for a session the runtime lists**, and the retry is **once**:
+a re-adoption loop over a genuinely dead session would turn every history read
+into a spawn storm.
+
+**RECONCILED 2026-09-03 — what "once" counts, because "once per failure" is not
+enough.** *Once* is **once per (session, sidecar generation)**: the attempt is
+keyed on the supervisor's child generation (`Supervisor.spawn_count`), so a
+session gets one re-adoption against each child that has ever failed to know it,
+and a fresh child — a respawn, a restart — earns a fresh attempt, which is
+correct because a new process really has not tried. Two further rules, both
+because the clause exists to prevent a spawn storm and neither is implied by the
+word alone:
+
+* **Concurrent readers share one attempt.** The attempt is taken under a
+  per-session lock, so N simultaneous history reads of a dead session make one
+  re-adoption between them rather than N. "Once per failure" would have made N
+  concurrent failures N attempts, which is the storm this clause forbids, spelled
+  as compliance.
+* **The attempt is recorded before it runs.** A re-adoption that itself fails
+  consumes the session's attempt for that generation. The alternative — charging
+  only successes — makes a permanently-failing resume retry forever, which is the
+  same storm reached by the other door.
+
+The consequence a client can see: after a sidecar death, the **first** read of a
+given session may be slow (it spawns and resumes) and every later read of that
+same session against that same child refuses immediately by name. Restoring the
+sidecar clears the mark on the next successful call (§2.3), with no restart.
 
 **NEW WORK (binds G4.10) — parent/child threading.** `HephaestusEvent` carries
 no parent linkage, `history.page` is per-session, and a quick-edit child is a
@@ -1180,7 +1619,8 @@ Five, ordered; a later one never overrides an earlier one.
 ```
 web/src/system/
   tokens.css          palette + semantic layer (§3.6, §3.9)
-  type.module.css     the seven type roles (§3.8)
+  type.module.css     the seven type roles, plus the three prose-heading
+                      roles the transcript's markdown projects into (§3.8)
   icons.tsx           the closed sprite (§3.12)
   Badge · Button · Chip · DataTable · Field · Panel · TabBar
   TreeRow · Input · Popover · EmptyState        (.tsx + .module.css each)
@@ -1247,7 +1687,7 @@ components actually reference: `--pad-panel`, `--pad-panel-header`, `--pad-row`,
 geometric offset it names in a comment. This is the difference between "12px
 because that's the rhythm" and "12px because I typed it".
 
-### 3.8 Type — seven roles, and 11px is confined to one of them
+### 3.8 Type — seven roles (plus three for prose), and 11px is confined to one of them
 
 Faces are unchanged. The five `--size-*` tokens become palette-layer and
 private; the public API is seven role classes consumed with `composes:`:
@@ -1261,6 +1701,34 @@ private; the public API is seven role classes consumed with `composes:`:
 | `.data` | 12 / 500 | mono, `tabular-nums` | every number the user reads |
 | `.code` | 12 / 400 | mono | refs, hashes, selectors, script, tool names |
 | `.eyebrow` | 11 / 600, `0.08em`, uppercase | ui | section eyebrows above a group |
+
+**AMENDED 2026-09-03 — three PROSE-HEADING roles, and the section title is now
+"seven roles plus three for prose".** §7.3's transcript renders the model's (and
+the operator's) own markdown, which can contain six heading levels, and the
+seven roles above have no member a `#` may become: `.title` is a *panel* header
+and `.eyebrow` is the one rung below body size. Three roles, added to this table
+because it is the normative artefact:
+
+| Role | Size / weight | Face | Used for |
+|---|---|---|---|
+| `.proseH1` | 15 / 600 | ui | markdown `#` in transcript prose |
+| `.proseH2` | 13 / 600 | ui | markdown `##` |
+| `.proseH3` | 13 / 600, `0.06em`, uppercase | ui | markdown `###` **and every level below** |
+
+They are not three new voices: they spend two steps the ramp already owns (15 and
+13) and separate `##` from `###` with **weight and case rather than a size the
+ramp does not have**. The last column of the third row is the rule that makes it
+coherent — **markdown levels 4 through 6 map onto `.proseH3`** rather than being
+dropped or shrunk, because the TIGHTENING below reserves the one step under body
+size for `.eyebrow`, and a heading smaller than the prose it introduces is not a
+heading. The three roles also own their `margin-block`, which is a widening of
+what a type role usually declares and is deliberate: a browser's default heading
+margin is a multiple of the heading's **own** font-size, so leaving the defaults
+gives the deepest, smallest heading the widest gap — this ramp inverted by a
+default nobody chose. (Precedent: `.code` already owns its `word-break` for the
+same kind of reason.) These roles are for **prose**; a panel header is still
+`.title`, and §7.3's transcript is the one surface where the author of the words
+decides where a heading goes.
 
 **TIGHTENING (binds §3, no gate clause): 11px may appear only inside
 `.eyebrow`**, checked mechanically. This one rule converts the shipped 65-of-91
@@ -1369,6 +1837,32 @@ reports, 3px acts.**
 readout, `--border-control` for every interactive control **and only** for
 interactive controls. This is the mechanical form of principle 3, and it is the
 rule the shipped `.toggle`/`.state` pair violates byte-for-byte.
+
+**AMENDED 2026-09-03 — the fourth case the three line tokens cannot serve: a
+rule that CARRIES MEANING and is not a control.** §7.3(a) asks the restored
+operator turn for a resting affordance that is not colour and not an attribute,
+and the obvious answer — an inline-start rule — has nowhere legible to draw
+from. Measured against the live panel ground (`#161a20`): `--border` is
+**1.26:1** and `--border-strong` is **1.75:1**, and §3.13(1) puts meaning-carrying
+non-text UI at **≥ 3:1** against its own surface. The only line token that clears
+it is `--border-control` at **5.01:1**, and spending that on a transcript row
+would promise a control that is not there — the border form of §3.9's C28.
+Normative, and narrow: **a rule that carries meaning and is not interactive is
+drawn in an ink, not in a line token** — `--ink-muted` (7.01:1 on panel) is the
+one this surface uses. An ink promises nothing about interactivity, which is
+exactly the property needed, and it clears the floor with room. The three line
+tokens keep their meanings unchanged and none of them widens.
+
+*Two consequences, stated rather than left to be discovered. (i) The distinction
+must then be carried by **geometry**, since two rows drawn in the same ink at the
+same weight are two rows with no rule: §7.3's operator turn is a 2px solid
+inline-start rule plus an indent — a speaker — and the reasoning aside is a 1px
+dashed hairline — an aside. (ii) This clause does **not** retroactively convict
+every decorative hairline in the tree. A `--border-strong` line beside a labelled
+control is decoration next to a thing that already says what it is; the floor
+binds a line that is **the only** carrier of a fact. §3.14's checks are not
+extended to sweep for this, because a mechanical check cannot tell the two
+apart — the reasoning belongs at the declaration, and it is written there.*
 
 **Focus.** `:focus-visible { outline: 2px solid var(--focus-ring);
 outline-offset: 2px }`, up from the shipped 1px so a ring on a control sitting
@@ -2911,12 +3405,52 @@ not the counter.
 ### 7.3 Kinds
 
 - `text_delta` → streamed assistant text, **markdown-rendered** in the
-  transcript (headings, lists, fenced code, bold, http(s) links). The same
-  sanitizing renderer shapes operator prompt echoes and restored
-  `user-prompt` rows. Tool-chip JSON is never passed through it. House copy
-  stays in `copy.ts`; the renderer only shapes the model's (and the
+  transcript. The same sanitizing renderer shapes operator prompt echoes and
+  restored `user-prompt` rows. Tool-chip JSON is never passed through it. House
+  copy stays in `copy.ts`; the renderer only shapes the model's (and the
   operator's) own words.
+  - **RECONCILED 2026-09-03 — the shipped vocabulary is wider than the four
+    examples this bullet used to list** ("headings, lists, fenced code, bold,
+    http(s) links"), and a list a reader treats as exhaustive should be either
+    exhaustive or absent. It is: ATX headings `#`..`######`, paragraphs, fenced
+    **and** indented code, bullet and ordered lists nested by indentation,
+    blockquotes, GFM pipe tables, thematic breaks, hard breaks (two trailing
+    spaces or a trailing backslash), `**strong**`, `*emphasis*`, `~~strike~~`,
+    code spans, backslash escapes, and http(s) links
+    (`web/src/stream/markdown.tsx`, whose header comment is the authority and
+    carries the reasoning).
+  - **What it deliberately does not understand, so a gap report is not filed
+    against a decision.** Raw HTML is never *stripped* because it is never
+    *parsed* — `<script>` is four punctuation marks and a word and renders as
+    those characters, which is a structural boundary rather than a configured
+    one. `![alt](src)` renders as its own characters and never becomes an
+    `<img>`: a transcript that fetched a remote byte because a model wrote a URL
+    would make a different privacy claim than the one §7.3 makes for `image`
+    events. Reference links and setext headings are out too — a model writes
+    `##`, and a rule that guessed at `---` under a line would eat the thematic
+    break that line actually is.
+  - **The one option, and it is the operator/model difference.** Agent prose
+    follows markdown's rule that a soft line break is a space: a model hard-wraps
+    its own paragraphs, and honouring those wraps would re-ragged every reply at
+    whatever column the model chose. The operator's rows — the `local-prompt`
+    echo and the restored `user-prompt` — pass `preserveLineBreaks`, because a
+    person who pressed Return meant it and their line breaks are content. One
+    flag rather than two renderers, so the sanitizing half cannot diverge
+    between them. §3.8 carries the three prose-heading type roles this renderer
+    projects into.
 - `thought` → collapsed `ThoughtSection`, expandable, `data-event-id` present.
+  **AMENDED 2026-09-03 — an empty reasoning run is a named absence, not an empty
+  disclosure.** The sidecar already drops a zero-length `thinking` delta at the
+  source (`agent/src/session/history.ts`), so this is the client's defensive
+  floor for whatever arrives anyway: when a `thought` run's joined text is empty
+  the body renders `copy.stream.thoughtEmpty` marked `data-thought-empty="1"`
+  instead of markdown. **The row is not replaced and its identity is not
+  dropped** — `[data-thought]` still renders and still carries its
+  `data-event-id`, because §7.2's grouping never eats an identity and G4.11's
+  archive match is over exactly those ids. It is deliberately **not** spelled as
+  a `[data-absence]` value: that attribute's vocabulary is pinned to exactly
+  `["terminal", "user_prompt"]` and several clauses assert it is absent from a
+  reopened transcript, so a third value there would break both.
 - `image` → **live**: decoded from the event's base64 with its `mimeType` and
   shown inline; an oversized or undecodable payload renders a labelled
   placeholder and never throws (the CLI's precedent). This is §0's deficit
@@ -2972,7 +3506,15 @@ dropped its id — exactly the information loss the match exists to catch)* —
 **the archive matcher skips exactly `[data-row="local-prompt"]` and
 `[data-row="run-start"]`, by name; any other `[data-row]` element that
 carries no event id is a mismatch**, and a presentation row that carries an
-event id is a build error (the guard cuts both ways). It never enters
+event id is a build error (the guard cuts both ways). *(AMENDED 2026-09-03 —
+the two names above were the two this **category** defines, and the shipped
+matcher has always skipped five: `web/e2e/stream.spec.ts`:202 names
+`local-prompt`, `run-start`, `absence`, `seam`, `resync`, because a notice, a
+seam and a resync break are id-less chrome that were never events either. The
+list is stated once, here, and it is those five plus §8(f)'s `turn-outcome`.
+The rule the sentence exists for is untouched and is the whole point: the skip
+is **by name**, never by "has no id", so a real event row that dropped its id
+still fails the match.)* It never enters
 history, never crosses the wire, and **states its own nature on its visible
 face, not on `title` alone**: each presentation row renders a visible-at-rest
 marker word in `.code` at `--ink-muted` (the echo row's marker reads
@@ -3035,9 +3577,41 @@ boundary events may have been lost — and derivation restarts from the frames
 after it.
 
 **The negative halves:** none is minted within a
-run; none is reconstructed from history (a reopened transcript's run structure
-is the §2.8 ordinal namespace, which has no runs to mark); and the row draws
-the run id in `.code` and nothing else — it is a rule line, not a card.
+run; ~~none is reconstructed from history (a reopened transcript's run structure
+is the §2.8 ordinal namespace, which has no runs to mark)~~ *(the parenthesis is
+STRUCK 2026-09-03 and replaced by the two clauses below; the rule it qualified
+survives as clause 2)*; and the row draws the run id in `.code` and nothing
+else — it is a rule line, not a card.
+
+**AMENDED 2026-09-03 — turn structure is not run structure, and history has the
+first.** The struck parenthesis was read as licence to render a reopened
+transcript as one undifferentiated stream, and that reading is what the
+2026-09-02 reproduction caught: three recorded turns fused into a single reply
+bubble with two prompts orphaned beneath it. Two different claims were riding on
+one sentence, and they are now stated apart.
+
+1. **A reopened transcript's turn structure IS rendered, from the record.**
+   §2.8's `turn` ordinal rides on every history event and on every
+   `user_prompts` entry, so the history prefix is **segmented by turn before
+   anything is grouped**: in ascending turn order, that turn's
+   `[data-row="user-prompt"]` row, then that turn's own rows, then the next
+   turn. Events carrying `turn: null` precede turn 0 as a prologue with no
+   prompt row. This is reading a field the sidecar sent, not deriving structure
+   from payloads (§1) — the client computes nothing the record does not state,
+   which is precisely why §2.8 puts the ordinal on the wire instead of leaving
+   the client to infer boundaries from `seq` arithmetic.
+2. **Live run identity is still never minted from history.** No
+   `[data-row="run-start"]` row is reconstructed in the history prefix, no
+   `run_id` is invented for a historical event, and the two identity namespaces
+   stay disjoint (§2.8). A **turn** is a record of one thing the operator asked;
+   a **run** is one live execution. A history page has the first and does not
+   have the second, and a client that spelled one as the other would be
+   inventing the very identity §2.7 refused to buy.
+
+**Testable:** a session recorded as three prompt/reply turns reopens as six rows
+in strict alternation, each reply under the prompt that produced it; the same
+transcript renders zero `[data-row="run-start"]` elements and no rendered
+historical `data-event-id` contains the live separator `#`.
 **Testable, both members:** across any transcript, every `[data-row="local-prompt"]`
 and `[data-row="run-start"]` element carries no `data-event-id`; the §7.2 id-set
 equality passes on a transcript containing both; two consecutive runs in
@@ -3046,6 +3620,141 @@ one live session render, **in the originating tab**, exactly two
 echo-licensed, the second by comparison); and an observer tab attached mid-run
 renders no `[data-row="run-start"]` row until the next run change, then
 exactly one per change.
+
+**AMENDED 2026-09-03 — the restored operator turn, and the three things it must
+show.** `[data-row="user-prompt"]` is a **recorded** row, not a presentation row:
+it is testimony the sidecar sent in §2.8's `user_prompts`, it carries a
+historical identity, and none of the C2/C21 category rules reach it. What the
+2026-09-02 reproduction found is that the row nevertheless renders as an
+undifferentiated paragraph — typographically identical to the agent's reply, with
+no bubble, label or rule, so that only the invisible `data-row` attribute
+separates the operator from the model. Three normative clauses — four, with
+(b′) added on reconciliation — and each is a fact the record now carries
+rather than a decoration:
+
+**(a) Role is visible at rest and never carried by colour alone.** The restored
+operator row renders a **visible role marker** — a short house word in `.code` at
+`--ink-muted`, on §7.3's presentation-marker precedent, though this row is not a
+presentation row — paired with its existing visually-hidden accessible
+equivalent. Colour, weight, or background alone does not satisfy this (§3.9's
+colour-is-never-alone discipline), and neither does `data-row`: an attribute is
+not an affordance. **Testable:** rendering one `user-prompt` row and one
+`text_delta` row into the same transcript, the two differ by at least one
+rendered text node or box affordance that is not a colour and not an attribute;
+the marker's text is present with the row at rest, not on hover and not on
+`title` alone.
+
+*Copy key: `copy.stream.userPrompt.marker`, beside the `accessible` string that
+key already carries. The marker names the **speaker**, not the medium — the
+agent's own rows carry none, because the model is this surface's default voice
+and a marker on every row is a marker on none (§0.2b's struck `live` badge).
+The house word is `operator`, the noun this document uses for the person
+throughout; it is not a possessive, not a name, and not `you`.*
+
+**RECONCILED 2026-09-03 — the marker rides BOTH operator rows, and the clause is
+widened to say so.** This clause was written about the restored `user-prompt`
+row, and the shipped renderer puts the same `operator` marker on the live
+`[data-row="local-prompt"]` echo as well. That is right and the spec follows it:
+a live echo and a restored prompt are **the same voice from two sources**, and a
+transcript where the operator is labelled only after a reload would teach the
+reader that the marker means "old" rather than "who". What stays different is
+the *category* marker beside it — C2's `unrecorded`, and §7A.5's `refused` — which
+is about the **row's status**, not about who spoke. So a live echo carries the
+role marker and its own category markers; a restored prompt carries the role
+marker alone; the agent's rows carry none.
+
+**(b) The envelope is a collapsed disclosure, labelled as the server's
+projection.** When `user_prompts[].envelope` is non-null the row renders
+`text` — the operator's own sentence — as its words, and the envelope **behind a
+closed-by-default disclosure** whose label names it as the workspace context this
+server composed and sent, never as something the operator wrote. The envelope's
+body renders as **preformatted text, not markdown**: it is a machine-composed
+block that opens with a `#` heading, so passing it through the transcript's
+markdown renderer would mint an `<h1>` inside an operator's row, and §7.3's
+renderer clause is about shaping *the model's (and the operator's) own words*.
+**Testable:** a context-carrying turn renders the operator's sentence as the
+row's visible text; the disclosure is closed on first render; **the envelope
+disclosure emits no heading element**; and the envelope's text is not the row's
+accessible name.
+
+*RECONCILED 2026-09-03 — that third clause is scoped to the ENVELOPE and must be
+read that way. An earlier wording said "no heading element is emitted inside a
+`user-prompt` row", which is falsifiable twice over by correct behaviour. A
+**legacy** turn's `text` is the fused `# Workspace context…` string (§2.8(3)),
+`envelope` is `null`, and the row honestly renders the only string the record
+has — through the same renderer every other row uses, which mints a heading. And
+an operator who types `# note` gets a heading because §7.3 mandates that the same
+renderer shape their words; suppressing structure a person typed is a different
+and worse lie than showing it. The obligation this clause carries is narrow and
+is the one the defect was about: **the server's projection never wears the
+operator's typography**, so the envelope renders preformatted and the disclosure
+contains no heading. A test written to the wider reading is red against every
+legacy session in the playground and should be corrected, not the code.*
+
+*DOM and copy: the disclosure is `[data-prompt-envelope]` with `aria-expanded`,
+inside the `[data-row="user-prompt"]` element and carrying no `data-event-id` of
+its own (it is part of that row, not a row). Copy lives under
+`copy.stream.userPrompt.envelope` as `{label, accessible, title}` — the label
+one short phrase naming it as **this server's** workspace context, sent with the
+turn; `title` carries §7.4(d)'s long form. It reuses §7A.3's disclosure
+behaviour and none of its state: the composer's preview is about a turn being
+composed, this is a record of one already sent, and neither reads the other's
+open/closed flag.*
+
+**(b′) ADDED 2026-09-03 — a prompt whose sentence the record cannot give is a
+named absence, not an empty row.** §2.8(2) allows `text: null`, and it is
+reachable: a marker recorded a textless turn, or a legacy record's separation was
+never possible and `null` is the honest answer §2.8(3) reserves. The row still
+renders — it is a real turn with a real `turn` ordinal and possibly a whole
+reply under it — and in place of the operator's words it carries a **named
+absence** paragraph marked `[data-prompt-text="unrecoverable"]`. Nothing is
+guessed and nothing is left blank: a `user-prompt` row with no visible text at
+all would read as a rendering bug, and a guessed sentence would be the exact
+regex recovery §2.8(3) forbids. The role marker, the envelope disclosure, and
+the turn's outcome row are unaffected — the absence is of the *sentence*, not of
+the turn.
+
+*Copy: the paragraph currently renders `copy.absent.unavailable`, the one-word
+named-absence value this document's audit rows and terminal band already use.
+That is honest and thin, and a one-sentence key under
+`copy.stream.userPrompt` — saying that the operator's own sentence was not
+recorded separately for this turn — is the better copy when someone lands it;
+either satisfies this clause, and neither may be a blank.*
+
+**(c) A turn that did not complete is labelled under its prompt.** When
+`user_prompts[].outcome` is present, one `[data-row="turn-outcome"]` row renders
+**directly under that turn's prompt row**, carrying
+`data-outcome-state="cancelled" | "error" | "interrupted"`, the state as a word,
+and `message` when the record has one. It renders for no other turn: absence of
+`outcome` means the turn completed (§2.8(4)), and a label on every turn would
+spend a row saying nothing, which is what §0.2b struck the `live` badge for.
+
+*Copy: `copy.stream.turnOutcome` keyed by the three states, one sentence each per
+§7.4(d), with the recorded `message` rendered **verbatim beside** the sentence
+and never substituted for it — the record's message is the sidecar's or the
+model's wording and may be empty, absent, or unhelpful, and the house sentence
+is what guarantees the row says something. The row's `key` is
+`turn-outcome:<turn>`, so it is stable across re-renders for the same reason the
+prompt row's is. Position is normative: **directly under that turn's prompt
+row**, above that turn's replies — the outcome is a fact about the whole turn,
+and a reader who has to reach the bottom of a truncated answer to learn it was
+truncated has been told too late. §3.9's colour discipline applies: the state
+word is text, not a colour.*
+
+**The outcome row carries no `data-event-id`, and that is deliberate.** An
+outcome is not an event: minting an id for it in the event namespace would be the
+third identity §2.8 declines to invent, and it would put a row into a set G4.11's
+archive is an archive of. It joins the by-name skip list — `local-prompt`,
+`run-start`, `absence`, `seam`, `resync`, and now `turn-outcome` — and every
+*other* `[data-row]` element that carries no event id remains a mismatch, exactly
+as the 2026-09-02 review fix requires.
+
+**The negative halves.** No outcome is derived: the client never concludes
+"cancelled" from a short reply, a missing terminal, or a run that stopped
+sending. `terminal` stays live-only and no terminal band is reconstructed
+(§7.3, §8) — the outcome row states what the *record* says about the turn, and
+the two are different facts with different sources. And the row is not minted for
+a live turn: while a run is in flight the live suffix says what is happening.
 
 ### 7.4 Stream states
 
@@ -3098,6 +3807,53 @@ vocabulary so a future state cannot land without copy. **The cause is never
 shortened away:** `runtimeFault`'s three-word verdicts, `resync.gap`'s statement
 that events are *not recovered*, and §7A.8's named `cause` all survive; what is
 cut is the paragraph explaining the mechanism, which belongs on `title`.
+
+**AMENDED 2026-09-03 — the seam label tells the truth about a mid-run mount.**
+§8's seam is the one row that speaks for the boundary between the recorded prefix
+and the live suffix, and it says one thing in every state:
+`copy.stream.seam` — "End of the recorded transcript — everything below arrived
+live." For a tab that **attaches while a run is already in progress** that
+sentence is false in the way that matters: history holds nothing for an in-flight
+turn, the frames emitted before the handshake are gone, and the row draws a
+confident label over the hole. Normative — the seam renders one of **two**
+strings, chosen from a fact the tab already holds:
+
+* `copy.stream.seam`, unchanged, when the first live row after the seam belongs
+  to a run this tab has held from its start;
+* **`copy.stream.seamMidRun`** — "Attached while this run was in progress;
+  earlier output of this run is not shown." — when it does not.
+
+**How the choice is decided, and it is decided from held frames only.** A live
+run's `seq` is run-monotonic and starts at **0** (`main.ts`'s `let seq = 0`, fed
+to `active.nextSeq()`). So the first live frame a tab receives for a run tells the
+tab which case it is in: `seq === 0` means it held the run from the beginning;
+`seq > 0` means frames of that run exist which this tab never received. The
+originating tab's own C2 echo is the same fact from the other side and licenses
+the unchanged label. Nothing is compared across the seam (§8's C3 stands),
+nothing is read from history, and no run start is inferred — the number the
+server already put on the frame is the whole derivation.
+
+**Before the first live frame, the label is the unchanged one.** A seam with
+nothing under it is not making a claim that can be wrong, so it renders
+`copy.stream.seam` until a live row exists and switches on that row's arrival if
+its `seq > 0`. The alternative — hedging every seam in advance against a run that
+may not be in progress — would put the mid-run sentence over the ordinary case,
+which is the same overclaim in the other direction. `data-seam` gains
+`data-seam-kind="end | mid-run"` so a test reads the state rather than the copy.
+
+**The residual, stated rather than papered over.** A frame lost *between* the run
+starting and this tab's first receipt would also present as `seq > 0`; on a fresh
+attach the queue is empty, so the only path there is a coalesced `progress`, and
+in that case "earlier output of this run is not shown" is still true — trivially,
+of one transient tick. A resync gap is a **different** seam with its own labelled
+break (§7.4(c), §8) and does not reach this rule.
+
+**Testable:** the mid-run string is one sentence and ≤25 words, so it joins
+§7.4(d)'s enumeration; a tab whose first live frame carries `seq > 0` renders
+`copy.stream.seamMidRun` and `data-seam-kind="mid-run"`; a tab that sent the
+turn, and a seam with no live row under it yet, render `copy.stream.seam` and
+`data-seam-kind="end"`; exactly one `[data-seam]` element renders in every
+case.
 
 **AMENDED 2026-09-02 (§0.2c, C20) — the Latest pill lives in the gutter, off
 the cards.** `[data-jump-latest]` floated over the transcript's content column
@@ -3486,6 +4242,23 @@ prompts restore from history's additive `user_prompts` field. The context
 block is still not an event (§15.10); it is part of the user turn and is not
 reconstructed as a second row. No named-absence notice is minted for either.
 
+**AMENDED 2026-09-03 (second) — the DEVIATION above has a durable consequence,
+and this is where it is paid.** Because Pi joins the content array into one
+persisted text part, a reopened context-carrying turn returned the whole
+`# Workspace context…` wall as `user_prompts[].text` — so the workspace's own
+projection was rendered as the operator's message, and (through
+`sessionPromptStore` and `firstPromptLine`) became the session tab's label and
+the document title after reload. The invariant this section protects was never
+in danger — `bind_run_request_text` still sees the operator's text alone — but
+the *record* lost the distinction the wire kept. §2.8(3) restores it: the
+sidecar records `{turn, text, envelope}` at prompt time, so `text` is the
+operator's sentence and `envelope` is this server's block, separately. §7.3
+states how the pair renders — the sentence as the row's words, the envelope
+behind a disclosure labelled as the server's projection — and the tab title and
+`document.title` follow `text`, never the envelope. A turn whose `text` is
+`null` falls back to §7.1's noun-phrase tab name rather than titling itself with
+a heading the operator never wrote.
+
 ### 7A.5 Sending a turn: at-least-once, no key, and how a tab learns its own run id
 
 `POST /sessions/{id}/prompt` carries **no** `Idempotency-Key` and a supplied one
@@ -3564,6 +4337,56 @@ containing the prompt text renders before any frame arrives; reopen the session
 — no such presentation row renders; recorded operator turns restore from
 history as `[data-row="user-prompt"]` when `user_prompts` is present, and
 the well does not draw the old user-prompt absence notice.
+
+**AMENDED 2026-09-03 — a refused prompt's echo is marked refused, not left
+standing as if it were a turn.** The echo is appended *before* the POST, and
+every failure branch touches only the post phase — so a prompt the server
+refused by name leaves a permanent, unmarked operator row in the transcript that
+looks exactly like a turn that ran, and that a reload silently deletes. The local
+gate cannot prevent it: `run_in_flight` is refused per **runtime** across all
+clients (§7A.5's TIGHTENING), so a tab can be refused for a run it never saw
+start. C2's rule that the echo is never removed is **correct and unchanged** —
+the words were typed, and un-saying them would be a worse lie than showing them —
+so the fix is a mark, not a deletion.
+
+Normative: on a **named refusal** to `POST /sessions/{id}/prompt` (§2.4's body:
+`run_in_flight`, `unknown_session`, `agent_unavailable`, `busy`, any other), the
+echo row keeps its text verbatim and gains, at rest and on its visible face:
+
+* `data-echo-state="refused"` and `data-refused-reason="<the server's reason>"`,
+  the reason string never rewritten and never collapsed into a neighbour;
+* a **second visible marker word** beside C2's `unrecorded` — the refusal word
+  and the server's reason in `.code`, on the presentation-row marker precedent —
+  with an accessible equivalent stating that the turn **did not start**, and the
+  long form on `title`.
+
+*Copy: `copy.stream.localEcho.refused` as `{marker, accessible, title}`, beside
+the `{marker, accessible, title}` the `localEcho` key already carries for C2. The
+server's reason is **rendered, never translated** — it is drawn as the reason
+string the server sent, next to the house marker word, because the client has no
+table of reasons and inventing one would be a second vocabulary drifting behind
+§2.4's. A reason the client has never heard of therefore still renders,
+correctly, as itself. `data-echo-state` defaults to `"sent"` on every echo row so
+the attribute is unconditionally present, on §7A.10's precedent for
+`data-send-state`.*
+
+**`refused` and `unknown` are different facts and stay two words.** `unknown` is
+§7A.5's lost POST: the turn *may* have started and the stream is the authority.
+`refused` is a server answer: the turn definitively did not start, and the text
+in the box is still sendable. A row that spelled them the same would tell an
+operator to go looking in the stream for a turn that never existed. The echo
+row's own vocabulary is therefore closed at three —
+`data-echo-state="sent" | "unknown" | "refused"` — and the composer form's
+`data-send-state` (§7A.10, closed at `ok | unknown`) is **untouched**: the form
+reports this tab's last send attempt, the row reports the fate of one echoed
+prompt, and the two are not the same subject.
+
+**Testable:** a POST refused `409 run_in_flight` leaves exactly one
+`[data-row="local-prompt"]` carrying the sent text, with
+`data-echo-state="refused"`, `data-refused-reason="run_in_flight"`, and the
+refusal word present as rendered text at rest (not on `title` alone, not by
+colour alone); the row still carries no `data-event-id`; and a reload renders no
+such row, because a refused turn was never recorded.
 
 ### 7A.6 Cancellation, and what a `4409` does to a run this tab started
 
@@ -4025,19 +4848,29 @@ Rules the client obeys and the e2e checks:
   namespace: live events are keyed `(run_id, seq)` and historical ones
   `(session_id, ordinal)` (§2.8). History renders as the transcript's
   **prefix**, the live stream as its suffix, and the boundary between them is a
-  visible seam, not a silent join. Within the live stream, terminal events sort
+  visible seam, not a silent join — and AMENDED 2026-09-03 the seam **says
+  which boundary it is**: `copy.stream.seam` when this tab held the run below it
+  from its first frame, `copy.stream.seamMidRun` when it attached with the run
+  already in progress and the frames before its handshake are simply gone
+  (§7.4). Within the live stream, terminal events sort
   last by their `seq = 2**62` minting — a statement about the live stream only,
   since no `terminal` ever appears in a history page (§7.3).
 - **Four kinds used to be unrecoverable from a reopened transcript** (§2.7's
   table). AMENDED 2026-09-03 — operator prompts restore from the additive
-  `user_prompts: [{seq, text}]` field on each history page (`seq` is the next
-  normalized event's seq; prompts do not consume a seq, so G4.11 event
-  identities stay identical). The other three stay honest limits, and **none
+  `user_prompts` field on each history page — AMENDED again the same day to
+  `[{turn, seq, text|null, envelope|null, outcome?}]`, with `turn` the identity
+  and `seq` retained as the next normalized event's ordinal (§2.8(2)). Prompts
+  consume no seq and `turn` is additive, so G4.11's event
+  identities stay identical. The other three stay honest limits, and **none
   of them mint a well notice**:
   - **user prompts** — restored from `user_prompts` as `[data-row="user-prompt"]`
-    with a historical identity (`<session_id>@prompt:<seq>`). The old
-    "Prompts aren't recorded…" sentence does not render. A sidecar that omits
-    the field is treated as `[]`;
+    with a historical identity ~~(`<session_id>@prompt:<seq>`)~~ *(STRUCK
+    2026-09-03: `seq` is the **next** event's ordinal and is not unique — two
+    prompts around a turn that produced no events share one, so it fails as an
+    identity in exactly the case the reproduction found)* —
+    **`<session_id>@turn:<turn>`**, from §2.8's ordinal, which is unique by
+    construction. The old "Prompts aren't recorded…" sentence does not render. A
+    sidecar that omits the field is treated as `[]`;
   - **`question` / `answer`** — synthetic and live-only; a reopened
     `AskUserWidget` is rebuilt from the `ask_user` tool call/result (§7.3);
   - **`terminal`** — pump-minted and live-only; no terminal band is shown and
@@ -4112,6 +4945,93 @@ one). **Testable:** originate a turn, reopen the session in a second tab —
 the second tab renders no `[data-row="local-prompt"]` and no `[data-absence]`;
 recorded operator text appears as `[data-row="user-prompt"]` when the sidecar
 sent `user_prompts`.
+
+**AMENDED 2026-09-03 — the reopened transcript is segmented by turn, and the
+walk gains a tail.** This is the clause the 2026-09-02 reproduction was missing.
+The client grouped the **whole** history surface and only then interleaved
+prompts, so a turn's trailing assistant text fused with the next turn's leading
+text into one row whose first `seq` belonged to the earlier turn, and every
+prompt after the first failed the ordering test and flushed at the tail: a
+three-turn chat rendered as prompt #1, one bubble reading `PONGPINGZEBRA`,
+prompt #2, prompt #3. Four normative clauses.
+
+**(f) Segment first, group second.** The history prefix is partitioned into
+turns **before** any grouping runs, and grouping runs **once per turn**. For each
+turn in ascending `turn` order the panel emits, in this order: that turn's prompt
+row; that turn's `[data-row="turn-outcome"]` row when the record has one (§7.3);
+then the grouped rows of the events carrying that `turn`. Events carrying
+`turn: null` form a leading prologue with no prompt row. A turn whose event list
+is empty emits its prompt row alone — a real state, and one the old `seq`-keyed
+interleave could not express at all. **Consecutive text events never group across
+a turn boundary**, which is the whole defect: a grouping function that cannot see
+a boundary will always cross it.
+
+*The outcome row sits above the turn's replies rather than after them, and the
+cost of that is stated rather than hidden: on a long cancelled turn the label is
+far from the point where the output stops. It is above anyway, for three
+reasons. The defect being fixed is that a **truncated answer looks finished**, so
+a reader who learns "cancelled" only after reading to the end has been told too
+late to read correctly. A turn that produced no events has nothing but its prompt
+row, so "after the replies" and "under the prompt" are the same position there
+and the rule must be one rule. And a turn block is bounded below by the next
+turn's prompt row, so a label at the top is never mistaken for the next turn's.*
+
+**(g) The two fallbacks, and they are different fallbacks.** A *legacy session*
+— one recorded before §2.8(3)'s markers existed — is served by a current sidecar
+that still stamps `turn` positionally, so (f) applies unchanged and the only
+degradation is that `text` carries the fused envelope and `envelope` is `null`.
+A *legacy sidecar* — a staged bundle older than this client — sends no `turn` at
+all, and the client falls back to segmenting at `user_prompts[].seq` boundaries
+**by prompt index**: a prompt with seq `S` opens a segment holding the events
+whose ordinal is `≥ S` and below the next prompt's seq, and consecutive prompts
+with an equal seq each open an empty one. That fallback is correct for ordinary
+chats and cannot express a textless prompt or a zero-event turn — which is why it
+is a fallback and not the design. **The client prefers `turn` whenever the field
+is present and never mixes the two rules within one page.**
+
+**(h) The tail read, and the one way a finished run may join the prefix.**
+§2.8(5)'s `end_cursor` is retained by the panel at the end of a walk and handed
+back as `after` to read what has since been recorded, instead of re-walking and
+re-normalizing the whole session for one new turn. Its output is **prefix**
+material and nothing else. The first bullet of this section is unchanged and
+binds it: live and historical events are never merged, and a tail read is never
+used to fill a resync gap (§2.7). The one legal fold, stated so it is not
+improvised: a tab may move a **finished** run out of its live suffix and into the
+prefix only by **first discarding every live row of that run** and then reading
+the tail — because the same logical events carry two disjoint identities
+(§2.8) and keeping both would render every one of them twice. A run is finished
+when the prompt response says so (§7A.6), not when the transcript looks quiet.
+
+*ADDED 2026-09-03 — folding tail output is not appending it, and the difference
+is one line of client code.* **Events** returned by a tail read never repeat what
+a walk already delivered (they are sliced by ordinal), so they append. **Prompts
+can repeat exactly once:** a trailing turn that has produced no events yet sits
+*at* the end mark and is carried both by the last page of the walk and by the
+next `after` read (§2.8(5)). A client therefore folds `user_prompts` by **`turn`
+— the identity §2.8(2) minted for exactly this — keeping the later copy**, and
+never by append. A client that appends renders a duplicate prompt row for every
+turn it was fast enough to see before its first reply, which is precisely the
+case a hand test does not reach.
+
+**(i) Nothing in (f)–(h) mints identity.** The prompt row's identity is
+`<session_id>@turn:<turn>`; the outcome row has none by design (§7.3); every
+event row keeps `<session_id>@<ordinal>` exactly as archived. **Testable:** the
+G4.11 archive match still passes with each archived id in the DOM exactly once,
+and the by-name skip list for id-less `[data-row]` elements is
+`local-prompt`, `run-start`, `absence`, `seam`, `resync`, `turn-outcome` — any
+other id-less row is still a mismatch.
+
+*ADDED 2026-09-03 — the prompt row's id is NOT an archived event id, and the
+archive match must stay a containment check.* `<session_id>@turn:<n>` lives in
+the historical namespace and uses its separator, but it names a **prompt**, and
+prompts consume no `seq` and enter no event archive (§2.8(2)). The G4.11 gate
+holds because it asserts two things — every **archived** id appears in the DOM
+exactly once, and every **rendered** historical id uses `@` and not the live `#`
+— and an extra non-event id satisfies both. (This was already true of the struck
+`@prompt:<seq>` form, so it is not new.) **A reviewer tempted to tighten that
+gate to set equality between archived ids and rendered ids would break it**, and
+would be asserting something this document does not claim: the archive is an
+archive of events, and the transcript renders more than events.
 
 **(C24) The reopen hedges do not enter the document.** AMENDED 2026-09-03 —
 the sentences this clause once required on the resting face ("Prompts aren't
@@ -5051,6 +5971,66 @@ four amendments.** Each names its stage. **Updated 2026-08-28: the
     count on it near-pointless today. Until then the strip renders no count, and
     that is a decision rather than a gap.
 
+43. **The turn record, and the tail read** (§2.8, added 2026-09-03). Four
+    pieces, all inside `agent/src`: the `turn` ordinal stamped on every
+    normalized history event and every `user_prompts` entry; the
+    `hephaestus.turn.v1` prompt-time `CustomEntry` that separates the operator's
+    sentence from §7A.3's envelope, plus the `hephaestus.turn_outcome.v1` entry
+    for a turn that ended before any assistant entry existed; the `outcome`
+    projection off Pi's `stopReason` / `errorMessage`; and `history.page`'s
+    `after` request form with its always-present `end_cursor`. None of it widens
+    the event vocabulary and none of it moves a `seq` — which is the property
+    that keeps G4.11's archive un-re-baselined, and which is pinned by a test
+    rather than asserted.
+
+44. **Session re-adoption on the read path, and the two named refusals**
+    (§2.3, §2.4, §2.8(6), added 2026-09-03). `resume_session` exists
+    (`agent_bridge/app.py`) with no production caller; the read path becomes
+    that caller — once per failure, never in a loop — and the refusal that
+    survives it is `404 unknown_session` rather than an unmapped
+    `SupervisorError` re-raised as a `500`. `GET /sessions` rows gain `readable`
+    and `unreadable_reason`. This is the first server-side producer of the
+    `unknown_session` reason `web/src/stream/sessionPromptGate.ts` has always
+    handled.
+
+45. **The reopened transcript reads as the conversation** (§7.3, §7.4, §7A.5,
+    §8(f)-(i), added 2026-09-03). The client half, and it is four separable
+    pieces so that the blocker is not held behind the taste work. **The
+    blocker:** `historicalRows` segments by turn *before* it groups, so a reply
+    lands under the prompt that produced it — correct against today's wire
+    through §8(g)'s prompt-index fallback, complete once item 43 lands. **The
+    record made readable:** the operator row's role marker, the envelope
+    disclosure, the `turn-outcome` row, and the session tab label and
+    `document.title` following `user_prompts[].text` rather than the envelope
+    (§7A.4). **Two honesty fixes the same code touches:** the refused echo's
+    `data-echo-state="refused"` mark, and `copy.stream.seamMidRun` for a tab
+    that attached with a run already running. **And one sequencing rule, because
+    losing it would ship a partial fix that looks complete:** segmentation may
+    start before item 43 lands and must not *merge* before it — the fallback is
+    right for ordinary chats and wrong, silently, for a textless prompt and a
+    zero-event turn, which are exactly the cases nobody tests by hand.
+
+46. **The transcript's markdown grammar, and the three type roles it projects
+    into** (§3.8, §7.3, added 2026-09-03). Not a follow-on to item 45 but a
+    dependency of it: the same sanitizing renderer shapes the operator's restored
+    rows, and it had a four-construct vocabulary that dropped ordinary model
+    output on the floor. Two pieces. **The renderer** (`web/src/stream/markdown.tsx`)
+    widens to the grammar §7.3 now enumerates, keeps its structural — never
+    configured — HTML boundary, and gains one option, `preserveLineBreaks`, which
+    the operator's two row kinds pass and the agent's do not. **The type roles**
+    (`.proseH1`/`.proseH2`/`.proseH3` in `web/src/system/type.module.css`) give
+    six markdown heading levels three rungs of §3.8's existing ramp, with levels
+    4–6 mapping onto the smallest rather than falling below body size.
+    **Unfinished, and named so it is not mistaken for done:** the elements this
+    renderer can now emit — `ul`/`ol`/`li`, `blockquote`, `table`/`th`/`td`,
+    `hr`, `pre` — have **no stylesheet at all** under `[data-markdown]`, so a
+    table renders as unbordered text and a blockquote as a bare 40px browser
+    indent. That is presentation work in `Transcript.module.css`, it is the
+    remaining half of this item, and it includes the `text-align` rules for the
+    `[data-align]` attribute the renderer projects a table cell's alignment as
+    (an attribute plus a stylesheet, so the repo's `heph/no-raw-type` rule stays
+    satisfiable).
+
 *§23 — provider sign-in. **Stage 10B**, Gate G10B, with credential discovery at
 **Stage 10C**, Gate G10C (both approved 2026-08-28). Its own new-work list is
 §23.14 and is numbered inside that section, because its first item is a
@@ -5208,6 +6188,41 @@ Named so review has targets, not so they are pre-forgiven.
     `{kind, provider_id, model_ids, source_path}` and a reviewer should treat any
     additional field — a tail, a fingerprint, a validity probe result — as a new
     decision needing its own ruling, not as a detail of this one.
+
+**Added 2026-09-03.**
+
+17. **§2.8(3)'s turn record has no category for a user message the sidecar
+    itself wrote, and one exists today.** The single automatic transient retry
+    (`agent/src/session/retry.ts`) re-prompts with a house sentence, which lands
+    on disk as an ordinary user-role entry — so it counts as a turn, produces a
+    `user_prompts` row with no marker, and §7.3(a) labels it `operator`. The
+    shape of the fix is written down in §2.8(3) (an optional
+    `origin: "operator" | "agent"` on the marker and on the projected entry,
+    absent meaning `operator`) precisely so it is not improvised at three
+    boundaries independently. **The risk is not the retry; it is that the row
+    reads as testimony.** A reviewer who holds that a transcript may never
+    attribute a machine's sentence to a person should treat this as a blocker on
+    §7.3(a) rather than a follow-on — the row is already rendering.
+18. **`turn` is derived by counting, and the count's stability rests on Pi
+    keeping its entry list whole.** Every ordinal in §2.8 is positional over the
+    frozen slice, which is what makes it restart-stable with nothing on disk to
+    support it. A compaction was probed and does **not** drop the markers or
+    renumber the walk (`getEntries()` keeps them; only the LLM projection elides
+    the compacted span), so the mechanism holds today. What is genuinely open is
+    a **Pi upgrade that moves the `CustomEntry` surface or changes what
+    `getEntries()` returns**: every turn would silently fall back to §2.8(3)'s
+    legacy path — fused envelope, no separation — with no error anywhere and no
+    test that fails, because the fallback is *correct behaviour* for a legacy
+    record. If a reviewer wants a tripwire, it is an assertion that a session
+    this build wrote reads back with its markers intact.
+19. **§7.3's markdown renderer is hand-rolled and now has a real grammar.** The
+    reason is argued at the module and stands — a library is also an HTML
+    pipeline, and its *sanitizer configuration* becomes the boundary, whereas
+    here the boundary is structural. The residual is that a hand-rolled parser
+    is now carrying tables, nested lists and blockquotes, which is enough
+    surface for a pathological reply to be a performance question rather than a
+    correctness one. It is bounded by a nesting floor (`MAX_DEPTH`) and it wants
+    a fuzz case standing behind it, not a second opinion about the choice.
 
 ---
 
