@@ -183,10 +183,16 @@ def test_an_empty_history_is_done_immediately(tmp_path: Path) -> None:
         assert agent is not None
         session = agent.create_session("orchestrator")
         page = web.get(f"/sessions/{session}/history").json()
+    # §2.8(5): `end_cursor` is present even on an empty page and is never null,
+    # so a client can always hand it back as `after` — the token itself stays
+    # opaque and is asserted only for presence here.
+    end_cursor = page.pop("end_cursor")
+    assert isinstance(end_cursor, str) and end_cursor
     assert page == {
         "status": "ok",
         "session_id": session,
         "events": [],
+        "user_prompts": [],
         "cursor": None,
         "done": True,
     }

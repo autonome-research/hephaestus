@@ -398,8 +398,10 @@ def test_kill9_restart_and_session_resume(harness: Harness) -> None:
             )
         ]
     )
-    resumed = harness.runtime.resume_session("orchestrator", session_id)
-    assert resumed == session_id
+    # No hand-written resume (§2.8(6), 2026-09-03): the respawned sidecar has
+    # forgotten the session, and `_call_for_session` re-adopts it from the
+    # retained principal on this very prompt. A hand-call here would let the
+    # test pass even if that re-adoption regressed.
     second = harness.runtime.prompt(session_id, "what was the gusset decision?", timeout=300)
     assert second.status == "completed"
     assert_stream_shape(second)

@@ -57,15 +57,18 @@ from .events import EventPump, HephaestusEvent, ObserverClient, PerClientQueue
 from .protocol import ErrorCode, ProtocolError
 from .sessions import RunInFlightError
 from .sidecar import SidecarResolution, node_executable, resolve_sidecar
-from .supervisor import ProcessLossEvent, Supervisor, SupervisorConfig
+from .supervisor import ProcessLossEvent, Supervisor, SupervisorConfig, SupervisorError
 
 __all__ = [
+    "AgentUnavailableError",
     "AskUserAnswerer",
     "AuthLinkError",
     "BridgeRuntime",
     "EventCallback",
     "PromptResult",
     "ProviderSpec",
+    "SessionRouteError",
+    "UnknownSessionError",
     "default_dist_main",
     "link_auth_source",
     "repo_root",
@@ -155,6 +158,93 @@ def _open_project_store(layout: ProjectLayout) -> OpStore:
 
 class AuthLinkError(Exception):
     """``auth_source`` could not be exposed to the app-owned agent dir."""
+
+
+class SessionRouteError(SupervisorError):
+    """A session route refused **by name** (``INTERFACE.md`` §2.4, 2026-09-03).
+
+    Raised in place of a bare :class:`SupervisorError` so the HTTP layer can map
+    a failed session read or prompt onto a *named* reason. Today an unmapped
+    ``SupervisorError`` is re-raised by ``http/errors.py`` and reaches the client
+    as an unnamed 500 — over a transcript that is sitting intact on disk — so the
+    panel can only say "the recorded transcript could not be read", forever, with
+    no remedy attached.
+
+    ``reason`` is both the token the route refuses with (§2.4) and the token
+    :meth:`BridgeRuntime.sessions` reports as ``unreadable_reason`` (§2.3), so a
+    panel renders the same word whichever way it learns the fact.
+
+    A **subclass of** :class:`SupervisorError` on purpose: every existing
+    ``except SupervisorError`` handler (the CLI, ``http/agent_attach``,
+    ``workflows``) keeps exactly the behaviour it has today, and only a caller
+    that asks for ``reason`` sees the new fact.
+    """
+
+    #: The wire token. Overridden per subclass and never composed at a call site,
+    #: so the two vocabularies (§2.3's mark and §2.4's refusal) cannot drift.
+    reason: str = "agent_unavailable"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        session_id: str,
+        error: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message, error=error)
+        self.session_id = session_id
+
+
+class UnknownSessionError(SessionRouteError):
+    """The sidecar does not know this session, after one re-adoption attempt.
+
+    §2.4: **404** ``unknown_session`` + ``{session_id}``. An addressing miss and
+    nothing more — the Pi JSONL may be perfectly intact on disk, which is why
+    §2.3 keeps the row *listed* and merely marks it. Delisting would erase from
+    the UI a transcript that still exists.
+    """
+
+    reason: str = "unknown_session"
+
+
+class AgentUnavailableError(SessionRouteError):
+    """No sidecar can serve this route — none attached, or none that will start.
+
+    §2.4: **503** ``agent_unavailable`` carrying §7A.8's ``cause``. The cause is
+    ``sidecar_failed``, which is already in §7A.8's closed cause set, so naming
+    this path does not widen the vocabulary.
+
+    **Never collapsed into** :class:`UnknownSessionError`: one says *this
+    session*, the other says *this runtime*. The remedies differ — open another
+    session versus repair the runtime — and a client that could not tell them
+    apart would offer the wrong one.
+    """
+
+    reason: str = "agent_unavailable"
+    #: §7A.8's closed ``cause`` set; named here so the HTTP layer copies a token
+    #: rather than inventing one.
+    cause: str = "sidecar_failed"
+
+
+def _names_unknown_session(exc: SupervisorError) -> bool:
+    """Does this failure carry the sidecar's *unknown session* refusal?
+
+    The sidecar answers ``INVALID_PARAMS`` with ``unknown session '<id>'`` for
+    every session route it cannot address (``agent/src/main.ts:505`` prompt,
+    ``:668`` compact, ``:680`` history). Read off the **structured envelope** the
+    supervisor already retains (:attr:`SupervisorError.error`) rather than the
+    formatted message: the envelope is the frame's own fact and the message is
+    only a rendering of it.
+
+    Deliberately narrow. Every other failure — a timeout, a provider error, a
+    refused tool — is *not* an addressing miss, and re-adopting on one would
+    retry work the model may already have done.
+    """
+    error = exc.error
+    code = error.get("code")
+    if not isinstance(code, int) or code != ErrorCode.INVALID_PARAMS:
+        return False
+    return "unknown session" in str(error.get("message", "")).casefold()
 
 
 #: Content of a Pi ``auth.json`` that carries nothing worth protecting; the
@@ -296,6 +386,27 @@ class BridgeRuntime:
         self._default_answerer = answerer
 
         self._principals: dict[str, Principal] = {}
+        # INTERFACE.md §2.3 (amended 2026-09-03): why a session this runtime
+        # LISTS could not be read, keyed by session id and holding §2.4's reason
+        # token. IN MEMORY, and that is correct rather than a shortcut: the flag
+        # is a cache of a *failure*, not a fact about the transcript, so a
+        # process that restarts has not tried yet and every row starts readable.
+        # Worst case of forgetting is one honest attempt; worst case of
+        # persisting is a session marked dead by a process that is gone.
+        #
+        # Beside the principal map rather than a field ON ``Principal``:
+        # ``Principal`` is the *authz* identity ``py.tool_dispatch`` is resolved
+        # against (``dispatch.py``), and a read-failure cache is not an authz
+        # fact. Same lifetime, same lock, no widening of what authorizes a tool.
+        self._unreadable: dict[str, str] = {}
+        # §2.8(6)'s "resume ONCE": the child generation (``Supervisor``'s
+        # ``spawn_count``) a session was last re-adopted against, plus a
+        # per-session lock so two concurrent readers of the same session share
+        # one attempt instead of each spawning their own. The clause exists to
+        # prevent a spawn storm, and "once per failure" alone does not: N
+        # concurrent history reads of a dead session are N failures.
+        self._readopted: dict[str, int] = {}
+        self._readopt_locks: dict[str, threading.Lock] = {}
         self._runs: dict[str, _Run] = {}
         # INTERFACE.md §2.7: the live wire frame carries exactly one envelope
         # field beyond the Python-side shape — ``session_id`` — so a
@@ -430,6 +541,30 @@ class BridgeRuntime:
         against an unavailable provider is refused by. Retained here rather than
         re-asked because it is replayed onto every child, so the freshest answer
         is always the one the current child gave.
+
+        **Why the hook does not also re-open this runtime's sessions.** A fresh
+        child has an empty session map while ``_principals`` still lists every
+        session this process opened, which is the whole of §2.8(6)'s bug.
+        Replaying them here — one ``session.create resume=true`` per retained
+        principal — was considered and rejected on two grounds, both about
+        failure rather than cost:
+
+        * *A hook that raises kills the runtime.* ``Supervisor._respawn_loop``
+          treats a spawn-hook exception exactly like a failed spawn: it discards
+          the child and burns a respawn attempt, and once the budget is gone the
+          supervisor is durably dead until an explicit ``restart()``. One session
+          whose JSONL cannot be re-opened would take down every other session,
+          the provider config, and the login path that might repair it. Wrapping
+          each resume in a ``try`` only converts that into the second objection.
+        * *It re-opens sessions nobody asked about.* Re-adoption is per read
+          (:meth:`_call_for_session`): it costs one extra round trip on the first
+          call after a respawn, is scoped to the session actually addressed, and
+          its failure is answerable to the caller that provoked it — which is
+          what lets §2.4 name a reason instead of logging one into the void.
+          Eager replay pays for every session on every respawn to save that trip.
+
+        The lazy path is also the one §2.8(6) specifies ("the server resumes the
+        session once and retries"), so this is not a deviation, only its reason.
         """
         result = sup.call("runtime.configure", self.configure_payload)
         self._provider_status = _provider_status_of(result)
@@ -672,11 +807,210 @@ class BridgeRuntime:
         sid = str(result["session_id"])
         with self._lock:
             self._principals[sid] = Principal(session_id=sid, profile=profile, part=part)
+            # §2.3: the mark is cleared the moment a call for that session
+            # succeeds. Opening it IS such a call, so a hand-written
+            # ``resume_session`` (the CLI, the stage-2 workflow tests) heals the
+            # listing exactly like the automatic re-adoption below does.
+            self._unreadable.pop(sid, None)
         return sid
 
     def resume_session(self, profile: str, session_id: str, *, part: str | None = None) -> str:
         """Resume a persisted session by id after a restart."""
         return self.create_session(profile, part=part, session_id=session_id, resume=True)
+
+    # -- readability: re-adopt once, then refuse by name (§2.3/§2.4/§2.8(6)) --
+
+    def _principal_of(self, session_id: str) -> Principal | None:
+        with self._lock:
+            return self._principals.get(session_id)
+
+    def _mark_readable(self, session_id: str) -> None:
+        """Forget a recorded failure the moment a call for it succeeds (§2.3)."""
+        with self._lock:
+            self._unreadable.pop(session_id, None)
+
+    def _mark_unreadable(self, session_id: str, reason: str) -> None:
+        """Record *why* this session's last call failed, for ``GET /sessions``.
+
+        Only for a session this runtime retains a principal for: the listing is
+        built from the principal map, so a mark for anything else is an entry
+        nothing can render and nothing can ever clear.
+        """
+        with self._lock:
+            if session_id in self._principals:
+                self._unreadable[session_id] = reason
+
+    def _readopt_lock(self, session_id: str) -> threading.Lock:
+        """The per-session re-adoption lock (created on first use).
+
+        Never acquired while holding it: :meth:`_readopt_once` takes ``_lock``
+        here, releases it, and only then takes the session lock, so the one lock
+        order in this file is *session lock → ``_lock``*.
+        """
+        with self._lock:
+            lock = self._readopt_locks.get(session_id)
+            if lock is None:
+                lock = threading.Lock()
+                self._readopt_locks[session_id] = lock
+            return lock
+
+    def _readopt_once(self, session_id: str, principal: Principal) -> None:
+        """Re-open a retained session on the current child. **Once per child.**
+
+        §2.8(6) says "resumes the session once and retries", and leaves open what
+        a *second concurrent* reader should do during that resume. Decided here,
+        in the bridge that owns the locking: the attempt is keyed by
+        ``(session, child generation)``, so concurrent readers share one attempt
+        and a session is re-adopted at most once per sidecar process. Reading
+        ``once`` as once-per-failure would let N concurrent history reads of a
+        genuinely dead session become N spawns — exactly the storm the clause
+        exists to prevent.
+
+        Keyed by generation rather than by a boolean because a *later* child is a
+        genuinely new fact: the next respawn empties the session map again, and
+        the first read after it must be allowed its one honest attempt.
+
+        What is recorded is the ATTEMPT, not its success, and it is recorded
+        BEFORE the resume runs. A resume that fails still consumes the attempt:
+        otherwise eight concurrent readers of a genuinely dead session would
+        queue on this lock and take eight turns at spawning it, which is the
+        storm read the other way round.
+        """
+        generation = self._sup.spawn_count
+        with self._readopt_lock(session_id):
+            with self._lock:
+                if self._readopted.get(session_id) == generation:
+                    # Another reader already spent this child's attempt; the
+                    # caller retries the call rather than resuming a second time.
+                    return
+                self._readopted[session_id] = generation
+            self.resume_session(principal.profile, session_id, part=principal.part)
+
+    def _refuse_by_name(
+        self,
+        session_id: str,
+        exc: SupervisorError,
+        *,
+        readopted: bool,
+        fallback: str | None = None,
+    ) -> SupervisorError:
+        """Classify a failed session call onto §2.4's two named refusals.
+
+        Returns the exception the caller should raise: a named one — with the
+        listing marked to match — or ``exc`` **unchanged** when the failure is
+        neither of §2.4's two conditions. A timeout is not an addressing miss and
+        not a dead runtime; renaming it would put a wrong remedy in front of the
+        operator, and §2.4's two rows are two conditions, not a catch-all.
+
+        ``fallback`` is the reason to use when a *retry* failed for some third
+        cause: the first failure already established that the sidecar does not
+        know this session, and a resume that failed for its own reasons does not
+        unsay that.
+
+        ``readopted`` says whether §2.8(6)'s single re-adoption attempt actually
+        ran, and it changes only the sentence — never the reason token, never the
+        status, never the ``{session_id}`` body §2.4 specifies. The two paths
+        into ``unknown_session`` are genuinely different events: one runtime
+        *tried* to re-open a retained principal and failed, the other holds no
+        principal for the id and so could not try. A refusal's words are the
+        operator's only account of what this server did, so a fixed sentence
+        claiming an attempt that never happened is a small lie told on the path
+        where the operator most needs the truth — a mistyped or foreign id looks
+        exactly like a transcript this runtime broke.
+        """
+        if _names_unknown_session(exc):
+            reason = UnknownSessionError.reason
+        elif not exc.error and not self._sup.is_running():
+            # No JSON-RPC envelope AND no child: the call never reached a
+            # sidecar. §7A.8's ``sidecar_failed`` cause, reached by one more path.
+            reason = AgentUnavailableError.reason
+        elif fallback is not None:
+            reason = fallback
+        else:
+            return exc
+        refusal: SessionRouteError
+        if reason == UnknownSessionError.reason:
+            recovery = (
+                "and one re-adoption attempt did not recover it"
+                if readopted
+                else "and this runtime holds no session with that id to re-adopt"
+            )
+            refusal = UnknownSessionError(
+                f"unknown session {session_id!r}: the sidecar does not know it, {recovery}",
+                session_id=session_id,
+                error=exc.error,
+            )
+        else:
+            refusal = AgentUnavailableError(
+                f"no sidecar can serve session {session_id!r}: {exc}",
+                session_id=session_id,
+                error=exc.error,
+            )
+        self._mark_unreadable(session_id, refusal.reason)
+        return refusal
+
+    def _call_for_session(
+        self,
+        method: str,
+        params: dict[str, Any],
+        *,
+        session_id: str,
+        timeout: float | None = None,
+    ) -> Any:
+        """One supervisor call for a session, made self-healing (§2.8(6)).
+
+        Argument order mirrors :meth:`Supervisor.call` — ``(method, params,
+        timeout=)`` — because this *is* that call plus a re-adoption; the
+        session is the healing context and rides as a keyword. The mirroring is
+        also what keeps ``tests/stage2/test_workflow_history.py``'s "Python
+        reaches a transcript only through an RPC" guard able to see which method
+        each literal names: that check reads the FIRST positional argument of
+        every call, so a method name demoted to second position would leave it
+        asserting an empty list — a guard that passes by seeing nothing.
+
+        **The gap this closes.** The spawn hook replays ``runtime.configure`` and
+        nothing else (:meth:`_configure_runtime`), so a respawned child's session
+        map is empty while ``_principals`` — written by :meth:`create_session`,
+        never pruned — still lists every session this process opened. Every route
+        for such a session then failed ``INVALID_PARAMS: unknown session``, which
+        ``http/errors.py`` re-raised as an unnamed 500 over a transcript that
+        exists intact on disk.
+
+        On exactly that failure, and on no other, the retained principal is
+        re-opened once (:meth:`_readopt_once`) and the call is retried once. **A
+        success is silent** — the client never learns anything happened, which is
+        the point. A second failure is refused BY NAME and the principal is
+        marked, so the route and ``GET /sessions`` say the same word.
+
+        Retrying is safe here *because* the refusal is an addressing miss: the
+        sidecar rejected the frame before running anything, so no model work is
+        repeated and §2.3's at-least-once prompt rule is not stretched. Nothing
+        else is retried — a timeout may well have started a turn.
+        """
+        try:
+            result = self._sup.call(method, params, timeout=timeout)
+        except SupervisorError as exc:
+            principal = self._principal_of(session_id)
+            if principal is None or not _names_unknown_session(exc):
+                # No attempt is made here and none was possible: either the
+                # failure is not an addressing miss, or this runtime retains no
+                # principal to re-open. The sentence must not claim one ran.
+                refusal = self._refuse_by_name(session_id, exc, readopted=False)
+                if refusal is exc:
+                    raise
+                raise refusal from exc
+            try:
+                self._readopt_once(session_id, principal)
+                result = self._sup.call(method, params, timeout=timeout)
+            except SupervisorError as retry_exc:
+                raise self._refuse_by_name(
+                    session_id,
+                    retry_exc,
+                    readopted=True,
+                    fallback=UnknownSessionError.reason,
+                ) from retry_exc
+        self._mark_readable(session_id)
+        return result
 
     # -- prompting ---------------------------------------------------------
 
@@ -737,8 +1071,23 @@ class BridgeRuntime:
         """
         with self._lock:
             principals = list(self._principals.values())
+            unreadable = dict(self._unreadable)
+        # §2.3 (amended 2026-09-03): each row says whether it is known to be
+        # unreadable. ``readable: true`` means NOT KNOWN TO BE UNREADABLE —
+        # stated that way because it is what the field can support. THE LISTING
+        # NEVER PROBES: fanning one ``GET /sessions`` into one bridge call per
+        # session is a list route nobody would call. The mark is written only
+        # where a real call for that session failed after re-adoption
+        # (:meth:`_refuse_by_name`) and cleared where one succeeded.
         return [
-            {"session_id": p.session_id, "profile": p.profile, "part": p.part} for p in principals
+            {
+                "session_id": p.session_id,
+                "profile": p.profile,
+                "part": p.part,
+                "readable": p.session_id not in unreadable,
+                "unreadable_reason": unreadable.get(p.session_id),
+            }
+            for p in principals
         ]
 
     def prompt(
@@ -803,7 +1152,14 @@ class BridgeRuntime:
                 # the params it always saw and a turn with no workspace context
                 # is byte-identical on the wire to one from before this change.
                 params["context"] = context
-            result = self._sup.call("session.prompt", params, timeout=timeout)
+            # Through the self-healing path (§2.8(6)): a prompt for a session
+            # the current child has forgotten is re-adopted and re-sent once,
+            # rather than refusing a turn whose transcript is intact. The retry
+            # is safe for the same reason the read's is — the sidecar refused the
+            # frame before running anything, so nothing is re-run.
+            result = self._call_for_session(
+                "session.prompt", params, session_id=session_id, timeout=timeout
+            )
             status = str(result.get("status", "completed"))
         finally:
             release_run_request_text(run_id)
@@ -868,12 +1224,29 @@ class BridgeRuntime:
             self._admission.request_cancel(run_id)
         self._sup.notify("cancel", {"run_id": run_id})
 
-    def history_page(self, session_id: str, cursor: str | None = None) -> dict[str, Any]:
-        """Fetch one normalized, high-water-frozen page of a session's history."""
+    def history_page(
+        self, session_id: str, cursor: str | None = None, after: str | None = None
+    ) -> dict[str, Any]:
+        """Fetch one normalized, high-water-frozen page of a session's history.
+
+        A **passthrough** in both directions (§2.8): the opaque token is
+        forwarded and returned unmodified and is never decoded on this side, and
+        every key the sidecar answers with — including the ``user_prompts`` and
+        ``end_cursor`` the 2026-09-03 amendment adds — flows through untouched.
+
+        ``after`` is §2.8(5)'s tail read: freeze a new mark now and start at the
+        ordinal the token names, so a client that already holds a walked prefix
+        can read what was recorded since instead of re-walking the session.
+        Forwarded only when present, so an older staged sidecar sees the params
+        it always saw. Both together is refused at the HTTP boundary
+        (``invalid_cursor``, §2.4) rather than here, where one would silently win.
+        """
         params: dict[str, Any] = {"session_id": session_id}
         if cursor is not None:
             params["cursor"] = cursor
-        return self._sup.call("history.page", params)
+        if after is not None:
+            params["after"] = after
+        return self._call_for_session("history.page", params, session_id=session_id)
 
     # -- py.* request handling (sidecar -> python) -------------------------
 

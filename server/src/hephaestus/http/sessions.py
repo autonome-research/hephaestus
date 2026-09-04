@@ -43,6 +43,8 @@ from hephaestus.agent_bridge.session_edges import (
     SessionEdgeStore,
 )
 
+from .errors import HttpRefusal
+
 __all__ = [
     "CREATABLE_PROFILES",
     "LIVE_BUFFER_MAX",
@@ -120,7 +122,9 @@ class SessionBackend(Protocol):
 
     def cancel(self, run_id: str) -> None: ...
 
-    def history_page(self, session_id: str, cursor: str | None = ...) -> dict[str, Any]: ...
+    def history_page(
+        self, session_id: str, cursor: str | None = ..., after: str | None = ...
+    ) -> dict[str, Any]: ...
 
     def sessions(self) -> list[dict[str, Any]]: ...
 
@@ -537,11 +541,37 @@ class WorkspaceSessions:
         }
 
     def list_sessions(self) -> dict[str, Any]:
+        """``GET /sessions``, amended 2026-09-03: each row also says whether it
+        can currently be read (§2.3).
+
+        ``readable`` / ``unreadable_reason`` are the bridge's own fields — a
+        mark with the same lifetime as the retained principal it describes,
+        held beside the principal map in ``BridgeRuntime``
+        (``agent_bridge/app.py``, the ``_unreadable`` dict) rather than as a
+        field on ``Principal`` itself — that dataclass is frozen and is the
+        authz identity ``py.tool_dispatch`` resolves against, so a cache of a
+        read failure does not belong on it (see the ``_unreadable`` comment
+        there for why). In memory either way: written only when a call for
+        that session actually failed after §2.8(6)'s single re-adoption
+        attempt, cleared the moment a call for it next succeeds. **The listing
+        never probes**: this method does not call the bridge again to find
+        out, it only reads what ``self.backend.sessions()`` already carried
+        back.
+
+        ``setdefault`` rather than an unconditional overwrite, so a backend that
+        has not been updated to carry the mark (a test double, most saliently)
+        still yields the full §2.3 row shape — with `readable: true` exactly the
+        default the spec asks for: "a serving process that restarts starts with
+        every row `readable: true`, and that is correct rather than a
+        shortcut". A backend that *has* been updated keeps whatever it wrote.
+        """
         rows = self.backend.sessions()
         for row in rows:
             edge = self.edges.get(str(row["session_id"]))
             row["parent_session_id"] = None if edge is None else edge.parent_session_id
             row["thread_state"] = THREAD_UNLINKED if edge is None else THREAD_LINKED
+            row.setdefault("readable", True)
+            row.setdefault("unreadable_reason", None)
         return {"status": "ok", "sessions": rows, "profiles": profiles_projection()}
 
     def run_prompt(
@@ -611,15 +641,44 @@ class WorkspaceSessions:
             "requested_session_id": session_id,
         }
 
-    def history(self, session_id: str, cursor: str | None) -> dict[str, Any]:
+    def history(
+        self, session_id: str, cursor: str | None, after: str | None = None
+    ) -> dict[str, Any]:
         """``history.page`` passthrough; the opaque cursor is never rewritten.
 
         **No page-size parameter** (§2.8): ``HISTORY_PAGE_SIZE`` lives in
         ``agent/src/session/history.ts`` and page 1 freezes a high-water mark, so
         a client-selectable size would break both restart-stability and the
         frozen-mark guarantee.
+
+        ``after`` is §2.8(5)'s **tail read**, additive to (never a replacement
+        for) ``cursor``: it freezes a *new* high-water mark now and starts at
+        the ordinal it names, rather than continuing inside a snapshot already
+        frozen. Sending both is refused ``invalid_cursor`` (400, §2.4) here —
+        at the one seam through which every caller of this method passes —
+        rather than letting one silently win; the route itself
+        (``server/src/hephaestus/http/app.py``) still has to *read* `?after=`
+        off the query string and reach this method with it, which is a change
+        to a file this module does not own (see the workflow's open concerns).
         """
-        page = self.backend.history_page(session_id, cursor)
+        if cursor is not None and after is not None:
+            raise HttpRefusal(
+                400,
+                "invalid_cursor",
+                "history.page accepts either `cursor` or `after`, never both",
+                data={"session_id": session_id},
+            )
+        # `after` is forwarded only when actually asked for, so a
+        # `SessionBackend` that has not yet grown the §2.8(5) parameter (a test
+        # double, most saliently `hephaestus.testing.fake_agent.FakeAgent`,
+        # which this module does not own) keeps working unchanged for every
+        # caller that never passes it — the ordinary `cursor` walk this method
+        # served before this amendment.
+        page = (
+            self.backend.history_page(session_id, cursor, after)
+            if after is not None
+            else self.backend.history_page(session_id, cursor)
+        )
         return {"status": "ok", "session_id": session_id, **page}
 
     def thread(self, session_id: str) -> dict[str, Any]:

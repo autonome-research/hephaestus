@@ -25,7 +25,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from hephaestus.agent_bridge.app import AgentUnavailableError, UnknownSessionError
 from hephaestus.agent_bridge.dispatch import DispatchError
+from hephaestus.agent_bridge.supervisor import SupervisorError
 from hephaestus.http.errors import (
     CAPABILITY_REASONS,
     REASON_STATUS,
@@ -346,3 +348,94 @@ def test_a_refusal_with_extra_data_keeps_it_and_cannot_relabel_itself() -> None:
     assert body["reason"] == "part_busy"
     assert body["status"] == "error"
     assert body["lease"] == "held"
+
+
+# --------------------------------------------------------------------------
+# §2.4, amended 2026-09-03: the two new session-route rows (§2.8(6))
+
+
+def test_an_unmapped_supervisor_error_no_longer_reaches_the_client_unnamed() -> None:
+    """The bug this amendment exists to fix, pinned at the mapping layer.
+
+    Before this amendment ``refusal_for`` had no branch for a bare
+    :class:`SupervisorError`: every isinstance check in the function is for
+    something *else*, so it fell through to the trailing ``raise exc`` and
+    reached the client as an unnamed 500 — over a transcript that was sitting
+    intact on disk the whole time (the condition §2.3/§2.4's amendment note
+    names explicitly). This must no longer raise.
+    """
+    from hephaestus.agent_bridge.protocol import ErrorCode
+
+    exc = SupervisorError("session.create failed", error={"code": ErrorCode.INTERNAL_ERROR})
+    refusal = refusal_for(exc)  # must not raise
+    assert isinstance(refusal, HttpRefusal)
+    assert refusal.status in (404, 503)
+    assert refusal.reason in ("unknown_session", "agent_unavailable")
+
+
+def test_unknown_session_error_maps_to_a_named_404_carrying_session_id() -> None:
+    """§2.4's new row: sidecar doesn't know a listed session, after one
+    re-adoption attempt → 404 ``unknown_session`` + ``{session_id}``.
+
+    ``UnknownSessionError`` is ``agent_bridge/app.py``'s own named signal for
+    exactly this condition (§2.8(6)) — asserted here as the CONTRACT between
+    the bridge and this mapping layer, independent of whichever route or
+    real-sidecar scenario produces one (``test_session_readopt.py`` exercises
+    that through a real kill/respawn).
+    """
+    exc = UnknownSessionError("unknown session 'sess-x': not recovered", session_id="sess-x")
+    refusal = refusal_for(exc)
+    assert refusal.status == 404
+    assert refusal.reason == "unknown_session"
+    assert refusal.data.get("session_id") == "sess-x"
+    assert status_for_reason("unknown_session") == 404
+
+
+def test_agent_unavailable_error_maps_to_a_named_503_carrying_its_cause() -> None:
+    """§2.4's other new row: no sidecar can serve ANY session route.
+
+    Never collapsed into ``unknown_session`` — one says *this session*, the
+    other says *this runtime*, and REASON_STATUS already carries
+    ``agent_unavailable`` → 503 (§7A.8), reused rather than re-tabulated.
+    """
+    exc = AgentUnavailableError("no sidecar can serve session 'sess-x'", session_id="sess-x")
+    refusal = refusal_for(exc)
+    assert refusal.status == 503
+    assert refusal.reason == "agent_unavailable"
+    assert refusal.data.get("cause") == "sidecar_failed"
+    assert REASON_STATUS["agent_unavailable"] == 503
+
+
+def test_unknown_session_and_agent_unavailable_are_never_collapsed() -> None:
+    """The two rows are asserted apart, deliberately, per the contract's own
+    "NEVER COLLAPSED" clause: different reasons, different statuses, different
+    remedies for what is superficially the same "a session route failed".
+    """
+    session = refusal_for(UnknownSessionError("unknown session 'x'", session_id="x"))
+    runtime = refusal_for(AgentUnavailableError("no sidecar", session_id="x"))
+    assert (session.status, session.reason) != (runtime.status, runtime.reason)
+    assert session.reason != runtime.reason
+
+
+def test_a_bare_supervisor_timeout_maps_to_504_not_agent_unavailable() -> None:
+    """Round 2's fix: a hard-wait timeout is a live, slow sidecar, not a dead
+    one, and must not fall into the ``agent_unavailable`` catch-all below it.
+
+    ``Supervisor._call``'s own backstop (``agent_bridge/supervisor.py:566``)
+    raises a bare ``SupervisorError`` with no ``error=`` envelope at all — the
+    same shape ``AgentUnavailableError``'s catch-all is built to catch — so the
+    mapping layer must recognise the message ITSELF (``_SUPERVISOR_TIMEOUT_RE``)
+    before falling through, on the same discipline as ``_UNKNOWN_SESSION_RE``.
+    Before this fix a slow-but-alive sidecar and a genuinely dead one were the
+    same 503, and a client cannot tell "wait" from "fix the runtime" apart.
+    """
+    exc = SupervisorError("session.prompt timed out after 30.0s with no response")
+    refusal = refusal_for(exc)
+    assert (refusal.status, refusal.reason) == (504, "timeout")
+    assert status_for_reason("timeout") == 504
+
+    # A bare SupervisorError that does NOT match the fixed timeout shape still
+    # falls through to the runtime-wide catch-all, unaffected by this branch.
+    other = SupervisorError("no process to write to")
+    other_refusal = refusal_for(other)
+    assert (other_refusal.status, other_refusal.reason) == (503, "agent_unavailable")

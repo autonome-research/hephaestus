@@ -568,6 +568,12 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
                     refusal = refusal_for(exc)
                 except BaseException:
                     raise exc from None
+                if refusal.reason == "agent_unavailable" and "config_path" not in refusal.data:
+                    # §2.4 promises `cause`, `config_path`, `detail` on every
+                    # `agent_unavailable`; a refusal minted below the runtime
+                    # (a sidecar that died mid-request) cannot know the path, so
+                    # it is merged here, and the bridge's own keys still win.
+                    refusal.data = {**_attach_data(runtime), **refusal.data}
                 return JSONResponse(refusal.body(), status_code=refusal.status)
 
         return wrapped
@@ -1424,7 +1430,12 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         # there is no page-size parameter: `HISTORY_PAGE_SIZE` lives in the
         # sidecar and page 1 freezes a high-water mark (§2.8).
         cursor = request.query_params.get("cursor")
-        return JSONResponse(await asyncio.to_thread(lambda: sessions.history(session_id, cursor)))
+        # `after` is §2.8(5)'s tail read, forwarded just as opaquely; sending
+        # both is refused `invalid_cursor` inside `WorkspaceSessions.history`.
+        after = request.query_params.get("after")
+        return JSONResponse(
+            await asyncio.to_thread(lambda: sessions.history(session_id, cursor, after))
+        )
 
     async def get_session_thread(request: Request) -> Response:
         # Deliberately NOT gated on an attached agent runtime. Threading is a

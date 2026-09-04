@@ -31,8 +31,10 @@ comment rather than papered over by inventing the string here.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Final
 
+from hephaestus.agent_bridge.app import AgentUnavailableError, UnknownSessionError
 from hephaestus.agent_bridge.dispatch import DispatchError
 from hephaestus.agent_bridge.limits import LimitError
 from hephaestus.agent_bridge.protocol import ErrorCode, ProtocolError
@@ -41,8 +43,11 @@ from hephaestus.agent_bridge.sessions import (
     SessionBusyError,
     StaleSelectionError,
 )
+from hephaestus.agent_bridge.supervisor import SupervisorError
 from hephaestus.core.errors import HephaestusError
 from opstore.errors import OpStoreError, ProtectedQuotaExceededError
+
+from .agent_attach import reduce_detail
 
 __all__ = [
     "CAPABILITY_REASONS",
@@ -280,6 +285,103 @@ REASON_STATUS: Final[dict[str, int]] = {
     "timeout": 504,
 }
 
+#: ``INTERFACE.md`` §2.4 (:709-711, :745-771), amended 2026-09-03. The exact
+#: string ``main.ts``'s three ``unknown session '${sessionId}'`` throw sites
+#: (``agent/src/main.ts:505,668,680``) put on the wire, so ``unknown_session``'s
+#: ``session_id`` can be *recovered* from an engine message that is otherwise
+#: opaque here — the same discipline as ``STALE_SELECTION_REASONS`` above:
+#: the engine's own vocabulary, read rather than re-derived. This is NOT the
+#: forbidden §2.8(3) recovery (stripping a "# Workspace context" heading from an
+#: application-state-dependent block with no reliable terminator): this pattern
+#: is the whole of a fixed, single-purpose RPC error message with one capture
+#: group, written by the one function that raises it.
+_UNKNOWN_SESSION_RE: Final[re.Pattern[str]] = re.compile(r"^unknown session '(.+)'$")
+
+#: The exact string ``Supervisor._call`` (``agent_bridge/supervisor.py:566``) puts
+#: on the wire for its own hard-wait backstop: ``f"{method} timed out after
+#: {deadline_s}s with no response"``. Read rather than re-derived, on the same
+#: discipline as ``_UNKNOWN_SESSION_RE`` above — a fixed, single-purpose message
+#: with no ``error`` envelope (this raise never passes ``error=``), so it would
+#: otherwise fall straight into the catch-all 503 below and mislabel a live but
+#: slow sidecar as a dead one. §2.4 already has a row for this: ``timeout`` →
+#: 504 (``REASON_STATUS["timeout"]`` above), the same status the bridge's own
+#: ``ErrorCode.TIMEOUT`` protocol code maps to — a call that timed out because
+#: the sidecar never answered is the same fact whether the deadline was caught
+#: by the protocol layer or by this supervisor-level backstop, and the two must
+#: not diverge into different statuses for what a client experiences identically.
+_SUPERVISOR_TIMEOUT_RE: Final[re.Pattern[str]] = re.compile(
+    r"^.+ timed out after .+s with no response$"
+)
+
+
+def _refusal_for_supervisor_error(exc: SupervisorError) -> HttpRefusal:
+    """§2.4's two new rows, both reached only through :class:`SupervisorError`.
+
+    **Preferred path.** ``agent_bridge/app.py`` already does the §2.8(6) work —
+    one re-adoption attempt, then a named :class:`SessionRouteError` subclass
+    (:class:`UnknownSessionError` / :class:`AgentUnavailableError`) carrying its
+    own ``reason`` and ``session_id`` (and, for the latter, ``cause``). Reading
+    those attributes is preferred over re-deriving the same fact from the raw
+    JSON-RPC envelope, because the bridge is the one place that actually ran
+    the re-adoption attempt and knows which of the two conditions it left
+    behind; a second, independent classification here could disagree with it.
+
+    **Fallback path.** A bare :class:`SupervisorError` that is *not* one of
+    those subclasses — a call site that has not been routed through the
+    bridge's naming yet, or a re-adoption-blind caller (``workflows.py``,
+    the CLI) that lets the raw exception surface. ``exc.error`` is the
+    sidecar's JSON-RPC error envelope, populated **only** when the failure is
+    an *answered* refusal — ``Supervisor.call`` sets it exactly once, from a
+    genuine ``{"error": …}`` response frame (``agent_bridge/supervisor.py:568``).
+    Every other raise site in that module (no process, a failed write, an
+    unanswered deadline, a respawn that gave up its budget) constructs a
+    :class:`SupervisorError` with no ``error`` kwarg at all, so its absence is
+    not a guess — it is the module's own distinction between "the sidecar
+    answered with a refusal" and "there was no sidecar to answer".
+    """
+    if isinstance(exc, UnknownSessionError):
+        return HttpRefusal(404, exc.reason, str(exc), data={"session_id": exc.session_id})
+    if isinstance(exc, AgentUnavailableError):
+        return HttpRefusal(
+            503,
+            exc.reason,
+            str(exc),
+            data={"cause": exc.cause, "detail": reduce_detail(exc)},
+        )
+    error = exc.error
+    code = error.get("code")
+    message = error.get("message")
+    if code == ErrorCode.INVALID_PARAMS and isinstance(message, str):
+        match = _UNKNOWN_SESSION_RE.match(message)
+        if match is not None:
+            return HttpRefusal(404, "unknown_session", message, data={"session_id": match.group(1)})
+    # A hard-wait timeout (no `error` envelope — see `_SUPERVISOR_TIMEOUT_RE`)
+    # is a live, slow sidecar, not an unreachable one. Checked before the
+    # catch-all below so it is never folded into `agent_unavailable`: the two
+    # already have distinct §2.4 rows (`timeout` → 504, `agent_unavailable` →
+    # 503) with different remedies (wait / retry, versus fix the runtime), and
+    # this module must not re-collapse a distinction the bridge's own protocol
+    # codes (`PROTOCOL_CODE_REASON[ErrorCode.TIMEOUT]` above) already keep.
+    if _SUPERVISOR_TIMEOUT_RE.match(str(exc)):
+        return HttpRefusal(504, "timeout", str(exc))
+    # Everything else is *this runtime's* sidecar being unreachable: a spawn
+    # that failed, a child that died with no respawn budget left, a call sent
+    # into (or timed out against) a process that stopped answering. §7A.8's
+    # closed `cause` vocabulary already has exactly the member for "the process
+    # itself is the problem" (`ATTACH_CAUSES` in `agent_attach.py`), reused
+    # rather than widened. `config_path` is deliberately absent: this module
+    # never opens the providers file, and a client that got this far already
+    # holds that value from the attach it made (`POST /providers/attach`,
+    # §7A.8) — carrying a second copy here would be a value this refusal cannot
+    # keep in sync with the one that matters.
+    return HttpRefusal(
+        503,
+        "agent_unavailable",
+        str(exc),
+        data={"cause": "sidecar_failed", "detail": reduce_detail(exc)},
+    )
+
+
 #: §2.4's last two rows — ``TIMEOUT`` / ``PROCESS_DOWN`` → 504 / 503 — name the
 #: bridge's **numeric JSON-RPC codes** (``agent_bridge/protocol.py``:52-53), not
 #: reason strings: the engine carries these conditions as codes and has no string
@@ -351,6 +453,15 @@ def refusal_for(exc: BaseException) -> HttpRefusal:
     """
     if isinstance(exc, HttpRefusal):
         return exc
+    if isinstance(exc, SupervisorError):
+        # §2.4, amended 2026-09-03: the two named rows a session route reaches
+        # when a call for a session the runtime lists fails at the bridge.
+        # Placed before every ``HephaestusError``-family branch below because
+        # ``SupervisorError`` is not one of that hierarchy and, unhandled here,
+        # falls all the way to the bare ``raise exc`` — which is exactly how an
+        # intact 29 KB transcript became a permanent unnamed 500 (§2.4's own
+        # amendment note).
+        return _refusal_for_supervisor_error(exc)
     if isinstance(exc, StaleSelectionError):
         # The five-value vocabulary rides as `reason` inside the payload when the
         # resolver supplies one (Stage 5's SelectionResolver, §19 item 8); the

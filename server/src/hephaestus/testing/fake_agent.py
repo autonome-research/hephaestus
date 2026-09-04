@@ -204,18 +204,45 @@ class FakeAgent:
 
     # -- history -----------------------------------------------------------
 
-    def history_page(self, session_id: str, cursor: str | None = None) -> dict[str, Any]:
+    def history_page(
+        self, session_id: str, cursor: str | None = None, after: str | None = None
+    ) -> dict[str, Any]:
         """One page over a frozen high-water mark, cursor shape and all.
 
         The high-water mark is frozen on page 1 and later pages never cross it,
         which is what makes the cursor restart-stable; the page size is the
         sidecar's and is **not** selectable by the caller (§2.8).
+
+        ``after`` is §2.8(5)'s tail read: it freezes a *new* mark at the current
+        last entry and starts at the ordinal the token names, and ``end_cursor``
+        is always present and never null — even on the last page and on an
+        empty session — so a client can always hand it back. An ``after`` at or
+        beyond the current end returns no events, ``done``, and the same
+        ``end_cursor`` it was given, which is what makes polling the tail cheap.
         """
         self.seen_cursors.append(cursor)
         events = self.history.get(session_id, [])
-        if not events:
-            return {"events": [], "cursor": None, "done": True}
-        if cursor is None:
+        if after is not None:
+            decoded = decode_cursor(after)
+            offset = int(decoded["offset"])
+            if offset >= len(events):
+                return {
+                    "events": [],
+                    "user_prompts": [],
+                    "cursor": None,
+                    "done": True,
+                    "end_cursor": after,
+                }
+            hw = f"e{len(events) - 1}"
+        elif not events:
+            return {
+                "events": [],
+                "user_prompts": [],
+                "cursor": None,
+                "done": True,
+                "end_cursor": encode_cursor("e0", 0),
+            }
+        elif cursor is None:
             hw, offset = f"e{len(events) - 1}", 0
         else:
             decoded = decode_cursor(cursor)
@@ -226,8 +253,13 @@ class FakeAgent:
         done = next_offset >= len(frozen)
         return {
             "events": page,
+            # The real sidecar's page always carries the additive prompt list
+            # (§2.8(2)); the fake seeds no prompts, so it is empty but present,
+            # which keeps the fake's page shape the real page's shape.
+            "user_prompts": [],
             "cursor": None if done else encode_cursor(hw, next_offset),
             "done": done,
+            "end_cursor": encode_cursor(hw, next_offset),
         }
 
     def seed_history(self, session_id: str, count: int) -> list[dict[str, Any]]:

@@ -302,6 +302,39 @@ def session_path_literals(source: str) -> list[str]:
     return offenders
 
 
+def method_def(source: str, name: str) -> ast.FunctionDef:
+    """The ``def`` node of one method, so a clause can be checked over its body alone."""
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return node
+    raise AssertionError(f"method went missing: {name}")
+
+
+def dotted_target(func: ast.expr) -> str:
+    """Render a call's callee as a dotted name (``self._sup.call``, ``open``)."""
+    parts: list[str] = []
+    node: ast.expr = func
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    parts.append(node.id if isinstance(node, ast.Name) else f"<{type(node).__name__}>")
+    return ".".join(reversed(parts))
+
+
+def call_targets(node: ast.AST) -> list[str]:
+    """Every callee inside ``node``, dotted, in walk order."""
+    return [dotted_target(call.func) for call in ast.walk(node) if isinstance(call, ast.Call)]
+
+
+def module_level_names(source: str) -> set[str]:
+    """Names this module itself defines at top level (its own helpers and types)."""
+    return {
+        node.name
+        for node in ast.parse(source).body
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+    }
+
+
 def test_workflow_history_no_python_module_parses_pi_jsonl() -> None:
     """No Python package names a ``.jsonl`` transcript except the bench archives."""
     bridge = REPO_ROOT / "server" / "src" / "hephaestus" / "agent_bridge"
@@ -346,8 +379,36 @@ def test_workflow_history_python_reaches_transcripts_only_through_the_bridge() -
         path.name for path in callers
     )
     # …and the runtime's only use is a supervisor request, never a file read.
-    assert callers[bridge / "app.py"] == ["call"]
+    #
+    # AMENDMENT (2026-09-03 — INTERFACE.md §2.8(6)). The literal no longer names
+    # ``self._sup.call`` directly: every session-scoped request now goes through
+    # ``BridgeRuntime._call_for_session``, the one seam that re-adopts a session
+    # the sidecar has forgotten and retries **exactly once**, so a transcript
+    # that exists intact on disk stops answering an unnamed 500. Renaming the
+    # expected literal alone would rename *past* the clause this test exists for,
+    # so it is checked in two halves: the ``history.page`` literal reaches the
+    # seam, and the seam's own body reaches nothing but the supervisor.
+    assert callers[bridge / "app.py"] == ["_call_for_session"]
     assert callers[bridge / "protocol.py"] == []
+
+    runtime_source = (bridge / "app.py").read_text(encoding="utf-8")
+    seam = call_targets(method_def(runtime_source, "_call_for_session"))
+    # The seam speaks to the supervisor and to nothing else that could be a
+    # transport: the first attempt and the single retry, both ``Supervisor.call``.
+    assert [target for target in seam if target.startswith("self._sup.")] == [
+        "self._sup.call",
+        "self._sup.call",
+    ], seam
+    # …and every *other* call it makes is its own method or this module's own
+    # helper — never ``open``, ``Path``, or anything reached through an import.
+    # That is the half a rename would have dropped: it still catches a future
+    # edit that healed a forgotten session by reading the JSONL itself.
+    strays = [
+        target
+        for target in seam
+        if not target.startswith("self.") and target not in module_level_names(runtime_source)
+    ]
+    assert strays == [], strays
 
     # Nothing in the bridge reaches into the sidecar's app-owned agent directory.
     #
