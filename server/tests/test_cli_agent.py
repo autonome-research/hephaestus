@@ -21,6 +21,7 @@ from typing import Any, cast
 import pytest
 from hephaestus.agent_bridge import cli as agent_cli
 from hephaestus.agent_bridge.app import AuthLinkError, PromptResult, link_auth_source
+from hephaestus.agent_bridge.client_mode import ClientModeError
 from hephaestus.core.cli import build_parser
 from hephaestus.testing.stream_assertions import text, tool_call
 from test_e2e_fake_model import Harness
@@ -46,6 +47,48 @@ def test_engine_verbs_still_parse_after_the_agent_hook() -> None:
     parser = build_parser()
     assert parser.parse_args(["build", "widget"]).command == "build"
     assert parser.parse_args(["render", "widget"]).command == "render"
+
+
+def test_agent_project_that_is_not_a_directory_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A mistyped or file-shaped ``--project`` must not walk up into another project.
+
+    ``find_project_root`` resolves non-strictly and then climbs, so both a
+    missing directory *inside* a project and the project's own
+    ``hephaestus.toml`` would resolve to that project and run against it — a
+    different root than the operator named, with a different transcript and
+    different leases. ``heph serve --web`` refuses these by name; docs/cli.md
+    promises the two verbs resolve ``--project`` identically, so this verb must
+    refuse them the same way and with the same exit status.
+    """
+    (tmp_path / "hephaestus.toml").write_text("", encoding="utf-8")
+
+    for target in (tmp_path / "typoo", tmp_path / "hephaestus.toml"):
+        args = build_parser().parse_args(["agent", "--project", str(target), "--session", "s1"])
+        assert args.func(args) == 2
+        assert f"heph: agent: --project {target}: not a directory" in capsys.readouterr().err
+
+
+def test_agent_project_that_is_a_directory_still_walks_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The guard refuses non-directories only; a real subdirectory still resolves."""
+    (tmp_path / "hephaestus.toml").write_text("", encoding="utf-8")
+    nested = tmp_path / "parts"
+    nested.mkdir()
+    seen: dict[str, object] = {}
+
+    def _attach(project_root: Path, **_kwargs: object) -> None:
+        seen["root"] = project_root
+        raise ClientModeError("server_unreachable", "stop here")
+
+    monkeypatch.setattr(agent_cli, "attach_client", _attach)
+
+    args = build_parser().parse_args(["agent", "--project", str(nested), "--session", "s1"])
+    assert args.func(args) == 1
+    assert seen["root"] == tmp_path
+    assert "not a directory" not in capsys.readouterr().err
 
 
 # --------------------------------------------------------------------------

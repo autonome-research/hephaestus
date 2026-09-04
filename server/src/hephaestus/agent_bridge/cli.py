@@ -352,7 +352,20 @@ def _resolve_selection(text: str, options: list[str], *, multi: bool, allow_free
 
 
 def _cmd_agent(args: argparse.Namespace) -> int:
-    start = Path(cast("str | None", args.project) or Path.cwd()).expanduser()
+    explicit = cast("str | None", args.project)
+    start = Path(explicit or Path.cwd()).expanduser()
+    if explicit is not None and not start.is_dir():
+        # Mirrors `heph serve --web --project` exactly (see
+        # :mod:`hephaestus.http.cli_web`), because docs/cli.md promises the two
+        # verbs resolve `--project` identically. `find_project_root` resolves
+        # non-strictly and then walks *up*, so a mistyped DIR — or one naming
+        # `hephaestus.toml` itself — would otherwise land on the nearest ancestor
+        # project and run against *that* one, silently: a different root than the
+        # operator named, holding a different transcript and different leases.
+        # Only a path that is not a directory is refused; a real subdirectory
+        # still walks up, which is the flag's point.
+        print(f"heph: agent: --project {explicit}: not a directory", file=sys.stderr)
+        return 2
     try:
         project_root = find_project_root(start)
     except Exception as exc:

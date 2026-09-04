@@ -21,7 +21,13 @@ import json
 import os
 import stat
 from pathlib import Path
+from typing import cast
 
+import pytest
+from hephaestus.agent_bridge.serve_record import ServeRecord
+from hephaestus.core.errors import ValidationError
+from hephaestus.core.project_store.layout import find_project_root
+from hephaestus.http.agent_attach import AttachRefused
 from hephaestus.http.principal import (
     SERVE_JSON_NAME,
     SERVE_TOKEN_NAME,
@@ -37,6 +43,7 @@ from hephaestus.http.serve import (
     DEFAULT_WEB_PORT,
     owning_server,
     parse_web_address,
+    serve_web,
 )
 
 
@@ -260,3 +267,297 @@ def test_no_built_bundle_is_a_named_absence_that_still_serves_the_api(tmp_path: 
     empty.mkdir()
     with workspace(tmp_path / "proj") as web:
         assert with_bundle(web.app, empty) is web.app
+
+
+# --------------------------------------------------------------------------
+# §2.1 — `--project DIR`: the serve verb, run from anywhere
+
+
+def _bare_project(root: Path) -> Path:
+    """The smallest thing ``find_project_root`` will accept, and nothing more."""
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "hephaestus.toml").write_text('name = "proj"\n', encoding="utf-8")
+    return root
+
+
+class _StubRuntime:
+    """Stands in for :class:`WorkspaceRuntime` so no sandbox is probed.
+
+    ``serve_web`` opens the real runtime with ``serve_mode=True``, which probes a
+    secure executor backend; that probe is a property of the machine, not of the
+    flag under test. What these tests need from the runtime is the one thing the
+    flag decides — **which root it was opened on** — so that is what the stub
+    records.
+    """
+
+    opened_on: Path | None = None
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+    @classmethod
+    def open(cls, root: Path, **_: object) -> _StubRuntime:
+        cls.opened_on = root
+        return cls(root)
+
+    def attach_agent(self) -> object:
+        raise AttachRefused("no_provider_config", self.root / ".heph", "stubbed")
+
+    def detach_agent(self) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+
+def _stub_serve(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    """Neuter everything ``serve_web`` does *except* project resolution."""
+    import uvicorn
+    from hephaestus.http import serve as serve_module
+
+    seen: dict[str, object] = {}
+    _StubRuntime.opened_on = None
+    monkeypatch.setattr(serve_module, "WorkspaceRuntime", _StubRuntime)
+
+    def _identity(app: object) -> object:
+        return app
+
+    monkeypatch.setattr(serve_module, "build_app", _identity)
+    monkeypatch.setattr(serve_module, "with_bundle", _identity)
+
+    def _run(_app: object, **kwargs: object) -> None:
+        # Called where the real server would block: the serve record still
+        # exists here, and is deleted by the `finally` that follows.
+        seen["record"] = read_serve_record(cast("Path", seen["store"]))
+        seen["bind"] = (kwargs.get("host"), kwargs.get("port"))
+
+    monkeypatch.setattr(uvicorn, "run", _run)
+    return seen
+
+
+def test_serve_project_dir_is_resolved_from_that_dir_not_the_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``heph serve --web --project DIR`` serves DIR's project from anywhere.
+
+    The flag exists so the workspace can be started without ``cd`` — which is
+    only true if *everything* the serve derives moves with it. So this asserts
+    the whole set at once: the runtime is opened on the resolved root, the token
+    and the ``serve.json`` record are written under **that** root's ``.heph/``,
+    and the unrelated working directory is left without a ``.heph/`` at all.
+    """
+    project = _bare_project(tmp_path / "proj")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    seen = _stub_serve(monkeypatch)
+    seen["store"] = project / ".heph"
+
+    assert serve_web(root=project, open_browser=False) == 0
+
+    assert _StubRuntime.opened_on == project.resolve()
+    assert (project / ".heph" / SERVE_TOKEN_NAME).is_file()
+    record = cast("ServeRecord | None", seen["record"])
+    assert record is not None and record.http == f"http://{DEFAULT_WEB_HOST}:{DEFAULT_WEB_PORT}"
+    assert not (elsewhere / ".heph").exists()
+
+
+def test_serve_project_dir_walks_up_to_the_project_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A DIR *inside* a project resolves to the project, exactly as cwd would.
+
+    ``--project`` is a starting point for ``find_project_root``, not a claim that
+    the directory named is itself the root — the same rule every other verb
+    follows, so ``--project parts/`` is not a surprise.
+    """
+    project = _bare_project(tmp_path / "proj")
+    nested = project / "parts" / "deeper"
+    nested.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    seen = _stub_serve(monkeypatch)
+    seen["store"] = project / ".heph"
+
+    assert serve_web(root=nested, open_browser=False) == 0
+    assert _StubRuntime.opened_on == project.resolve()
+
+
+def test_serve_and_agent_agree_on_the_project_a_dir_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The record ``--project`` writes is the one ``heph agent --project`` finds.
+
+    §2.1 gives ``heph agent`` **no new flag**: it discovers a live serve by
+    reading ``<root>/.heph/serve.json``. That handshake only holds if both verbs
+    resolve the same DIR to the same root, so the discovery half is run here
+    against the record the serve half actually wrote — from a *third* directory,
+    so neither side can be right by accident.
+    """
+    project = _bare_project(tmp_path / "proj")
+    nested = project / "parts"
+    nested.mkdir()
+    monkeypatch.chdir(tmp_path)
+    seen = _stub_serve(monkeypatch)
+    seen["store"] = project / ".heph"
+
+    found: dict[str, object] = {}
+
+    def _run(_app: object, **_kwargs: object) -> None:
+        # `heph agent --project <nested>` does exactly this: resolve the root,
+        # then ask whether a live server owns it.
+        found["owner"] = owning_server(find_project_root(nested))
+
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "run", _run)
+    assert serve_web(root=project, open_browser=False) == 0
+
+    owner = cast("ServeRecord | None", found["owner"])
+    assert owner is not None
+    assert owner.pid == os.getpid()
+
+
+def test_serve_project_dir_outside_a_project_refuses_like_the_cwd_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A bad ``--project`` is the same refusal a bad working directory is.
+
+    Same exception, same ``validation_error`` code, same kind — because it is
+    the same call, given a different starting point. A separate refusal for the
+    flag would be a second thing to keep in step with the first.
+    """
+    outside = tmp_path / "not-a-project"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+    _stub_serve(monkeypatch)
+
+    with pytest.raises(ValidationError) as flag_exc:
+        serve_web(root=outside, open_browser=False)
+    with pytest.raises(ValidationError) as cwd_exc:
+        serve_web(open_browser=False)
+
+    assert flag_exc.value.code == cwd_exc.value.code == "validation_error"
+    assert flag_exc.value.kind == cwd_exc.value.kind == "contract"
+    assert str(flag_exc.value) == str(cwd_exc.value)
+
+
+def test_the_no_project_refusal_says_what_a_project_is_and_how_to_make_one(
+    tmp_path: Path,
+) -> None:
+    """The first refusal a new operator meets has to be actionable.
+
+    The **code** is deliberately unchanged (``validation_error``) and so is the
+    leading ``no hephaestus.toml found`` clause that other tests and callers
+    match on; what the message gained is the two facts a stranded operator is
+    missing — what a project is, and the verb that makes one.
+    """
+    outside = tmp_path / "nowhere"
+    outside.mkdir()
+    with pytest.raises(ValidationError) as exc_info:
+        find_project_root(outside)
+
+    message = str(exc_info.value)
+    assert exc_info.value.code == "validation_error"
+    assert message.startswith("no hephaestus.toml found at or above ")
+    assert str(outside) in message
+    assert "heph init DIR" in message
+    assert "--project DIR" in message
+
+
+# --------------------------------------------------------------------------
+# the flag on the real parser
+
+
+def test_the_serve_verb_carries_project_beside_the_web_flags() -> None:
+    """``--project DIR`` is spelled exactly as ``heph agent --project`` is."""
+    from hephaestus.core.cli import build_parser
+
+    parsed = build_parser().parse_args(["serve", "--web", "--project", "/tmp/x"])
+    assert parsed.web is True
+    assert parsed.project == "/tmp/x"
+    assert build_parser().parse_args(["serve", "--web"]).project is None
+
+
+def test_serve_project_is_expanded_and_handed_to_the_web_half(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``~`` is expanded at the CLI boundary, where the string came from."""
+    from hephaestus.core.cli import build_parser
+    from hephaestus.http import serve as serve_module
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "proj").mkdir()
+    seen: dict[str, object] = {}
+
+    def _serve_web(*, web: str | None = None, root: Path | None = None) -> int:
+        seen["web"] = web
+        seen["root"] = root
+        return 0
+
+    monkeypatch.setattr(serve_module, "serve_web", _serve_web)
+    args = build_parser().parse_args(["serve", "--web", "--project", "~/proj"])
+    assert args.func(args) == 0
+    assert seen["root"] == tmp_path / "proj"
+
+
+def test_serve_project_that_is_not_a_directory_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A typo'd or file-shaped ``--project`` must not walk up into another project.
+
+    ``find_project_root`` resolves non-strictly and then climbs, so both a
+    missing directory *inside* a project and the project's own
+    ``hephaestus.toml`` used to resolve to that project and serve it — minting a
+    token and a serve record under a root the operator never named.
+    """
+    from hephaestus.core.cli import build_parser
+    from hephaestus.http import serve as serve_module
+
+    (tmp_path / "hephaestus.toml").write_text("", encoding="utf-8")
+
+    def _unreachable(**_kwargs: object) -> int:  # pragma: no cover - must not run
+        raise AssertionError("serve_web must not be reached")
+
+    monkeypatch.setattr(serve_module, "serve_web", _unreachable)
+
+    for target in (tmp_path / "typoo", tmp_path / "hephaestus.toml"):
+        args = build_parser().parse_args(["serve", "--web", "--project", str(target)])
+        assert args.func(args) == 2
+        assert f"--project {target}: not a directory" in capsys.readouterr().err
+
+
+def test_serve_project_that_is_a_directory_still_walks_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The guard refuses non-directories only; a real subdirectory still resolves."""
+    from hephaestus.core.cli import build_parser
+    from hephaestus.http import serve as serve_module
+
+    nested = tmp_path / "parts"
+    nested.mkdir()
+    seen: dict[str, object] = {}
+
+    def _serve_web(*, web: str | None = None, root: Path | None = None) -> int:
+        seen["root"] = root
+        return 0
+
+    monkeypatch.setattr(serve_module, "serve_web", _serve_web)
+    args = build_parser().parse_args(["serve", "--web", "--project", str(nested)])
+    assert args.func(args) == 0
+    assert seen["root"] == nested
+
+
+def test_serve_project_without_web_is_refused_by_name(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The MCP half resolves the project from the cwd; ignoring the flag would lie.
+
+    An accepted-and-ignored ``--project`` would leave the operator believing the
+    MCP transport had been aimed somewhere it never looked — the one failure a
+    usage error costs nothing to prevent.
+    """
+    from hephaestus.core.cli import build_parser
+
+    args = build_parser().parse_args(["serve", "--mcp", "--project", "/tmp/x"])
+    assert args.func(args) == 2
+    assert "--project applies to --web" in capsys.readouterr().err

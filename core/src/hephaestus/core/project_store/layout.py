@@ -187,12 +187,27 @@ class ProjectLayout:
 
 
 def find_project_root(start: Path) -> Path:
-    """Nearest ancestor (including ``start``) containing ``hephaestus.toml``."""
+    """Nearest ancestor (including ``start``) containing ``hephaestus.toml``.
+
+    The refusal is the first thing a new operator sees when they run ``heph``
+    from the wrong directory, so it says what a project *is* and how to make
+    one. The error **code** is unchanged (``validation_error``, kind
+    ``contract``) and so is the leading ``no hephaestus.toml found`` clause —
+    both are matched by callers and tests; what was added is the sentence after
+    it.
+    """
     current = start.resolve()
     for candidate in (current, *current.parents):
         if (candidate / MANIFEST_FILENAME).is_file():
             return candidate
-    raise ValidationError(f"no {MANIFEST_FILENAME} found at or above {start}", kind="contract")
+    raise ValidationError(
+        f"no {MANIFEST_FILENAME} found at or above {start}: "
+        f"a Hephaestus project is a directory holding {MANIFEST_FILENAME} "
+        "(plus globals.py, parts/ and checks/). "
+        "Create one with `heph init DIR`, then run from inside it "
+        "(or pass `--project DIR` to `heph agent` / `heph serve --web`)",
+        kind="contract",
+    )
 
 
 def load_project(root: Path) -> ProjectLayout:

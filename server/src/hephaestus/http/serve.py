@@ -75,6 +75,15 @@ def serve_web(
 ) -> int:
     """Run the workspace API on loopback until interrupted.
 
+    ``root`` is where the search for the project starts — ``--project DIR``, or
+    the working directory when it is ``None``. Everything this function derives
+    is derived from the *resolved* root and never from the process's cwd again:
+    ``.heph/serve.token``, ``.heph/serve.json``, the runtime (and through it the
+    provider config and the sidecar's working directory), and the lease
+    ownership check. The built client bundle is found relative to this
+    installation rather than to any directory, so it is unaffected either way.
+    A ``root`` outside a project raises the ordinary ``validation_error``.
+
     Refuses rather than racing when another live process already owns the
     project: ``architecture.md`` §4.2 already says a second process must route
     through the owning server or fail ``session_busy``, and two servers on one
