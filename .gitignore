@@ -35,3 +35,6 @@ spikes/**/out/
 # Playwright artifacts (`pnpm --dir web test:e2e`)
 web/playwright-report/
 web/test-results/
+
+# Vite dependency-optimizer cache (web/ dev server run from the repo root)
+.vite/

@@ -60,7 +60,7 @@ permissions:
 env:
   UV_PYTHON: "3.13"
   NODE_VERSION: "22.19.0"
-  PNPM_VERSION: "10"
+  PNPM_VERSION: "10.34.5"
 
 jobs:
   # ------------------------------------------------------------ leaderboard --

@@ -1,0 +1,29 @@
+# Copyright 2026 The Hephaestus Authors
+# SPDX-License-Identifier: Apache-2.0
+#
+# `web/` is a single package with its own lockfile, not a multi-package
+# workspace — `.github/workflows/ci.yml` records why there is no
+# repository-root `pnpm-workspace.yaml`, and a `packages:` list here would
+# recreate that problem one level down.
+#
+# Recreating node_modules (switching pnpm majors is enough to require it: the
+# two write incompatible `.modules.yaml` and use different store versions) is a
+# question pnpm asks before acting, and a shell with no TTY cannot answer —
+# ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY. CI escapes it with the `CI` env
+# var; a script, a hook or an agent shell has no such flag. This has to live
+# here rather than in an `.npmrc`: neither pnpm 10.34.5 nor pnpm 11 accepts it
+# as an rc key, and an rc value is a string, where the string "false" is truthy.
+# Answering yes unattended is safe — node_modules is, by definition,
+# reconstructible from the lockfile.
+confirmModulesPurge: false
+
+# There is deliberately no `allowBuilds` here. Nothing in this lockfile has an
+# install-time script: Vite 8 bundles with Rolldown, so unlike `agent/` this
+# tree pulls in no esbuild and no native toolchain at all. (`package.json`
+# claimed an ignored esbuild build until this was checked; it was stale.)
+#
+# When a dependency does arrive with one, pnpm 11 stops the install with
+# ERR_PNPM_IGNORED_BUILDS rather than silently skipping it. The fix is an
+# `allowBuilds:` map here — `name: true` to run it, `name: false` to refuse it
+# on the record — in the spelling `agent/pnpm-workspace.yaml` documents, which
+# is the only one both pinned pnpm majors read.

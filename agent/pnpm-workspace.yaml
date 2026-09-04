@@ -1,0 +1,77 @@
+# Copyright 2026 The Hephaestus Authors
+# SPDX-License-Identifier: Apache-2.0
+#
+# `agent/` is a single package with its own lockfile, not a multi-package
+# workspace — `.github/workflows/ci.yml` records why there is no
+# repository-root `pnpm-workspace.yaml`, and adding a `packages:` list here
+# would recreate that problem one level down. The file exists for one reason:
+# to state, in the tree, which dependency build scripts are allowed to run.
+#
+# `allowBuilds` is the one spelling both pinned pnpm versions read. pnpm 11
+# consumes it natively; pnpm 10.34.5 folds it into `onlyBuiltDependencies` /
+# `ignoredBuiltDependencies` before the installer sees it — the key is in that
+# release's `DEPS_BUILD_CONFIG_KEYS`, and `getOptionsFromPnpmSettings` does the
+# fold. It is not a spelling *every* pnpm reads: 10.24.0 ignores it and 10.26.0
+# honours it, so a pnpm older than roughly 10.25 sees no policy here and skips
+# esbuild's install script. It does so loudly — "Ignored build scripts:
+# esbuild. Run pnpm approve-builds" — and that is the intended failure mode.
+# The `packageManager` pin in package.json is what normally keeps anyone from
+# reaching it: `manage-package-manager-versions` defaults to true, so such a
+# pnpm switches itself to 10.34.5 before the install runs.
+#
+# The older split-list spelling is not an alternative, though not for the
+# reason it is tempting to give. pnpm 11 does not reject those four keys: in
+# the 11.25.0 bundle they are members of `UNTYPED_WORKSPACE_SETTING_KEYS`, so
+# they parse without even an unknown-setting warning. They are simply never
+# consulted — `ignoredBuiltDependencies` occurs in that bundle exactly twice,
+# once in that key list and once in `LEGACY_BUILD_SETTINGS`, which only
+# `pnpm approve-builds` uses, to delete them when it rewrites this file. Inert
+# is enough: writing them here would leave pnpm 11 at ERR_PNPM_IGNORED_BUILDS
+# all the same.
+#
+# The `"pnpm": {"ignoredBuiltDependencies": [...]}` block that used to sit in
+# package.json is deliberately gone rather than kept as a fallback for
+# pre-`allowBuilds` pnpm, because it never was one: it listed esbuild as
+# *ignored*, so under pnpm 10.18.3 it yields the same skipped build as no
+# policy at all, minus the warning that would have reported it. The fallback
+# that would genuinely work, `pnpm.onlyBuiltDependencies`, is a member of pnpm
+# 11's `MIGRATED_PNPM_FIELD_KEYS` and so costs every pnpm 11 user a WARN on
+# every install ('The "pnpm" field in package.json is no longer read by pnpm'),
+# which is a poor price for silencing a warning that only ever reaches someone
+# running a pnpm older than this package's own pin.
+#
+# Every package pnpm can detect a build script on is listed explicitly, `false`
+# included — an unlisted one is "automatically ignored", which is what makes
+# `pnpm install` and `pnpm run` fail on pnpm 11.
+
+# Recreating node_modules (switching pnpm majors is enough to require it: the
+# two write incompatible `.modules.yaml` and use different store versions) is
+# a question pnpm asks before acting, and a shell with no TTY cannot answer —
+# ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY. CI escapes it with the `CI` env
+# var; a script, a hook or an agent shell has no such flag. This has to live
+# here rather than in `.npmrc`: neither pnpm 10.34.5 nor pnpm 11 accepts it as
+# an rc key, and an rc string "false" is truthy where a boolean is wanted.
+# Answering yes unattended is safe — node_modules is, by definition,
+# reconstructible from the lockfile.
+confirmModulesPurge: false
+
+allowBuilds:
+  # Allowed. `postinstall: node install.js` is esbuild's supported way to
+  # locate and version-check the platform binary (`@esbuild/<os>-<arch>`) that
+  # `scripts/bundle.mjs` drives to produce the sidecar the wheel ships; it also
+  # repairs the cases where the optional-dependency layout alone does not
+  # produce a runnable binary. On linux-x64 the bundle was observed to succeed
+  # even with the script skipped, because esbuild's JS API can resolve the
+  # optional package directly — that is incidental, not a platform guarantee,
+  # and it is not the reason this entry exists. The reason is that a package
+  # with an install script and no verdict here is "automatically ignored",
+  # which is what makes pnpm 11 refuse to install or to run a script at all.
+  esbuild: true
+  # Not required. Its only install-time hook is a literal
+  # `preinstall: echo 'preinstall: no-op'`; nothing the bundle reads is
+  # produced by it. Reached transitively through @earendil-works/pi-ai.
+  '@google/genai': false
+  # Not required. `postinstall: node scripts/postinstall` returns immediately
+  # unless the package sets `versionScheme` (7.6.5 does not), and even then it
+  # only prints a compatibility warning to stderr. It writes nothing.
+  protobufjs: false
