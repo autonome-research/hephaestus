@@ -196,8 +196,15 @@ def test_workflow_history_reconstructs_the_same_events_after_a_restart(
     before = read_all_pages(harness, session_id)
     assert len(before) == TRANSCRIPT_EVENTS
     # Every record is a public Hephaestus event; no Pi/bridge vocabulary leaks.
+    #
+    # AMENDMENT (INTERFACE.md §2.8(1), 2026-09-03): ``turn`` joins the closed
+    # set. It is public history-page vocabulary, not Pi's and not the bridge's —
+    # the 0-based ordinal of the user message whose turn recorded the event,
+    # counted over the frozen entry slice. The set stays CLOSED rather than
+    # becoming a subset-of-anything: it is the guard that would catch a real
+    # leak, and widening it by one named field is not the same as removing it.
     for event in before:
-        assert set(event) <= {"run_id", "seq", "kind", "tool_call_id", "payload"}
+        assert set(event) <= {"run_id", "seq", "kind", "tool_call_id", "payload", "turn"}
         assert event["kind"] in {
             "tool_call",
             "tool_result",

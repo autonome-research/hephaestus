@@ -158,7 +158,14 @@ describe("cursor paging over a frozen high-water mark", () => {
   const initial = Array.from({ length: 5 }, (_, i) => assistantText(`e${i}`, `t${i}`));
 
   it("empty history is done immediately", () => {
-    expect(pageHistory([], "r")).toEqual({ events: [], userPrompts: [], cursor: null, done: true });
+    // §2.8(5): `endCursor` is ALWAYS present, never null, even on an empty page.
+    expect(pageHistory([], "r")).toEqual({
+      events: [],
+      userPrompts: [],
+      cursor: null,
+      done: true,
+      endCursor: expect.any(String),
+    });
   });
 
   it("carries operator prompts beside the page without shifting event seqs", () => {
@@ -166,11 +173,15 @@ describe("cursor paging over a frozen high-water mark", () => {
       userMsg("u0", "Add a 2 mm chamfer."),
       assistantText("a1", "done"),
     ];
-    expect(extractUserPrompts(entries)).toEqual([{ seq: 0, text: "Add a 2 mm chamfer." }]);
+    // §2.8(2)/(3): `turn` is the identity now, and a marker-less prompt's
+    // `envelope` is null (today's legacy fallback, verbatim).
+    expect(extractUserPrompts(entries)).toEqual([
+      { turn: 0, seq: 0, text: "Add a 2 mm chamfer.", envelope: null },
+    ]);
     const page = pageHistory(entries, "sess-1");
     expect(page.events.map((e) => e.kind)).toEqual(["text_delta"]);
     expect(page.events[0]?.seq).toBe(0);
-    expect(page.userPrompts).toEqual([{ seq: 0, text: "Add a 2 mm chamfer." }]);
+    expect(page.userPrompts).toEqual([{ turn: 0, seq: 0, text: "Add a 2 mm chamfer.", envelope: null }]);
   });
 
   it("freezes the high-water at the first page and never crosses it as the log grows", () => {

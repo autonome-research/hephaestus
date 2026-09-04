@@ -42,7 +42,14 @@ import {
 } from "./session/credentials.js";
 import { SessionService, type ManagedSession } from "./session/manager.js";
 import type { SessionProfile } from "./session/profiles.js";
-import { pageHistory } from "./session/history.js";
+import {
+  nextTurnOrdinal,
+  pageHistory,
+  TURN_MARKER_TYPE,
+  TURN_OUTCOME_MARKER_TYPE,
+  type HistoryPageRequest,
+  type HistoryUserPrompt,
+} from "./session/history.js";
 import { normalizeLiveEvent, wireEvent } from "./session/live.js";
 import {
   ContextPolicy,
@@ -506,6 +513,36 @@ peer.on("session.prompt", async (params) => {
   }
 
   const controller = svc.beginRun(sessionId, runId);
+
+  // INTERFACE.md §2.8(3) — RECORD THE TURN AT PROMPT TIME.
+  //
+  // The recorded transcript is the only thing a reopened panel has, and until
+  // now it recorded the *fused* message Pi persists: with a workspace context
+  // block the operator's sentence and the server's projection became one user
+  // entry with no separation, so a reopened turn showed the server's words as
+  // the operator's (and titled the tab "# Workspace context"). There is no
+  // reliable way to undo that fusion after the fact — the block's tail is
+  // application-state dependent — so the pair is written down *before* it is
+  // fused, as a Pi CustomEntry that is EXCLUDED FROM LLM CONTEXT and therefore
+  // cannot change what the model reads.
+  //
+  // Best effort by construction: a session that cannot take the marker (an
+  // unpersisted session, a Pi surface that moved) falls back per turn to
+  // today's behaviour, which is exactly §2.8(3)'s legacy path. Failing the run
+  // over a bookkeeping entry would trade a rendering defect for an outage.
+  let recordedTurn: number | null = null;
+  try {
+    const manager = managed.session.sessionManager;
+    recordedTurn = nextTurnOrdinal(manager.getEntries());
+    manager.appendCustomEntry(TURN_MARKER_TYPE, {
+      turn: recordedTurn,
+      text: promptText,
+      envelope: contextBlock ?? null,
+    });
+  } catch (err) {
+    log(`turn marker not recorded: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   let seq = 0;
   const next = (): number => seq++;
   const policy = new ContextPolicy({ summary: () => stubSummary(managed) });
@@ -560,13 +597,32 @@ peer.on("session.prompt", async (params) => {
       // the operator's text is no longer at message start, so template
       // expansion would fire on the workspace's own prose rather than on
       // theirs — and it changes nothing for `heph agent`, which sends no block.
-      prompt: (text) =>
-        contextBlock === undefined
+      prompt: (text) => {
+        // The single transient retry re-prompts with a sentence THIS sidecar
+        // wrote (session/retry.ts). Pi persists it as an ordinary user message,
+        // so without its own marker it would surface as an operator turn
+        // (§2.8(3), amended 2026-09-03): record it with `origin: "agent"` so
+        // the projection can say who spoke. Same best-effort rule as above.
+        if (text !== promptText) {
+          try {
+            const manager = managed.session.sessionManager;
+            manager.appendCustomEntry(TURN_MARKER_TYPE, {
+              turn: nextTurnOrdinal(manager.getEntries()),
+              text,
+              envelope: contextBlock ?? null,
+              origin: "agent",
+            });
+          } catch (err) {
+            log(`retry turn marker not recorded: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+        return contextBlock === undefined
           ? managed.session.prompt(text)
           : managed.session.sendUserMessage([
               { type: "text", text: contextBlock },
               { type: "text", text },
-            ]),
+            ]);
+      },
       takeTurnError: () => {
         const captured = turnError;
         turnError = undefined;
@@ -604,6 +660,26 @@ peer.on("session.prompt", async (params) => {
     // completed flips it to `accepted`. Nothing else in this process writes it,
     // which is what makes "there is no background probe" true.
     observeTurn(managed.model.provider, state === "completed" ? undefined : errorMessage);
+  }
+
+  // §2.8(4) source (ii) — the turn that ended with NO assistant entry at all:
+  // cancelled before the model answered, or failed before the first token.
+  // Source (i) (the last assistant entry's stopReason) covers every other case
+  // and covers every session already on disk, so this marker exists only to
+  // close the one hole the persisted messages cannot: a turn with nothing to
+  // read it off. `history.ts` prefers (i) whenever an assistant entry exists,
+  // so writing this on every non-completed run cannot relabel a turn the model
+  // actually finished.
+  if (state !== "completed" && recordedTurn !== null) {
+    try {
+      managed.session.sessionManager.appendCustomEntry(TURN_OUTCOME_MARKER_TYPE, {
+        turn: recordedTurn,
+        state: state === "cancelled" ? "cancelled" : "error",
+        ...(errorMessage !== undefined ? { message: errorMessage } : {}),
+      });
+    } catch (err) {
+      log(`turn outcome not recorded: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   const terminalPayload: { [k: string]: JsonValue } =
@@ -672,6 +748,27 @@ peer.on("session.compact", async (params) => {
   return { summary: result.summary ?? "" };
 });
 
+/** Wire form of one recorded prompt (INTERFACE.md §2.8(2)). */
+function wireUserPrompt(prompt: HistoryUserPrompt): { [k: string]: JsonValue } {
+  const wire: { [k: string]: JsonValue } = {
+    turn: prompt.turn,
+    seq: prompt.seq,
+    text: prompt.text,
+    envelope: prompt.envelope,
+  };
+  // ABSENT means the operator; only the sidecar's own retry sentence is marked.
+  if (prompt.origin === "agent") wire.origin = "agent";
+  // ABSENT means completed. `outcome: null` would say "unknown", which is a
+  // different claim and not one this record can make.
+  if (prompt.outcome !== undefined) {
+    wire.outcome =
+      prompt.outcome.message !== undefined
+        ? { state: prompt.outcome.state, message: prompt.outcome.message }
+        : { state: prompt.outcome.state };
+  }
+  return wire;
+}
+
 peer.on("history.page", (params) => {
   const svc = requireService();
   const sessionId = String(params.session_id);
@@ -680,16 +777,29 @@ peer.on("history.page", (params) => {
     throw new RpcError(ErrorCode.INVALID_PARAMS, `unknown session '${sessionId}'`);
   }
   const entries = managed.session.sessionManager.getEntries();
-  const page = pageHistory(
-    entries,
-    sessionId,
-    params.cursor !== undefined ? { cursor: String(params.cursor) } : {},
-  );
+  const cursor = params.cursor === undefined || params.cursor === null ? undefined : String(params.cursor);
+  const after = params.after === undefined || params.after === null ? undefined : String(params.after);
+  // §2.8(5): the two forms are mutually exclusive and the ambiguity is REFUSED
+  // rather than resolved — a client that sent both does not know which snapshot
+  // it is reading, and silently picking one hands it a page it did not ask for.
+  if (cursor !== undefined && after !== undefined) {
+    throw new RpcError(ErrorCode.INVALID_PARAMS, "history.page accepts cursor or after, not both");
+  }
+  const request: HistoryPageRequest = {
+    ...(cursor !== undefined ? { cursor } : {}),
+    ...(after !== undefined ? { after } : {}),
+  };
+  const page = pageHistory(entries, sessionId, request);
   return {
-    events: page.events.map(wireEvent),
-    user_prompts: page.userPrompts.map((prompt) => ({ seq: prompt.seq, text: prompt.text })),
+    // §2.8(1): `turn` is stamped HERE, not inside `wireEvent`. `wireEvent` is
+    // shared with the live `notify("event", …)` path (see the subscribe call in
+    // session.prompt), so a `turn` added there would leak onto the live socket,
+    // where the field has no meaning and where the spec forbids it.
+    events: page.events.map((ev) => ({ ...wireEvent(ev), turn: ev.turn })),
+    user_prompts: page.userPrompts.map(wireUserPrompt),
     cursor: page.cursor,
     done: page.done,
+    end_cursor: page.endCursor,
   };
 });
 
