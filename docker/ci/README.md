@@ -29,9 +29,8 @@ this repository:
 - `uv run` without `UV_PROJECT_ENVIRONMENT` creates `/w/.venv` **as root**,
   replacing the host virtualenv; host `uv run` then dies with
   `failed to remove directory .venv/bin: Permission denied`.
-- `pnpm` without a store dir writes a root-owned `.pnpm-store/`, and the
-  container's `corepack` will pull its own pnpm over the repo pin into
-  `agent/node_modules`.
+- `pnpm` without a store dir writes a root-owned `.pnpm-store/` into the mount,
+  and every `node_modules/` it creates is root-owned too.
 - Python bytecode caches travel **both ways** through the mount, and either
   direction makes a traceback name a path that does not exist on the machine
   reading it. Measured 2026-08-28:
@@ -53,6 +52,57 @@ this repository:
 `ci.yml` never hits any of this because it runs on a throwaway checkout and
 sets `npm_config_store_dir: /tmp/pnpm-store`. A local run on your real worktree
 must move that state out of the mount itself.
+
+## The pnpm version the container actually runs
+
+The image bakes `corepack prepare pnpm@10.18.3 --activate`
+(`docker/ci/Dockerfile`), and that is what `pnpm` in this container *is* —
+`agent/package.json` and `web/package.json` declaring
+`"packageManager": "pnpm@10.34.5"` does not by itself change it. Two mechanisms
+could raise it, and inside this container neither fires:
+
+- **corepack resolves `packageManager` by walking up from the current
+  directory**, not from `--dir`. The recipe runs `-w /w`, and the repository
+  root deliberately has no `package.json` (there is no root pnpm workspace —
+  `.github/workflows/ci.yml` records why), so `pnpm --dir agent install` gives
+  corepack nothing to resolve and it falls back to the activated version.
+  Measured 2026-09-03: from a directory with no manifest `corepack pnpm
+  --version` printed corepack's activated default; from a directory whose
+  `package.json` pins 10.34.5 it printed `10.34.5`.
+- **pnpm does not switch versions when corepack invoked it.** The self-switch is
+  gated on `!isExecutedByCorepack()` — that is `COREPACK_ROOT` being absent from
+  the environment — in pnpm 10.34.5's `dist/pnpm.cjs`, and pnpm says so in its
+  own words: *"Corepack invoked pnpm with this version, and pnpm does not switch
+  versions when running under corepack."* A pnpm invoked **directly** does
+  honour the field, including across `--dir` (measured with pnpm 11.25.0 against
+  a package pinning 10.34.5: the install re-executed as `v10.34.5`). That is how
+  the stock-runner jobs land on the pin. Nothing here invokes pnpm directly.
+
+`ci.yml` escapes all of this only because it activates the pin explicitly, as
+its own first step in this job, before any pnpm command:
+
+```
+- run: corepack prepare "pnpm@${PNPM_VERSION}" --activate
+```
+
+A local container run must do the same (or `cd agent`/`cd web` before each pnpm
+command, so corepack has a manifest to read). Without it you get 10.18.3, which
+has no `allowBuilds` support whatsoever — zero occurrences in its
+`dist/pnpm.cjs` against 13 in 10.34.5's — so it reads no verdict from
+`agent/pnpm-workspace.yaml` and skips esbuild's `postinstall` **silently**,
+producing exactly the quietly under-built tree that `PNPM_VERSION`'s comment in
+`ci.yml` records. Activating
+the pin costs one download into the corepack cache under `HOME`, and the
+recipe's `-e HOME=/tmp/h` is per-run, so that fetch repeats on every run.
+
+`confirmModulesPurge: false` in `agent/pnpm-workspace.yaml` and
+`web/pnpm-workspace.yaml` is read by both versions, so `pnpm install` stays
+non-interactive either way; the recipe keeps `-e CI=true` because the rest of
+the toolchain reads it.
+
+Rebaking the image on 10.34.5 would remove both the extra step and the download.
+It is a Dockerfile change and therefore a digest bump, so it belongs to a
+re-baseline PR rather than to a local run.
 
 ## Recipe
 
@@ -99,9 +149,20 @@ uv run python -c "from hephaestus.core.render.goldens import renderer_string; pr
 `llvmpipe (LLVM 20.1.2, 256 bits)` is the pin. Anything else and you have
 rebuilt the image against a drifted base.
 
-The e2e half additionally needs a built sidecar and web bundle before it will
-start (`heph serve --web` refuses without both) — follow the `render goldens`
-job's step order in `.github/workflows/ci.yml`.
+The recipe above runs no pnpm, so the version question does not touch it. The
+e2e half does: it additionally needs a built sidecar and web bundle before it
+will start (`heph serve --web` refuses without both). Follow the `render
+goldens` job's step order in `.github/workflows/ci.yml` **including its first
+step** — put
+
+```
+corepack prepare "pnpm@10.34.5" --activate &&
+```
+
+into the `bash -lc` block ahead of every pnpm command, or the container builds
+the sidecar with 10.18.3 and its ignored install scripts. The version there is
+`ci.yml`'s `PNPM_VERSION`, which is the same one the two `packageManager` fields
+declare; if they have moved, that is the number to copy.
 
 ## Re-taking the Stage 12 pinned-image measurements
 

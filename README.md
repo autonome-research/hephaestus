@@ -16,30 +16,42 @@ Not on PyPI. There is no GitHub Release.
 
 ```console
 $ git clone https://github.com/autonome-research/hephaestus && cd hephaestus
-$ uv sync --dev
+$ ./scripts/bootstrap.sh
 $ uv run heph --version
 ```
 
-What each capability actually needs (sandbox, macOS, agent sidecar):
-[docs/install.md](docs/install.md).
+`scripts/bootstrap.sh` reports every missing prerequisite at once and then runs
+the build: `uv sync --dev`, the agent sidecar, and the web client (`--no-web`
+skips the last, `--check` only reports). For the engine verbs alone,
+`uv sync --dev` is still the whole install.
+
+What each capability actually needs (sandbox, macOS, agent sidecar), and how to
+run `heph` from outside the clone: [docs/install.md](docs/install.md).
 
 ## Operator UI
 
-Optional. Build the client from this clone, then run `heph serve --web` inside
-a project.
+Optional. Build the client from this clone, then serve a **project** — the
+clone is not one, so `heph serve --web` in the repository root refuses.
 
 ```console
-$ pnpm --dir web install --frozen-lockfile
-$ pnpm --dir web build
-$ uv run heph serve --web
+$ (cd web && pnpm install --frozen-lockfile)
+$ (cd web && pnpm build)
+$ uv run heph init ~/designs/bracket
+$ uv run heph serve --web --project ~/designs/bracket
 ```
+
+Without `--project`, `cd` into the project first. Run pnpm from inside `web/`
+rather than with `pnpm --dir web`: `--dir` moves the install but not the version
+resolution, and under corepack that picks the wrong pnpm — see
+[docs/install.md](docs/install.md#how-it-finds-pnpm).
 
 ## Headless / agents
 
 Coding agents use `heph` from a clone. You do not need the browser or MCP.
 
-After `uv sync --dev`, put the clone's `.venv/bin` on `PATH` (or call that
-`heph` by path):
+After `uv sync --dev`, put the clone's `.venv/bin` on `PATH`, call that `heph`
+by path, or symlink `scripts/heph` — a launcher that resolves the clone from
+its own location — onto `PATH`:
 
 ```console
 $ heph init /tmp/gadget && cd /tmp/gadget

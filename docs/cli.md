@@ -92,6 +92,22 @@ already initialized — is refused with the named `init_target_not_empty` error
 (exit 1) and nothing is written. The project name is the target directory's
 name; with no argument the current (empty) directory is initialized.
 
+Every other verb runs **inside** a project: it walks up from the working
+directory (or from `--project DIR`, where a verb has one) looking for
+`hephaestus.toml`, and refuses rather than guessing when there is none. A
+Hephaestus clone is not a project, which is the usual way to meet this:
+
+```
+heph: error (validation_error): no hephaestus.toml found at or above /home/you/hephaestus:
+a Hephaestus project is a directory holding hephaestus.toml (plus globals.py, parts/ and
+checks/). Create one with `heph init DIR`, then run from inside it (or pass `--project DIR`
+to `heph agent` / `heph serve --web`)
+```
+
+The code is `validation_error` (kind `contract`) and the fix is in the message:
+`heph init DIR`, then `cd` there — or point `--project` at a project you
+already have.
+
 ### `heph part list` / `heph part create` / `heph part show`
 
 The agent-shaped part verbs. Listing and showing compute nothing; creating
@@ -782,10 +798,46 @@ environment and handed to the sidecar. An ambient key you did not name is never
 forwarded — the allowlist is the whole mechanism, not a convenience filter.
 
 `kind` may be `anthropic`, `openai_compatible` (supply `baseUrl` — this is the
-local/self-hosted lane), or `pi_native` to use Pi's own model catalog. Only
-`pi_native` needs `auth_source`, an absolute path to an existing Pi `auth.json`
-which the supervisor **symlinks** into the project's agent directory. Without
-it, nothing outside the project is visible to the sidecar.
+local/self-hosted lane), `local` (endpoint only), or `pi_native` to use Pi's
+own model catalog. The `pi_native` lane is how an existing Codex/Pi login
+becomes a model here, and it carries no credential of its own — an id, its
+models, and `auth_source`:
+
+```json
+{
+  "providers": [
+    {
+      "id": "openai-codex",
+      "kind": "pi_native",
+      "models": [{"id": "gpt-5.6-sol"}]
+    }
+  ],
+  "credential_allowlist": [],
+  "auth_source": "/home/you/.pi/agent/auth.json"
+}
+```
+
+`id` is the catalog provider's own id, and `models[].id` must be an id that
+provider publishes — for `openai-codex` those are `gpt-5.3-codex-spark`,
+`gpt-5.4`, `gpt-5.4-mini`, `gpt-5.5`, `gpt-5.6-luna`, `gpt-5.6-sol` and
+`gpt-5.6-terra`. `credential_allowlist` stays empty: this lane reads no
+environment variable, so naming one would only widen what the sidecar can see.
+
+`auth_source` is an absolute path to an **existing** Pi `auth.json` and is
+required by `pi_native` alone. The supervisor **symlinks** it into the
+project's agent directory — never copies it. That is not a convenience: OAuth
+records rotate, and a copy would either go stale or refresh independently and
+revoke your own Codex login out from under you. One file, one rotation, two
+readers. An existing real `auth.json` in the agent directory is never clobbered;
+only Pi's empty placeholder is replaced, and anything else refuses by name.
+Without `auth_source`, nothing outside the project is visible to the sidecar.
+
+`heph serve --web` reports what it made of all this at `GET /api/v1/providers`:
+`auth_source` and `auth_source_linked` (is the symlink in place), `file_mode`
+and `file_mode_private`, and each provider's `available` with its
+`unavailable_reason`. No credential material crosses that boundary — the report
+is the fastest way to find out why a configured model is not offered. Write the
+file `0600`; the report says so when it is wider.
 
 In session: Ctrl-C cancels the in-flight run and only that run; a second Ctrl-C
 at an idle prompt exits. Images returned by tools are written under
@@ -806,6 +858,10 @@ backend and there is deliberately **no** `--unsafe-local-executor` flag on this
 verb. Under `--mcp` on stdio, stdout is the transport — diagnostics go to
 stderr, always.
 
+This transport resolves the project from the working directory, per request, so
+run it from inside one. `--project` belongs to `--web` and is refused by name
+here (exit 2) rather than accepted and ignored.
+
 ### `heph serve --web`
 
 Serve the **operator workspace** (`INTERFACE.md` §2) on loopback — optional
@@ -816,7 +872,28 @@ has an unsandboxed path either. MCP is not required to use this workspace.
 ```console
 $ heph serve --web                                  # 127.0.0.1:8760
 $ heph serve --web --web-address 127.0.0.1:9000
+$ heph serve --web --project ~/designs/bracket      # from any directory
 ```
+
+| Flag | Effect |
+|---|---|
+| `--web` | Serve the operator workspace. |
+| `--web-address HOST:PORT` | Bind address, loopback only (default `127.0.0.1:8760`). |
+| `--project DIR` | Where the search for the project starts (default: cwd). |
+
+`--project DIR` resolves exactly as it does for [`heph agent`](#heph-agent):
+the nearest ancestor of `DIR` holding `hephaestus.toml` is the project served,
+so `--project parts/` and `--project .` name the same one. It exists so the
+workspace can be started without a `cd`, and everything the serve derives moves
+with it — `.heph/serve.token`, `.heph/serve.json`, the provider config, and the
+agent runtime's working directory. Because both verbs resolve a directory the
+same way, `heph agent --project DIR` finds the `serve.json` that
+`heph serve --web --project DIR` wrote and runs in client mode against it. A
+`DIR` that is not inside a project is refused with the same `validation_error`
+a bad working directory gives. The flag applies to `--web` only: passing it
+with `--mcp` is a usage error (exit 2) rather than a silently ignored flag,
+because the MCP transport resolves the project per request from the working
+directory.
 
 The command prints `http://127.0.0.1:PORT/#t=<token>` and, on a TTY, opens it.
 The token rides in the URL **fragment**, never a query string, so it never
@@ -841,9 +918,10 @@ not a failed serve.
 The server also serves the **built web client** at `/`, with the API under
 `/api/`, so the browser loads the app from the origin that answers its requests.
 In a wheel that bundle is packaged; in a source checkout it is `web/dist`, which
-`pnpm --dir web build` writes. With no bundle built the command says so on
-stderr and serves the API alone — a workspace API without its client is still a
-usable API, and Vite's dev server can proxy `/api` to it.
+`pnpm build` in `web/` writes. That lookup is relative to the installation, not
+to the project, so it does not move with `--project`. With no bundle built the
+command says so on stderr and serves the API alone — a workspace API without its
+client is still a usable API, and Vite's dev server can proxy `/api` to it.
 
 Loopback only, and deliberately: no TLS, no real authn, no multi-tenancy. This
 is a local instrument, not a deployment.

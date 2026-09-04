@@ -21,9 +21,17 @@ required.
 
 ```console
 $ git clone https://github.com/autonome-research/hephaestus && cd hephaestus
-$ uv sync --dev                              # Python workspace — this is the install
+$ ./scripts/bootstrap.sh                     # everything; --check reports and stops
 $ uv run heph --version
 ```
+
+`scripts/bootstrap.sh` reports every missing prerequisite at once and then runs
+the same commands this section documents by hand — `uv sync --dev`, the agent
+install/bundle/stage, and the web install/build — so it is the fastest way to
+find out what a new machine is short of. `--check` changes nothing; `--no-web`
+stops after the sidecar. If you only touch Python, `uv sync --dev` on its own is
+still the install. Details and the per-step breakdown:
+[docs/install.md](docs/install.md).
 
 The TypeScript agent and the web operator chrome are separate packages with
 separate lockfiles, not members of one root workspace (`repo_conventions.md`,
@@ -33,11 +41,69 @@ Linux x86_64 — see [docs/install.md](docs/install.md) for what each capability
 requires and what fails closed without it.
 
 ```console
-$ pnpm --dir agent install --frozen-lockfile # the TypeScript agent
+$ (cd agent && pnpm install --frozen-lockfile)  # the TypeScript agent
 ```
 
-Python is driven with `uv run …`; the two Node packages with
-`pnpm --dir agent …` and `pnpm --dir web …`.
+Python is driven with `uv run …`; the two Node packages by running pnpm from
+**inside** `agent/` or `web/`, rather than with `pnpm --dir` — `--dir` moves the
+install but not the version resolution, for the corepack reason below.
+
+### pnpm: the pin, and where its settings live
+
+Both Node packages declare `"packageManager": "pnpm@10.34.5"`. A pnpm you invoke
+**directly** honours that field and re-executes as the pinned version, including
+across `--dir` (measured with pnpm 11.25.0 against a package pinning 10.34.5:
+the install reports `using pnpm v10.34.5`). The visible cost is a one-time
+download, and for someone coming from pnpm 11 a second store and one
+`node_modules` rebuild, because the majors use incompatible store versions.
+That convergence is deliberate: there is no config spelling all the plausible
+pnpm versions read, so the pin is what keeps a stray one from producing a
+quietly under-built tree. To run your own instead: `--pm-on-fail=ignore`
+(pnpm 11) or `manage-package-manager-versions=false` (pnpm 10). Installs no
+longer need a TTY or `CI=true`; nothing prompts.
+
+Under **corepack** the pin does not carry itself, and this repository's shape is
+the reason. Corepack resolves `packageManager` by walking up from the current
+directory — `--dir` does not move that search — and there is deliberately no
+repository-root `package.json`, so `corepack pnpm --dir agent …` run from the
+root finds no field and uses whatever corepack has activated. pnpm will not
+rescue it: the self-switch is gated on not running under corepack, and pnpm 11
+reports the mismatch as an error (*"Corepack invoked pnpm with this version, and
+pnpm does not switch versions when running under corepack"*) rather than
+switching. Either run pnpm directly, or `corepack prepare pnpm@10.34.5
+--activate` once, or `cd agent`/`cd web` first — the last is what
+`scripts/bootstrap.sh` does and what the command blocks here are written as,
+because it is the one form correct for every route at once.
+
+Two settings are what make those installs promptless, and both live in
+`agent/pnpm-workspace.yaml` and `web/pnpm-workspace.yaml` — **not** in an
+`.npmrc`. Neither pinned pnpm major
+accepts them as rc keys, and an rc value is a string, where `"false"` is truthy;
+there is deliberately no `.npmrc` in either tree.
+
+- `confirmModulesPurge: false` — recreating `node_modules` is a question pnpm
+  asks before acting, and a script or an agent shell with no TTY cannot answer
+  it (`ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`). Answering yes unattended is
+  safe: `node_modules` is reconstructible from the lockfile.
+- `allowBuilds:` — a name→boolean map of which dependency install scripts may
+  run. Record a verdict for **every** package pnpm detects a script on, `false`
+  included: an unlisted one counts as "automatically ignored", which is exactly
+  what makes pnpm 11 fail the install (`ERR_PNPM_IGNORED_BUILDS`). Write the
+  reason beside each entry, as the existing ones do. Do not reach for the older
+  split-list spelling — `onlyBuiltDependencies`, `onlyBuiltDependenciesFile`,
+  `neverBuiltDependencies`, `ignoredBuiltDependencies` — and not because pnpm 11
+  rejects it: all four are in that release's `UNTYPED_WORKSPACE_SETTING_KEYS`, so
+  they parse without even an unknown-setting warning. They are simply never
+  consulted (only `pnpm approve-builds` reads them, to delete them when it
+  rewrites the file), which leaves pnpm 11 at `ERR_PNPM_IGNORED_BUILDS` all the
+  same. `allowBuilds` is the one spelling both pinned majors read, and
+  `agent/pnpm-workspace.yaml` records the measurement. Do not commit what
+  `pnpm approve-builds` writes without reading it, either: which spelling it
+  emits depends on the major that ran it.
+
+Neither file is a multi-package workspace declaration: both omit `packages:` on
+purpose, for the reason `repo_conventions.md` gives for having no
+repository-root `pnpm-workspace.yaml` (it would hoist `agent/`'s lockfile).
 
 Default local checks (engine / CLI; no `web/` required). The root pytest
 configuration intentionally discovers the stage gates and `opstore/tests`; the
@@ -48,7 +114,7 @@ $ uv run ruff check . && uv run ruff format --check .
 $ uv run pyright opstore core server
 $ uv run pytest -m "not slow"                # root stage gates + opstore tests
 $ uv run pytest core/tests server/tests contract/tests
-$ pnpm --dir agent typecheck && pnpm --dir agent test
+$ (cd agent && pnpm typecheck && pnpm test)
 $ uv run python scripts/docs_check.py        # links, paths, and §refs
 $ uv run python scripts/license_headers.py --check
 ```
@@ -60,11 +126,11 @@ core. Install and test it when you are changing that tree, running Gate G4, or
 serving the workspace client (`heph serve --web` serves `web/dist` at `/`).
 
 ```console
-$ pnpm --dir web install --frozen-lockfile   # the web workspace client
-$ pnpm --dir web exec playwright install chromium
-$ pnpm --dir web build     # `heph serve --web` serves web/dist at /
-$ pnpm --dir web typecheck && pnpm --dir web lint && pnpm --dir web test
-$ pnpm --dir web test:e2e  # the Gate G4 command; see web/e2e/README.md
+$ (cd web && pnpm install --frozen-lockfile)  # the web workspace client
+$ (cd web && pnpm exec playwright install chromium)
+$ (cd web && pnpm build)   # `heph serve --web` serves web/dist at /
+$ (cd web && pnpm typecheck && pnpm lint && pnpm test)
+$ (cd web && pnpm test:e2e)  # the Gate G4 command; see web/e2e/README.md
 ```
 
 ## The clean-room boundary
