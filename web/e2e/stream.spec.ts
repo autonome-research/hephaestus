@@ -199,7 +199,9 @@ test("reopening loads the multi-page transcript and matches the archive (G4.9, G
         .map((node) => node.getAttribute("data-row") ?? ""),
     );
   for (const name of idlessRows) {
-    expect(["local-prompt", "run-start", "absence", "seam", "resync"]).toContain(name);
+    expect(["local-prompt", "run-start", "absence", "seam", "resync", "turn-outcome"]).toContain(
+      name,
+    );
   }
 
   // §7.4 C20 (amended 2026-09-02): the Latest pill lives in the gutter, off

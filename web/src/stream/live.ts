@@ -40,6 +40,26 @@ import {
   type TranscriptItem,
 } from "./transcript";
 
+/** The `entry: "echo"` member of `LiveEntry` — this module's own writes to it. */
+type EchoEntry = Extract<LiveEntry, { readonly entry: "echo" }>;
+
+/**
+ * §7A.5's closed `data-echo-state` vocabulary — THIS MODULE'S OWN COPY.
+ *
+ * `transcript.ts` carries the same three-member set on `LiveEntry`'s echo
+ * variant and says why a second copy is correct rather than sloppy: "`live.ts`
+ * holds the SENDER's copy of this set … The two cannot drift silently:
+ * `liveRows` assigns one to the other, so a member added on either side and
+ * not the other fails to compile." This is that copy.
+ *
+ * `unknown` (a POST that never came back) is a real member, but nothing in
+ * this module transitions an echo into it: the composer's own
+ * `data-send-state="unknown"` already carries that fact (`Composer.tsx`), and
+ * §7A.5 gives the echo itself no second, redundant path to the same word.
+ */
+export const ECHO_STATES = ["sent", "unknown", "refused"] as const;
+export type EchoState = (typeof ECHO_STATES)[number];
+
 /** The close code §2.7 assigns to an overflowed observer, with its reason. */
 export const RESYNC_CLOSE_CODE = 4409;
 export const RESYNC_CLOSE_REASON = "resync_required";
@@ -91,10 +111,36 @@ export interface LiveState {
   readonly terminals: number;
   /** Recently seen `<run_id>#<seq>` identities, newest last. */
   readonly seen: readonly string[];
+  /**
+   * §7.4 (amended 2026-09-03): did THIS mount ever receive a live frame whose
+   * `seq > 0` before it had received any live frame at all?
+   *
+   * A live run's `seq` is run-monotonic and starts at 0
+   * (`agent/src/main.ts:509`), so a `seq > 0` first frame is proof that frames
+   * of that run exist which this mount never received — it attached while the
+   * run was already in progress. DECIDED ONCE, FROM THE FIRST FRAME ONLY:
+   * once `true` nothing clears it (not a later run starting cleanly, not a
+   * resync) — the fact this field records is about *this mount's history*,
+   * not about the run that happens to be live right now. `transcript.ts`'s
+   * `seamKind` derives the same fact independently from the held
+   * `LiveEntry[]` for the seam row itself; this field is the same held fact
+   * exposed as a plain boolean for any other consumer (`useStream.ts`'s
+   * `StreamView.midRunAttach`) without re-walking the entry list.
+   */
+  readonly midRunAttach: boolean;
 }
 
 export function emptyLive(status: StreamState = "historical"): LiveState {
-  return { status, entries: [], cursor: null, resyncs: 0, seen: [], runId: null, terminals: 0 };
+  return {
+    status,
+    entries: [],
+    cursor: null,
+    resyncs: 0,
+    seen: [],
+    runId: null,
+    terminals: 0,
+    midRunAttach: false,
+  };
 }
 
 /**
@@ -130,6 +176,18 @@ export function emptyLive(status: StreamState = "historical"): LiveState {
 export function receive(state: LiveState, frame: EventFrame): LiveState {
   const identity = liveEventId(frame.run_id, frame.seq);
   if (state.seen.includes(identity)) return state;
+  // §7.4: mirrors `transcript.ts::seamKind`'s own walk exactly, so the two
+  // derivations of "the same held fact" can never disagree. `seamKind` scans
+  // `entries` for the first `echo` or `event` (skipping `break`s) and decides
+  // right there — an `echo` seen first means "end" unconditionally (C1's
+  // license: a Send this tab performed starts the run it is about to watch,
+  // whatever that run's first frame's `seq` turns out to be), an `event` seen
+  // first decides on its `seq`. So the decision here is frozen the moment
+  // `entries` already holds an `echo` OR an `event` — not merely an `event` —
+  // and, once frozen, a later frame never revisits it (see the field's own
+  // doc: not a later run starting cleanly, not a resync).
+  const decided = state.entries.some((entry) => entry.entry === "echo" || entry.entry === "event");
+  const midRunAttach = state.midRunAttach || (!decided && frame.seq > 0);
   const item = liveItem(frame);
   const entries = decidePending(state.entries, item);
   const seen = [...state.seen, identity];
@@ -148,6 +206,7 @@ export function receive(state: LiveState, frame: EventFrame): LiveState {
     terminals: state.terminals + (frame.kind === "terminal" ? 1 : 0),
     resyncs: state.resyncs,
     seen: seen.length > LIVE_DEDUPE_WINDOW ? seen.slice(seen.length - LIVE_DEDUPE_WINDOW) : seen,
+    midRunAttach,
   };
 }
 
@@ -210,10 +269,47 @@ function lastPendingBreak(entries: readonly LiveEntry[]): number {
 export function appendEcho(state: LiveState, text: string): LiveState {
   let echoes = 0;
   for (const entry of state.entries) if (entry.entry === "echo") echoes += 1;
-  return {
-    ...state,
-    entries: [...state.entries, { entry: "echo", key: `echo:${String(echoes)}`, text }],
+  const entry: EchoEntry = {
+    entry: "echo",
+    key: `echo:${String(echoes)}`,
+    text,
+    state: "sent",
+    refusedReason: null,
   };
+  return { ...state, entries: [...state.entries, entry] };
+}
+
+/**
+ * §7A.5: a NAMED refusal to `POST .../prompt` (`run_in_flight`,
+ * `agent_unavailable`, or any other closed reason the route names) marks the
+ * most recently sent echo `refused`, carrying the server's reason verbatim.
+ *
+ * The text is never touched — C2's never-removed rule is untouched by this
+ * function; only the presentation state changes. Marks the LAST echo entry
+ * rather than one addressed by key: the composer disables Send for the whole
+ * duration of a pending POST (`post.phase === "sending"`, `Composer.tsx`), so
+ * at most one echo is ever unsettled at a time and "the last one" is
+ * unambiguous. Idempotent against a second report for the same echo.
+ *
+ * Deliberately NOT called for §7A.5's OTHER named outcome, `unknown` (a POST
+ * that never came back at all) — see `ECHO_STATES`'s doc comment for why.
+ */
+export function refuseEcho(state: LiveState, reason: string): LiveState {
+  const index = lastEchoIndex(state.entries);
+  if (index === -1) return state;
+  const entry = state.entries[index];
+  if (entry === undefined || entry.entry !== "echo" || entry.state === "refused") return state;
+  const updated: EchoEntry = { ...entry, state: "refused", refusedReason: reason };
+  const entries = [...state.entries];
+  entries[index] = updated;
+  return { ...state, entries };
+}
+
+function lastEchoIndex(entries: readonly LiveEntry[]): number {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    if (entries[i]?.entry === "echo") return i;
+  }
+  return -1;
 }
 
 /**

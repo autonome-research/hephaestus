@@ -6,6 +6,8 @@
 
 import { describe, expect, it } from "vitest";
 import { identitySurface } from "../../src/api/events";
+import type { HistoryEventFrame } from "../../src/api/events";
+import type { HistoryUserPrompt } from "../../src/api/sessions";
 import {
   chipStatus,
   groupRows,
@@ -161,8 +163,16 @@ describe("the panel's rows (§8)", () => {
     expect(rows[0]).toEqual({
       row: "user-prompt",
       key: "user-prompt:0",
+      turn: 0,
       text: "Add a 2 mm chamfer.",
-      eventId: `${historyItems()[0]?.sessionId ?? ""}@prompt:0`,
+      textUnrecoverable: false,
+      envelope: null,
+      // §8(i), amended 2026-09-03: `@prompt:<seq>` is STRUCK — `seq` is the
+      // NEXT event's ordinal and two prompts around a zero-event turn share
+      // one, so it cannot be an identity. `@turn:<turn>` is the replacement,
+      // universally, including this legacy-fallback page (turn = prompt
+      // index positionally, per §2.8(3)'s per-turn fallback).
+      eventId: `${historyItems()[0]?.sessionId ?? ""}@turn:0`,
     });
     expect(rows.some((row) => row.row === "user-prompt")).toBe(true);
   });
@@ -797,5 +807,327 @@ describe("the local prompt echo and the run-start boundary (amended 2026-09-02)"
       if (row.row === "text") for (const item of row.items) ids.add(item.eventId);
     }
     expect(ids).toEqual(new Set(["run-a#0", "run-b#0"]));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §2.8 / §8, amended 2026-09-03 — the turn record and its blocker fix
+//
+// W3's own bug, reproduced verbatim from the recorded three-turn session
+// (`/home/manisha/hephaestus-chat-investigation/repro/history_t3.json`):
+// `historicalRows` calls `groupRows(items)` over the WHOLE surface BEFORE
+// interleaving prompts, so three separate `text_delta` events with nothing of
+// another kind between them merge into ONE text row before any prompt gets a
+// chance to land between them. The fixture is copied in below rather than read
+// from disk, because a test-author file must not depend on read access to the
+// investigation directory at CI time.
+//
+// `TurnFrame` / `TurnPrompt` anticipate §2.8(1)/(2)'s new wire fields. They are
+// declared as EXTENSIONS of the shipped types (`& { turn: … }`) rather than
+// inline literals passed where a narrower type is expected, so a variable of
+// this type still satisfies `historicalItem`/`historicalRows` structurally —
+// this file asserts ROW OUTPUT, never a raw `.turn` field on a `TranscriptItem`,
+// so it makes no claim about where inside the item that field ultimately lives.
+// ---------------------------------------------------------------------------
+
+type TurnFrame = HistoryEventFrame & { readonly turn: number | null };
+type TurnPrompt = HistoryUserPrompt & {
+  readonly turn: number;
+  readonly envelope?: string | null;
+  readonly outcome?: { readonly state: string; readonly message?: string };
+};
+
+const T3_SESSION_ID = "5fd1b9cd-df29-488c-a877-243dbb546450";
+
+/** The recorded legacy-shape page, `history_t3.json`'s `events` verbatim. */
+function t3LegacyEvents(): readonly HistoryEventFrame[] {
+  return [
+    { kind: "text_delta", payload: { text: "PONG" }, run_id: T3_SESSION_ID, seq: 0 },
+    { kind: "text_delta", payload: { text: "PING" }, run_id: T3_SESSION_ID, seq: 1 },
+    { kind: "text_delta", payload: { text: "ZEBRA" }, run_id: T3_SESSION_ID, seq: 2 },
+  ];
+}
+
+/** The recorded legacy-shape page, `history_t3.json`'s `user_prompts` verbatim. */
+function t3LegacyPrompts(): readonly HistoryUserPrompt[] {
+  return [
+    { seq: 0, text: "Reply with exactly the word PONG." },
+    { seq: 1, text: "Reply with exactly the word PING." },
+    {
+      seq: 2,
+      text:
+        "# Workspace context\n\nThe operator is looking at this workspace. Everything below is this server's own projection of the state their client named; it is not part of their request.\n\n## Part: example\nThis part has no current build.\ndeclared properties (from script_literals):\n  part.description = Example plate scaffolded by heph init\n  part.process = cnc_router\nproject checks:\n  project:placeholder: pass\nno DFM run has been recorded for this part\n\n## Viewport\ncamera view: iso\n\n## Panels the operator has open\nstage tab: viewport\ninspector tab: results\n\nReply with exactly the word ZEBRA.",
+    },
+  ];
+}
+
+/** Same three turns, on the wire the way a post-amendment sidecar sends them. */
+function t3TurnFrames(): readonly TurnFrame[] {
+  return [
+    { kind: "text_delta", payload: { text: "PONG" }, run_id: T3_SESSION_ID, seq: 0, turn: 0 },
+    { kind: "text_delta", payload: { text: "PING" }, run_id: T3_SESSION_ID, seq: 1, turn: 1 },
+    { kind: "text_delta", payload: { text: "ZEBRA" }, run_id: T3_SESSION_ID, seq: 2, turn: 2 },
+  ];
+}
+
+function t3TurnPrompts(): readonly TurnPrompt[] {
+  return [
+    { turn: 0, seq: 0, text: "Reply with exactly the word PONG.", envelope: null },
+    { turn: 1, seq: 1, text: "Reply with exactly the word PING.", envelope: null },
+    { turn: 2, seq: 2, text: "Reply with exactly the word ZEBRA.", envelope: t3LegacyPrompts()[2]?.text ?? null },
+  ];
+}
+
+/** Every text row's rendered content, in row order — what a reader actually sees. */
+function textContents(rows: readonly PanelRow[]): readonly string[] {
+  return rows
+    .filter((row): row is Extract<PanelRow, { row: "text" }> => row.row === "text")
+    .map((row) =>
+      row.items
+        .map((item) => (item.payload as { text?: string } | undefined)?.text ?? "")
+        .join(""),
+    );
+}
+
+describe("(a) the legacy repro: three prompts, three lone text deltas (history_t3.json)", () => {
+  it("renders six rows in strict prompt/reply alternation, never one merged bubble", () => {
+    const items = t3LegacyEvents().map((frame) => historicalItem(frame, T3_SESSION_ID));
+    const rows = historicalRows(items, t3LegacyPrompts());
+
+    expect(rows.map((row) => row.row)).toEqual([
+      "user-prompt",
+      "text",
+      "user-prompt",
+      "text",
+      "user-prompt",
+      "text",
+    ]);
+    // The defect this reproduces: three separate replies collapsing into one
+    // "PONGPINGZEBRA" bubble because `groupRows` ran over the whole surface
+    // before any prompt could land between them.
+    expect(textContents(rows)).toEqual(["PONG", "PING", "ZEBRA"]);
+    const texts = rows.filter((row) => row.row === "text");
+    for (const row of texts) {
+      if (row.row === "text") expect(row.items).toHaveLength(1);
+    }
+  });
+});
+
+describe("(b) the same session, the new turn-bearing shape", () => {
+  it("renders identically to the legacy page — six rows, strict alternation", () => {
+    const items = t3TurnFrames().map((frame) => historicalItem(frame, T3_SESSION_ID));
+    const rows = historicalRows(items, t3TurnPrompts());
+
+    expect(rows.map((row) => row.row)).toEqual([
+      "user-prompt",
+      "text",
+      "user-prompt",
+      "text",
+      "user-prompt",
+      "text",
+    ]);
+    expect(textContents(rows)).toEqual(["PONG", "PING", "ZEBRA"]);
+  });
+});
+
+describe("(c) a turn with a tool call keeps the NEXT turn's prompt above its OWN text", () => {
+  it("does not let a later turn's reply merge upward into an earlier turn's text run", () => {
+    const sessionId = "sess-c";
+    const frames: readonly TurnFrame[] = [
+      {
+        kind: "tool_call",
+        run_id: sessionId,
+        seq: 0,
+        turn: 0,
+        tool_call_id: "c1",
+        payload: { name: "inspect_part", arguments: {} },
+      },
+      {
+        kind: "tool_result",
+        run_id: sessionId,
+        seq: 1,
+        turn: 0,
+        tool_call_id: "c1",
+        payload: { toolName: "inspect_part", isError: false, text: "{}" },
+      },
+      { kind: "text_delta", run_id: sessionId, seq: 2, turn: 0, payload: { text: "turn one's own reply." } },
+      { kind: "text_delta", run_id: sessionId, seq: 3, turn: 1, payload: { text: "turn two's own reply." } },
+    ];
+    const prompts: readonly TurnPrompt[] = [
+      { turn: 0, seq: 0, text: "First question." },
+      { turn: 1, seq: 3, text: "Second question." },
+    ];
+    const items = frames.map((frame) => historicalItem(frame, sessionId));
+    const rows = historicalRows(items, prompts);
+
+    expect(rows.map((row) => row.row)).toEqual([
+      "user-prompt",
+      "chip",
+      "text",
+      "user-prompt",
+      "text",
+    ]);
+    // The row immediately under turn 1's prompt is turn 1's OWN text — not
+    // turn 0's, and not a merge of both. Under the blocker bug, `groupRows`
+    // would fold seq 2 and seq 3 into one text row (nothing of another kind
+    // separates them at the item level) and the second prompt would render
+    // BELOW it — i.e. below its own reply.
+    const secondPromptAt = rows.findIndex(
+      (row) => row.row === "user-prompt" && row.text === "Second question.",
+    );
+    expect(secondPromptAt).toBeGreaterThan(-1);
+    const rowAfter = rows[secondPromptAt + 1];
+    expect(rowAfter?.row).toBe("text");
+    expect(textContents(rows.slice(secondPromptAt))).toEqual(["turn two's own reply."]);
+  });
+});
+
+describe("(d) two identical chips in different turns stay two chips", () => {
+  it("never coalesces a §7.2(a) repeat group across a turn boundary", () => {
+    const sessionId = "sess-d";
+    const DOC = { status: "ok", total: 1 };
+    const frames: readonly TurnFrame[] = [
+      {
+        kind: "tool_call",
+        run_id: sessionId,
+        seq: 0,
+        turn: 0,
+        tool_call_id: "c0",
+        payload: { name: "list_project_checks", arguments: {} },
+      },
+      {
+        kind: "tool_result",
+        run_id: sessionId,
+        seq: 1,
+        turn: 0,
+        tool_call_id: "c0",
+        payload: { toolName: "list_project_checks", isError: false, text: JSON.stringify(DOC) },
+      },
+      {
+        kind: "tool_call",
+        run_id: sessionId,
+        seq: 2,
+        turn: 1,
+        tool_call_id: "c1",
+        payload: { name: "list_project_checks", arguments: {} },
+      },
+      {
+        kind: "tool_result",
+        run_id: sessionId,
+        seq: 3,
+        turn: 1,
+        tool_call_id: "c1",
+        payload: { toolName: "list_project_checks", isError: false, text: JSON.stringify(DOC) },
+      },
+    ];
+    const prompts: readonly TurnPrompt[] = [
+      { turn: 0, seq: 0, text: "Check it." },
+      { turn: 1, seq: 2, text: "Check it again." },
+    ];
+    const items = frames.map((frame) => historicalItem(frame, sessionId));
+    const rows = historicalRows(items, prompts);
+
+    const chips = rows.filter((row) => row.row === "chip");
+    expect(chips).toHaveLength(2);
+    for (const chip of chips) {
+      if (chip.row === "chip") expect(chip.repeat).toBeUndefined();
+    }
+    expect(rows.map((row) => row.row)).toEqual(["user-prompt", "chip", "user-prompt", "chip"]);
+  });
+});
+
+describe("(e) a zero-event turn (duplicate seq, legacy shape) still renders its own prompt", () => {
+  it("keeps a silent turn's prompt distinct from its neighbour, dropping neither", () => {
+    const sessionId = "sess-e";
+    // Turn 0 has a real reply at seq 0. Turn 1 is silent — no event of its
+    // own — so, per the legacy encoding, its recorded `seq` borrows the NEXT
+    // turn's first event ordinal: both turn 1 and turn 2's prompts carry
+    // seq 1, because turn 2's own reply is the event at seq 1.
+    const frames: readonly HistoryEventFrame[] = [
+      { kind: "text_delta", run_id: sessionId, seq: 0, payload: { text: "reply zero" } },
+      { kind: "text_delta", run_id: sessionId, seq: 1, payload: { text: "reply two" } },
+    ];
+    const prompts: readonly HistoryUserPrompt[] = [
+      { seq: 0, text: "question zero" },
+      { seq: 1, text: "question one, unanswered" },
+      { seq: 1, text: "question two" },
+    ];
+    const items = frames.map((frame) => historicalItem(frame, sessionId));
+    const rows = historicalRows(items, prompts);
+
+    const promptTexts = rows
+      .filter((row): row is Extract<PanelRow, { row: "user-prompt" }> => row.row === "user-prompt")
+      .map((row) => row.text);
+    // All three prompts survive as three distinct rows — none dropped, none
+    // merged into a neighbour because their `seq` collided.
+    expect(promptTexts).toEqual(["question zero", "question one, unanswered", "question two"]);
+    // And the silent turn's prompt renders with nothing of its own beneath it
+    // before the next prompt — it precedes "question two", not the other way
+    // around.
+    const silentAt = rows.findIndex(
+      (row) => row.row === "user-prompt" && row.text === "question one, unanswered",
+    );
+    const nextAt = rows.findIndex((row) => row.row === "user-prompt" && row.text === "question two");
+    expect(silentAt).toBeGreaterThan(-1);
+    expect(nextAt).toBeGreaterThan(silentAt);
+  });
+});
+
+describe("(h) the mid-run seam is decided from the first held live frame's seq alone", () => {
+  const historyItem = (): TranscriptItem[] => [
+    historicalItem(
+      { kind: "text_delta", run_id: "sess-h", seq: 0, payload: { text: "earlier turn" } },
+      "sess-h",
+    ),
+  ];
+
+  it("labels an attach held from the start as the ordinary seam (seq === 0)", () => {
+    const rows = panelRows(historyItem(), [
+      { entry: "event", item: liveItem({ run_id: "run-h", seq: 0, kind: "text_delta", session_id: "sess-h", payload: { text: "live" } }) },
+    ]);
+    const seam = rows.find((row) => row.row === "seam") as (PanelRow & { readonly kind?: string }) | undefined;
+    expect(seam).toBeDefined();
+    expect(seam?.kind).toBe("end");
+  });
+
+  it("labels a mid-run attach honestly (seq > 0): frames before this tab's first receipt existed", () => {
+    const rows = panelRows(historyItem(), [
+      { entry: "event", item: liveItem({ run_id: "run-h", seq: 7, kind: "text_delta", session_id: "sess-h", payload: { text: "live" } }) },
+    ]);
+    const seam = rows.find((row) => row.row === "seam") as (PanelRow & { readonly kind?: string }) | undefined;
+    expect(seam).toBeDefined();
+    expect(seam?.kind).toBe("mid-run");
+  });
+
+  it("an originating tab's own echo still licenses the ordinary seam label", () => {
+    const rows = panelRows(historyItem(), [
+      { entry: "echo", key: "echo:0", text: "p" },
+      { entry: "event", item: liveItem({ run_id: "run-h", seq: 0, kind: "text_delta", session_id: "sess-h", payload: { text: "live" } }) },
+    ]);
+    const seam = rows.find((row) => row.row === "seam") as (PanelRow & { readonly kind?: string }) | undefined;
+    expect(seam?.kind).toBe("end");
+  });
+});
+
+describe("(i) a progress frame between two text deltas does not split the text row", () => {
+  it("keeps one paragraph, not two, across a dropped transient indicator", () => {
+    const runId = "run-i";
+    const items: TranscriptItem[] = [
+      liveItem({ run_id: runId, seq: 0, kind: "text_delta", session_id: "sess-i", payload: { text: "Scanning the " } }),
+      liveItem({ run_id: runId, seq: 1, kind: "progress", session_id: "sess-i", payload: { message: "tick" } }),
+      liveItem({ run_id: runId, seq: 2, kind: "text_delta", session_id: "sess-i", payload: { text: "build." } }),
+    ];
+    const rows = groupRows(items);
+    const texts = rows.filter((row) => row.row === "text");
+    expect(texts).toHaveLength(1);
+    if (texts[0]?.row === "text") {
+      expect(texts[0].items.map((item) => item.eventId)).toEqual([
+        `${runId}#0`,
+        `${runId}#2`,
+      ]);
+    }
+    // `progress` still mints no row of its own — the fix is that it no longer
+    // interrupts the run around it either.
+    expect(rows.some((row) => row.row === "unknown")).toBe(false);
   });
 });

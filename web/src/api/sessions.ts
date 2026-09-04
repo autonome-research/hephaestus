@@ -35,6 +35,10 @@
 import { apiJson } from "./client";
 import type { HistoryEventFrame } from "./events";
 
+/** §2.4's two refusal reasons a session route now names (2026-09-03). */
+export const UNREADABLE_REASONS = ["unknown_session", "agent_unavailable"] as const;
+export type UnreadableReason = (typeof UNREADABLE_REASONS)[number];
+
 /** `agent_bridge/app.py::sessions` + the two fields `list_sessions` joins on. */
 export interface SessionRow {
   readonly session_id: string;
@@ -43,6 +47,15 @@ export interface SessionRow {
   /** From `tp_session_edges`; `null` when this session has no recorded parent. */
   readonly parent_session_id: string | null;
   readonly thread_state: ThreadState;
+  /**
+   * §2.3 (2026-09-03, additive): `true` means NOT KNOWN TO BE UNREADABLE — the
+   * listing never probes, so this is a cache of a past failure, not a live
+   * fact. `undefined` from an older server, which never marks a row; treat
+   * that the same as `true`.
+   */
+  readonly readable?: boolean;
+  /** Non-null exactly when `readable` is `false`; the same string §2.4 refuses by. */
+  readonly unreadable_reason?: UnreadableReason | null;
 }
 
 /**
@@ -112,16 +125,51 @@ export interface ThreadDocument {
  * fields (`agent/src/session/history.ts::HistoryPage`) and neither is rewritten
  * anywhere between there and here.
  */
-/** One operator prompt restored from history, keyed to the next event `seq`. */
+/** §2.8's closed `outcome.state` vocabulary for a non-`stop` turn. */
+export const TURN_OUTCOME_STATES = ["cancelled", "error", "interrupted"] as const;
+export type TurnOutcomeState = (typeof TURN_OUTCOME_STATES)[number];
+
+/** §2.8(4): present for a turn that did not complete; absent means completed. */
+export interface TurnOutcome {
+  readonly state: TurnOutcomeState;
+  readonly message?: string;
+}
+
+/**
+ * One operator turn restored from history (§2.8(2), amended 2026-09-03).
+ *
+ * `turn` is THE IDENTITY — 0-based, unique, strictly increasing — present
+ * whenever the sidecar stamps it. `seq` keeps its original, pre-amendment
+ * meaning (the ordinal of the turn's first event) and stays on the wire, but
+ * is explicitly NOT unique: two prompts around a zero-event turn can share
+ * one. A page from a sidecar that predates this amendment carries neither
+ * `turn` nor `envelope` nor `outcome` — see `stream/history.ts` for the
+ * per-turn legacy fallback this client must not skip.
+ */
 export interface HistoryUserPrompt {
+  /** THE IDENTITY when present (§2.8(2)). Absent from a pre-amendment sidecar. */
+  readonly turn?: number;
   readonly seq: number;
-  readonly text: string;
+  /** The operator's typed sentence alone; `null` when unrecoverable (§2.8(3)). */
+  readonly text: string | null;
+  /** §7A.3's workspace-context block, verbatim, when one was sent. */
+  readonly envelope?: string | null;
+  readonly outcome?: TurnOutcome;
+  /** §2.8(3): who wrote `text`. Absent means the operator; `"agent"` is the
+   *  sidecar's own transient-retry continuation sentence. */
+  readonly origin?: "operator" | "agent";
 }
 
 export interface HistoryPageDocument {
   readonly status: "ok";
   readonly session_id: string;
-  readonly events: readonly HistoryEventFrame[];
+  /**
+   * §2.8(1): each event additively carries `turn` — `null` before the
+   * session's first user message, absent entirely from a pre-amendment
+   * sidecar's page. Never present on a LIVE frame; that is §2.8(1)'s other
+   * half, enforced in `stream/live.ts` rather than in a type.
+   */
+  readonly events: readonly (HistoryEventFrame & { readonly turn?: number | null })[];
   /**
    * Additive field: operator turns recorded beside the event page. Omitted by
    * older sidecars; never shifts event identities (G4.11).
@@ -129,6 +177,13 @@ export interface HistoryPageDocument {
   readonly user_prompts?: readonly HistoryUserPrompt[];
   readonly cursor: string | null;
   readonly done: boolean;
+  /**
+   * §2.8(5): ALWAYS present and NEVER null on a page from an amended sidecar
+   * — names the ordinal after this page's last event, hand it back as
+   * `after` for a tail read. Optional here because a pre-amendment sidecar
+   * sends no such field at all.
+   */
+  readonly end_cursor?: string;
 }
 
 /** `MAX_THREAD_DEPTH` (`session_edges.py`), mirrored so the upward walk is bounded. */
@@ -147,19 +202,34 @@ export function fetchThread(sessionId: string): Promise<ThreadDocument> {
 }
 
 /**
- * One history page. `cursor` is forwarded **verbatim** — never decoded, never
- * re-encoded, and never accompanied by a page size (§2.8).
+ * One history page. `cursor` and `after` are forwarded **verbatim** — never
+ * decoded, never re-encoded, and never accompanied by a page size (§2.8).
  *
  * `encodeURIComponent` is percent-encoding for the query string, not a rewrite:
  * a base64url cursor (`[A-Za-z0-9_-]`) passes through it unchanged byte for
  * byte, and the escape exists so a cursor shape that ever gained another
  * character still arrives as the server minted it rather than as URL syntax.
+ *
+ * `after` is §2.8(5)'s TAIL read — a caller retaining a prior page's
+ * `end_cursor` and asking to resume from it passes it here instead of
+ * `cursor`. The two are mutually exclusive on the wire (the server refuses
+ * `invalid_cursor` when both are given, §2.4); this function does not enforce
+ * that itself; a caller passes at most one. `null` (as well as omitting the
+ * argument) means "no tail read" — matching `stream/history.ts`'s
+ * `PageFetcher`, whose own `after` is `string | null | undefined` because a
+ * bounded walk's later pages pass `null` once the tail token is consumed.
  */
 export function fetchHistoryPage(
   sessionId: string,
   cursor: string | null,
+  after?: string | null,
 ): Promise<HistoryPageDocument> {
-  const query = cursor === null ? "" : `?cursor=${encodeURIComponent(cursor)}`;
+  const query =
+    after !== undefined && after !== null
+      ? `?after=${encodeURIComponent(after)}`
+      : cursor === null
+        ? ""
+        : `?cursor=${encodeURIComponent(cursor)}`;
   return apiJson<HistoryPageDocument>(sessionPath(sessionId, `/history${query}`));
 }
 

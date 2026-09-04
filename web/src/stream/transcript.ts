@@ -40,7 +40,7 @@ import {
   type EventKind,
   type HistoryEventFrame,
 } from "../api/events";
-import type { HistoryUserPrompt } from "../api/sessions";
+import type { HistoryUserPrompt, TurnOutcome, TurnOutcomeState } from "../api/sessions";
 
 export type Surface = "live" | "historical";
 
@@ -57,6 +57,21 @@ export interface TranscriptItem {
   readonly sessionId: string | null;
   readonly toolCallId: string | null;
   readonly payload: unknown;
+  /**
+   * §2.8(1) (amended 2026-09-03): the 0-based ordinal of the user message whose
+   * turn recorded this event, on a HISTORY PAGE only.
+   *
+   * `null` carries two different facts and the difference does not matter to
+   * this module: an event recorded before the session's first user message (the
+   * spec's prologue), and a page served by a sidecar older than the amendment.
+   * Both mean "this event names no turn", and `historicalRows` decides which
+   * segmentation rule to run from the PROMPTS, never from this field alone —
+   * so a legacy page cannot land every event in a prologue by accident.
+   *
+   * Always `null` on a live item: §2.8(1) says `turn` is a field of the history
+   * page and of nothing else, and it is testable both ways.
+   */
+  readonly turn: number | null;
 }
 
 function item(
@@ -65,6 +80,7 @@ function item(
   runId: string,
   seq: number,
   sessionId: string | null,
+  turn: number | null,
   frame: { readonly kind: string; readonly tool_call_id?: string; readonly payload?: unknown },
 ): TranscriptItem {
   return {
@@ -77,7 +93,24 @@ function item(
     sessionId,
     toolCallId: frame.tool_call_id ?? null,
     payload: frame.payload,
+    turn,
   };
+}
+
+/**
+ * Read an additive integer ordinal off a wire value.
+ *
+ * `turn` is additive on both the event and the prompt (§2.8(1), §2.8(2)): a
+ * sidecar older than the amendment sends neither, and both are optional on the
+ * wire types. Anything that is not a non-negative integer — absent, `null`, a
+ * float, a string — reads as absent, so a page that half-carries the field is
+ * treated as a page that does not carry it, which is what keeps §8(g)'s two
+ * segmentation rules from mixing inside one page.
+ */
+function readOrdinal(value: unknown): number | null {
+  if (typeof value !== "number") return null;
+  if (!Number.isInteger(value) || value < 0) return null;
+  return value;
 }
 
 /** A live socket frame → an item in the `(run_id, seq)` namespace. */
@@ -88,6 +121,11 @@ export function liveItem(frame: EventFrame): TranscriptItem {
     frame.run_id,
     frame.seq,
     frame.session_id,
+    // §2.8(1): never on a live frame, even if a sidecar ever sent one. The
+    // sidecar's own trap is the shared `wireEvent`; this is the client half of
+    // the same rule, and it makes "no turn on the live socket" true here
+    // regardless of what arrives.
+    null,
     frame,
   );
 }
@@ -101,13 +139,17 @@ export function liveItem(frame: EventFrame): TranscriptItem {
  * (§2.8). Reading the page's own field says what is true instead of relying on
  * that coincidence.
  */
-export function historicalItem(frame: HistoryEventFrame, sessionId: string): TranscriptItem {
+export function historicalItem(
+  frame: HistoryEventFrame & { readonly turn?: number | null },
+  sessionId: string,
+): TranscriptItem {
   return item(
     "historical",
     historicalEventId(sessionId, frame.seq),
     frame.run_id,
     frame.seq,
     sessionId,
+    readOrdinal(frame.turn),
     frame,
   );
 }
@@ -249,6 +291,15 @@ interface AskDraft {
  * as durable in the DOM would misrepresent the stream." A dropped `progress` is
  * therefore not a gap, and a rendered one would be a claim the vocabulary does
  * not make.
+ *
+ * FIXED 2026-09-03 — the drop is now genuine. `progress` used to produce no row
+ * of its own while still *closing* an open `text_delta` or `thought` run, so a
+ * tick between two deltas split one paragraph into two rows. That is a gap: the
+ * seam between the halves is visible, it is caused by an event the docstring
+ * above promises is droppable, and the same content arrives as one paragraph on
+ * the reopened surface (history carries no `progress`) — the two surfaces
+ * disagreed about the same words. The event is therefore skipped before the
+ * run-closing guards, which is the only place the promise can be kept.
  */
 export function groupRows(items: readonly TranscriptItem[]): readonly TranscriptRow[] {
   const rows: TranscriptRow[] = [];
@@ -274,6 +325,9 @@ export function groupRows(items: readonly TranscriptItem[]): readonly Transcript
   };
 
   for (const event of items) {
+    // Dropped BEFORE the run-closing guards: see the docstring. A `progress`
+    // frame is not a change of kind, it is the absence of one.
+    if (event.kind === "progress") continue;
     if (event.kind !== "text_delta" && textRun !== null) {
       const first = textRun[0];
       if (first !== undefined) rows.push({ row: "text", key: first.eventId, items: textRun });
@@ -436,10 +490,6 @@ export function groupRows(items: readonly TranscriptItem[]): readonly Transcript
       }
       case "terminal": {
         rows.push({ row: "terminal", key: event.eventId, item: event });
-        break;
-      }
-      case "progress": {
-        // No row, by §7.3. See the function docstring.
         break;
       }
       case null:
@@ -661,6 +711,117 @@ export type HistoricalAbsence = (typeof HISTORICAL_ABSENCES)[number];
 
 export type { HistoryUserPrompt };
 
+// ---------------------------------------------------------------------------
+// §2.8 (amended 2026-09-03) — the turn record
+// ---------------------------------------------------------------------------
+
+/**
+ * §2.8(2)'s outcome, re-exported from the wire types so a renderer importing
+ * from the transcript model does not need two imports for one row.
+ *
+ * ABSENCE MEANS COMPLETED, NEVER UNKNOWN. Nothing here is ever derived: a short
+ * reply, a missing terminal, or a run that stopped sending is not evidence of
+ * cancellation, and this module mints no outcome from any of them.
+ */
+export type { TurnOutcome, TurnOutcomeState };
+
+/**
+ * The closed set, as a record rather than a list, so the compiler checks it
+ * BOTH ways against `TurnOutcomeState`: a state added to the wire vocabulary
+ * and not here fails to compile, and so does one here that the wire does not
+ * name. `api/sessions.ts` keeps the runtime list; this module stays free of a
+ * runtime import from the API layer, which is what makes it pure.
+ */
+const KNOWN_OUTCOME_STATES: Readonly<Record<TurnOutcomeState, true>> = {
+  cancelled: true,
+  error: true,
+  interrupted: true,
+};
+
+/**
+ * One recorded operator turn as §2.8(2) publishes it, read leniently.
+ *
+ * `HistoryUserPrompt` (`api/sessions.ts`, still the shipped `{seq, text}`) is
+ * assignable to this, which is the point: the loader keeps its declared type
+ * and this module reads the additive fields off the same objects. Every field
+ * past `seq` is optional here **because the running server may or may not send
+ * it**, and a client that required them would refuse to render the page it is
+ * pointed at today.
+ *
+ * - `turn` — §2.8(2)'s IDENTITY: 0-based, unique, strictly increasing.
+ * - `seq` — unchanged meaning: the ordinal of this turn's first event.
+ *   EXPLICITLY NOT UNIQUE (two prompts around a zero-event turn share one), so
+ *   it is a segmentation boundary and never an identity.
+ * - `text` — the operator's typed sentence and nothing else; `null` when the
+ *   record cannot recover it. NOT recovered by stripping a heading (§2.8(3)).
+ * - `envelope` — §7A.3's workspace-context block verbatim, when one was sent.
+ * - `outcome` — absent for a completed turn.
+ */
+export interface RestoredPrompt {
+  readonly turn?: number;
+  readonly seq: number;
+  readonly text: string | null;
+  readonly envelope?: string | null;
+  /**
+   * Deliberately LOOSER than `TurnOutcome`: `state` is read as a plain string
+   * and validated by `readOutcome`. The wire's vocabulary is the server's, this
+   * build's copy of it is a snapshot, and a page carrying a state this build
+   * has never heard of must still render its events rather than fail to type.
+   */
+  readonly outcome?: { readonly state: string; readonly message?: string } | null;
+  /** §2.8(3): read loosely for the same reason as `outcome`; only the literal
+   *  `"agent"` changes the row's speaker. */
+  readonly origin?: string;
+}
+
+/**
+ * Read a turn outcome off a wire value, or `null`.
+ *
+ * Structural rather than cast: `outcome` is additive, its `state` is a closed
+ * set, and a state this build has never heard of is dropped rather than
+ * rendered — an unrecognized word would put an unlabelled row under a prompt.
+ */
+function readOutcome(value: unknown): TurnOutcome | null {
+  if (typeof value !== "object" || value === null) return null;
+  const state: unknown = (value as { readonly state?: unknown }).state;
+  if (typeof state !== "string") return null;
+  if (!Object.hasOwn(KNOWN_OUTCOME_STATES, state)) return null;
+  const known = state as TurnOutcomeState;
+  const message: unknown = (value as { readonly message?: unknown }).message;
+  return typeof message === "string" ? { state: known, message } : { state: known };
+}
+
+/**
+ * §7A.5 (amended 2026-09-03): what became of one echoed prompt.
+ *
+ * `sent` — the POST was accepted; the default, so the attribute is
+ *   unconditionally present on the rendered row.
+ * `unknown` — the POST was lost. The turn MAY have started; the stream is the
+ *   authority.
+ * `refused` — the server answered with a named refusal. The turn definitively
+ *   did NOT start and the text is still sendable.
+ *
+ * `refused` and `unknown` stay two words because they are two different facts
+ * with two different next moves.
+ *
+ * `live.ts` holds the SENDER's copy of this set (it is the module that decides
+ * an echo's fate). The two cannot drift silently: `liveRows` assigns one to the
+ * other, so a member added on either side and not the other fails to compile.
+ */
+export const ECHO_STATES = ["sent", "unknown", "refused"] as const;
+export type EchoState = (typeof ECHO_STATES)[number];
+
+/**
+ * §7.4 (amended 2026-09-03): which boundary the seam is.
+ *
+ * `end` — the live suffix begins at the start of a run this tab held whole.
+ * `mid-run` — this tab attached while a run was already in progress, so output
+ *   of that run exists that it never received. Saying "the transcript ends
+ *   here" over that is the dishonest half the amendment removes.
+ */
+export const SEAM_KINDS = ["end", "mid-run"] as const;
+export type SeamKind = (typeof SEAM_KINDS)[number];
+
 /** §7.4's closed vocabulary on the Stream header. */
 export const STREAM_STATES = [
   "live",
@@ -704,9 +865,13 @@ export interface ResyncBreak {
  * already holds — never from computing over payloads, never from a fact the
  * server did not send this tab. It carries NO `data-event-id`, appears in no
  * `data-event-ids` list, and is excluded BY NAME from every event-id equality
- * testable: the archive matcher skips exactly `local-prompt` and `run-start`;
- * any other id-less `data-row` element is a mismatch, and a presentation row
- * that carries an event id is a build error. It never enters history and never
+ * testable, and a presentation row that carries an event id is a build error.
+ *
+ * The CATEGORY is these two. The archive matcher's SKIP LIST is wider and is
+ * not the same list (§7.3, amended 2026-09-03): `local-prompt`, `run-start`,
+ * `absence`, `seam`, `resync`, `turn-outcome` — the honesty rows and the turn
+ * label carry no id either. The skip stays BY NAME rather than by "has no id"
+ * so a real event row that dropped its id still fails. It never enters history and never
  * crosses the wire, and it states its own nature on its visible face (a
  * marker in `.code` at `--ink-muted` plus an accessible equivalent), with
  * `title` carrying only the long form.
@@ -717,80 +882,298 @@ export type PresentationRowName = (typeof PRESENTATION_ROWS)[number];
 export type PanelRow =
   | TranscriptRow
   | { readonly row: "absence"; readonly key: string; readonly absence: HistoricalAbsence }
-  | { readonly row: "seam"; readonly key: string }
+  | {
+      readonly row: "seam";
+      readonly key: string;
+      /** §7.4: which boundary this is, decided from held frames alone. */
+      readonly kind: SeamKind;
+    }
   | { readonly row: "resync"; readonly key: string; readonly resync: ResyncBreak }
   /** C2: the local prompt echo — the sent text verbatim, originating tab only. */
-  | { readonly row: "local-prompt"; readonly key: string; readonly text: string }
+  | {
+      readonly row: "local-prompt";
+      readonly key: string;
+      readonly text: string;
+      /**
+       * §7A.5: this echo's fate, when the sender learned one. Absent means the
+       * sender recorded nothing, and the renderer's default is `sent` — the
+       * attribute is unconditional in the DOM, the field is not, so an echo
+       * that never learned anything is not asserted to have succeeded here.
+       */
+      readonly state?: EchoState;
+      /**
+       * The server's own reason word, VERBATIM. Never translated and never
+       * collapsed into a neighbour: a reason this client has never heard of
+       * still renders, correctly, as itself.
+       */
+      readonly refusedReason?: string | null;
+    }
   /**
-   * A recorded operator turn restored from history. Carries a historical
-   * identity (`<session_id>@prompt:<seq>`) so G4.11's idless-row skip list
-   * does not need widening.
+   * A recorded operator turn restored from history (§2.8(2), §7.3).
+   *
+   * IDENTITY IS THE TURN (§8(i), amended 2026-09-03):
+   * `<session_id>@turn:<turn>`. The struck `<session_id>@prompt:<seq>` was not
+   * unique — `seq` is the NEXT event's ordinal, and two prompts around a
+   * zero-event turn carry the same one, so two rows shared one id.
    */
   | {
       readonly row: "user-prompt";
       readonly key: string;
+      /** §2.8(2)'s ordinal: recorded when the page carries one, else counted. */
+      readonly turn: number;
+      /**
+       * The operator's own sentence. `""` when the record could not recover it
+       * — see `textUnrecoverable`, which is the field that says so. Never the
+       * envelope: §7.3(b) forbids rendering the server's projection as the
+       * operator's words.
+       */
       readonly text: string;
+      /**
+       * `true` when the page carried `text: null` (§2.8(3)'s honest answer for
+       * a legacy record whose sentence cannot be separated from the envelope).
+       * The renderer falls back rather than drawing a blank row; it is a named
+       * field because an empty string is not a sentence anyone typed.
+       */
+      readonly textUnrecoverable: boolean;
+      /**
+       * §2.8(3), amended 2026-09-03: `"agent"` when the sentence is the sidecar's
+       * own transient-retry continuation, so the renderer names the speaker.
+       * Absent means the operator.
+       */
+      readonly origin?: "agent";
+      /**
+       * §7A.3's workspace-context block, when one was sent with this turn, for
+       * the closed-by-default disclosure of §7.3(b). Preformatted when
+       * rendered, NEVER markdown: it opens with a `#` heading, and the
+       * transcript's renderer would mint an `<h1>` inside an operator's row.
+       */
+      readonly envelope: string | null;
       readonly eventId: string;
+    }
+  /**
+   * §7.3(c): the label under a turn that did not simply finish.
+   *
+   * Carries NO `data-event-id` by design — it is a projection of the turn
+   * record, not an event — which is why §7.3's skip list names it. It renders
+   * for no other turn: absence of `outcome` means the turn completed.
+   */
+  | {
+      readonly row: "turn-outcome";
+      readonly key: string;
+      readonly turn: number;
+      readonly outcome: TurnOutcome;
     }
   /** C21: the run-start boundary — a rule line carrying the run id, derived. */
   | { readonly row: "run-start"; readonly key: string; readonly runId: string };
 
 /**
- * The historical **prefix**: recorded events interleaved with restored
- * operator prompts. Empty history contributes no rows at all.
+ * One turn's slice of the historical prefix: the record of what was asked, and
+ * the events that turn produced.
  *
- * AMENDED 2026-09-03 — no named-absence hedge. Prompts come back from the
- * additive `user_prompts` field (seq-stable; G4.11's event archive is
- * untouched). A finished turn is the last chip or the last assistant
- * markdown; the well does not narrate what a reopen cannot show.
+ * `turn` is `null` for the PROLOGUE — events recorded before the session's
+ * first user message (§2.8(1)). It has no prompt row, because there is no
+ * prompt: folding those events into turn 0 would print output above the
+ * message that did not cause it.
+ */
+interface TurnSegment {
+  readonly turn: number | null;
+  readonly prompt: RestoredPrompt | null;
+  readonly items: readonly TranscriptItem[];
+}
+
+/**
+ * §8(f): partition the page by turn, in the record's own ordinals.
+ *
+ * Used whenever the page carries them, which is the rule §8(g) says to prefer.
+ */
+function segmentsByTurn(
+  items: readonly TranscriptItem[],
+  prompts: readonly RestoredPrompt[],
+): readonly TurnSegment[] {
+  const prologue: TranscriptItem[] = [];
+  const buckets = new Map<number, TranscriptItem[]>();
+  for (const event of items) {
+    if (event.turn === null) {
+      prologue.push(event);
+      continue;
+    }
+    const bucket = buckets.get(event.turn);
+    if (bucket === undefined) buckets.set(event.turn, [event]);
+    else bucket.push(event);
+  }
+  const recorded = new Map<number, RestoredPrompt>();
+  for (const prompt of prompts) {
+    const turn = readOrdinal(prompt.turn);
+    // First write wins: `turn` is unique by §2.8(2), and a page that broke that
+    // is not a reason to render one turn twice.
+    if (turn !== null && !recorded.has(turn)) recorded.set(turn, prompt);
+  }
+  const ordinals = [...new Set([...recorded.keys(), ...buckets.keys()])].sort((a, b) => a - b);
+  const segments: TurnSegment[] = [];
+  if (prologue.length > 0) segments.push({ turn: null, prompt: null, items: prologue });
+  for (const turn of ordinals) {
+    // A turn with a prompt and no events is a real state (cancelled before the
+    // first token) and emits its prompt row alone. A turn with events and no
+    // prompt is a page that lost a record; its events still render, in place.
+    segments.push({ turn, prompt: recorded.get(turn) ?? null, items: buckets.get(turn) ?? [] });
+  }
+  return segments;
+}
+
+/**
+ * §8(g)'s FALLBACK, for a sidecar older than the amendment: partition by prompt
+ * INDEX over `seq` RANGES.
+ *
+ * A prompt with `seq` S opens a segment holding the events whose ordinal is
+ * `>= S` and below the next prompt's `seq`; consecutive prompts sharing a `seq`
+ * each open an empty segment but the last. The ordinal is the prompt's INDEX,
+ * which is exactly what §2.8(1) says the sidecar counts — so a legacy page
+ * renders with the same identities a current page would give it.
+ *
+ * NEVER `seq` UNIQUENESS. The walk consumes items in order against a moving
+ * upper bound, so equal, missing or out-of-order boundaries cost a segment its
+ * contents and never lose an event: everything left over lands in the last
+ * segment, whose bound is unbounded.
+ *
+ * Correct for ordinary chats. It cannot express a textless prompt or a
+ * zero-event turn — which is why it is the fallback and not the design.
+ */
+function segmentsByPromptIndex(
+  items: readonly TranscriptItem[],
+  prompts: readonly RestoredPrompt[],
+): readonly TurnSegment[] {
+  const segments: TurnSegment[] = [];
+  let index = 0;
+  const take = (below: number): TranscriptItem[] => {
+    const taken: TranscriptItem[] = [];
+    for (;;) {
+      const next = items[index];
+      if (next === undefined || next.seq >= below) return taken;
+      taken.push(next);
+      index += 1;
+    }
+  };
+  const prologue = take(prompts[0]?.seq ?? Number.POSITIVE_INFINITY);
+  if (prologue.length > 0) segments.push({ turn: null, prompt: null, items: prologue });
+  prompts.forEach((prompt, ordinal) => {
+    segments.push({
+      turn: ordinal,
+      prompt,
+      items: take(prompts[ordinal + 1]?.seq ?? Number.POSITIVE_INFINITY),
+    });
+  });
+  return segments;
+}
+
+/**
+ * Which of §8(g)'s two rules this page gets — decided ONCE, for the whole page.
+ *
+ * "The client prefers `turn` whenever the field is present and NEVER MIXES the
+ * two rules within one page." Present means: every prompt carries an ordinal,
+ * AND the events carry them too (or there are no events). The second half is
+ * the guard against a half-upgraded page — prompts stamped, events not — which
+ * would otherwise put every event in the prologue and every prompt row after
+ * all of them, i.e. the exact defect this function exists to remove.
+ *
+ * With NO prompts at all the first test is vacuously true, so the answer is
+ * decided by the events alone — turn-bearing events segment, turn-less ones do
+ * not. That is the intended reading rather than an accident of `every`: with no
+ * prompt records the ordinals on the events are the only turn structure the
+ * page carries, and ignoring them would fuse two turns' replies for want of a
+ * prompt row nobody was going to render anyway.
+ */
+function prefersTurnOrdinals(
+  items: readonly TranscriptItem[],
+  prompts: readonly RestoredPrompt[],
+): boolean {
+  if (!prompts.every((prompt) => readOrdinal(prompt.turn) !== null)) return false;
+  return items.length === 0 || items.some((event) => event.turn !== null);
+}
+
+/** §8(f)'s emission order for one turn, and the only place it is decided. */
+function segmentRows(segment: TurnSegment, sessionId: string): readonly PanelRow[] {
+  const rows: PanelRow[] = [];
+  const prompt = segment.prompt;
+  const turn = segment.turn;
+  if (prompt !== null && turn !== null) {
+    const text = typeof prompt.text === "string" ? prompt.text : null;
+    rows.push({
+      row: "user-prompt",
+      key: `user-prompt:${String(turn)}`,
+      turn,
+      text: text ?? "",
+      textUnrecoverable: text === null,
+      ...(prompt.origin === "agent" ? { origin: "agent" as const } : {}),
+      envelope: typeof prompt.envelope === "string" ? prompt.envelope : null,
+      eventId: `${sessionId}@turn:${String(turn)}`,
+    });
+    const outcome = readOutcome(prompt.outcome);
+    // ABOVE this turn's replies, per §8(f), and the cost is stated there: on a
+    // long cancelled turn the label ends up far from where the output stops.
+    // It is above because a truncated answer LOOKS FINISHED, and learning
+    // "cancelled" only at the end is learning it too late to read the reply
+    // correctly — and because a zero-event turn has nowhere else to put it.
+    if (outcome !== null) {
+      rows.push({ row: "turn-outcome", key: `turn-outcome:${String(turn)}`, turn, outcome });
+    }
+  }
+  rows.push(...groupRows(segment.items));
+  return rows;
+}
+
+/**
+ * The historical **prefix**: the recorded conversation, one turn at a time.
+ *
+ * AMENDED 2026-09-03 — SEGMENT FIRST, GROUP SECOND (§8(f)). This function used
+ * to group the whole page and then interleave prompt rows between the groups by
+ * comparing `seq`. That is why a reopened three-turn chat rendered as four rows
+ * with one bubble reading `PONGPINGZEBRA`: `groupRows` runs over a flat item
+ * list and cannot see a turn boundary even in principle, so three replies to
+ * three different prompts — all `text_delta`, all adjacent — were one paragraph
+ * before any interleave could get between them. A grouping function that cannot
+ * see a boundary will always cross it. So the boundary is applied first, and
+ * `groupRows` runs ONCE PER TURN over a slice that holds one turn's events.
+ *
+ * Empty history contributes no rows at all. Prompts come back from the additive
+ * `user_prompts` field; no named-absence hedge is minted (§8, C24).
+ *
+ * A page with NO prompt records still segments, when its events carry turn
+ * ordinals: the boundary is a fact about the events, and honouring it costs
+ * nothing but stops two turns' replies fusing into one paragraph on a page
+ * whose prompt records were lost or were never asked for (a tail read of a
+ * turn's events alone). Those segments emit no prompt row — there is no prompt
+ * to render — and a page carrying neither turns nor prompts falls through to a
+ * single unsegmented run, which is exactly today's behaviour.
  *
  * §8's C3 still holds for *presentation* rows: no `local-prompt` echo and no
- * `run-start` boundary is reconstructed here. `user-prompt` is a recorded
- * turn with a historical identity, not a client-minted echo.
+ * `run-start` boundary is reconstructed here, and no `run_id` is invented for a
+ * historical event (§7.3 C21's surviving negative half). A TURN is a record of
+ * one thing the operator asked; a RUN is one live execution. This page has the
+ * first and does not have the second.
+ *
+ * `sessionId` names the session these records came from, for §8(i)'s prompt-row
+ * identity `<session_id>@turn:<turn>`. It is OPTIONAL and falls back to the
+ * first event's own session id, because that is where every rendered page's id
+ * comes from today and a caller that does not pass one must still render. THE
+ * FALLBACK HAS A HOLE, stated rather than hidden: a page of prompts with NO
+ * events — every turn cancelled before its first token, which §2.8(2) makes
+ * expressible for the first time — has no event to read a session id off, and
+ * its prompt rows would be identified `@turn:0` with an empty session. Passing
+ * the id closes it; `user_prompts` carries no session id of its own, so the
+ * caller is the only party that knows.
  */
 export function historicalRows(
   items: readonly TranscriptItem[],
-  prompts: readonly HistoryUserPrompt[] = [],
+  prompts: readonly RestoredPrompt[] = [],
+  sessionId: string | null = null,
 ): readonly PanelRow[] {
   if (items.length === 0 && prompts.length === 0) return [];
-  const sessionId = items[0]?.sessionId ?? "";
-  const grouped = groupRows(items);
-  if (prompts.length === 0) return grouped;
-
+  const owner = sessionId ?? items[0]?.sessionId ?? "";
+  const segments = prefersTurnOrdinals(items, prompts)
+    ? segmentsByTurn(items, prompts)
+    : segmentsByPromptIndex(items, prompts);
   const rows: PanelRow[] = [];
-  let promptIndex = 0;
-  let groupIndex = 0;
-  const promptRow = (prompt: HistoryUserPrompt): PanelRow => ({
-    row: "user-prompt",
-    key: `user-prompt:${prompt.seq}`,
-    text: prompt.text,
-    eventId: `${sessionId}@prompt:${prompt.seq}`,
-  });
-  const firstSeq = (row: TranscriptRow): number => {
-    if (row.row === "text" || row.row === "thought") return row.items[0]?.seq ?? 0;
-    if (row.row === "chip") return row.call.seq;
-    if (row.row === "cycle") return row.pairs[0]?.chip.call.seq ?? 0;
-    if (row.row === "ask") return (row.call ?? row.question ?? row.answer)?.seq ?? 0;
-    if (row.row === "image" || row.row === "audit" || row.row === "terminal" || row.row === "unknown") {
-      return row.item.seq;
-    }
-    return 0;
-  };
-
-  while (groupIndex < grouped.length || promptIndex < prompts.length) {
-    const group = grouped[groupIndex];
-    const prompt = prompts[promptIndex];
-    const groupSeq = group === undefined ? Number.POSITIVE_INFINITY : firstSeq(group);
-    if (prompt !== undefined && prompt.seq <= groupSeq) {
-      rows.push(promptRow(prompt));
-      promptIndex += 1;
-      continue;
-    }
-    if (group !== undefined) {
-      rows.push(group);
-      groupIndex += 1;
-    }
-  }
+  for (const segment of segments) rows.push(...segmentRows(segment, owner));
   return rows;
 }
 
@@ -804,7 +1187,20 @@ export function historicalRows(
 export type LiveEntry =
   | { readonly entry: "event"; readonly item: TranscriptItem }
   | { readonly entry: "break"; readonly resync: ResyncBreak }
-  | { readonly entry: "echo"; readonly key: string; readonly text: string };
+  | {
+      readonly entry: "echo";
+      readonly key: string;
+      readonly text: string;
+      /**
+       * §7A.5: what the sender learned about this echo's POST, when it learned
+       * anything. Written by the sender (`live.ts`), read here and carried onto
+       * the row unchanged — this module decides nothing about it, because the
+       * fate of a POST is not a fact a transcript can derive.
+       */
+      readonly state?: EchoState;
+      /** The server's reason word, verbatim, when the state is `refused`. */
+      readonly refusedReason?: string | null;
+    };
 
 /**
  * The live **suffix**, with each resync break rendered in place.
@@ -852,7 +1248,23 @@ export function liveRows(entries: readonly LiveEntry[]): readonly PanelRow[] {
     }
     if (entry.entry === "echo") {
       flush();
-      rows.push({ row: "local-prompt", key: entry.key, text: entry.text });
+      // §7A.5, C2: the text is carried VERBATIM whatever became of the POST —
+      // the words were typed, and a refusal is not a reason to remove them.
+      // The fate rides beside them; the license below is unaffected by it,
+      // because a refused Send is still a Send this tab performed.
+      const echo: PanelRow =
+        entry.state === undefined
+          ? { row: "local-prompt", key: entry.key, text: entry.text }
+          : entry.refusedReason === undefined || entry.refusedReason === null
+            ? { row: "local-prompt", key: entry.key, text: entry.text, state: entry.state }
+            : {
+                row: "local-prompt",
+                key: entry.key,
+                text: entry.text,
+                state: entry.state,
+                refusedReason: entry.refusedReason,
+              };
+      rows.push(echo);
       echoLicense = true;
       continue;
     }
@@ -874,6 +1286,36 @@ export function liveRows(entries: readonly LiveEntry[]): readonly PanelRow[] {
 }
 
 /**
+ * §7.4 (amended 2026-09-03): which boundary the seam is, from HELD FRAMES ONLY.
+ *
+ * A live run's `seq` is run-monotonic and starts at 0 (`agent/src/main.ts:509`,
+ * `let seq = 0; const next = () => seq++`), so the first live frame this tab
+ * received for a run says which case it is in: `seq === 0` and it held the run
+ * from the beginning; `seq > 0` and frames of that run exist that it never
+ * received. The originating tab's own C2 echo is the same fact from the other
+ * side — a Send this tab performed starts the run it is about to watch — and it
+ * licenses the unchanged label without looking at any frame.
+ *
+ * Nothing is compared across the seam, nothing is read from history, and no run
+ * start is inferred: a resync break before the first frame is not evidence
+ * either way and is skipped. A seam with no live frame under it yet reads
+ * `end`, and switches on the first frame's arrival if its `seq > 0`.
+ *
+ * HONEST RESIDUAL (§7.4): a frame lost between a run starting and this tab's
+ * first receipt presents identically to a mid-run attach. On a fresh attach the
+ * queue is empty, so the only path there is a coalesced `progress` — in which
+ * case "attached while this run was in progress" is still true, trivially, of
+ * one transient tick. That is an argument, not a measurement.
+ */
+export function seamKind(live: readonly LiveEntry[]): SeamKind {
+  for (const entry of live) {
+    if (entry.entry === "echo") return "end";
+    if (entry.entry === "event") return entry.item.seq === 0 ? "end" : "mid-run";
+  }
+  return "end";
+}
+
+/**
  * The whole transcript: history's prefix, a **visible seam**, the live suffix.
  *
  * The seam appears only when there is something on both sides of it. A seam over
@@ -882,12 +1324,14 @@ export function liveRows(entries: readonly LiveEntry[]): readonly PanelRow[] {
 export function panelRows(
   history: readonly TranscriptItem[],
   live: readonly LiveEntry[],
-  prompts: readonly HistoryUserPrompt[] = [],
+  prompts: readonly RestoredPrompt[] = [],
+  /** §8(i)'s prompt-row identity owner; see `historicalRows` for the fallback. */
+  sessionId: string | null = null,
 ): readonly PanelRow[] {
-  const before = historicalRows(history, prompts);
+  const before = historicalRows(history, prompts, sessionId);
   const after = liveRows(live);
   if (before.length === 0 || after.length === 0) return [...before, ...after];
-  return [...before, { row: "seam", key: "seam" }, ...after];
+  return [...before, { row: "seam", key: "seam", kind: seamKind(live) }, ...after];
 }
 
 /**

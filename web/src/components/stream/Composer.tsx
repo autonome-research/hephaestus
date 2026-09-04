@@ -218,8 +218,22 @@ export interface ComposerProps {
    * touches that the tab holds without the server's help. Fired on the same
    * submit that calls `sessionPromptStore.remember`, before the POST, so the
    * operator's words are on screen for the whole model round-trip.
+   *
+   * Takes the session id the turn actually targets — `sessionId` for an
+   * already-open tab, or the id `POST /sessions` just minted on the
+   * create-then-send path — so the echo always lands in the session it is
+   * about even though this component's own `sessionId` prop is still `null`
+   * at the moment `createSession` resolves.
    */
-  readonly onEcho?: ((text: string) => void) | undefined;
+  readonly onEcho?: ((sessionId: string, text: string) => void) | undefined;
+  /**
+   * §7A.5: a NAMED refusal to the prompt POST (`run_in_flight`,
+   * `agent_unavailable`, any other reason the route names) marks that same
+   * echo `refused` rather than leaving it looking like an ordinary sent turn.
+   * Not called for the `unknown` outcome (a POST that never came back) — that
+   * stays on the composer's own `data-send-state="unknown"`, per §7A.5.
+   */
+  readonly onEchoRefused?: ((sessionId: string, reason: string) => void) | undefined;
   /**
    * Incremented after `POST /sessions` so the new session's box is focused
    * (#61). `0` / omitted means "do not steal focus".
@@ -496,7 +510,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
 
     const postPrompt = (sid: string): void => {
       sessionPromptStore.remember(sid, opening);
-      props.onEcho?.(opening);
+      props.onEcho?.(sid, opening);
       void sendPrompt(sid, opening, envelope)
         .then((document) => {
           setPost({ phase: "idle" });
@@ -519,6 +533,10 @@ export function Composer(props: ComposerProps): React.JSX.Element {
             return;
           }
           if (cause instanceof WorkspaceError) {
+            // §7A.5: a NAMED refusal — the turn definitively did not start —
+            // marks the echo `refused` rather than leaving it standing as
+            // though the turn were merely unresolved.
+            props.onEchoRefused?.(sid, cause.reason);
             setPost({
               phase: "refused",
               reason: cause.reason,

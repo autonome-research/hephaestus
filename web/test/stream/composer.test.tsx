@@ -1214,7 +1214,7 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     const root = mount({ onEcho });
     type(root, "Chamfer the lid, 0.5 mm.");
     pressEnter(root);
-    expect(onEcho).toHaveBeenCalledExactlyOnceWith("Chamfer the lid, 0.5 mm.");
+    expect(onEcho).toHaveBeenCalledExactlyOnceWith("sess-1", "Chamfer the lid, 0.5 mm.");
     resolveTurn({
       status: "ok",
       session_id: "sess-1",
@@ -1234,12 +1234,16 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     // uncertainty, and hiding them would un-say something the operator said.
     vi.mocked(sendPrompt).mockRejectedValue(new Error("the POST did not come back"));
     const onEcho = vi.fn();
-    const root = mount({ onEcho });
+    const onEchoRefused = vi.fn();
+    const root = mount({ onEcho, onEchoRefused });
     type(root, "Bump the kerf to 0.25 mm.");
     pressEnter(root);
     await act(async () => undefined);
     expect(composer(root).getAttribute("data-send-state")).toBe("unknown");
     expect(onEcho).toHaveBeenCalledTimes(1);
+    // §7A.5: `unknown` (a lost POST) never marks the echo refused — the turn
+    // may have started, and `refused` would say something false.
+    expect(onEchoRefused).not.toHaveBeenCalled();
     // A second, deliberate Send appends a second echo.
     const retry = root.querySelector<HTMLButtonElement>("[data-composer-retry]");
     act(() => {
@@ -1247,6 +1251,15 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     });
     await act(async () => undefined);
     expect(onEcho).toHaveBeenCalledTimes(2);
+  });
+
+  it("marks the echo refused on a NAMED refusal, with the server's own reason (§7A.5)", async () => {
+    const onEcho = vi.fn();
+    const onEchoRefused = vi.fn();
+    const root = await refuseRunInFlight({ onEcho, onEchoRefused });
+    expect(onEcho).toHaveBeenCalledExactlyOnceWith("sess-1", "Bump the kerf to 0.25 mm.");
+    expect(onEchoRefused).toHaveBeenCalledExactlyOnceWith("sess-1", "run_in_flight");
+    void root;
   });
 
   it("summarises the envelope at rest and mounts NO chip row (§7A.3(a)(c))", () => {

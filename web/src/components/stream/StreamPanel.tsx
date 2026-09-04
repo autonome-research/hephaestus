@@ -470,6 +470,7 @@ export function StreamPanel(): React.JSX.Element {
         terminals={stream.terminals}
         onForgetLiveRun={stream.clearRunId}
         onEcho={stream.echo}
+        onEchoRefused={stream.refuseEcho}
         focusNonce={focusNonce}
         onRuntimeFault={reportFault}
         sessionTitle={sessionTitle}

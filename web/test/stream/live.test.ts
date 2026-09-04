@@ -13,6 +13,7 @@ import {
   emptyLive,
   LIVE_DEDUPE_WINDOW,
   receive,
+  refuseEcho,
   RESYNC_CLOSE_CODE,
   RESYNC_CLOSE_REASON,
   resumeFrame,
@@ -126,11 +127,23 @@ describe("the local prompt echo entry (§7A.5 C1)", () => {
     state = receive(state, frame(0));
     state = appendEcho(state, "add a 3mm fillet");
     const tail = state.entries[state.entries.length - 1];
-    expect(tail).toEqual({ entry: "echo", key: "echo:0", text: "add a 3mm fillet" });
+    expect(tail).toEqual({
+      entry: "echo",
+      key: "echo:0",
+      text: "add a 3mm fillet",
+      state: "sent",
+      refusedReason: null,
+    });
     // A second Send appends a second echo with a distinct key.
     state = appendEcho(state, "and mirror it");
     const next = state.entries[state.entries.length - 1];
-    expect(next).toEqual({ entry: "echo", key: "echo:1", text: "and mirror it" });
+    expect(next).toEqual({
+      entry: "echo",
+      key: "echo:1",
+      text: "and mirror it",
+      state: "sent",
+      refusedReason: null,
+    });
   });
 
   it("is never removed: a resync and later frames leave every echo standing", () => {
@@ -155,6 +168,80 @@ describe("the local prompt echo entry (§7A.5 C1)", () => {
     state = receive(state, frame(1));
     const marker = state.entries.find((entry) => entry.entry === "break");
     expect(marker?.resync.outcome).toBe("contiguous");
+  });
+});
+
+describe("a refused echo (§7A.5)", () => {
+  it("marks the most recent echo refused, keeping the text verbatim", () => {
+    let state = emptyLive("live");
+    state = appendEcho(state, "add a 3mm fillet");
+    state = refuseEcho(state, "run_in_flight");
+    const tail = state.entries[state.entries.length - 1];
+    expect(tail).toEqual({
+      entry: "echo",
+      key: "echo:0",
+      text: "add a 3mm fillet",
+      state: "refused",
+      refusedReason: "run_in_flight",
+    });
+  });
+
+  it("is a no-op when there is no echo to mark", () => {
+    const state = emptyLive("live");
+    expect(refuseEcho(state, "run_in_flight")).toBe(state);
+  });
+
+  it("marks only the LAST echo, leaving an earlier one sent", () => {
+    let state = emptyLive("live");
+    state = appendEcho(state, "first");
+    state = appendEcho(state, "second");
+    state = refuseEcho(state, "agent_unavailable");
+    const [first, second] = state.entries;
+    expect(first?.entry === "echo" ? first.state : null).toBe("sent");
+    expect(second?.entry === "echo" ? second.state : null).toBe("refused");
+  });
+
+  it("does not overwrite the reason on a second report", () => {
+    let state = emptyLive("live");
+    state = appendEcho(state, "p");
+    state = refuseEcho(state, "run_in_flight");
+    state = refuseEcho(state, "agent_unavailable");
+    const tail = state.entries[state.entries.length - 1];
+    expect(tail?.entry === "echo" ? tail.refusedReason : null).toBe("run_in_flight");
+  });
+});
+
+describe("the mid-run attach fact (§7.4)", () => {
+  it("is false before any frame arrives", () => {
+    expect(emptyLive("live").midRunAttach).toBe(false);
+  });
+
+  it("stays false when the first frame this mount ever sees starts at seq 0", () => {
+    let state = emptyLive("live");
+    state = receive(state, frame(0));
+    expect(state.midRunAttach).toBe(false);
+  });
+
+  it("is true when the first frame this mount ever sees has seq > 0", () => {
+    let state = emptyLive("live");
+    state = receive(state, frame(7));
+    expect(state.midRunAttach).toBe(true);
+  });
+
+  it("is decided once: a later run starting cleanly does not clear it", () => {
+    let state = emptyLive("live");
+    state = receive(state, frame(7));
+    expect(state.midRunAttach).toBe(true);
+    state = receive(state, { ...frame(0, "run-2") });
+    expect(state.midRunAttach).toBe(true);
+  });
+
+  it("stays true across a resync — a reconnect is not a fresh mount", () => {
+    let state = emptyLive("live");
+    state = receive(state, frame(7));
+    state = resync(state);
+    state = receive(state, frame(8));
+    expect(state.midRunAttach).toBe(true);
   });
 });
 

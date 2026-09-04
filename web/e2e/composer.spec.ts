@@ -394,6 +394,92 @@ test.describe("the composer stays typable with no session", () => {
   });
 });
 
+test.describe("the composer creates its own session (§7A.5/§8, amended 2026-09-03)", () => {
+  // Every other case in this file addresses a session `POST /sessions`
+  // already minted — `openSession` navigates straight to `?s=<id>`. Real
+  // first contact is the OTHER path: the operator lands on a blank canvas
+  // with no `?s=` at all, types, and hits Send — the composer's OWN
+  // `createSession` call mints the session, live. §7A.5(C1)/§8 both promise
+  // the same echo and run-start boundary that an already-open session's
+  // first turn gets; this is the reproduction that would have caught the
+  // stale-`sessionId`-closure defect (`useStream.echo` used to be bound to
+  // the tab's `sessionId` prop, which was still `null` at the instant
+  // `createSession()` resolved, so the echo silently landed nowhere).
+  test("the first turn's echo and run-start boundary render for a session the composer itself minted", async ({
+    page,
+  }) => {
+    test.setTimeout(180_000);
+    // Force `selected === null` on arrival — same technique as the block
+    // above — so this send goes through Composer's create-then-send branch
+    // rather than auto-selecting a pre-existing session (`StreamPanel.tsx`'s
+    // "first session wins" default, §4.5).
+    await page.route("**/api/v1/sessions", async (route) => {
+      if (route.request().method() !== "GET") {
+        await route.continue();
+        return;
+      }
+      const path = new URL(route.request().url()).pathname.replace(/\/$/, "");
+      if (path !== "/api/v1/sessions") {
+        await route.continue();
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          status: "ok",
+          sessions: [],
+          profiles: [
+            {
+              profile: "orchestrator",
+              can_delegate: true,
+              part_scoped: false,
+              requires_part: false,
+            },
+            { profile: "part", can_delegate: false, part_scoped: true, requires_part: true },
+          ],
+        }),
+      });
+    });
+
+    await open(page, route(PART));
+    const composer = page.locator("[data-composer]");
+    await expect(composer).toHaveAttribute("data-disabled-reason", "no_session");
+    await expect(composer.locator("[data-composer-input]")).toBeEnabled();
+
+    await composer
+      .locator("[data-composer-input]")
+      .fill(`${world().composer.sentinel} please make me a part`);
+    await composer.locator("[data-composer-send]").click();
+
+    // The URL gains `?s=` for the session the composer itself minted — the
+    // observable form of "today it creates over the API and opens ?s=<id>",
+    // here reached from the composer's own POST rather than a pre-created one.
+    await page.waitForFunction(() => window.location.hash.includes("s="), null, {
+      timeout: 30_000,
+    });
+    await expect(page.locator("[data-composer][data-session-id]")).not.toHaveAttribute(
+      "data-session-id",
+      "",
+    );
+
+    // §7A.5 (C1): the echo renders for THIS session, not lost in the
+    // create-then-send hand-off.
+    const echoRow = page.locator('[data-row="local-prompt"]');
+    await expect(echoRow).toHaveCount(1);
+    await expect(echoRow).toContainText("please make me a part");
+    await expect(echoRow).toHaveAttribute("data-echo-state", "sent");
+
+    // The turn's events reach the transcript, and — §7.3 (C21) — the echo
+    // licensed exactly one run-start boundary for the first frame, same as
+    // an already-open session's first turn gets it.
+    await expect(page.locator("[data-tool-name]").first()).toBeVisible({ timeout: 120_000 });
+    const boundary = page.locator('[data-row="run-start"]');
+    await expect(boundary).toHaveCount(1);
+    expect(await boundary.getAttribute("data-event-id")).toBeNull();
+  });
+});
+
 test.describe("§7A.12 case 7 — POST /sessions validation", () => {
   test("quick_edit is refused by name, pointing at the route that seeds one", async () => {
     // §7A.2's TIGHTENING. A bare create would produce that profile's

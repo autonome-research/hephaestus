@@ -34,6 +34,7 @@ import {
   disconnected,
   emptyLive,
   receive,
+  refuseEcho,
   resync,
   setStatus,
   type LiveState,
@@ -73,10 +74,31 @@ export interface StreamView {
   /** Forget `runId` on submit so Cancel cannot target a finished turn. */
   readonly clearRunId: () => void;
   /**
-   * §7A.5 (C1): append the local-prompt echo on Send — originating tab only,
-   * because only this tab's composer calls it with text this tab holds.
+   * §7A.5 (C1): append the local-prompt echo on Send.
+   *
+   * Takes the TARGET session id explicitly rather than closing over this
+   * hook's own `sessionId` argument, because the create-then-send path
+   * (`Composer.tsx`) mints a brand-new session id and echoes into *that*
+   * session before this hook is ever re-rendered with it — a closure over
+   * the hook's `sessionId` would echo into `null` (or the previously
+   * selected session) and silently drop the words. Any caller may name any
+   * session; `useStream`'s own `sessionId` argument decides only which
+   * session's rows this particular hook instance RENDERS.
    */
-  readonly echo: (text: string) => void;
+  readonly echo: (sessionId: string, text: string) => void;
+  /**
+   * §7A.5: mark the most recently sent echo for `sessionId` `refused`,
+   * carrying the server's own reason. See `live.ts::refuseEcho` — the
+   * `unknown` outcome (a lost POST) deliberately does not call this.
+   */
+  readonly refuseEcho: (sessionId: string, reason: string) => void;
+  /**
+   * §7.4: did THIS mount's first live frame arrive with `seq > 0`? Feeds the
+   * transcript layer's mid-run-seam label — see `live.ts`'s `midRunAttach`
+   * doc for the full reasoning. `false` (renders the ordinary seam) until a
+   * live frame has actually arrived.
+   */
+  readonly midRunAttach: boolean;
   /** Live `terminal` frames seen; §7A.11's read-refresh trigger. */
   readonly terminals: number;
   readonly error: Error | null;
@@ -125,8 +147,14 @@ export function useStream(sessionId: string | null): StreamView {
       (progress) => {
         if (signal.aborted) return;
         setHistory({ sid: sessionId, value: progress });
-        // First write wins: restore tab titles from the server, not the page store.
+        // First write wins: restore tab titles from the server, not the page
+        // store. §2.8(3)/§7A.4: `text` is the operator's own sentence and
+        // nothing else; a `null` (an unrecoverable legacy prompt) is never
+        // substituted with the envelope — the tab keeps §7.1's noun-phrase
+        // fallback name instead of titling itself with a heading the
+        // operator never wrote.
         for (const prompt of progress.userPrompts) {
+          if (prompt.text === null) continue;
           sessionPromptStore.remember(sessionId, prompt.text);
         }
       },
@@ -216,19 +244,27 @@ export function useStream(sessionId: string | null): StreamView {
     }));
   }, [sessionId]);
 
-  const echo = useCallback(
-    (text: string) => {
-      if (sessionId === null) return;
-      setLive((prev) => ({
-        sid: sessionId,
-        value: appendEcho(prev.sid === sessionId ? prev.value : CONNECTING, text),
-      }));
-    },
-    [sessionId],
-  );
+  // Both callbacks below take the TARGET session id as an argument rather
+  // than reading this hook's own `sessionId` — see `StreamView.echo`'s doc.
+  // `setLive`'s updater compares `prev.sid` against THAT id, not against the
+  // hook's closed-over `sessionId`, which is what lets the create-then-send
+  // path echo into a session this particular hook render never saw.
+  const echo = useCallback((sid: string, text: string) => {
+    setLive((prev) => ({
+      sid,
+      value: appendEcho(prev.sid === sid ? prev.value : CONNECTING, text),
+    }));
+  }, []);
+
+  const refuseEchoCb = useCallback((sid: string, reason: string) => {
+    setLive((prev) => ({
+      sid,
+      value: refuseEcho(prev.sid === sid ? prev.value : CONNECTING, reason),
+    }));
+  }, []);
 
   return {
-    rows: panelRows(shownHistory.items, shownLive.entries, shownHistory.userPrompts),
+    rows: panelRows(shownHistory.items, shownLive.entries, shownHistory.userPrompts, sessionId),
     status: shownLive.status,
     history: shownHistory,
     tabs: shownThread.tabs,
@@ -238,6 +274,8 @@ export function useStream(sessionId: string | null): StreamView {
     runId: shownLive.runId,
     clearRunId,
     echo,
+    refuseEcho: refuseEchoCb,
+    midRunAttach: shownLive.midRunAttach,
     terminals: shownLive.terminals,
     error: shownError ?? shownHistory.error,
   };
