@@ -40,7 +40,17 @@ export type RpcRequest = (
   params: { [k: string]: JsonValue },
 ) => Promise<JsonValue>;
 
-/** Per-call trusted context supplied by the session layer. */
+/**
+ * Per-call trusted context supplied by the session layer.
+ *
+ * Per CALL, and therefore per RUN: with turns overlapping in one sidecar
+ * process, `sessionId`/`runId` here are the identity of the run that INVOKED
+ * this tool, resolved by the session layer from that run's own scope
+ * (main.ts `resolveContext`) rather than from a shared "current run" slot. The
+ * proxy never reads ambient state to fill these in — everything it stamps onto
+ * a bridge request comes from this object, which is what keeps one run's tool
+ * call from crossing the bridge under another run's identity.
+ */
 export interface ProxyContext {
   readonly sessionId: string;
   readonly runId: string;
@@ -330,6 +340,12 @@ export class ToolProxy {
       return ["py.delegate", params];
     }
     if (toolName === "ask_user") {
+      // `run_id` is the INVOKING run's — `ctx` is per call — and it is load
+      // bearing twice over: Python matches the human's answer to the pending
+      // question by it, and the sidecar's transport brackets the suspension with
+      // `question`/`answer` events on the run this field names (main.ts's
+      // `py.ask_user` handler resolves the run from it). A stale or ambient id
+      // here would suspend one run and narrate it on another's event sequence.
       const params: { [k: string]: JsonValue } = {
         run_id: ctx.runId,
         question: args.question ?? null,

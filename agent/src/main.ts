@@ -21,6 +21,7 @@
 // FakeModel is test-only and is NEVER started here — production models arrive
 // through runtime.configure.
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import process from "node:process";
 import { FrameDecoder, encodeFrame, FrameTooLargeError } from "./framing.js";
 import type { JsonValue } from "./framing.js";
@@ -70,11 +71,53 @@ const peer = new RpcPeer((frame) => {
   process.stdout.write(encodeFrame(frame));
 });
 
-// ── active-run tool-invocation context ───────────────────────────────────────
-// One prompt runs per session at a time; tool `execute` fires synchronously
-// within the awaited prompt, so a single "current context" resolves the trusted
-// invocation for the tool proxy. Concurrent prompts in the tests never execute
-// tools, so clobbering is harmless.
+// ── per-run tool-invocation context ──────────────────────────────────────────
+//
+// THE PREMISE, CORRECTED. More than one prompt can be in flight in this process
+// at once, and the layer above says so deliberately. `BridgeRuntime._admit_turn`
+// (server/src/hephaestus/agent_bridge/app.py) refuses a second live turn on the
+// SAME session — `run_in_flight`, scope "session" — and admits one on any OTHER
+// session: INTERFACE.md §19.23 narrowed that guard from project-wide to
+// per-session precisely so "a part session and the orchestrator may now think at
+// the same time". The admission budget behind it is sixteen concurrent runs
+// (`schemas/bridge_limits.json`, `admission.run_slots`). One sidecar process
+// serves every one of those sessions over this single stdio peer, and
+// `session.prompt` is an async handler that yields at every await.
+//
+// The older premise — "one prompt runs per session at a time, so a single
+// current context resolves the trusted invocation; concurrent prompts in the
+// tests never execute tools, so clobbering is harmless" — was true only of the
+// tests it was written against. With one module-global slot the run that
+// started LAST owned every tool call EITHER run made, and the run that finished
+// FIRST cleared the slot out from under the other. Both failures are silent and
+// both are identity failures: the wrong session id and entry id on a mutation's
+// idempotency key (tools/invocation.ts), the wrong model's capability gating an
+// image result (tools/proxy.ts), and one run's `question`/`answer` events
+// minted on another run's sequence.
+//
+// Observed rather than theorized. Two sessions prompted concurrently against
+// the bundled sidecar, each turn calling one tool: BOTH `py.tool_dispatch`
+// requests crossed the bridge as the second run's session and run id, out of
+// one shared `InvocationTracker` (`run-B#0` and `run-B#1`) — session A's tool
+// call was dispatched under session B's identity. The same two turns calling
+// `ask_user` broadcast session A's question on run B's id and sequence
+// (`q-run-B-0`), so the tab watching run A never saw the question its own turn
+// was suspended on. Against this file as it now stands the same reproductions
+// give `sa`/`run-A#0` and `sb`/`run-B#0`, and `q-run-A-0` on run A.
+//
+// So a context belongs to a RUN, and it is reached two ways that agree by
+// construction:
+//   • `runScope` (AsyncLocalStorage) carries it down the await chain from
+//     `session.prompt` into every tool `execute` Pi fires inside that turn.
+//     Pi's tool loop runs within the awaited prompt, so the store IS the
+//     invoking run's — and nothing has to be threaded through Pi's
+//     `execute(toolCallId, args)` signature, which carries no run identity and
+//     is not ours to widen.
+//   • `activeRuns` keys the same contexts by run id, for the one caller that
+//     holds an explicit id rather than an async scope: the `py.ask_user`
+//     bracket below, whose `params.run_id` the proxy stamped from the invoking
+//     call's own context (tools/proxy.ts `buildRequest`).
+// Each run deletes ITS OWN entry when it ends; nothing clears a shared slot.
 interface ActiveContext {
   readonly sessionId: string;
   readonly runId: string;
@@ -85,7 +128,36 @@ interface ActiveContext {
   readonly imagesSupported: boolean;
   ordinal: number;
 }
-let activeContext: ActiveContext | undefined;
+const activeRuns = new Map<string, ActiveContext>();
+const runScope = new AsyncLocalStorage<ActiveContext>();
+
+/**
+ * The run whose turn is executing the code that asks.
+ *
+ * The async scope is the AUTHORITY: it is the only source that cannot be wrong
+ * about which run invoked a tool. The single-active-run fallback covers an
+ * async context lost at a boundary Pi may introduce (a queue, a timer, a native
+ * callback) — with exactly one run in flight there is nothing to confuse it
+ * with, so attributing the call is safe and the log line records that it
+ * happened. With none, or with several, this REFUSES rather than guesses:
+ * guessing is precisely the defect being removed here, and a failed tool call
+ * is a better outcome than one carrying another session's identity.
+ */
+function currentRun(): ActiveContext {
+  const scoped = runScope.getStore();
+  if (scoped !== undefined) return scoped;
+  const only = activeRuns.size === 1 ? [...activeRuns.values()][0] : undefined;
+  if (only !== undefined) {
+    log(`tool invocation resolved outside its run scope; attributed to run '${only.runId}'`);
+    return only;
+  }
+  throw new RpcError(
+    ErrorCode.INTERNAL_ERROR,
+    activeRuns.size === 0
+      ? "no active run for tool invocation"
+      : `ambiguous run for tool invocation (${activeRuns.size} runs in flight)`,
+  );
+}
 
 /** Emit one normalized event frame on the private bridge (stdout, never logs). */
 function emitEvent(ev: HephaestusEvent): void {
@@ -93,10 +165,7 @@ function emitEvent(ev: HephaestusEvent): void {
 }
 
 function resolveContext(toolCallId: string): ProxyContext {
-  const active = activeContext;
-  if (active === undefined) {
-    throw new RpcError(ErrorCode.INTERNAL_ERROR, "no active run for tool invocation");
-  }
+  const active = currentRun();
   const ordinal = active.ordinal;
   active.ordinal += 1;
   const invocation: TrustedInvocation = active.tracker.register({
@@ -146,10 +215,24 @@ function resolveContext(toolCallId: string): ProxyContext {
 // `?? null` is not used on them: the schema's defaults are `true` and `false`
 // (`schemas/tools/ask_user.schema.json`), a client reads an absent field as
 // that default, and writing `null` would put a third value on the wire.
+//
+// The ordinal below is process-wide rather than per-run on purpose: the run id
+// is already part of the question id, so one monotonic counter cannot collide
+// across concurrent runs, and a per-run counter would buy nothing.
 let questionOrdinal = 0;
 const proxy = new ToolProxy(async (method, params) => {
   if (method !== "py.ask_user") return peer.request(method, params);
-  const active = activeContext;
+  // THE BRACKET BELONGS TO THE RUN THAT ASKED — which, with turns overlapping,
+  // is not "whichever run is current". `params.run_id` is the invoking run's id:
+  // the proxy stamps it from the per-call context `resolveContext` handed that
+  // call (tools/proxy.ts `buildRequest`), so it is the authoritative key here,
+  // and the async scope agrees with it whenever it is present. Resolving through
+  // it is what keeps the pair on the ASKING run's sequence — emitting them on
+  // another run's `nextSeq` would give that run two events with one ordinal and
+  // leave a hole in this one.
+  const active =
+    (typeof params.run_id === "string" ? activeRuns.get(params.run_id) : undefined) ??
+    runScope.getStore();
   const runId = active?.runId ?? String(params.run_id ?? "");
   const questionId = `q-${runId}-${questionOrdinal++}`;
   if (active !== undefined) {
@@ -568,7 +651,7 @@ peer.on("session.prompt", async (params) => {
     }
   });
 
-  activeContext = {
+  const run: ActiveContext = {
     sessionId,
     runId,
     tracker: new InvocationTracker(),
@@ -576,74 +659,82 @@ peer.on("session.prompt", async (params) => {
     imagesSupported: managed.model.input.includes("image"),
     ordinal: 0,
   };
+  activeRuns.set(runId, run);
   let state: "completed" | "cancelled" | "failed" = "completed";
   let errorMessage: string | undefined;
   try {
-    const outcome = await promptWithTransientRetry(promptText, {
-      // With a context block the turn is sent as a content ARRAY whose leading
-      // block is the workspace context and whose second block is the operator's
-      // text verbatim (INTERFACE.md §7A.4).
-      //
-      // DEVIATION, reported rather than glossed: **Pi admits no genuinely
-      // separate second user-role text block.** `AgentSession.sendUserMessage`
-      // joins a content array's text parts with "\n" and calls `prompt()` with
-      // `expandPromptTemplates: false` — so what the model receives is one user
-      // message whose first paragraphs are the block. The invariant §7A.4
-      // actually protects is on the Python side and is unaffected: the block
-      // never reaches `bind_run_request_text`, so `prompt_number_diff` still
-      // diffs the operator's own words. The second-order consequence is
-      // recorded here: a turn WITH context skips file-template expansion, one
-      // WITHOUT keeps it. That is the safer asymmetry — with a block prepended
-      // the operator's text is no longer at message start, so template
-      // expansion would fire on the workspace's own prose rather than on
-      // theirs — and it changes nothing for `heph agent`, which sends no block.
-      prompt: (text) => {
-        // The single transient retry re-prompts with a sentence THIS sidecar
-        // wrote (session/retry.ts). Pi persists it as an ordinary user message,
-        // so without its own marker it would surface as an operator turn
-        // (§2.8(3), amended 2026-09-03): record it with `origin: "agent"` so
-        // the projection can say who spoke. Same best-effort rule as above.
-        if (text !== promptText) {
-          try {
-            const manager = managed.session.sessionManager;
-            manager.appendCustomEntry(TURN_MARKER_TYPE, {
-              turn: nextTurnOrdinal(manager.getEntries()),
-              text,
-              envelope: contextBlock ?? null,
-              origin: "agent",
-            });
-          } catch (err) {
-            log(`retry turn marker not recorded: ${err instanceof Error ? err.message : String(err)}`);
+    // Everything this turn awaits runs INSIDE the run's async scope, so a tool
+    // `execute` Pi fires anywhere under it resolves this run and not a
+    // concurrent one. The scope wraps the context policy too: a threshold
+    // compaction is still this run's work, and its audit event must carry this
+    // run's next ordinal.
+    await runScope.run(run, async () => {
+      const outcome = await promptWithTransientRetry(promptText, {
+        // With a context block the turn is sent as a content ARRAY whose leading
+        // block is the workspace context and whose second block is the operator's
+        // text verbatim (INTERFACE.md §7A.4).
+        //
+        // DEVIATION, reported rather than glossed: **Pi admits no genuinely
+        // separate second user-role text block.** `AgentSession.sendUserMessage`
+        // joins a content array's text parts with "\n" and calls `prompt()` with
+        // `expandPromptTemplates: false` — so what the model receives is one user
+        // message whose first paragraphs are the block. The invariant §7A.4
+        // actually protects is on the Python side and is unaffected: the block
+        // never reaches `bind_run_request_text`, so `prompt_number_diff` still
+        // diffs the operator's own words. The second-order consequence is
+        // recorded here: a turn WITH context skips file-template expansion, one
+        // WITHOUT keeps it. That is the safer asymmetry — with a block prepended
+        // the operator's text is no longer at message start, so template
+        // expansion would fire on the workspace's own prose rather than on
+        // theirs — and it changes nothing for `heph agent`, which sends no block.
+        prompt: (text) => {
+          // The single transient retry re-prompts with a sentence THIS sidecar
+          // wrote (session/retry.ts). Pi persists it as an ordinary user message,
+          // so without its own marker it would surface as an operator turn
+          // (§2.8(3), amended 2026-09-03): record it with `origin: "agent"` so
+          // the projection can say who spoke. Same best-effort rule as above.
+          if (text !== promptText) {
+            try {
+              const manager = managed.session.sessionManager;
+              manager.appendCustomEntry(TURN_MARKER_TYPE, {
+                turn: nextTurnOrdinal(manager.getEntries()),
+                text,
+                envelope: contextBlock ?? null,
+                origin: "agent",
+              });
+            } catch (err) {
+              log(`retry turn marker not recorded: ${err instanceof Error ? err.message : String(err)}`);
+            }
           }
-        }
-        return contextBlock === undefined
-          ? managed.session.prompt(text)
-          : managed.session.sendUserMessage([
-              { type: "text", text: contextBlock },
-              { type: "text", text },
-            ]);
-      },
-      takeTurnError: () => {
-        const captured = turnError;
-        turnError = undefined;
-        return captured;
-      },
-      aborted: () => controller.signal.aborted,
-      onRetry: (message, transientClass) => {
-        // The archive shows the fault and the single retry (audit events are
-        // never coalesced or dropped).
-        emitEvent({
-          runId,
-          seq: next(),
-          kind: "audit",
-          payload: { event: "turn_retry", error: message, transient_class: transientClass },
-        });
-      },
+          return contextBlock === undefined
+            ? managed.session.prompt(text)
+            : managed.session.sendUserMessage([
+                { type: "text", text: contextBlock },
+                { type: "text", text },
+              ]);
+        },
+        takeTurnError: () => {
+          const captured = turnError;
+          turnError = undefined;
+          return captured;
+        },
+        aborted: () => controller.signal.aborted,
+        onRetry: (message, transientClass) => {
+          // The archive shows the fault and the single retry (audit events are
+          // never coalesced or dropped).
+          emitEvent({
+            runId,
+            seq: next(),
+            kind: "audit",
+            payload: { event: "turn_retry", error: message, transient_class: transientClass },
+          });
+        },
+      });
+      state = outcome.state;
+      if (outcome.errorMessage !== undefined) errorMessage = outcome.errorMessage;
+      // Drive the context policy off post-turn usage (compaction/escalation).
+      await applyContextPolicy(managed, run, policy);
     });
-    state = outcome.state;
-    if (outcome.errorMessage !== undefined) errorMessage = outcome.errorMessage;
-    // Drive the context policy off post-turn usage (compaction/escalation).
-    await applyContextPolicy(managed, runId, policy);
   } catch (err) {
     if (controller.signal.aborted) {
       state = "cancelled";
@@ -653,7 +744,10 @@ peer.on("session.prompt", async (params) => {
     }
   } finally {
     unsubscribe();
-    activeContext = undefined;
+    // Each run drops ITS OWN entry. The old shared slot was cleared here by
+    // whichever run finished first, which left every other in-flight run's
+    // remaining tool calls resolving nothing.
+    activeRuns.delete(runId);
     svc.endRun(runId);
     // §23.8/§23.10: the turn is the observation. A run that reached the provider
     // and failed on auth flips that provider's health to `rejected`; one that
@@ -693,9 +787,18 @@ peer.on("session.prompt", async (params) => {
   return { status: state, run_id: runId };
 });
 
+/**
+ * Post-turn context policy for ONE run.
+ *
+ * Takes the run's own context rather than just its id: the compaction audit
+ * event has to be minted on that run's sequence, and reading the sequence off a
+ * shared "current context" is how it used to land on a neighbouring run (or, on
+ * the already-cleared slot, on a fabricated `seq: 0` that duplicated the run's
+ * first event ordinal).
+ */
 async function applyContextPolicy(
   managed: ManagedSession,
-  runId: string,
+  run: ActiveContext,
   policy: ContextPolicy,
 ): Promise<void> {
   const usage = managed.session.getContextUsage();
@@ -705,15 +808,15 @@ async function applyContextPolicy(
       await managed.session.compact(action.instructions);
       policy.reset();
       emitEvent({
-        runId,
-        seq: activeContext?.nextSeq() ?? 0,
+        runId: run.runId,
+        seq: run.nextSeq(),
         kind: "audit",
         payload: { event: "compaction", trigger: "threshold" },
       });
     } else {
       // Budget escalation: surface a question to the operator via py.ask_user.
       await peer.request("py.ask_user", {
-        run_id: runId,
+        run_id: run.runId,
         question: `Context budget at ${Math.round(action.percent * 100)}%. Continue?`,
         options: ["continue", "stop"],
         allow_free_text: false,
