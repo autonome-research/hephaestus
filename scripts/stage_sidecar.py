@@ -3,7 +3,7 @@
 
 """Stage the bundled Node sidecar into ``hephaestus-server`` as package data.
 
-This is the step between ``pnpm --dir agent run bundle`` and ``uv build``. It
+This is the step between ``(cd agent && pnpm run bundle)`` and ``uv build``. It
 copies the bundle into ``server/src/hephaestus/agent_bridge/_sidecar/``, distils
 the esbuild metafile into a small ``AUDIT.json``, and writes the SHA-256
 ``MANIFEST.json`` the supervisor verifies before every spawn.
@@ -23,8 +23,8 @@ regexes.
 
 Usage::
 
-    pnpm --dir agent install --frozen-lockfile
-    pnpm --dir agent run bundle
+    (cd agent && pnpm install --frozen-lockfile)
+    (cd agent && pnpm run bundle)
     uv run python scripts/stage_sidecar.py
 """
 
@@ -173,8 +173,8 @@ def stage() -> Path:
     """Copy, audit, and manifest the bundle. Returns the staged root."""
     if not BUNDLE_DIR.is_dir():
         raise SystemExit(
-            f"no bundle at {BUNDLE_DIR}\nrun: pnpm --dir agent install --frozen-lockfile "
-            "&& pnpm --dir agent run bundle"
+            f"no bundle at {BUNDLE_DIR}\nrun: (cd agent && pnpm install --frozen-lockfile "
+            "&& pnpm run bundle)"
         )
     if not METAFILE.is_file():
         raise SystemExit(f"no esbuild metafile at {METAFILE}; re-run the bundle")
