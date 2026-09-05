@@ -26,7 +26,7 @@ import process from "node:process";
 import { FrameDecoder, encodeFrame, FrameTooLargeError } from "./framing.js";
 import type { JsonValue } from "./framing.js";
 import { RpcPeer, RpcError, ErrorCode, FRAME_VERSION } from "./rpc.js";
-import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { ModelRuntime, SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
   createModelRuntime,
   type ProviderAvailability,
@@ -57,6 +57,7 @@ import { normalizeLiveEvent, wireEvent } from "./session/live.js";
 import {
   ContextPolicy,
   formatPinnedSummary,
+  summarize,
   type PinnedCadSummary,
 } from "./session/context.js";
 import { promptWithTransientRetry, turnErrorOf } from "./session/retry.js";
@@ -653,14 +654,29 @@ peer.on("session.create", async (params) => {
   return { session_id: managed.id, profile: managed.profile, part: managed.part ?? null };
 });
 
-function stubSummary(managed: ManagedSession): PinnedCadSummary {
-  return {
-    designIntent: `session ${managed.id} (${managed.profile})`,
-    decisions: [],
-    openProblems: [],
-    params: {},
-    checkStatus: "unknown",
-  };
+/**
+ * The pinned CAD summary handed to Pi compaction (STAGE2_DIGEST §1).
+ *
+ * Derived from the session's OWN recorded entries — `summarize` reads the
+ * transcript the sidecar already holds, so there is no bridge call and no new
+ * wire method behind this. What it replaced (`stubSummary`, one commit old and
+ * never revisited) returned five empty fields, so the one artifact designed to
+ * survive compaction survived carrying nothing: audit-2026-09-04 B-12.
+ *
+ * Best effort by construction. An unreadable entry list summarizes as the empty
+ * session, which is byte-identical to what the stub produced; failing a
+ * compaction over the bookkeeping about it would trade a context defect for an
+ * outage, the same posture the turn marker takes above.
+ */
+function pinnedSummary(managed: ManagedSession): PinnedCadSummary {
+  let entries: readonly SessionEntry[] = [];
+  try {
+    entries = managed.session.sessionManager.getEntries();
+  } catch (err) {
+    const why = err instanceof Error ? err.message : String(err);
+    log(`pinned summary: entries unreadable (${why})`);
+  }
+  return summarize(entries, managed);
 }
 
 peer.on("session.prompt", async (params) => {
@@ -715,7 +731,7 @@ peer.on("session.prompt", async (params) => {
 
   let seq = 0;
   const next = (): number => seq++;
-  const policy = new ContextPolicy({ summary: () => stubSummary(managed) });
+  const policy = new ContextPolicy({ summary: () => pinnedSummary(managed) });
 
   // Live normalization: Pi streaming events become public Hephaestus events as
   // they happen, on the same run-monotonic sequence as the synthetic ones.
@@ -933,7 +949,7 @@ peer.on("session.compact", async (params) => {
   if (managed === undefined) {
     throw new RpcError(ErrorCode.INVALID_PARAMS, `unknown session '${sessionId}'`);
   }
-  const instructions = formatPinnedSummary(stubSummary(managed));
+  const instructions = formatPinnedSummary(pinnedSummary(managed));
   const result = await managed.session.compact(instructions);
   return { summary: result.summary ?? "" };
 });

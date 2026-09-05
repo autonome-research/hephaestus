@@ -159,6 +159,42 @@ export interface HistoryEvent extends HephaestusEvent {
   readonly turn: number | null;
 }
 
+/**
+ * One recorded assistant tool call: the name and the arguments as issued.
+ *
+ * WHY IT IS EXPORTED. The pinned CAD summary (`session/context.ts`, digest §1)
+ * is derived from the session's own transcript and from nothing else — no
+ * bridge call, no new wire method — so it needs the same Pi-boundary adapter
+ * this module already owns. Re-parsing `entry.message` outside this file would
+ * be a second structural reader of Pi's persisted shape, drifting silently the
+ * first time Pi moves a field.
+ */
+export interface RecordedToolCall {
+  readonly toolCallId: string;
+  readonly name: string;
+  readonly arguments: Readonly<Record<string, unknown>>;
+}
+
+/** One recorded tool result: its call's id, the tool, and the serialized text. */
+export interface RecordedToolResult {
+  readonly toolCallId: string;
+  readonly toolName: string;
+  /** The joined text blocks — one canonical-JSON envelope (`tools/proxy.ts`). */
+  readonly text: string;
+  /** §7.2's failure flag; `null` when the entry records neither source. */
+  readonly isError: boolean | null;
+}
+
+/**
+ * Everything one walk of a session's entries yields about what was ASKED and
+ * what the tools ANSWERED — the two halves the pinned summary derives from.
+ */
+export interface RecordedActivity {
+  readonly prompts: readonly HistoryUserPrompt[];
+  readonly toolCalls: readonly RecordedToolCall[];
+  readonly toolResults: readonly RecordedToolResult[];
+}
+
 /** Recover the operator's words from a Pi user message. */
 export function userPromptText(content: unknown): string | null {
   if (typeof content === "string") {
@@ -304,6 +340,8 @@ interface TurnAccumulator {
 interface Walk {
   readonly events: HistoryEvent[];
   readonly prompts: HistoryUserPrompt[];
+  readonly toolCalls: RecordedToolCall[];
+  readonly toolResults: RecordedToolResult[];
 }
 
 /**
@@ -325,6 +363,8 @@ interface Walk {
  */
 function walkEntries(entries: readonly SessionEntry[], runId: string): Walk {
   const events: HistoryEvent[] = [];
+  const toolCalls: RecordedToolCall[] = [];
+  const toolResults: RecordedToolResult[] = [];
   const accumulators: TurnAccumulator[] = [];
   let seq = 0;
   let turn: number | null = null;
@@ -359,8 +399,17 @@ function walkEntries(entries: readonly SessionEntry[], runId: string): Walk {
       continue;
     }
     if (entry.type !== "message") continue;
-    // entry.message is a Pi AgentMessage; read it via the structural adapter.
-    const message = entry.message as unknown as PiMessage;
+    // entry.message is a Pi AgentMessage; read it via the structural adapter,
+    // and read it DEFENSIVELY for the same reason `stopReason` is `unknown`
+    // above: this is a durable log. A `message` entry that carries no message —
+    // a line written by an older sidecar, a truncated tail — used to throw a
+    // TypeError out of the walk, which §2.4 says is the wrong report twice
+    // over: `history.page` surfaced it as `-32603` ("this server has no agent
+    // runtime attached") and the pinned CAD summary, which walks these same
+    // entries, silently fell back to empty. Such an entry contributes nothing
+    // and consumes no `seq`, so no existing event identity moves.
+    const message = entry.message as unknown as PiMessage | undefined;
+    if (message === null || typeof message !== "object") continue;
     if (message.role === "user") {
       // The turn ordinal is COUNTED, never read: it is deterministic from this
       // frozen slice, therefore restart-stable for exactly the reason `seq` is,
@@ -405,19 +454,24 @@ function walkEntries(entries: readonly SessionEntry[], runId: string): Walk {
         // surfaces disagreeing about the same turn.
         else if (item.type === "thinking") {
           if (item.thinking !== "") emit("thought", { text: item.thinking });
-        } else if (item.type === "toolCall")
+        } else if (item.type === "toolCall") {
           emit("tool_call", { name: item.name, arguments: item.arguments as JsonValue }, item.id);
+          toolCalls.push({ toolCallId: item.id, name: item.name, arguments: item.arguments });
+        }
       }
     } else if (message.role === "toolResult") {
       const text = message.content
         .filter((c): c is PiTextContent => c.type === "text")
         .map((c) => c.text)
         .join("");
-      emit(
-        "tool_result",
-        { toolName: message.toolName, text, isError: recoverIsError(message, text) },
-        message.toolCallId,
-      );
+      const isError = recoverIsError(message, text);
+      emit("tool_result", { toolName: message.toolName, text, isError }, message.toolCallId);
+      toolResults.push({
+        toolCallId: message.toolCallId,
+        toolName: message.toolName,
+        text,
+        isError,
+      });
       for (const item of message.content) {
         if (item.type === "image") emit("image", { mimeType: item.mimeType }, message.toolCallId);
       }
@@ -435,7 +489,7 @@ function walkEntries(entries: readonly SessionEntry[], runId: string): Walk {
     const attributed = acc.origin === "agent" ? { ...base, origin: "agent" as const } : base;
     return outcome !== null ? { ...attributed, outcome } : attributed;
   });
-  return { events, prompts };
+  return { events, prompts, toolCalls, toolResults };
 }
 
 /**
@@ -479,6 +533,21 @@ export function extractUserPrompts(entries: readonly SessionEntry[]): HistoryUse
 }
 
 /**
+ * The prompts and the tool activity of one session, from a single walk.
+ *
+ * The pinned CAD summary is derived from exactly this (`session/context.ts`):
+ * what the operator asked, what was decided, and what the tools most recently
+ * reported. Nothing here consumes a `seq` or touches event identity — it is the
+ * same walk `normalizeEntries` performs, projected a third way — so adding it
+ * cannot move a historical event, which is the property
+ * `tests/stage4/test_g4_event_archive.py` defends.
+ */
+export function readSessionActivity(entries: readonly SessionEntry[]): RecordedActivity {
+  const walk = walkEntries(entries, "");
+  return { prompts: walk.prompts, toolCalls: walk.toolCalls, toolResults: walk.toolResults };
+}
+
+/**
  * The turn ordinal the NEXT user message will take (INTERFACE.md §2.8(3)).
  *
  * Used at prompt time by `main.ts` to stamp the marker it appends. It is the
@@ -491,7 +560,8 @@ export function nextTurnOrdinal(entries: readonly SessionEntry[]): number {
   let count = 0;
   for (const entry of entries) {
     if (entry.type !== "message") continue;
-    const message = entry.message as unknown as PiMessage;
+    const message = entry.message as unknown as PiMessage | undefined;
+    if (message === null || typeof message !== "object") continue;
     if (message.role === "user") count += 1;
   }
   return count;
