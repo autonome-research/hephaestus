@@ -61,6 +61,14 @@ Exit codes are uniform: **0** success, **1** the operation ran and the answer
 was "no" (a failed check, an unmet gate, a drifted registry), **2** you asked
 for something impossible (bad usage, a refused capability).
 
+An exit-1 refusal the verb actually *ran* to reach still carries its result
+document on stdout (`{"part":"…","status":"already_exists"}`). An exit-2 usage
+error has no result to report, so it goes to stderr and stdout stays empty.
+Where a verb refuses on a **precondition** — the `--out` checks under `heph
+render` and `heph cam emit`, the target check under `heph init` — a `--json`
+invocation gets that refusal as an object on stderr,
+`{"status":"refused","code":"usage","message":"…"}`, rather than prose.
+
 ---
 
 ## Engine verbs — no Node, no network
@@ -89,8 +97,12 @@ example: ok (current) artifact=artifact:build:sha256:2f6e01c4a51b83d2…
 
 `heph init` never overwrites: a non-empty target — including a directory it
 already initialized — is refused with the named `init_target_not_empty` error
-(exit 1) and nothing is written. The project name is the target directory's
-name; with no argument the current (empty) directory is initialized.
+(exit 1) and nothing is written. A target that cannot be created at all — an
+unwritable or missing parent — is refused with exit 2, and nothing is written
+there either: the scaffold is staged in a sibling directory and moved into
+place, so a half-written project is not a state `heph init` can leave behind.
+The project name is the target directory's name; with no argument the current
+(empty) directory is initialized.
 
 Every other verb runs **inside** a project: it walks up from the working
 directory (or from `--project DIR`, where a verb has one) looking for
@@ -120,14 +132,23 @@ bracket	parts/bracket.py	sha256:…
 primary	parts/primary.py	sha256:…
 
 $ heph part create spacer --template blank --json
-{"content_hash":"sha256:…","initial_script":"from build123d import *\n\n\nwith BuildPart() as part:\n    pass\n","path":"parts/spacer.py","replayed":false,"snapshot_ref":"artifact:part-snapshot:sha256:…","status":"ok"}
+{"content_hash":"sha256:f4e48dcac5f8e945d73b6c254b2217447c60db609031e6c3bc59b490d56b65b1","initial_script":"# Scaffolded by `heph part create --template blank`. Edit or replace it.\n#\n# Nothing is brought in from elsewhere: build123d, math, Param, p, hc, part and\n# tag are already in scope — the injected namespace is the whole API surface\n# (script contract §2). Declare tunables in PARAMS and read them back as\n# `p.<name>`; publish by assigning to `part.geometry` (§5).\nPARAMS = {}\n\npart.geometry = Box(10.0, 10.0, 10.0)\n\n# `heph lint` asks for these two (§5.2); fill them in when the shape is real.\n# part.description = \"\"\n# part.process = \"\"\n","path":"parts/spacer.py","replayed":false,"snapshot_ref":"artifact:part-snapshot:sha256:f4e48dcac5f8e945d73b6c254b2217447c60db609031e6c3bc59b490d56b65b1","status":"ok"}
 
 $ heph part create spacer --json
 {"part":"spacer","status":"already_exists"}
 
-$ heph part show spacer --json
-{"current":false,"part":"spacer","status":"not_built"}
+$ heph build spacer
+spacer: ok (current) artifact=artifact:build:sha256:1f0a7b7fc496088fab…
 ```
+
+**Every template builds unmodified.** `blank`, `solid`, `sheet` and
+`from_store` are written against the part-script contract — no imports (§1:
+build123d is pre-injected, and `__import__` is absent, so an import line is a
+build error), and geometry published by assigning to `part.geometry` (§5)
+rather than by shadowing that handle with a `BuildPart()` context.
+`core/tests/test_cli_authoring.py::test_every_template_builds` runs
+`create` + `build` for each name, so a scaffold that does not build is a test
+failure rather than a first-run surprise.
 
 | Flag / form | Effect |
 |---|---|
@@ -292,6 +313,12 @@ bracket: rendered 1 image(s) -> render
 Every render records the artifact it came from. A picture that cannot name its
 build is not evidence.
 
+`--out` is validated before the first view is rendered: a directory that cannot
+be created or written is refused with exit 2, naming the flag, rather than
+discovered after every image already exists in memory. The default `render/` is
+created if absent, as it always has been. The same precondition covers
+`heph render --pose`.
+
 ### `heph goldens`
 
 Regenerate the golden render corpus.
@@ -305,6 +332,15 @@ uncommitted changes cannot be attributed to anything. Goldens carry provenance
 (script hash + renderer version), and `verification.md` makes this the only
 sanctioned path to change them. `--dir DIR` points at a different golden
 directory (default `tests/render/goldens`).
+
+The golden corpus is repository content: the clean-room fixtures live in the
+Hephaestus checkout under `corpus/public_fixtures`, so this verb runs **there**,
+not in a design project. Outside a checkout it is refused by name with exit 2 —
+a capability that cannot work here, not a run that answered "no".
+`--fixtures-dir DIR` points it at another corpus of the same shape, which is how
+a fork regenerates goldens for its own fixtures. Note that the two roots are
+independent: `--fixtures-dir` moves the corpus, never the tree whose
+cleanliness is checked.
 
 ### `heph diff PART TARGET`
 
@@ -441,7 +477,10 @@ $ heph cam emit plate --out plate.dxf --json
 
 `--json` is the machine record (kerf source, contours, DXF hash). The DXF
 is always written. A part whose `part.process` is not `laser_cut` or
-`waterjet` is refused by name.
+`waterjet` is refused by name. `--out` is validated before the kerf, nesting
+and DXF work runs — an unwritable path is exit 2 naming the flag, not a
+`PermissionError` thrown after the whole program has been computed and
+discarded.
 
 ### `heph solve pose`
 

@@ -15,26 +15,25 @@ file is the nominal path and the record says ``kerf_uncompensated``.
 
 Exit codes match the engine CLI: 0 success, 1 the emit ran and the answer
 was no (not a 2D cut process, no flat pattern, a kerf that cannot offset),
-2 usage (no project, unknown part).
+2 usage (no project, unknown part, an ``--out`` that cannot be written).
+``--out`` is validated before the emit runs, so an unwritable path is reported
+in the first millisecond instead of after the whole program has been computed
+and thrown away.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
+from hephaestus.core.cli_errors import CliUsageError, ensure_writable_dir, guard
 from hephaestus.core.errors import ValidationError
 from hephaestus.core.project_store.layout import find_project_root
 
 __all__ = ["add_subparsers"]
-
-
-class _UsageError(Exception):
-    """CLI misuse: reported on stderr with exit code 2."""
 
 
 def _kerf_line(kerf: Mapping[str, Any]) -> str:
@@ -83,7 +82,7 @@ def _project_root() -> Path:
     try:
         return find_project_root(Path.cwd())
     except ValidationError as exc:
-        raise _UsageError(exc.message) from exc
+        raise CliUsageError(exc.message) from exc
 
 
 def _cmd_emit(args: argparse.Namespace) -> int:
@@ -91,11 +90,15 @@ def _cmd_emit(args: argparse.Namespace) -> int:
 
     name = cast("str", args.part)
     root = _project_root()
+    # The output precondition runs BEFORE the emit (ledger B-10): kerf, nesting
+    # and DXF generation are the expensive part, and an unwritable `--out`
+    # discovered afterwards throws all of it away to report an OS error the
+    # operator could have been told about in the first millisecond.
+    out = Path(cast("str", args.out)) if args.out else Path(f"{name}.dxf")
+    ensure_writable_dir(out.parent, flag="--out")
     program = emit_part(
         name, project_root=root, explicit_kerf_mm=cast("float | None", args.kerf_mm)
     )
-    out = Path(cast("str", args.out)) if args.out else Path(f"{name}.dxf")
-    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(program.dxf)
     payload = program.to_json()
     payload["path"] = str(out)
@@ -104,17 +107,6 @@ def _cmd_emit(args: argparse.Namespace) -> int:
     else:
         print(format_program(payload, path=str(out)))
     return 0
-
-
-def _guard(command: Callable[[argparse.Namespace], int]) -> Callable[[argparse.Namespace], int]:
-    def run(args: argparse.Namespace) -> int:
-        try:
-            return command(args)
-        except _UsageError as exc:
-            print(f"heph: {exc}", file=sys.stderr)
-            return 2
-
-    return run
 
 
 def add_subparsers(
@@ -141,4 +133,4 @@ def add_subparsers(
         help="explicit kerf width in millimetres (overrides the process pack)",
     )
     emit.add_argument("--json", action="store_true", help="emit the cut-file record as JSON")
-    emit.set_defaults(func=_guard(_cmd_emit))
+    emit.set_defaults(func=guard(_cmd_emit))

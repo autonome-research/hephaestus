@@ -3,6 +3,11 @@
 Create and write go through ``ProjectStore.write_part`` — the same
 ``create_part`` / ``write_part`` contract the tool dispatcher uses. These tests
 stay in-process and spawn no geometry worker.
+
+``TestTemplateBuilds`` is the exception: it drives a real
+``--unsafe-local-executor`` build per template (ledger B-4 — "the absence of
+this test is the actual defect": the byte-equality test above proves nothing
+about buildability).
 """
 
 from __future__ import annotations
@@ -15,7 +20,7 @@ from typing import Any, cast
 
 import pytest
 from hephaestus.core.cli import main
-from hephaestus.core.part_templates import PART_TEMPLATES
+from hephaestus.core.part_templates import PART_TEMPLATES, TEMPLATE_NAMES
 from hephaestus.core.project_store.layout import load_project, open_store
 from hephaestus.core.project_store.listing import list_parts_projection
 from hephaestus.core.project_store.store import ProjectStore
@@ -299,3 +304,59 @@ class TestPrompt:
         shown = load_json(capsys)
         assert shown["status"] == "empty"
         assert shown["text"] == ""
+
+
+class TestTemplateBuilds:
+    """B-4: every ``create_part`` template must *build*, not merely parse.
+
+    All four templates currently open with ``from build123d import *``, which
+    the sandbox denies by design (script_contract.md §2: build123d is
+    pre-injected, never imported) — every scaffolded part fails on line 1. The
+    fix rewrites the table against the real contract; this class pins the
+    actual invariant so a future edit cannot reintroduce an unbuildable
+    scaffold undetected.
+    """
+
+    @pytest.mark.parametrize("template", TEMPLATE_NAMES)
+    def test_every_template_builds(
+        self,
+        template: str,
+        project: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        part_name = f"t_{template}"
+        assert (
+            run(
+                project,
+                monkeypatch,
+                "part",
+                "create",
+                part_name,
+                "--template",
+                template,
+                "--json",
+            )
+            == 0
+        )
+        capsys.readouterr()
+        code = run(project, monkeypatch, "build", part_name, "--unsafe-local-executor", "--json")
+        out = capsys.readouterr()
+        assert code == 0, f"template {template!r} failed to build:\n{out.out}\n{out.err}"
+        built = cast("dict[str, Any]", json.loads(out.out))
+        assert built["status"] == "ok", built
+        assert built["artifact_ref"], "a successful build must publish an artifact ref"
+
+    def test_no_template_contains_the_forbidden_import(self) -> None:
+        """script_contract.md §2: ``__import__`` is absent from the injected
+        namespace, so no template may contain the substring ``import`` at all —
+        cheap, fast, and it fails loudly if the line returns."""
+        for name, script in PART_TEMPLATES.items():
+            assert "import" not in script, (
+                f"PART_TEMPLATES[{name!r}] contains the forbidden 'import' token: {script!r}"
+            )
+
+    def test_from_store_is_not_a_duplicate_of_blank(self) -> None:
+        """A template named for a store-seeded scaffold must not be ``blank``
+        under another name."""
+        assert PART_TEMPLATES["from_store"] != PART_TEMPLATES["blank"]

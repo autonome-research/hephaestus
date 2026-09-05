@@ -48,7 +48,9 @@ __all__ = [
     "GOLDEN_SPECS",
     "GOLDEN_WIDTH",
     "DirtyTreeError",
+    "GoldenCorpusUnavailableError",
     "GoldenSpec",
+    "default_fixtures_root",
     "git_is_dirty",
     "renderer_string",
     "script_hash",
@@ -66,6 +68,21 @@ DEFAULT_GOLDEN_DIR = Path("tests/render/goldens")
 
 class DirtyTreeError(RuntimeError):
     """``heph goldens --update`` refused because the git tree is dirty."""
+
+
+class GoldenCorpusUnavailableError(RuntimeError):
+    """``heph goldens --update`` refused: there is no fixture corpus to render.
+
+    The golden corpus is repository content, not project content: it lives in
+    the Hephaestus checkout under ``corpus/public_fixtures``. Before this
+    refusal existed, one resolved ``root`` served two unrelated purposes —
+    the dirty-tree guard (correct for *any* repository) and the fixture root
+    (correct only for *this* one) — so every git-backed user project passed the
+    first use and died in ``shutil.copytree`` on the second, with a raw
+    ``FileNotFoundError`` naming a path that only exists inside the clone
+    (ledger B-10). The two meanings are now separate arguments, and this is what
+    the second one being absent means.
+    """
 
 
 @dataclass(frozen=True)
@@ -148,15 +165,20 @@ def renderer_string() -> str:
         return session.gl_renderer
 
 
-def _fixtures_root(repo_root: Path) -> Path:
+def default_fixtures_root(repo_root: Path) -> Path:
+    """Where the public clean-room fixtures live inside a Hephaestus checkout."""
     return repo_root / "corpus" / "public_fixtures"
 
 
 def _prepare_project(
-    spec: GoldenSpec, repo_root: Path, scratch: Path, backend: ExecBackend
+    spec: GoldenSpec, fixtures_root: Path, scratch: Path, backend: ExecBackend
 ) -> tuple[RenderProject, str]:
-    """Copy a fixture into ``scratch``, build+publish its parts, return the handle."""
-    source_dir = _fixtures_root(repo_root) / spec.fixture
+    """Copy a fixture into ``scratch``, build+publish its parts, return the handle.
+
+    ``fixtures_root`` is the *corpus* root, never the repository root: the two
+    were one variable, and conflating them is B-10's first half.
+    """
+    source_dir = fixtures_root / spec.fixture
     project_dir = scratch / spec.fixture
     shutil.copytree(source_dir, project_dir)
     layout: ProjectLayout = load_project(project_dir)
@@ -242,6 +264,7 @@ def update_goldens(
     *,
     out_dir: Path = DEFAULT_GOLDEN_DIR,
     repo_root: Path | None = None,
+    fixtures_root: Path | None = None,
     backend: ExecBackend | None = None,
     specs: Sequence[GoldenSpec] = GOLDEN_SPECS,
     force: bool = False,
@@ -251,12 +274,29 @@ def update_goldens(
 
     Returns the list of written files (PNGs and sidecars). ``force`` bypasses the
     dirty-tree guard (tests/tooling only — never the ``heph goldens`` path).
+
+    ``repo_root`` is the tree whose cleanliness is verified; ``fixtures_root``
+    is the corpus that is rendered. They default to the same checkout and are
+    *not* the same thing — see :class:`GoldenCorpusUnavailableError`. Do not
+    re-derive the repository root from the corpus, or the dirty-tree guard
+    weakens to "the corpus is clean".
     """
     root = repo_root or _git_root()
+    corpus = fixtures_root if fixtures_root is not None else default_fixtures_root(root)
     if not force and git_is_dirty(root):
         raise DirtyTreeError(
             "refusing to regenerate goldens on a dirty git tree; commit or stash first "
             "(golden updates must be committed alongside the change that motivates them)"
+        )
+    # Before anything is written: no corpus, no goldens. Checked here rather
+    # than at the copytree so the refusal costs nothing and leaves nothing —
+    # not even an empty output directory — behind.
+    if not corpus.is_dir():
+        raise GoldenCorpusUnavailableError(
+            f"no golden fixture corpus at {corpus}: golden regeneration renders the "
+            "clean-room fixtures that live in the Hephaestus checkout under "
+            "corpus/public_fixtures, so this verb runs there — or point --fixtures-dir "
+            "at another corpus of the same shape"
         )
     out_dir.mkdir(parents=True, exist_ok=True)
     exec_backend = backend or UnsafeLocalBackend()
@@ -267,7 +307,7 @@ def update_goldens(
     try:
         for spec in specs:
             scratch = scratch_base / f"{spec.name}-{uuid.uuid4().hex[:8]}"
-            project, _part = _prepare_project(spec, root, scratch, exec_backend)
+            project, _part = _prepare_project(spec, corpus, scratch, exec_backend)
             result = render_golden(project, spec)
             for image in result.images:
                 stem = f"{spec.name}_{_slug(image.view)}_{spec.channel}"

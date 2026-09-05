@@ -5,15 +5,23 @@
 The render CLI is exercised as a real subprocess against the public assembly
 fixture (build then render); the goldens generator is verified to refuse a
 dirty git tree (verification.md meta-test) using a throwaway scratch repo.
+
+B-10 adds: golden regeneration outside a Hephaestus checkout must refuse by
+name instead of a raw ``FileNotFoundError``; ``heph render``'s ``--out`` must
+be validated *before* the GL session opens, for both the single-part and the
+posed-scene command.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from hephaestus.core.render.goldens import (
@@ -157,3 +165,133 @@ def test_script_hash_and_specs_are_well_formed() -> None:
     assert len(GOLDEN_SPECS) >= 1
     channels = {spec.channel for spec in GOLDEN_SPECS}
     assert {"rgb", "mask", "section"} <= channels
+
+
+# -- B-10: golden regeneration outside a checkout must refuse by name -------
+
+
+def test_update_goldens_refuses_outside_a_checkout(scratch_repo: Path) -> None:
+    """``scratch_repo`` is a clean git repository with no ``corpus/`` at all —
+    exactly "a clean git-backed project" from the ledger's reproduction.
+    Today this raises a raw ``FileNotFoundError`` from ``shutil.copytree``
+    reaching for a fixture path that only exists inside the Hephaestus clone.
+    """
+    from hephaestus.core.render import goldens as goldens_mod
+
+    error_cls = getattr(goldens_mod, "GoldenCorpusUnavailableError", None)
+    assert error_cls is not None, (
+        "B-10 fix step 6: hephaestus.core.render.goldens must define "
+        "GoldenCorpusUnavailableError, raised before the golden loop when the "
+        "fixtures root is not a directory (docs/audit-2026-09-04-broken.md B-10)"
+    )
+    with pytest.raises(error_cls):
+        update_goldens(out_dir=scratch_repo / "goldens", repo_root=scratch_repo)
+    assert not (scratch_repo / "goldens").exists()
+
+
+def test_goldens_cli_refuses_outside_checkout_without_traceback(scratch_repo: Path) -> None:
+    """The CLI-level case: exit 2, a named message, and — unlike today — no
+    Python traceback on stderr."""
+    result = _heph(["goldens", "--update"], scratch_repo)
+    assert result.returncode == 2, (result.returncode, result.stdout, result.stderr)
+    assert "Traceback" not in result.stderr
+    assert "heph:" in result.stderr
+
+
+def test_goldens_fixtures_dir_overrides_the_default_corpus(tmp_path: Path) -> None:
+    """``--fixtures-dir`` (ledger fix step 7) lets a fork with its own corpus
+    use the verb; regenerating from a copied single-spec corpus must still
+    work from outside the Hephaestus checkout."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(["init"], repo)
+    _git(["config", "user.email", "t@example.com"], repo)
+    _git(["config", "user.name", "t"], repo)
+    (repo / "seed.txt").write_text("seed\n", encoding="utf-8")
+    _git(["add", "-A"], repo)
+    _git(["commit", "-m", "seed"], repo)
+
+    spec = GOLDEN_SPECS[0]
+    fixtures_dir = tmp_path / "my_fixtures"
+    fixtures_dir.mkdir()
+    shutil.copytree(FIXTURES / spec.fixture, fixtures_dir / spec.fixture)
+
+    out = repo / "golden-out"
+    result = _heph(
+        ["goldens", "--update", "--dir", str(out), "--fixtures-dir", str(fixtures_dir)],
+        repo,
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    pngs = list(out.glob("*.png"))
+    assert pngs, "expected at least one golden PNG regenerated under the overridden fixtures dir"
+
+
+# -- B-10: `heph render`'s --out must be validated before the GL session ----
+
+
+@pytest.fixture()
+def unwritable_dir(tmp_path: Path) -> Iterator[Path]:
+    """A directory with no write bit — ``mkdir`` beneath it raises PermissionError."""
+    denied = tmp_path / "denied"
+    denied.mkdir()
+    denied.chmod(0o555)
+    try:
+        yield denied
+    finally:
+        denied.chmod(0o755)
+
+
+def test_render_out_precondition_runs_before_the_gl_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    unwritable_dir: Path,
+) -> None:
+    """Today ``out_dir.mkdir`` runs *after* every requested view has already
+    been rendered (B-10 root cause): the images exist in memory and are
+    discarded, and the raw ``PermissionError`` reaches the interpreter. Patch
+    ``inspect_part`` to blow up if it is ever reached, proving the fixed CLI
+    validates ``--out`` first and never opens a GL session at all."""
+    from hephaestus.core import cli_init, cli_render
+
+    target = tmp_path / "proj"
+    cli_init.scaffold(target)
+    monkeypatch.chdir(target)
+
+    def _must_not_be_called(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("inspect_part must not run before --out is validated")
+
+    monkeypatch.setattr("hephaestus.core.render.inspect.inspect_part", _must_not_be_called)
+
+    out = unwritable_dir / "sub" / "render-out"
+    code = cli_render.main(["render", "example", "--out", str(out)])
+    err = capsys.readouterr().err
+    assert code == 2, err
+    assert "--out" in err
+
+
+def test_render_pose_out_precondition_runs_before_the_gl_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    unwritable_dir: Path,
+) -> None:
+    """Same precondition, the posed-render command — B-10 notes this ``mkdir``
+    was copied verbatim from the single-part command, "evidence on its own
+    that a shared helper is the right shape"."""
+    from hephaestus.core import cli_init, cli_render
+
+    target = tmp_path / "proj"
+    cli_init.scaffold(target)
+    monkeypatch.chdir(target)
+
+    def _must_not_be_called(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("render_posed_scene must not run before --out is validated")
+
+    monkeypatch.setattr("hephaestus.core.render.posed.render_posed_scene", _must_not_be_called)
+
+    out = unwritable_dir / "sub" / "render-out"
+    code = cli_render.main(["render", "--pose", "p1", "--out", str(out)])
+    err = capsys.readouterr().err
+    assert code == 2, err
+    assert "--out" in err

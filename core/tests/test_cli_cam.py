@@ -9,6 +9,7 @@ refused — Stage 14 milling is a different contract.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
 
@@ -172,3 +173,66 @@ def test_cam_emit_outside_project_exits_2(
     code = heph(["cam", "emit", "plate"])
     assert code == 2
     assert "hephaestus.toml" in capsys.readouterr().err
+
+
+# -- B-10: --out under an unwritable parent must refuse (exit 2), before the ---
+# -- expensive kerf/nesting/DXF work runs, never after it. ----------------------
+
+
+@pytest.fixture()
+def unwritable_dir(tmp_path: Path) -> Iterator[Path]:
+    """A directory with no write bit — ``mkdir`` beneath it raises PermissionError."""
+    denied = tmp_path / "denied"
+    denied.mkdir()
+    denied.chmod(0o555)
+    try:
+        yield denied
+    finally:
+        # Restore so pytest's own tmp_path cleanup can remove it afterwards.
+        denied.chmod(0o755)
+
+
+def test_cam_emit_unwritable_out_returns_2_and_writes_nothing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    unwritable_dir: Path,
+) -> None:
+    """Today ``out.parent.mkdir`` runs *after* ``emit_part`` has computed the
+    whole cut program (B-10 root cause): the kerf/nesting/DXF work is thrown
+    away and an uncaught ``PermissionError`` reaches the interpreter instead of
+    a named, exit-2 refusal. Nothing must be written."""
+    target = _init_part(tmp_path, "plate", "laser_cut")
+    monkeypatch.chdir(target)
+    assert heph(["build", "plate", UNSAFE]) == 0
+    capsys.readouterr()
+
+    out = unwritable_dir / "sub" / "plate.dxf"
+    code = heph(["cam", "emit", "plate", "--out", str(out)])
+    err = capsys.readouterr().err
+    assert code == 2, err
+    assert "--out" in err
+    assert not out.exists()
+    assert not (unwritable_dir / "sub").exists()
+
+
+def test_cam_emit_out_precondition_runs_before_the_build_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    unwritable_dir: Path,
+) -> None:
+    """Ordering assertion (ledger "Tests to add"): an unwritable ``--out`` must
+    be reported even for a part with **no current build**, proving the output
+    precondition is checked before the (expensive) emit path runs at all — not
+    after ``emit_part`` has already refused ``not_built``."""
+    target = _init_part(tmp_path, "plate", "laser_cut")
+    monkeypatch.chdir(target)
+    # Deliberately not built.
+
+    out = unwritable_dir / "sub" / "plate.dxf"
+    code = heph(["cam", "emit", "plate", "--out", str(out)])
+    err = capsys.readouterr().err
+    assert code == 2, err
+    assert "--out" in err
+    assert "not_built" not in err

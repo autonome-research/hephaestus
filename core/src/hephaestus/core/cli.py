@@ -77,6 +77,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from hephaestus.core.checks.report import project_check_report, report_json
+from hephaestus.core.cli_errors import CliUsageError
 from hephaestus.core.errors import (
     AddressingError,
     HephaestusError,
@@ -127,8 +128,11 @@ _SYNC_PART = "__hc_sync__"
 _SYNC_SCRIPT = "part.geometry = Box(1.0, 1.0, 1.0)\n"
 
 
-class _UsageError(Exception):
-    """CLI misuse: reported on stderr with exit code 2."""
+#: The shared usage error (:mod:`hephaestus.core.cli_errors`). Kept under the
+#: module-private name every call site below already uses, so the taxonomy in
+#: :func:`main` catches the refusals raised by ``cli_cam`` / ``cli_render`` /
+#: ``cli_init`` too — ledger B-10: one boundary, not one per output verb.
+_UsageError = CliUsageError
 
 
 # --------------------------------------------------------------------------
@@ -834,6 +838,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     except HephaestusError as exc:
         print(f"heph: error ({exc.code}): {exc.message}", file=sys.stderr)
         return 1
+    except OSError as exc:
+        # Last-resort net beneath the output preconditions (ledger B-10). Every
+        # verb that takes an operator-supplied path validates it up front with
+        # `cli_errors.ensure_writable_dir`, which refuses by name; this arm
+        # catches the OS failures no precondition can anticipate (a filesystem
+        # that fills between the check and the write, a revoked mount) and
+        # reports them as what they are — "you asked for something impossible",
+        # exit 2 — rather than as an interpreter traceback.
+        reason = exc.strerror or exc.__class__.__name__
+        detail = f"{reason} ({exc.filename})" if exc.filename else reason
+        print(f"heph: {detail}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

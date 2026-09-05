@@ -20,12 +20,18 @@ and every existing verb (build/check/lint) is untouched.
   flags (``--channel``/``--mask-mode``/``--section-plane``/``--explode``/
   ``--focus``/``--last-good``/``--artifact-ref``), refused by name rather
   than silently ignored.
-- ``heph goldens --update [--dir tests/render/goldens]`` regenerates the golden
-  corpus; it refuses to run on a dirty git tree (verification.md meta-test).
+- ``heph goldens --update [--dir tests/render/goldens] [--fixtures-dir DIR]``
+  regenerates the golden corpus; it refuses to run on a dirty git tree
+  (verification.md meta-test) and, since ledger B-10, refuses by name when
+  there is no fixture corpus to render — the corpus is repository content, so
+  the verb runs inside a Hephaestus checkout unless ``--fixtures-dir`` points
+  it at a fork's own corpus of the same shape.
 
 Exit codes match the engine CLI: 0 success, 1 error (no build, dirty tree),
-2 usage (argparse). Render itself never rebuilds — it reads the published
-current build, so a build must have run first.
+2 usage (argparse, an ``--out`` that cannot be written, golden regeneration
+with no corpus). ``--out`` is validated before any view is rendered, so an
+unwritable directory never costs a GL session. Render itself never rebuilds —
+it reads the published current build, so a build must have run first.
 """
 
 from __future__ import annotations
@@ -36,6 +42,7 @@ import sys
 from pathlib import Path
 from typing import cast
 
+from hephaestus.core.cli_errors import ensure_writable_dir, guard
 from hephaestus.core.project_store.layout import find_project_root, load_project, open_store
 
 __all__ = ["add_subparsers", "main"]
@@ -47,18 +54,30 @@ def _slug(view: str) -> str:
 
 def _cmd_render(args: argparse.Namespace) -> int:
     from hephaestus.core.errors import ValidationError
-    from hephaestus.core.render.inspect import RenderProject, inspect_part
 
     part = cast("str | None", args.part)
     pose = cast("str | None", args.pose)
     views = cast("list[str]", args.views) or ["iso", "+X"]
-    out_dir = Path(cast("str", args.out))
     json_out = bool(args.json)
+    # The output precondition runs before the branch, so one call covers both
+    # the single-part and the posed-scene command (ledger B-10: the unguarded
+    # `mkdir` was *copied* into the posed command, which is evidence on its own
+    # that a shared helper is the right shape). It must CREATE rather than
+    # refuse a missing path: `--out` defaults to the relative `render/`, which
+    # has never had to exist beforehand. Validating here also means an
+    # unwritable directory is reported before a single view is rendered —
+    # today the images are produced, held in memory, and then discarded.
+    out_dir = ensure_writable_dir(Path(cast("str", args.out)), flag="--out")
 
     if pose is not None:
         return _cmd_render_pose(args, pose, views, out_dir, json_out)
     if part is None:
         raise ValidationError("render: a part name or --pose <id> is required", kind="contract")
+
+    # Imported here, below the precondition: pulling in the render stack
+    # (trimesh/pyrender/OCP) is not free, and an unwritable --out does not need
+    # it to be refused.
+    from hephaestus.core.render.inspect import RenderProject, inspect_part
 
     root = find_project_root(Path.cwd())
     layout = load_project(root)
@@ -78,7 +97,6 @@ def _cmd_render(args: argparse.Namespace) -> int:
         focus=cast("str | None", args.focus),
     )
 
-    out_dir.mkdir(parents=True, exist_ok=True)
     image_records: list[dict[str, object]] = []
     for image in result.images:
         filename = f"{part}_{_slug(image.view)}_{image.channel}.png"
@@ -149,7 +167,6 @@ def _cmd_render_pose(
     store = open_store(layout)
     result = render_posed_scene(layout, store, pose_id=pose, views=views)
 
-    out_dir.mkdir(parents=True, exist_ok=True)
     image_records: list[dict[str, object]] = []
     for image in result.images:
         filename = f"pose-{pose}_{_slug(image.view)}_rgb.png"
@@ -184,17 +201,32 @@ def _cmd_render_pose(
 
 
 def _cmd_goldens(args: argparse.Namespace) -> int:
-    from hephaestus.core.render.goldens import DEFAULT_GOLDEN_DIR, DirtyTreeError, update_goldens
+    from hephaestus.core.render.goldens import (
+        DEFAULT_GOLDEN_DIR,
+        DirtyTreeError,
+        GoldenCorpusUnavailableError,
+        update_goldens,
+    )
 
     if not bool(args.update):
         print("heph goldens: nothing to do (pass --update to regenerate)", file=sys.stderr)
         return 2
     out_dir = Path(cast("str", args.dir)) if args.dir else DEFAULT_GOLDEN_DIR
+    fixtures_dir = cast("str | None", args.fixtures_dir)
     try:
-        written = update_goldens(out_dir=out_dir)
+        written = update_goldens(
+            out_dir=out_dir,
+            fixtures_root=Path(fixtures_dir) if fixtures_dir else None,
+        )
     except DirtyTreeError as exc:
         print(f"heph: error (dirty_tree): {exc}", file=sys.stderr)
         return 1
+    except GoldenCorpusUnavailableError as exc:
+        # A refused capability, not a failed run: exit 2, the same code bad
+        # usage gets, because regenerating goldens outside a checkout with a
+        # corpus is asking for something impossible (docs/cli.md exit codes).
+        print(f"heph: {exc}", file=sys.stderr)
+        return 2
     pngs = [path for path in written if path.suffix == ".png"]
     print(f"regenerated {len(pngs)} golden(s) under {out_dir}")
     return 0
@@ -264,7 +296,7 @@ def add_subparsers(
     )
     render.add_argument("--out", default="render", metavar="DIR", help="output directory for PNGs")
     render.add_argument("--json", action="store_true", help="emit the render metadata JSON")
-    render.set_defaults(func=_cmd_render)
+    render.set_defaults(func=guard(_cmd_render))
 
     goldens = sub.add_parser("goldens", help="regenerate golden renders (refuses on a dirty tree)")
     goldens.add_argument("--update", action="store_true", help="regenerate the golden corpus")
@@ -274,7 +306,14 @@ def add_subparsers(
         metavar="DIR",
         help="golden output directory (default tests/render/goldens)",
     )
-    goldens.set_defaults(func=_cmd_goldens)
+    goldens.add_argument(
+        "--fixtures-dir",
+        default=None,
+        dest="fixtures_dir",
+        metavar="DIR",
+        help="fixture corpus to render (default: corpus/public_fixtures in this checkout)",
+    )
+    goldens.set_defaults(func=guard(_cmd_goldens))
 
 
 def main(argv: list[str] | None = None) -> int:

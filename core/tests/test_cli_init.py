@@ -105,3 +105,45 @@ class TestRefusals:
         target = tmp_path / "afile"
         target.write_text("not a directory\n", encoding="utf-8")
         assert main(["init", str(target)]) == 1
+
+
+class TestOSFailures:
+    """B-10: an OS-level scaffold failure must refuse (exit 2, named target,
+    nothing written) rather than traceback or leave a partial scaffold."""
+
+    def test_unwritable_parent_returns_2_and_leaves_the_parent_untouched(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        denied = tmp_path / "denied"
+        denied.mkdir()
+        denied.chmod(0o555)
+        try:
+            target = denied / "newproj"
+            code = main(["init", str(target)])
+            err = capsys.readouterr().err
+            assert code == 2, err
+            assert str(target) in err
+            assert not target.exists()
+            assert list(denied.iterdir()) == []
+        finally:
+            denied.chmod(0o755)
+
+    def test_a_failure_partway_through_leaves_no_partial_scaffold(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The atomicity contract: a write that fails after ``hephaestus.toml``
+        and ``globals.py`` have already been written must not leave a target
+        directory behind at all — docs/cli.md's "nothing is written" promise
+        forbids a scaffold that is present but incomplete."""
+        target = tmp_path / "widgets"
+        original_write_text = Path.write_text
+
+        def flaky_write_text(self: Path, data: str, *args: object, **kwargs: object) -> int:
+            if self.name == ".gitignore":
+                raise OSError("disk full (simulated)")
+            return original_write_text(self, data, *args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(Path, "write_text", flaky_write_text)
+        with pytest.raises(OSError):
+            scaffold(target)
+        assert not target.exists()
