@@ -15,6 +15,7 @@ import {
   COMPACTION_TRIGGER_FRACTION,
   BUDGET_ESCALATION_FRACTION,
   PINNED_SUMMARY_OPEN,
+  PINNED_SUMMARY_CLOSE,
   type PinnedCadSummary,
   type RenderRef,
 } from "../../src/session/context.js";
@@ -468,5 +469,158 @@ describe("summarize: CAD state the compaction boundary must carry", () => {
     const summary = summarize(entries, managed);
     expect(summary.checkStatus).toBe("unknown");
     expect(summary.designIntent).toBe("intent");
+  });
+});
+
+// ── the byte-budget shrink ───────────────────────────────────────────────────
+//
+// MAX_SUMMARY_BYTES is a HARD budget on the whole formatted block, and the
+// block is PREPENDED to the compaction request — it competes for exactly the
+// context the compaction is reclaiming. The per-item cap alone cannot enforce
+// it: MAX_SUMMARY_ITEMS items of MAX_SUMMARY_ITEM_BYTES each, in two lists plus
+// a parameter map, jointly exceed the budget while every individual item is
+// legal. Only the shrink pass enforces it, and its ORDER is part of the
+// contract: the lists are newest-first, so shedding from the tail sheds the
+// OLDEST claim; decisions go before open problems; parameters go last and never
+// empty. The mutation these tests exist to kill is deleting that pass — every
+// assertion below is on a transcript whose UNSHRUNK block is over budget, and
+// each supplies exactly MAX_SUMMARY_ITEMS decisions so the item cap sheds none
+// of them and anything missing is the shrink's doing.
+
+/** A string long enough that the item it is rendered into fills the per-item
+ *  byte budget, tagged at the front so the survivor can still be named after
+ *  the clamp cuts its tail off. */
+function bulky(tag: string): string {
+  return `${tag} ${"x".repeat(400)}`;
+}
+
+/** `count` parameters with names long enough to make the parameter map itself
+ *  a material share of the block. */
+function bulkyParams(count: number): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (let i = 0; i < count; i += 1) out[`p_${String(i).padStart(3, "0")}_${"w".repeat(26)}`] = 12.5;
+  return out;
+}
+
+/**
+ * A transcript whose summary is over budget before shrinking: MAX_SUMMARY_ITEMS
+ * answered questions, MAX_SUMMARY_ITEMS unresolved requirements, and `params`.
+ * Growing `params` is the dial that decides how much has to be shed.
+ */
+function oversizedEntries(params: Record<string, number>): SessionEntry[] {
+  const entries: SessionEntry[] = [ctxUserMsg("u0", `Design a manifold. ${"z".repeat(400)}`)];
+  for (let i = 0; i < MAX_SUMMARY_ITEMS; i += 1) {
+    const tag = `Q${String(i).padStart(2, "0")}`;
+    entries.push(ctxToolCall(`a-${tag}`, `c-${tag}`, "ask_user", { question: bulky(tag) }));
+    entries.push(ctxToolResult(`r-${tag}`, `c-${tag}`, "ask_user", { selection: `${tag}-answer` }));
+  }
+  entries.push(ctxToolCall("a-req", "c-req", "record_requirements", { entries: [] }));
+  entries.push(
+    ctxToolResult("r-req", "c-req", "record_requirements", {
+      status: "ok",
+      generation: 1,
+      artifact_ref: null,
+      entries: [],
+      unresolved_material: Array.from(
+        { length: MAX_SUMMARY_ITEMS },
+        (_unused, i) => `R${String(i).padStart(2, "0")}${"y".repeat(400)}`,
+      ),
+    }),
+  );
+  entries.push(ctxToolCall("a-set", "c-set", "set_params", { values: params }));
+  entries.push(ctxToolResult("r-set", "c-set", "set_params", { effective: params, rejected: [] }));
+  return entries;
+}
+
+/** The `Qnn` tag each surviving decision was built from, in rendered order. */
+function decisionTags(summary: PinnedCadSummary): string[] {
+  return summary.decisions.map((d) => d.slice(0, 3));
+}
+
+/** `Qnn` tags newest-first — the order a shrunk decision list must be a PREFIX of. */
+const NEWEST_FIRST_TAGS = Array.from(
+  { length: MAX_SUMMARY_ITEMS },
+  (_unused, i) => `Q${String(MAX_SUMMARY_ITEMS - 1 - i).padStart(2, "0")}`,
+);
+
+describe("summarize: the byte budget is enforced by shrinking", () => {
+  it("shrinks an over-budget summary to within MAX_SUMMARY_BYTES, delimiters intact", () => {
+    const summary = summarize(oversizedEntries(bulkyParams(10)), managed);
+    const block = formatPinnedSummary(summary);
+
+    expect(Buffer.byteLength(block, "utf8")).toBeLessThanOrEqual(MAX_SUMMARY_BYTES);
+    // The delimiters are what makes the block recoverable in the
+    // post-compaction transcript (the G2 gate reads INSIDE this span), so
+    // shrinking must never reach them: it drops items, never bytes off the ends.
+    expect(block.startsWith(PINNED_SUMMARY_OPEN)).toBe(true);
+    expect(block.endsWith(PINNED_SUMMARY_CLOSE)).toBe(true);
+
+    // The transcript supplied exactly MAX_SUMMARY_ITEMS answers, so the item cap
+    // dropped none: a shorter list here is the byte budget being enforced, and
+    // it is the assertion that fails if the shrink pass is removed.
+    expect(summary.decisions.length).toBeLessThan(MAX_SUMMARY_ITEMS);
+    expect(summary.decisions.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("sheds oldest-first and keeps the most recent decision", () => {
+    const summary = summarize(oversizedEntries(bulkyParams(10)), managed);
+    const tags = decisionTags(summary);
+
+    // Newest-first, so the survivors are a PREFIX of the newest-first order:
+    // shedding from the tail sheds the oldest claim. A shrink that popped the
+    // head, reversed the list, or shed from the middle fails here.
+    expect(tags).toEqual(NEWEST_FIRST_TAGS.slice(0, tags.length));
+    expect(tags[0]).toBe(`Q${String(MAX_SUMMARY_ITEMS - 1).padStart(2, "0")}`);
+    expect(tags).not.toContain("Q00");
+  });
+
+  it("sheds decisions before open problems, and parameters not at all while a list can still give", () => {
+    const params = bulkyParams(10);
+    const summary = summarize(oversizedEntries(params), managed);
+
+    // Decisions are shed down to their last item before open problems lose one,
+    // and parameters go last of all — so an overshoot the decision list alone
+    // can absorb leaves the other two untouched.
+    expect(summary.decisions.length).toBeLessThan(MAX_SUMMARY_ITEMS);
+    expect(summary.openProblems).toHaveLength(MAX_SUMMARY_ITEMS);
+    expect(Object.keys(summary.params)).toEqual(Object.keys(params).sort());
+  });
+
+  it("sheds parameters only once both lists are down to one, and never empties them", () => {
+    // A parameter map big enough that shrinking both lists to their last item
+    // still leaves the block over budget.
+    const params = bulkyParams(100);
+    const summary = summarize(oversizedEntries(params), managed);
+    const block = formatPinnedSummary(summary);
+
+    expect(Buffer.byteLength(block, "utf8")).toBeLessThanOrEqual(MAX_SUMMARY_BYTES);
+    expect(block.startsWith(PINNED_SUMMARY_OPEN)).toBe(true);
+    expect(block.endsWith(PINNED_SUMMARY_CLOSE)).toBe(true);
+
+    // Each list always leaves one behind: a block naming some current state is
+    // worth more than one naming none.
+    expect(summary.decisions).toHaveLength(1);
+    expect(decisionTags(summary)[0]).toBe(`Q${String(MAX_SUMMARY_ITEMS - 1).padStart(2, "0")}`);
+    expect(summary.openProblems).toHaveLength(1);
+    expect(summary.openProblems[0]).toContain("unresolved requirement R00");
+
+    const keys = Object.keys(summary.params);
+    expect(keys.length).toBeGreaterThanOrEqual(1);
+    expect(keys.length).toBeLessThan(Object.keys(params).length);
+    // Parameters are shed from the tail of their sorted order too, so the map
+    // that survives is a prefix of the sorted keys rather than an arbitrary set.
+    expect(keys).toEqual(Object.keys(params).sort().slice(0, keys.length));
+  });
+
+  it("shrinks deterministically: the same entries render byte-identically twice", () => {
+    const entries = oversizedEntries(bulkyParams(10));
+    const first = formatPinnedSummary(summarize(entries, managed));
+    const second = formatPinnedSummary(summarize(entries, managed));
+    expect(second).toBe(first);
+    // And from a list rebuilt from scratch, which is what restart-stability
+    // actually means: the shrink must not depend on anything but the entries.
+    const rebuilt = formatPinnedSummary(summarize(oversizedEntries(bulkyParams(10)), managed));
+    expect(rebuilt).toBe(first);
+    expect(Buffer.byteLength(first, "utf8")).toBeLessThanOrEqual(MAX_SUMMARY_BYTES);
   });
 });
