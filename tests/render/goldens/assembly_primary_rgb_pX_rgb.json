@@ -5,7 +5,7 @@
   "fixture": "assembly",
   "gl_renderer": "llvmpipe (LLVM 20.1.2, 256 bits)",
   "golden": "assembly_primary_rgb",
-  "goldens_script_sha256": "sha256:f5d3d9f075397d455232f9db2f9705d5d424b869030b1a25676f99629c3f4627",
+  "goldens_script_sha256": "sha256:1d80227b7503c116625fa0d4cd6df6f26fdd5d927b63107a9dfd9a44f468e672",
   "height": 360,
   "linear_deflection_mm": 0.1,
   "mask_mode": "solid",
