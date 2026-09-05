@@ -28,6 +28,7 @@ harness stops overriding.
 | id | title | severity | effort | files |
 | --- | --- | --- | --- | --- |
 | B-1 | `measure` and every parent-side measurement resolve only the literal `"part"` selector | critical | L | `core/src/hephaestus/core/executor/artifact_geometry.py`, `core/src/hephaestus/core/assembly.py`, `server/src/hephaestus/agent_bridge/cad_ops/_base.py` |
+| B-1b | §7 rule 4 has no binding-to-solid mapping, so binding names are unaddressable on any published artifact | medium | M | `core/src/hephaestus/core/executor/worker.py`, `core/src/hephaestus/core/executor/source_map.py`, `core/src/hephaestus/core/executor/published_geometry.py` |
 | B-2 | Nine model-visible tools are unwired in all three shipped runtimes | critical | L | `server/src/hephaestus/agent_bridge/dispatch.py`, `server/src/hephaestus/agent_bridge/app.py`, `server/src/hephaestus/http/runtime.py`, `server/src/hephaestus/mcp/app.py` |
 | B-3 | `delegate_part_agent` fails its own result schema in both shipped runtimes | high | S | `server/src/hephaestus/agent_bridge/app.py`, `server/src/hephaestus/agent_bridge/workflows.py` |
 | B-4 | Every `heph part create` template is unbuildable: the table opens with a forbidden import | critical | M | `core/src/hephaestus/core/part_templates.py`, `docs/cli.md` |
@@ -41,7 +42,15 @@ harness stops overriding.
 | B-12 | `stubSummary` is the only producer of the pinned CAD summary, so compaction carries nothing | high | M | `agent/src/main.ts`, `agent/src/session/context.ts` |
 
 Severity is user-visible consequence, not effort. `critical` means a documented
-capability does not work at all; `high` means a surface reports something untrue.
+capability does not work at all; `high` means a surface reports something untrue;
+`medium` means a documented rule one surface cannot serve, refusing honestly and
+with a route around it.
+
+B-1b is **not** one of the twelve. It was opened by wave one's implementation of
+B-1, which proved this document's own expectation for contract §7 rule 4
+structurally unreachable, and it is recorded here so a later reader treats that
+limit as a known deviation rather than as an unfinished fix to be patched back
+in.
 
 ## Workflow plan
 
@@ -59,6 +68,21 @@ they are the only real sequencing constraints in the set.
 | E — Sidecar context | B-12 | `agent/src/session/context.ts`, `agent/test/session/context.test.ts`, `tests/stage2/test_g2_context.py` |
 | F — Build-state honesty | B-5 | `server/src/hephaestus/http/projections.py`, `server/src/hephaestus/http/context.py`, `server/src/hephaestus/agent_bridge/cad_ops/_build.py`, `core/src/hephaestus/core/types.py`, `core/src/hephaestus/core/cli_authoring.py`, `web/src/api/types.ts`, `web/src/components/BuildStateChip.tsx`, `server/tests/test_http_reads.py` |
 | G — Web layout and strip | B-7, B-8, B-9 | `web/src/components/stage/viewport/ViewCube.tsx`, `web/src/components/stage/viewport/ViewCube.module.css`, `web/src/viewport/cameras.ts`, `web/src/system/Popover.module.css`, `web/src/system/Panel.module.css`, `web/src/system/Panel.tsx`, `web/src/system/DataTable.tsx`, `web/src/components/stream/StreamPanel.tsx`, `web/src/stream/thread.ts`, `web/src/api/sessions.ts`, `web/src/copy.ts`, `web/test/viewportChrome.test.tsx`, `web/e2e/viewport.spec.ts`, `web/e2e/chrome.spec.ts`, `web/e2e/stream.spec.ts` |
+
+**Three follow-ups have no lane, and each names a file the table above does not
+allocate.** They are not gaps in a lane's work; they are work no lane could do.
+B-1b needs `core/src/hephaestus/core/executor/worker.py` and
+`core/src/hephaestus/core/executor/source_map.py` (plus the source-map schema
+documentation), none of which appear in any `owns` cell — only its third file,
+`published_geometry.py`, is lane B's. B-10's shared error boundary is adopted by
+the four CLI modules lane A owns and by no others, so eight further `cli_*`
+modules keep private copies of the same usage error and guard. And B-1's
+tool-level assertions — the `measure`/`run_checks` parity over the four selector
+kinds, and the pin that no refusal names a rule-4 binding in **either** its
+candidate list or its message — belong in `server/tests/test_dispatch_tools.py`,
+which is in no lane's list either. Each needs an explicit ownership grant (widen
+a lane, or open one that owns `core/src/hephaestus/core/executor/` and
+`server/tests/`) before anyone can act on it.
 
 Four lanes also create a module, and each new module belongs to the lane that
 creates it: lane A adds `cli_errors.py` under `core/src/hephaestus/core/`, lane B
@@ -114,7 +138,15 @@ without them:
   delegation third must not land before that; wiring `delegation=` **without**
   `delegation_runner=` is the safe intermediate state and is already supported —
   the dispatcher synthesizes an `INTERRUPTED` terminal rather than inventing a
-  completion.
+  completion. **Two capabilities are held short by this blocker, not one.**
+  `query_snapshot` is an ordinary tool dispatched from the same
+  `py.tool_dispatch` path, so a snapshot caller that issues `Supervisor.call`
+  deadlocks identically — wave one reproduced the watchdog killing the child and
+  the run dying with `sidecar restarted`. Its safe intermediate state mirrors
+  delegation's: bind the caller, and have it report itself unavailable before any
+  work starts, so the model reads `capability_not_available` (B-2 step 3). Both
+  go live with no edit at either site once py-dispatch moves onto a bounded
+  worker pool.
 - **`heph agent` runs model-authored build scripts under the unsafe local
   backend.** `CadOpsState` defaults to `UnsafeLocalBackend()` when no backend is
   injected, and `BridgeRuntime` injects none. Until that is fixed,
@@ -173,7 +205,20 @@ Expected — tool_schema.md's `measure` entry declares the full contract §7
 grammar: tags, labels with `#k`/`#*` dedup selectors, binding names, `"part"`,
 and `"<part>/<label>"` cross-part, with addressing errors listing candidates
 rather than guessing. `measure(kind="bbox", a="top_face")` should return
-`[40, 20, 0]`, and an unknown selector should list `wb`, `top_face`, `body`.
+`[40, 20, 0]`, and an unknown selector should list `wb` and `top_face`.
+
+**Known limit, and it is structural: contract §7 rule 4 is not answerable on this
+surface.** This paragraph originally expected the binding `body` among those
+candidates too. Wave one proved that unreachable against a published artifact:
+publication records label runs and tag placements and **no binding-to-solid
+mapping**, so a binding name refuses, and it must appear in neither the
+structured candidate list nor the prose that restates the same names a second
+time. Advertising it would be advertising a name this surface cannot answer.
+That is a narrower hole than it sounds — §5.1 label-fill means a geometry-bearing
+binding that was never relabelled is already addressable under rule 3 by that
+same name, and a binding whose node was relabelled is addressable by the label it
+was given. Closing it at the mechanism is B-1b below; do not "restore" `body` to
+the candidate set without landing that first.
 
 ### Root cause
 
@@ -264,15 +309,39 @@ artifact" constructor and have all four consumers use it.
 5. `core/src/hephaestus/core/checks/report.py:69` — build the published source
    instead of `artifact_source`.
 6. `core/src/hephaestus/core/project_store/publication.py` — install the bundle
-   blob and a `build-bundle:<artifact blob>` pointer for **every** publication
-   kind, GC-linked to the artifact, so an explicit historical or preview
-   `artifact_ref` resolves its namespace without a part-name lookup. Then step 3's
-   `part=` special case disappears.
+   blob and a `build-bundle:<part>:<artifact blob>` pointer for **every**
+   publication kind, GC-linked to the artifact, so an explicit historical or
+   preview `artifact_ref` resolves its namespace. **The key carries the part, and
+   step 3's `part=` argument therefore stays** — this step was first written with
+   an artifact-only key and a promise that step 3's special case would disappear,
+   and both are wrong for the same reason: an artifact ref is content-addressed
+   over BRep bytes alone, so two parts whose geometry is byte-identical share one
+   ref, and a pointer keyed by the artifact alone would hand a measurement the
+   other part's namespace. Wave one shipped `build-bundle:<part>:<artifact blob>`
+   for exactly that collision; with no part in hand the readers fall back to
+   `"part"`-only addressing rather than guessing a namespace, which is what
+   `_artifact_geometry`'s docstring in
+   `server/src/hephaestus/agent_bridge/cad_ops/_base.py` now states. One residual
+   ambiguity is documented in code and is narrower: two builds of the **same**
+   part with byte-identical BRep but a renamed label share one ref, so the
+   pointer is last-writer-wins. It is mitigated by preferring the part's current
+   bundle when the ref IS the current artifact, and by the snapshot manifest
+   naming the exact `bundle_ref` it froze.
 7. `core/src/hephaestus/core/project_store/projections.py:785` — bump the
    project-snapshot manifest to version 2 with a `bundle_ref` beside each part's
    `artifact_ref`, readers accepting version 1 and falling back.
 8. `core/src/hephaestus/core/placement.py` — the preview path builds its bundle
-   in memory; let it read the now-durable bundle when one exists.
+   in memory. **Wave one landed this step as a deliberate no-op, and it should
+   stay one: seven of the eight steps are code, and this one is a comment.**
+   `placement.py` assembles the preview bundle from the `UnpublishedBuild`
+   already in hand, through publication's own `build_bundle` — the identical
+   document. Reading it back out of the store instead buys nothing behavioural
+   and costs a round-trip plus a retention dependency, on the one path (a 2C
+   solve) that measures what it just built. The stale comment that claimed the
+   preview path had no durable bundle is corrected in place, beside the
+   `PublishedBuild` construction, and states the deviation and its reason. Do not
+   close B-1 as "all eight steps landed", and do not "fix" this back into a store
+   read.
 
 Spec and doc lines to amend. The module docstring in
 `core/src/hephaestus/core/executor/artifact_geometry.py` is the primary doc
@@ -294,13 +363,23 @@ preview retention class and are collected with their artifact.
 
 - `core/tests/test_artifact_geometry.py` — `published_artifact_source` over a
   real published build resolves a tag to the tagged **face** (bbox z-extent 0), a
-  label to its solid, a binding to its element, and `"part"` to the whole
-  compound; an unknown selector's `AddressingError` lists `wb`, `top_face`,
-  `body`.
+  label to its solid, and `"part"` to the whole compound; an unknown selector's
+  `AddressingError` lists `wb` and `top_face` and **not** the binding `body`, per
+  the rule-4 limit in Expected. Plus `addressable_namespace` itself: it drops
+  binding-only names and keeps a name that is both a label and a binding.
 - `server/tests/test_dispatch_tools.py` — a **parity** assertion, not two
   literals: `measure(a=sel)` equals the part-scope `run_checks` measured value
-  for the same selector, over `{part, label, tag, binding}`. That is the
-  invariant that actually failed.
+  for the same selector, over `{part, label, tag}`. That is the invariant that
+  actually failed. `binding` joins that set only where §5.1 auto-filled the
+  label, which is what makes it resolvable under rule 3.
+- `server/tests/test_dispatch_tools.py` — **the message, not only the tuple.** A
+  refusal states its near misses twice, in `candidates` and verbatim in the
+  prose, so `assert "body" not in exc.message` beside
+  `assert "body" not in exc.data["candidates"]`. A filter over the structured
+  list alone passes the second assertion and fails the first; that is the
+  half-fix this bullet exists to catch. And a cross-part refusal's candidates are
+  part-qualified — a bare name there would resolve against whichever part is
+  *current*, not the one it came from.
 - `server/tests/test_dispatch_tools.py` — cross-part
   `measure(kind="clearance", a="w/top_face", b="v/part")` resolves through the
   project snapshot; and a pre-fix artifact ref refuses `namespace_unrecorded`
@@ -317,6 +396,93 @@ because of an addressing error will go green — correctly. Say so in the change
 description, or it reads as a grading regression. Depends on B-4 only in that
 every end-to-end test here currently has to route around the unbuildable
 templates.
+
+## B-1b — §7 rule 4 has no binding-to-solid mapping to resolve against
+
+- **severity** medium · **surface** engine · **verdict** confirmed by wave one
+- **effort** M · **risk** medium · **lane** none — see the workflow plan ·
+  **opened by** B-1's implementation, not by the 2026-09-04 audit
+
+### Symptom
+
+On a published artifact, a contract §7 rule-4 selector — a bare **binding** name
+— cannot resolve, and no candidate list may offer one. `measure`, `heph check`
+and project-scope `run_checks` all answer the other three rules after B-1; rule 4
+they answer by refusing, and the refusal deliberately omits binding names from
+both halves of its output (`candidates`, and the near-miss clause of the message,
+which states the same names a second time in prose).
+
+The user-visible shape is mild because §5.1 label-fill covers the common case: a
+geometry-bearing binding that was never relabelled carries its own name as a
+label and resolves under rule 3, and a relabelled one resolves under the label it
+was given. What is missing is the case where the two diverge — a binding whose
+node was given a *different* label — plus the honesty cost of a documented rule
+that one surface silently cannot serve.
+
+### Root cause
+
+Publication records the worker's §7 namespace and the source map's tag
+placements, and neither carries topology for a binding.
+`core/src/hephaestus/core/executor/source_map.py`'s `BindingEvent` records
+`{line, statement_index, iteration, call_site}` — provenance, not geometry — so
+`published_geometry.py` has nothing to join a binding name against, and
+`addressable_namespace` correctly drops those names rather than advertising what
+it cannot answer.
+
+The mapping is not merely absent: it is **computed and thrown away**.
+`core/src/hephaestus/core/executor/worker.py`'s `_fill_labels_and_rows` already
+walks `_reverse_binding_names` and establishes binding-to-node identity live
+(`IsSame` over the wrapped shapes) so that §5.1 can fill labels. It uses the
+identity for the label fill and discards it.
+
+### Fix
+
+Record what the worker already knows, and let the parent side join on it.
+
+1. `core/src/hephaestus/core/executor/worker.py` — in `_fill_labels_and_rows`,
+   keep the solid indices each binding contributed, in `part.geometry.solids()`
+   order, instead of discarding them once the labels are filled.
+2. `core/src/hephaestus/core/executor/source_map.py` — persist them: either
+   extend the existing `bindings` table with the placements or add a
+   `binding_placements` table beside it. Version the source-map schema document
+   with it.
+3. `core/src/hephaestus/core/executor/published_geometry.py` (lane B's file) —
+   `PartGeometry._run_shape` resolves rule 4 off that table, and
+   `addressable_namespace` collapses to the identity: with the mapping present it
+   no longer has anything to drop, and the filter added for B-1 becomes a no-op
+   rather than a special case.
+
+A binding that never reaches `part.geometry` — `tests/stage8c/_g8c.py`'s
+`spare_rib` is the in-tree instance — must stay `unaddressable_anchor` either
+way. The point of the mapping is to distinguish "bound to geometry that was
+published" from "bound to something that never got there", which today are the
+same refusal.
+
+Spec and doc lines to amend. tool_schema.md's `measure` entry states the rule-4
+limit as a limit; landing this retires that sentence. ASSEMBLY.md carries the
+same clause about what the addressable view of a published artifact cannot
+supply. Both were written by B-1 to describe the gap honestly and must be
+retired **together with** the code, not before it.
+
+### Tests to add
+
+- `core/tests/test_artifact_geometry.py` — a binding whose node was relabelled
+  resolves to that node under rule 4, where today it refuses; and
+  `addressable_namespace` now keeps binding names it currently drops.
+- `server/tests/test_dispatch_tools.py` (unowned — see the workflow plan) — the
+  B-1 assertions invert: a refusal's candidates and its message may now name a
+  binding. Whoever lands this must update those pins in the same change, or the
+  two items contradict each other.
+- `tests/stage8c/_g8c.py`'s `spare_rib` stays `unaddressable_anchor`; that is the
+  assertion that keeps this from becoming a guess.
+
+### Notes
+
+Until this lands, B-1's behaviour is correct as shipped and must not be "fixed":
+a rule-4 binding is absent from candidate lists **by design**, and a patch that
+puts `body` back in the list without putting the mapping in the source map
+restores exactly the defect B-1 removed — a surface advertising a name it cannot
+answer.
 
 ## B-2 — Nine model-visible tools are unwired in all three shipped runtimes
 
@@ -426,10 +592,34 @@ construction.
    capabilities that need a live sidecar. Keep the constructor signature
    unchanged so every existing test call site still compiles.
 3. `server/src/hephaestus/agent_bridge/app.py:365` — replace the bare
-   `ToolDispatcher(self._project, cad=self._cad)` with `build_dispatcher(...)`;
-   after `Supervisor.start` succeeds, call `bind_runtime` with a snapshot caller
-   adapting `Supervisor.call("query.snapshot", …)` (the sidecar already serves
-   that method, so there is no wire change).
+   `ToolDispatcher(self._project, cad=self._cad)` with `build_dispatcher(...)`.
+   **The second half of this step as first written is a regression, not a fix,
+   and wave one reproduced it killing the sidecar.** It said to bind, after
+   `Supervisor.start`, a snapshot caller adapting
+   `Supervisor.call("query.snapshot", …)`. `query_snapshot` is not a
+   `Supervisor.call` adapter's client: it is an **ordinary tool**, so it arrives
+   over `py.tool_dispatch`, which `Supervisor._read_loop` runs INLINE on the
+   single reader thread. A caller that turns around and issues `Supervisor.call`
+   from there waits for a response only the thread it is blocking can deliver.
+   Reproduced literally: the caller printed that it was running on
+   `Thread-2 (_read_loop)`, `query.snapshot` never got a response, the watchdog
+   killed the child as unresponsive, and the run died with `sidecar restarted` —
+   strictly worse than the refusal it was meant to replace. This is the same
+   reader-thread blocker the workflow plan already names for delegation, and
+   `query_snapshot` belongs on that list beside it.
+
+   What wave one shipped instead, and what this step now asks for: **wire the
+   caller anyway, and guard it.** Binding it means the capability goes live with
+   no edit at this site the moment py-dispatch moves off the reader thread. The
+   guard is a module-private `threading.local` flag set for the whole of the
+   `py.*` handler, plus a new `SnapshotAvailability` protocol on the dispatcher
+   whose `unavailable()` the dispatcher asks **before** it prepares a render
+   bundle. The model reads the same
+   `{"status": "capability_error", "code": "capability_not_available"}` it read
+   before, with an honest message naming the reason; nothing regresses and
+   nothing is claimed that is not true. The invariant to carry forward, and to
+   state wherever a new `py.*` method is added: **no `py.*` handler may call
+   `Supervisor.call`.**
 4. `server/src/hephaestus/http/runtime.py:174` and its `reload_manifest`
    sibling — the same call in both, so toggling a manifest flag cannot silently
    drop the registry.
@@ -488,6 +678,19 @@ durable terminal instead of inventing a completion", which is already better tha
 - A contract-level test that for each of the 57 tools the shipped
   `build_dispatcher` either routes it or refuses with a reason declared in that
   tool's committed schema under `schemas/tools/`.
+
+### Notes
+
+**Honest limit: `query_snapshot` has no shipped HTTP surface, so wiring it
+proves less than it looks.** INTERFACE.md §2.3's route table exposes `read_part`,
+`inspect_part`, `measure` and the keyed mutations; there is no
+`POST /tools/query_snapshot`. Every real caller of this tool today is therefore a
+model turn, and every real answer is the guarded refusal in step 3. Wave one's
+off-thread proof drove the shared dispatcher directly — the code path an HTTP
+tool route would take — which is evidence that the caller is correctly wired, not
+that the tool is reachable. Do not read "`query_snapshot` works under serve" as
+more than that, and do not count it among the nine tools this item restores until
+either py-dispatch moves off the reader thread or a route exists.
 
 ## B-3 — `delegate_part_agent` fails its own result schema in both shipped runtimes
 
@@ -1201,7 +1404,38 @@ module already documents as one camera with two names.
   collects pixels belonging to another target's drawn quad. This is the assertion
   whose absence let the defect ship.
 - Same file — clicking the `-X`, `+Y` and `-Z` targets moves the URL's `view` to
-  each. All three are unclickable today, so this test fails before the fix.
+  each. All three are unclickable today, so this test fails before the fix. Wave
+  one landed this as a **navigation sequence**, not three direct clicks, for the
+  reason in the Notes below.
+
+### Notes
+
+**§5.5 behaviour change, and it is deliberate: only viewer-facing cells are drawn
+and hittable, so `data-view="front"` is camera-dependent.** The fix's negative
+half — a target that is drawn is hittable, and a target that is not drawn is not
+— means a face turned away from the viewer is not painted, is not in the
+accessibility tree, and is reached by turning the cube. `data-view="front"` is
+therefore present exactly when the `-Y` face is toward the camera, and it is
+**absent at the default `iso`**. C19's older unconditional reading — "`front` is
+always present" — was satisfied by the shipped cube only *because* of the defect:
+the parent transform applied azimuth as a screen roll, so `Front` faced the
+viewer at every azimuth. Compliance there was the bug, and the alternative
+reading (draw the hidden faces so the assertion keeps passing) would reintroduce
+precisely the unreachable buttons this item exists to remove.
+
+The testable form that replaces it: at every named view the plate carries a
+`data-view` for the camera the workspace is on and marks that cell
+`[data-cube-current]`, and the cell whose normal is the eye direction is the one
+drawn. Two consequences bind anyone writing tests here. A click test may not
+address `-X`, `+Y` or `-Z` directly from `iso` — those cells are behind the cube
+and are, correctly, not clickable — so drive them as a sequence of turns instead.
+And an inventory test may not assert that all eight standard view names appear as
+distinct targets: `cameras.py` gives `-Y` and `front` the same angles, one camera
+with two names, so a 26-cell inventory with unique names spells that camera
+exactly once, and B-7's own derivation rule spells it `front`. INTERFACE.md §5.5
+and its C19 clause are amended to match, and the two assertions that encoded the
+old reading (`web/test/viewportChrome.test.tsx`'s C19 case and
+`web/e2e/viewport.spec.ts`'s `front` probe) were rewritten rather than kept.
 
 ## B-8 — BOM dialog is 2838px tall at y=-919 with no scroll, and its value column is 0px wide
 
@@ -1671,6 +1905,41 @@ init leaving files behind on failure — the init tests assert the opposite.
   the message names the target, and the parent is unchanged; plus an atomicity
   test that a failure after the first two files leaves the target directory
   absent.
+
+### Notes
+
+**The shared boundary landed as `core/src/hephaestus/core/cli_errors.py`, and it
+is half-adopted by design of the lane split, not by oversight.** That module is
+the single owner of `CliUsageError`, `usage_from_oserror`, `ensure_writable_dir`,
+the json-aware refusal printer and the `guard` wrapper. The four modules lane A
+owns adopted it — `core/src/hephaestus/core/cli.py` keeps `_UsageError` only as
+an alias of `CliUsageError`, because it has too many call sites to rename in the
+same change, and `core/src/hephaestus/core/cli_cam.py`,
+`core/src/hephaestus/core/cli_render.py` and
+`core/src/hephaestus/core/cli_init.py` raise the shared error directly.
+
+**Follow-up, unassigned:** eight further modules still carry a private
+`_UsageError` and a private `_guard` of their own, and none was in lane A's
+ownership — `core/src/hephaestus/core/cli_authoring.py`,
+`core/src/hephaestus/core/cli_solve.py`,
+`core/src/hephaestus/core/cli_registry.py`,
+`core/src/hephaestus/core/cli_references.py`,
+`core/src/hephaestus/core/cli_import.py`,
+`core/src/hephaestus/core/cli_assembly.py`,
+`core/src/hephaestus/core/cli_motion.py` and
+`server/src/hephaestus/agent_bridge/cli_export.py`. Each should import
+`CliUsageError` and `guard` from `hephaestus.core.cli_errors` and delete its
+copy. Until that lands, the JSON refusal shape is **deliberately scoped** in
+docs/cli.md to the precondition refusals rather than claimed for every verb: do
+not widen that sentence ahead of the adoption, and do not read the eight private
+copies as duplication left behind carelessly.
+
+One clause of that scoped sentence is nevertheless unreachable and is a small
+follow-up of its own: it names "the target check under `heph init`", but
+`heph init` declares no `--json` flag, so the object form cannot be produced
+there — `heph init --json` is an argparse usage error. Either give `heph init`
+the flag or narrow the sentence to the `--out` checks under `heph render` and
+`heph cam emit`, which do have it. docs/cli.md is lane A's file.
 
 ## B-11 — A malformed cursor is reported as a dead runtime; resuming a transcript that does not exist mints one
 

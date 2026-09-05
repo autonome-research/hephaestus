@@ -19,6 +19,8 @@ from typing import Any
 import pytest
 from hephaestus.agent_bridge.cad_ops import EXPORT_FORMATS, CadOps
 from hephaestus.agent_bridge.dispatch import DispatchError
+from hephaestus.core.project_store.publication import build_bundle_pointer
+from hephaestus.core.project_store.store import blob_hash_of_ref
 from hephaestus.testing.tools_fixture import (
     ORCH,
     PART_WIDGET,
@@ -1098,3 +1100,223 @@ def test_cad_ops_param_state_hash_is_stable_for_an_unset_scope(tmp_path: Path) -
         assert json.loads(json.dumps(a)) == a
     finally:
         store.close()
+
+
+# ==========================================================================
+# section 7 addressing through the measure tool (audit-2026-09-04 B-1)
+#
+# A published artifact is BRep bytes: labels, tags and bindings live only in
+# the worker that built the shape, and what makes a reloaded artifact
+# addressable is what publication recorded beside it. Until 2026-09-04
+# ``measure``, ``heph check`` and project-scope ``run_checks`` built that index
+# EMPTY, so the literal ``"part"`` selector was the only one they could answer
+# -- while the identical tag and label resolved inside the same part's own
+# ``CHECKS`` during the build, and while constraint anchors resolved them
+# against the very same artifact. The refusal came out as "resolves to nothing"
+# with no candidates, which reads as a typo in the selector rather than as a
+# hole in the tool, and that is how it stayed hidden for fourteen months.
+#
+# These pin the join at the tool boundary, which is where a model meets it:
+# the parity with the in-worker value, the candidates a refusal must offer (and
+# the one name it must never offer), and the single namespace the tool honestly
+# cannot supply.
+
+#: A tag, a label, and a binding (``body``) that is section 7 rule 4 -- the one
+#: rule a published artifact cannot answer, since publication records label
+#: runs and tag placements and no binding-to-solid mapping. Each check makes
+#: exactly ONE measurement, so its recorded ``measured`` value IS the bbox the
+#: worker saw for that selector.
+ADDRESSABLE_PLATE_SRC = """PARAMS = {}
+
+body = Box(40.0, 20.0, 6.0)
+body.label = "wb"
+tag(body.faces().sort_by(Axis.Z)[-1], "top_face")
+part.geometry = body
+
+CHECKS = {
+    "bbox_part": lambda m: m.bbox("part")[0] > 0.0,
+    "bbox_wb": lambda m: m.bbox("wb")[0] > 0.0,
+    "bbox_top_face": lambda m: m.bbox("top_face")[0] > 0.0,
+}
+"""
+
+ADDRESSABLE_PIN_SRC = """PARAMS = {}
+
+shank = Box(4.0, 4.0, 30.0)
+shank.label = "pin_shank"
+part.geometry = shank
+"""
+
+#: The silent-red half of B-1: a project check addressing another part's label
+#: and tag. Every one of these read as a failing check (or an errored one)
+#: while the parent-side index was empty.
+CROSS_PART_CHECK_SRC = """# Project check: cross-part label and tag selectors.
+
+CHECKS = {
+    "label": lambda m: m.bbox("plate/wb")[2] > 5.9,
+    "tag": lambda m: m.bbox("plate/top_face")[2] < 0.001,
+    "clearance": lambda m: m.clearance("plate/top_face", "pin/part") < 0.001,
+}
+"""
+
+#: ``"bbox_<selector>"`` -> the selector, one per section 7 rule the parent side
+#: can answer: rule 1 (``part``), rule 3 (a label), rule 2 (a tag).
+ADDRESSABLE_SELECTORS: dict[str, str] = {
+    "bbox_part": "part",
+    "bbox_wb": "wb",
+    "bbox_top_face": "top_face",
+}
+
+
+@pytest.fixture(scope="module")
+def addressable(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Project]:
+    """A built project whose parts carry a tag, a label and a rule-4 binding."""
+    p = make_project(tmp_path_factory.mktemp("addressable") / "proj")
+    (p.root / "parts" / "plate.py").write_text(ADDRESSABLE_PLATE_SRC, encoding="utf-8")
+    (p.root / "parts" / "pin.py").write_text(ADDRESSABLE_PIN_SRC, encoding="utf-8")
+    (p.root / "checks" / "cross.py").write_text(CROSS_PART_CHECK_SRC, encoding="utf-8")
+    # Every part must be current for the project-scope snapshot to assemble.
+    p.build("widget", "bracket", "plate", "pin")
+    try:
+        yield p
+    finally:
+        p.close()
+
+
+def test_measure_agrees_with_the_in_worker_checks_value_for_every_selector(
+    addressable: Project,
+) -> None:
+    """The B-1 parity: one selector, two evaluators, the same number.
+
+    ``run_checks`` re-executes the part and measures INSIDE the worker, where
+    the labels and tags still exist; ``measure`` measures the published artifact
+    from the parent. Both must answer the same thing for the same name, or the
+    model is being told two different truths about one part.
+    """
+    report = addressable.call("run_checks", {"name": "plate"})
+    assert report["status"] == "ok"
+    for check, selector in ADDRESSABLE_SELECTORS.items():
+        entry = report["checks"][check]
+        assert entry["pass"] is True, check
+        out = addressable.call("measure", {"kind": "bbox", "a": selector, "part": "plate"})
+        assert out["value"] == entry["measured"], selector
+        assert out["detail"]["measured"] == entry["measured"], selector
+    # Not vacuous: the three selectors name three different pieces of geometry,
+    # so the parity above cannot be satisfied by one shared fallback answer.
+    values = {
+        selector: addressable.call("measure", {"kind": "bbox", "a": selector, "part": "plate"})[
+            "value"
+        ]
+        for selector in ADDRESSABLE_SELECTORS.values()
+    }
+    assert values["part"] == values["wb"] == [40.0, 20.0, 6.0]
+    assert values["top_face"] == [40.0, 20.0, 0.0]  # a face has no thickness
+
+
+def test_measure_refusal_lists_the_namespace_and_never_a_rule_4_binding(
+    addressable: Project,
+) -> None:
+    """An unknown selector gets the resolvable namespace -- and no binding name.
+
+    ``addressing.py`` draws its near misses from the part's whole recorded
+    namespace, so ``"bdy"`` near-misses the binding ``body``; the parent side
+    cannot answer a rule-4 binding at all, and offering one would be the same
+    failure as the empty candidate tuple, wearing help's clothes. The names are
+    stated TWICE -- in ``candidates`` and verbatim in the prose -- so both are
+    asserted here: a fix that corrects only the structured field leaves the
+    sentence advertising exactly what the list dropped, and a model reads the
+    sentence.
+    """
+    with pytest.raises(DispatchError) as ei:
+        addressable.call("measure", {"kind": "bbox", "a": "bdy", "part": "plate"})
+    assert ei.value.reason == "invalid_part"
+    candidates = ei.value.data["candidates"]
+    assert candidates == ["part", "top_face", "wb"]
+    assert "body" not in candidates
+    assert "body" not in ei.value.message
+    # The near-miss clause named only `body`, so it is gone rather than empty.
+    assert "near misses" not in ei.value.message
+
+
+def test_measure_refusal_keeps_a_genuine_near_miss(addressable: Project) -> None:
+    """Narrowing the unanswerable names must not swallow the answerable ones."""
+    with pytest.raises(DispatchError) as ei:
+        addressable.call("measure", {"kind": "bbox", "a": "top_fce", "part": "plate"})
+    assert ei.value.data["candidates"] == ["top_face"]
+    assert ei.value.message.endswith("near misses: top_face")
+
+
+def test_measure_cross_part_refusal_qualifies_every_candidate(addressable: Project) -> None:
+    """More than one part addressed: a bare candidate would resolve elsewhere.
+
+    In a cross-part call an unqualified name resolves against whichever part is
+    *current*, not the part its namespace came from, so a bare suggestion is a
+    suggestion the caller cannot act on.
+    """
+    with pytest.raises(DispatchError) as ei:
+        addressable.call("measure", {"kind": "clearance", "a": "plate/bdy", "b": "pin/part"})
+    assert ei.value.reason == "invalid_part"
+    candidates = ei.value.data["candidates"]
+    assert candidates, "a refusal with no alternatives at all is B-1's own symptom"
+    assert all("/" in name for name in candidates), candidates
+    # The parts the call actually named come first; the list is capped, and an
+    # alphabetical project walk can spend the whole cap before reaching them.
+    assert candidates[:3] == ["plate/part", "plate/top_face", "plate/wb"]
+    assert "pin/part" in candidates
+    assert "plate/body" not in candidates
+    assert "body" not in ei.value.message
+
+
+def test_measure_refuses_namespace_unrecorded_rather_than_reporting_nothing(
+    project: Project,
+) -> None:
+    """No stored bundle is a different fact from "that name matches nothing".
+
+    An artifact published before bundles were durable, or one whose bundle has
+    been collected, genuinely has no recorded section 7 namespace. Spelling that
+    the same way as a dangling selector is what sent a reader hunting for a typo
+    that was not there. ``"part"`` (rule 1) still resolves on the same artifact,
+    because BRep bytes carry the whole compound on their own.
+    """
+    plate = project.root / "parts" / "plate.py"
+    plate.write_text(ADDRESSABLE_PLATE_SRC, encoding="utf-8")
+    stale_ref = project.call("build_part", {"name": "plate"})["artifact_ref"]
+    # Move the part off that build so only the durable pointer answers for it...
+    plate.write_text(ADDRESSABLE_PLATE_SRC.replace("Box(40.0", "Box(41.0"), encoding="utf-8")
+    assert project.call("build_part", {"name": "plate"})["artifact_ref"] != stale_ref
+    # ...then collect the bundle, leaving the artifact bytes durably stored.
+    pointer = build_bundle_pointer("plate", blob_hash_of_ref(stale_ref))
+    stored = project.store.blobs.read_pointer(pointer)
+    assert stored is not None
+    project.store.blobs.cas_swap(pointer, stored, None)
+
+    pinned = {"kind": "bbox", "part": "plate", "artifact_ref": stale_ref}
+    with pytest.raises(DispatchError) as ei:
+        project.call("measure", {**pinned, "a": "wb"})
+    assert ei.value.reason == "namespace_unrecorded"
+    assert ei.value.data["part"] == "plate"
+    assert ei.value.data["selector"] == "wb"
+    assert "resolves to nothing" not in ei.value.message
+    survivor = project.call("measure", {**pinned, "a": "part"})
+    assert survivor["value"] == [40.0, 20.0, 6.0]
+    assert survivor["resolved_artifact_refs"] == [stale_ref]
+
+
+def test_project_checks_resolve_cross_part_labels_and_tags(addressable: Project) -> None:
+    """The regression pin for B-1's silent half: these read as FAILING checks.
+
+    A project check addressing ``"<part>/<label>"`` or ``"<part>/<tag>"`` ran
+    against the same empty parent-side index, so a correct model-authored check
+    reported a red result nobody could explain from the check's own text.
+    """
+    out = addressable.call("run_checks", {"scope": "project"})
+    assert out["status"] == "ok"
+    assert out["file_hashes"].keys() == {"cross.py"}
+    checks = out["checks"]
+    assert checks["cross:label"]["pass"] is True
+    assert checks["cross:tag"]["pass"] is True
+    assert checks["cross:clearance"]["pass"] is True
+    # The measured values, not just the verdicts: a check that measured the
+    # whole part for every selector would pass "label" for the wrong reason.
+    assert checks["cross:label"]["measured"] == [40.0, 20.0, 6.0]
+    assert checks["cross:tag"]["measured"] == [40.0, 20.0, 0.0]
