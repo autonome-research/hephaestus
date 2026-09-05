@@ -60,6 +60,21 @@ export const copy = {
     pin: "Artifact pin",
     buildState: "Build",
     /**
+     * The `stale` chip's title (audit-2026-09-04 B-5). The word alone says the
+     * build is behind; the title says WHAT moved, because `stale_inputs` is a
+     * server field and the operator's next action differs by which input it
+     * names — an edited script means rebuild, a changed project parameter means
+     * the value they just moved is not in this artifact.
+     *
+     * Named inputs are the server's closed vocabulary (`BUILD_INPUTS`), joined
+     * verbatim: the client does not translate, re-word or re-order a server
+     * fact (§1).
+     */
+    buildStateStale: (inputs: readonly string[]): string =>
+      inputs.length === 0
+        ? "This artifact is behind the project as it stands now."
+        : `Changed since this build: ${inputs.join(", ")}. The viewport is showing the superseded artifact.`,
+    /**
      * The hold control's label is a VERB. It used to be `pinMode.pinned`
      * ("held"), so the bar printed a state word on a button beside two other
      * state words — four labels for one fact on an unbuilt part (§4.1's

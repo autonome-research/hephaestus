@@ -192,6 +192,13 @@ def _cmd_part_show(args: argparse.Namespace) -> int:
         store.read_part(name)  # addressing_error + candidates if missing
         publisher = Publisher(load_project(root), opstore)
         result = publisher.current_result(name)
+        # INTERFACE.md §2.3 calls this verb the build route's CLI counterpart,
+        # so it says the same two things the route does (audit-2026-09-04 B-5):
+        # `current` is publication state, and freshness is the separately
+        # recomputed fact beside it. `None` where the comparison is unavailable
+        # (a bundle written before the consumed-`hc` map existed) — omitted
+        # rather than guessed, exactly as the route omits the keys.
+        freshness = None if result is None else publisher.freshness(name)
     finally:
         opstore.close()
     if result is None:
@@ -199,11 +206,18 @@ def _cmd_part_show(args: argparse.Namespace) -> int:
         _emit(payload, json_out=bool(args.json), human=f"{name}: not built")
         return 0
     if bool(args.json):
-        print(json.dumps(result.to_json()))
+        record = result.to_json()
+        if freshness is not None:
+            record["stale"] = not freshness.fresh
+            record["stale_inputs"] = list(freshness.changed_inputs)
+        print(json.dumps(record))
         return 0
     status = result.status
     artifact = "" if result.artifact_ref is None else f" artifact={result.artifact_ref}"
-    print(f"{name}: {status} (current={result.current}){artifact}")
+    stale = "" if freshness is None else f", stale={not freshness.fresh}"
+    print(f"{name}: {status} (current={result.current}{stale}){artifact}")
+    if freshness is not None and not freshness.fresh:
+        print(f"  changed since this build: {', '.join(freshness.changed_inputs)}")
     if result.metrics is not None:
         print(
             f"  solids={result.metrics.solids} volume={result.metrics.volume_mm3} mm^3 "

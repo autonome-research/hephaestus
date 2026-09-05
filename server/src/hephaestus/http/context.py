@@ -415,12 +415,23 @@ def _say_part(
     block.heading(f"Part: {part}")
 
     block.read(f"/parts/{part}/build")
-    build = build_projection(runtime.cad.current_build(part))
+    # The SAME two reads the route hands `build_projection` (audit-2026-09-04
+    # B-5). Composing from the record alone told the model `build status: ok`
+    # and a superseded artifact ref for a part whose script had since been
+    # edited — the one reader of that lie who cannot see the header chip and
+    # then goes on to measure the artifact it was handed.
+    build = build_projection(runtime.cad.current_build(part), runtime.cad.build_freshness(part))
     status = str(build["status"])
     if status == "not_built":
         block.say("This part has no current build.")
     else:
         block.say(f"build status: {status}")
+        if build.get("stale") is True:
+            changed = ", ".join(cast("list[str]", build["stale_inputs"]))
+            block.say(
+                f"this build is STALE: {changed} changed since it was built, "
+                "so the artifact below is the superseded one"
+            )
         block.say(f"build artifact: {build['artifact_ref']}")
         block.say(f"geometry entries: {build['geometry_count']}")
         entries = cast("list[dict[str, Any]]", build["geometries"])

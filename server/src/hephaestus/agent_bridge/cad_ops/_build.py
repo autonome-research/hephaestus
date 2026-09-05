@@ -32,7 +32,7 @@ from hephaestus.core.executor.runner import UnpublishedBuild
 from hephaestus.core.lint import checks_thresholds
 from hephaestus.core.project_store.store import blob_hash_of_ref
 from hephaestus.core.render.inspect import inspect_part, prepare_render_bundle
-from hephaestus.core.types import BuildResult, Metrics
+from hephaestus.core.types import BuildFreshness, BuildResult, Metrics
 from opstore.types import JSONValue
 
 from opstore import LeaseHeldError
@@ -315,6 +315,22 @@ class BuildOps(CadOpsState):
         wins: this is never preferred over :meth:`current_build`.
         """
         return self._publisher().last_failure_result(name)
+
+    def build_freshness(self, name: str) -> BuildFreshness | None:
+        """Are the current build's recorded inputs still the live ones? (lock-free).
+
+        The third of the three lock-free build reads, and the same discipline as
+        its two neighbours: one pointer read plus one script hash, never a
+        rebuild, never a lock. ``GET /parts/{part}/build`` needs it because
+        ``BuildResult.current`` is publication state and cannot answer freshness
+        — the header chip rendered a superseded build as "up to date" for
+        exactly as long as this read did not exist (audit-2026-09-04 B-5).
+
+        ``None`` when the part has no current bundle, or a bundle written before
+        publication recorded the consumed-``hc`` map: the comparison is then
+        unavailable and the caller says so by omission rather than by guessing.
+        """
+        return self._publisher().freshness(name)
 
     def current_bundle(self, name: str) -> Mapping[str, JSONValue] | None:
         """The published *bundle* behind ``name``'s current pointer (lock-free).

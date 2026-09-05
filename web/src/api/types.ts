@@ -78,6 +78,39 @@ export interface StatementCheckpoint {
 export interface BuildDocument {
   readonly status: "ok" | "error" | "not_built";
   readonly current: boolean;
+  /**
+   * `build_projection`'s freshness fact — whether the inputs this artifact was
+   * computed from are still the ones on disk (audit-2026-09-04 B-5).
+   *
+   * NOT the negation of `current`, and the two are independent: `current` is
+   * publication state (`architecture.md` §3.5), stamped by the pointer flip and
+   * never recomputed, so a build stays `current: true` after its script is
+   * edited. `stale` is recomputed on every read, which is the only reason §4.1's
+   * `stale` chip state has a producer at all.
+   *
+   * Optional because the server OMITS both keys where it cannot compare — a
+   * bundle written before publication recorded the consumed-`hc` map. `undefined`
+   * is "no answer", never "fresh", so the chip falls back rather than asserting.
+   */
+  readonly stale?: boolean;
+  /**
+   * Which inputs moved: a subset of the server's closed `BUILD_INPUTS`
+   * vocabulary (`script`, `toolchain`, `part_params`, `imports`,
+   * `hc_dependencies`), in the server's comparison order. A named empty list
+   * when the build is fresh; the client never re-words or re-orders it.
+   */
+  readonly stale_inputs?: readonly string[];
+  /**
+   * A recorded failure of the script AS IT STANDS NOW, carried beside a current
+   * success (audit-2026-09-04 B-5, the sibling half).
+   *
+   * The route prefers the current success — `geometry_count` and the geometry
+   * rows are facts about the current build — which used to make `error`
+   * unreachable on a read for any part that had ever built once. Present only
+   * when the last recorded failure is about the live script text, which is also
+   * exactly when `stale` is true.
+   */
+  readonly last_failure?: BuildFailure;
   readonly geometry_count: number;
   readonly geometries: readonly GeometryEntry[];
   // Both are `str | None` on `BuildResult`, and the projection passes them
@@ -95,6 +128,12 @@ export interface BuildDocument {
   readonly checkpoints?: readonly StatementCheckpoint[];
   readonly error?: BuildError | undefined;
   readonly critique?: Readonly<Record<string, unknown>>;
+}
+
+/** `build_projection`'s `last_failure` — a failed build's error and its stops. */
+export interface BuildFailure {
+  readonly error: BuildError;
+  readonly checkpoints: readonly StatementCheckpoint[];
 }
 
 /**

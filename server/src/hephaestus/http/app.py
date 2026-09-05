@@ -54,7 +54,7 @@ from hephaestus.agent_bridge.supervisor import SupervisorError
 from hephaestus.contract import toolgen
 from hephaestus.contract.tools_decl import READ_ARTIFACT_PAGE_MAX, TOOLS_BY_NAME
 from hephaestus.core.checks.report import project_check_report
-from hephaestus.core.types import BuildResult
+from hephaestus.core.types import BuildFreshness, BuildResult
 from hephaestus.mcp.validate import SchemaError, normalize_arguments
 from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
@@ -706,14 +706,21 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
     async def get_build(request: Request) -> Response:
         part = _part(request)
 
-        def _read() -> BuildResult | None:
+        # Every read of the build axis in ONE worker-thread hop, because this is
+        # the part-switch path and each of the three is a store read. The
+        # freshness comparison (audit-2026-09-04 B-5) costs one script hash on
+        # top of the record read, which is what buys the route the right to say
+        # `stale` instead of letting `current` be read as "up to date".
+        def _read() -> tuple[BuildResult | None, BuildFreshness | None, BuildResult | None]:
             current = runtime.cad.current_build(part)
-            if current is not None:
-                return current
-            return runtime.cad.last_failure_build(part)
+            failure = runtime.cad.last_failure_build(part)
+            if current is None:
+                return failure, None, None
+            freshness = runtime.cad.build_freshness(part)
+            return current, freshness, _failure_of_the_live_script(current, failure, freshness)
 
-        result = await asyncio.to_thread(_read)
-        return JSONResponse(build_projection(result))
+        result, freshness, failure = await asyncio.to_thread(_read)
+        return JSONResponse(build_projection(result, freshness, last_failure=failure))
 
     async def get_properties(request: Request) -> Response:
         return JSONResponse(await asyncio.to_thread(part_properties, runtime, _part(request)))
@@ -1795,6 +1802,41 @@ def project_checks(runtime: WorkspaceRuntime) -> Any:
     one's is the bearer already verified by :func:`_authorize`.
     """
     return project_check_report(runtime.layout, runtime.store)
+
+
+def _failure_of_the_live_script(
+    current: BuildResult, failure: BuildResult | None, freshness: BuildFreshness | None
+) -> BuildResult | None:
+    """The recorded failure ``GET /parts/{part}/build`` must surface, or ``None``.
+
+    The route prefers a current success over a later failure and that precedence
+    is deliberate — ``geometry_count`` and the geometry rows are facts about the
+    *current* build, and a failure has none — but the loser was discarded, so a
+    part that had ever built once could never surface a later failure through
+    this route and ``BuildDocument.error`` was unreachable on a read
+    (audit-2026-09-04 B-5, the sibling half).
+
+    Which failures are worth surfacing is decided by the **live script hash**,
+    not by "newer than the current build". A failure is shown when it is about
+    the script as it stands now — the operator edited, built, and it broke — and
+    the current success is then necessarily stale, so the two facts tell one
+    coherent story: *this is the artifact you are looking at, it is behind, and
+    here is what happened when the current text was last built*.
+
+    The audit ledger proposed the weaker rule "the failure's script hash differs
+    from the current build's". That rule is wrong in the ordinary
+    fail-then-fix-then-build sequence: the failed attempt and the succeeding one
+    also have different scripts, so a healthy part with a long-since-repaired
+    failure would carry a ``last_failure`` forever. Comparing against the live
+    text answers the question a reader is actually asking and reports nothing in
+    that case.
+    """
+    if failure is None or failure.error is None or freshness is None:
+        return None
+    live = freshness.live_script_hash
+    if live is None or live == current.input_hashes.script:
+        return None
+    return failure if failure.input_hashes.script == live else None
 
 
 def part_properties(runtime: WorkspaceRuntime, part: str) -> dict[str, Any]:

@@ -101,6 +101,76 @@ def test_build_route_serves_geometry_count_as_an_explicit_field(tmp_path: Path) 
     assert body["artifact_ref"].startswith("artifact:build:")
 
 
+def test_build_route_reports_stale_after_a_script_edit_with_no_rebuild(tmp_path: Path) -> None:
+    """B-5 regression: a script edit with no rebuild must not read as current.
+
+    ``current`` stays publication state (it is still ``True``: this build IS
+    the part's current publication), but a read-time freshness fact names the
+    changed input so the header can print ``stale`` instead of "up to date".
+    """
+    root = tmp_path / "proj"
+    with workspace(root) as web:
+        assert web.post("/parts/widget/build", json={}, key=uuid7()).status_code == 200
+        before = web.get("/parts/widget/build").json()
+        assert before["current"] is True
+        assert before["stale"] is False
+        assert before["stale_inputs"] == []
+        path = root / "parts" / "widget.py"
+        path.write_text(
+            path.read_text(encoding="utf-8") + "# a harmless comment\n", encoding="utf-8"
+        )
+        body = web.get("/parts/widget/build").json()
+    assert body["current"] is True
+    assert body["artifact_ref"] == before["artifact_ref"]
+    assert body["stale"] is True
+    assert body["stale_inputs"] == ["script"]
+
+
+def test_build_route_stale_is_false_when_the_script_is_rewritten_identically(
+    tmp_path: Path,
+) -> None:
+    """The negative half of the reproduction: identical bytes, no drift."""
+    root = tmp_path / "proj"
+    with workspace(root) as web:
+        assert web.post("/parts/widget/build", json={}, key=uuid7()).status_code == 200
+        path = root / "parts" / "widget.py"
+        path.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+        body = web.get("/parts/widget/build").json()
+    assert body["current"] is True
+    assert body["stale"] is False
+    assert body["stale_inputs"] == []
+
+
+def test_build_route_stale_inputs_names_hc_dependencies_on_a_project_param_edit(
+    tmp_path: Path,
+) -> None:
+    """The ``hc`` leg: the read path uses the same projection ``_revalidate`` does.
+
+    ``widget`` consumes ``hc.wall`` (``body = Box(p.width, 20.0, hc.wall)``), so
+    a project-parameter edit is a changed input for it even though its own
+    script text never moved.
+    """
+    root = tmp_path / "proj"
+    with workspace(root) as web:
+        assert web.post("/parts/widget/build", json={}, key=uuid7()).status_code == 200
+        # `POST /parts/{part}/params` forces `name` to the path's part on every
+        # call (§2.3: the path wins over the body), which the tool schema
+        # refuses for `scope="project"` (`name` must be `null`). There is no
+        # HTTP route for a project-scope write, so this exercises it through
+        # the dispatcher directly — the same call `mcp/app.py`'s verb makes.
+        state_hash = web.runtime.cad.param_state_hash("project", None)
+        edit = web.dispatch(
+            "set_params",
+            {"scope": "project", "values": {"wall": 3.0}, "expected_state_hash": state_hash},
+            entry="hc-edit",
+        )
+        assert edit["rejected"] == [], edit
+        body = web.get("/parts/widget/build").json()
+    assert body["current"] is True
+    assert body["stale"] is True
+    assert body["stale_inputs"] == ["hc_dependencies"]
+
+
 def test_build_route_names_the_absence_rather_than_returning_an_empty_success(
     tmp_path: Path,
 ) -> None:
@@ -153,7 +223,19 @@ def test_build_route_serves_last_failure_when_there_is_no_current(tmp_path: Path
 
 
 def test_build_route_prefers_current_over_a_later_failure(tmp_path: Path) -> None:
-    """G4.2's geometry_count is a fact about the current build, not last-fail."""
+    """G4.2's geometry_count is a fact about the current build, not last-fail.
+
+    The precedence is deliberate and stays: a part that has ever built
+    successfully must not lose its current build to a later failed attempt.
+    But ``BuildDocument.error`` on that later attempt must not become
+    unreachable through this route either — it surfaces as ``last_failure``
+    beside the current record, recognised because the failure's recorded script
+    hash is the hash of the script AS IT STANDS NOW, which the current build's
+    is not. (The audit ledger proposed "differs from the current build's"; that
+    weaker rule also carries a long-since-repaired failure forever, which
+    ``test_build_route_omits_last_failure_recorded_before_the_current_success``
+    is the counter-case for.)
+    """
     root = tmp_path / "proj"
     with workspace(root) as web:
         assert web.post("/parts/widget/build", json={}, key=uuid7()).status_code == 200
@@ -164,12 +246,65 @@ def test_build_route_prefers_current_over_a_later_failure(tmp_path: Path) -> Non
             "part.geometry = body\n",
             encoding="utf-8",
         )
-        assert web.post("/parts/widget/build", json={}, key=uuid7()).json()["status"] == "error"
+        failed = web.post("/parts/widget/build", json={}, key=uuid7()).json()
+        assert failed["status"] == "error"
         body = web.get("/parts/widget/build").json()
     assert body["status"] == "ok"
     assert body["current"] is True
     assert body["artifact_ref"] == current["artifact_ref"]
     assert body["geometry_count"] == current["geometry_count"]
+    last_failure = cast("dict[str, Any]", body["last_failure"])
+    assert last_failure["error"]["type"] == failed["error"]["type"]
+    assert last_failure["error"]["message"] == failed["error"]["message"]
+    assert len(cast("list[Any]", last_failure["checkpoints"])) >= 1
+
+
+def test_build_route_omits_last_failure_recorded_before_the_current_success(
+    tmp_path: Path,
+) -> None:
+    """The other half of the precedence: a failure the current success supersedes.
+
+    Same script both times — only the live ``hc.wall`` value differs across the
+    two build attempts — so the failed record is not about the script as it
+    stands now (the live text matches the CURRENT build, not the failure) and
+    ``last_failure`` is absent, rather than resurfacing a problem the current
+    build already fixed.
+    """
+    root = tmp_path / "proj"
+    with workspace(root) as web:
+        path = root / "parts" / "widget.py"
+        path.write_text(
+            "PARAMS = {\n"
+            '    "width": Param(40.0, min=10.0, max=80.0),\n'
+            "}\n\n"
+            "body = Box(p.width, 20.0, hc.wall)\n"
+            "if hc.wall < 1.5:\n"
+            "    body = fillet(body.edges(), radius=99.0)\n"
+            "part.geometry = body\n",
+            encoding="utf-8",
+        )
+        low_hash = web.runtime.cad.param_state_hash("project", None)
+        low = web.dispatch(
+            "set_params",
+            {"scope": "project", "values": {"wall": 1.0}, "expected_state_hash": low_hash},
+            entry="wall-low",
+        )
+        assert low["rejected"] == [], low
+        failed = web.post("/parts/widget/build", json={}, key=uuid7()).json()
+        assert failed["status"] == "error"
+        high_hash = web.runtime.cad.param_state_hash("project", None)
+        high = web.dispatch(
+            "set_params",
+            {"scope": "project", "values": {"wall": 2.0}, "expected_state_hash": high_hash},
+            entry="wall-high",
+        )
+        assert high["rejected"] == [], high
+        succeeded = web.post("/parts/widget/build", json={}, key=uuid7()).json()
+        assert succeeded["status"] == "ok"
+        body = web.get("/parts/widget/build").json()
+    assert body["status"] == "ok"
+    assert body["current"] is True
+    assert "last_failure" not in body
 
 
 def test_properties_projection_keys_are_exactly_the_declared_part_metadata(

@@ -30,7 +30,7 @@ from typing import Any, Final, Literal
 
 from hephaestus.core.checks.report import badge, report_json
 from hephaestus.core.executor.namespace import METADATA_FIELDS
-from hephaestus.core.types import BuildResult
+from hephaestus.core.types import BuildFreshness, BuildResult
 
 __all__ = [
     "METADATA_FIELDS",
@@ -57,7 +57,12 @@ PROPERTY_SOURCES: Final[tuple[str, ...]] = ("build_record", "script_literals")
 PropertySource = Literal["build_record", "script_literals"]
 
 
-def build_projection(result: BuildResult | None) -> dict[str, Any]:
+def build_projection(
+    result: BuildResult | None,
+    freshness: BuildFreshness | None = None,
+    *,
+    last_failure: BuildResult | None = None,
+) -> dict[str, Any]:
     """``GET /parts/{part}/build`` — the §2.3 BuildResult projection.
 
     ``geometry_count`` is served as an **explicit field** and is
@@ -83,11 +88,39 @@ def build_projection(result: BuildResult | None) -> dict[str, Any]:
     success. Silence never reads as a pass (§6.3's rule, applied to the build
     axis). The route prefers the current successful record when both exist
     (G4.2's ``geometry_count`` is a fact about the current build).
+
+    ``stale`` and ``stale_inputs`` are the freshness fact ``current`` is not
+    (audit-2026-09-04 B-5). ``current`` stays exactly what
+    ``architecture.md`` §3.5 defines — publication state, stamped by the pointer
+    flip and never recomputed — and the question a reader actually asks, *are
+    the inputs this artifact was computed from still the ones on disk*, is
+    answered beside it by :meth:`~hephaestus.core.project_store.publication.Publisher.freshness`.
+    Without the second field the route served ``current: true`` for a build
+    whose script had since been edited and the §4.1 chip rendered it as the
+    literal words "up to date"; with it, §4.1's ``stale`` chip state has the
+    producer it was specified with and never had.
+
+    Both keys are **omitted** rather than guessed where ``freshness`` is
+    ``None`` — a bundle written before publication recorded the consumed-``hc``
+    map cannot be compared, and an omitted key is how this projection says "no
+    answer" (an invented ``stale: false`` would be silence reading as a pass).
+    A part with nothing built has nothing to be stale about and says so with the
+    named empty list rather than by omission.
+
+    ``last_failure`` closes the sibling half of the same honesty problem. The
+    route prefers a current success over a later failure — deliberately, because
+    ``geometry_count`` is a fact about the *current* build — which left
+    ``BuildDocument.error`` unreachable on a read for any part that had ever
+    built once. When the caller supplies a failure that is about the script as
+    it stands now, it rides along under its own key: the success keeps the
+    document, and the failure stops being invisible.
     """
     if result is None:
         return {
             "status": "not_built",
             "current": False,
+            "stale": False,
+            "stale_inputs": [],
             "geometry_count": 0,
             "geometries": [],
             "checkpoints": [],
@@ -106,8 +139,16 @@ def build_projection(result: BuildResult | None) -> dict[str, Any]:
         "warnings": [warning.to_json() for warning in result.warnings],
         "checkpoints": [checkpoint.to_json() for checkpoint in result.checkpoints],
     }
+    if freshness is not None:
+        payload["stale"] = not freshness.fresh
+        payload["stale_inputs"] = list(freshness.changed_inputs)
     if result.error is not None:
         payload["error"] = result.error.to_json()
+    if last_failure is not None and last_failure.error is not None:
+        payload["last_failure"] = {
+            "error": last_failure.error.to_json(),
+            "checkpoints": [checkpoint.to_json() for checkpoint in last_failure.checkpoints],
+        }
     return payload
 
 

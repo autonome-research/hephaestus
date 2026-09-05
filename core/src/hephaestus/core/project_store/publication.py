@@ -53,7 +53,7 @@ from hephaestus.core.project_store.store import (
 from hephaestus.core.project_store.store import (
     artifact_ref as make_artifact_ref,
 )
-from hephaestus.core.types import BuildResult
+from hephaestus.core.types import BuildFreshness, BuildInput, BuildResult, InputHashes
 from opstore.gc import PREVIEW_RETENTION_CLASS
 from opstore.types import JSONValue, OwnerId
 
@@ -77,12 +77,14 @@ __all__ = [
     "EXPORT_REF_PREFIX",
     "ExportOutcome",
     "FrozenBuildInputs",
+    "InputMismatch",
     "PublicationKind",
     "PublicationOutcome",
     "Publisher",
     "build_bundle",
     "build_bundle_pointer",
     "current_pointer",
+    "input_mismatches",
 ]
 
 #: CAS pointer prefix for per-part current-build bundles.
@@ -210,6 +212,113 @@ def _geometry_source(build: UnpublishedBuild) -> str:
     """
     raw = build.worker_result.get("geometry_source")
     return raw if isinstance(raw, str) and raw in GEOMETRY_SOURCES else "authored"
+
+
+@dataclass(frozen=True)
+class InputMismatch:
+    """One §8 build input whose live value no longer matches the recorded hash."""
+
+    #: Which input moved — one of :data:`hephaestus.core.types.BuildInput`'s
+    #: five names. A per-file import mismatch reports ``"imports"``: the closed
+    #: vocabulary is what a chip and a context block can render, and the file
+    #: that moved is named in :attr:`detail`.
+    input: BuildInput
+    #: The frozen-versus-live sentence publication records on a raced outcome.
+    detail: str
+
+
+def input_mismatches(
+    expected: InputHashes,
+    *,
+    live_script: str | None,
+    live_toolchain: str,
+    live_part_params: str | None,
+    live_imports: Mapping[str, str | None],
+    consumed_hc: Mapping[str, JSONValue],
+    live_hc: Mapping[str, JSONValue],
+    compare_part_params: bool = True,
+) -> tuple[InputMismatch, ...]:
+    """Compare one build's recorded ``input_hashes`` against live values.
+
+    The single comparison behind **both** halves of "are these still the inputs
+    this build was computed from" — :meth:`Publisher._revalidate`, which asks it
+    under locks before the current-pointer flip, and :meth:`Publisher.freshness`,
+    which asks it on a lock-free read so a route can serve the answer
+    (audit-2026-09-04 B-5). Extracting it is what keeps the read from being a
+    *second* definition of staleness that agrees with publication today and
+    drifts tomorrow.
+
+    Pure: every live value is supplied by the caller, because the two callers
+    read them from different places (a frozen ``UnpublishedBuild`` versus the
+    published bundle) and because a function that read the filesystem itself
+    could not be the shared one.
+
+    ``compare_part_params=False`` drops the ``part_params`` leg for a caller
+    that has no ``PARAMS`` declaration in hand — a read has none, and needs
+    none, since the declaration is parsed out of the script and a changed
+    declaration is therefore already a changed script. With the leg compared,
+    ``live_part_params=None`` keeps publication's own reading: a build carrying
+    no declaration is malformed and is refused as a mismatch rather than passed.
+
+    ``live_imports`` maps each recorded import path to its live hash, ``None``
+    for one that has become unreadable. Only paths the build recorded are
+    compared — a new file in ``imports/`` that this build never read is not a
+    changed input to it (``INGEST.md`` §1).
+    """
+    mismatches: list[InputMismatch] = []
+    if live_script != expected.script:
+        mismatches.append(
+            InputMismatch("script", f"script: frozen {expected.script}, live {live_script}")
+        )
+    if live_toolchain != expected.toolchain:
+        mismatches.append(
+            InputMismatch(
+                "toolchain", f"toolchain: frozen {expected.toolchain}, live {live_toolchain}"
+            )
+        )
+    if compare_part_params:
+        if live_part_params is None:
+            mismatches.append(
+                InputMismatch("part_params", "part_params: build carries no params declaration")
+            )
+        elif live_part_params != expected.part_params:
+            mismatches.append(
+                InputMismatch(
+                    "part_params",
+                    f"part_params: frozen {expected.part_params}, live {live_part_params}",
+                )
+            )
+    # INGEST.md §1: a changed import file is a changed input. Revalidation
+    # compares the live bytes against the frozen hashes, so a build that
+    # raced a replaced STEP file can never flip the current pointer.
+    for path, frozen in sorted(expected.imports.items()):
+        live_import = live_imports.get(path)
+        if live_import != frozen:
+            mismatches.append(
+                InputMismatch(
+                    "imports",
+                    f"imports[{path}]: frozen {frozen}, live {live_import or 'unreadable'}",
+                )
+            )
+    missing = sorted(name for name in consumed_hc if name not in live_hc)
+    if missing:
+        mismatches.append(
+            InputMismatch(
+                "hc_dependencies",
+                f"hc_dependencies: consumed names no longer defined: {', '.join(missing)}",
+            )
+        )
+    else:
+        live_projection = {name: live_hc[name] for name in consumed_hc}
+        live_hash = consumed_hc_hash(live_projection)
+        if live_hash != expected.hc_dependencies:
+            mismatches.append(
+                InputMismatch(
+                    "hc_dependencies",
+                    f"hc_dependencies: frozen {expected.hc_dependencies}, live {live_hash}",
+                )
+            )
+    return tuple(mismatches)
 
 
 @dataclass(frozen=True)
@@ -687,47 +796,85 @@ class Publisher:
         return tuple(refs), tuple(blobs)
 
     def _revalidate(self, build: UnpublishedBuild) -> tuple[str, ...]:
-        """Recheck script/part-param/toolchain/consumed-hc hashes under locks."""
+        """Recheck script/part-param/toolchain/consumed-hc hashes under locks.
+
+        A thin caller of :func:`input_mismatches` since audit-2026-09-04 B-5:
+        the comparison itself is shared with :meth:`freshness`, which asks the
+        same question on a **read** with no locks and no build in hand. One
+        implementation rather than two is the whole point — a second copy would
+        be a second answer to "are this build's inputs still the live ones", and
+        the route would drift from the pointer flip the moment either changed.
+        """
         part = build.result.part
         expected = build.result.input_hashes
-        mismatches: list[str] = []
+        declaration = build.worker_result.get("params_declaration")
+        script_path = self.layout.part_path(part)
+        return tuple(
+            mismatch.detail
+            for mismatch in input_mismatches(
+                expected,
+                live_script=(
+                    sha256_bytes(script_path.read_bytes()) if script_path.is_file() else None
+                ),
+                live_toolchain=toolchain_hash(),
+                live_part_params=(
+                    sha256_canonical_json(declaration) if isinstance(declaration, dict) else None
+                ),
+                live_imports={
+                    path: self.parts.import_hash(path) for path in sorted(expected.imports)
+                },
+                consumed_hc=build.consumed_hc,
+                live_hc=self.projections.state().hc_state,
+            )
+        )
+
+    def freshness(self, part: str) -> BuildFreshness | None:
+        """Are ``part``'s current build's recorded inputs still the live ones?
+
+        The read-time half of the comparison :meth:`_revalidate` runs under
+        locks at publication, and the answer ``BuildResult.current`` cannot
+        give: ``current`` is publication state, stamped once by the pointer flip
+        and true forever after (``architecture.md`` §3.5), so a reader that
+        renders it as "up to date" is stating something the record never claimed
+        (audit-2026-09-04 B-5).
+
+        Lock-free and never a rebuild — one pointer read, one blob read, one
+        script hash. It is reconstructible from a pure read only because the
+        bundle already records the consumed-``hc`` projection beside the §8
+        input hashes; ``None`` where it does not (no current bundle at all, or a
+        bundle written before that map existed), so a caller reports the absence
+        of an answer rather than an invented "fresh".
+
+        The ``part_params`` leg is not compared here and does not need to be:
+        the ``PARAMS`` declaration is parsed out of the script, so a changed
+        declaration is a changed script and the script leg already names it.
+        """
+        bundle = self._current_bundle(part)
+        if bundle is None:
+            return None
+        consumed_raw = bundle.get("consumed_hc")
+        result_raw = bundle.get("result")
+        if not isinstance(consumed_raw, dict):
+            return None
+        if not isinstance(result_raw, dict):
+            raise ValidationError("current bundle has no result record", kind="contract")
+        expected = BuildResult.from_json(cast("Mapping[str, JSONValue]", result_raw)).input_hashes
         script_path = self.layout.part_path(part)
         live_script = sha256_bytes(script_path.read_bytes()) if script_path.is_file() else None
-        if live_script != expected.script:
-            mismatches.append(f"script: frozen {expected.script}, live {live_script}")
-        live_toolchain = toolchain_hash()
-        if live_toolchain != expected.toolchain:
-            mismatches.append(f"toolchain: frozen {expected.toolchain}, live {live_toolchain}")
-        declaration = build.worker_result.get("params_declaration")
-        if not isinstance(declaration, dict):
-            mismatches.append("part_params: build carries no params declaration")
-        else:
-            declared = sha256_canonical_json(declaration)
-            if declared != expected.part_params:
-                mismatches.append(f"part_params: frozen {expected.part_params}, live {declared}")
-        # INGEST.md §1: a changed import file is a changed input. Revalidation
-        # compares the live bytes against the frozen hashes, so a build that
-        # raced a replaced STEP file can never flip the current pointer.
-        for path, frozen in sorted(expected.imports.items()):
-            live_import = self.parts.import_hash(path)
-            if live_import != frozen:
-                mismatches.append(
-                    f"imports[{path}]: frozen {frozen}, live {live_import or 'unreadable'}"
-                )
-        live_hc = self.projections.state().hc_state
-        missing = sorted(name for name in build.consumed_hc if name not in live_hc)
-        if missing:
-            mismatches.append(
-                f"hc_dependencies: consumed names no longer defined: {', '.join(missing)}"
-            )
-        else:
-            live_projection = {name: live_hc[name] for name in build.consumed_hc}
-            live_hash = consumed_hc_hash(live_projection)
-            if live_hash != expected.hc_dependencies:
-                mismatches.append(
-                    f"hc_dependencies: frozen {expected.hc_dependencies}, live {live_hash}"
-                )
-        return tuple(mismatches)
+        mismatches = input_mismatches(
+            expected,
+            live_script=live_script,
+            live_toolchain=toolchain_hash(),
+            live_part_params=None,
+            compare_part_params=False,
+            live_imports={path: self.parts.import_hash(path) for path in sorted(expected.imports)},
+            consumed_hc=cast("Mapping[str, JSONValue]", consumed_raw),
+            live_hc=self.projections.state().hc_state,
+        )
+        return BuildFreshness(
+            changed_inputs=tuple(dict.fromkeys(mismatch.input for mismatch in mismatches)),
+            live_script_hash=live_script,
+        )
 
     def _flip_current(
         self,

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Literal, TypeVar, cast
+from typing import Final, Literal, TypeVar, cast, get_args
 
 from hephaestus.core.errors import ValidationError
 from opstore.types import JSONValue
@@ -122,6 +122,63 @@ class InputHashes:
             toolchain=_req(data, "toolchain", str),
             imports=imports,
         )
+
+
+#: The closed vocabulary of build inputs a *reader* can re-compare — the
+#: :class:`InputHashes` legs whose live value can move under an already
+#: published build. Named once because three surfaces have to mean the same five
+#: words by it: ``Publisher.freshness`` produces them, ``build_projection``
+#: serves them as ``stale_inputs``, and the composer's context block reads them
+#: back to the model (audit-2026-09-04 B-5). A ``Literal`` rather than a bare
+#: ``str`` so a sixth name cannot arrive by typo — the closed set is checked
+#: where a mismatch is *constructed*, not where it is rendered.
+#:
+#: ``effective_params`` is deliberately absent. An override is an input to the
+#: build that *ran*, recorded on the record; changing one asks for a new build
+#: rather than making an old one untrue, and publication's own revalidation does
+#: not compare it either.
+BuildInput = Literal["script", "toolchain", "part_params", "imports", "hc_dependencies"]
+
+#: :data:`BuildInput`'s members as a value, in comparison order.
+BUILD_INPUTS: Final[tuple[BuildInput, ...]] = get_args(BuildInput)
+
+
+@dataclass(frozen=True)
+class BuildFreshness:
+    """Whether a published build's recorded inputs still match the live ones.
+
+    A **read-time** fact, recomputed on every read, and deliberately NOT the
+    same thing as :attr:`BuildResult.current`. ``current`` is publication state
+    (``architecture.md`` §3.5): this build won the part's current pointer, and
+    that stays true no matter what is edited afterwards. Freshness is the other
+    half a reader needs and no record could carry — whether the inputs the build
+    was computed from are still the inputs on disk.
+
+    Conflating the two is audit-2026-09-04 B-5: ``GET /parts/{part}/build``
+    served ``current: true`` for a build whose script had since been edited, and
+    the header chip rendered that as the literal words "up to date".
+
+    :attr:`changed_inputs` is a subset of :data:`BUILD_INPUTS` in that fixed
+    order — the comparison order, not an alphabetical one, so ``script`` (the
+    leg that subsumes ``part_params``) is always named first.
+    """
+
+    #: The inputs whose live value no longer matches the recorded hash. Empty
+    #: means fresh; there is no third state, because a freshness that could not
+    #: be computed is reported as the ABSENCE of a ``BuildFreshness`` rather
+    #: than as an empty one (§6.3: silence must not read as a pass).
+    changed_inputs: tuple[BuildInput, ...] = ()
+    #: The live script hash the comparison read, or ``None`` when the part file
+    #: is gone. Carried because one other reader needs exactly the hash this
+    #: comparison saw: ``GET /parts/{part}/build`` surfaces a recorded failure
+    #: only when that failure is about the script as it stands NOW, and a second
+    #: read of the file could answer a different question than this one did.
+    live_script_hash: str | None = None
+
+    @property
+    def fresh(self) -> bool:
+        """``True`` when every recorded input still matches the live one."""
+        return not self.changed_inputs
 
 
 @dataclass(frozen=True)
@@ -652,7 +709,10 @@ def _checkpoints(data: Mapping[str, JSONValue]) -> tuple[StatementCheckpoint, ..
 
 
 __all__: Sequence[str] = (
+    "BUILD_INPUTS",
     "AuditHashes",
+    "BuildFreshness",
+    "BuildInput",
     "BuildResult",
     "BuildStatus",
     "BuiltThrough",
