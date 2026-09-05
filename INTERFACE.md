@@ -434,6 +434,19 @@ started in a terminal is *the same session object* the browser attaches to,
 because there is only ever one runtime. No event forwarding exists to get
 wrong.
 
+**AMENDED 2026-09-04 — the serving process also owns the project's registry
+set.** `server/src/hephaestus/agent_bridge/wiring.py`'s `build_dispatcher`
+resolves the `[registries]` pins once per runtime (falling back to the bundled
+trees) and verifies each Merkle digest, so the five registry tools answer from
+bytes this process accepted. A pin that no longer verifies degrades the registry
+to absent — the tools refuse `not_implemented` naming the reason — rather than
+preventing the serve from starting. The construction is one function because
+four runtimes answered "which capabilities does a shipped runtime have?"
+independently and all four answered "none": `heph agent`, `heph serve --web` and
+`heph mcp` now take their capability set from `build_dispatcher` by construction
+rather than by copying a constructor call that predates them
+(`docs/audit-2026-09-04-broken.md` B-2).
+
 ### 2.2 Principal and authorization
 
 The workspace principal is **not** a Pi session and must not borrow one.
@@ -480,7 +493,7 @@ cheapest way to keep it from calcifying into one.
 | `GET /project` | `{root, name, units, parts[], serve_mode, capabilities}` — the `open_project` projection, same serializer as `mcp/app.py` |
 | `GET /parts` | `[{name, path, content_hash, snapshot_ref}]` — `list_parts` projection. **Same serializer** as `heph part list --json` (`hephaestus.core.project_store.listing`). |
 | `GET /parts/{part}/script?offset_line&limit_lines` | `read_part` result verbatim, `_PAGING_FIELDS` intact. CLI counterpart: `heph script show --json`. |
-| `GET /parts/{part}/build` | `BuildResult` projection: `{status, current, artifact_ref, project_snapshot_ref, effective_params, geometry_count, geometries[], metrics, checks, source_map_ref, warnings, checkpoints[], error?, critique?}`. CLI counterpart: `heph part show --json` emits the engine `BuildResult` (same document `heph build --json` writes) or `{status:"not_built"}`. |
+| `GET /parts/{part}/build` | `BuildResult` projection: `{status, current, stale, stale_inputs[], artifact_ref, project_snapshot_ref, effective_params, geometry_count, geometries[], metrics, checks, source_map_ref, warnings, checkpoints[], error?, last_failure?, critique?}`. **AMENDED 2026-09-04:** `current` is **publication state** and is never recomputed by a reader (`architecture.md` §3.5); `stale` and `stale_inputs[]` are the separately recomputed freshness fact, comparing the published build's recorded input hashes against the live ones over the closed input vocabulary `script`, `toolchain`, `part_params`, `imports`, `hc_dependencies`. Both are **omitted** where the comparison is unavailable (a record written before publication captured the consumed-`hc` map); a part with nothing built serves the named empty pair. `last_failure` is a recorded failure of the script **as it stands now**, carried beside a current success so the precedence — a current success wins, because `geometry_count` is a fact about the current build — never makes a failure unreachable on a read. CLI counterpart: `heph part show --json` emits the engine `BuildResult` (same document `heph build --json` writes) plus `stale`/`stale_inputs`, or `{status:"not_built"}` — it reads only the **current** build, so a part whose only build failed prints the named absence where this route serves `status:"error"`. |
 | `GET /parts/{part}/properties` | the enumerated `part.*` metadata projection (§6.2) |
 | `GET /parts/{part}/checks` | the shared `heph check --json` serializer (§6.3) |
 | `GET /parts/{part}/params` | `PARAMS` declarations `{name, value, default, min, max, step, scope}` + `state_hash`. CLI counterpart: `heph params [PART] --json` (script literals + last-build effective values; no sandbox, no `state_hash` — it does not write `set_params`). |
@@ -578,7 +591,7 @@ side effect on a live run.
 
 | Route | Is | Why no key, and what stands in for one |
 |---|---|---|
-| `POST /sessions` | `session.create` (profile from a closed set) | Creates a session; a duplicate is an extra *idle* session, not a lost or doubled write. At-least-once is the stated consequence: a retried create may leave an orphan session, which `GET /sessions` lists and the operator closes. |
+| `POST /sessions` | `session.create` (profile from a closed set), body `{profile, part?, session_id?, resume?}` — **documented 2026-09-04, having shipped undocumented** | Creates a session; a duplicate is an extra *idle* session, not a lost or doubled write. At-least-once is the stated consequence: a retried create may leave an orphan session, which `GET /sessions` lists and the operator closes. **`resume: true` for an id with no persisted session directory is `404 unknown_session` (§2.4), not a fresh session minted under that name** — the runtime that owns the session directories is the one layer that can answer the question, and it refuses there. `resumed` in the response is a *fact about the transcript*, never an echo of the request flag. |
 | `POST /sessions/{id}/prompt` | `prompt`, body `{text, context?}` (§7A.3) | A prompt is not idempotent in any useful sense — the same words twice are two turns, and pretending otherwise would let a replay swallow a deliberate re-ask. At-least-once, stated. The optional `context` member changes nothing about the key policy: it carries references, never facts (§7A.3). |
 | `POST /sessions/{id}/answer` | `session.answer` for a pending `ask_user` | Governed by **question-id idempotency**, not by the header ladder: idempotent on the question id, first answer wins (§2.7). That is a stronger and already-existing guarantee; a second mechanism over it would be the duplication mission rule 6 forbids. |
 | `POST /runs/{run_id}/cancel` | `cancel` — cancellation targets a **run**, so the route does | Idempotent **by construction**: `app.py::cancel` is a quiet no-op after close and a repeated `request_cancel` on an already-cancelled run changes nothing. A key would record a replay of a no-op. |
@@ -724,9 +737,12 @@ HTTP status is a coarse envelope over the reason and never replaces it.
 | `session_busy`, `part_busy`, `key_expired`, `key_timestamp_skew`, `key_payload_mismatch` | 409 | full refusal payload verbatim |
 | snapshot ref past retention | 410 | `snapshot_expired` |
 | admission full (17th run) | 429 | `busy` |
-| **sidecar does not know a session the runtime lists, after one re-adoption attempt (§2.8)** | **404** | **`unknown_session`** + `{session_id}` |
-| **no sidecar can serve a session route — none attached, or one that cannot be started** | **503** | **`agent_unavailable`** + §7A.8's `cause` and `detail` (no `config_path` — see below) |
+| **sidecar does not know a session the runtime lists, after one re-adoption attempt (§2.8); or `POST /sessions` names an id with `resume: true` and no persisted session directory exists for it** | **404** | **`unknown_session`** + `{session_id}` |
+| **no sidecar can serve a session route — none attached, or one that cannot be started, and *nothing answered*** | **503** | **`agent_unavailable`** + §7A.8's `cause` and `detail` (no `config_path` — see below) |
 | `TIMEOUT` / `PROCESS_DOWN` | 504 / 503 | reason verbatim |
+| **no route matches the request path** | **404** | **`unknown_route`** |
+| **the path is served, the method is not** | **405** | **`method_not_allowed`**, and the router's `Allow` header is preserved |
+| **an exception no branch of the mapper classified** | **500** | **`internal_error`** + `{incident}`, with a **fixed** message |
 | **edit / param CAS conflict** | **200** | not an error — the discriminated result carrying `conflict{…}` |
 | **`capability_not_available` / `image_model_required`** | **200** | the discriminated `capability_error` *result* |
 
@@ -788,6 +804,34 @@ to make that impossible.
 `agent_unavailable` says *this runtime*. They have different remedies (open
 another session versus fix the runtime), and a client that could not tell them
 apart would offer the wrong one.
+
+**AMENDED 2026-09-04 — the envelope covers the router and the server fault, and
+an answered refusal is never a dead runtime.** Three rows were added because
+three responses this process can emit had no envelope at all. A route miss and a
+wrong method are decided by the **router**, before any endpoint runs, so a
+per-endpoint mapping cannot reach them; an exception no branch classified
+reached the client as a plain-text `500`. All three now carry `status`, `reason`
+and `message`, and the decision is taken once, at the application boundary —
+there is no response this server emits without the envelope. `internal_error` is
+the one reason in the table that is **not the engine's**: it names the *absence*
+of an engine condition, which is why its message is a fixed sentence plus a
+correlation id and never `str(exc)`. This path is reached only by exceptions
+nobody has classified, and therefore by exceptions nobody has redacted; the id
+is logged with the traceback so an operator can join the two. The 405's `Allow`
+header rides through unchanged — the envelope is an addition to it, never a
+replacement.
+
+And one sentence on `agent_unavailable`: **a refusal the sidecar *answered* is
+never `agent_unavailable`.** The answer is proof of liveness. The bridge
+distinguishes the two structurally — an error envelope is populated only from a
+genuine `{"error": …}` response frame, and every other supervisor raise site
+carries none — so the refusal is derived from the envelope whenever one is
+present, read off the closed `SIDECAR_REFUSALS` vocabulary
+(`server/src/hephaestus/http/errors.py`) rather than by matching a message
+string, and the 503 is reachable only by silence. Before this, a malformed
+history cursor was reported as `503 agent_unavailable` while the very next call
+to the same process returned `200`, and the panel told the operator to attach a
+runtime that was already attached.
 
 **TIGHTENING (binds G5.15).** The five-value `StaleReason` vocabulary is closed
 and must not be collapsed. `malformed` — which no gate clause names — is
@@ -1388,6 +1432,19 @@ moves.
   caller forgets, and for `heph agent`, which does not pass through the HTTP
   layer at all. The two are not required to share a message string and do not:
   the wire contract is the reason token and the status, not the prose.
+  **AMENDED 2026-09-04 — `invalid_cursor` is not only the pair.** A token that
+  does not decode is `invalid_cursor` at 400 too: not base64url of a JSON
+  object, no string high-water mark, or an `offset` that is not a non-negative
+  integer. It is refused **by the sidecar**, because this section already
+  forbids any layer above it from decoding a token — so the HTTP layer cannot
+  validate the shape itself and must not try. The sidecar therefore names its
+  own refusal on the wire (a JSON-RPC `INVALID_PARAMS` frame whose `data.reason`
+  is `invalid_cursor`) and the HTTP layer reads that token off the closed
+  `SIDECAR_REFUSALS` set rather than re-deriving it from prose; the reason token
+  and the status are the wire contract, exactly as the RECONCILED note above
+  already says for the pair. Before this, the decoder threw a plain error, which
+  became a `-32603` and reached the client as `503 agent_unavailable` — a live
+  sidecar reported dead for a malformed request.
 - **Spelled the same at all three boundaries.** HTTP:
   `GET /sessions/{id}/history?cursor=` **or** `?after=`, still with no page-size
   parameter and still a passthrough — the route forwards whichever it was given
@@ -1468,6 +1525,20 @@ given session may be slow (it spawns and resumes) and every later read of that
 same session against that same child refuses immediately by name. Restoring the
 sidecar clears the mark on the next successful call (§2.3), with no restart.
 
+**AMENDED 2026-09-04 — re-adoption may fail, and it says so.** The resume this
+clause performs is itself refusable: a session id with no persisted session
+**directory** is `unknown session`, which this path already maps to
+`404 unknown_session`. The check is on the directory and not on a transcript
+file inside it, because the directory is created when the session is opened and
+before any entry is written — a session that was created and died mid-turn is
+exactly what this clause exists to recover, and a file-level check would turn
+that recovery into a permanent refusal. The alternative, which shipped, was
+worse than a refusal: a failed re-adoption silently created a **new empty
+session under the old id** and reported the transcript readable. This is also
+what makes `resumed` in `POST /sessions`' response (§2.3) a fact about the
+transcript rather than an echo of the request flag — a create that returned at
+all is a resume that found something to continue.
+
 **NEW WORK (binds G4.10) — parent/child threading.** `HephaestusEvent` carries
 no parent linkage, `history.page` is per-session, and a quick-edit child is a
 separate `session_id` with its own Pi JSONL; `QuickEditContext.parent_session_id`
@@ -1531,7 +1602,7 @@ viewport; **GLTF/GLB** as the geometry wire format; **Playwright** for
 | Server state | TanStack Query | Server state is almost entirely content-addressed and cacheable **by ref** (§2.6); refetch/invalidate is the whole problem. §7A.11 finally makes invalidation a specified boundary rather than an implied one. |
 | Workspace state | one module over `useSyncExternalStore`, no state library | The pin must have exactly **one** authority (§4.5) and must be URL-serializable, which is a flat record, not a reducer ceremony. *Rejected:* Zustand and Redux Toolkit — a dependency whose only output is a store this small; and bare per-component `useState`, which cannot hold a single pin authority. |
 | Router | None; hand-rolled URL state sync | One route (§4.5). A router would exist only to parse a query string. |
-| Bundle delivery | built assets ship inside the wheel, served by `--web` from `importlib.resources` | The packaged-sidecar precedent. Vite's dev server is a development convenience proxying `/api` to a running `heph serve --web`. `@autonome/hephaestus-web` stays reserved and unpublished. |
+| Bundle delivery | built assets ship inside the wheel, served by `--web` from `importlib.resources`; **AMENDED 2026-09-04 — a path the bundle does not contain answers `404` with §2.4's envelope, never a single-page fallback and never an unhandled fault** | The packaged-sidecar precedent. Vite's dev server is a development convenience proxying `/api` to a running `heph serve --web`. `@autonome/hephaestus-web` stays reserved and unpublished. The bundle is composed **around** the API application (so §2.3's closed route table stays a strong assertion), which left it with no exception middleware of its own: a missing `/favicon.ico` answered `500` with a traceback on every page load. It gets the API's own envelope handlers (`with_error_envelope`, `server/src/hephaestus/http/app.py`). The client keeps its navigation state in the URL fragment, so an unknown path is a wrong URL and a `404` is the honest answer. |
 
 ### 3.2 The dependency decisions, revisited — and the row that was wrong
 
@@ -1734,6 +1805,17 @@ decides where a heading goes.
 `.eyebrow`**, checked mechanically. This one rule converts the shipped 65-of-91
 distribution into a ramp with a shape: eyebrows 11, controls and data 12, prose
 13, panel titles 15.
+
+**AMENDED 2026-09-04 — a projected surface may SHRINK a composed role, and may
+not re-declare one.** The view cube (§5.5) paints each face word onto its face
+through that cell's own affine, so a word on an oblique face renders at roughly
+0.7× the composed `.label` size. That is legal and is stated rather than left
+implicit, because the rule it must not break is the one this section is about:
+the role is `composes: label`, never a re-declared `font-size`, so the ramp
+still has exactly the members in the tables above and the projection is a
+transform on a role rather than an eighth voice. The affine only ever shrinks —
+a projected surface that magnified a role would be minting a size the ramp does
+not have, by another door.
 
 ### 3.9 Colour — semantic roles, with the ratio each one guarantees
 
@@ -2480,6 +2562,20 @@ into SCREAMING_SNAKE API keys (`AREA_MM2`, `BBOX_MM`) and shown raw; and a
 200px table floating in a 1490px panel with the Properties value column
 visibly jogging between two groups that each compute their own `max-content`.
 
+**AMENDED 2026-09-04 — the container contract, both halves.** A `DataTable` or
+`Field` renders ONLY inside a `PanelBody`: the body is the sole declarer of the
+three tracks these components claim with `grid-template-columns: subgrid`, and a
+subgrid with no parent tracks to inherit is a one-column stack. A `PanelBody` in
+turn must have a **bounded-height ancestor**, because its `overflow: auto` is a
+promise only a bounded parent can keep. **The negative half:** prose inside a
+panel spans all three tracks and contributes to the intrinsic size of NONE of
+them — a `PanelNote` that auto-places into the label column makes its own
+`max-width: 68ch` that column's max-content size. *Retires:* tracks of
+`487.625px 0px 8px` in the BOM dialog — a label column sized by a sentence and a
+value column collapsed to the zero minimum of `minmax(0, 1fr)` beside it — in
+the dialog and in seven inspector panels. **A column sized by a sentence is not
+a column.**
+
 **`Field`.** One key/value fact on the same three-column geometry, for panels
 carrying a fact rather than a table. Replaces the `<dl>` grids in
 `PropertiesPanel` and `ProvenancePanel`.
@@ -2532,6 +2628,19 @@ to the opener. Carries `data-provenance-state` for §4.4's three shapes, and
 §4.4's explanatory sentences render in `.body` at `--ink-muted` — **not** the
 current 3.10:1 — because a sentence that exists to make a weak answer read as
 designed cannot itself be below the legibility floor.
+
+**AMENDED 2026-09-04 — the dialog variant is bounded on BOTH axes.** It is
+centred rather than anchored, so "stay in the viewport" cashes out as a height
+contract mirroring the width one: `max-height: min(80vh, calc(100vh - 2 *
+var(--pad-overlay)))` and `overflow: hidden`. The `overflow` is the load-bearing
+half — it makes the dialog a scroll-container boundary, so the panel inside
+resolves against the bounded height, its `auto minmax(0, 1fr)` rows shrink the
+body row, and the body's own `overflow: auto` finally has something to clip.
+**The panel body is the scroll region and the dialog's title stays pinned.**
+*Retires:* a BOM dialog measured 434×2838 at y=-919 — top and bottom 919px
+off-screen, `max-height: none`, `overflow: visible`, and a body reporting
+`scrollHeight === clientHeight === 2777`, so there was nothing to scroll because
+the body was allowed to be as tall as its content.
 
 **`EmptyState`.** Centred column, `max-width: 44ch`, sprite icon, `.title`
 heading, `.body` prose in the base ink and **not italic**, optional `Button`.
@@ -2851,7 +2960,35 @@ hit stays inside the same plate. A one-solid sheet **unmounts** explode and
 section while they are no-ops and not engaged (#113 leftover): no "Show
 explode" / "Show section" disclosure on a single solid. An engaged `explode_t`
 or `section_plane` stays mounted so the operator can reset it. That is overlay
-crowding, not a second camera control. The cube itself is unchanged.
+crowding, not a second camera control.
+
+**AMENDED 2026-09-04 — the inventory is closed, the vocabulary has one
+implementation, and the hit map IS the drawing.** **The inventory is closed at
+twenty-six: six faces, twelve edges, eight corners** — one target per direction
+in `{-1,0,1}³` minus the origin, and a build with four of twelve edges and five
+of eight corners does not satisfy this clause. **The derivation rule:** every
+target's `view` comes from its own direction through the shared camera
+vocabulary (`web/src/viewport/cameras.ts`'s `nameForDirection`, mirroring
+`cameras.py`), never from a table written beside it, so the `+++` corner **is**
+`iso` and the `-Y` face is spelled `front` — one camera with two names, which
+is why the inventory names twenty-six cameras and not twenty-six words. **The
+addressing rule:** every drawn target carries `data-view`, plus `data-cube-hit`
+naming its kind, and the one whose camera the workspace is on carries
+`data-cube-current`. **The negative half, and it is the clause that has teeth:**
+the cube's hit regions ARE its projection — a target that is drawn is hittable,
+and a target that is not drawn is not. A face turned away from the viewer is not
+drawn, is not in the accessibility tree, and is reached by turning the cube; two
+targets never trade pixels by paint order. C19's `front` hit stays inside the
+same plate **and is drawn exactly when the `-Y` face is toward the camera**; at
+every camera the cell whose normal is the eye direction is drawn and is the
+current target. *Retires:* a `preserve-3d` stack of six faces, four slabs driven
+through the body's interior and five plates at a margin, hit-tested by paint
+order under a parent `rotateZ` that rolled the cube in the screen plane rather
+than turning it — ten of fifteen targets reachable at `iso`, the same reachable
+set at every azimuth, and `Front / Top` collecting pixels that belonged to
+`Top`. The 2026-09-03 clause's closing "the cube itself is unchanged" is struck:
+the cube is the thing that changed, and the overlay-crowding rule above it is
+what stands.
 
 **Appearance cluster — operator chrome, bound to the pin.** A small control
 strip on the viewport drives the display authorship §3.11 already specified:
@@ -2889,6 +3026,21 @@ header shows `stale` with the ref it is showing. `architecture.md` §3 already
 guarantees a long build never blocks inspection; the UI's job is to express
 "stale but valid" rather than to blank the canvas. It never blanks.
 
+**AMENDED 2026-09-04 — `stale` has two producers, and the header chip renders
+the second one.** The first is the in-flight-rebuild state above, which is
+client-side and lives for the duration of a mutation. The second, and by far the
+commoner, is the server's `stale` field on `GET /parts/{part}/build` (§2.3): the
+published build's recorded inputs no longer match the live ones — most often an
+edited script. The §4.1 chip maps `status:"ok"` with `stale:true` to the word
+`stale` **ahead** of the `current`/`preview` split, because `current` stays
+`true` after an edit and would otherwise print "up to date" for a superseded
+artifact. The same read carries `last_failure`, and its precedence is stated in
+the one direction that survives the ordinary fail-then-fix-then-build sequence:
+a recorded failure is surfaced **when its script hash equals the LIVE script
+hash on disk** — the failure is about the text in front of the operator — and
+never merely because it is newer than the current build, which would leave a
+repaired part carrying a `last_failure` forever.
+
 **AMENDED 2026-09-02 (§0.2c) — the absence gets its remedies, and the overlays
 get a layout contract.**
 
@@ -2921,11 +3073,22 @@ and the legend yields last, because a readout that lies about camera scale is
 worse than a missing control. **The negative half:** no bottom overlay is ever
 absolutely positioned over another, and nothing yields above 560px.
 
-**(C19) `front` joins the view-cube plate, and nothing overlaps anything.** The
+**(C19) the named views live in the view-cube plate, and nothing overlaps
+anything.** *(Heading amended 2026-09-04; the pairwise-disjointness half below
+is unchanged and still passes.)* The
 §4.7 ViewCube spec already moved `front` onto "a separate named-views row";
 this clause pins where that row lives: **inside the view-cube plate** (§3.10's
 overlay surface), not as a free-floating control — one plate, one shadow, one
-bounding box in the corner. **Testable, and it covers the whole overlay
+bounding box in the corner. **AMENDED 2026-09-04 — which `data-view` is
+present depends on the camera.** `front` is not a free-floating control: it is
+the cube's `-Y` face, inside the one plate, and it is drawn exactly when that
+face is toward the viewer. The testable form is therefore that at every named
+view the plate carries a `data-view` for the camera the workspace is on and
+marks it `[data-cube-current]` — not that `front` is unconditionally present.
+**Note the retired reading:** the shipped cube satisfied an unconditional
+"`front` is always present" assertion only because its parent transform applied
+azimuth as a screen ROLL, so `Front` faced the viewer at every azimuth. That is
+the defect, not compliance. **Testable, and it covers the whole overlay
 contract:** an e2e asserts, on a `ready` canvas at 1280×800 and at the 560px
 yield width, that the bounding boxes of the view-cube plate, the appearance
 cluster, the grid readout, the explode slider, the section control, and the
@@ -3062,6 +3225,28 @@ One tab per attached session, nested: an orchestrator, its delegated part
 sessions, and a part session's quick-edit children form a three-level tree
 rendered as an indented tab list with `data-thread-depth`. The edge source is
 `GET /sessions/{id}/thread` (§2.8) — never inference.
+
+**AMENDED 2026-09-04 — membership and shape come from different documents, and
+conflating them is the defect this clause now names.** The strip's **membership**
+is the sessions listing: every session the serving process owns renders exactly
+one tab, in every state. `GET /sessions/{id}/thread` is the source of an edge's
+kind, origin and creation time for the SELECTED subtree — never the source of
+which sessions exist, because it returns one connected component of the session
+forest and always answers with at least one node. A session that is listed but
+is not in the selected thread keeps its listed `thread_state` and its edges are
+unknown rather than absent, which the tab says with `data-thread-state`.
+**Depth is read, never guessed:** `GET /sessions` carries `parent_session_id`
+from the same edge join, and a tab's depth is recomputed by counting its
+**listed** ancestors — so a parent id that is not itself listed is treated as
+absent and its child is a root at depth 0, because an indent under a tab that is
+not on screen is a claim about a session the strip is not showing. The edge
+source is still the thread route — never inference. **The orphan clause:**
+because the route table carries no session-close route, a duplicate create
+leaves a permanently idle session; the strip renders it, and hiding it is not an
+available remedy. *Retires:* creating a session left exactly one tab — the new
+one — while `GET /sessions` returned three rows, because the panel drew the
+selected thread and fell back to the listing only when the walk returned
+nothing, which a route that always answers with at least one node never does.
 
 Attachment is explicit: opening a part shows its session if one exists; the
 "attach" affordance lists live sessions. **A browser tab is a client, never a
@@ -3983,7 +4168,10 @@ one gesture, not "click Ask about, then click the box." Focus alone still
 creates nothing. **Named refusal:** there is
 no route that closes a session and none is invented. An orphan is idle and
 harmless; `GET /sessions` lists it, and the panel says it can be left rather
-than offering a close button no route backs.
+than offering a close button no route backs. **AMENDED 2026-09-04 — and the
+strip therefore renders every idle orphan a duplicate create leaves behind**
+(§7.1). Operators will see tabs appear that earlier builds silently hid; that is
+the repair, not a regression.
 
 **Where a part comes from, said out loud** *(2026-08-28 review addition)*. After
 this section lands, the only way to bring a part into existence from the browser
@@ -4071,6 +4259,14 @@ is deterministic in `(references, project state)`, bounded by the existing
 `text_result` caps with truncation **marked, never silent** (§2.9's precedent),
 and goldened at `tests/stage4/goldens/context/<case>.txt` so a change to what
 the agent is told is a diff in a review rather than a change nobody can see.
+
+**AMENDED 2026-09-04 — reading through the projection includes reading its
+freshness.** The part block composes from the same two reads
+`GET /parts/{part}/build` hands its projection, so a stale build says so in
+words before it names its artifact ref. Composing from the build record alone
+told the model `build status: ok` and a superseded artifact ref for a part whose
+script had since been edited — the one reader of that answer who cannot see the
+§4.1 chip, and who then goes on to `measure` the artifact it was handed.
 
 **NEW WORK (§19.20) — `POST /context/preview`**, project-scoped, read, no key.
 Resolves an envelope and returns `{block, truncated, sources[]}` **without**
@@ -6030,6 +6226,59 @@ four amendments.** Each names its stage. **Updated 2026-08-28: the
     `[data-align]` attribute the renderer projects a table cell's alignment as
     (an attribute plus a stylesheet, so the repo's `heph/no-raw-type` rule stays
     satisfiable).
+
+*§2.1 / `ASSEMBLY.md` §2 — the 2026-09-04 audit's residue: four facts it left
+open by design, in three items. Named by `docs/audit-2026-09-04-broken.md`
+(B-1b, B-2).*
+
+47. **`py.*` dispatch on a bounded worker pool** (§2.1, added 2026-09-04).
+    `Supervisor._read_loop` calls the `py.*` handler inline, so a handler that
+    issues `Supervisor.call` waits on a response only the thread it is blocking
+    can deliver, and the watchdog then kills the child as unresponsive. Two
+    model-visible capabilities are held short by this and by nothing else, now
+    that `server/src/hephaestus/agent_bridge/wiring.py` resolves the rest.
+    **`query_snapshot` refuses every model turn** with
+    `capability_not_available`: its caller IS wired and answers
+    `dispatch.SnapshotAvailability.unavailable()` rather than deadlocking, and
+    the refusal is the same result the model read when no caller was configured
+    at all. Its other half is that **no shipped HTTP route dispatches
+    `query_snapshot`** — §2.3 exposes `read_part`/`inspect_part`/`measure` and
+    the keyed mutations, not this tool — so in practice every caller is a model
+    turn and every answer is the refusal; the wiring is honest, not a claim that
+    vision is live. **`delegate_part_agent` reaches a durable `interrupted`
+    terminal** because no `DelegationRunner` may be bound, which is the correct
+    state while the runner would have to prompt a child over the channel the
+    call is already occupying: one durable terminal beats an invented
+    completion. Both go live with no edit at either site once dispatch moves off
+    the reader thread.
+
+48. **A probed secure backend for `heph agent`** (§2.1, added 2026-09-04).
+    `CadOpsState` defaults to `UnsafeLocalBackend` and
+    `server/src/hephaestus/agent_bridge/cli.py` injects none, so
+    `instance_store_part` reports `capability_not_available` under `heph agent`
+    while working under `heph serve --web`, which probes bwrap. `wiring.py`'s
+    `resolve_registry` drops an unsafe backend on principle — registry content
+    never runs unsandboxed — so the fix is to pass a probed backend into
+    `BridgeRuntime(backend=…)` and nowhere else. Until then this is a **named
+    capability gap in one runtime**, not a silent one: the tool refuses by name.
+
+49. **A binding-to-solid record on a published artifact** (`ASSEMBLY.md` §2,
+    `tool_schema.md`'s `measure`, added 2026-09-04). Contract §7 rule 4 — a bare
+    **binding** name — cannot resolve against a published artifact, because
+    publication records label runs and tag placements and no binding-to-solid
+    mapping. `measure`, `heph check` and project-scope `run_checks` answer the
+    other three rules and refuse this one, and the refusal deliberately omits
+    binding names from **both** halves of its output (the `candidates` list and
+    the near-miss clause of the message, which states the same names a second
+    time in prose) rather than offering a selector guaranteed to refuse. The
+    user-visible shape is mild because `script_contract.md` §5.1's label fill
+    covers the common case: a geometry-bearing binding that was never relabelled
+    carries its own name as a label and resolves under rule 3, and a relabelled
+    one resolves under the label it was given. What is missing is the case where the two diverge — a
+    binding whose node was given a *different* label — plus the honesty cost of
+    a documented rule one surface cannot serve. Closing it means recording the
+    mapping at publication, which is a build-side change, not a measurement-side
+    one.
 
 *§23 — provider sign-in. **Stage 10B**, Gate G10B, with credential discovery at
 **Stage 10C**, Gate G10C (both approved 2026-08-28). Its own new-work list is

@@ -67,6 +67,18 @@ One part, one script, under `parts/`. A script is executed statement by
 statement in an injected namespace — it is not imported as a module and it does
 not `import` anything.
 
+**The canonical minimal scripts are the `heph part create` templates**
+(`core/src/hephaestus/core/part_templates.py`), and copying one is the way to
+start. Two traps live in the gap between build123d's own idiom and this
+contract, and the templates are the only place they are answered together: a
+part script publishes by **assigning** `part.geometry = <shape>`, so the builder
+form `with BuildPart() as part:` rebinds the injected handle and publishes
+nothing at all; and there is no import line, so `from build123d import *` is a
+build error rather than a redundancy. Every template builds unmodified, and
+`core/tests/test_cli_authoring.py::TestTemplateBuilds` keeps them that way — the
+absence of that test is why four of them shipped unbuildable
+(`docs/audit-2026-09-04-broken.md` B-4).
+
 ```python
 # parts/bracket.py
 PARAMS = {

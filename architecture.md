@@ -340,7 +340,17 @@ params, pinned toolchain, and the part's consumed-`hc` projection (the exact
 do not invalidate an artifact whose consumed projection is unchanged. Before
 publishing a **successful, non-preview** artifact as current or clearing stale
 state, it reacquires the locks and revalidates script/part-param/toolchain and
-consumed-`hc` hashes. Failed builds
+consumed-`hc` hashes. **AMENDED 2026-09-04 — `current` is publication state and
+nothing more:** it records that this build won the part's current pointer, and
+it is never recomputed by a reader. Read routes serve freshness as a
+**separately recomputed fact** beside it — the same script/part-param/toolchain/
+consumed-`hc` comparison, run lock-free against the live project, over the
+closed input vocabulary `core/src/hephaestus/core/types.py`'s `BuildInput`
+names — so `current` can never be read as "up to date". A reader that recomputed
+`current` itself would be re-deciding publication on a read; a reader with no
+second field had no honest word for an edited script, which is how
+`GET /parts/{part}/build` came to serve a superseded artifact as current
+(`docs/audit-2026-09-04-broken.md` B-5). Failed builds
 and transient-parameter previews always have `current=false` and preserve the
 prior successful current artifact. A raced build may retain a content-addressed
 superseded artifact for audit, but cannot become current; retrying the same
@@ -354,6 +364,17 @@ coherent project-snapshot manifest atomically maps every addressed part to a
 successful artifact whose consumed-`hc` projection matches the current live
 projection; unchanged parts may contribute an artifact from an older audit
 revision. Shared dependency names necessarily carry equal canonical values.
+**AMENDED 2026-09-04 — a manifest entry names the build's bundle, and so does
+the store.** Each entry also carries `bundle_ref` (manifest version 2), and
+every publication that produced an artifact records that bundle under a
+`build-bundle:<part>:<artifact blob>` pointer GC-linked **from the artifact**,
+so the `script_contract.md` §7 selector namespace of a historical, preview or
+raced build stays resolvable for exactly as long as its geometry does. Readers accept manifest
+version 1 and fall back to the pointer, then to `"part"`-only addressing, and a
+bundle naming a different artifact than the one being measured is refused on
+both paths rather than resolved against the wrong build. The key carries the
+part because an artifact ref is content-addressed over BRep bytes alone and two
+parts with identical geometry share one.
 Project-scoped measure/check rejects with `incoherent_project_snapshot` and
 stale/mismatched projection details unless a valid current manifest exists or
 the caller supplies an immutable `project_snapshot_ref`. Reads of one part run lock-free against

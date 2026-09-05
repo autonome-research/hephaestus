@@ -543,9 +543,30 @@ measure(kind: "interference"|"clearance"|"distance"|"bbox"|"volume"|"mass"|
 `a`/`b` use the geometry addressing grammar of contract §7 (tags, labels
 with `#k`/`#*` dedup selectors, binding names, `"part"`, and
 `"<part>/<label>"` cross-part); addressing errors list candidates rather
-than guessing. `interference` returns overlap volume with
-per-pair breakdown (observed equivalent: `Measure Overlap`); `clearance`
-returns minimum separation; `distance` measures between tagged topology. The
+than guessing — **AMENDED 2026-09-04:** the resolvable namespace itself when no
+near miss is close enough to suggest, never a name this surface cannot answer,
+and in both the structured list and the message, which state the same names
+twice. Candidates are spelled as the call would have to spell them:
+part-qualified whenever more than one part is addressed, since a bare name
+there would resolve against whichever part is current. That namespace is what
+publication recorded beside the artifact (the build's §7 `geometry_index`, the
+source map's tag placements, the contract's §8 solid runs), so a non-`"part"`
+selector against an artifact whose build bundle was never stored — published
+before bundles were durable, or collected with its geometry — refuses
+`namespace_unrecorded` naming the part, rather than reporting a real selector as
+resolving to nothing against an empty candidate set; `"part"` still resolves on
+such an artifact. Two honest limits remain. A selector that IS in the namespace
+but names topology a reloaded BRep cannot supply (a tag placed outside
+`part.geometry`, a vertex/wire tag) is an addressing error carrying that reason,
+never a guessed face. And §7 rule 4 is not answerable here at all: publication
+records label runs and tag placements and no binding-to-solid mapping, so a
+binding name refuses and appears in neither the candidate list nor the message —
+contract §5.1's label fill means a geometry-bearing binding that was never
+relabelled is already addressable under rule 3 by that same name, and a binding
+whose node was relabelled is addressable by the label it was given.
+
+`interference` returns overlap volume with per-pair breakdown (observed
+equivalent: `Measure Overlap`); `clearance` returns minimum separation; `distance` measures between tagged topology. The
 canonical schema requires `b` for interference/clearance/distance and forbids
 it for unary bbox/volume/mass/sealed/genus operations. A single-part operation
 may target an explicit successful current/historical/preview `artifact_ref`;

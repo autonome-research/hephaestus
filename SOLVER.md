@@ -84,7 +84,7 @@ had drifted by up to 550 lines, and the surface count had moved 53 → 54 under
 `compare_to_scan`. All of them were re-resolved against `HEAD` on 2026-08-30
 and are correct as written *now*. Two of them were load-bearing rather than
 cosmetic — G13A clause 14 greps the `check_assembly` occurrence of "There is
-no solver." (`tool_schema.md:911`, which the 2026-08-30 amendment rewrote in
+no solver." (`tool_schema.md:932`, which the 2026-08-30 amendment rewrote in
 place, so the clause now reads the amended wording at the same line), and
 G13B clause 40 repoints the two literal `assert len(...) == N` pins — so a
 stale line number here is not a typo but a gate clause nobody can write.
@@ -151,7 +151,7 @@ touched anything.
 - `ASSEMBLY.md:56-57` — "A constraint that requires motion to satisfy is"
 - `ASSEMBLY.md:55-75` — "NO SOLVER MOVES GEOMETRY"
 - `ASSEMBLY.md:68` — "is a separate stage.)"
-- `ASSEMBLY.md:126` — "No placement solver **in 8C**"
+- `ASSEMBLY.md:143` — "No placement solver **in 8C**"
 - `KINEMATICS.md:333` — "No placement/assembly solver **in Stage 9**"
 - `KINEMATICS.md:25-29` — "Each amendment lands with the sub-stage whose machinery ships it"
 - `KINEMATICS.md:8-11` — "Stage 9 amendment"
@@ -161,7 +161,7 @@ touched anything.
 - `VALIDATION.md:67-77` — "insufficient_scan_seeds"
 - `VALIDATION.md:163-167` — "independent second solution"
 - `VALIDATION.md:510-516` — "budget = ceil"
-- `tool_schema.md:911` — "No solver moves geometry"
+- `tool_schema.md:932` — "No solver moves geometry"
 - `tool_schema.md:126-132` — "orchestrator-only"
 - `script_contract.md:119-140` — "PARAMS"
 - `script_contract.md:141-149` — "globals.py"
@@ -216,7 +216,7 @@ holds it.*
   verdict, never clears a violated row, and nothing in Stage 13 writes a
   script, a parameter, or an artifact."* The heading of the bullet changes
   from `NO SOLVER` to `NO SOLVER MOVES GEOMETRY`.
-- **`ASSEMBLY.md` §4 (`ASSEMBLY.md:126`)** — **LANDED 2026-08-30 with 13B**.
+- **`ASSEMBLY.md` §4 (`ASSEMBLY.md:143`)** — **LANDED 2026-08-30 with 13B**.
   "No placement solver." is scoped to 8C the way its neighbouring sentence was
   already scoped to 8C by the Stage 9 amendment: "No placement solver **in
   8C** (amendment: proposal-only placement solving is Stage 13 per
@@ -244,7 +244,7 @@ holds it.*
   authored, in Stage 9 and in Stage 13 alike (`SOLVER.md` §1)."
 - **`tool_schema.md`** — **§`check_assembly`'s "There is no solver."**
   was rewritten to the amended `ASSEMBLY.md` §1 wording and **LANDED
-  2026-08-30 with the plan amendment** (`tool_schema.md:911-926`), rather than
+  2026-08-30 with the plan amendment** (`tool_schema.md:932-947`), rather than
   at the **13A** the row was drafted for. The row said "at 13A, in the same
   change that adds the `solve_pose` heading"; the sentence went one step
   earlier and the heading did not move with it, because the two halves are
@@ -410,7 +410,7 @@ The parenthesis is the route this stage took and is now spent; it survives in
 the bullet's dated amendment note (`ASSEMBLY.md:68`) as the record of what was
 replaced.
 
-`ASSEMBLY.md:126`, §4: "No placement solver." — **unamended**, scoped at 13B.
+`ASSEMBLY.md:143`, §4: "No placement solver." — **unamended**, scoped at 13B.
 
 `KINEMATICS.md` §0's first bullet, **as it stood** (now
 `KINEMATICS.md:45-56`, titled "A solver that MOVES authored geometry", whose
@@ -425,7 +425,7 @@ first sentence is the one below, unchanged):
 stay authored." — **unamended**, scoped at 13B.
 
 `tool_schema.md`'s `check_assembly` section, **as it stood** (now
-`tool_schema.md:911-926`, opening "**No solver moves geometry.**" and carrying
+`tool_schema.md:932-947`, opening "**No solver moves geometry.**" and carrying
 the amended `ASSEMBLY.md` §1 wording):
 
 > **There is no solver.** Scripts position geometry; constraints verify, they
@@ -1080,7 +1080,7 @@ pose_invariant)`, `pose_bound_constraint_in_transform_space`,
 `unbounded_param`, `unknown_joint`, `missing_provenance`,
 `tolerance_below_determinism_floor` (a declared tolerance tighter than 1e-9,
 the number G8C's determinism clause asserts two processes agree to —
-`ASSEMBLY.md:152-153`).
+`ASSEMBLY.md:169-170`).
 
 **Resolution-time** (`unresolvable(reason)`): the nine
 `UNRESOLVABLE_REASONS` of `core/executor/published_geometry.py:104-114`, plus
@@ -1112,7 +1112,7 @@ elsewhere asserts is not closed.**
 - `tolerance_below_determinism_floor` was spelled
   `tolerance_below_measurement_floor` in the earlier draft, and the rename is
   deliberate. 1e-9 is a *determinism* floor: it is what two processes in the
-  pinned image are gated to agree to (`ASSEMBLY.md:152-153`), and nothing in
+  pinned image are gated to agree to (`ASSEMBLY.md:169-170`), and nothing in
   this repo has ever measured the kernel's accuracy against ground truth.
   Calling it a measurement floor would claim a number nobody computed, and
   attach that claim to the one epsilon a reader is most likely to trust. A
@@ -1315,7 +1315,7 @@ which this is not.
 ## 9. Determinism, honestly tiered
 
 The gates already demand cross-process identity to 1e-9
-(`ASSEMBLY.md:152-153`), and this repo has already been bitten by
+(`ASSEMBLY.md:169-170`), and this repo has already been bitten by
 environment-dependent float output — goldens had to be re-baselined *inside
 the pinned CI image* (commits `148075f`, `f3a4d42`; the pinned-image policy
 is `verification.md:76-97`). Iterative solving makes that harder, so the
@@ -1444,7 +1444,7 @@ the capability in the script or an existing enum, not on the surface — so
   `verification` blocks and their per-block `determinism_tier` (§7.0, §9).
   It writes nothing: no proposal artifact, no pose declaration (§2A), no
   generation. **Part and orchestrator profiles**, on the 8C quartet rationale
-  (`ASSEMBLY.md:105-112`): cheap, reversible, and measured against geometry the
+  (`ASSEMBLY.md:122-129`): cheap, reversible, and measured against geometry the
   model did not choose.
 - `propose_placement(space: "transform"|"parameters", constraints, free,
   ground?, starts?, box?, weighting, regularization, tol, provenance,
@@ -1454,7 +1454,7 @@ the capability in the script or an existing enum, not on the surface — so
   the same rationale that makes project-scoped `set_params` and `run_checks`
   orchestrator-only (`tool_schema.md:126-132`). `space: "parameters"` is the
   13C enum extension — the `layout="nested_sheet"` precedent
-  (`tool_schema.md:1409-1433`), a schema amendment rather than a new tool, and
+  (`tool_schema.md:1430-1454`), a schema amendment rather than a new tool, and
   it **landed at 13C with the tool count unchanged at 57**. `free` carries part
   names in transform space and `Param` names (`<part>.<param>` / `hc.<param>`)
   in parameter space; `box` and `ground` are transform space's alone (a
@@ -1687,7 +1687,7 @@ draft demanded 1e-9 of quantities no part of this spec drives to 1e-9.** A
 gate clause may assert 1e-9 of a **pure function evaluated at fixed given
 inputs** — `forward_kinematics` at declared joint values, a §3.3 identity —
 because that is arithmetic with no iteration in it, and it is the claim
-`ASSEMBLY.md:152-153` and `KINEMATICS.md:353-355` already make. A gate clause may
+`ASSEMBLY.md:169-170` and `KINEMATICS.md:353-355` already make. A gate clause may
 **never** assert 1e-9 of a *solved* quantity: the solver terminates on the
 declared tolerance (§4.2 step 6), a tolerance tighter than 1e-9 is refused
 `tolerance_below_determinism_floor` (§6.3), and demanding accuracy a
@@ -1821,7 +1821,7 @@ do.
 14. **Amendment drift, asserted at the sub-stage that ships the heading.**
     With 13A's amendments landed: `tool_schema.md` contains a `solve_pose`
     heading **and** no un-scoped sentence "There is no solver." (the
-    `check_assembly` occurrence at `tool_schema.md:911` now reads the amended
+    `check_assembly` occurrence at `tool_schema.md:932` now reads the amended
     `ASSEMBLY.md` §1 wording); every name in `TOOL_NAMES` has a matching
     normative heading with a parseable signature block (the
     `tests/stage2/test_g2_contract_drift.py:270-305` shape, re-run here);

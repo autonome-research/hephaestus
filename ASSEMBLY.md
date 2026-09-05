@@ -91,6 +91,23 @@ generations, provenance on every entry). Each entry:
   with violated. Status is recomputed on demand and PROJECTED at
   publication: rebuilding any part a constraint touches marks the assembly
   projection stale, same machinery as `hc`/import staleness.
+  **AMENDED 2026-09-04 — one addressable view of a published artifact, and
+  every parent-side reader shares it.** The view a reloaded BRep admits — the
+  build's `script_contract.md` §7 `geometry_index` out of its bundle, the source
+  map's tag placements, the §8 solid runs — lives in
+  `core/src/hephaestus/core/executor/published_geometry.py`, is re-exported from
+  `hephaestus.core.assembly` unchanged, and is joined to an artifact by
+  `core/src/hephaestus/core/executor/artifact_geometry.py`'s
+  `published_source_for`. Constraint anchors, joint anchors (`KINEMATICS.md`
+  §2), the §3.3 selection table and **every parent-side measurement**
+  (`measure`, `heph check`, project-scope `run_checks`) resolve through that one
+  implementation. Measurement was the copy that did not: from Stage 2B to
+  2026-09-04 it built an empty index and so addressed the literal `"part"`
+  selector and nothing else, on the very artifacts this section was already
+  resolving tags against. What the view cannot supply is that contract's rule
+  4 — publication records no binding-to-solid mapping — so `addressable_namespace`
+  is what a surface may advertise as candidates, and a binding reaches a
+  published artifact only through the label `script_contract.md` §5 gave it.
 - **Pose-bound outcomes** (amendment 2026-08-26, `KINEMATICS.md` §3): an
   entry carrying `poses` is evaluated at each named pose (anchors resolved
   once, transforms applied, residual per pose). Its outcome extends the 8C

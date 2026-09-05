@@ -63,10 +63,30 @@ agent/                    pnpm package @hephaestus/agent (private, ESM, TS stric
                           the `turn` ordinal on every event, the
                           {turn, seq, text, envelope, outcome?} user_prompts
                           entry, and the `after` tail read with its
-                          always-present endCursor (INTERFACE.md §2.8)
+                          always-present endCursor (INTERFACE.md §2.8); and
+                          `readSessionActivity`, a third projection of that
+                          same single walk (prompts + tool calls + tool
+                          results) that the pinned CAD summary derives from —
+                          it consumes no `seq`, so it cannot move an event
+                          identity (audit-2026-09-04 B-12)
       context.ts          K=3 image eviction w/ text stubs, T=70% compaction
                           request with pinned CAD summary, 90% budget
-                          escalation via ask_user
+                          escalation via ask_user; `summarize` PRODUCES that
+                          summary from the session's own recorded entries
+                          (history.ts's `readSessionActivity`): the first
+                          operator prompt is the design intent; answered
+                          ask_user questions and recorded requirement
+                          resolutions are the decisions; the newest set_params
+                          (else build_part) map is the params; the newest
+                          run_checks is the check status; failing checks, the
+                          newest failed build per part and unresolved material
+                          are the open problems. NO BRIDGE CALL and no new wire
+                          method — every input is already in the transcript the
+                          sidecar owns, so nobody should reach for a Python
+                          round-trip later. Bounded by MAX_SUMMARY_ITEMS=8 per
+                          list, MAX_SUMMARY_ITEM_BYTES=240 per string and
+                          MAX_SUMMARY_BYTES=4096 for the whole block, shed
+                          oldest-first (audit-2026-09-04 B-12)
     tools/
       schema.gen.ts       GENERATED TypeBox definitions — do not hand-edit;
                           produced by `uv run python -m hephaestus.contract.toolgen ts`
@@ -109,6 +129,13 @@ server/                   uv workspace member hephaestus-server
                           result (+ images as refs/base64 within budgets);
                           idempotency via opstore opkeys with trusted
                           invocation ids
+    wiring.py             build_dispatcher: THE construction of the
+                          dispatcher's capability set — registry set via
+                          RegistrySet.open, delegation service with a real
+                          pre-admission gate — shared by heph agent,
+                          heph serve --web and heph mcp; the two capabilities
+                          that need a live sidecar arrive afterwards through
+                          ToolDispatcher.bind_runtime (audit-2026-09-04 B-2)
     admission.py          run admission over opstore.admission (16 slots),
                           terminal channel, acks, startup reconstruction
     delegation.py         delegation WAL over opstore admission per digest §3
