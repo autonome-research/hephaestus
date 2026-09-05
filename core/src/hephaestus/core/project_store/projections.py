@@ -108,6 +108,12 @@ class PartProjection:
     #: The import analogue of ``consumed``: only a part that imported a file
     #: goes stale when that file changes.
     imports: Mapping[str, str] = field(default_factory=dict[str, str])
+    #: ``artifact:build-bundle:sha256:…`` of the bundle this build published —
+    #: its §7 selector namespace (audit-2026-09-04 B-1). Empty for a projection
+    #: recorded before bundles were addressable by ref; a reader falls back to
+    #: the part's durable bundle pointer, and then to ``"part"``-only
+    #: addressing, rather than guessing a namespace.
+    bundle_ref: str = ""
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -116,6 +122,7 @@ class PartProjection:
             "artifact_ref": self.artifact_ref,
             "audit_revision": self.audit_revision,
             "imports": {name: self.imports[name] for name in sorted(self.imports)},
+            "bundle_ref": self.bundle_ref,
         }
 
     @classmethod
@@ -140,12 +147,16 @@ class PartProjection:
             if not isinstance(value, str):
                 raise ValidationError("import hashes must be strings", kind="contract")
             imports[name] = value
+        bundle = data.get("bundle_ref", "")
+        if not isinstance(bundle, str):
+            raise ValidationError("part projection bundle_ref must be a string", kind="contract")
         return cls(
             part=part,
             consumed=dict(consumed),
             artifact_ref=artifact,
             audit_revision=revision,
             imports=imports,
+            bundle_ref=bundle,
         )
 
 
@@ -620,6 +631,7 @@ class Projections:
         consumed: Mapping[str, JSONValue],
         artifact_ref: str,
         imports: Mapping[str, str] | None = None,
+        bundle_ref: str = "",
     ) -> ProjectionState:
         """Record a successful current publication's projection; clears its stale.
 
@@ -640,6 +652,7 @@ class Projections:
             artifact_ref=artifact_ref,
             audit_revision=state.audit_revision,
             imports=recorded_imports,
+            bundle_ref=bundle_ref,
         )
         stale = {name: why for name, why in state.stale.items() if name != part}
         # The published build's import hashes ARE live at this point (publication
@@ -782,14 +795,25 @@ class Projections:
             raise SnapshotRejectedError(
                 f"project snapshot is incoherent: {detail}", issues=tuple(issues)
             )
+        # Version 2 (audit-2026-09-04 B-1) adds ``bundle_ref`` beside each part's
+        # ``artifact_ref``: the §7 namespace the frozen build published, named
+        # immutably so a manifest read back later addresses THAT build rather
+        # than whatever the part has published since. Readers accept version 1
+        # and fall back — the field is additive and every pre-existing manifest
+        # stays readable.
         manifest: JSONValue = {
-            "version": 1,
+            "version": 2,
             "audit_revision": state.audit_revision,
             "parts": {
                 part: {
                     "artifact_ref": state.projections[part].artifact_ref,
                     "audit_revision": state.projections[part].audit_revision,
                     "consumed": dict(state.projections[part].consumed),
+                    **(
+                        {"bundle_ref": state.projections[part].bundle_ref}
+                        if state.projections[part].bundle_ref
+                        else {}
+                    ),
                 }
                 for part in sorted(parts)
             },
@@ -800,6 +824,12 @@ class Projections:
             self._store.blobs.cas_swap(SNAPSHOT_POINTER, expected, blob)
         for part in sorted(parts):
             self._store.gc.link(blob, blob_hash_of_ref(state.projections[part].artifact_ref))
+            # The manifest names the bundle, so the manifest keeps it reachable:
+            # a snapshot whose namespace has been collected could still be read
+            # for its artifact refs but would silently lose its selectors.
+            bundle_ref = state.projections[part].bundle_ref
+            if bundle_ref:
+                self._store.gc.link(blob, blob_hash_of_ref(bundle_ref))
         return ProjectSnapshot(
             ref=PROJECT_SNAPSHOT_REF_PREFIX + blob,
             manifest=cast("Mapping[str, JSONValue]", manifest),

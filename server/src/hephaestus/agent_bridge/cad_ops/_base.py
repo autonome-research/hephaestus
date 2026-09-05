@@ -27,7 +27,7 @@ from typing import Any, Final, cast
 
 from hephaestus.core.checks.engine import CheckSet
 from hephaestus.core.checks.facade import GeometrySource
-from hephaestus.core.executor.artifact_geometry import artifact_source
+from hephaestus.core.executor.artifact_geometry import ArtifactGeometry, published_source_for
 from hephaestus.core.executor.imports import ImportPayload
 from hephaestus.core.executor.runner import BuildRequest, UnpublishedBuild, run_build
 from hephaestus.core.executor.sandbox.base import ExecBackend
@@ -104,6 +104,17 @@ def json_map(raw: JSONValue | None) -> dict[str, JSONValue]:
     if not isinstance(raw, dict):
         return {}
     return dict(cast("Mapping[str, JSONValue]", raw))
+
+
+def _names_artifact(bundle: Mapping[str, JSONValue], artifact_ref: str) -> bool:
+    """True when ``bundle`` records ``artifact_ref``, or records none at all.
+
+    A bundle written before publication stored the ref names no artifact and is
+    taken at its word; one that names a different artifact is a store we should
+    not read from (``Publisher.bundle_for_artifact`` refuses the same way).
+    """
+    recorded = bundle.get("artifact_ref")
+    return not isinstance(recorded, str) or recorded == artifact_ref
 
 
 # --------------------------------------------------------------------------
@@ -414,15 +425,68 @@ class CadOpsState:
         for name, entry in sorted(cast("Mapping[str, JSONValue]", parts_raw).items()):
             if not isinstance(entry, dict):
                 continue
-            ref = cast("Mapping[str, JSONValue]", entry).get("artifact_ref")
+            record = cast("Mapping[str, JSONValue]", entry)
+            ref = record.get("artifact_ref")
             if not isinstance(ref, str):
                 continue
-            sources[name] = self._artifact_geometry(ref, scratch)
+            # Manifest version 2 names the bundle the snapshot froze; version 1
+            # does not, and the (part, artifact) pointer answers for it.
+            bundle_ref = record.get("bundle_ref")
+            sources[name] = self._artifact_geometry(
+                ref,
+                scratch,
+                part=name,
+                bundle_ref=bundle_ref if isinstance(bundle_ref, str) else None,
+            )
             refs.append(ref)
         return sources, refs
 
-    def _artifact_geometry(self, ref: str, scratch: Path) -> GeometrySource:
+    def _artifact_geometry(
+        self,
+        ref: str,
+        scratch: Path,
+        *,
+        part: str | None = None,
+        bundle_ref: str | None = None,
+    ) -> ArtifactGeometry:
+        """One published artifact as an addressable §7 source.
+
+        ``part`` is what makes the full grammar reachable (audit-2026-09-04
+        B-1): the build's recorded namespace is keyed by the part that published
+        it, because an artifact ref is content-addressed over BRep bytes alone
+        and two parts with identical geometry share one. Without a part this
+        falls back to ``"part"``-only addressing rather than picking a namespace
+        that may belong to a different part.
+        """
         blob = blob_hash_of_ref(ref)
         if not self._store.blobs.has(blob):
             raise CadOpError("invalid_params", f"artifact {ref} is not durably stored")
-        return artifact_source(self._store.blobs.get(blob), scratch_dir=scratch)
+        bundle = self._artifact_bundle(ref, part=part, bundle_ref=bundle_ref)
+        return published_source_for(
+            self._store,
+            part=part,
+            artifact_ref=ref,
+            bundle=bundle,
+            scratch_dir=scratch,
+        )
+
+    def _artifact_bundle(
+        self, ref: str, *, part: str | None, bundle_ref: str | None
+    ) -> Mapping[str, JSONValue] | None:
+        """What publication recorded ABOUT one build, or ``None`` if unrecorded."""
+        if bundle_ref is not None:
+            blob = blob_hash_of_ref(bundle_ref)
+            if self._store.blobs.has(blob):
+                raw = json.loads(self._store.blobs.get(blob).decode("utf-8"))
+                # The same guard ``Publisher.bundle_for_artifact`` puts on the
+                # pointer path, spelled once more because a manifest is just
+                # another way of naming a bundle: one that names a DIFFERENT
+                # artifact would resolve this ref's selectors against another
+                # build's namespace, which is the silent wrong answer §7 forbids.
+                if isinstance(raw, dict) and _names_artifact(
+                    cast("Mapping[str, JSONValue]", raw), ref
+                ):
+                    return cast("Mapping[str, JSONValue]", raw)
+        if part is None:
+            return None
+        return self._publisher().bundle_for_artifact(part, ref)

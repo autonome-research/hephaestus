@@ -17,6 +17,7 @@ GC-root pin plus a provenance link to the source build.
 
 from __future__ import annotations
 
+import contextlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
@@ -49,6 +50,9 @@ from hephaestus.core.project_store.store import (
     SourceSnapshot,
     blob_hash_of_ref,
 )
+from hephaestus.core.project_store.store import (
+    artifact_ref as make_artifact_ref,
+)
 from hephaestus.core.types import BuildResult
 from opstore.gc import PREVIEW_RETENTION_CLASS
 from opstore.types import JSONValue, OwnerId
@@ -65,6 +69,9 @@ from opstore import (
 )
 
 __all__ = [
+    "BUILD_BUNDLE_ARTIFACT_KIND",
+    "BUILD_BUNDLE_POINTER_PREFIX",
+    "BUILD_BUNDLE_REF_PREFIX",
     "CURRENT_POINTER_PREFIX",
     "EXPORT_ARTIFACT_KIND",
     "EXPORT_REF_PREFIX",
@@ -74,11 +81,22 @@ __all__ = [
     "PublicationOutcome",
     "Publisher",
     "build_bundle",
+    "build_bundle_pointer",
     "current_pointer",
 ]
 
 #: CAS pointer prefix for per-part current-build bundles.
 CURRENT_POINTER_PREFIX = "part-current:"
+#: Artifact kind of a build bundle document.
+BUILD_BUNDLE_ARTIFACT_KIND: Final[str] = "build-bundle"
+#: Ref prefix naming one build's bundle document immutably.
+BUILD_BUNDLE_REF_PREFIX = f"artifact:{BUILD_BUNDLE_ARTIFACT_KIND}:"
+#: CAS pointer prefix for the bundle of ONE published build, keyed by part and
+#: by the artifact blob it describes (audit-2026-09-04 B-1). The current pointer
+#: answers "what is this part's namespace now"; this answers "what namespace did
+#: THIS artifact publish", which is what a historical or preview ``artifact_ref``
+#: needs and what ``measure`` had no way to ask.
+BUILD_BUNDLE_POINTER_PREFIX = "build-bundle:"
 #: The artifact kind every published export carries. Named rather than spelled
 #: inline at each site, because §19.24 makes it a value the *store* records and
 #: three places (here, ``cad_ops/_exports.py``, ``http/artifacts.py``) have to
@@ -144,6 +162,21 @@ def build_bundle(build: UnpublishedBuild, published: BuildResult, audit_revision
 def current_pointer(part: str) -> str:
     """The CAS pointer name holding ``part``'s current bundle blob hash."""
     return CURRENT_POINTER_PREFIX + part
+
+
+def build_bundle_pointer(part: str, artifact_blob: str) -> str:
+    """The CAS pointer holding the bundle of one published build.
+
+    Keyed by **part and artifact blob**, not by the artifact alone. An artifact
+    ref is content-addressed over the BRep bytes only, so two parts whose
+    geometry happens to be identical share one artifact ref while their §7
+    namespaces differ (one labels its box ``lid``, the other ``base``). An
+    artifact-only key would hand the second part's selectors the first part's
+    namespace — a silent wrong answer, which is the one outcome §7 forbids
+    outright. Every caller already knows the part it is measuring, so the
+    stronger key costs nothing.
+    """
+    return f"{BUILD_BUNDLE_POINTER_PREFIX}{part}:{artifact_blob}"
 
 
 def _mesh_hashes(build: UnpublishedBuild) -> dict[str, JSONValue]:
@@ -379,6 +412,117 @@ class Publisher:
         """
         return self._current_bundle(part)
 
+    def bundle_for_artifact(self, part: str, artifact_ref: str) -> Mapping[str, JSONValue] | None:
+        """The bundle recorded for ONE published build of ``part``, or ``None``.
+
+        Every parent-side measurement resolves its §7 namespace through this
+        (audit-2026-09-04 B-1): ``measure``, project-scope ``run_checks`` and
+        ``heph check`` had no route to it at all and addressed the literal
+        ``"part"`` selector instead. ``None`` is a fact, not a failure — a build
+        published before bundles were durable, or one whose bundle has been
+        collected with its artifact — and the caller falls back to the
+        ``"part"``-only source rather than inventing a namespace.
+        """
+        blob = self._bundle_blob_for_artifact(part, artifact_ref)
+        if blob is None or not self._store.blobs.has(blob):
+            return None
+        raw = json.loads(self._store.blobs.get(blob).decode("utf-8"))
+        if not isinstance(raw, dict):  # pragma: no cover - our own canonical JSON
+            return None
+        bundle = cast("Mapping[str, JSONValue]", raw)
+        # The pointer is keyed by the artifact, but a bundle that names a
+        # different one would be a store we should not read from: refuse rather
+        # than resolve selectors against the wrong build.
+        recorded = bundle.get("artifact_ref")
+        if isinstance(recorded, str) and recorded != artifact_ref:  # pragma: no cover - defensive
+            return None
+        return bundle
+
+    def bundle_ref_for_artifact(self, part: str, artifact_ref: str) -> str | None:
+        """``artifact:build-bundle:sha256:…`` of one build's bundle, if stored.
+
+        The immutable handle a *snapshot manifest* records beside each part's
+        artifact ref, so a manifest read back later resolves the namespace of
+        the build it actually froze rather than of whatever that part published
+        since.
+        """
+        blob = self._bundle_blob_for_artifact(part, artifact_ref)
+        if blob is None or not self._store.blobs.has(blob):
+            return None
+        return make_artifact_ref(BUILD_BUNDLE_ARTIFACT_KIND, blob)
+
+    def _bundle_blob_for_artifact(self, part: str, artifact_ref: str) -> str | None:
+        """The bundle blob for one build: the current pointer, else the durable one.
+
+        The current pointer is consulted first, and only when it actually names
+        ``artifact_ref``. Two reasons, and both are about not answering with the
+        wrong build's namespace:
+
+        * a build the part is currently publishing has exactly one authoritative
+          bundle — the one behind ``part-current:``. A later PREVIEW of the same
+          bytes (``run_checks`` republishes the current script) overwrites the
+          durable pointer, and preferring the current pointer keeps
+          ``measure`` reading the build the project is standing behind;
+        * a store whose builds predate :func:`build_bundle_pointer` has no
+          durable pointer at all, and this is what makes the change
+          zero-migration: the CURRENT build — the default path of every
+          measurement — resolves its namespace on the first run.
+
+        The durable pointer then answers for exactly the refs the current
+        pointer cannot: historical builds, previews, and raced builds.
+        """
+        current = self._store.blobs.read_pointer(current_pointer(part))
+        if current is not None and self._store.blobs.has(current):
+            raw = json.loads(self._store.blobs.get(current).decode("utf-8"))
+            if isinstance(raw, dict):
+                recorded = cast("Mapping[str, JSONValue]", raw).get("artifact_ref")
+                if recorded == artifact_ref:
+                    return current
+        return self._store.blobs.read_pointer(
+            build_bundle_pointer(part, blob_hash_of_ref(artifact_ref))
+        )
+
+    def _record_artifact_bundle(self, part: str, artifact_ref: str | None, bundle_blob: str) -> str:
+        """Point ``build-bundle:<part>:<artifact>`` at ``bundle_blob`` (idempotent).
+
+        GC-linked **from the artifact**: the namespace a build published is only
+        meaningful while the geometry it describes still exists, so the bundle
+        lives exactly as long as its artifact and is collected with it. Nothing
+        new is pinned and no retention class is widened.
+        """
+        if artifact_ref is None:
+            return bundle_blob
+        artifact_blob = blob_hash_of_ref(artifact_ref)
+        self._store.gc.link(artifact_blob, bundle_blob)
+        record_artifact_kind(self._store, BUILD_BUNDLE_ARTIFACT_KIND, bundle_blob)
+        pointer = build_bundle_pointer(part, artifact_blob)
+        expected = self._store.blobs.read_pointer(pointer)
+        if expected == bundle_blob:
+            return bundle_blob
+        # A concurrent publication of the same (part, artifact) may win the race;
+        # both bundles describe the same bytes, so either answers the same
+        # question and the loser has nothing to redo.
+        with contextlib.suppress(ConflictedError):
+            self._store.blobs.cas_swap(pointer, expected, bundle_blob)
+        return bundle_blob
+
+    def _install_artifact_bundle(
+        self, build: UnpublishedBuild, retention: str = "default"
+    ) -> str | None:
+        """Store the bundle of a build that is NOT becoming current, and point at it.
+
+        ``ASSEMBLY.md`` §2's bundle used to be written only by the current-pointer
+        flip, so a preview or raced build published its geometry and nothing that
+        said which selectors that geometry admits. B-1 makes the record
+        unconditional: what a build published is a fact about that build, not
+        about whether it won the pointer.
+        """
+        if build.result.artifact_ref is None:
+            return None
+        bundle = build_bundle(build, build.result, self.projections.state().audit_revision)
+        blob = self._store.blobs.put(canonical_json(bundle).encode("utf-8"), retention)
+        return self._record_artifact_bundle(build.result.part, build.result.artifact_ref, blob)
+
     def current_result(self, part: str) -> BuildResult | None:
         """The last published current BuildResult of ``part`` (lock-free read)."""
         bundle = self._current_bundle(part)
@@ -456,6 +600,11 @@ class Publisher:
             # last-good pointer (§3.5); older failures age out normally.
             if kind == "failed":
                 self._set_last_failure(part, record_blob)
+            # B-1: a preview's §7 namespace is recorded too, in its own
+            # retention class and GC-linked to its own artifact. `run_checks`
+            # publishes previews and then measures them; without this the
+            # measurement could address only "part".
+            self._install_artifact_bundle(build, retention)
             return PublicationOutcome(
                 kind=kind,
                 part=part,
@@ -473,7 +622,11 @@ class Publisher:
             if mismatches:
                 # Raced: inputs moved since the frozen snapshot. The
                 # content-addressed superseded artifact stays for audit, but
-                # the build cannot become current and clears nothing.
+                # the build cannot become current and clears nothing. Its
+                # namespace is recorded all the same (B-1): the artifact is
+                # citable evidence, and evidence nobody can address is evidence
+                # nobody can check.
+                self._install_artifact_bundle(build, retention)
                 return PublicationOutcome(
                     kind="raced",
                     part=part,
@@ -611,6 +764,12 @@ class Publisher:
                     intended_outcome=canonical_json({"published": bundle_blob}),
                 )
             except ConflictedError:
+                # The bundle above says ``current: true``; this build did not
+                # become current, so its namespace is recorded from the
+                # non-current result instead. A raced build is still citable
+                # evidence, and evidence nobody can address is evidence nobody
+                # can check.
+                self._install_artifact_bundle(build)
                 return PublicationOutcome(
                     kind="raced",
                     part=part,
@@ -629,10 +788,15 @@ class Publisher:
         artifact_ref = published.artifact_ref
         if artifact_ref is None:  # pragma: no cover - ok builds always carry a ref
             raise ValidationError("successful build has no artifact ref", kind="contract")
+        # B-1: the same bundle, additionally addressable by the artifact it
+        # describes. The current pointer moves on every rebuild; this one does
+        # not, so a ref naming THIS build keeps resolving its own namespace.
+        self._record_artifact_bundle(part, artifact_ref, bundle_blob)
         self.projections.record_current(
             part,
             consumed=build.consumed_hc,
             artifact_ref=artifact_ref,
+            bundle_ref=make_artifact_ref(BUILD_BUNDLE_ARTIFACT_KIND, bundle_blob),
             imports=published.input_hashes.imports,
         )
         for blob in (record_blob, *evidence_blobs):

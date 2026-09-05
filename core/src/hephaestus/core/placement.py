@@ -4021,14 +4021,18 @@ class _PreviewBuilder:
                     "error": cast("JSONValue", error.to_json()) if error else None,
                 },
             )
-        # A PREVIEW publication stores the §8 ``BuildResult`` and stops there —
-        # only a current-pointer flip writes the bundle document. The §7
-        # geometry index a tag anchor resolves through lives in that bundle, so
-        # it is assembled here from the same build, through publication's own
-        # :func:`~hephaestus.core.project_store.publication.build_bundle`.
-        # Reading ``record_blob`` instead would hand the resolver a bare result
-        # with no namespace, and every tag anchor in a 2C solve would come back
-        # ``unaddressable_anchor`` for a tag the build had certainly placed.
+        # The §7 geometry index a tag anchor resolves through lives in the
+        # bundle document, not in the §8 ``BuildResult``: reading ``record_blob``
+        # would hand the resolver a bare result with no namespace, and every tag
+        # anchor in a 2C solve would come back ``unaddressable_anchor`` for a tag
+        # the build had certainly placed. Since audit-2026-09-04 B-1 a preview
+        # publication ALSO stores that bundle durably (keyed by part and
+        # artifact), so this could be read back instead — it is still assembled
+        # here, from the very :class:`UnpublishedBuild` in hand and through
+        # publication's own
+        # :func:`~hephaestus.core.project_store.publication.build_bundle`, because
+        # that is the identical document with no store round-trip and no
+        # dependence on retention: a solve measures what it just built.
         published = PublishedBuild(
             result=result,
             bundle=cast(

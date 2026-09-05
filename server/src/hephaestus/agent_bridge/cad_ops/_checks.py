@@ -251,6 +251,12 @@ class CheckOps(CadOpsState):
                 resolved_ref = snapshot.ref
             else:
                 resolved_ref = project_snapshot_ref
+            # Each source carries the FULL §7 namespace of the build the
+            # manifest froze (audit-2026-09-04 B-1). Until then this reached an
+            # empty index, so an acceptance check addressing "<part>/<label>"
+            # or a tag came back ``pass: false`` with an AddressingError buried
+            # in ``measured`` — a red verification signal for a correct design,
+            # which is worse than a refusal because it looks like a verdict.
             sources, _refs = self._snapshot_sources(resolved_ref, Path(scratch))
             # KINEMATICS.md §2 (last bullet) / §4: the m.at_pose / m.sweep
             # read surfaces resolve against the SAME frozen snapshot the

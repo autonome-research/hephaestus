@@ -166,7 +166,7 @@ touched anything.
 - `script_contract.md:119-140` — "PARAMS"
 - `script_contract.md:141-149` — "globals.py"
 - `script_contract.md:164-172` — "a part MUST NOT shadow an `hc` name"
-- `docs/cli.md:407-410` — "no solver **in"
+- `docs/cli.md:443-446` — "no solver **in"
 - `bench/src/hephaestus/bench/scoring.py:282-304` — "def split_name"
 - `contract/tests/test_toolgen.py:98-115` — "declared additions, not drift"
 - `tests/stage2/test_g2_contract_drift.py:357` — "solve_pose"
@@ -271,7 +271,7 @@ holds it.*
   finding it then rather than at 13A is the citation audit paying for itself.
   The sentence "there is no per-script joint syntax and no solver: scripts
   position geometry, poses exist only inside an evaluation"
-  (`docs/cli.md:407-410`, re-resolved at 13C: 13A's, 13B's and 13C's own
+  (`docs/cli.md:443-446`, re-resolved at 13C: 13A's, 13B's and 13C's own
   `heph solve` sections land above this one, so the anchor moved 255 → 390 and
   the audit is what noticed) is **true today** — no `heph solve` verb exists — and
   becomes false the moment 13A ships `heph solve pose` (§11). It is scoped, not
@@ -854,8 +854,9 @@ choice that respects P4.
 - **`hephaestus.core.placement`** — the engine half, mirroring the
   `constraints.py` ↔ `assembly.py` and `kinematics.py` ↔ `motion.py` split
   (`core/assembly.py:1-19`): anchor resolution through the shared
-  `AnchorResolver` / `PartGeometry` pair (`core/assembly.py:476-573`, already
-  reused by motion per `core/assembly.py:42-47`), the outcome vocabulary, the
+  `AnchorResolver` / `PartGeometry` pair (`core/assembly.py:454-567` and
+  `core/executor/published_geometry.py:136-231`, reused by motion per
+  `core/assembly.py:42-45`), the outcome vocabulary, the
   independent verification pass, and the proposal record.
 - **`hephaestus.core.project_store.proposals`** — generational proposal
   state on the ledger pattern (`project_store/constraints.py:1-37`).
@@ -1010,7 +1011,7 @@ Six spellings, and no others. For 2B and 2C:
    about the author's intent. It also does not claim global infeasibility —
    only that this start's basin has none.
 6. **`unresolvable(reason)`** — reuse of
-   `core/assembly.py:120-171`'s `UNRESOLVABLE_REASONS` verbatim, same
+   `core/executor/published_geometry.py:62-114`'s `UNRESOLVABLE_REASONS` verbatim, same
    failure/same fix/same name, exactly as `core/motion.py:225-249` already
    does, plus the Stage 13 additions named in §6.3.
 
@@ -1082,7 +1083,7 @@ the number G8C's determinism clause asserts two processes agree to —
 `ASSEMBLY.md:152-153`).
 
 **Resolution-time** (`unresolvable(reason)`): the nine
-`UNRESOLVABLE_REASONS` of `core/assembly.py:161-171`, plus
+`UNRESOLVABLE_REASONS` of `core/executor/published_geometry.py:104-114`, plus
 `stale_proposal_inputs` (§8) and `no_free_variable_affects` (§2C).
 
 **Run-time** (named refusals carrying the best iterate and its independently
@@ -1277,7 +1278,7 @@ defect as a name asserted but not listed, so it is defined here.
 
 A proposal whose bound artifact refs no longer match the parts'
 current refs is reported `stale: true` at read, naming which refs changed —
-the `AssemblyProjection` staleness rule (`core/assembly.py:988-1000`) applied
+the `AssemblyProjection` staleness rule (`core/project_store/projections.py:57-72`) applied
 by comparison at read time rather than by a stored projection.
 **DECISION**: no new `ProjectionState` field. Proposals are immutable and
 their inputs are already bound, so freshness is a pure function of the
@@ -1595,7 +1596,7 @@ already exists.
 13. **Ground/free-set semantics** — parts partitioned into free and ground,
     `no_ground_part`.
 14. **The frame-extraction-once pipeline** over the shared `AnchorResolver` /
-    `PartGeometry` (`core/assembly.py:476-573`), producing the analytic
+    `PartGeometry` (`core/executor/published_geometry.py:136-231`), producing the analytic
     records `geom.solve` consumes.
 15. **The independent verification pass** (§7): separate process, its
     import-closure assertion, the all-eight-kinds evaluation, the

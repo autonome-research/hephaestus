@@ -44,6 +44,14 @@ That resolution layer lives in the public :class:`AnchorResolver` /
 (:mod:`hephaestus.core.motion`) to ride the SAME path — one implementation of
 "§7 against a published artifact", not two that could disagree.
 
+:class:`PartGeometry` and its readers now live in
+:mod:`hephaestus.core.executor.published_geometry` and are re-exported here
+unchanged. The move (audit-2026-09-04 B-1) is what makes "not two that could
+disagree" true of *measurement* as well: the ``measure`` tool, ``heph check``
+and project-scope ``run_checks`` built an empty index of their own and so
+addressed the literal ``"part"`` selector and nothing else, on the very
+artifacts this module was already resolving tags against.
+
 **Pose-bound evaluation** (``KINEMATICS.md`` §3): a constraint entry may name
 poses. Absent, evaluation is at zero and the outcome wire shape is
 byte-for-byte the 8C one — a gate clause, pinned against recorded evidence.
@@ -61,14 +69,28 @@ from __future__ import annotations
 import dataclasses
 import json
 import tempfile
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Literal, cast
 
-from hephaestus.core.addressing import GeometryIndex, Resolution, resolve
+from hephaestus.core.addressing import Resolution, resolve
 from hephaestus.core.errors import AddressingError, ValidationError
-from hephaestus.core.executor.runner import geometry_index_from_json
+
+# ASSEMBLY.md §2's anchoring machinery moved to the executor package at
+# audit-2026-09-04 B-1: `measure`, `heph check` and project-scope `run_checks`
+# needed the identical "§7 against a published artifact" join and were building
+# an empty index instead. Re-exported below so this module's public surface —
+# and every importer of it (motion, placement, the solver) — is unchanged.
+from hephaestus.core.executor.published_geometry import (
+    UNRESOLVABLE_REASONS,
+    PartGeometry,
+    UnresolvableAnchorError,
+    UnresolvableReason,
+    part_geometry,
+    published_index,
+    tag_placements,
+)
 from hephaestus.core.executor.tags import TagPlacement
 from hephaestus.core.project_store.constraints import (
     ConstraintEntry,
@@ -118,73 +140,6 @@ OutcomeState = Literal["satisfied", "violated", "unresolvable"]
 #: The three per-constraint states (``ASSEMBLY.md`` §2). Closed on purpose:
 #: "not checked" has exactly one spelling, and it is not a pass.
 OUTCOME_STATES: Final[tuple[OutcomeState, ...]] = ("satisfied", "violated", "unresolvable")
-
-UnresolvableReason = Literal[
-    "missing_part",
-    "no_current_build",
-    "missing_artifact",
-    "dangling_selector",
-    "ambiguous_selector",
-    "unaddressable_anchor",
-    "shape_refused",
-    "invalid_constraint",
-    "unresolvable_pose",
-]
-
-#: Why a constraint could not be evaluated. Each names a different fix:
-#:
-#: * ``missing_part`` — the anchor names a part this project does not have.
-#: * ``no_current_build`` — the part exists but has no current successful build
-#:   (never built, or its last build failed): build it.
-#: * ``missing_artifact`` — a current build is recorded but its artifact bytes
-#:   are not durably stored: the evidence is gone, which is not the same as
-#:   never having existed.
-#: * ``dangling_selector`` — the selector resolves to nothing in that build's §7
-#:   namespace: the tag or label the constraint was written against is gone,
-#:   typically because the script was edited.
-#: * ``ambiguous_selector`` — the selector matches several interpretations at
-#:   one precedence level; §7 forbids guessing, so does this.
-#: * ``unaddressable_anchor`` — the selector exists in the namespace but the
-#:   published artifact cannot supply that geometry (an unplaced tag, a
-#:   vertex/wire tag, a binding that contributed no node).
-#: * ``shape_refused`` — geometry was resolved but is the wrong class for the
-#:   kind (``geom``'s :class:`~hephaestus.geom.ConstraintShapeError`, whose own
-#:   reason is carried in the detail): concentricity between two boxes has no
-#:   answer, and a plausible number for it would be worse than none.
-#: * ``invalid_constraint`` — the stored entry is malformed for its kind. The
-#:   declaration path refuses these, so reaching it here means a generation was
-#:   written by an older or foreign writer; it is reported, never evaluated.
-#: * ``unresolvable_pose`` — the entry binds a pose (``KINEMATICS.md`` §3) that
-#:   could not be evaluated: unknown or withdrawn, orphaned by a withdrawn
-#:   joint, out of a joint's declared limits, or riding an unresolvable joint.
-#:   The detail names the pose and its own reason; the row is NOT checked, and
-#:   the ``pose_residuals`` table says which poses were.
-UNRESOLVABLE_REASONS: Final[tuple[UnresolvableReason, ...]] = (
-    "missing_part",
-    "no_current_build",
-    "missing_artifact",
-    "dangling_selector",
-    "ambiguous_selector",
-    "unaddressable_anchor",
-    "shape_refused",
-    "invalid_constraint",
-    "unresolvable_pose",
-)
-
-
-class UnresolvableAnchorError(Exception):
-    """An anchor could not be turned into geometry — a named reason plus detail.
-
-    Public because ``KINEMATICS.md`` §2 makes joint-anchor resolution
-    (:mod:`hephaestus.core.motion`) ride this module's anchoring path: the
-    engine that shares :class:`AnchorResolver` also has to catch its refusals.
-    """
-
-    def __init__(self, reason: UnresolvableReason, detail: str) -> None:
-        super().__init__(detail)
-        self.reason: UnresolvableReason = reason
-        self.detail = detail
-
 
 # --------------------------------------------------------------------------
 # the record
@@ -470,104 +425,6 @@ class AssemblyStatus:
 
 
 # --------------------------------------------------------------------------
-# resolved geometry of one part's current artifact
-
-
-@dataclass(frozen=True)
-class PartGeometry:
-    """One part's current artifact, plus everything needed to address into it."""
-
-    part: str
-    artifact_ref: str
-    shape: Any
-    index: GeometryIndex
-    solids: tuple[Any, ...]
-    #: ``(label, first solid index, solid count)`` runs in geometry-tree order.
-    runs: tuple[tuple[str, int, int], ...]
-    placements: Mapping[str, TagPlacement]
-    #: False when the label rows do not partition the artifact's solids (nested
-    #: labels double-count). Label/binding anchors are then unaddressable rather
-    #: than resolved to a run that may not be the addressed node's.
-    runs_partition: bool
-
-    def shape_for(self, resolution: Resolution) -> Any:
-        """The concrete geometry one resolution names, or ``UnresolvableAnchorError``."""
-        if resolution.kind == "part":
-            return self.shape
-        if resolution.kind == "tag":
-            return self._tag_shape(resolution.name)
-        return self._run_shape(resolution)
-
-    def _tag_shape(self, name: str) -> Any:
-        placement = self.placements.get(name)
-        if placement is None or placement.solid_index is None or placement.topo_index is None:
-            raise UnresolvableAnchorError(
-                "unaddressable_anchor",
-                f"tag {name!r} is in {self.part}'s namespace but was not placed in the "
-                "published artifact (it referenced topology outside part.geometry)",
-            )
-        if placement.solid_index >= len(self.solids):
-            raise UnresolvableAnchorError(
-                "unaddressable_anchor",
-                f"tag {name!r} names solid {placement.solid_index} of {self.part}, which the "
-                f"published artifact does not have ({len(self.solids)} solids)",
-            )
-        solid = self.solids[placement.solid_index]
-        if placement.kind == "solid":
-            return solid
-        if placement.kind in ("face", "edge"):
-            topologies = list(solid.faces() if placement.kind == "face" else solid.edges())
-            if placement.topo_index >= len(topologies):
-                raise UnresolvableAnchorError(
-                    "unaddressable_anchor",
-                    f"tag {name!r} names {placement.kind} {placement.topo_index} of solid "
-                    f"{placement.solid_index}, which the published artifact does not have",
-                )
-            return topologies[placement.topo_index]
-        raise UnresolvableAnchorError(
-            "unaddressable_anchor",
-            f"tag {name!r} is a {placement.kind}, which a published artifact cannot address "
-            "(only solids, faces and edges are relocatable in reloaded BRep)",
-        )
-
-    def _run_shape(self, resolution: Resolution) -> Any:
-        if resolution.kind == "binding":
-            raise UnresolvableAnchorError(
-                "unaddressable_anchor",
-                f"binding {resolution.name!r} contributed no labeled node to {self.part}'s "
-                "published geometry, so there is nothing to measure (§5.1 label-fill gives a "
-                "geometry-bearing binding a label; this one has none)",
-            )
-        if not self.runs_partition:
-            raise UnresolvableAnchorError(
-                "unaddressable_anchor",
-                f"{self.part}'s published label rows do not partition its solids (nested "
-                "labels), so a label anchor cannot be mapped to geometry without guessing",
-            )
-        picked: list[Any] = []
-        for occurrence in resolution.occurrences:
-            if occurrence >= len(self.runs):
-                raise UnresolvableAnchorError(
-                    "unaddressable_anchor",
-                    f"label {resolution.name!r} occurrence {occurrence} is outside "
-                    f"{self.part}'s published label rows",
-                )
-            _, start, count = self.runs[occurrence]
-            picked.extend(self.solids[start : start + count])
-        if not picked:
-            raise UnresolvableAnchorError(
-                "unaddressable_anchor",
-                f"label {resolution.name!r} contributed no solid to {self.part}'s published "
-                "geometry",
-            )
-        if len(picked) == 1:
-            return picked[0]
-        from build123d import Compound
-
-        return Compound(children=picked)
-
-
-# --------------------------------------------------------------------------
 # shared anchor resolution
 
 
@@ -684,21 +541,16 @@ class AnchorResolver:
                 f"artifact {result.artifact_ref} of part {part!r} is not durably stored",
             )
         shape = cast("Any", load_brep_shape(self._store.blobs.get(blob), scratch_dir=self._scratch))
-        solids = tuple(cast("list[Any]", shape.solids()))
         bundle = (
             (self._publisher.current_bundle(part) or {}) if named is None else dict(named.bundle)
         )
-        index = _published_index(bundle, result)
-        runs, partition = _solid_runs(index, result, len(solids))
-        return PartGeometry(
+        return part_geometry(
             part=part,
             artifact_ref=result.artifact_ref,
             shape=shape,
-            index=index,
-            solids=solids,
-            runs=runs,
+            index=published_index(bundle, result),
             placements=self._placements(result),
-            runs_partition=partition,
+            result=result,
         )
 
     def _placements(self, result: BuildResult) -> dict[str, TagPlacement]:
@@ -712,29 +564,7 @@ class AnchorResolver:
         raw = json.loads(self._store.blobs.get(blob).decode("utf-8"))
         if not isinstance(raw, dict):  # pragma: no cover - our own JSON
             return {}
-        tags = cast("Mapping[str, JSONValue]", raw).get("tags")
-        if not isinstance(tags, dict):
-            return {}
-        out: dict[str, TagPlacement] = {}
-        for name, entry in cast("Mapping[str, JSONValue]", tags).items():
-            if not isinstance(entry, dict):
-                continue
-            placement = cast("Mapping[str, JSONValue]", entry)
-            kind = placement.get("kind")
-            solid = placement.get("solid")
-            topo = placement.get("topo_index")
-            if not isinstance(kind, str):
-                continue
-            out[name] = TagPlacement(
-                kind=kind,
-                solid_index=(
-                    solid if isinstance(solid, int) and not isinstance(solid, bool) else None
-                ),
-                topo_index=topo if isinstance(topo, int) and not isinstance(topo, bool) else None,
-                statement_index=-1,
-                line=0,
-            )
-        return out
+        return tag_placements(cast("Mapping[str, JSONValue]", raw))
 
 
 # --------------------------------------------------------------------------
@@ -1090,50 +920,3 @@ def _unresolvable(
         provenance=entry.provenance.to_json(),
         note=entry.note,
     )
-
-
-def _published_index(bundle: Mapping[str, JSONValue], result: BuildResult) -> GeometryIndex:
-    """The §7 namespace of a published build.
-
-    Publication records the worker's own ``geometry_index``; a bundle written
-    before that (``ASSEMBLY.md`` §2 added it) falls back to the §8 ``geometries``
-    rows, which are the same label set in the same order with the display
-    dedup suffix applied — enough to address labels and to report a dangling
-    tag honestly, rather than pretending an old build has no namespace at all.
-    """
-    raw = bundle.get("geometry_index")
-    if isinstance(raw, dict):
-        index = geometry_index_from_json(cast("Mapping[str, JSONValue]", raw))
-        if index.labels or index.tags or index.bindings:
-            return index
-    return GeometryIndex(labels=tuple(_raw_labels(result)), bindings={}, tags=frozenset())
-
-
-def _raw_labels(result: BuildResult) -> Iterable[str]:
-    """Undo the §7 display dedup (``name#2`` -> ``name``) on ``geometries`` rows."""
-    for entry in result.geometries:
-        base, separator, suffix = entry.label.rpartition("#")
-        yield base if separator and suffix.isdigit() else entry.label
-
-
-def _solid_runs(
-    index: GeometryIndex, result: BuildResult, solid_count: int
-) -> tuple[tuple[tuple[str, int, int], ...], bool]:
-    """Map each label row to its run of solids (tree order == solid order).
-
-    The §3.3 selection table (:mod:`hephaestus.core.render.inspect`) reads a
-    published artifact the same way: rows are consecutive runs of solids in
-    tree order. That mapping only holds when the rows PARTITION the artifact's
-    solids; a label on a compound *and* on its children counts the same solids
-    twice, and the second return value says so, because guessing which run a
-    nested label meant is exactly what §7 forbids.
-    """
-    counts = [max(entry.solids, 0) for entry in result.geometries]
-    labels = list(index.labels)
-    runs: list[tuple[str, int, int]] = []
-    start = 0
-    for position, label in enumerate(labels):
-        count = counts[position] if position < len(counts) else 0
-        runs.append((label, start, count))
-        start += count
-    return tuple(runs), start == solid_count and len(counts) == len(labels)

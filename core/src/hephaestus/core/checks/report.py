@@ -31,7 +31,6 @@ from hephaestus.core.checks.engine import CheckSet
 from hephaestus.core.checks.facade import GeometrySource
 from hephaestus.core.project_store.layout import ProjectLayout
 from hephaestus.core.project_store.publication import Publisher
-from hephaestus.core.project_store.store import blob_hash_of_ref
 from hephaestus.core.types import CheckReport, CheckResult
 from opstore.types import JSONValue
 
@@ -54,8 +53,14 @@ def project_check_report(
     coherent project snapshot, whose refusal raises
     :class:`~hephaestus.core.project_store.projections.SnapshotRejectedError`
     for the caller to render in its own idiom.
+
+    Each source is the build's FULL §7 namespace, not the ``"part"``-only view
+    this used to build (audit-2026-09-04 B-1). A check addressing
+    ``"<part>/<label>"`` or a tag was returning ``pass: false`` with an
+    ``AddressingError`` buried in ``measured`` — a failing acceptance check for
+    a correct design, which is a worse failure than a refusal.
     """
-    from hephaestus.core.executor.artifact_geometry import artifact_source
+    from hephaestus.core.executor.artifact_geometry import published_source_for
 
     publisher = Publisher(layout, store)
     layout.store_root.mkdir(parents=True, exist_ok=True)
@@ -65,8 +70,13 @@ def project_check_report(
             current = publisher.current_result(part)
             if current is None or current.artifact_ref is None:
                 continue
-            data = store.blobs.get(blob_hash_of_ref(current.artifact_ref))
-            sources[part] = artifact_source(data, scratch_dir=Path(scratch))
+            sources[part] = published_source_for(
+                store,
+                artifact_ref=current.artifact_ref,
+                part=part,
+                bundle=publisher.bundle_for_artifact(part, current.artifact_ref),
+                scratch_dir=Path(scratch),
+            )
 
         snapshot_ref: str | None = None
         if project:

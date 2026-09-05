@@ -45,6 +45,7 @@ from typing import Any, Literal, cast
 import numpy as np
 from hephaestus.core.errors import AddressingError, ValidationError
 from hephaestus.core.executor.artifact_geometry import load_brep_shape
+from hephaestus.core.executor.published_geometry import tag_placements
 from hephaestus.core.executor.tags import TagPlacement
 from hephaestus.core.project_store.artifact_kinds import record_artifact_kind
 from hephaestus.core.project_store.layout import ProjectLayout
@@ -419,34 +420,15 @@ def build_solid_labels(result: BuildResult | None, solid_count: int) -> dict[int
 def tag_placements_from_source_map(
     source_map: Mapping[str, JSONValue] | None,
 ) -> dict[str, TagPlacement]:
-    """Reconstruct ``{tag: TagPlacement}`` from a published source-map artifact."""
-    out: dict[str, TagPlacement] = {}
-    if source_map is None:
-        return out
-    tags = source_map.get("tags")
-    if not isinstance(tags, dict):
-        return out
-    for name, raw in cast("Mapping[str, JSONValue]", tags).items():
-        if not isinstance(raw, dict):
-            continue
-        placement = cast("Mapping[str, JSONValue]", raw)
-        kind = placement.get("kind")
-        solid = placement.get("solid")
-        topo = placement.get("topo_index")
-        statement = placement.get("statement")
-        line = placement.get("line")
-        if not isinstance(kind, str):
-            continue
-        out[name] = TagPlacement(
-            kind=kind,
-            solid_index=solid if isinstance(solid, int) and not isinstance(solid, bool) else None,
-            topo_index=topo if isinstance(topo, int) and not isinstance(topo, bool) else None,
-            statement_index=(
-                statement if isinstance(statement, int) and not isinstance(statement, bool) else -1
-            ),
-            line=line if isinstance(line, int) and not isinstance(line, bool) else 0,
-        )
-    return out
+    """Reconstruct ``{tag: TagPlacement}`` from a published source-map artifact.
+
+    A one-line delegation since audit-2026-09-04 B-1: the decoder is shared with
+    anchor resolution (:func:`hephaestus.core.executor.published_geometry.tag_placements`)
+    because the §3.3 selection table and a measurement anchor must agree about
+    where a published tag sits, and two decoders are how they would stop
+    agreeing. Kept as a name here — it is what the §3.3 call sites read.
+    """
+    return tag_placements(source_map)
 
 
 # --------------------------------------------------------------------------
