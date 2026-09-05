@@ -14,6 +14,7 @@ from typing import Any
 
 from hephaestus.agent_bridge.cad_ops import CadOps
 from hephaestus.agent_bridge.dispatch import Principal, ToolDispatcher
+from hephaestus.agent_bridge.wiring import build_dispatcher
 from hephaestus.core.project_store.layout import ProjectLayout, load_project, open_store
 from hephaestus.core.project_store.store import ProjectStore
 
@@ -143,6 +144,39 @@ def make_project(
         delegation=delegation,
         delegation_runner=delegation_runner,
         snapshot_caller=snapshot_caller,
+    )
+    if seed_ledger:
+        from hephaestus.testing.ledger import seed_minimal_ledger
+
+        seed_minimal_ledger(cad)
+    return Project(root=root, layout=layout, store=store, cad=cad, dispatcher=dispatcher, _n=[0])
+
+
+def make_wired_project(
+    root: Path, *, broken: bool = False, seed_ledger: bool = True, delegation: bool = True
+) -> Project:
+    """The same project, but with the dispatcher a **shipped runtime** builds.
+
+    :func:`make_project` above takes the capabilities as injections, which is
+    what a unit test of one family wants. It is also how B-2 hid: every test
+    that exercised the registry or delegation tools handed them in, so nothing
+    ever asserted what ``heph agent`` / ``heph serve`` / ``heph mcp`` actually
+    construct. This builds through
+    :func:`~hephaestus.agent_bridge.wiring.build_dispatcher` — the one owner of
+    that answer — so a test can assert the shipped surface without booting a
+    sidecar.
+
+    The two live-sidecar capabilities are still absent here (there is no child
+    process), exactly as they are in ``heph mcp``: ``query_snapshot`` answers
+    ``capability_not_available`` and a delegation reaches a durable
+    ``INTERRUPTED`` terminal rather than a fabricated completion.
+    """
+    scaffold(root, broken=broken)
+    layout = load_project(root)
+    store = open_store(layout)
+    cad = CadOps(layout, store)
+    dispatcher = build_dispatcher(
+        layout, store, ProjectStore(layout, store), cad, delegation=delegation
     )
     if seed_ledger:
         from hephaestus.testing.ledger import seed_minimal_ledger

@@ -27,6 +27,7 @@ Hephaestus events, never raw frames.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import stat
 import threading
@@ -37,6 +38,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
+from hephaestus.core.executor.sandbox.base import ExecBackend
 from hephaestus.core.project_store.layout import ProjectLayout, load_project
 from hephaestus.core.project_store.retention import DefaultProtectedRoots
 from hephaestus.core.project_store.store import ProjectStore
@@ -55,9 +57,16 @@ from .cad_ops import (
 from .dispatch import DispatchError, Principal, ToolDispatcher
 from .events import EventPump, HephaestusEvent, ObserverClient, PerClientQueue
 from .protocol import ErrorCode, ProtocolError
+from .query_snapshot import (
+    QuerySnapshotError,
+    SnapshotRequest,
+    SnapshotResult,
+    SnapshotUsage,
+)
 from .sessions import RunInFlightError
 from .sidecar import SidecarResolution, node_executable, resolve_sidecar
 from .supervisor import ProcessLossEvent, Supervisor, SupervisorConfig, SupervisorError
+from .wiring import build_dispatcher
 
 __all__ = [
     "AgentUnavailableError",
@@ -328,6 +337,105 @@ def _provider_status_of(result: Any) -> list[dict[str, Any]]:
     return out
 
 
+#: Set for the duration of a ``py.*`` handler on the thread running it.
+#:
+#: ``Supervisor._read_loop`` is a SINGLE thread: it reads every frame the child
+#: sends, and it calls the ``py.*`` handler inline (``_dispatch_py_request``).
+#: A handler that issues ``Supervisor.call`` therefore blocks waiting for a
+#: response only the thread it is blocking could ever read — the call times out,
+#: the watchdog kills the child as unresponsive, and the reader thread dies with
+#: it. So the invariant is: **inside a ``py.*`` handler, do not call the
+#: sidecar.** It is recorded as a thread flag rather than by comparing thread
+#: identities because the invariant is about *what this thread is doing*, not
+#: about which thread it happens to be.
+_PY_HANDLER = threading.local()
+
+
+class _BridgeSnapshotCaller:
+    """``query.snapshot`` over the live sidecar: the ephemeral vision child.
+
+    One dispatcher serves two kinds of caller, and only one of them can reach
+    the child. An HTTP tool route runs on a worker thread (``http/app.py`` hands
+    every dispatch to ``asyncio.to_thread``) and is free to call the sidecar. A
+    model turn arrives inside ``py.tool_dispatch``, on the supervisor's reader
+    thread, where calling the sidecar is a deadlock the watchdog resolves by
+    killing the child (see :data:`_PY_HANDLER`).
+
+    So this caller answers :meth:`unavailable` on the second case and refuses
+    with the tool's own ``capability_not_available`` — the exact result the
+    model already read when no caller was configured at all, so nothing
+    regresses — instead of taking the sidecar down. It becomes live for model
+    turns the moment ``py.*`` dispatch moves onto a worker pool, with no change
+    here (audit-2026-09-04-broken.md B-2, "Dependencies outside this document").
+
+    **Today no shipped HTTP route dispatches ``query_snapshot``** — §2.3
+    exposes ``read_part``/``inspect_part``/``measure`` and the keyed mutations,
+    not this tool — so in practice every caller is a model turn and every
+    answer is the refusal. That is honest, and it is one blocker away from
+    working; it is not a claim that vision is live.
+    """
+
+    def __init__(self, sup: Supervisor) -> None:
+        self._sup = sup
+
+    def unavailable(self) -> str | None:
+        """:class:`~.dispatch.SnapshotAvailability`: usable off the reader thread only.
+
+        Answered before the dispatcher prepares a render bundle, so a refusal
+        names the runtime rather than borrowing the render's own complaint about
+        an unbuilt part.
+        """
+        if getattr(_PY_HANDLER, "active", False):
+            return (
+                "query_snapshot cannot run inside a sidecar request on this runtime: "
+                "the vision child is reached over the same channel this call is "
+                "already occupying"
+            )
+        return None
+
+    async def call(self, request: SnapshotRequest) -> SnapshotResult:
+        # Second enforcement of the same rule: the dispatcher asks
+        # :meth:`unavailable` first, and this is what makes the invariant hold
+        # for any other caller of this object.
+        blocked = self.unavailable()
+        if blocked is not None:
+            raise QuerySnapshotError("capability_not_available", blocked)
+        # Off the event loop: the supervisor call is blocking, and leaving it on
+        # the loop would also disarm ``QuerySnapshotService``'s own
+        # ``asyncio.wait_for`` timeout — the outer bound of the two the service
+        # enforces.
+        return await asyncio.to_thread(self._call, request)
+
+    def _call(self, request: SnapshotRequest) -> SnapshotResult:
+        try:
+            raw = self._sup.call(
+                "query.snapshot",
+                {
+                    "run_id": request.run_id,
+                    "question": request.question,
+                    "image_refs": list(request.image_refs),
+                    "max_output_tokens": request.max_output_tokens,
+                    "max_turns": request.max_turns,
+                    "timeout_s": request.timeout_s,
+                },
+                timeout=request.timeout_s,
+            )
+        except SupervisorError as exc:
+            raise QuerySnapshotError("snapshot_failed", str(exc)) from exc
+        answer = _as_dict(raw).get("answer")
+        return SnapshotResult(
+            text=answer if isinstance(answer, str) else "",
+            # The child returns text; the images it looked at are the ones this
+            # side prepared, and they stay on disk (digest §2: refs only).
+            refs=request.image_refs,
+            # The sidecar reports no usage for this method, so none is invented.
+            # The turn count is a profile invariant, not a measurement: the
+            # ``query_snapshot`` profile is single-turn by construction
+            # (``agent/src/session/profiles.ts``).
+            usage=SnapshotUsage(output_tokens=0, input_tokens=0, turns=1, cost=0.0),
+        )
+
+
 class BridgeRuntime:
     """Composed runtime: supervised sidecar + Python dispatch/admission/events."""
 
@@ -346,6 +454,7 @@ class BridgeRuntime:
         project_store: ProjectStore | None = None,
         cad: CadOps | None = None,
         dispatcher: ToolDispatcher | None = None,
+        backend: ExecBackend | None = None,
     ) -> None:
         self._layout = load_project(project_root)
         # ONE store, ONE ``ProjectStore``, ONE dispatcher per process. The four
@@ -362,8 +471,23 @@ class BridgeRuntime:
             ProjectStore(self._layout, self._store) if project_store is None else project_store
         )
         self._cad = CadOps(self._layout, self._store) if cad is None else cad
+        # B-2: the capability set is resolved by ``wiring.build_dispatcher`` and
+        # nowhere else, so this runtime, ``heph serve --web`` and ``heph mcp``
+        # cannot disagree about which of the 57 tools actually work. Before
+        # this, every shipped runtime built ``ToolDispatcher(project, cad=cad)``
+        # and nine model-visible tools refused in all three.
+        #
+        # ``backend`` is the SECURE backend registry generators may run under.
+        # ``heph agent`` has none — ``CadOpsState`` defaults to the unsafe local
+        # backend and nothing injects a probed one — so ``instance_store_part``
+        # stays at ``capability_not_available`` here by the contract
+        # ``core/registry/_ops.py`` already states, rather than degrading to an
+        # unsandboxed generator run. ``wiring.resolve_registry`` drops an unsafe
+        # backend on its own, so passing one cannot open that hole either.
         self._dispatcher = (
-            ToolDispatcher(self._project, cad=self._cad) if dispatcher is None else dispatcher
+            build_dispatcher(self._layout, self._store, self._project, self._cad, backend=backend)
+            if dispatcher is None
+            else dispatcher
         )
         self._admission = BridgeAdmission(self._store.admission)
         # Bounded per-client fan-out + the durable terminal channel (digest §6):
@@ -587,6 +711,26 @@ class BridgeRuntime:
     def start(self) -> None:
         """Spawn the sidecar (the spawn hook pushes ``runtime.configure``)."""
         self._sup.start()
+        self._bind_runtime_capabilities()
+
+    def _bind_runtime_capabilities(self) -> None:
+        """Hand the dispatcher the capabilities that need a live child (B-2).
+
+        Separate from construction because the ``query_snapshot`` vision child
+        is a *session*, and there is no session until a sidecar exists. Called
+        again from :meth:`rebind_project`, because a manifest reload builds a
+        fresh dispatcher and a capability silently lost across a settings toggle
+        is exactly the kind of drift §6.4 splits that surface to avoid.
+
+        No delegation runner is bound: executing a child part agent means
+        prompting it over the sidecar, and every ``delegate_part_agent`` arrives
+        inside a ``py.*`` handler on the supervisor's single reader thread
+        (see :data:`_PY_HANDLER`). Until that dispatch moves onto a worker pool,
+        an absent runner is the correct state — the dispatcher then writes
+        exactly one durable ``INTERRUPTED`` terminal rather than inventing a
+        completion.
+        """
+        self._dispatcher.bind_runtime(snapshot_caller=_BridgeSnapshotCaller(self._sup))
 
     def restart(self, *, reason: str = "manual") -> None:
         """Kill the whole sidecar and respawn it; the spawn hook re-configures.
@@ -771,6 +915,7 @@ class BridgeRuntime:
         self._project = project_store
         self._cad = cad
         self._dispatcher = dispatcher
+        self._bind_runtime_capabilities()
 
     @property
     def cad(self) -> CadOps:
@@ -1251,6 +1396,20 @@ class BridgeRuntime:
     # -- py.* request handling (sidecar -> python) -------------------------
 
     def _on_py_request(self, method: str, params: dict[str, Any]) -> Any:
+        # Marks this thread as "servicing a sidecar request" for the whole
+        # handler, including everything the dispatcher reaches. Nothing under
+        # here may call back into the sidecar; see :data:`_PY_HANDLER` for why
+        # that is a deadlock and not merely slow. try/finally rather than a
+        # plain reset: a handler that raises still has to clear the flag, or the
+        # reader thread would refuse every later snapshot for the life of the
+        # process.
+        _PY_HANDLER.active = True
+        try:
+            return self._route_py_request(method, params)
+        finally:
+            _PY_HANDLER.active = False
+
+    def _route_py_request(self, method: str, params: dict[str, Any]) -> Any:
         if method == "py.tool_dispatch":
             return self._handle_tool_dispatch(params)
         if method == "py.ask_user":
@@ -1258,10 +1417,53 @@ class BridgeRuntime:
         if method == "py.admission_capacity":
             return {"capacity": self._admission.capacity()}
         if method == "py.delegate":
-            # Delegation is owned by the delegation coordinator; the runtime-core
-            # slice rejects rather than fabricating a child.
-            return {"status": "rejected", "reason": "no_run_slot", "part_session_id": None}
+            return self._handle_delegate(params)
         raise ProtocolError(ErrorCode.METHOD_NOT_FOUND, f"unhandled py request: {method}")
+
+    def _handle_delegate(self, params: dict[str, Any]) -> Any:
+        """Route the sidecar's ``py.delegate`` into the one dispatcher (B-3).
+
+        ``delegate_part_agent`` is the single model-visible tool that does NOT
+        arrive over ``py.tool_dispatch``: ``agent/src/tools/proxy.ts`` special-
+        cases it onto its own method so the sidecar can hold the parent turn
+        open. That is why a Stage-2A placeholder here — an unconditional
+        ``{"status": "rejected", "reason": "no_run_slot", "part_session_id":
+        None}`` — was never reached by any dispatcher test: it shadowed the real
+        ``_delegate`` entirely, and it was both illegal (an optional property
+        present as ``null`` fails the committed schema in both validators, so
+        the model read "result from delegate_part_agent failed its result
+        schema") and untrue (no slot was ever contended).
+
+        The wire params carry no ``session_id`` of their own — the trusted
+        invocation is the only place the calling session is named — so the
+        principal is resolved from there, and an unrecognized session is a
+        protocol error rather than a silent orchestrator.
+        """
+        raw_inv = cast("dict[str, Any]", params.get("invocation") or {})
+        session_id = str(raw_inv.get("session_id", ""))
+        with self._lock:
+            principal = self._principals.get(session_id)
+        if principal is None:
+            raise ProtocolError(
+                ErrorCode.INVALID_PARAMS, f"py.delegate from unknown session {session_id!r}"
+            )
+        arguments: dict[str, Any] = {
+            "part": params.get("part"),
+            "prompt": params.get("prompt"),
+        }
+        for optional in ("delivery", "deadline_seconds"):
+            if params.get(optional) is not None:
+                arguments[optional] = params[optional]
+        return self._dispatcher.dispatch(
+            principal,
+            {
+                "session_id": session_id,
+                "run_id": str(params.get("parent_run_id", "")),
+                "tool": "delegate_part_agent",
+                "arguments": arguments,
+                "invocation": raw_inv,
+            },
+        )
 
     def _handle_tool_dispatch(self, params: dict[str, Any]) -> Any:
         session_id = str(params.get("session_id", ""))

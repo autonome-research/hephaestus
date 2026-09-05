@@ -35,6 +35,7 @@ from hephaestus.agent_bridge.admission import open_project_store
 from hephaestus.agent_bridge.cad_ops import CadOps
 from hephaestus.agent_bridge.dispatch import Principal, ToolDispatcher
 from hephaestus.agent_bridge.session_edges import SessionEdgeStore
+from hephaestus.agent_bridge.wiring import build_dispatcher
 from hephaestus.core.executor.sandbox.base import ExecBackend
 from hephaestus.core.executor.sandbox.probe import refuse_unsafe, secure_backend
 from hephaestus.core.project_store.layout import ProjectLayout, load_project
@@ -165,15 +166,28 @@ class WorkspaceRuntime:
         # the very thing §2.1's "one process owns the leases" exists to prevent.
         # ``mcp/app.py`` shares one for the same reason.
         project_store = ProjectStore(layout, store)
+        # ONE edge store too, shared by the thread projection and the delegation
+        # WAL that WRITES the edges (§2.8): the row is recorded at the PREPARED
+        # transition inside the dispatcher's delegation service, so the panel
+        # and the writer must be looking at the same table handle.
+        edges = SessionEdgeStore(store.db)
         return cls(
             root=resolved,
             layout=layout,
             store=store,
             project_store=project_store,
             cad=cad,
-            dispatcher=ToolDispatcher(project_store, cad=cad),
+            # B-2: the capability set is resolved in ONE place for every shipped
+            # runtime (``agent_bridge/wiring.py``). This serve is the process
+            # that owns the project's leases (§2.1) and now its registry set as
+            # well; ``exec_backend`` is the probed secure backend under
+            # ``serve_mode``, which is what lets ``instance_store_part`` run a
+            # store generator here at all.
+            dispatcher=build_dispatcher(
+                layout, store, project_store, cad, backend=exec_backend, edges=edges
+            ),
             ledger=RestLedger(store),
-            edges=SessionEdgeStore(store.db),
+            edges=edges,
             backend=exec_backend,
             token=token,
             serve_mode=serve_mode,
@@ -416,7 +430,18 @@ class WorkspaceRuntime:
         self.layout = load_project(self.root)
         self.cad = CadOps(self.layout, self.store, backend=self.backend)
         self.project_store = ProjectStore(self.layout, self.store)
-        self.dispatcher = ToolDispatcher(self.project_store, cad=self.cad)
+        # The same construction as :meth:`open`, so toggling a manifest flag
+        # cannot silently drop the registry set (B-2). ``BridgeRuntime.
+        # rebind_project`` re-binds the live-sidecar capabilities onto this new
+        # dispatcher below.
+        self.dispatcher = build_dispatcher(
+            self.layout,
+            self.store,
+            self.project_store,
+            self.cad,
+            backend=self.backend,
+            edges=self.edges,
+        )
         if self.session_backend is not None:
             # The sidecar must not keep building against the pre-toggle layout:
             # the agent and the panel disagreeing about a *project setting* is

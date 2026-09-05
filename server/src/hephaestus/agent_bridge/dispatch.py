@@ -67,6 +67,7 @@ from hephaestus.core.errors import (
 from hephaestus.core.part_templates import BLANK_TEMPLATES
 from hephaestus.core.project_store.store import ProjectStore, WriteConflictError
 from hephaestus.core.registry import TEXT_MAX_LINES, RegistryError, RegistryOps
+from opstore.errors import BusyError, NotFoundError
 from opstore.types import TerminalState
 
 from .cad_ops import (
@@ -86,6 +87,7 @@ from .delegation import (
     DelegationService,
     Delivery,
     Rejected,
+    RejectionReason,
 )
 from .limits import LimitError, enforce_max_utf8_bytes
 from .protocol import ErrorCode, ProtocolError
@@ -111,6 +113,7 @@ __all__ = [
     "DispatchError",
     "Invocation",
     "Principal",
+    "SnapshotAvailability",
     "ToolDispatcher",
 ]
 
@@ -317,6 +320,21 @@ class _NullLedger:
         return None
 
 
+@runtime_checkable
+class SnapshotAvailability(Protocol):
+    """A :class:`SnapshotCaller` that can say it is *temporarily* unreachable.
+
+    Being configured and being usable are different facts. ``app.py``'s caller
+    reaches the vision child over the supervisor, which a ``py.*`` handler may
+    not do from the reader thread it is occupying — so the same object is usable
+    from an HTTP tool route and not from a model turn, in the same process, at
+    the same moment. Optional: a caller that is always usable (a test double, a
+    future in-process provider) simply does not implement it.
+    """
+
+    def unavailable(self) -> str | None: ...
+
+
 class _CadBundlePreparer:
     """Adapts :class:`CadOps` render-bundle preparation to the snapshot service."""
 
@@ -358,14 +376,51 @@ class ToolDispatcher:
         snapshot_caller: SnapshotCaller | None = None,
         budget_ledger: BudgetLedger | None = None,
         registry: RegistryOps | None = None,
+        registry_unavailable: str | None = None,
     ) -> None:
         self._store = store
         self._cad = cad
         self._registry = registry
+        #: Why ``registry`` is absent, when a runtime tried to open one and
+        #: could not (a drifted Merkle pin, a missing tree). Carried so the five
+        #: registry tools refuse with the *reason* instead of a bare "not wired
+        #: in this runtime", which is indistinguishable from "this build has no
+        #: registries" and sends the operator looking in the wrong place.
+        self._registry_unavailable = registry_unavailable
         self._delegation = delegation
         self._delegation_runner = delegation_runner
         self._snapshot_caller = snapshot_caller
         self._ledger: BudgetLedger = budget_ledger or _NullLedger()
+
+    # -- runtime-bound capabilities ----------------------------------------
+
+    def bind_runtime(
+        self,
+        *,
+        snapshot_caller: SnapshotCaller | None = None,
+        delegation_runner: DelegationRunner | None = None,
+    ) -> None:
+        """Attach the two capabilities that need a **live sidecar** (B-2).
+
+        Everything else the dispatcher routes is decided from the project on
+        disk and its opstore, so :func:`~hephaestus.agent_bridge.wiring.build_dispatcher`
+        can construct it before any child process exists. These two cannot be:
+        the ``query_snapshot`` vision child and the delegation coordinator both
+        run a *session*, which only exists once ``Supervisor.start`` has
+        succeeded. Separating them from the constructor is what lets one
+        construction serve all three shipped runtimes — ``heph mcp`` has no
+        sidecar and simply never calls this, so those two families keep their
+        honest refusals there rather than pretending to a capability the
+        process does not have.
+
+        Idempotent per capability and additive: ``None`` leaves what is already
+        bound in place, so a re-bind after a manifest reload (``http/runtime.py``
+        ``reload_manifest``) cannot silently drop a live capability.
+        """
+        if snapshot_caller is not None:
+            self._snapshot_caller = snapshot_caller
+        if delegation_runner is not None:
+            self._delegation_runner = delegation_runner
 
     # -- entry point -------------------------------------------------------
 
@@ -1177,11 +1232,18 @@ class ToolDispatcher:
         self, _p: Principal, cad: CadOps, arguments: dict[str, Any], inv: Invocation
     ) -> dict[str, Any]:
         caller = self._snapshot_caller
-        if caller is None:
+        unavailable = caller.unavailable() if isinstance(caller, SnapshotAvailability) else None
+        if caller is None or unavailable is not None:
+            # Asked BEFORE the render bundle is prepared. Rendering a part to
+            # answer a question this runtime cannot ask is wasted work, and —
+            # worse — it substitutes the render's own refusal (an unbuilt part)
+            # for the true one, so the model would be told its part is the
+            # problem when the runtime is.
             return {
                 "status": "capability_error",
                 "code": "capability_not_available",
-                "message": "no multimodal snapshot provider is configured for this runtime",
+                "message": unavailable
+                or "no multimodal snapshot provider is configured for this runtime",
             }
         name = str(arguments["name"])
         question = str(arguments["question"])
@@ -1199,6 +1261,19 @@ class ToolDispatcher:
                 service.run(inv.session_id, child_run_id, question, image_refs=())
             )
         except QuerySnapshotError as exc:
+            if exc.code == "capability_not_available":
+                # The SAME discriminated result the absent-caller branch above
+                # returns. A runtime can hold a snapshot caller that is not
+                # usable from the calling thread (``app.py``'s reader-thread
+                # guard: a ``py.*`` handler may not issue a supervisor call, see
+                # ``supervisor.py``'s single-reader invariant), and the model
+                # must read one shape for "this runtime cannot answer a visual
+                # question right now" rather than two.
+                return {
+                    "status": "capability_error",
+                    "code": "capability_not_available",
+                    "message": exc.message,
+                }
             raise DispatchError(exc.code, exc.message) from exc
         return {
             "status": "ok",
@@ -1228,9 +1303,15 @@ class ToolDispatcher:
         """
         registry = self._registry
         if registry is None:
+            # B-2: a runtime that could not OPEN its registries (a drifted
+            # Merkle pin) degrades to this refusal rather than failing to start,
+            # so the reason travels with it — otherwise the operator reads the
+            # same sentence as a build that ships no registries at all.
+            because = f" ({self._registry_unavailable})" if self._registry_unavailable else ""
             raise DispatchError(
                 "not_implemented",
-                f"tool {decl.name!r} needs the registry stack, which is not wired in this runtime",
+                f"tool {decl.name!r} needs the registry stack, "
+                f"which is not wired in this runtime{because}",
                 code=ErrorCode.METHOD_NOT_FOUND,
             )
         if decl.name == "list_skills":
@@ -1269,13 +1350,51 @@ class ToolDispatcher:
             )
         try:
             if decl.name == "delegate_part_agent":
-                return self._delegate(service, decl, arguments, inv, run_id)
+                return self._delegate_guarded(service, decl, arguments, inv, run_id)
             ref = str(arguments["delegation_ref"])
             if decl.name == "cancel_delegation":
                 return _delegation_result(service.cancel(ref))
             return _delegation_result(service.check_deadline(ref))
         except DelegationError as exc:
             raise DispatchError(exc.code, exc.message) from exc
+
+    def _delegate_guarded(
+        self,
+        service: DelegationService,
+        decl: ToolDecl,
+        arguments: dict[str, Any],
+        inv: Invocation,
+        run_id: str,
+    ) -> dict[str, Any]:
+        """:meth:`_delegate`, with the admission substrate's own errors typed.
+
+        Only ``delegate_part_agent`` writes through admission (``suspend`` /
+        ``admit``), and only its result declares a ``rejected`` variant — so
+        this translation belongs to it alone and not to the ``get``/``cancel``
+        siblings, whose schemas have no such variant to answer with.
+        """
+        try:
+            return self._delegate(service, decl, arguments, inv, run_id)
+        except BusyError:
+            # The admission substrate refused the child slot on the path the
+            # state machine does not classify itself (``suspend``, for a
+            # synchronous delegation). That IS a pre-admission rejection with no
+            # child run and no ref, so it is answered as the declared
+            # ``rejected`` variant rather than as an untyped exception.
+            return {"status": "rejected", "reason": str(RejectionReason.NO_RUN_SLOT)}
+        except NotFoundError as exc:
+            # No admission row for the parent run. Unreachable from a model turn
+            # (a prompt is admitted before any tool can be called) and reachable
+            # from ``POST /tools/delegate_part_agent``, where the run id comes
+            # off the request. B-2 wired delegation into that route for the
+            # first time, so the opstore's own exception would otherwise cross
+            # the boundary untyped — every dispatcher refusal carries a stable
+            # reason, without exception.
+            raise DispatchError(
+                "invalid_params",
+                f"delegate_part_agent needs a live parent run: {exc}",
+                code=ErrorCode.INVALID_PARAMS,
+            ) from exc
 
     def _delegate(
         self,

@@ -18,12 +18,17 @@ It reuses the shipped-but-private test-support package verbatim
   ``owner``;
 * :mod:`~hephaestus.testing.sidecar` — the one-per-process ``agent/dist`` build.
 
-The one thing it *adds* is :class:`G2Runtime`: ``BridgeRuntime`` with the tool
-families Stage 2A left unwired for the runtime slice — registries, delegation
-and the ``query_snapshot`` vision child — plugged in, plus a recorder that
-captures the trusted invocation metadata Python actually received. Gate clauses
-about "every generated tool through the real bridge" need all 30 tools routed,
-and clauses about scheduling/idempotency need to observe *what Python saw*.
+The one thing it *adds* is :class:`G2Runtime`: the shipped ``BridgeRuntime``
+with a recorder over its dispatcher, so clauses about scheduling and idempotency
+can observe the trusted invocation metadata Python actually received, plus
+scripted stand-ins for the two capabilities that need a live child run (the
+``query_snapshot`` vision child and the delegation coordinator), handed over
+through the shipped ``bind_runtime`` seam. It does **not** wire the tool
+families any more: registries and the delegation service are resolved by
+``hephaestus.agent_bridge.wiring.build_dispatcher``, the one place every shipped
+runtime asks. It used to wire them here, and that is exactly why the gate stayed
+green through audit-2026-09-04-broken.md's B-2 — a harness that composes the
+product's capabilities tests a runtime that does not ship.
 """
 
 from __future__ import annotations
@@ -41,10 +46,9 @@ import pytest
 from hephaestus.agent_bridge.app import BridgeRuntime, PromptResult
 from hephaestus.agent_bridge.delegation import DelegationRow, DelegationService
 from hephaestus.agent_bridge.dispatch import Principal, ToolDispatcher
-from hephaestus.agent_bridge.protocol import ErrorCode, ProtocolError
 from hephaestus.agent_bridge.query_snapshot import SnapshotRequest, SnapshotResult, SnapshotUsage
 from hephaestus.agent_bridge.supervisor import pid_alive
-from hephaestus.core.registry import RegistryOps, RegistrySet, load_registry
+from hephaestus.core.executor.sandbox.base import ExecBackend
 from hephaestus.testing.doubles import FakeClock, FakeLiveness, owner
 from hephaestus.testing.fake_openai import FakeOpenAI, RequestInfo, TurnResolver, start_fake_openai
 from hephaestus.testing.fake_openai import _chunk as fake_openai_chunk
@@ -99,7 +103,6 @@ __all__ = [
     "node_available",
     "owner",
     "payload_of",
-    "registry_ops",
     "scaffold",
     "scaffold_project",
     "start_scripted_openai",
@@ -136,18 +139,18 @@ def scaffold_project(root: Path, *, name: str = "g2", seed_ledger: bool = True) 
     )
 
 
-def registry_ops(store: Any, *, sandbox: bool = False) -> RegistryOps:
-    """The shipped registries (skills/parts/materials) over a project's opstore."""
-    registries = RegistrySet(
-        {kind: load_registry(REGISTRIES / kind) for kind in ("skills", "parts", "materials")}
-    )
-    backend: Any = None
-    if sandbox:
-        from hephaestus.core.executor.sandbox.bwrap import BwrapBackend, find_bwrap
+def _sandbox_backend() -> ExecBackend | None:
+    """The probed bwrap backend registry generators run under, when the host has one.
 
-        if find_bwrap() is not None:
-            backend = BwrapBackend()
-    return RegistryOps(registries, store, backend=backend)
+    ``heph agent`` injects no backend, so ``instance_store_part`` refuses there
+    with ``capability_not_available`` — the contract
+    ``core/registry/_ops.py`` states, and the honest answer until the sandbox
+    blocker named in audit-2026-09-04-broken.md is cleared. Supplying one here
+    is what lets the gate prove the generator path itself.
+    """
+    from hephaestus.core.executor.sandbox.bwrap import BwrapBackend, find_bwrap
+
+    return BwrapBackend() if find_bwrap() is not None else None
 
 
 # --------------------------------------------------------------------------
@@ -318,6 +321,10 @@ class _RecordingDispatcher:
         self.inner = inner
         self.recorder = recorder
 
+    def bind_runtime(self, **capabilities: Any) -> None:
+        """Pass the live-sidecar capabilities through to the wrapped dispatcher."""
+        self.inner.bind_runtime(**capabilities)
+
     def dispatch(self, principal: Principal, params: dict[str, Any]) -> Any:
         raw_inv = params.get("invocation")
         record = ToolCallRecord(
@@ -377,17 +384,32 @@ class CompletingDelegationRunner:
 
 
 class G2Runtime(BridgeRuntime):
-    """``BridgeRuntime`` with the full Stage-2 tool surface wired + recording.
+    """The **shipped** ``BridgeRuntime``, recording what crossed the bridge.
 
-    Stage 2A wires the file/CAD families only; the gate needs the registry,
-    delegation and snapshot families routed as well. The composition here is the
-    same one ``server/tests`` uses for those families, hung off the runtime's own
-    project store so a single ``state.db`` backs admission, delegation and CAS.
+    This class used to construct the registry set, the delegation service and
+    the dispatcher itself, and to override ``_on_py_request`` with the
+    ``py.delegate`` routing production was missing. That is why the gate was
+    green while nine model-visible tools refused in every shipped runtime
+    (audit-2026-09-04-broken.md B-2/B-3): every G2 clause exercised a runtime
+    that did not ship. All of it now lives in ``server/`` — the capability set
+    in :mod:`hephaestus.agent_bridge.wiring`, the delegation routing in
+    :meth:`BridgeRuntime._handle_delegate` — and this subclass adds only what a
+    *test* legitimately owns:
 
-    ``py.delegate`` (the sidecar sends delegation over its own method, not
-    ``py.tool_dispatch``) is routed back into the dispatcher, resolving the
-    calling session from the *trusted invocation* metadata — the wire params
-    themselves carry no ``session_id``.
+    * a recording decorator over the shipped dispatcher, so clauses about
+      scheduling and idempotency can observe what Python actually received;
+    * the two **live-sidecar** capabilities, scripted and handed over through
+      the shipped :meth:`~hephaestus.agent_bridge.dispatch.ToolDispatcher.bind_runtime`
+      seam rather than by rebuilding the dispatcher: a scripted vision child and
+      a scripted delegation coordinator. Production supplies neither yet — both
+      would have to call the sidecar from inside a ``py.*`` handler, which is
+      the reader-thread deadlock ``app.py`` documents — so scripting them is the
+      only way to drive the child-run clauses at all, and doing it through
+      ``bind_runtime`` means the *rest* of the surface is the shipped one.
+    * ``sandbox=True`` supplies the probed bwrap backend registry generators run
+      under. ``heph agent`` has none (``CadOpsState`` defaults to the unsafe
+      local backend), so ``instance_store_part`` refuses there by design; the
+      gate proves the generator path itself works when a secure backend exists.
     """
 
     def __init__(
@@ -396,72 +418,40 @@ class G2Runtime(BridgeRuntime):
         project_root: Path,
         providers: list[dict[str, Any]],
         dist_main: Path,
-        delegation: bool = True,
-        registry: bool = True,
         snapshot: ScriptedSnapshotCaller | None = None,
         sandbox: bool = False,
-        clock: Any = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(
-            project_root=project_root, providers=providers, dist_main=dist_main, **kwargs
+            project_root=project_root,
+            providers=providers,
+            dist_main=dist_main,
+            backend=_sandbox_backend() if sandbox else None,
+            **kwargs,
         )
         self.recorder = Recorder()
         self.snapshot_caller = snapshot
         self.delegation_runner = CompletingDelegationRunner()
-        self.delegation: DelegationService | None = None
-        if delegation:
-            self.delegation = DelegationService(self._store.admission, self._store.db, clock=clock)
-        self.registry: RegistryOps | None = None
-        if registry:
-            self.registry = registry_ops(self._store, sandbox=sandbox)
-        inner = ToolDispatcher(
-            self._project,
-            cad=self._cad,
-            delegation=self.delegation,
-            delegation_runner=self.delegation_runner,
-            registry=self.registry,
-            snapshot_caller=snapshot,
+        self._dispatcher = cast(
+            "ToolDispatcher", _RecordingDispatcher(self._dispatcher, self.recorder)
         )
-        self._dispatcher = cast("ToolDispatcher", _RecordingDispatcher(inner, self.recorder))
+
+    def _bind_runtime_capabilities(self) -> None:
+        """Script the two capabilities a live sidecar would own; keep the rest."""
+        super()._bind_runtime_capabilities()
+        self._dispatcher.bind_runtime(
+            snapshot_caller=self.snapshot_caller, delegation_runner=self.delegation_runner
+        )
 
     # -- py.* -------------------------------------------------------------
 
     def _on_py_request(self, method: str, params: dict[str, Any]) -> Any:
-        if method == "py.delegate":
-            return self._handle_delegate(params)
         if method == "py.ask_user":
             self.recorder.questions.append(dict(params))
             answer = super()._on_py_request(method, params)
             self.recorder.answers.append((time.monotonic(), answer))
             return answer
         return super()._on_py_request(method, params)
-
-    def _handle_delegate(self, params: dict[str, Any]) -> Any:
-        raw_inv = cast("dict[str, Any]", params.get("invocation") or {})
-        session_id = str(raw_inv.get("session_id", ""))
-        principal = self._principals.get(session_id)
-        if principal is None:
-            raise ProtocolError(
-                ErrorCode.INVALID_PARAMS, f"py.delegate from unknown session {session_id!r}"
-            )
-        arguments: dict[str, Any] = {
-            "part": params.get("part"),
-            "prompt": params.get("prompt"),
-        }
-        for optional in ("delivery", "deadline_seconds"):
-            if params.get(optional) is not None:
-                arguments[optional] = params[optional]
-        return self._dispatcher.dispatch(
-            principal,
-            {
-                "session_id": session_id,
-                "run_id": str(params.get("parent_run_id", "")),
-                "tool": "delegate_part_agent",
-                "arguments": arguments,
-                "invocation": raw_inv,
-            },
-        )
 
     # -- test conveniences -------------------------------------------------
 

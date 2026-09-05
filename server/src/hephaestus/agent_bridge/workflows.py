@@ -482,8 +482,15 @@ class WorkflowBridge:
         try:
             self._admission.admit_run(branch_run_id)
         except BusyError:
-            # A pre-admission rejection has no child run/ref (digest §3).
-            return {"status": "rejected", "reason": "no_run_slot", "part_session_id": None}
+            # A pre-admission rejection has no child run/ref (digest §3) — and no
+            # ``part_session_id`` KEY either. The declared rejected variant
+            # (``contract/src/hephaestus/contract/tools_decl.py``'s
+            # ``delegate_part_agent`` result, required ``["status", "reason"]``)
+            # renders the property as an OPTIONAL string, so "absent" is legal and
+            # a present ``null`` is a type violation that fails both committed
+            # validators — the model then reads "result from delegate_part_agent
+            # failed its result schema" with nothing to discriminate on.
+            return {"status": "rejected", "reason": "no_run_slot"}
         self.branch_runs.append(branch_run_id)
         # The delegation row stores only the prompt hash, so register the prompt
         # under the same key the row will carry (the trusted invocation's op id)

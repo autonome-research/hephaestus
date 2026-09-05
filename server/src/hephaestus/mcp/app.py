@@ -66,6 +66,7 @@ from hephaestus.agent_bridge.project_projections import (
     open_project_projection,
 )
 from hephaestus.agent_bridge.protocol import ProtocolError
+from hephaestus.agent_bridge.wiring import build_dispatcher
 from hephaestus.contract import toolgen
 from hephaestus.contract.tools_decl import TOOLS_BY_NAME
 from hephaestus.core.errors import HephaestusError
@@ -278,7 +279,29 @@ class HephaestusMCP:
                 store=store,
                 project_store=project_store,
                 cad=cad,
-                dispatcher=ToolDispatcher(project_store, cad=cad),
+                # B-2: the same capability resolution every shipped runtime
+                # uses (``agent_bridge/wiring.py``) — ``heph mcp`` was the third
+                # runtime with the five registry tools unwired, and it was
+                # broken by copying the bare construction rather than by a
+                # decision of its own.
+                #
+                # ``delegation=False`` is the decision it DOES make, and it is
+                # deliberate: MCP has no sidecar, so no process here could ever
+                # run a child part agent. The delegation family keeps its typed
+                # ``not_implemented`` instead of admitting a delegation nothing
+                # will execute, and ``query_snapshot`` keeps
+                # ``capability_not_available`` because this runtime never calls
+                # ``ToolDispatcher.bind_runtime``. Registry and CAD tools, which
+                # need only the project and its opstore, work here exactly as
+                # they do under serve.
+                dispatcher=build_dispatcher(
+                    layout,
+                    store,
+                    project_store,
+                    cad,
+                    backend=self._backend_for(layout),
+                    delegation=False,
+                ),
                 ledger=IdempotencyLedger(store),
             )
             with self._lock:

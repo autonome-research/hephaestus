@@ -39,6 +39,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
 
+import jsonschema
 import pytest
 from hephaestus.agent_bridge.dispatch import DispatchError, Principal
 from hephaestus.agent_bridge.jobstore import JobStore
@@ -81,6 +82,23 @@ from hephaestus.testing.workflow_harness import (
     scaffold_workflow_project,
 )
 from opstore.types import TerminalState
+
+REPO = Path(__file__).resolve().parents[2]
+
+
+def _result_schema(tool: str) -> dict[str, Any]:
+    """The committed JSON Schema ``result`` clause for one tool.
+
+    B-3 (audit-2026-09-04-broken.md): the payload a hand-built ``py.delegate``
+    reply emits must validate against this, exactly like a dispatcher-routed
+    tool result does — a hand-typed dict pinned with no cross-validation is
+    what let an illegal ``part_session_id: null`` ship in the first place.
+    """
+    document = cast(
+        "dict[str, Any]",
+        json.loads((REPO / "schemas" / "tools" / f"{tool}.schema.json").read_text("utf-8")),
+    )
+    return cast("dict[str, Any]", document["result"])
 
 
 class ScriptedTransport:
@@ -210,7 +228,14 @@ def test_bridge_delegate_rejects_with_no_child_when_no_slot_is_free(wiring: Wiri
             "invocation": invocation("job#delegate:0"),
         },
     )
-    assert result == {"status": "rejected", "reason": "no_run_slot", "part_session_id": None}
+    # B-3: an optional key present as `null` is a type violation both
+    # committed validators reject ("Expected union value" / "is not valid
+    # under any of the given schemas") — omitting it is correct (tool_schema.md,
+    # contract/src/hephaestus/contract/tools_decl.py:1483). The reason itself is
+    # genuine here (16 filler runs really do leave no slot); only the key was
+    # wrong.
+    assert result == {"status": "rejected", "reason": "no_run_slot"}
+    jsonschema.validate(result, _result_schema("delegate_part_agent"))
 
 
 def test_bridge_delegate_requires_a_parent_run_id(wiring: Wiring) -> None:
