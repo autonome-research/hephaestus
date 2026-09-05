@@ -98,6 +98,13 @@ export function PanelBody({ className, children }: PanelBodyProps): React.JSX.El
  *
  * §4.7 gives the eyebrow a job — "section eyebrows above a group" — and this is
  * the only way to spend it, so the 11px tightening has exactly one site.
+ *
+ * THE SPAN RULE, same as `PanelBody`'s: a section is a subgrid over the body's
+ * three tracks, so anything in it that is not itself a three-column row spans
+ * all three (`.section > *`). Without that rule a `PanelNote` here auto-places
+ * into the LABEL column and its `max-width: 68ch` becomes that track's
+ * max-content size — a 487px label column beside a 0px value column, which is
+ * how the BOM dialog shipped.
  */
 export function PanelSection({
   eyebrow,

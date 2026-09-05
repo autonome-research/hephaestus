@@ -606,6 +606,76 @@ test("the stream column says 'session' once above the transcript (§7.1, §4.1(e
 });
 
 // --------------------------------------------------------------------------
+// B-9 — creating a session keeps every other session in the strip
+// (audit-2026-09-04-broken.md B-9). THE REGRESSION THIS GUARDS: before the fix,
+// the strip rendered only the selected session's own thread walk, so creating
+// a second ROOT (the only way to mint one from the browser) emptied the strip
+// down to that one new tab while `GET /sessions` kept listing every session.
+
+test("creating a session keeps every other session in the strip, and the new one survives reload (B-9)", async ({
+  page,
+}, testInfo) => {
+  await openSession(page, ORCHESTRATOR);
+  const before = await page
+    .locator("[data-session-tab]")
+    .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-session-tab")));
+  expect(before.length).toBeGreaterThan(0);
+  const beforeSet = new Set(before);
+
+  // §7.1(b): the create affordance is either a direct `[data-session-create]`
+  // button (no part selected) or a `+` that opens a menu naming it (a part is
+  // selected here, via `route`'s default). Handle both shapes.
+  const menuButton = page.locator("[data-session-create-menu]");
+  if ((await menuButton.count()) > 0) {
+    await menuButton.click();
+  }
+  await page.locator("[data-session-create]").first().click();
+
+  // The strip must GROW, never shrink to one, and the panel settles once the
+  // new session's own tab is drawn (its create callback selects it).
+  await expect
+    .poll(async () => await page.locator("[data-session-tab]").count(), {
+      timeout: 30_000,
+    })
+    .toBeGreaterThan(before.length);
+
+  const afterTabs = await page
+    .locator("[data-session-tab]")
+    .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-session-tab")));
+
+  // Every previously-shown session is STILL shown.
+  for (const id of before) {
+    expect(afterTabs, `session ${id ?? "?"} disappeared from the strip after create`).toContain(id);
+  }
+
+  // Every session the server now lists has a tab: membership is the listing,
+  // not the selected thread (§7.1, corrected).
+  const listing = await api<SessionsDocument>("/sessions");
+  for (const row of listing.sessions) {
+    expect(afterTabs, `listed session ${row.session_id} has no tab in the strip`).toContain(
+      row.session_id,
+    );
+  }
+
+  const created = afterTabs.find((id) => id !== null && !beforeSet.has(id)) ?? null;
+  expect(created, "no new tab appeared after create").not.toBeNull();
+
+  // Reload with NO `s=` in the URL: §4.5 falls back to the first listed
+  // session, never the one just created, so the new session's tab must still
+  // be reachable in the strip rather than only by hand-editing the fragment.
+  await page.reload();
+  await expect(page.locator("[data-session-tab]").first()).toBeVisible();
+  const reloadedTabs = await page
+    .locator("[data-session-tab]")
+    .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-session-tab")));
+  expect(reloadedTabs, `the created session ${created ?? "?"} is gone after reload`).toContain(
+    created,
+  );
+
+  await archive(page, testInfo, "b9-create-keeps-strip");
+});
+
+// --------------------------------------------------------------------------
 // G4.8 — a CLI-started session streams live into the panel
 
 test("a session started by `heph agent` streams live into the panel (G4.8)", async ({

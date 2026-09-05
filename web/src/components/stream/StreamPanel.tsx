@@ -80,6 +80,7 @@ import { useStream } from "../../stream/useStream";
 import { useFollowScroll } from "../../stream/followScroll";
 import { sessionPromptStore } from "../../stream/sessionPrompts";
 import { titleForSession } from "../../stream/sessionTitle";
+import { sessionForest } from "../../stream/thread";
 import { Composer, NewSessionAction } from "./Composer";
 import { SessionCreateAction, SessionTabs } from "./SessionTabs";
 import { StreamHeader } from "./StreamHeader";
@@ -123,25 +124,20 @@ export function StreamPanel(): React.JSX.Element {
     if (selected === null && first !== null) workspaceStore.update({ session: first });
   }, [selected, first]);
 
-  // With no thread yet (the walk is in flight, or it failed) the tab list falls
-  // back to the flat session list, each row at depth 0 carrying its own
-  // `thread_state` from `GET /sessions`. That is the server's own answer, not an
-  // inference: `list_sessions` joins the edge table for exactly this field.
-  const tabs = useMemo(
-    () =>
-      stream.tabs.length > 0
-        ? stream.tabs
-        : rows.map((row) => ({
-            session_id: row.session_id,
-            parent_session_id: row.parent_session_id,
-            kind: null,
-            depth: 0,
-            thread_state: row.thread_state,
-            origin: {},
-            created_at: null,
-          })),
-    [stream.tabs, rows],
-  );
+  // §7.1, corrected 2026-09-04: THE STRIP'S MEMBERSHIP IS THE SESSIONS LISTING;
+  // its SHAPE is the thread walk. Those are two different documents and the
+  // strip needs both, which is what `sessionForest` composes.
+  //
+  // What was here instead — `stream.tabs.length > 0 ? stream.tabs : rows.map(…)`
+  // — treated the thread as a superset of the listing. It is not: the thread is
+  // the subtree around the SELECTION, and `…/thread` always answers with at
+  // least one node, so the flat branch never ran and the strip drew one
+  // connected component of the session forest. Creating a session (the only way
+  // to mint a second root from the browser) therefore emptied the strip of every
+  // other session, and the new one was unreachable after a reload because the
+  // default selection is the first LISTED row and the bridge lists in insertion
+  // order.
+  const tabs = useMemo(() => sessionForest(rows, stream.tabs), [rows, stream.tabs]);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const { following, jumpToLatest } = useFollowScroll(scrollRef, selected, stream.rows.length);

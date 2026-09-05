@@ -38,6 +38,14 @@ import { ViewCube } from "../src/components/stage/viewport/ViewCube";
 import { copy } from "../src/copy";
 import { DEFAULT_STATE } from "../src/state/workspace";
 import { workspaceStore } from "../src/state/react";
+import { ISO_ELEVATION_DEG, viewAngles } from "../src/viewport/cameras";
+// B-7's fix (docs/audit-2026-09-04-broken.md) puts the cube's hit inventory in
+// this module. It does not exist yet — see `web/test/cubeTargets.test.ts` — so
+// every test below that imports it is red until a later round lands it, and
+// that failure to resolve fails the WHOLE file's import, not only these
+// assertions. That is a known, accepted cost of testing red-first against the
+// ledger's own fix design rather than against the shipped (wrong) mechanism.
+import { projectTargets, targetName } from "../src/viewport/cubeTargets";
 
 /** Every overlay the well used to paint over an empty canvas. */
 const FURNITURE = [
@@ -175,15 +183,42 @@ describe("the not-built absence — §5.5 C10, both halves of the never-renders 
 });
 
 describe("ViewCube — front joins the plate (§5.5 C19)", () => {
-  it("renders the named-views row inside the ONE [data-view-cube] box", () => {
+  /** Render the cube for one camera. The SERVER snapshot is always
+      `DEFAULT_STATE`, so a non-default view needs a client mount. */
+  function cubeAt(view: string): HTMLElement {
+    workspaceStore.reset({ ...DEFAULT_STATE, view });
     const host = document.createElement("div");
-    host.innerHTML = renderToStaticMarkup(<ViewCube />);
-    const cubes = host.querySelectorAll("[data-view-cube]");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    act(() => {
+      root.render(<ViewCube />);
+    });
+    return host;
+  }
+
+  afterEach(() => {
+    workspaceStore.reset(DEFAULT_STATE);
+  });
+
+  // AMENDED by B-7's implementing round, and the amendment is the fix's own
+  // negative half: the cube draws EXACTLY the cells facing the viewer, so a
+  // `data-view` is present when its target is drawn and absent when it is not.
+  // At the default camera (`iso`, looking from `+++`) the `iso` corner is
+  // toward the viewer and the `-Y` face is behind the cube; at `front` it is
+  // the other way round. The shipped cube satisfied the old, unconditional
+  // form of this assertion by drawing `Front` at EVERY azimuth — which is the
+  // defect B-7 names, not compliance with C19.
+  it("addresses the named views inside the ONE [data-view-cube] box, each where it is drawn", () => {
+    const iso = cubeAt("iso");
+    const cubes = iso.querySelectorAll("[data-view-cube]");
     expect(cubes).toHaveLength(1);
-    // `front` — the one named view — is inside the same bounding box as the
-    // orientation cross, not a free-floating control beside it.
-    expect(cubes[0]?.querySelector('[data-view="front"]')).not.toBeNull();
     expect(cubes[0]?.querySelector('[data-view="iso"]')).not.toBeNull();
+    // Behind the cube at iso: not drawn, and so not addressable.
+    expect(cubes[0]?.querySelector('[data-view="front"]')).toBeNull();
+
+    const front = cubeAt("front");
+    const plate = front.querySelector("[data-view-cube]");
+    expect(plate?.querySelector('[data-view="front"]')).not.toBeNull();
   });
 
   it("is a 3D cube in the tab order with an accessible name; axis buttons are gone", () => {
@@ -209,6 +244,74 @@ describe("ViewCube — front joins the plate (§5.5 C19)", () => {
     expect(css).not.toMatch(/color:\s*var\(--accent-ink\)/);
     expect(css).toMatch(/color:\s*var\(--ink-strong\)/);
     expect(css).toMatch(/\[data-cube-current\][\s\S]*background:\s*var\(--accent-quiet\)/);
+  });
+});
+
+describe("ViewCube — every hit region is addressed and matches its own projection (B-7)", () => {
+  /** Mount with a given `view`, so the cube's own client-side azimuth/elevation apply. */
+  function mountAt(view: string): HTMLElement {
+    workspaceStore.reset({ ...DEFAULT_STATE, view });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    act(() => {
+      root.render(<ViewCube />);
+    });
+    return host;
+  }
+
+  afterEach(() => {
+    workspaceStore.reset(DEFAULT_STATE);
+  });
+
+  it("mints data-view on EVERY button, not only front and iso", () => {
+    const host = mountAt("iso");
+    const buttons = [...host.querySelectorAll("button")];
+    // Fifteen today (six faces, four edges, five corners — B-7's own count of
+    // the shipped, incomplete table); twenty-six once the fix lands. Either
+    // way, every button drawn must carry its own `data-view`.
+    expect(buttons.length).toBeGreaterThan(0);
+    for (const button of buttons) {
+      expect(button.getAttribute("data-view"), button.outerHTML).not.toBeNull();
+      expect(button.getAttribute("data-view")).not.toBe("");
+    }
+  });
+
+  it("the set of data-view values equals what the projection says is visible at iso", () => {
+    const host = mountAt("iso");
+    const domViews = new Set(
+      [...host.querySelectorAll("[data-view]")].map((el) => el.getAttribute("data-view") ?? ""),
+    );
+    const angles = viewAngles("iso") ?? { azimuth_deg: 45, elevation_deg: ISO_ELEVATION_DEG };
+    const projected = projectTargets(angles.azimuth_deg, angles.elevation_deg);
+    const expectedViews = new Set(
+      projected.filter((target) => target.visible).map((target) => targetName(target.direction)),
+    );
+    expect(domViews).toEqual(expectedViews);
+  });
+
+  it("the set of data-view values equals what the projection says is visible at +X", () => {
+    const host = mountAt("+X");
+    const domViews = new Set(
+      [...host.querySelectorAll("[data-view]")].map((el) => el.getAttribute("data-view") ?? ""),
+    );
+    const angles = viewAngles("+X")!;
+    const projected = projectTargets(angles.azimuth_deg, angles.elevation_deg);
+    const expectedViews = new Set(
+      projected.filter((target) => target.visible).map((target) => targetName(target.direction)),
+    );
+    expect(domViews).toEqual(expectedViews);
+  });
+
+  it("data-cube-hit is drawn only from the three closed kinds", () => {
+    const host = mountAt("iso");
+    const kinds = [...host.querySelectorAll("[data-cube-hit]")].map((el) =>
+      el.getAttribute("data-cube-hit"),
+    );
+    expect(kinds.length).toBeGreaterThan(0);
+    for (const kind of kinds) {
+      expect(["face", "edge", "corner"]).toContain(kind);
+    }
   });
 });
 

@@ -451,6 +451,15 @@ export const copy = {
     viewCube: {
       label: "View cube",
       namedLabel: "Named views",
+      /**
+       * The `+++` corner's ACCESSIBLE NAME, no longer a drawn glyph (B-7).
+       *
+       * The shipped cube painted this string inside a 16px corner plate, where
+       * it clipped (client width 14, scroll width 18). The projected cube draws
+       * words on faces only; every other target carries a name composed from
+       * the six face words below, and this corner keeps its own because its
+       * camera has a name of its own in `cameras.py`'s vocabulary.
+       */
       iso: "iso",
       faces: {
         front: "Front",

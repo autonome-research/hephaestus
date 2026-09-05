@@ -2,7 +2,22 @@
  * Copyright 2026 The Hephaestus Authors
  * SPDX-License-Identifier: Apache-2.0
  *
- * §5.5's view cube — a 3D plate of faces, edges, and corners.
+ * §5.5's view cube — a PROJECTED bevelled cube whose hit map is its picture.
+ *
+ * WHAT THIS FILE NO LONGER DOES, because each line was a defect (B-7):
+ * `perspective` + `transform-style: preserve-3d` (the cube's diagonal overflowed
+ * the 72px scene box into the plate's padding and border); `position: absolute;
+ * inset: 0` on every hit with a size on top of it (edge "slabs" 14×56 driven
+ * through the body's middle and corner plates at a 20px margin — plates through
+ * the solid's interior, not its edges and corners); and `backface-visibility`
+ * (which, with the roll the old parent transform applied, hid `Back` at every
+ * azimuth). Overlapping siblings in one `preserve-3d` subtree hit-test by PAINT
+ * ORDER, which is how `Front / Top` came to collect 516px over `Top`'s 739.
+ *
+ * Every cell is now positioned and clipped from `viewport/cubeTargets.ts`'s
+ * projection. `clip-path` is the load-bearing part: it clips hit testing as well
+ * as painting, so a button's reachable area IS its drawn polygon and two cells
+ * can never trade pixels.
  */
 
 .cube {
@@ -14,6 +29,11 @@
   border-radius: var(--radius-card);
   background: var(--surface-overlay);
   box-shadow: var(--elev-popover);
+  /* §3.9: `--accent-ink` is permitted only on `--accent`. Cube words are words,
+     so they spend `--ink-strong` — the same pairing the pressed toggle recipe
+     uses on `--accent-quiet`. `--accent-ink` on `--accent-quiet` is 1.56:1 and
+     fails §3.13.1. The face words inherit this through `fill: currentcolor`. */
+  color: var(--ink-strong);
 }
 
 .cube:focus-visible {
@@ -21,61 +41,85 @@
   outline-offset: 2px;
 }
 
+/* The projection's own frame. 72px here and `CUBE_SIZE` there are the same
+   number and must stay so; `overflow: hidden` is the guarantee the cube can
+   never paint over the plate's padding again, whatever the camera. */
 .scene {
+  position: relative;
   width: 72px;
   height: 72px;
-  perspective: 240px;
+  overflow: hidden;
 }
 
-.body {
-  position: relative;
-  width: 56px;
-  height: 56px;
-  margin: 8px auto 0;
-  transform-style: preserve-3d;
+/* The picture, in two layers around the buttons. `.art` draws the cells UNDER
+   them (so a hover or current-target fill lands on the cell it names) and
+   `.gloss` draws the face words and the focus ring OVER them (so a filled cell
+   does not swallow its own word). Neither takes pointer events: the hit map is
+   the buttons alone, and the two can disagree only if the projection disagrees
+   with itself. */
+.art,
+.gloss {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.cell {
+  stroke: var(--border-control);
+  stroke-width: 1px;
+  stroke-linejoin: round;
+}
+
+/* §3.10's ladder read as depth: a face sits one rung above the bevel that
+   surrounds it, and both sit below the plate they are drawn on. */
+.cellFace {
+  fill: var(--surface-control);
+}
+
+.cellEdge,
+.cellCorner {
+  fill: var(--surface-raised);
+}
+
+/* A face word, painted ONTO its face by the cell's own affine (see
+   `cubeTargets.ts::frame`). The type role is composed, never re-declared
+   (§3.8); the affine only ever shrinks it. */
+.word {
+  composes: label from "../../../system/type.module.css";
+  fill: currentcolor;
+}
+
+/* The focus ring is drawn HERE rather than as an `outline` on the button,
+   because `clip-path` clips an outline away with everything else. Drawing it as
+   the cell's own polygon is also the more honest indicator: it shows the shape
+   that will be activated (§3.13.4). */
+.ring {
+  fill: none;
+  stroke: var(--focus-ring);
+  stroke-width: 2px;
+  stroke-linejoin: round;
+  pointer-events: none;
 }
 
 .face,
 .edge,
 .corner {
   position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   margin: 0;
   padding: 0;
-  border: 1px solid var(--border-control);
-  background: var(--surface-control);
-  /* §3.9: `--accent-ink` is permitted only on `--accent`. Cube glyphs are
-     words, so they spend `--ink-strong` — the same pairing the pressed
-     toggle recipe uses on `--accent-quiet`. `--accent-ink` on
-     `--accent-quiet` is 1.56:1 and fails §3.13.1. */
-  color: var(--ink-strong);
+  border: 0;
+  background: transparent;
+  color: inherit;
   cursor: pointer;
-  backface-visibility: hidden;
 }
 
-.face {
-  composes: label from "../../../system/type.module.css";
-  width: 56px;
-  height: 56px;
-}
-
-.edge {
-  width: 14px;
-  height: 56px;
-  margin-left: 21px;
-  background: var(--surface-raised);
-}
-
-.corner {
-  composes: eyebrow from "../../../system/type.module.css";
-  width: 16px;
-  height: 16px;
-  margin: 20px;
-  border-radius: var(--radius-card);
-  background: var(--surface-raised);
+/* Hover lifts the cell to the plate's own rung — the lightest surface in
+   §3.10's ladder, so it reads as "toward you" against both the face and the
+   bevel fills above. */
+.face:hover,
+.edge:hover,
+.corner:hover {
+  background: var(--surface-overlay);
 }
 
 .face[data-cube-current],
@@ -83,12 +127,4 @@
 .corner[data-cube-current] {
   background: var(--accent-quiet);
   color: var(--ink-strong);
-  border-color: var(--accent);
-}
-
-.face:focus-visible,
-.edge:focus-visible,
-.corner:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
 }

@@ -552,11 +552,18 @@ test("viewport overlays are pairwise non-intersecting at 1280x800 and at the yie
   await open(page, route(PART, { tab: "viewport", t: "0" }));
   await awaitViewport(page);
 
-  // C19: `front` lives INSIDE the one view-cube plate — one bounding box in
-  // the corner, so the pairwise sweep below covers it by construction.
+  // C19: the named views live INSIDE the one view-cube plate — one bounding box
+  // in the corner, so the pairwise sweep below covers them by construction.
+  //
+  // AMENDED with B-7's fix: the cube draws exactly the cells facing the viewer,
+  // so which `data-view` is present depends on the camera. This route carries no
+  // `view`, so it is `iso` and the `iso` corner is the cell toward the eye; the
+  // `front` face is behind the cube here and is asserted at its own camera in
+  // the B-7 gate below. The shipped cube passed the old unconditional form by
+  // drawing `Front` at EVERY azimuth, which is the defect, not compliance.
   const cube = page.locator("[data-view-cube]");
   await expect(cube).toHaveCount(1);
-  await expect(cube.locator('[data-view="front"]')).toHaveCount(1);
+  await expect(cube.locator('[data-view="iso"]')).toHaveCount(1);
   await expect(cube).toHaveAttribute("aria-label", "View cube");
   await expect(cube).toHaveAttribute("tabindex", "0");
   for (const axis of ["+Y", "+Z", "-X", "+X", "-Z", "-Y"]) {
@@ -614,3 +621,134 @@ async function sha256(bytes: Buffer): Promise<string> {
 function sizeOf(png: Buffer): { width: number; height: number } {
   return { width: png.readUInt32BE(16), height: png.readUInt32BE(20) };
 }
+
+// --------------------------------------------------------------------------
+// B-7 — the view cube's reachability gate (audit-2026-09-04-broken.md B-7).
+//
+// THIS IS THE ASSERTION WHOSE ABSENCE LET THE DEFECT SHIP. The commit that
+// introduced the cube rewrote `viewportChrome.test.tsx` to count boxes, check
+// `tabindex`, and read the stylesheet as text — "Not one assertion is about
+// geometry or reachability" (B-7's own history section). This sweep is that
+// missing assertion: it buckets every pixel of the cube's bounding box by the
+// button under it, exactly the way the audit's own reproduction did, and reads
+// the address off each button's OWN accessible name — never off `data-view`,
+// which today is minted on only two of fifteen buttons and would make this
+// gate vacuously pass on the unfixed cube.
+
+/** Every button inside the view cube, bucketed by pixel under `elementFromPoint`. */
+async function sweepCube(page: Page): Promise<{
+  readonly counts: Record<string, number>;
+  readonly boxes: Record<string, { width: number; height: number }>;
+}> {
+  return await page.evaluate(() => {
+    const cube = document.querySelector("[data-view-cube]");
+    if (cube === null) throw new Error("no [data-view-cube] in the DOM");
+    const rect = cube.getBoundingClientRect();
+    const counts: Record<string, number> = {};
+    const boxes: Record<string, { width: number; height: number }> = {};
+    for (const button of cube.querySelectorAll("button")) {
+      const label = button.getAttribute("aria-label") ?? button.textContent ?? "";
+      const box = button.getBoundingClientRect();
+      boxes[label] = { width: box.width, height: box.height };
+    }
+    for (let y = Math.ceil(rect.top); y < Math.floor(rect.bottom); y += 1) {
+      for (let x = Math.ceil(rect.left); x < Math.floor(rect.right); x += 1) {
+        const el = document.elementFromPoint(x, y);
+        const button = el?.closest("button") ?? null;
+        if (button === null || !cube.contains(button)) continue;
+        const label = button.getAttribute("aria-label") ?? button.textContent ?? "";
+        counts[label] = (counts[label] ?? 0) + 1;
+      }
+    }
+    return { counts, boxes };
+  });
+}
+
+const NAMED_VIEWS = ["iso", "+X", "-X", "+Y", "-Y", "+Z", "-Z", "front"] as const;
+
+test("every drawn view-cube button collects at least one pixel, at iso and at every standard view (B-7 reachability gate)", async ({
+  page,
+}, testInfo) => {
+  const failures: string[] = [];
+  for (const view of NAMED_VIEWS) {
+    await open(page, route(PART, { tab: "viewport", view, t: "0" }));
+    await awaitViewport(page);
+    await expect(page.locator("[data-view-cube]")).toBeVisible();
+    const { counts, boxes } = await sweepCube(page);
+    for (const [label, box] of Object.entries(boxes)) {
+      if (box.width <= 0 || box.height <= 0) continue; // not drawn; nothing to reach
+      const hit = counts[label] ?? 0;
+      if (hit === 0) failures.push(`${view}: "${label}" (${box.width}x${box.height}) collected 0px`);
+      // The audit's own numbers: Front swallowed 2646px of a 90x98 plate — a
+      // button collecting far more than its own drawn area is another
+      // target's paint-order victim, not a generously-sized hit region.
+      const area = box.width * box.height;
+      if (hit > area * 1.5) {
+        failures.push(`${view}: "${label}" collected ${String(hit)}px over its own ${area.toFixed(0)}px box`);
+      }
+    }
+  }
+  testInfo.annotations.push({ type: "b7-reachability", description: failures.join(" | ") });
+  expect(failures, failures.join("\n")).toEqual([]);
+  await archive(page, testInfo, "b7-cube-reachability");
+});
+
+/** §5.5's two-names-one-camera pair, spelled the way the cube spells it. */
+function canonicalView(view: string): string {
+  return view === "-Y" ? "front" : view;
+}
+
+test("the cube always draws the camera the workspace is on, and addresses it (B-7, C19)", async ({
+  page,
+}) => {
+  // C19's `front` clause, at the camera where `front` is the cell toward the
+  // eye. Stated as a rule rather than about one name: at every named view the
+  // cell whose normal IS the eye direction is drawn and carries that camera's
+  // `data-view`. `-Y` and `front` are one camera with two names (`cameras.ts`),
+  // and the cube spells it `front`.
+  for (const view of NAMED_VIEWS) {
+    await open(page, route(PART, { tab: "viewport", view, t: "0" }));
+    await awaitViewport(page);
+    const cube = page.locator("[data-view-cube]");
+    await expect(cube.locator(`[data-view="${canonicalView(view)}"]`), view).toHaveCount(1);
+    // And it is the CURRENT one, so the plate says where the camera is.
+    await expect(cube.locator("[data-cube-current]"), view).toHaveCount(1);
+  }
+});
+
+test("clicking -X, +Y and -Z view-cube targets moves the URL's view to each (B-7)", async ({
+  page,
+}) => {
+  await open(page, route(PART, { tab: "viewport", t: "0" }));
+  await awaitViewport(page);
+
+  // The audit names these three by their FACE labels — Left (-X), Back (+Y),
+  // Bottom (-Z) — as unreachable at EVERY azimuth on the shipped cube: `Left`
+  // and `Bottom` collected zero pixels at all fifteen named views, and `Back`
+  // was culled by `backface-visibility` at all of them. All three are reached
+  // here, which is the regression this test exists for.
+  //
+  // They are reached BY TURNING THE CUBE, because that is what the fix makes
+  // true: the cube draws exactly the cells facing the viewer, so a face on the
+  // far side is not drawn and — §5.5's negative half — not clickable either. A
+  // corner brings it round, which is what corner targets are for and what no
+  // shipped corner could do (five of eight existed and several named the wrong
+  // camera). Every step below therefore also exercises a corner target.
+  const steps: readonly { readonly label: string; readonly view: string }[] = [
+    { label: "Left / Back / Top", view: "az135_el35" },
+    { label: "Left", view: "-X" },
+    { label: "Left / Front / Bottom", view: "az225_el-35" },
+    { label: "Bottom", view: "-Z" },
+    { label: "Left / Back / Bottom", view: "az135_el-35" },
+    { label: "Back", view: "+Y" },
+  ];
+
+  for (const { label, view } of steps) {
+    await page.locator("[data-view-cube]").getByRole("button", { name: label, exact: true }).click({
+      timeout: 5_000,
+    });
+    await expect
+      .poll(() => new URL(page.url()).hash, `clicking "${label}" did not move the view to ${view}`)
+      .toMatch(new RegExp(`view=${view.replace(/[+]/g, "%2B")}|view=${view}`));
+  }
+});

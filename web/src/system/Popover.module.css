@@ -36,6 +36,29 @@
   left: 50%;
   transform: translate(-50%, -50%);
   max-width: 60ch;
+  /* §4.7 asks a popover to be "anchored and flipped to stay in the viewport".
+     The dialog variant is CENTRED rather than anchored, so the clause cashes out
+     as a height contract mirroring the width one above — a bound on both axes.
+
+     `overflow: hidden` is the load-bearing half, not decoration. A fixed-position
+     flex column with no height bound sizes to its content and the centring
+     transform then hangs half of it off-screen: the BOM dialog measured
+     434x2838 at y=-919, clipped at both ends, and its body reported
+     scrollHeight === clientHeight === 2777 — nothing to scroll, because the body
+     was allowed to be as tall as its content. `overflow` makes this box a scroll
+     boundary so the flex child must resolve against the bounded height, at which
+     point the panel's own `auto minmax(0, 1fr)` rows shrink the body row and its
+     `overflow: auto` finally has something to clip. The header stays pinned and
+     only the body scrolls, which is what a modal with a title wants. */
+  max-height: min(80vh, calc(100vh - 2 * var(--pad-overlay)));
+  overflow: hidden;
   border-radius: var(--radius-dialog);
   box-shadow: var(--elev-dialog);
+}
+
+/* `Panel` already declares `min-height: 0`; this is for every other child a
+   dialog may ever hold, so the discipline above is inherited rather than
+   rediscovered one surface at a time. */
+.panel[data-variant="dialog"] > * {
+  min-height: 0;
 }

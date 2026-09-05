@@ -30,6 +30,25 @@
 // SCREAMING_SNAKE API keys (`AREA_MM2`, `BBOX_MM`) and shown raw; and a 200px
 // table floating in a 1490px panel with the Properties value column visibly
 // jogging between two groups that each compute their own `max-content`.
+//
+// THE CONTAINER CONTRACT, both halves, because a table that is drawn outside it
+// is not merely unstyled — it is unreadable, and it was shipped that way.
+//
+// 1. A `DataTable` or `Field` renders ONLY inside a `PanelBody`. The body is the
+//    sole declarer of the three tracks these components claim with
+//    `grid-template-columns: subgrid`; a subgrid with no parent tracks to
+//    inherit is a one-column stack. (`.split` is the one table that declares its
+//    own tracks, and it does so precisely because its container wrapper broke
+//    that chain — see `DataTable.module.css` C27.)
+// 2. A `PanelBody` must itself have a BOUNDED-HEIGHT ancestor. Its
+//    `overflow: auto` is a promise only a bounded parent can keep: with an
+//    unbounded one, `minmax(0, 1fr)` resolves against the body's own content and
+//    the scroll region never has anything to clip. The BOM dialog is the
+//    retired instance — 2838px tall, centred on its own midpoint, off-screen at
+//    both ends — and `Popover.module.css`'s dialog variant now carries the bound.
+//
+// All fourteen call sites already satisfy the first half; it is written down so
+// the next one does too.
 
 import type { ReactNode } from "react";
 import { cx, type DataAttributes } from "./dataAttrs";

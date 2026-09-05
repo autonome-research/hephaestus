@@ -82,6 +82,21 @@
   gap: var(--gap-stack);
 }
 
+/* The counterpart of `.body > *` above, and its absence was a real defect. A
+   section is itself a subgrid, so a `DataTable` inside one self-spans and is
+   fine — but a `PanelNote` carries no `grid-column`, auto-places into COLUMN 1,
+   and its `max-width: 68ch` becomes the max-content contribution of the
+   `max-content` label track. The BOM dialog's tracks computed
+   `487.625px 0px 8px`: a label column sized by a sentence, and a value column
+   collapsed to the zero minimum of `minmax(0, 1fr)` beside it. Prose in a panel
+   spans all three tracks and contributes to the intrinsic size of none of them.
+   `DataTable` declares the same span at the same specificity in its own module,
+   so this states the value rather than fighting the cascade. */
+.section > * {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
 .note {
   margin: 0;
   max-width: 68ch;

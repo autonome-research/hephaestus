@@ -15,12 +15,19 @@
 // right namespace, `data-widget-source`, `data-thread-depth`,
 // `data-thread-state`, the seam, the absences and the labelled break.
 
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { readToolResult } from "../../src/api/events";
+import type { SessionsDocument } from "../../src/api/sessions";
 import { SessionTabs } from "../../src/components/stream/SessionTabs";
+import { StreamPanel } from "../../src/components/stream/StreamPanel";
 import { Transcript } from "../../src/components/stream/Transcript";
 import { copy } from "../../src/copy";
+import { emptyHistory } from "../../src/stream/history";
+import { emptyLive } from "../../src/stream/live";
 import { parseToolResult } from "../../src/stream/toolResult";
 import {
   groupRows,
@@ -31,7 +38,16 @@ import {
   type PanelRow,
 } from "../../src/stream/transcript";
 import type { ThreadTab } from "../../src/stream/thread";
+import { useStream, type StreamView } from "../../src/stream/useStream";
+import { DEFAULT_STATE } from "../../src/state/workspace";
+import { workspaceStore } from "../../src/state/react";
 import { allHistoryFrames, fixture } from "./fixture";
+
+// The panel's own session-thread wiring is mocked here (`useStream` opens a
+// live socket and pages history, neither of which this suite needs): only the
+// MEMBERSHIP/SHAPE composition (`sessionForest`, tested directly in
+// `thread.test.ts`) is under test, wired through the real `StreamPanel`.
+vi.mock("../../src/stream/useStream", () => ({ useStream: vi.fn() }));
 
 function parse(markup: string): Document {
   return new DOMParser().parseFromString(`<body>${markup}</body>`, "text/html");
@@ -709,5 +725,99 @@ describe("an empty thought run renders a named absence, not an empty disclosure"
     // Not a bare "Reasoning" label with nothing under it — some absence
     // marker is present.
     expect(details?.querySelector("[data-thought-empty]")).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B-9 — StreamPanel renders one tab per LISTED session, never only the
+// selected session's own thread (audit-2026-09-04-broken.md B-9).
+//
+// `useStream` is mocked (it owns the socket and the paged history, neither of
+// which this suite exercises); `GET /sessions` is answered from the query
+// cache, which is how the panel actually reads it. The regression this guards:
+// before the fix, a session listed but outside the selected thread's subtree
+// never got a tab at all.
+
+describe("StreamPanel — the strip's membership is the listing, not one thread (B-9)", () => {
+  afterEach(() => {
+    workspaceStore.reset(DEFAULT_STATE);
+    vi.mocked(useStream).mockReset();
+  });
+
+  function fakeStream(overrides: Partial<StreamView> = {}): StreamView {
+    return {
+      rows: [],
+      status: "historical",
+      history: emptyHistory(),
+      tabs: [],
+      threadState: null,
+      threadBounded: false,
+      resyncs: 0,
+      runId: null,
+      clearRunId: () => undefined,
+      echo: () => undefined,
+      refuseEcho: () => undefined,
+      midRunAttach: false,
+      terminals: emptyLive().terminals,
+      error: null,
+      ...overrides,
+    };
+  }
+
+  function mount(sessionsDoc: SessionsDocument, selected: string): { host: HTMLElement; root: Root } {
+    workspaceStore.reset({ ...DEFAULT_STATE, session: selected });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(["sessions"], sessionsDoc);
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    act(() => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <StreamPanel />
+        </QueryClientProvider>,
+      );
+    });
+    return { host, root };
+  }
+
+  it("renders three tabs from a three-row listing when the selected session's own thread has only one node", () => {
+    const selected = "sess-new-orchestrator";
+    const rows: SessionsDocument["sessions"] = [
+      { session_id: "sess-o", profile: "orchestrator", part: null, parent_session_id: null, thread_state: "linked" },
+      { session_id: "sess-p", profile: "part", part: "bracket", parent_session_id: "sess-o", thread_state: "linked" },
+      { session_id: selected, profile: "orchestrator", part: null, parent_session_id: null, thread_state: "unlinked" },
+    ];
+    // The freshly created session's OWN thread walk is a one-node tree — the
+    // honest answer for a session with no recorded parent and no children yet.
+    vi.mocked(useStream).mockReturnValue(
+      fakeStream({
+        tabs: [
+          {
+            session_id: selected,
+            parent_session_id: null,
+            kind: null,
+            depth: 0,
+            thread_state: "unlinked",
+            origin: {},
+            created_at: null,
+          },
+        ],
+      }),
+    );
+
+    const { host, root } = mount({ status: "ok", sessions: rows, profiles: [] }, selected);
+    try {
+      const tabs = [...host.querySelectorAll("[data-session-tab]")];
+      expect(tabs.map((t) => t.getAttribute("data-session-tab")).sort()).toEqual(
+        ["sess-o", "sess-p", selected].sort(),
+      );
+      expect(tabs.map((t) => t.getAttribute("data-session-id"))).toContain(selected);
+    } finally {
+      act(() => {
+        root.unmount();
+      });
+      host.remove();
+    }
   });
 });
