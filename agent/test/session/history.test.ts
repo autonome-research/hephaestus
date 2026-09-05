@@ -5,7 +5,9 @@ import {
   extractUserPrompts,
   pageHistory,
   decodeCursor,
+  encodeCursor,
   HISTORY_PAGE_SIZE,
+  MalformedCursorError,
 } from "../../src/session/history.js";
 
 // Minimal structural builders for Pi session entries (test-boundary shapes).
@@ -222,5 +224,64 @@ describe("cursor paging over a frozen high-water mark", () => {
 
   it("rejects a malformed cursor", () => {
     expect(() => pageHistory(initial, "r", { cursor: "!!!not-base64!!!" })).toThrow();
+  });
+});
+
+// --------------------------------------------------------------------------
+// B-11(a): a malformed cursor is a NAMED error, not a plain `Error`.
+//
+// `rpc.ts`'s catch turns any thrown value that is not an `RpcError` into a
+// bare JSON-RPC internal error (-32603), which the HTTP layer could not tell
+// apart from "the sidecar stopped answering" — a `%%%` cursor was reported as
+// `503 agent_unavailable` while the very next history call returned 200.
+// `main.ts` catches `MalformedCursorError` specifically and re-throws it as an
+// `RpcError` carrying `data: {reason: "invalid_cursor"}`; these tests pin the
+// decoder's half of that contract — the named class, not merely "throws" —
+// independent of `main.ts` or a built sidecar.
+describe("a malformed cursor is a named error (B-11a)", () => {
+  it("is thrown for a non-base64-shaped token", () => {
+    expect(() => decodeCursor("%%%")).toThrow(MalformedCursorError);
+  });
+
+  it("is thrown for a well-formed-base64 payload that is not JSON", () => {
+    const notJson = Buffer.from("not json at all", "utf8").toString("base64url");
+    expect(() => decodeCursor(notJson)).toThrow(MalformedCursorError);
+  });
+
+  it("is thrown when the high-water mark is missing", () => {
+    const missingMark = Buffer.from(JSON.stringify({ offset: 3 }), "utf8").toString("base64url");
+    expect(() => decodeCursor(missingMark)).toThrow(MalformedCursorError);
+  });
+
+  it("is thrown for a non-integer offset", () => {
+    const nonInteger = Buffer.from(JSON.stringify({ hw: "e1", offset: 1.5 }), "utf8").toString(
+      "base64url",
+    );
+    expect(() => decodeCursor(nonInteger)).toThrow(MalformedCursorError);
+  });
+
+  it("is thrown for a negative offset", () => {
+    const negative = Buffer.from(JSON.stringify({ hw: "e1", offset: -1 }), "utf8").toString(
+      "base64url",
+    );
+    expect(() => decodeCursor(negative)).toThrow(MalformedCursorError);
+  });
+
+  it("is thrown (not a plain Error) for the mutually-exclusive cursor/after pair", () => {
+    // `pageHistory` throws this one itself, from the same named class, so a
+    // client cannot tell the two `invalid_cursor` causes apart by error type —
+    // only §2.4's envelope (and its message) distinguishes them.
+    const initial: SessionEntry[] = [];
+    const cursor = encodeCursor({ hw: "e0", offset: 0 });
+    expect(() => pageHistory(initial, "r", { cursor, after: cursor })).toThrow(
+      MalformedCursorError,
+    );
+  });
+
+  it("decodes a well-formed cursor without throwing", () => {
+    // The positive case, so the named refusal is not over-tightened: a real
+    // cursor this module minted still round-trips.
+    const token = encodeCursor({ hw: "e4", offset: 2 });
+    expect(decodeCursor(token)).toEqual({ hw: "e4", offset: 2 });
   });
 });

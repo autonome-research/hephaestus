@@ -442,11 +442,55 @@ def _cmd_agent(args: argparse.Namespace) -> int:
         print("type a prompt, or Ctrl-D to leave; Ctrl-C cancels the running turn.")
         exit_code = _repl(runtime, session_id, console)
     except SupervisorError as exc:
-        print(f"heph: bridge failure: {exc}", file=sys.stderr)
+        # `--resume` naming a transcript this project does not hold is an
+        # ORDINARY operator mistake (a typo, a session from another project, one
+        # already deleted) and §2.3/§2.4's amendment of 2026-09-04 made the
+        # sidecar refuse it by name rather than mint an empty session under it.
+        # `SupervisorError.__str__` is `f"{method} failed: {call.error}"` — the
+        # raw JSON-RPC frame — which is a debugging artefact, not an answer, and
+        # printing it here would tell an operator to read a dict when what they
+        # need is the one flag to drop.
+        unknown = _unknown_session_in(exc) if resume else None
+        if unknown is not None:
+            print(
+                f"heph: unknown session '{unknown}': nothing to resume under that "
+                "name (drop --resume to create it)",
+                file=sys.stderr,
+            )
+        else:
+            print(f"heph: bridge failure: {exc}", file=sys.stderr)
         exit_code = 1
     finally:
         runtime.close()
     return exit_code
+
+
+def _unknown_session_in(exc: SupervisorError) -> str | None:
+    """The session id an answered ``unknown_session`` refusal names, or ``None``.
+
+    Read off the frame's ``data``, never off its sentence: ``main.ts``'s
+    ``session.create`` handler puts ``{reason, session_id}`` there precisely so
+    the classification does not depend on the wording (the same field
+    ``http/errors.py``'s ``SIDECAR_REFUSALS`` dispatches on). A bare
+    :class:`SupervisorError` — no sidecar, a dead child, a timeout — carries no
+    ``error`` envelope at all, so it falls through to the generic sentence at
+    the call site, which is the honest answer for it. The caller consults this
+    only under ``--resume``, so the remedy it prints ("drop ``--resume``") is
+    the remedy for the invocation that actually happened.
+
+    Deliberately local rather than imported from ``http/errors.py``: the
+    dependency between these two layers points one way (the HTTP layer uses the
+    bridge), and a CLI that imported the server's mapper to print one line would
+    reverse it for no gain.
+    """
+    data = exc.error.get("data")
+    if not isinstance(data, dict):
+        return None
+    fields: dict[str, Any] = {str(k): v for k, v in data.items()}  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+    if fields.get("reason") != "unknown_session":
+        return None
+    session_id = fields.get("session_id")
+    return session_id if isinstance(session_id, str) else None
 
 
 def _cmd_agent_client(

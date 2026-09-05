@@ -39,7 +39,7 @@ from hephaestus.core.project_store.layout import find_project_root
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .agent_attach import AttachRefused
-from .app import build_app
+from .app import build_app, with_error_envelope
 from .principal import clear_serve_record, mint_token, write_serve_record
 from .runtime import WorkspaceRuntime
 
@@ -256,7 +256,12 @@ def with_bundle(api: ASGIApp, bundle: Path | None = None) -> ASGIApp:
         return api
     from starlette.staticfiles import StaticFiles
 
-    static = StaticFiles(directory=resolved, html=True)
+    # §2.4 (amended 2026-09-04, B-6): the bundle branch answers the same error
+    # envelope as the API. Unwrapped, StaticFiles raises HTTPException(404) for
+    # a path the bundle lacks and this raw ASGI dispatcher has no exception
+    # middleware, so every page load's /favicon.ico was a 500 text/plain with a
+    # traceback in the log.
+    static: ASGIApp = with_error_envelope(StaticFiles(directory=resolved, html=True))
 
     async def dispatch(scope: Scope, receive: Receive, send: Send) -> None:
         target = api if scope["type"] == "lifespan" or _is_api(scope.get("path")) else static

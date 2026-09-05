@@ -526,8 +526,18 @@ class WorkspaceSessions:
 
         Both arguments were already on the :class:`SessionBackend` Protocol and
         on ``BridgeRuntime.create_session``; nothing new is invented here, and no
-        route is added. ``resume`` on an id with no persisted transcript is a
-        fresh session under that name, which is the sidecar's own behaviour.
+        route is added.
+
+        **AMENDED 2026-09-04 (§2.3/§2.4/§2.8).** The concession this docstring
+        used to record — "``resume`` on an id with no persisted transcript is a
+        fresh session under that name, which is the sidecar's own behaviour" —
+        was an accurate description of the manager and an incorrect conclusion:
+        it treated the sidecar's silence as a decision. A ``resume`` for an id
+        the runtime holds no transcript for is now **404 ``unknown_session``**,
+        refused in the one layer that can answer the question (the sidecar owns
+        the session directories), and this method does not re-ask it here — a
+        second, independent existence check above the runtime would be a second
+        answer that could disagree with the first.
         """
         opened = self.backend.create_session(
             profile, part=part, session_id=session_id, resume=resume
@@ -537,6 +547,14 @@ class WorkspaceSessions:
             "session_id": opened,
             "profile": profile,
             "part": part,
+            # `resumed` is a FACT about the transcript, not an echo of the
+            # request (§2.8, amended 2026-09-04). It may be reported from the
+            # request flag *only because* the runtime now refuses a resume it
+            # cannot honour: a `create_session` that returned at all is a resume
+            # that found something to continue. Before that refusal existed this
+            # same expression was a lie — the request's own flag handed back as
+            # if it were an outcome — and the panel opened an empty tab labelled
+            # as resumed.
             "resumed": resume,
         }
 

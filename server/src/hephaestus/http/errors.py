@@ -31,7 +31,9 @@ comment rather than papered over by inventing the string here.
 
 from __future__ import annotations
 
+import logging
 import re
+import uuid
 from typing import Any, Final
 
 from hephaestus.agent_bridge.app import AgentUnavailableError, UnknownSessionError
@@ -47,19 +49,27 @@ from hephaestus.agent_bridge.supervisor import SupervisorError
 from hephaestus.core.errors import HephaestusError
 from opstore.errors import OpStoreError, ProtectedQuotaExceededError
 
-from .agent_attach import reduce_detail
+from .agent_attach import ATTACH_CAUSES, DETAIL_MAX_CHARS, reduce_detail
 
 __all__ = [
     "CAPABILITY_REASONS",
+    "INTERNAL_ERROR_MESSAGE",
     "PROTOCOL_CODE_REASON",
     "REASON_STATUS",
+    "SIDECAR_REFUSALS",
     "STALE_SELECTION_REASONS",
     "HttpRefusal",
     "capability_result",
     "error_body",
+    "internal_error",
     "refusal_for",
+    "router_refusal",
     "status_for_reason",
 ]
+
+#: Where the ``internal_error`` incident id and its traceback are joined. Named
+#: rather than the module ``__name__`` so an operator has one logger to raise.
+_LOG: Final[logging.Logger] = logging.getLogger("hephaestus.http")
 
 #: ``INTERFACE.md`` §2.4, TIGHTENING (binds G5.15): the five-value
 #: ``StaleReason`` vocabulary is closed and must not be collapsed. ``malformed``
@@ -180,6 +190,13 @@ REASON_STATUS: Final[dict[str, int]] = {
     # existing test pins a status for this reason (the four that assert it read
     # `CadOpError.reason` off the dispatcher, below HTTP).
     "target_exists": 409,
+    # The sidecar's own conflict on a caller-chosen session id (`main.ts`'s
+    # `session.create` handler, over `SessionService.create`): that id is
+    # already live in this runtime. A conflict on existing state, on the same
+    # footing as `target_exists` directly above — not a malformed request (the
+    # id is well-formed and the caller may legitimately want the session that
+    # already bears it) and emphatically not a server fault.
+    "session_exists": 409,
     # 409 — refusals whose full payload rides through verbatim.
     "stale_selection": 409,
     "session_busy": 409,
@@ -283,7 +300,142 @@ REASON_STATUS: Final[dict[str, int]] = {
     # 503 / 504 — the two bridge liveness terminals.
     "process_down": 503,
     "timeout": 504,
+    # §2.4, amended 2026-09-04 — the three rows the ROUTER and the server-fault
+    # path need. Until they existed, a route miss, a wrong method and every
+    # unmapped exception left this process without an envelope at all: Starlette
+    # answered `text/plain` with no `status`, no `reason` and no `message`, and
+    # `web/src/api/client.ts` turned all three into an unnamed `transport_error`
+    # — the exact condition §2.4's 2026-09-03 amendment exists to make
+    # impossible. They are tabulated here, beside the engine's own reasons, and
+    # the first two are *this layer's* strings on purpose: no engine raises
+    # them, because the condition is "no engine code ran at all".
+    #
+    # No route matched. NOT the `unknown_`/`no_such_` family fallback and not
+    # `not_found`: `not_found` is an addressing miss inside the project (a part,
+    # an artifact), while this one says the ADDRESS SPACE has no such route —
+    # different remedies (fix the id, versus fix the URL), and §2.4's rule that
+    # two conditions with different remedies never share a reason applies to
+    # this pair exactly as it does to `unknown_session`/`agent_unavailable`.
+    "unknown_route": 404,
+    # The route exists and does not serve this method. Its refusal MUST keep the
+    # `Allow` header the router attaches (see `router_refusal`): the envelope is
+    # an addition to that header, never a replacement for it.
+    "method_not_allowed": 405,
+    # The one reason in this table that is NOT the engine's, and the only one
+    # that names the *absence* of an engine condition: an exception no branch of
+    # `refusal_for` classified. Its message is fixed (`INTERNAL_ERROR_MESSAGE`)
+    # and carries a correlation id instead of `str(exc)`, because this row is
+    # reached only by exceptions nobody has classified and therefore nobody has
+    # redacted — the same argument §23.6 makes for never echoing a provider's
+    # error text back to a browser.
+    "internal_error": 500,
+    # Two 500s that are NOT `internal_error`: the sidecar classified them itself
+    # (`main.ts`'s `currentRun`), so they keep their own name and their own
+    # sentence. `internal_error`'s fixed message plus incident id is for
+    # exceptions nobody has classified and therefore nobody has redacted; these
+    # two are a run-attribution fault whose message ("no active run for tool
+    # invocation", "ambiguous run … (N runs in flight)") is written by the code
+    # that raises it, carries nothing from a provider or a filesystem, and is
+    # the only thing that tells an operator which of the two happened.
+    "no_active_run": 500,
+    "ambiguous_run": 500,
 }
+
+#: ``INTERFACE.md`` §2.4, amended 2026-09-04: the refusals the **router** raises
+#: before any endpoint runs, keyed by the status Starlette's own
+#: ``HTTPException`` carries — which is the only fact this layer has about a
+#: request that matched nothing.
+_ROUTER_REASONS: Final[dict[int, str]] = {404: "unknown_route", 405: "method_not_allowed"}
+
+#: The refusals the **sidecar** may name for itself, read off the JSON-RPC error
+#: ``data.reason``. CLOSED, on exactly the discipline
+#: ``http/agent_credentials.PROVIDER_REFUSALS`` already applies to §23.11's
+#: vocabulary: a set a downstream process can add members to by answering with a
+#: new string is not closed, and the whole value of a closed vocabulary is that
+#: it is testable by enumeration. A reason outside it is not passed through — it
+#: falls to the code-based branches below.
+#:
+#: ``invalid_cursor`` is §2.8's, raised by ``agent/src/main.ts``'s history
+#: handler for a token that does not decode and for the mutually-exclusive
+#: ``cursor``/``after`` pair; ``unknown_session`` is §2.4's, raised by the same
+#: file's create handler for a ``resume`` naming a transcript that does not
+#: exist. Both are *the sidecar's* refusals because both are questions only the
+#: sidecar can answer — §2.8 forbids this layer from decoding a cursor, and
+#: nothing above the sidecar knows which session directories exist.
+#:
+#: The other four are the same discipline applied to the refusals ``main.ts``
+#: already had, which the 2026-09-04 structural fix would otherwise have
+#: flattened into an opaque ``internal_error`` — a strictly *less* informative
+#: answer than the one that shipped before it:
+#:
+#: * ``agent_unavailable`` — ``requireService``/``requireRuntime``: the child is
+#:   answering, but it holds no runtime that can serve a turn (``configure`` has
+#:   not run, or every declared provider failed §23.7 verification). §7A.8's
+#:   availability condition, and the only thing an operator can act on, so it
+#:   keeps §7A.8's 503 and its ``cause`` (see :func:`_agent_unavailable_data`).
+#:   This is NOT the catch-all reintroduced: this layer still never *infers*
+#:   ``agent_unavailable`` from an answered frame — the runtime states it, about
+#:   itself, in the one place that knows.
+#: * ``session_exists`` — a caller-chosen session id already live in the
+#:   runtime: 409, the conflict family.
+#: * ``no_active_run`` / ``ambiguous_run`` — ``currentRun``: a tool invocation
+#:   that cannot be attributed to a run. Internal faults (500) that keep their
+#:   own sentence, because the sentence is the whole diagnosis.
+SIDECAR_REFUSALS: Final[frozenset[str]] = frozenset(
+    {
+        "agent_unavailable",
+        "ambiguous_run",
+        "invalid_cursor",
+        "no_active_run",
+        "session_exists",
+        "unknown_session",
+    }
+)
+
+#: ``INTERFACE.md`` §2.4, amended 2026-09-04. The **fixed** sentence every
+#: ``internal_error`` carries. Never ``str(exc)``: see the table row above.
+INTERNAL_ERROR_MESSAGE: Final[str] = (
+    "the server failed while handling this request; quote the incident id to "
+    "join this refusal to the traceback in the server log"
+)
+
+
+def internal_error(exc: BaseException) -> HttpRefusal:
+    """§2.4's ``internal_error`` row: a fixed message plus a correlation id.
+
+    The id is minted here and logged here **with the traceback**, so the two
+    halves an operator has to join — the sentence a browser shows and the stack
+    a server log holds — are written by one function and cannot drift. Nothing
+    of ``exc`` crosses to the client: an exception that reached this row is one
+    no branch of :func:`refusal_for` classified, so no branch has redacted it
+    either, and §23.6's rule about never echoing an unredacted error text back
+    to a browser is not weakened just because the text is ours.
+    """
+    incident = uuid.uuid4().hex[:12]
+    _LOG.error("unhandled request failure (incident %s)", incident, exc_info=exc)
+    return HttpRefusal(500, "internal_error", INTERNAL_ERROR_MESSAGE, data={"incident": incident})
+
+
+def router_refusal(status: int, *, method: str, path: str) -> HttpRefusal | None:
+    """§2.4's two router rows, or ``None`` for a status this table does not name.
+
+    ``None`` rather than a guessed reason: the router raises exactly 404 and 405
+    (Starlette's ``Router.not_found`` and ``Route.handle``), and no endpoint in
+    this application raises an ``HTTPException`` of its own. Should one ever
+    appear, it is a condition nobody classified, and the caller sends it to
+    :func:`internal_error` rather than letting this function invent a name for
+    it — the same reason :func:`refusal_for` ends in a bare ``raise``.
+    """
+    reason = _ROUTER_REASONS.get(status)
+    if reason is None:
+        return None
+    message = (
+        f"{method} {path} is not a route this server serves"
+        if reason == "unknown_route"
+        else f"{method} is not served at {path}"
+    )
+    return HttpRefusal(status, reason, message, data={"method": method, "path": path})
+
 
 #: ``INTERFACE.md`` §2.4 (:709-711, :745-771), amended 2026-09-03. The exact
 #: string ``main.ts``'s three ``unknown session '${sessionId}'`` throw sites
@@ -338,6 +490,14 @@ def _refusal_for_supervisor_error(exc: SupervisorError) -> HttpRefusal:
     :class:`SupervisorError` with no ``error`` kwarg at all, so its absence is
     not a guess — it is the module's own distinction between "the sidecar
     answered with a refusal" and "there was no sidecar to answer".
+
+    **That distinction is now load-bearing** (§2.4, amended 2026-09-04): an
+    answered refusal is handed to :func:`_refusal_from_envelope` and can never
+    be *classified as* ``agent_unavailable`` by this layer, and only the
+    *unanswered* half — no envelope at all — reaches the two liveness branches
+    at the end. An answered frame in which the sidecar names
+    ``agent_unavailable`` about itself is a different thing entirely, and is
+    read as the token it is (see :data:`SIDECAR_REFUSALS`).
     """
     if isinstance(exc, UnknownSessionError):
         return HttpRefusal(404, exc.reason, str(exc), data={"session_id": exc.session_id})
@@ -348,13 +508,35 @@ def _refusal_for_supervisor_error(exc: SupervisorError) -> HttpRefusal:
             str(exc),
             data={"cause": exc.cause, "detail": reduce_detail(exc)},
         )
-    error = exc.error
-    code = error.get("code")
-    message = error.get("message")
-    if code == ErrorCode.INVALID_PARAMS and isinstance(message, str):
-        match = _UNKNOWN_SESSION_RE.match(message)
-        if match is not None:
-            return HttpRefusal(404, "unknown_session", message, data={"session_id": match.group(1)})
+    if exc.error:
+        # **THE STRUCTURAL HALF** (§2.4, amended 2026-09-04). A populated
+        # ``error`` is the supervisor's own proof that the sidecar *answered*:
+        # ``Supervisor._call`` sets it exactly once, from a genuine
+        # ``{"error": …}`` response frame, and every other raise site in that
+        # module constructs the exception with no ``error`` kwarg at all. An
+        # answer is proof of liveness, so this module can never *infer*
+        # ``agent_unavailable`` from here — the mislabel is removed BY
+        # CONSTRUCTION rather than by enumerating the messages that must not
+        # reach it. That is the whole fix: before it, any answered refusal
+        # this module had not been taught to name (a malformed history cursor,
+        # most visibly) was reported as a dead runtime while the very next call
+        # to the same process returned 200, and the panel told the operator to
+        # attach a runtime that was already attached.
+        #
+        # AMENDED (2026-09-05): the rule is "never *inferred*", not "never
+        # produced". A sidecar that answers ``data.reason:
+        # "agent_unavailable"`` is stating, about itself, that it holds no
+        # runtime that can serve a turn (``runtime.configure`` has not run, or
+        # every declared provider failed §23.7 verification) — §7A.8's
+        # availability condition, reported by the only process that knows it.
+        # Reading that token is the same discipline as reading
+        # ``invalid_cursor``; it is the *guess* the structural fix removed, and
+        # the guess stays removed: an envelope that does not name the reason
+        # still cannot reach 503 from this branch. Flattening these two into
+        # ``internal_error`` instead was a strictly less informative answer
+        # than the one that shipped before the fix — an opaque 500 with a fixed
+        # sentence, where an operator previously got a 503 naming the runtime.
+        return _refusal_from_envelope(exc)
     # A hard-wait timeout (no `error` envelope — see `_SUPERVISOR_TIMEOUT_RE`)
     # is a live, slow sidecar, not an unreachable one. Checked before the
     # catch-all below so it is never folded into `agent_unavailable`: the two
@@ -380,6 +562,89 @@ def _refusal_for_supervisor_error(exc: SupervisorError) -> HttpRefusal:
         str(exc),
         data={"cause": "sidecar_failed", "detail": reduce_detail(exc)},
     )
+
+
+def _refusal_from_envelope(exc: SupervisorError) -> HttpRefusal:
+    """Name a refusal the sidecar **answered** with, from the frame's own fields.
+
+    Ordered by how much the sidecar said, most explicit first, and every branch
+    reads the engine rather than re-deriving it:
+
+    1. ``data.reason`` inside :data:`SIDECAR_REFUSALS` — the sidecar named its
+       own refusal, so this layer copies the token and forwards the rest of
+       ``data`` as the refusal's body. This is the seam that lets §2.8's
+       ``invalid_cursor`` be minted *in the sidecar* (the only place allowed to
+       decode a cursor) and still arrive as a 400 with its own name; the closed
+       set is what keeps a downstream process from widening §2.4's vocabulary
+       by answering with a new string. ``agent_unavailable`` is the one member
+       whose body is not forwarded verbatim — see
+       :func:`_agent_unavailable_data` for why ``cause`` is re-checked here.
+    2. the ``INVALID_PARAMS`` + ``unknown session '<id>'`` shape, for the three
+       ``main.ts`` throw sites that carry no ``data`` (see
+       :data:`_UNKNOWN_SESSION_RE`).
+    3. a bridge protocol code that already has a §2.4 row
+       (:data:`PROTOCOL_CODE_REASON`).
+    4. anything else: the sidecar answered with a fault nobody has classified,
+       which is exactly what ``internal_error`` names. A 500 rather than the old
+       503 is the honest half of the fix — "this server failed" is true, "this
+       server has no runtime" was not.
+    """
+    error = exc.error
+    raw = error.get("data")
+    fields: dict[str, Any] = (
+        {str(k): v for k, v in raw.items()}  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+        if isinstance(raw, dict)
+        else {}
+    )
+    named = fields.get("reason")
+    if isinstance(named, str) and named in SIDECAR_REFUSALS:
+        raw_message = error.get("message")
+        text = raw_message if isinstance(raw_message, str) and raw_message else str(exc)
+        data = {k: v for k, v in fields.items() if k != "reason"}
+        if named == "agent_unavailable":
+            data = _agent_unavailable_data(data, text)
+        return HttpRefusal(status_for_reason(named), named, text, data=data)
+    code = error.get("code")
+    message = error.get("message")
+    if code == ErrorCode.INVALID_PARAMS and isinstance(message, str):
+        match = _UNKNOWN_SESSION_RE.match(message)
+        if match is not None:
+            return HttpRefusal(404, "unknown_session", message, data={"session_id": match.group(1)})
+    reason = PROTOCOL_CODE_REASON.get(code) if isinstance(code, int) else None
+    if reason is not None:
+        return HttpRefusal(status_for_reason(reason), reason, str(exc))
+    return internal_error(exc)
+
+
+def _agent_unavailable_data(fields: dict[str, Any], message: str) -> dict[str, Any]:
+    """§7A.8's body for an ``agent_unavailable`` the **sidecar** named.
+
+    Three rules, and each is the one §2.4/§7A.8 already states for this refusal
+    raised anywhere else — restated here because the value now arrives from
+    another process:
+
+    * ``cause`` is checked against :data:`~.agent_attach.ATTACH_CAUSES` and
+      falls back to ``sidecar_failed``. The vocabulary is closed, and a set a
+      downstream process can add a member to by answering with a new string is
+      not closed — the same argument ``agent_credentials._reason_of`` makes for
+      §23.11's codes, applied to the one field this refusal is dispatched on.
+    * ``detail`` is guaranteed. §2.4's 2026-09-03 RECONCILIATION says this
+      refusal carries ``cause`` **and** ``detail``; the sidecar's own sentence
+      is the honest value, bounded by ``DETAIL_MAX_CHARS`` for the same reason
+      :func:`~.agent_attach.reduce_detail` bounds its own — a refusal is a
+      sentence for an operator, not a log.
+    * ``config_path`` is dropped if a future sidecar ever sends one. The same
+      RECONCILIATION is explicit that this path does not carry it: this layer
+      cannot keep such a value in sync, and "a stale ``config_path`` is worse
+      than an absent one, because a client would act on it".
+    """
+    cause = fields.get("cause")
+    detail = fields.get("detail")
+    return {
+        **{k: v for k, v in fields.items() if k not in ("cause", "detail", "config_path")},
+        "cause": cause if isinstance(cause, str) and cause in ATTACH_CAUSES else "sidecar_failed",
+        "detail": (detail if isinstance(detail, str) and detail else message)[:DETAIL_MAX_CHARS],
+    }
 
 
 #: §2.4's last two rows — ``TIMEOUT`` / ``PROCESS_DOWN`` → 504 / 503 — name the

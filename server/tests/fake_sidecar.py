@@ -194,7 +194,14 @@ def _handle(msg: dict[str, object]) -> None:
         _send(
             {
                 "id": req_id,
-                "error": {"code": -32600, "message": "runtime.configure has not run yet"},
+                "error": {
+                    "code": -32600,
+                    "message": "runtime.configure has not run yet",
+                    # Mirrors agent/src/main.ts's runtimeUnavailable(): the
+                    # frame names its reason so the HTTP layer maps it to 503
+                    # agent_unavailable rather than an unnamed fault.
+                    "data": {"reason": "agent_unavailable", "cause": "sidecar_failed"},
+                },
             }
         )
         return

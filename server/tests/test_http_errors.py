@@ -85,6 +85,18 @@ def test_the_envelope_never_lets_payload_data_overwrite_reason_or_message() -> N
         ("busy", 429),
         ("process_down", 503),
         ("timeout", 504),
+        # B-6: the application boundary's own three rows — a route the table
+        # does not carry, a route it carries for the wrong method, and an
+        # exception no branch of `refusal_for` maps.
+        ("unknown_route", 404),
+        ("method_not_allowed", 405),
+        ("internal_error", 500),
+        # The rows the sidecar names for itself (`SIDECAR_REFUSALS`), each with
+        # the status class its condition belongs to and none of them 500-opaque.
+        ("agent_unavailable", 503),
+        ("session_exists", 409),
+        ("no_active_run", 500),
+        ("ambiguous_run", 500),
     ],
 )
 def test_the_section_two_four_table_row_by_row(reason: str, status: int) -> None:
@@ -357,20 +369,28 @@ def test_a_refusal_with_extra_data_keeps_it_and_cannot_relabel_itself() -> None:
 def test_an_unmapped_supervisor_error_no_longer_reaches_the_client_unnamed() -> None:
     """The bug this amendment exists to fix, pinned at the mapping layer.
 
-    Before this amendment ``refusal_for`` had no branch for a bare
-    :class:`SupervisorError`: every isinstance check in the function is for
-    something *else*, so it fell through to the trailing ``raise exc`` and
+    Before the 2026-09-03 amendment ``refusal_for`` had no branch for a bare
+    :class:`SupervisorError` at all: every isinstance check in the function was
+    for something *else*, so it fell through to the trailing ``raise exc`` and
     reached the client as an unnamed 500 — over a transcript that was sitting
-    intact on disk the whole time (the condition §2.3/§2.4's amendment note
-    names explicitly). This must no longer raise.
+    intact on disk the whole time. This must no longer raise.
+
+    UPDATED by the 2026-09-04 (B-11) amendment: a populated ``error`` envelope
+    this module does not recognise is no longer folded into
+    ``unknown_session``/``agent_unavailable`` either — that guess was itself the
+    B-11(a) mislabel (an *answered* refusal reported as a dead runtime). An
+    answered-but-unclassified envelope is now ``internal_error`` at 500: still
+    named, still carries an incident id, and honest about which of "this
+    request is bad" / "this runtime is gone" / "nobody classified this" is
+    true.
     """
     from hephaestus.agent_bridge.protocol import ErrorCode
 
     exc = SupervisorError("session.create failed", error={"code": ErrorCode.INTERNAL_ERROR})
     refusal = refusal_for(exc)  # must not raise
     assert isinstance(refusal, HttpRefusal)
-    assert refusal.status in (404, 503)
-    assert refusal.reason in ("unknown_session", "agent_unavailable")
+    assert (refusal.status, refusal.reason) == (500, "internal_error")
+    assert isinstance(refusal.data.get("incident"), str) and refusal.data["incident"]
 
 
 def test_unknown_session_error_maps_to_a_named_404_carrying_session_id() -> None:
@@ -439,3 +459,299 @@ def test_a_bare_supervisor_timeout_maps_to_504_not_agent_unavailable() -> None:
     other = SupervisorError("no process to write to")
     other_refusal = refusal_for(other)
     assert (other_refusal.status, other_refusal.reason) == (503, "agent_unavailable")
+
+
+# --------------------------------------------------------------------------
+# B-11(a) — a malformed cursor is reported as a dead runtime
+
+
+def test_a_supervisor_error_with_no_envelope_is_agent_unavailable() -> None:
+    """The half of the structural rule that must stay true: silence is a dead
+    runtime. ``Supervisor``'s own raise sites (no process, a respawn that gave
+    up its budget, an unanswered deadline) construct a bare ``SupervisorError``
+    with no ``error=`` kwarg at all, and that absence IS the "nothing answered"
+    fact — not a guess.
+    """
+    exc = SupervisorError("no process to write to")
+    refusal = refusal_for(exc)
+    assert (refusal.status, refusal.reason) == (503, "agent_unavailable")
+
+
+def test_a_supervisor_error_with_an_error_envelope_is_never_agent_unavailable() -> None:
+    """The structural half of the B-11(a) fix, pinned WITHOUT naming the cursor
+    message: a populated ``error`` envelope is proof the sidecar answered, so it
+    must never fall through to ``agent_unavailable`` — whether or not this
+    module recognises the message inside it.
+
+    Before the fix, ``_refusal_for_supervisor_error`` only special-cased ONE
+    invalid-params shape (`_UNKNOWN_SESSION_RE`); every other populated
+    envelope — including the malformed-cursor message the sidecar has not been
+    taught to emit through this path yet — fell through to the same catch-all
+    a truly silent sidecar gets. This is exactly the mechanism B-11(a) names:
+    "any future sidecar handler that throws a plain error […] still becomes
+    -32603 and is still reported as a dead runtime." A mapper that special-cased
+    only the cursor message would leave every OTHER answered-but-unrecognised
+    envelope mislabelled; this test is written so it cannot be satisfied that
+    way.
+    """
+    from hephaestus.agent_bridge.protocol import ErrorCode
+
+    exc = SupervisorError(
+        "session.create failed",
+        error={
+            "code": ErrorCode.INVALID_PARAMS,
+            "message": "a future refusal this module has not been taught to name yet",
+        },
+    )
+    refusal = refusal_for(exc)
+    assert refusal.reason != "agent_unavailable"
+
+
+def test_a_malformed_cursor_envelope_maps_to_invalid_cursor_at_400() -> None:
+    """B-11(a) fix step 3: the sidecar names its own refusal, read rather than
+    re-derived.
+
+    ``agent/src/session/history.ts`` throws a NAMED ``MalformedCursorError`` for
+    a token that does not decode and for the mutually-exclusive ``cursor``/
+    ``after`` pair; ``main.ts``'s ``history.page`` handler re-throws it as an
+    ``RpcError`` carrying ``data: {reason: "invalid_cursor"}`` rather than
+    letting it become a bare ``-32603``. This unit pins the Python half of that
+    contract — :func:`refusal_for` reading the sidecar's own ``data.reason``
+    token off the JSON-RPC envelope — independent of a built sidecar.
+    """
+    from hephaestus.agent_bridge.protocol import ErrorCode
+
+    exc = SupervisorError(
+        "history.page failed",
+        error={
+            "code": ErrorCode.INVALID_PARAMS,
+            "message": "malformed history cursor",
+            "data": {"reason": "invalid_cursor"},
+        },
+    )
+    refusal = refusal_for(exc)
+    assert (refusal.status, refusal.reason) == (400, "invalid_cursor")
+    assert status_for_reason("invalid_cursor") == 400
+
+
+def test_the_sidecar_failed_refusal_never_carries_the_provider_config_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Paired with ``test_http_attach.py``'s
+    ``test_a_serve_starts_with_no_provider_config_and_names_why`` (not owned by
+    this lane, so not imported here): THAT refusal is
+    ``agent_unavailable``/``no_provider_config`` and correctly carries
+    ``config_path`` — it names the file this process checked and found empty.
+    THIS refusal is ``agent_unavailable``/``sidecar_failed`` — a session backend
+    that WAS attached (an attach happened; ``config_path`` is on record) and
+    then failed mid-call with no envelope. §2.4 says this path must not carry
+    ``config_path``, because a stale path is worse than an absent one, and the
+    refusal is already minted correctly where ``AgentUnavailableError``/the
+    bare-``SupervisorError`` catch-all construct it (no ``config_path`` key in
+    either literal). The six-line merge at ``http/app.py``'s endpoint guard
+    (``if refusal.reason == "agent_unavailable" and "config_path" not in
+    refusal.data: refusal.data = {**_attach_data(runtime), **refusal.data}``)
+    is what reattaches it — unconditionally, for ANY ``agent_unavailable``,
+    sidecar-failed included. That merge is the root cause and the ledger names
+    its deletion explicitly; this test fails while it stands.
+    """
+    from hephaestus.http.agent_attach import AgentAttachState
+
+    with workspace(tmp_path / "proj", agent=True) as web:
+        # An attach DID happen in this process and is on record, config_path
+        # and all — the state a real serve is in after a successful sign-in.
+        web.runtime.attach_state = AgentAttachState(
+            attached=True, config_path=str(web.root / ".heph" / "providers.json"), generation=1
+        )
+
+        def _boom(*_args: object, **_kwargs: object) -> str:
+            raise SupervisorError("no process to write to")
+
+        agent = web.agent
+        assert agent is not None
+        monkeypatch.setattr(agent, "create_session", _boom)
+
+        response = web.post("/sessions", json={"profile": "orchestrator"})
+
+    assert response.status_code == 503
+    body = response.json()
+    assert body["reason"] == "agent_unavailable"
+    assert body["cause"] == "sidecar_failed"
+    assert "config_path" not in body
+
+
+# --------------------------------------------------------------------------
+# The sidecar's own refusals, each named rather than flattened (§2.4, amended
+# 2026-09-05). Every one of these is an ANSWERED frame, so the structural half
+# of the B-11(a) fix routes it to `_refusal_from_envelope`; before the sidecar
+# carried a `data.reason` for it, that meant an opaque `500 internal_error` for
+# four conditions that had names, three of which had been 503s with a cause.
+# The reasons are minted in `agent/src/main.ts`; these pin the Python half.
+
+
+def _answered(message: str, *, code: int, data: dict[str, object]) -> SupervisorError:
+    """One answered JSON-RPC refusal, shaped exactly as ``Supervisor._call`` raises it."""
+    return SupervisorError(
+        f"session.create failed: {{'message': {message!r}}}",
+        error={"code": code, "message": message, "data": data},
+    )
+
+
+def test_an_unconfigured_runtime_is_503_agent_unavailable_with_a_cause() -> None:
+    """``main.ts``'s ``requireRuntime``/``requireService``: the child answers,
+    and what it answers is that it holds no runtime that can serve a turn.
+
+    §7A.8's availability condition, so §7A.8's envelope — 503, a ``cause`` from
+    the closed set, a ``detail``. Not ``internal_error``: "the server failed" is
+    not what happened, and an opaque 500 tells an operator nothing about the one
+    thing they can act on.
+    """
+    from hephaestus.agent_bridge.protocol import ErrorCode
+
+    exc = _answered(
+        "runtime.configure has not run yet",
+        code=ErrorCode.INVALID_REQUEST,
+        data={"reason": "agent_unavailable", "cause": "sidecar_failed"},
+    )
+    refusal = refusal_for(exc)
+    assert (refusal.status, refusal.reason) == (503, "agent_unavailable")
+    assert refusal.message == "runtime.configure has not run yet"
+    assert refusal.data["cause"] == "sidecar_failed"
+    assert refusal.data["detail"]
+    # §2.4's 2026-09-03 RECONCILIATION: this path carries `cause` and `detail`
+    # and deliberately not `config_path`.
+    assert "config_path" not in refusal.body()
+
+
+def test_a_runtime_whose_providers_all_failed_verification_is_also_503() -> None:
+    """§23.7: a configured runtime whose every provider failed verification is
+    unusable for exactly the same reason and gets exactly the same envelope —
+    plus the provider's own code, so the refusal names what to fix.
+    """
+    from hephaestus.agent_bridge.protocol import ErrorCode
+
+    exc = _answered(
+        "provider 'openai' did not verify: provider_not_authenticated",
+        code=ErrorCode.INVALID_REQUEST,
+        data={
+            "reason": "agent_unavailable",
+            "cause": "provider_config_invalid",
+            "provider_id": "openai",
+            "unavailable_reason": "provider_not_authenticated",
+        },
+    )
+    refusal = refusal_for(exc)
+    assert (refusal.status, refusal.reason) == (503, "agent_unavailable")
+    assert refusal.data["cause"] == "provider_config_invalid"
+    assert refusal.data["provider_id"] == "openai"
+    assert refusal.data["unavailable_reason"] == "provider_not_authenticated"
+
+
+def test_a_sidecar_cause_outside_the_closed_set_is_not_passed_through() -> None:
+    """The discipline ``agent_credentials._reason_of`` applies to §23.11's codes,
+    applied to the one field this refusal is dispatched on: a vocabulary a
+    downstream process can widen by answering with a new string is not closed.
+    """
+    from hephaestus.agent_bridge.protocol import ErrorCode
+    from hephaestus.http.agent_attach import ATTACH_CAUSES
+
+    exc = _answered(
+        "the runtime is sad",
+        code=ErrorCode.INVALID_REQUEST,
+        data={"reason": "agent_unavailable", "cause": "invented_by_a_future_sidecar"},
+    )
+    refusal = refusal_for(exc)
+    assert refusal.status == 503
+    assert refusal.data["cause"] == "sidecar_failed"
+    assert refusal.data["cause"] in ATTACH_CAUSES
+
+
+def test_a_sidecar_supplied_config_path_is_dropped_from_agent_unavailable() -> None:
+    """A stale ``config_path`` is worse than an absent one, and this layer cannot
+    keep one in sync — so a future sidecar cannot add the key by answering with it.
+    """
+    from hephaestus.agent_bridge.protocol import ErrorCode
+
+    exc = _answered(
+        "runtime.configure has not run yet",
+        code=ErrorCode.INVALID_REQUEST,
+        data={
+            "reason": "agent_unavailable",
+            "cause": "sidecar_failed",
+            "config_path": "/somewhere/providers.json",
+        },
+    )
+    assert "config_path" not in refusal_for(exc).body()
+
+
+def test_a_duplicate_session_id_is_a_409_conflict_not_a_server_fault() -> None:
+    """``SessionService.create``'s other refusal: the caller chose an id this
+    runtime is already serving. A conflict on existing state — the request is
+    well-formed and the runtime is healthy — so 409, and the ``session_id``
+    rides through so the caller can address the session that already holds it.
+    """
+    from hephaestus.agent_bridge.protocol import ErrorCode
+
+    exc = _answered(
+        "session 's1' already exists",
+        code=ErrorCode.INVALID_PARAMS,
+        data={"reason": "session_exists", "session_id": "s1"},
+    )
+    refusal = refusal_for(exc)
+    assert (refusal.status, refusal.reason) == (409, "session_exists")
+    assert refusal.data["session_id"] == "s1"
+    assert refusal.message == "session 's1' already exists"
+
+
+def test_an_unattributable_tool_call_keeps_its_own_500_and_its_own_sentence() -> None:
+    """``main.ts``'s ``currentRun``. Genuinely an internal fault, so 500 — but
+    NOT ``internal_error``, whose fixed message and incident id exist for
+    exceptions nobody classified and therefore nobody redacted. These two are
+    classified where they are raised, they carry nothing from a provider or a
+    filesystem, and the sentence is the entire diagnosis: it survives.
+    """
+    from hephaestus.agent_bridge.protocol import ErrorCode
+    from hephaestus.http.errors import INTERNAL_ERROR_MESSAGE
+
+    none_active = refusal_for(
+        _answered(
+            "no active run for tool invocation",
+            code=ErrorCode.INTERNAL_ERROR,
+            data={"reason": "no_active_run"},
+        )
+    )
+    assert (none_active.status, none_active.reason) == (500, "no_active_run")
+    assert none_active.message == "no active run for tool invocation"
+    assert none_active.message != INTERNAL_ERROR_MESSAGE
+    assert "incident" not in none_active.body()
+
+    ambiguous = refusal_for(
+        _answered(
+            "ambiguous run for tool invocation (2 runs in flight)",
+            code=ErrorCode.INTERNAL_ERROR,
+            data={"reason": "ambiguous_run", "runs_in_flight": 2},
+        )
+    )
+    assert (ambiguous.status, ambiguous.reason) == (500, "ambiguous_run")
+    assert ambiguous.data["runs_in_flight"] == 2
+
+
+def test_an_envelope_that_names_no_reason_still_cannot_reach_agent_unavailable() -> None:
+    """The half of the structural fix that must not be weakened by the rows
+    above: reading a token the sidecar wrote is not the same as INFERRING one.
+
+    An answered frame whose ``data`` names no reason — the shape every
+    unclassified sidecar throw still has — must stay off the 503 path, or the
+    B-11(a) regression (a live sidecar reported as a dead runtime, while the
+    very next call to it returns 200) is back for every future handler.
+    """
+    from hephaestus.agent_bridge.protocol import ErrorCode
+
+    for data in ({}, {"reason": "a_reason_this_layer_does_not_know"}):
+        exc = SupervisorError(
+            "session.prompt failed",
+            error={"code": ErrorCode.INVALID_REQUEST, "message": "something new", "data": data},
+        )
+        refusal = refusal_for(exc)
+        assert refusal.reason == "internal_error", data
+        assert refusal.status == 500, data

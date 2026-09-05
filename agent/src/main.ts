@@ -41,13 +41,15 @@ import {
   reduceLoginError,
   type FlowProjection,
 } from "./session/credentials.js";
-import { SessionService, type ManagedSession } from "./session/manager.js";
+import { SessionService, UnknownSessionError, type ManagedSession } from "./session/manager.js";
 import type { SessionProfile } from "./session/profiles.js";
 import {
+  MalformedCursorError,
   nextTurnOrdinal,
   pageHistory,
   TURN_MARKER_TYPE,
   TURN_OUTCOME_MARKER_TYPE,
+  type HistoryPage,
   type HistoryPageRequest,
   type HistoryUserPrompt,
 } from "./session/history.js";
@@ -151,12 +153,20 @@ function currentRun(): ActiveContext {
     log(`tool invocation resolved outside its run scope; attributed to run '${only.runId}'`);
     return only;
   }
-  throw new RpcError(
-    ErrorCode.INTERNAL_ERROR,
-    activeRuns.size === 0
-      ? "no active run for tool invocation"
-      : `ambiguous run for tool invocation (${activeRuns.size} runs in flight)`,
-  );
+  // Both halves are internal faults — nothing the caller sent is wrong — but
+  // they are NAMED faults, and the name travels in `data.reason` so the HTTP
+  // layer reports them as themselves (with this sentence intact) rather than as
+  // §2.4's `internal_error`, whose fixed message and incident id are for
+  // exceptions nobody has classified. These two are classified here.
+  throw activeRuns.size === 0
+    ? new RpcError(ErrorCode.INTERNAL_ERROR, "no active run for tool invocation", {
+        reason: "no_active_run",
+      })
+    : new RpcError(
+        ErrorCode.INTERNAL_ERROR,
+        `ambiguous run for tool invocation (${activeRuns.size} runs in flight)`,
+        { reason: "ambiguous_run", runs_in_flight: activeRuns.size },
+      );
 }
 
 /** Emit one normalized event frame on the private bridge (stdout, never logs). */
@@ -271,27 +281,65 @@ let availability: readonly ProviderAvailability[] = [];
 const logins = new LoginFlows();
 const agentDir = process.env.HEPHAESTUS_AGENT_DIR ?? process.cwd();
 
-function requireService(): SessionService {
-  if (service === undefined) {
-    // INTERFACE.md §23.7: with per-provider verification, "no service" now has
-    // two distinct causes and they must not read as one. A runtime that was
-    // never configured is the old message. A runtime that WAS configured but
-    // whose every provider failed verification refuses with **that provider's
-    // own code** — never with a generic one, and never by falling back to a
-    // provider that did verify, because there is none.
-    const failed = availability.find((entry) => !entry.available);
-    if (failed !== undefined) {
-      throw new RpcError(ErrorCode.INVALID_REQUEST, failed.unavailable_reason ?? "provider_unknown");
-    }
-    throw new RpcError(ErrorCode.INVALID_REQUEST, "runtime.configure has not run yet");
+/**
+ * The refusal for "this sidecar holds no runtime that can serve a turn".
+ *
+ * INTERFACE.md §7A.8/§2.4: this is an **availability** condition, and the HTTP
+ * layer must be able to say so — `503 agent_unavailable` with a `cause` — from
+ * the frame alone. It therefore carries `data.reason` the way `unknown_session`
+ * and `invalid_cursor` do (`server/src/hephaestus/http/errors.py`'s
+ * `SIDECAR_REFUSALS`); without it, an answered refusal is by construction
+ * un-nameable above this process and degrades to an opaque `500 internal_error`,
+ * which tells an operator nothing about the one thing they can fix.
+ *
+ * `cause` is §7A.8's closed vocabulary (`http/agent_attach.ATTACH_CAUSES`), and
+ * the Python side re-checks membership rather than trusting this string — a
+ * vocabulary a downstream process can widen by answering with a new value is
+ * not closed.
+ */
+function runtimeUnavailable(): RpcError {
+  // INTERFACE.md §23.7: with per-provider verification, "no runtime" now has
+  // two distinct causes and they must not read as one. A runtime that was
+  // never configured is the old message. A runtime that WAS configured but
+  // whose every provider failed verification refuses with **that provider's
+  // own code** — never with a generic one, and never by falling back to a
+  // provider that did verify, because there is none.
+  const failed = availability.find((entry) => !entry.available);
+  if (failed !== undefined) {
+    const code = failed.unavailable_reason ?? "provider_unknown";
+    return new RpcError(
+      ErrorCode.INVALID_REQUEST,
+      `provider '${failed.id}' did not verify: ${code}`,
+      {
+        reason: "agent_unavailable",
+        // Not `no_provider_config`: a configuration WAS read and applied. What
+        // it declares cannot serve a turn, which is what §7A.8 names
+        // `provider_config_invalid`. The provider and its own code ride along
+        // so the operator is told which one to fix rather than only that
+        // something is wrong.
+        cause: "provider_config_invalid",
+        provider_id: failed.id,
+        unavailable_reason: code,
+      },
+    );
   }
+  return new RpcError(ErrorCode.INVALID_REQUEST, "runtime.configure has not run yet", {
+    reason: "agent_unavailable",
+    // The child is up and answering, but the supervisor never completed the
+    // `runtime.configure` handshake (or a respawn's replay of it failed), which
+    // is a fault of the sidecar's own lifecycle — §7A.8's `sidecar_failed`, the
+    // same cause the unanswered half of this condition already reports.
+    cause: "sidecar_failed",
+  });
+}
+
+function requireService(): SessionService {
+  if (service === undefined) throw runtimeUnavailable();
   return service;
 }
 
 function requireRuntime(): ModelRuntime {
-  if (runtime === undefined) {
-    throw new RpcError(ErrorCode.INVALID_REQUEST, "runtime.configure has not run yet");
-  }
+  if (runtime === undefined) throw runtimeUnavailable();
   return runtime;
 }
 
@@ -561,8 +609,47 @@ peer.on("session.create", async (params) => {
     ...(params.part !== undefined && params.part !== null ? { part: String(params.part) } : {}),
     ...(params.resume === true ? { resume: true } : {}),
   };
-  const managed =
-    request.resume === true ? await svc.resume(request) : await svc.create(request);
+  if (request.resume === true && request.sessionId === undefined) {
+    throw new RpcError(ErrorCode.INVALID_PARAMS, "resume requires session_id", {
+      reason: "invalid_params",
+    });
+  }
+  let managed: ManagedSession;
+  try {
+    managed = request.resume === true ? await svc.resume(request) : await svc.create(request);
+  } catch (err) {
+    // INTERFACE.md §2.3/§2.4 (amended 2026-09-04): a resume naming a transcript
+    // this project does not hold is `unknown_session` at 404 — the refusal §2.4
+    // already defines — and NOT a fresh session under that name. Surfaced as an
+    // `RpcError` with the invalid-params code so it never becomes `-32603`,
+    // which the Python side would have to read as "the sidecar stopped
+    // answering"; `data.reason` carries the token so the classification does not
+    // depend on the sentence.
+    if (err instanceof UnknownSessionError) {
+      throw new RpcError(ErrorCode.INVALID_PARAMS, err.message, {
+        reason: "unknown_session",
+        session_id: err.sessionId,
+      });
+    }
+    // The other refusal `SessionService.create` raises for a caller-chosen id:
+    // that id is already live in THIS process. A conflict on existing state
+    // (§2.4's 409 family), not a server fault — and named here rather than left
+    // to become an unclassified `-32603`, which the HTTP layer can only report
+    // as an opaque `internal_error`. Matched by exact equality against the id
+    // this handler itself sent, never by a pattern: the sentence is
+    // `session/manager.ts`'s one fixed, single-purpose string.
+    if (
+      request.sessionId !== undefined &&
+      err instanceof Error &&
+      err.message === `session '${request.sessionId}' already exists`
+    ) {
+      throw new RpcError(ErrorCode.INVALID_PARAMS, err.message, {
+        reason: "session_exists",
+        session_id: request.sessionId,
+      });
+    }
+    throw err;
+  }
   return { session_id: managed.id, profile: managed.profile, part: managed.part ?? null };
 });
 
@@ -886,13 +973,32 @@ peer.on("history.page", (params) => {
   // rather than resolved — a client that sent both does not know which snapshot
   // it is reading, and silently picking one hands it a page it did not ask for.
   if (cursor !== undefined && after !== undefined) {
-    throw new RpcError(ErrorCode.INVALID_PARAMS, "history.page accepts cursor or after, not both");
+    throw new RpcError(
+      ErrorCode.INVALID_PARAMS,
+      "history.page accepts cursor or after, not both",
+      { reason: "invalid_cursor", session_id: sessionId },
+    );
   }
   const request: HistoryPageRequest = {
     ...(cursor !== undefined ? { cursor } : {}),
     ...(after !== undefined ? { after } : {}),
   };
-  const page = pageHistory(entries, sessionId, request);
+  // §2.8/§2.4: a token that does not decode is `invalid_cursor` at 400, refused
+  // HERE because §2.8 forbids any layer above the sidecar from decoding one.
+  // Without this wrap the decoder's throw became a `-32603` internal error and
+  // the HTTP layer reported a live sidecar as `503 agent_unavailable`.
+  let page: HistoryPage;
+  try {
+    page = pageHistory(entries, sessionId, request);
+  } catch (err) {
+    if (err instanceof MalformedCursorError) {
+      throw new RpcError(ErrorCode.INVALID_PARAMS, err.message, {
+        reason: "invalid_cursor",
+        session_id: sessionId,
+      });
+    }
+    throw err;
+  }
   return {
     // §2.8(1): `turn` is stamped HERE, not inside `wireEvent`. `wireEvent` is
     // shared with the live `notify("event", …)` path (see the subscribe call in

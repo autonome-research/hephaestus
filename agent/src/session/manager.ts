@@ -24,9 +24,36 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { profileDefinition, sessionDirFor, type SessionProfile } from "./profiles.js";
 import { hephaestusInlineExtension } from "./extension.js";
 import type { PiModel } from "./runtime.js";
+
+/**
+ * A resume naming a session this project holds no persisted transcript for.
+ *
+ * INTERFACE.md §2.3/§2.4 (amended 2026-09-04). `resume` used to be a request
+ * the manager could not fail: `resume()` delegated straight to `create()`, and
+ * `PiSessionManager.continueRecent` over an absent directory has nothing to
+ * continue, so it minted a **fresh session under the old name** and every layer
+ * above reported `resumed: true`. The operator was told they had reopened a
+ * transcript they had not, and §2.8's re-adoption path — which is this same
+ * call — would silently replace a session it failed to recover with an empty
+ * one bearing its id.
+ *
+ * The message is the exact shape the Python side already parses
+ * (`server/src/hephaestus/http/errors.py`'s `_UNKNOWN_SESSION_RE`, and
+ * `agent_bridge/app.py`'s `_names_unknown_session`), so no new reason and no new
+ * mapping code is needed on either side of the bridge; `main.ts` also puts
+ * `reason: "unknown_session"` in the frame's `data` so the classification does
+ * not depend on the sentence at all.
+ */
+export class UnknownSessionError extends Error {
+  constructor(readonly sessionId: string) {
+    super(`unknown session '${sessionId}'`);
+    this.name = "UnknownSessionError";
+  }
+}
 
 export interface SessionCreateRequest {
   readonly profile: SessionProfile;
@@ -187,9 +214,44 @@ export class SessionService {
     return managed;
   }
 
-  /** Resume a persisted session by ID (continue its most recent JSONL). */
+  /**
+   * Resume a persisted session by ID (continue its most recent JSONL).
+   *
+   * **Refuses rather than minting** (INTERFACE.md §2.3/§2.4, amended
+   * 2026-09-04): a resume for an id with no persisted session directory is
+   * `unknown session '<id>'`, which the bridge maps to §2.4's existing
+   * `unknown_session` at 404. See {@link UnknownSessionError} for what the
+   * silent-create did instead.
+   *
+   * The check is on the **directory**, not on a transcript file inside it.
+   * `PiSessionManager.create` makes the directory when the session is opened,
+   * before any entry is written, so a session that was created and then died
+   * mid-turn still has one — and §2.8(6)'s re-adoption must be able to recover
+   * exactly that session. A file-level check would turn the crash this clause
+   * exists to heal into a permanent refusal.
+   */
   async resume(request: SessionCreateRequest): Promise<ManagedSession> {
+    const id = request.sessionId;
+    if (id === undefined) {
+      throw new Error("resume requires a session id: there is nothing to resume without a name");
+    }
+    if (!this.hasPersistedSession(request, id)) {
+      throw new UnknownSessionError(id);
+    }
     return this.create({ ...request, resume: true });
+  }
+
+  /** Is there something on disk for this id that `resume` could continue? */
+  private hasPersistedSession(request: SessionCreateRequest, id: string): boolean {
+    const definition = profileDefinition(
+      request.profile,
+      request.part !== undefined ? { part: request.part } : {},
+    );
+    // A non-persisting profile (query_snapshot, reviewer) writes no JSONL at
+    // all, so there is never anything to resume under one — the request is an
+    // addressing miss whatever is on disk.
+    if (!definition.persist) return false;
+    return existsSync(sessionDirFor(request.projectRoot, id));
   }
 
   private buildPiSessionManager(

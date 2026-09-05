@@ -35,6 +35,7 @@ notes for the server implementer name (``agent_bridge/app.py``'s
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -536,3 +537,43 @@ def test_a_session_id_this_runtime_never_opened_is_refused_without_claiming_a_re
     # none to mark.
     listed = harness.get("/sessions").json()["sessions"]
     assert made_up_id not in {row["session_id"] for row in listed}
+
+
+# ---------------------------------------------------------------------------
+# (g) B-11(b): a re-adoption with nothing left on disk to re-adopt
+
+
+def test_a_readoption_whose_session_directory_is_missing_is_unknown_session(
+    harness: ReadoptHarness,
+) -> None:
+    """§2.8(6)'s refusal, driven ORGANICALLY rather than by fault injection.
+
+    (c)/(d) above patch ``BridgeRuntime.resume_session`` to make the re-adoption
+    fail; this one removes the thing a resume reads. The session directory is
+    deleted between the kill and the read, so the freshly respawned sidecar's
+    own ``SessionService.resume`` — which checks for the directory before it
+    creates anything (``agent/src/session/manager.ts``) — refuses on its own,
+    through the real seam, with nothing in this process pretending on its
+    behalf.
+
+    The regression this guards is the one §2.3/§2.4's 2026-09-04 amendment was
+    written for: before it, ``resume`` for an id with nothing on disk MINTED an
+    empty session under that name, and the caller got a 200 with an empty
+    transcript — a silent, permanent loss of the very history §2.8(6) exists to
+    recover. A named 404 is the whole point, so this asserts both halves: the
+    reason, and the absence of a fabricated page.
+    """
+    session_id = harness.create_and_prompt("pong")
+    harness.kill_and_wait_for_respawn()
+
+    session_dir = harness.runtime.root / ".heph" / "sessions" / session_id
+    assert session_dir.is_dir(), session_dir
+    shutil.rmtree(session_dir)
+
+    page = harness.get(f"/sessions/{session_id}/history")
+    assert page.status_code == 404, page.text
+    body = page.json()
+    assert body["reason"] == "unknown_session"
+    assert body.get("session_id") == session_id
+    # the regression this must not introduce: a silently minted empty transcript
+    assert "events" not in body

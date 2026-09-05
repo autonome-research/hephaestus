@@ -382,7 +382,15 @@ def test_a_quick_edit_transcript_may_still_be_RESUMED_by_name(app: Workspace) ->
     too would make §14's own fixture unloadable, so §7A.2's refusal is scoped to
     the **create** path, which is the one it argues about ("a **bare**
     ``POST /sessions {profile:"quick_edit", part:"tread"}``").
+
+    The transcript is seeded first: since B-11(b) (2026-09-04) resuming an id
+    with no persisted transcript is a 404 ``unknown_session`` rather than a
+    fresh session minted under that name, which is what this test used to rely
+    on without saying so.
     """
+    agent = app.agent
+    assert agent is not None
+    agent.create_session("quick_edit", part="widget", session_id="sess-committed-quickedit")
     response = app.post(
         "/sessions",
         json={
@@ -393,6 +401,7 @@ def test_a_quick_edit_transcript_may_still_be_RESUMED_by_name(app: Workspace) ->
         },
     )
     assert response.status_code == 200, response.text
+    assert response.json()["resumed"] is True
 
 
 def test_a_part_session_must_name_its_part(app: Workspace) -> None:

@@ -504,6 +504,31 @@ interface Cursor {
   readonly offset: number;
 }
 
+/**
+ * A history paging request this module refuses: INTERFACE.md §2.8's
+ * `invalid_cursor`.
+ *
+ * A NAMED class, and the seam is the class rather than an `RpcError`, because
+ * this module is the pure normalisation module and must not import the RPC
+ * layer — `main.ts` is where a thrown error becomes a wire frame, and it is the
+ * only place that knows the JSON-RPC vocabulary.
+ *
+ * Why it has to be named at all: a plain `Error` out of a handler becomes
+ * `-32603` (`rpc.ts`'s catch), which the Python classifier could not tell from
+ * a sidecar that had stopped answering — so a `%%%` cursor was reported to the
+ * operator as **`503 agent_unavailable`**, "this server has no agent runtime
+ * attached", while the very next history call returned 200. §2.4 forbids
+ * exactly that collapse: a malformed request and an unreachable runtime "have
+ * different remedies and a client that could not tell them apart would offer
+ * the wrong one".
+ */
+export class MalformedCursorError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MalformedCursorError";
+  }
+}
+
 export function encodeCursor(cursor: Cursor): string {
   return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
 }
@@ -513,11 +538,11 @@ export function decodeCursor(token: string): Cursor {
   try {
     parsed = JSON.parse(Buffer.from(token, "base64url").toString("utf8"));
   } catch {
-    throw new Error("malformed history cursor");
+    throw new MalformedCursorError("malformed history cursor");
   }
   const obj = parsed as { hw?: unknown; offset?: unknown };
   if (typeof obj.hw !== "string" || typeof obj.offset !== "number" || !Number.isInteger(obj.offset) || obj.offset < 0) {
-    throw new Error("malformed history cursor");
+    throw new MalformedCursorError("malformed history cursor");
   }
   return { hw: obj.hw, offset: obj.offset };
 }
@@ -576,7 +601,11 @@ export function pageHistory(
 ): HistoryPage {
   const pageSize = options.pageSize ?? HISTORY_PAGE_SIZE;
   if (request.cursor !== undefined && request.after !== undefined) {
-    throw new Error("history page accepts cursor or after, not both");
+    // §2.8(5)'s mutually-exclusive pair, thrown as the SAME named error as a
+    // token that does not decode: both are `invalid_cursor` at 400 (§2.4), and
+    // a plain `Error` here would land on precisely the `-32603`-becomes-
+    // "dead runtime" path `MalformedCursorError` exists to close.
+    throw new MalformedCursorError("history page accepts cursor or after, not both");
   }
 
   const last = entries[entries.length - 1];

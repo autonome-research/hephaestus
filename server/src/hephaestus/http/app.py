@@ -57,9 +57,13 @@ from hephaestus.core.checks.report import project_check_report
 from hephaestus.core.types import BuildResult
 from hephaestus.mcp.validate import SchemaError, normalize_arguments
 from starlette.applications import Starlette
+from starlette.exceptions import HTTPException
+from starlette.middleware.errors import ServerErrorMiddleware
+from starlette.middleware.exceptions import ExceptionMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute, Route, WebSocketRoute
+from starlette.types import ASGIApp
 from starlette.websockets import WebSocket
 
 from . import agent_attach, providers
@@ -79,7 +83,14 @@ from .artifacts import (
     mime_for_kind,
 )
 from .context import compose_context, parse_envelope
-from .errors import HttpRefusal, capability_result, error_body, refusal_for
+from .errors import (
+    HttpRefusal,
+    capability_result,
+    error_body,
+    internal_error,
+    refusal_for,
+    router_refusal,
+)
 from .events_ws import serve_events
 from .exports import (
     EXPORT_ROUTE_TOOLS,
@@ -111,7 +122,13 @@ from .sessions import (
     thread_projection,
 )
 
-__all__ = ["API_PREFIX", "ROUTE_TABLE", "WEBSOCKET_ROUTES", "build_app"]
+__all__ = [
+    "API_PREFIX",
+    "ROUTE_TABLE",
+    "WEBSOCKET_ROUTES",
+    "build_app",
+    "with_error_envelope",
+]
 
 #: Versioned because this is a client API, not the headless surface (§2.3).
 #: Declared below both verbs (:mod:`hephaestus.agent_bridge.serve_record`) so the
@@ -530,6 +547,84 @@ def _replayed(response: Any) -> Response:
 # --------------------------------------------------------------------------
 
 
+async def _envelope_http_exception(request: Request, exc: Exception) -> Response:
+    """§2.4 over the **router's own** refusals: a route miss and a wrong method.
+
+    Registered on the application rather than added to :func:`build_app`'s
+    per-endpoint guard, because neither condition ever reaches an endpoint —
+    Starlette's router raises before any handler runs, which is exactly why the
+    guard (correct for everything it can see) could never close this hole. The
+    application boundary is the one place that sees every response this process
+    emits, so the decision is taken there: **every** response carries the
+    envelope.
+
+    The ``Allow`` header Starlette attaches to a 405 rides through unchanged.
+    The envelope is an addition to it, never a replacement: repairing an
+    incorrect body by dropping a correct header would trade one defect for
+    another.
+    """
+    status = exc.status_code if isinstance(exc, HTTPException) else 500
+    # The method is read off the scope rather than through ``Request.method``:
+    # Starlette hands this handler the *connection*, which is a ``WebSocket``
+    # for a socket scope, and that class has no ``method`` at all. No socket
+    # path raises an ``HTTPException`` today, and an ``AttributeError`` raised
+    # *inside* the handler that exists to keep every response named would be a
+    # particularly bad way to find that out.
+    method = str(request.scope.get("method", "GET"))
+    refusal = router_refusal(status, method=method, path=request.url.path)
+    if refusal is None:
+        # A status this table does not name — no branch of this application
+        # raises one. Rather than invent a reason for it here, it is handed to
+        # the row that exists for exactly "nobody classified this".
+        refusal = internal_error(exc)
+        return JSONResponse(refusal.body(), status_code=refusal.status)
+    headers = getattr(exc, "headers", None)
+    return JSONResponse(
+        refusal.body(),
+        status_code=refusal.status,
+        headers=dict(headers) if headers else None,
+    )
+
+
+async def _envelope_server_error(_: Request, exc: Exception) -> Response:
+    """§2.4 over the server-fault path: an exception no branch classified.
+
+    Starlette's ``ServerErrorMiddleware`` runs this handler and then **re-raises**,
+    so uvicorn still logs the traceback and a ``TestClient`` built with
+    ``raise_server_exceptions=True`` still raises — the fix adds an envelope to
+    this path without taking away the loudness an operator needs from it.
+
+    The body is a fixed sentence plus a correlation id (:func:`internal_error`),
+    never ``str(exc)``: this path is reached only by exceptions nobody has
+    classified and therefore nobody has redacted.
+    """
+    refusal = internal_error(exc)
+    return JSONResponse(refusal.body(), status_code=refusal.status)
+
+
+def with_error_envelope(app: ASGIApp) -> ASGIApp:
+    """Give a **bare** ASGI application §2.4's envelope on the paths it fails.
+
+    :func:`build_app` gets these two handlers from ``Starlette`` itself. This
+    exists for the one thing in the process that is *not* a Starlette
+    application: the built client bundle, which ``http/serve.py``'s
+    ``with_bundle`` composes **around** the API as a raw ``StaticFiles``
+    callable (deliberately — mounting it inside :func:`build_app` would weaken
+    §2.3's closed-route-table assertion). With nothing between it and the
+    server, a path the bundle does not contain raises ``HTTPException(404)``
+    straight through and answers 500 with a traceback in the log on every page
+    load that asks for a missing ``/favicon.ico``.
+
+    §3: a path the bundle does not contain is a **404**, never a single-page
+    fallback — the client keeps its navigation state in the URL fragment, so an
+    unknown path is a wrong URL and saying so is the honest answer.
+    """
+    return ServerErrorMiddleware(
+        ExceptionMiddleware(app, handlers={HTTPException: _envelope_http_exception}),
+        handler=_envelope_server_error,
+    )
+
+
 def build_app(runtime: WorkspaceRuntime) -> Starlette:
     """The Starlette app serving :data:`ROUTE_TABLE` over ``runtime``."""
     api = _Api(runtime)
@@ -568,12 +663,17 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
                     refusal = refusal_for(exc)
                 except BaseException:
                     raise exc from None
-                if refusal.reason == "agent_unavailable" and "config_path" not in refusal.data:
-                    # §2.4 promises `cause`, `config_path`, `detail` on every
-                    # `agent_unavailable`; a refusal minted below the runtime
-                    # (a sidecar that died mid-request) cannot know the path, so
-                    # it is merged here, and the bridge's own keys still win.
-                    refusal.data = {**_attach_data(runtime), **refusal.data}
+                # NOTHING is merged onto the refusal here. §2.4's RECONCILIATION
+                # of 2026-09-03 is explicit that the sidecar-failed
+                # `agent_unavailable` carries `cause` and `detail` and
+                # deliberately NOT `config_path`: this layer never opens the
+                # providers file, so the only way to fill the key would be to
+                # copy a value the refusal cannot keep in sync, and "a stale
+                # `config_path` is worse than an absent one, because a client
+                # would act on it". The refusals that DO carry it
+                # (`sessions_or_refuse`, the attach routes) mint it where the
+                # path is actually known, which is why re-attaching it here was
+                # both wrong and unnecessary.
                 return JSONResponse(refusal.body(), status_code=refusal.status)
 
         return wrapped
@@ -1647,7 +1747,19 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         WebSocketRoute(API_PREFIX + template, endpoint=endpoint)
         for template, endpoint in sockets.items()
     )
-    return Starlette(routes=routes)
+    # §2.4, amended 2026-09-04: the envelope is decided at the APPLICATION
+    # boundary, not per route. `guarded` maps everything an endpoint can raise;
+    # these two map everything that never reaches one — the router's 404/405 and
+    # any exception no branch of `refusal_for` classified — so there is no
+    # response this application can emit without `status`, `reason` and
+    # `message`. `server/tests/test_http_envelope.py` is the standing guard.
+    return Starlette(
+        routes=routes,
+        exception_handlers={
+            HTTPException: _envelope_http_exception,
+            Exception: _envelope_server_error,
+        },
+    )
 
 
 def _method_router(

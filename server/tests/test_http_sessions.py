@@ -72,6 +72,64 @@ def test_the_profile_set_is_closed(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------
+# B-11(b): resume is refused for a transcript that does not exist, and
+# `resumed` reports what happened rather than echoing the request (§2.3/§2.4,
+# amended 2026-09-04).
+
+
+def test_resuming_a_transcript_that_does_not_exist_is_refused_unknown_session(
+    tmp_path: Path,
+) -> None:
+    """The audit's repro, pinned: before this fix a never-used id came back 200
+    ``resumed: true`` and the listing then showed a session nothing had opened —
+    "the operator is told they reopened a transcript they did not."
+
+    §2.4 already defines ``unknown_session`` at 404 for an id the runtime holds
+    nothing for; this is that same refusal, reached from the create route
+    rather than from an existing session route.
+    """
+    with workspace(tmp_path / "proj", agent=True) as web:
+        response = web.post(
+            "/sessions",
+            json={"profile": "orchestrator", "session_id": "sess-nope", "resume": True},
+        )
+        listed = web.get("/sessions").json()
+
+    assert response.status_code == 404
+    body = response.json()
+    assert body["reason"] == "unknown_session"
+    assert body["session_id"] == "sess-nope"
+    assert "sess-nope" not in {row["session_id"] for row in listed["sessions"]}
+
+
+def test_resuming_a_persisted_transcript_reopens_it_and_is_not_over_tightened(
+    tmp_path: Path,
+) -> None:
+    """The positive half, so the refusal above is not over-tightened: a session
+    that genuinely persisted resumes 200 with ``resumed: true``, and its
+    history is the transcript that was actually there — not a fresh empty one
+    bearing the old name.
+    """
+    with workspace(tmp_path / "proj", agent=True) as web:
+        agent = web.agent
+        assert agent is not None
+        session_id = agent.create_session("orchestrator", session_id="sess-real")
+        agent.seed_history(session_id, 3)
+
+        response = web.post(
+            "/sessions",
+            json={"profile": "orchestrator", "session_id": "sess-real", "resume": True},
+        )
+        history = web.get(f"/sessions/{session_id}/history").json()
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["session_id"] == "sess-real"
+    assert body["resumed"] is True
+    assert len(history["events"]) == 3
+
+
+# --------------------------------------------------------------------------
 # history
 
 
@@ -115,6 +173,71 @@ def test_the_history_route_exposes_no_page_size(tmp_path: Path) -> None:
         for name in ("limit", "page_size", "pageSize", "max", "count"):
             page = web.get(f"/sessions/{session}/history", params={name: "3"}).json()
             assert len(page["events"]) == HISTORY_PAGE_SIZE, name
+
+
+# --------------------------------------------------------------------------
+# B-11(a): a malformed cursor is refused by name, never reported as a dead
+# runtime (§2.4/§2.8, amended 2026-09-04). Driven against the FAKE backend, so
+# the contract is pinned on the lane with no Node toolchain — the sidecar's own
+# decoder is exercised separately by ``agent/test/session/history.test.ts``.
+
+
+def test_a_malformed_cursor_is_refused_invalid_cursor_not_agent_unavailable(
+    tmp_path: Path,
+) -> None:
+    """Every shape §2.8 names, each 400 ``invalid_cursor`` — never the 503
+    ``agent_unavailable`` the audit found ("this server has no agent runtime
+    attached, so there is nobody to send this to", over a live sidecar).
+
+    Then an UNQUALIFIED read still returns 200: the pin that a malformed
+    request never marks the runtime dead for the calls that follow it — the
+    exact regression a message-based special case (rather than the structural
+    "an answered refusal is never agent_unavailable" fix) would still allow for
+    any input this branch does not happen to recognise.
+    """
+    import base64
+
+    with workspace(tmp_path / "proj", agent=True) as web:
+        agent = web.agent
+        assert agent is not None
+        session = agent.create_session("orchestrator")
+        agent.seed_history(session, 5)
+
+        def b64(payload: bytes) -> str:
+            return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+        malformed_params: list[dict[str, str]] = [
+            {"cursor": "%%%"},  # not base64-shaped at all
+            {"cursor": b64(b'{"foo": 1}')},  # well-formed base64, not a cursor
+            {"after": b64(b'{"hw": "e1", "offset": 1.5}')},  # non-integer offset
+            {"after": b64(b'{"hw": "e1", "offset": -1}')},  # negative offset
+            # The audit's OWN four tokens, verbatim and unencoded. The four
+            # above are base64-of-JSON payloads, which exercise the decoder one
+            # layer in; these are what a hand-typed URL or a stale bookmark
+            # actually carries, and `after` is a distinct parameter from
+            # `cursor` with a distinct decode path — a fix that named only the
+            # `cursor` shapes would leave half the ledger's reproduction
+            # answering 503 over a live sidecar.
+            {"cursor": "YWJj"},  # valid base64 ("abc"), not a cursor
+            {"after": "abc"},  # not base64-shaped at all
+            {"after": "-1"},  # an offset mistaken for a token
+        ]
+        for params in malformed_params:
+            response = web.get(f"/sessions/{session}/history", params=params)
+            assert response.status_code == 400, params
+            body = response.json()
+            assert body["reason"] == "invalid_cursor", params
+            assert body["status"] == "error"
+            # A malformed cursor is not an attach problem: `config_path` is the
+            # attach refusal's key (§7A.8) and its presence here would send the
+            # panel to the sign-in flow for a bad URL.
+            assert "config_path" not in body, params
+
+        # The sidecar was never considered dead: an unqualified read right
+        # after every malformed one still succeeds.
+        alive = web.get(f"/sessions/{session}/history")
+        assert alive.status_code == 200
+        assert len(alive.json()["events"]) == 5
 
 
 def test_a_multi_page_walk_delivers_every_event_exactly_once(tmp_path: Path) -> None:

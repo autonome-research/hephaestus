@@ -29,12 +29,23 @@ import threading
 from collections.abc import Callable
 from typing import Any, Final
 
-from hephaestus.agent_bridge.app import PromptResult
+from hephaestus.agent_bridge.app import PromptResult, UnknownSessionError
 from hephaestus.agent_bridge.events import EventPump, HephaestusEvent, ObserverClient
+from hephaestus.agent_bridge.protocol import ErrorCode
 from hephaestus.agent_bridge.supervisor import SupervisorError
 from opstore.admission import AdmissionControl
 
-__all__ = ["HISTORY_PAGE_SIZE", "FakeAgent", "decode_cursor", "encode_cursor"]
+__all__ = ["HISTORY_PAGE_SIZE", "FakeAgent", "MalformedCursor", "decode_cursor", "encode_cursor"]
+
+
+class MalformedCursor(Exception):
+    """Mirrors ``MalformedCursorError`` in ``agent/src/session/history.ts``.
+
+    Raised by :func:`decode_cursor` for exactly the shapes the sidecar's own
+    decoder refuses, so the fake backend can be driven through §2.8's
+    ``invalid_cursor`` contract on the lane that has no Node toolchain.
+    """
+
 
 #: Mirrors ``HISTORY_PAGE_SIZE`` in ``agent/src/session/history.ts``. Duplicated
 #: as a *test* constant only — the route deliberately exposes no page size, so
@@ -49,9 +60,31 @@ def encode_cursor(hw: str, offset: int) -> str:
 
 
 def decode_cursor(token: str) -> dict[str, Any]:
+    """The sidecar's decoder, refusals included (``history.ts``'s ``decodeCursor``).
+
+    The validation is the sidecar's, shape for shape — a token that is not
+    base64url of JSON, a payload that is not an object with a string ``hw``, and
+    an ``offset`` that is not a non-negative integer — because a double that
+    accepted tokens the real decoder refuses would let a test pass over a
+    request production rejects.
+    """
     padded = token + "=" * (-len(token) % 4)
-    loaded: Any = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
-    return dict(loaded)
+    try:
+        loaded: Any = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise MalformedCursor("malformed history cursor") from exc
+    if not isinstance(loaded, dict):
+        raise MalformedCursor("malformed history cursor")
+    fields: dict[str, Any] = {str(k): v for k, v in loaded.items()}  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+    offset = fields.get("offset")
+    if (
+        not isinstance(fields.get("hw"), str)
+        or not isinstance(offset, int)
+        or isinstance(offset, bool)
+        or offset < 0
+    ):
+        raise MalformedCursor("malformed history cursor")
+    return fields
 
 
 class FakeAgent:
@@ -120,8 +153,25 @@ class FakeAgent:
         session_id: str | None = None,
         resume: bool = False,
     ) -> str:
+        """Open a session, refusing a ``resume`` there is nothing to resume.
+
+        §2.3/§2.4, amended 2026-09-04. The refusal is **modelled**, not
+        reimplemented: what stands in for the real backend's "does
+        ``.heph/sessions/<id>`` exist?" is "does this double hold anything under
+        that id" — a live session or a seeded transcript. The exception is the
+        bridge's own :class:`UnknownSessionError`, so the double raises the same
+        type the real runtime does and the route's mapping is asserted against
+        the shape it will meet in production, not a look-alike.
+
+        Before this, the double inserted the id unconditionally, so the fake
+        backend agreed with the real one on the *wrong* answer: a resume for a
+        never-used name returned 200 with ``resumed: true`` and the listing then
+        showed a session nothing had opened.
+        """
         with self._lock:
             sid = session_id or f"sess-{next(self._session_seq)}"
+            if resume and sid not in self._sessions and sid not in self.history:
+                raise UnknownSessionError(f"unknown session '{sid}'", session_id=sid)
             self._sessions[sid] = {"session_id": sid, "profile": profile, "part": part}
             return sid
 
@@ -219,9 +269,30 @@ class FakeAgent:
         empty session — so a client can always hand it back. An ``after`` at or
         beyond the current end returns no events, ``done``, and the same
         ``end_cursor`` it was given, which is what makes polling the tail cheap.
+
+        A token that does not decode is refused the way the **sidecar** refuses
+        it (§2.8/§2.4, amended 2026-09-04): a ``SupervisorError`` carrying the
+        JSON-RPC envelope the real bridge would carry, ``data.reason`` and all,
+        so ``http/errors.py`` classifies the double's answer through exactly the
+        branch it classifies the real one through. Raising an ``HttpRefusal``
+        here instead would have tested nothing — the mapping under test is the
+        one that reads the sidecar's envelope.
         """
         self.seen_cursors.append(cursor)
         events = self.history.get(session_id, [])
+        token = after if after is not None else cursor
+        if token is not None:
+            try:
+                decode_cursor(token)
+            except MalformedCursor as exc:
+                raise SupervisorError(
+                    f"history.page failed: {exc}",
+                    error={
+                        "code": ErrorCode.INVALID_PARAMS,
+                        "message": str(exc),
+                        "data": {"reason": "invalid_cursor", "session_id": session_id},
+                    },
+                ) from exc
         if after is not None:
             decoded = decode_cursor(after)
             offset = int(decoded["offset"])
