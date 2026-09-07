@@ -703,11 +703,6 @@ details[open] > .rawSummary::before {
   border-color: var(--status-error-ink);
 }
 
-.terminalId {
-  composes: code from "../../system/type.module.css";
-  color: var(--ink-muted);
-}
-
 /* §8(d), amended 2026-09-01: a named absence is "one short sentence in the
    transcript's own type role", not a blockquote. The 2px rule and the indent
    gave a one-line notice the weight of a pull quote inside the transcript it

@@ -147,13 +147,20 @@
   min-width: 0;
   overflow: hidden;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  /* ONE definite row, because the aside holds exactly ONE child in BOTH of its
+     states — `StreamPanel` when open, the strip control when collapsed
+     (§4.1(h), amended 2026-09-02 (C25): the eyebrow band is struck AS A BAND).
+     The struck band's `auto` row outlived it: the one remaining child was
+     auto-placed into a CONTENT-sized first row and a second row absorbed the
+     other 780px with nothing in it, so `StreamPanel`'s `height: 100%` resolved
+     against a content-sized track, its flex column had no leftover height to
+     hand out, and the composer sat under the tab strip instead of at the
+     column's bottom edge. The collapsed override below already spelled the
+     correct single-row template; two rules that must agree is the shape this
+     bug came in, so there is now one. */
+  grid-template-rows: minmax(0, 1fr);
   border-left: 1px solid var(--border);
   background: var(--surface-panel);
-}
-
-.body[data-stream="collapsed"] .stream {
-  grid-template-rows: minmax(0, 1fr);
 }
 
 /* ---- the rail overlay (§4.1(b)) ----------------------------------------- */

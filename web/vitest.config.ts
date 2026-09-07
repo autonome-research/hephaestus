@@ -20,5 +20,15 @@ export default defineConfig({
   test: {
     include: ["test/**/*.test.{ts,tsx}"],
     environment: "jsdom",
+    // Every `vi.stubGlobal` is undone after the test that made it
+    // (J-mirrors-and-dx-19). `exports.test.tsx` replaced the global `URL` with a
+    // SPREAD OF A CONSTRUCTOR — a plain object with no `[[Construct]]` — in its
+    // §22.4 block, and the only restore was an `unstubAllGlobals` in that
+    // block's own `beforeEach`, which protects the next test IN THE BLOCK and
+    // nothing after it. The §22.7 block below therefore ran against a stub, and
+    // was green only because it renders markup and happens not to construct a
+    // `URL`. A teardown in that one file would fix that one file; the flag fixes
+    // the class, and is what the runner has it for.
+    unstubGlobals: true,
   },
 });

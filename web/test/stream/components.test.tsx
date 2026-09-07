@@ -336,6 +336,45 @@ describe("the transcript's honesty rows (§8, §7.4)", () => {
     expect(band?.textContent ?? "").toContain("could not keep up with its events");
   });
 
+  // J-web-stream-9: the terminal id used to render as its own visible line —
+  // "Terminal: terminal:run-…" — at the same weight as the outcome, even though
+  // the identical value was already on the band twice over (the data attribute,
+  // and now the title). §7.1's house rule for a machine identity (applied here
+  // to match session tabs): the id stays on `title` and the data attribute and
+  // is never drawn.
+  it("carries the terminal id on the attribute and the title, never as visible text (J-web-stream-9)", () => {
+    const terminalId = `terminal:${fixture.run_id}`;
+    const item = liveItem({
+      run_id: fixture.run_id,
+      seq: 2 ** 62,
+      kind: "terminal",
+      session_id: fixture.session_id,
+      payload: { state: "completed", terminal_id: terminalId },
+    });
+    const document_ = renderRows(groupRows([item]));
+    const band = document_.querySelector("[data-terminal-state]");
+    expect(band).not.toBeNull();
+    expect(band?.getAttribute("data-terminal-id")).toBe(terminalId);
+    expect(band?.getAttribute("title") ?? "").toContain(terminalId);
+    // The negative half: no visible text node the band renders looks like the
+    // id — a `namespace:rest` machine-identifier shape.
+    expect(band?.textContent ?? "").not.toContain(terminalId);
+    expect(band?.textContent ?? "").not.toMatch(/\bterminal:[\w-]+/);
+  });
+
+  it("never renders a terminal/backpressure-prefixed machine identifier as visible text, across the whole recorded transcript", () => {
+    // The class-closing guard: not only the one row constructed above, but
+    // every terminal band the fixture and the live suffix produce.
+    const document_ = renderRows(panelRows(historyItems, liveEntries));
+    const bands = [...document_.querySelectorAll("[data-terminal-state]")];
+    expect(bands.length).toBeGreaterThan(0);
+    for (const band of bands) {
+      const id = band.getAttribute("data-terminal-id");
+      if (id === null) continue;
+      expect(band.textContent ?? "").not.toContain(id);
+    }
+  });
+
   it("gives every rendered event id exactly one element", () => {
     const document_ = renderRows(panelRows(historyItems, liveEntries));
     const ids = [...document_.querySelectorAll("[data-event-id]")].map((node) =>
@@ -813,6 +852,76 @@ describe("StreamPanel — the strip's membership is the listing, not one thread 
         ["sess-o", "sess-p", selected].sort(),
       );
       expect(tabs.map((t) => t.getAttribute("data-session-id"))).toContain(selected);
+    } finally {
+      act(() => {
+        root.unmount();
+      });
+      host.remove();
+    }
+  });
+
+  // J-web-stream-2: a session that exists and has never been prompted used to
+  // render nothing — no heading, no icon, no attribute — while `data-history-
+  // state` reported the read as `complete`. §7.4(e)'s composed state renders
+  // instead: an icon, a heading, one sentence, and no create affordance (the
+  // composer below it is the action).
+  it("renders the §7.4(e) empty-transcript state for a selected session with a complete, zero-row history (J-web-stream-2)", () => {
+    const selected = "sess-empty";
+    const rows: SessionsDocument["sessions"] = [
+      { session_id: selected, profile: "part", part: "bracket", parent_session_id: null, thread_state: "linked" },
+    ];
+    vi.mocked(useStream).mockReturnValue(
+      fakeStream({
+        rows: [],
+        history: { ...emptyHistory(), state: "complete" },
+        tabs: [
+          {
+            session_id: selected,
+            parent_session_id: null,
+            kind: "part",
+            depth: 0,
+            thread_state: "linked",
+            origin: {},
+            created_at: null,
+          },
+        ],
+      }),
+    );
+
+    const { host, root } = mount({ status: "ok", sessions: rows, profiles: [] }, selected);
+    try {
+      const empty = host.querySelector("[data-transcript-empty]");
+      expect(empty).not.toBeNull();
+      expect(empty?.textContent?.trim().length ?? 0).toBeGreaterThan(0);
+      // Neither the no-sessions empty state's title nor a create-session
+      // string leaks into this render — this is a DIFFERENT composed state,
+      // never a fallback dressed up as one.
+      expect(host.textContent).not.toContain(copy.stream.noSessionsTitle);
+      // §7.1: no create affordance inside this state. The composer is the
+      // action; a second one here would be the "wall of buttons" it forbids.
+      expect(empty?.querySelector("button")).toBeNull();
+    } finally {
+      act(() => {
+        root.unmount();
+      });
+      host.remove();
+    }
+  });
+
+  it("does not render the empty-transcript state while the history is still loading", () => {
+    const selected = "sess-loading";
+    const rows: SessionsDocument["sessions"] = [
+      { session_id: selected, profile: "part", part: "bracket", parent_session_id: null, thread_state: "linked" },
+    ];
+    vi.mocked(useStream).mockReturnValue(
+      fakeStream({
+        rows: [],
+        history: { ...emptyHistory(), state: "loading" },
+      }),
+    );
+    const { host, root } = mount({ status: "ok", sessions: rows, profiles: [] }, selected);
+    try {
+      expect(host.querySelector("[data-transcript-empty]")).toBeNull();
     } finally {
       act(() => {
         root.unmount();

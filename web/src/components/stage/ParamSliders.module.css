@@ -33,3 +33,19 @@
   clip-path: inset(50%);
 }
 
+/*
+ * The placeholder row (J-cli-startup-8). §8(b)'s "visibly filling" shape: the
+ * panel keeps its geometry while `GET /parts/{part}/params` is in flight rather
+ * than being replaced by one line of text, which is what made a tab switch read
+ * as a blank rail for seconds. Deliberately NOT animated — an animation here
+ * would be motion with no information in it, and §3.13 keeps the resting page
+ * still — and deliberately unlabelled, because the label of the row it is
+ * standing in for belongs to a different part.
+ */
+.skeleton {
+  display: block;
+  height: 2.25rem;
+  border-radius: var(--radius-control);
+  background: var(--surface-app);
+  border: 1px solid var(--border);
+}

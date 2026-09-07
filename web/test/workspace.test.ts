@@ -207,6 +207,37 @@ describe("URL serialization", () => {
     );
   });
 
+  it("serializes exactly the declared tab vocabularies, and a rename of a VALUE fails here (J-web-viewport-8)", () => {
+    // J-web-viewport-8 — **verdict: by design.** The stage tab LABELLED
+    // "Geometry" writes `results`, which reads as drift and is not: the token
+    // is §4.5's closed vocabulary, the client transcribes it faithfully, and
+    // only the visible label was changed (so two tabs a few hundred pixels
+    // apart do not both read "Results" — the assertion above). Renaming the
+    // VALUE would alter a closed vocabulary and break every bookmark carrying
+    // it, so the guard the ledger asks for is this one: the serialized values
+    // are pinned literally, and a future rename of one fails a test instead of
+    // silently invalidating links.
+    expect([...STAGE_TABS]).toEqual(["viewport", "script", "timeline", "results", "diff"]);
+    expect([...INSPECTOR_TABS]).toEqual([
+      "results",
+      "properties",
+      "provenance",
+      "checks",
+      "dfm",
+      "export",
+      "sourcing",
+    ]);
+    // And the values are what actually reaches the URL, for every one of them.
+    for (const tab of STAGE_TABS) {
+      expect(encodeWorkspaceUrl({ ...DEFAULT_STATE, stage_tab: tab })).toContain(`tab=${tab}`);
+      expect(decodeWorkspaceUrl(`#/p/stair?tab=${tab}`).stage_tab).toBe(tab);
+    }
+    for (const tab of INSPECTOR_TABS) {
+      expect(encodeWorkspaceUrl({ ...DEFAULT_STATE, inspector_tab: tab })).toContain(`itab=${tab}`);
+      expect(decodeWorkspaceUrl(`#/p/stair?itab=${tab}`).inspector_tab).toBe(tab);
+    }
+  });
+
   it("falls back closed on a value outside a closed vocabulary", () => {
     // A URL is user input. An unknown tab does not widen the vocabulary and
     // does not throw the workspace away; it lands on the default.

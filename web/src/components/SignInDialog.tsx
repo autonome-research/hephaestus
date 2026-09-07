@@ -53,6 +53,10 @@ import {
   type ProviderRow,
 } from "../api/providers";
 import { copy } from "../copy";
+// §23.14 item 15's "no reason string constructed at a call site", now spelled in
+// a module neither this dialog nor the providers panel owns — the panel used to
+// import it from here, and the composer could not reach it at all.
+import { refusalText } from "./refusalText";
 import { Button, Panel, PanelBody, PanelHeader, PanelNote, Popover, TextInput } from "../system";
 import styles from "./SignInDialog.module.css";
 
@@ -65,20 +69,6 @@ export interface SignInDialogProps {
   readonly onClose: () => void;
   /** Called after a credential actually landed, so the panel can re-read. */
   readonly onSignedIn: () => void;
-}
-
-/**
- * The refusal sentence for a named reason.
- *
- * §23.14 item 15: "no reason string constructed at a call site". An unmapped
- * reason falls back to the server's own message rather than to a phrase this
- * file invents — the server named it, and a client that paraphrases a refusal it
- * does not recognise is guessing.
- */
-export function refusalText(error: unknown): string {
-  if (!(error instanceof WorkspaceError)) return copy.errors.title;
-  const known = copy.providers.refusal as Readonly<Record<string, string>>;
-  return known[error.reason] ?? error.message;
 }
 
 const PENDING_FLOW = new Set(["authorization_pending", "awaiting_input", "slow_down"]);

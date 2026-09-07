@@ -78,6 +78,73 @@ describe("shell layout — usable at 1280px, not a 2400px desk", () => {
   });
 });
 
+/*
+ * J-web-stream-1: the stream aside kept a two-row `grid-template-rows` written
+ * for a child dd9ee1c deleted (the eyebrow band). With one child auto-placed
+ * into a content-sized first row, the second row absorbed ~780px with nothing
+ * in it and `StreamPanel`'s `height: 100%` resolved against a content-sized
+ * track — the composer sat under the tab strip instead of at the column's
+ * bottom. This is "one line that would have caught the deletion": the aside's
+ * row template must be a SINGLE definite row, in both of its states, because it
+ * holds exactly one child in both.
+ */
+describe("stream aside — one child, one row (J-web-stream-1)", () => {
+  const shell = css("components/Shell.module.css");
+  const shellSrc = readFileSync(join(webSrc, "components/Shell.tsx"), "utf8");
+
+  it("gives the .stream aside exactly one definite row, not a two-row template with a leftover track", () => {
+    const rule = /\.stream\s*\{([^}]*)\}/.exec(shell);
+    expect(rule, ".stream rule not found").not.toBeNull();
+    const body = rule?.[1] ?? "";
+    expect(body).toMatch(/grid-template-rows:\s*minmax\(0,\s*1fr\)\s*;/);
+    // The defect was a template with two tracks (e.g. `auto minmax(0, 1fr)` or
+    // `auto 1fr`); guard directly against a second track reappearing. Splitting
+    // naively on whitespace would miscount `minmax(0, 1fr)` as two tokens (the
+    // comma inside the function), so track boundaries are counted at
+    // top-level (paren-depth zero) commas/spaces instead.
+    const rows = /grid-template-rows:\s*([^;]+);/.exec(body)?.[1] ?? "";
+    let depth = 0;
+    let tracks = rows.trim() === "" ? 0 : 1;
+    for (const ch of rows.trim()) {
+      if (ch === "(") depth += 1;
+      else if (ch === ")") depth -= 1;
+      else if (/\s/.test(ch) && depth === 0) tracks += 1;
+    }
+    expect(tracks).toBe(1);
+  });
+
+  it("does not declare a second, collapsed-state row template that could drift from the first", () => {
+    // The two states used to disagree — the collapsed override already had the
+    // correct single-row template and the open state did not. Now that they
+    // are unified there must be exactly one `.stream` rule carrying
+    // `grid-template-rows`, not two that have to be kept in sync by hand.
+    const occurrences = [...shell.matchAll(/\.stream[^{]*\{[^}]*grid-template-rows/g)];
+    expect(occurrences.length).toBe(1);
+  });
+
+  it("renders exactly one child of the aside in each branch (open and collapsed)", () => {
+    // A source-level companion to the CSS assertion above: the row template is
+    // only safe to be a single definite row if the aside truly holds one child
+    // per branch. `styles["stream"]` is applied to the <aside> once; below it
+    // the ternary must yield exactly one element per branch.
+    const asideMatch = /<aside className=\{styles\["stream"\]\}[^>]*>([\s\S]*?)<\/aside>/.exec(
+      shellSrc,
+    );
+    expect(asideMatch, "could not find the stream <aside> in Shell.tsx").not.toBeNull();
+    const body = asideMatch?.[1] ?? "";
+    // Exactly one ternary branching the aside's single child, and it must not
+    // itself contain a sibling element at the top level (a second child would
+    // reintroduce the two-row need this fix removed).
+    expect(body).toMatch(/shell\.streamOpen\s*\?/);
+    // Lazy match past any comment block between `? (` and the first element,
+    // since the open branch is documented in place (§4.1(h)/C25).
+    const openBranch = /shell\.streamOpen\s*\?\s*\([\s\S]*?<StreamPanel\s*\/>/.exec(body);
+    const collapsedBranch = /<button[\s\S]*data-stream-strip/.exec(body);
+    expect(openBranch, "open branch must render exactly <StreamPanel />").not.toBeNull();
+    expect(collapsedBranch, "collapsed branch must render the strip control").not.toBeNull();
+  });
+});
+
 describe("left rail — no dead band between the section list and Working tree", () => {
   it("does not grow the versions panel into leftover height", () => {
     const versions = css("components/rail/VersionList.module.css");

@@ -8,10 +8,21 @@
 
 /* §5.5 C18: one occupant of the viewport's bottom flex band — `flex: 1` with a
    120px minimum track, so the slider takes the width the legend and the section
-   control leave. Collapsed to its disclosure it stops stretching. */
+   control leave. Collapsed to its disclosure it stops stretching.
+ *
+ * `min-width: min-content` is THE CARD'S FLOOR (J-web-viewport-3). The clause
+ * gives the explode *slider* a 120px minimum track and the stylesheet put that
+ * minimum on the inner `.slider` wrapper while the CARD was free to shrink below
+ * it — so with a section engaged at 1600px the card was 113px around 172px of
+ * content, the slider wrapper ended 16px past its right edge and the Collapse
+ * button's text ran 24-61px onto the canvas. `min-content` is the track minimum
+ * plus this card's measured chrome, computed by the engine instead of by hand,
+ * so it cannot drift from the padding and gap declared below it. An overflow
+ * rule would have replaced a button painted on the canvas with a button that is
+ * invisible and unreachable, which is not a fix. */
 .control {
   flex: 1 1 auto;
-  min-width: 0;
+  min-width: min-content;
   display: flex;
   align-items: center;
   gap: var(--gap-inline);

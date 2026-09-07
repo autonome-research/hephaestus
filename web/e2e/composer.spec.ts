@@ -599,4 +599,48 @@ test.describe("§7A.12 case 6 — no agent runtime", () => {
     expect(body.block).toContain(`## Part: ${PART}`);
     void page;
   });
+
+  // -------------------------------------------------------------------------
+  // J-web-stream-3 — the general invariant, over the SPECIFIC state the audit
+  // reproduced: a zero-config serve is exactly what put a 621px path chip in a
+  // 395px column. "An end-to-end invariant that for every descendant of the
+  // stream aside the right edge is inside the aside's, at two widths — the
+  // general invariant that would catch the next one too."
+
+  test("every descendant of the stream aside fits inside it, with the composer's own refusal live (J-web-stream-3)", async ({
+    page,
+  }) => {
+    for (const width of [1280, 1920]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto(`${baseUrl}/#t=${token}`);
+      const composer = page.locator("[data-composer]");
+      await expect(composer).toHaveAttribute("data-composer-state", "disabled", { timeout: 60_000 });
+      await expect(composer.locator("[data-attach-path]")).toBeVisible();
+
+      const escaped = await page.evaluate(() => {
+        const asideEl = document.querySelector("aside");
+        if (asideEl === null) throw new Error("no aside");
+        const asideBox = asideEl.getBoundingClientRect();
+        const bad: string[] = [];
+        for (const node of asideEl.querySelectorAll("*")) {
+          const box = node.getBoundingClientRect();
+          if (box.width === 0 && box.height === 0) continue;
+          if (box.right > asideBox.right + 1) {
+            bad.push(
+              `${node.tagName}.${String(node.className)} right ${String(Math.round(box.right))} > aside right ${String(Math.round(asideBox.right))}`,
+            );
+          }
+        }
+        return bad;
+      });
+      expect(escaped, `at ${String(width)}px`).toEqual([]);
+
+      // The path is shown as visible text, not only on the machine-readable
+      // attribute — the reproduction's own complaint was "the end of the path
+      // is off screen and there is no ellipsis to say so".
+      const path = await composer.locator("[data-attach-path]").getAttribute("data-attach-path");
+      expect(path).toMatch(/providers\.json$/);
+      await expect(composer.locator("[data-attach-path]")).toContainText("providers.json");
+    }
+  });
 });

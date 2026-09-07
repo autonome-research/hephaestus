@@ -54,6 +54,7 @@ import { workspaceStore } from "../../src/state/react";
 import { formatRef } from "../../src/system";
 import { sessionPromptStore } from "../../src/stream/sessionPrompts";
 import { copy } from "../../src/copy";
+import { ATTACH_CAUSES, attachDetailAdds, type AttachCause } from "../../src/api/attach";
 
 // The one route the last block counts calls on. Everything else in the module is
 // the real thing — `CONTEXT_MEMBERS` is asserted against directly, and a
@@ -558,6 +559,120 @@ describe("the DOM contract", () => {
     expect(host.querySelector("[data-composer-input]")).not.toBeNull();
     expect(host.querySelector("[data-composer-send]")).not.toBeNull();
     expect(host.querySelector("[data-context-summary]")).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// J-web-stream-4 — one attach cause stated once, not three times, and Send's
+// clipped reason span never duplicates the empty state's sentence a second
+// time in the same form.
+//
+// The composed refusal used to render, for `no_provider_config` alone: the
+// empty state's sentence, the mapped cause paragraph (a restatement of the
+// same fact), the raw engine `detail` (which re-derives the sentence AND
+// re-prints the path the chip above already names), and then Send's own
+// clipped reason span repeating the empty state's sentence a fourth time.
+// `attachDetailAdds` is the predicate that decides the one legitimate case —
+// `detail` behind a disclosure, and only where it says something the mapped
+// cause does not — and `reasonElementId` is what keeps Send from minting its
+// own copy. Both are asserted here against rendered markup, not just the
+// pure predicate, because the defect was in composition, not in either half
+// alone.
+
+/** Every non-empty leaf text node's trimmed content, in document order. */
+function leafTexts(host: Element): string[] {
+  const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
+  const texts: string[] = [];
+  let node = walker.nextNode();
+  while (node !== null) {
+    const text = (node.textContent ?? "").trim();
+    if (text.length > 0) texts.push(text);
+    node = walker.nextNode();
+  }
+  return texts;
+}
+
+describe("the composed refusal states one cause once, and Send never restates it (J-web-stream-4)", () => {
+  function refusalMarkup(cause: AttachCause, detail?: string): { html: string; host: HTMLElement } {
+    const html = markup({
+      agentUnavailable: true,
+      attach: {
+        attached: false,
+        config_path: "/tmp/p/.heph/providers.json",
+        generation: 1,
+        cause,
+        ...(detail === undefined ? {} : { detail }),
+      },
+    });
+    const host = document.createElement("div");
+    host.innerHTML = html;
+    return { html, host };
+  }
+
+  it("`attachDetailAdds` is true for exactly the two reduced-exception causes, false for every other member", () => {
+    // A table-driven pass over the WHOLE closed vocabulary — not just the two
+    // members that answer true — so a new cause silently defaulting to `true`
+    // (and reintroducing a restated paragraph) fails here rather than later.
+    for (const cause of ATTACH_CAUSES) {
+      const expected = cause === "provider_config_invalid" || cause === "sidecar_failed";
+      expect(attachDetailAdds(cause), cause).toBe(expected);
+    }
+    expect(attachDetailAdds(null)).toBe(false);
+  });
+
+  it("with the absent-config cause: the sentence renders once, the path once, and the raw detail never appears as rendered text", () => {
+    const raw = "no provider config at /tmp/p/.heph/providers.json";
+    const { html, host } = refusalMarkup("no_provider_config", raw);
+    const sentence = copy.attach.cause.no_provider_config;
+    const path = "/tmp/p/.heph/providers.json";
+
+    const bodyText = host.textContent ?? "";
+    expect(bodyText.split(sentence).length - 1).toBe(1);
+    expect(bodyText.split(path).length - 1).toBe(1);
+
+    // `attachDetailAdds` is false for this cause, so no disclosure mounts and
+    // the raw detail — the composed `f"{cause}: {detail}"`-derived string —
+    // is not among the rendered leaf text nodes.
+    expect(host.querySelector("[data-attach-detail]")).toBeNull();
+    expect(leafTexts(host)).not.toContain(raw);
+    expect(html).not.toMatch(new RegExp(raw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  });
+
+  it("with the invalid-config cause: the detail IS reachable, behind the disclosure, distinct from the mapped sentence", () => {
+    const detail = "line 12: expected ',' or '}'";
+    const { host } = refusalMarkup("provider_config_invalid", detail);
+    const disclosure = host.querySelector("[data-attach-detail]");
+    expect(disclosure).not.toBeNull();
+    expect(disclosure?.textContent).toContain(detail);
+    // Distinct fact, not a restatement: the mapped sentence and the detail
+    // are two different leaf text nodes, not the same string twice.
+    expect(copy.attach.cause.provider_config_invalid).not.toBe(detail);
+  });
+
+  it("with the sidecar-failed cause: the detail is likewise reachable", () => {
+    const detail = "exit code 1: sidecar crashed on startup";
+    const { host } = refusalMarkup("sidecar_failed", detail);
+    const disclosure = host.querySelector("[data-attach-detail]");
+    expect(disclosure).not.toBeNull();
+    expect(disclosure?.textContent).toContain(detail);
+  });
+
+  it("Send's own reason points at the empty state's sentence instead of rendering a second copy", () => {
+    // This is the fourth duplication the symptom named: two different
+    // elements — the empty state's body and Send's own clipped reason span —
+    // rendering the identical unavailable sentence. `reasonElementId` is what
+    // the fix threads through so only one element carries the text.
+    const { host } = refusalMarkup("no_provider_config");
+    const send = host.querySelector("[data-composer-send]");
+    expect(send).not.toBeNull();
+    // No descendant of Send renders the disabled sentence as its own text —
+    // the reason is on `aria-describedby`/`title` only when it is not the
+    // element the empty state already rendered.
+    const sendOwnTexts = leafTexts(send as Element).filter(
+      (text) => text !== copy.composer.send,
+    );
+    expect(sendOwnTexts).toEqual([]);
+    expect(send?.getAttribute("aria-describedby")).not.toBeNull();
   });
 });
 

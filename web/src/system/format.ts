@@ -95,15 +95,31 @@ export function formatNumber(value: number): string {
 }
 
 /**
- * Any JSON value a metric or a measurement may carry, as display text.
+ * Any JSON value a metric or a measurement may carry, as display text — or
+ * `null` where there is no honest scalar rendering of it.
  *
- * An array of numbers — a `bbox_mm` triple — becomes `12 × 34 × 5.5`, because
- * `[12,34,5.5]` printed as JSON is punctuation a reader has to parse. Anything
- * else falls back to compact JSON: a *reading surface never receives
- * `JSON.stringify` output* is §4.7's rule for typed errors, and this is the
- * narrow remaining case where the value genuinely is a structure.
+ * **`null` IS THE FIX** (J-web-stream-8). This function used to be total over
+ * `unknown` and ended in `JSON.stringify`, so the Checks panel printed
+ * `measured: {"error":{"type":"AddressingError","code":"addressing_error",…}}`
+ * at the same weight and colour as `measured: 250 × 156 × 5.5` beside it, with
+ * the one thing the operator needs — *you referenced a part that does not
+ * exist* — about 120 characters in, inside JSON punctuation. §4.7 already
+ * forbade that by name and prescribed the shape: the message is the row value,
+ * the code is a `Chip`, the raw object goes behind a disclosure. The clause was
+ * written and never implemented, and a fall-through is why: it made the wrong
+ * rendering the *default* for every structure anyone ever passed.
+ *
+ * Returning `null` makes the compiler the enforcement. Every call site must now
+ * say what it does with a structure, and the next one cannot silently
+ * stringify. `data-value` is unaffected — the machine-readable attribute
+ * legitimately serializes, and does so through `measuredText` at the call sites,
+ * which is why selectors, the archive matcher and the audit harness see no
+ * change from this.
+ *
+ * An array of numbers — a `bbox_mm` triple — still becomes `12 × 34 × 5.5`,
+ * because `[12,34,5.5]` printed as JSON is punctuation a reader has to parse.
  */
-export function formatValue(value: unknown): string {
+export function formatValue(value: unknown): string | null {
   if (value === null || value === undefined) return "";
   if (typeof value === "number") return formatNumber(value);
   if (typeof value === "string") return value;
@@ -111,7 +127,68 @@ export function formatValue(value: unknown): string {
   if (Array.isArray(value) && value.every((item) => typeof item === "number")) {
     return (value as readonly number[]).map(formatNumber).join(" × ");
   }
-  return JSON.stringify(value) ?? "";
+  return null;
+}
+
+/**
+ * The engine's error envelope, as the two fields §4.7 asks a panel to render.
+ *
+ * The engine treats a check whose *measurement* raised as a distinct verdict and
+ * puts the typed exception in `measured` as `{error: {type, code, message}}`.
+ * The client had the structure and the vocabulary and rendered neither; this is
+ * the reader that makes the structure reachable.
+ *
+ * `code` and `message` are required because a chip with no code and a sentence
+ * with no words are not the §4.7 recipe; a partial envelope is not one.
+ */
+export interface ErrorEnvelope {
+  readonly code: string;
+  readonly message: string;
+  /** The exception class the engine named, where it named one. */
+  readonly type: string | null;
+}
+
+export function readErrorEnvelope(value: unknown): ErrorEnvelope | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const error = (value as Record<string, unknown>)["error"];
+  if (typeof error !== "object" || error === null || Array.isArray(error)) return null;
+  const fields = error as Record<string, unknown>;
+  const code = fields["code"];
+  const message = fields["message"];
+  if (typeof code !== "string" || typeof message !== "string") return null;
+  const type = fields["type"];
+  return { code, message, type: typeof type === "string" ? type : null };
+}
+
+/**
+ * A flat fact map — `{kerf_mm: 0.2, minimum_feature_mm: 0.8}` — as label/value
+ * pairs a table primitive can render.
+ *
+ * "Flat" is load-bearing: every value must itself be renderable as a scalar by
+ * `formatValue`, so a nested object cannot sneak a `JSON.stringify` back in one
+ * level down. A map with even one unrenderable member is `null` here and its
+ * caller falls back to the disclosure, which is the honest place for a shape
+ * this file does not know.
+ *
+ * Insertion order is the server's order and is preserved: a fact map's order is
+ * the engine's, and re-sorting it would be the client asserting a ranking.
+ */
+export interface FactPair {
+  readonly key: string;
+  readonly value: string;
+}
+
+export function readFactMap(value: unknown): readonly FactPair[] | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length === 0) return null;
+  const pairs: FactPair[] = [];
+  for (const [key, member] of entries) {
+    const text = formatValue(member);
+    if (text === null) return null;
+    pairs.push({ key, value: text });
+  }
+  return pairs;
 }
 
 /**

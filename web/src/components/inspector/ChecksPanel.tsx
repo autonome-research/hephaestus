@@ -48,10 +48,10 @@ import {
   PanelBody,
   PanelHeader,
   PanelNote,
-  formatValue,
   type BadgeStatus,
 } from "../../system";
 import { Fact } from "../Fact";
+import { MeasuredAside, MeasuredText, measuredText, readMeasured } from "./MeasuredValue";
 import { RefusalBanner } from "../RefusalBanner";
 import { useWorkspace } from "../../state/react";
 import styles from "./panels.module.css";
@@ -96,13 +96,23 @@ export function ChecksView({ checks }: ChecksViewProps): React.JSX.Element {
                     ) : (
                       <span className={styles["muted"]}>
                         {copy.checks.measured}:{" "}
+                        {/* §4.7: the message is the row value, the code is a
+                            chip, the raw object is behind a disclosure — never
+                            `JSON.stringify` at the weight of a formatted
+                            measurement (J-web-stream-8). The `<Fact>` keeps its
+                            literal source and its verbatim `data-value`; only
+                            the glyphs inside it moved. */}
                         <Fact
                           source="checks.report.checks[].measured"
                           value={measuredText(result.measured)}
                           className={styles["mono"]}
                         >
-                          {formatValue(result.measured)}
+                          <MeasuredText shape={readMeasured(result.measured)} />
                         </Fact>
+                        <MeasuredAside
+                          shape={readMeasured(result.measured)}
+                          raw={measuredText(result.measured)}
+                        />
                       </span>
                     )}
                   </span>
@@ -142,11 +152,6 @@ export function ChecksView({ checks }: ChecksViewProps): React.JSX.Element {
       </PanelBody>
     </Panel>
   );
-}
-
-/** A measured value as the report carries it, serialized for `data-value`. */
-function measuredText(measured: unknown): string {
-  return measured === undefined ? "" : JSON.stringify(measured);
 }
 
 export function ChecksPanel(): React.JSX.Element {

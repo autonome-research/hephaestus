@@ -17,6 +17,8 @@ import { CHIP_REF_WIDTH, formatRef } from "../src/system";
 import { copy } from "../src/copy";
 import { ArtifactPin } from "../src/components/ArtifactPin";
 import { Header } from "../src/components/Header";
+import { PinSplitMarker } from "../src/components/PinSplitMarker";
+import { pinSplit } from "../src/state/pinSplit";
 import { ExportChrome, producedRow } from "../src/components/chrome/ExportChrome";
 import {
   resetSubmissionKeys,
@@ -348,6 +350,153 @@ const BASE_SUBMISSION: Submission = {
   artifactRef: JIG,
   part: "assembly_jig",
 };
+
+// ---------------------------------------------------------------------------
+// J-web-viewport-5 — the held-artifact source part is READ, not remembered.
+//
+// `heldFrom` is a private instance field on `WorkspaceStore`, explicitly kept
+// out of the serialised record ("§4.5's closed record does not grow a field
+// for a sentence"). Its own `reset()` comment already names the reload case:
+// "A pasted URL can hold a ref without saying which part minted it." A real
+// reload constructs a FRESH `WorkspaceStore` (its `heldFrom` starts `null` by
+// the class field initializer) and then `reset()`s it from the decoded URL —
+// so nothing the STORE can do recovers the fact.
+//
+// The fix is therefore not in the store: `state/heldPart.tsx` reads the part off
+// the artifact itself (`GET /artifacts/{ref}/meta`), which makes it a server
+// value that survives a reload and a pasted URL, and keeps §4.5's record closed.
+// These cases pin the store's half of that split — the within-session fallback,
+// and the honest `null` that makes the read necessary.
+// ---------------------------------------------------------------------------
+
+describe("the held artifact's source part (J-web-viewport-5)", () => {
+  const HELD_REF = "artifact:build:sha256:" + "c".repeat(64);
+
+  it("survives switching the selected part WITHIN one session", () => {
+    const store = new WorkspaceStore();
+    store.update({ part: "bracket" });
+    store.hold(HELD_REF);
+    store.update({ part: "kerf_card" });
+    expect(store.heldFromPart()).toBe("bracket");
+  });
+
+  it("is not remembered across a reload — which is why the fact is READ, not remembered", () => {
+    // Simulate a reload: the live store's snapshot is exactly what a reload's
+    // decoded URL would carry (same `pin_mode`, same `artifact_ref`), handed
+    // to a BRAND NEW store instance — the shape a fresh page load actually
+    // takes (`decodeWorkspaceUrl` → `reset()` on a store that just booted).
+    const live = new WorkspaceStore();
+    live.update({ part: "bracket" });
+    live.hold(HELD_REF);
+    const reloaded = new WorkspaceStore();
+    reloaded.reset({ ...live.getSnapshot() });
+
+    // The pin round-trips (`pin_mode`, `artifact_ref`) and the source part does
+    // not, and **no store-level fix can change that**: a fresh instance has no
+    // memory of a hold that happened in a previous document, and §4.5's record
+    // is closed, so the fact cannot ride in the URL either. Inferring it from
+    // `state.part` would be worse than nothing — in the split state the URL's
+    // part is the SELECTED one, so the inference would name the wrong part on
+    // exactly the screen §4.1 exists for.
+    //
+    // So this is the ledger's assertion "the workspace object no longer carries
+    // a derived fact", stated positively: the store answers `null` rather than
+    // guessing, and `state/heldPart.tsx` reads the answer off
+    // `GET /artifacts/{ref}/meta` instead — attributable, reload-surviving, and
+    // no wider record. Its `part` projection is the one server change still
+    // outstanding (see the handoff notes); until it lands, `useHeldPart` falls
+    // back to exactly this value, so the fallback is what this pins.
+    expect(reloaded.getSnapshot().pin_mode).toBe("pinned");
+    expect(reloaded.getSnapshot().artifact_ref).toBe(HELD_REF);
+    expect(reloaded.heldFromPart()).toBeNull();
+  });
+
+  it("names the source part as VISIBLE text when held from another part, not only on the title attribute", () => {
+    // §4.1's visible, inherited marking (J-web-viewport-9's clause) must be
+    // satisfiable by something other than a tooltip. The banner sentence
+    // itself already carries the words when `heldFrom` is known; the
+    // reproduction above is what makes it unknown after a reload.
+    const store = new WorkspaceStore();
+    store.update({ part: "bracket" });
+    store.hold(HELD_REF);
+    store.update({ part: "kerf_card" });
+    const banner = copy.header.pinnedBanner(store.heldFromPart(), "kerf_card");
+    expect(banner).toContain("bracket");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// J-web-viewport-9 — the marking is words, mounted per-region, only while the
+// two axes disagree. `<PinSplitMarker>` is what discharges §4.1's "every panel
+// below inherits that marking"; these pin its render contract directly rather
+// than through a whole `Stage`/`Inspector` mount, since the predicate itself
+// is already pinned in `test/pinSplit.test.ts`.
+// ---------------------------------------------------------------------------
+
+describe("PinSplitMarker — the marking is words, per region (J-web-viewport-9)", () => {
+  const split = pinSplit("pinned", "bracket", "kerf_card");
+  if (split === null) throw new Error("fixture split must not be null");
+
+  it("mounts nothing for either region when the two axes agree", () => {
+    const agreeing = pinSplit("pinned", "bracket", "bracket");
+    const stage = mount(<PinSplitMarker split={agreeing} region="stage" />);
+    expect(stage.querySelector("[data-pin-split]")).toBeNull();
+    act(() => {
+      mounted?.root.unmount();
+    });
+    mounted?.host.remove();
+    mounted = null;
+    const inspector = mount(<PinSplitMarker split={agreeing} region="inspector" />);
+    expect(inspector.querySelector("[data-pin-split]")).toBeNull();
+  });
+
+  it("names the held part as VISIBLE text on the stage region, attributed with the ref", () => {
+    const host = mount(
+      <PinSplitMarker split={split} region="stage" artifactRef={JIG} />,
+    );
+    const node = host.querySelector('[data-pin-split="stage"]');
+    expect(node).not.toBeNull();
+    expect(node?.getAttribute("data-pin-split-part")).toBe("bracket");
+    // Visible text, not only the attribute — a screen reader with CSS off and
+    // a sighted reader both need to meet the fact.
+    expect(node?.textContent ?? "").toContain("bracket");
+    expect(node?.textContent ?? "").toContain(formatRef(JIG, CHIP_REF_WIDTH).split(" · ")[1] ?? "nomatch");
+  });
+
+  it("names the selected part as visible text on the inspector region, with no ref attribution", () => {
+    const host = mount(<PinSplitMarker split={split} region="inspector" />);
+    const node = host.querySelector('[data-pin-split="inspector"]');
+    expect(node).not.toBeNull();
+    expect(node?.getAttribute("data-pin-split-part")).toBe("kerf_card");
+    expect(node?.textContent ?? "").toContain("kerf_card");
+    // The inspector shows the SELECTED part's own panels — attributing a ref
+    // there would misname whose artifact the reference belongs to.
+    expect(node?.querySelector("[data-source='workspace.artifact_ref']")).toBeNull();
+  });
+
+  it("carries BOTH part names in its accessible text, on either region", () => {
+    // A screen-reader user meets one region at a time; "showing bracket" alone
+    // does not say that the other region is showing something else.
+    const stage = mount(<PinSplitMarker split={split} region="stage" />);
+    const stageNode = stage.querySelector('[data-pin-split="stage"]');
+    expect(stageNode?.getAttribute("aria-label") ?? "").toContain("bracket");
+    expect(stageNode?.getAttribute("aria-label") ?? "").toContain("kerf_card");
+    act(() => {
+      mounted?.root.unmount();
+    });
+    mounted?.host.remove();
+    mounted = null;
+    const inspector = mount(<PinSplitMarker split={split} region="inspector" />);
+    const inspectorNode = inspector.querySelector('[data-pin-split="inspector"]');
+    expect(inspectorNode?.getAttribute("aria-label") ?? "").toContain("bracket");
+    expect(inspectorNode?.getAttribute("aria-label") ?? "").toContain("kerf_card");
+  });
+
+  it("renders null (no wrapper element at all) when split is null", () => {
+    const host = mount(<PinSplitMarker split={null} region="stage" />);
+    expect(host.childElementCount).toBe(0);
+  });
+});
 
 describe("export idempotency key is per part (issue 100)", () => {
   beforeEach(() => {

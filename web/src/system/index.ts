@@ -70,7 +70,10 @@ export {
   formatValue,
   metricLabel,
   metricUnit,
+  readErrorEnvelope,
+  readFactMap,
 } from "./format";
+export type { ErrorEnvelope, FactPair } from "./format";
 
 export { cx } from "./dataAttrs";
 export type { DataAttributes } from "./dataAttrs";

@@ -28,9 +28,24 @@ import styles from "./RefusalBanner.module.css";
 export function RefusalBanner({
   error,
   onRetry,
+  sentence,
 }: {
   readonly error: unknown;
   readonly onRetry?: (() => void) | undefined;
+  /**
+   * The sentence, where the caller's surface has a CLOSED refusal vocabulary
+   * and must not fall through to the engine's message (J-web-stream-6).
+   *
+   * The default below is the server's `message`, which is right for the git and
+   * check routes: their reasons are open-ended, the server composed one honest
+   * sentence, and a client that replaced it with a generic title would be
+   * discarding the only description of the failure. It is wrong for the
+   * provider routes, whose messages are composed as `f"{cause}: {detail}"` —
+   * a machine reason code and an engine detail, which §4.7 forbids on a reading
+   * surface. Those callers pass `components/refusalText.ts::refusalText`, which
+   * has no raw fallback at all.
+   */
+  readonly sentence?: string | undefined;
 }): React.JSX.Element | null {
   if (!(error instanceof WorkspaceError)) return null;
   const unauthorized = error.reason === "unauthorized";
@@ -47,7 +62,7 @@ export function RefusalBanner({
         {error.reason}
       </Chip>
       <p className={styles["message"]}>
-        {unauthorized ? copy.errors.unauthorized : error.message}
+        {unauthorized ? copy.errors.unauthorized : (sentence ?? error.message)}
       </p>
       {onRetry === undefined || unauthorized ? null : (
         <Button variant="secondary" icon="refresh" onClick={onRetry} data-refusal-retry="">

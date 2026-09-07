@@ -165,6 +165,24 @@
 }
 
 /*
+ * §7.4(e), added 2026-09-05: the composed state for a selected session with no
+ * transcript. It takes the column's leftover height, because an empty state
+ * hugging the tab strip over 800px of void is the shape §3.3's principle 5
+ * rules out — the same void `Shell.module.css`'s struck second row used to
+ * leave. The scroll host beside it stops growing while it is mounted: with zero
+ * rows it has nothing to scroll, and two `flex: 1 1 auto` siblings would split
+ * the height between a state and an empty box.
+ */
+.emptyTranscript {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.emptyTranscript ~ .scrollHost {
+  flex: 0 1 auto;
+}
+
+/*
  * §7.4 C20 (amended 2026-09-02): the Latest pill lives in the GUTTER, off the
  * cards. The scroller reserves a trailing strip — the edge the scrollbar owns —
  * by padding, so no chip, text row, or presentation row extends into it; the

@@ -323,6 +323,35 @@ describe("consecutive identical successful calls coalesce (§7.2 (a))", () => {
     expect(rows).toHaveLength(1);
   });
 
+  // J-web-stream-12's coalescing property, pinned rather than assumed safe. The
+  // group's signature used to be three parts joined with a raw NUL sentinel —
+  // `${toolName}\0${kind}\0${text}` — which was invisible in every editor and
+  // diff and made the source binary to `grep`. The FIX is not "escape the
+  // byte": it is that `repeatSignature` now serializes the tuple through
+  // `canonicalJson`, which is injective over strings by construction (JSON
+  // escapes its own delimiters), so no separator character is needed at all —
+  // and in particular two RAW (non-JSON) results whose tool name and text
+  // would collide under a naive single-character join must still be told
+  // apart.
+  it("never coalesces two raw results whose tool name and text would collide under a naive join", () => {
+    // Both concatenate to "same:x:rest" under a naive `:`-joined signature
+    // (tool + ":" + text); the structured signature must still tell them apart
+    // because they are genuinely different calls.
+    const rows = chips([
+      ...pair(0, { tool: "same:x", text: "rest" }),
+      ...pair(1, { tool: "same", text: "x:rest" }),
+    ]);
+    expect(rows).toHaveLength(2);
+  });
+
+  it("coalesces two raw results with the SAME tool and text, the positive control for the test above", () => {
+    const rows = chips([
+      ...pair(0, { tool: "same:x", text: "rest" }),
+      ...pair(1, { tool: "same:x", text: "rest" }),
+    ]);
+    expect(rows).toHaveLength(1);
+  });
+
   describe("the negative half — a group does NOT form when", () => {
     it("the documents differ by any byte", () => {
       expect(chips([...pair(0), ...pair(1, { doc: { ...DOC, total: 2 } })])).toHaveLength(2);

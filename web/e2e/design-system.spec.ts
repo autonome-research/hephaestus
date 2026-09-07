@@ -455,6 +455,85 @@ test("the viewport canvas is the same height on all five inspector tabs (§4.1(c
   expect(new Set(values).size, `canvas heights across tabs: ${JSON.stringify(heights)}`).toBe(1);
 });
 
+// ---------------------------------------------------------------------------
+// J-web-viewport-9 — §4.1's "every panel below inherits that marking" had no
+// consumer. `<PinSplitMarker>` discharges it: while the pin is held on one
+// part and another is selected, the STAGE names the held part (the pin's own
+// axis) and the INSPECTOR names the selected part — mounted only while the
+// two axes disagree. The fix note's own risk: "mount the markers INSIDE their
+// regions, since the drawer-height parity assertion is at risk from a new
+// row" — so this reruns exactly the parity sweep above, with the markers live.
+//
+// The split state is reachable only WITHIN one session (client-side rail
+// navigation, no reload) until J-web-viewport-5's server `part` projection
+// lands — a reload loses `heldFromPart()` today, which is why this drives the
+// split by clicking Hold and then a different part row rather than by a URL.
+
+const SPLIT_PART = "riser";
+
+test("the split-pin markers name each region's own part, and mount only while the axes disagree (J-web-viewport-9)", async ({
+  page,
+}, testInfo) => {
+  await open(page, route(PART, { tab: "viewport" }));
+  await expect(page.locator('[data-testid="viewport"]')).toBeVisible();
+
+  // The negative half FIRST: following current, on one part, with nothing
+  // selected elsewhere — neither marker exists at all, not merely hidden.
+  await expect(page.locator("[data-pin-split]")).toHaveCount(0);
+
+  await page.locator('[data-pin-action="hold"]').click();
+  await expect(page.locator('[data-pin-action="follow"]')).toBeVisible();
+
+  // Still agreeing — held on the part that is also selected — so still no
+  // split. A marker that is always on while held is not a marking.
+  await expect(page.locator("[data-pin-split]")).toHaveCount(0);
+
+  await page.locator(`[data-tree-row="part"][data-part="${SPLIT_PART}"]`).click();
+  await expect(page).toHaveURL(new RegExp(`/p/${SPLIT_PART}`));
+
+  const stage = page.locator('[data-pin-split="stage"]');
+  const inspector = page.locator('[data-pin-split="inspector"]');
+  await expect(stage).toHaveCount(1);
+  await expect(inspector).toHaveCount(1);
+  await expect(stage).toHaveAttribute("data-pin-split-part", PART);
+  await expect(inspector).toHaveAttribute("data-pin-split-part", SPLIT_PART);
+  // Visible text, not only the attribute (the clause's own defect was a
+  // tooltip-only statement).
+  await expect(stage).toContainText(PART);
+  await expect(inspector).toContainText(SPLIT_PART);
+  // Each region's accessible text carries BOTH names, since a screen-reader
+  // user meets one region at a time.
+  expect(await stage.getAttribute("aria-label")).toContain(PART);
+  expect(await stage.getAttribute("aria-label")).toContain(SPLIT_PART);
+  expect(await inspector.getAttribute("aria-label")).toContain(PART);
+  expect(await inspector.getAttribute("aria-label")).toContain(SPLIT_PART);
+
+  // The drawer-height parity sweep, rerun with the markers mounted: the fix
+  // note's own stated risk is a new row in the stage/inspector grid, and this
+  // is the assertion that would catch it.
+  const heights: Record<string, number> = {};
+  for (const tab of TABS) {
+    await page.locator(`[data-inspector-tab="${tab}"]`).click();
+    await expect(page.locator(`[data-inspector-panel="${tab}"]`)).toBeVisible();
+    heights[tab] = await page.evaluate(() => {
+      const host = document.querySelector<HTMLElement>('[data-testid="viewport"]');
+      return host === null ? 0 : Math.round(host.getBoundingClientRect().height);
+    });
+  }
+  await archive(page, testInfo, "pin-split-markers");
+  const values = TABS.map((tab) => heights[tab] ?? 0);
+  expect(values.every((height) => height > 0)).toBe(true);
+  expect(
+    new Set(values).size,
+    `canvas heights across tabs with the split markers mounted: ${JSON.stringify(heights)}`,
+  ).toBe(1);
+
+  // And the markers are still there after the tab churn above — they are not
+  // an artifact of the moment the split first formed.
+  await expect(stage).toHaveCount(1);
+  await expect(inspector).toHaveCount(1);
+});
+
 test("the drawer handle resizes the drawer and the canvas keeps agreeing", async ({ page }) => {
   await open(page, route(PART, { tab: "viewport" }));
   const handle = page.locator("[data-drawer-handle]");

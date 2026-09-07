@@ -34,7 +34,10 @@ import { shellStore } from "../../state/shell";
 import { effectiveInspectorTab, STAGE_TABS, type StageTab } from "../../state/workspace";
 import { Badge, EmptyState, TabBar, tabControlId, useShell } from "../../system";
 import { ResultsPanel } from "../inspector/ResultsPanel";
+import { useHeldPart } from "../../state/heldPart";
+import { pinSplit } from "../../state/pinSplit";
 import { dirtySideWord, useDirtyIndex } from "../rail/GitDirty";
+import { PinSplitMarker } from "../PinSplitMarker";
 import { Inspector } from "./Inspector";
 import { ScriptWorkspace } from "./ScriptWorkspace";
 import { Timeline } from "./Timeline";
@@ -45,6 +48,13 @@ export function Stage(): React.JSX.Element {
   const tab = useWorkspace((s) => s.stage_tab);
   const inspectorTab = useWorkspace((s) => s.inspector_tab);
   const part = useWorkspace((s) => s.part);
+  // §4.1's held-pin marking (J-web-viewport-9). The stage follows the PIN; the
+  // inspector below follows the rail selection, and while the two disagree each
+  // says which part it is showing.
+  const pinMode = useWorkspace((s) => s.pin_mode);
+  const artifactRef = useWorkspace((s) => s.artifact_ref);
+  const heldPart = useHeldPart();
+  const split = pinSplit(pinMode, heldPart, part);
   const dirty = useDirtyIndex();
   const shell = useShell();
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -125,6 +135,14 @@ export function Stage(): React.JSX.Element {
               : {}),
           }))}
         />
+
+        {/* §4.1's inherited marking, inside the region it marks
+            (J-web-viewport-9). The container is unconditional so the region's
+            three-row template does not change shape when the marker mounts;
+            `PinSplitMarker` renders null unless the two axes disagree. */}
+        <div data-pin-split-slot="stage">
+          <PinSplitMarker split={split} region="stage" artifactRef={artifactRef} />
+        </div>
 
         <div
           className={styles["content"]}

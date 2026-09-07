@@ -606,6 +606,160 @@ test("the stream column says 'session' once above the transcript (§7.1, §4.1(e
 });
 
 // --------------------------------------------------------------------------
+// J-web-stream-1 / J-web-stream-2 — the aside holds ONE child and therefore
+// ONE definite row (RC-11). The shipped two-row template auto-placed that one
+// child into a content-sized first row and left the second absorbing every
+// leftover pixel with nothing in it, so the composer sat under the tab strip
+// instead of at the column's bottom — for every session shorter than the
+// column, not only an empty one. J-web-stream-2 lands with it: with the void
+// closed, a session with zero turns needs its OWN composed state rather than
+// an empty list, or the void reopens at 812px instead of 780px.
+
+/** The aside/panel/composer geometry the fix makes exact, at a stable width. */
+async function asideGeometry(page: Page): Promise<{
+  readonly asideHeight: number;
+  readonly panelHeight: number;
+  readonly asideBottom: number;
+  readonly composerBottom: number;
+}> {
+  return await page.evaluate(() => {
+    const asideEl = document.querySelector("aside");
+    const panel = document.querySelector('[data-testid="stream-panel"]');
+    const composer = document.querySelector("[data-composer]");
+    if (asideEl === null || panel === null || composer === null) {
+      throw new Error("aside, stream-panel or composer not found");
+    }
+    const asideBox = asideEl.getBoundingClientRect();
+    return {
+      asideHeight: asideBox.height,
+      panelHeight: panel.getBoundingClientRect().height,
+      asideBottom: asideBox.bottom,
+      composerBottom: composer.getBoundingClientRect().bottom,
+    };
+  });
+}
+
+test("the composer sits at the column's bottom edge, and the panel fills the aside (J-web-stream-1)", async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await openSession(page, ORCHESTRATOR);
+  await expect(page.locator('[data-testid="transcript"] [data-row]').first()).toBeVisible();
+
+  const withTranscript = await asideGeometry(page);
+  // Within a pixel: the reproduction measured a 780px void from a
+  // content-sized first row; the fix makes the row the aside's own height, so
+  // the panel and the aside must agree to within rounding.
+  expect(
+    Math.abs(withTranscript.panelHeight - withTranscript.asideHeight),
+    `panel ${String(withTranscript.panelHeight)} vs aside ${String(withTranscript.asideHeight)}`,
+  ).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs(withTranscript.composerBottom - withTranscript.asideBottom),
+    `composer bottom ${String(withTranscript.composerBottom)} vs aside bottom ${String(withTranscript.asideBottom)}`,
+  ).toBeLessThanOrEqual(1);
+
+  await archive(page, testInfo, "stream-aside-parity-transcript");
+});
+
+test("the composer still sits at the column's bottom edge for an EMPTY session (J-web-stream-1, J-web-stream-2)", async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await open(page, route(PART));
+  await expect(page.locator('[data-testid="stream-panel"]')).toBeVisible();
+
+  const menuButton = page.locator("[data-session-create-menu]");
+  if ((await menuButton.count()) > 0) await menuButton.click();
+  await page.locator("[data-session-create]").first().click();
+  await expect
+    .poll(async () => await page.locator("[data-session-tab][aria-selected='true']").count())
+    .toBe(1);
+
+  // J-web-stream-2's own state: a session read as complete, zero rows, no
+  // sessions-empty title and no create-session string leaking into it.
+  const empty = page.locator("[data-transcript-empty]");
+  await expect(empty).toHaveCount(1);
+  const emptyText = (await empty.textContent()) ?? "";
+  expect(emptyText).not.toMatch(/new session/i);
+  expect(emptyText).not.toMatch(/no sessions/i);
+  // No action lives in the composed state itself — the composer below it is
+  // the action (§7.1 forbids a second create affordance here).
+  await expect(empty.locator("button")).toHaveCount(0);
+
+  // The empty state occupies more than half the transcript region — the
+  // assertion the ledger names as proving J-web-stream-1 and -2 landed
+  // together: it needs the closed void to have somewhere to grow into.
+  const region = await page.evaluate(() => {
+    const host = document.querySelector("[data-transcript-empty]");
+    const scroller = document.querySelector("[data-transcript-scroll]") ?? host?.parentElement ?? null;
+    if (host === null || scroller === null) return null;
+    return {
+      empty: host.getBoundingClientRect().height,
+      region: scroller.getBoundingClientRect().height,
+    };
+  });
+  expect(region).not.toBeNull();
+  if (region !== null) {
+    expect(region.empty, `empty state ${String(region.empty)} vs region ${String(region.region)}`).toBeGreaterThan(
+      region.region / 2,
+    );
+  }
+
+  const geometry = await asideGeometry(page);
+  expect(
+    Math.abs(geometry.panelHeight - geometry.asideHeight),
+    `panel ${String(geometry.panelHeight)} vs aside ${String(geometry.asideHeight)}`,
+  ).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs(geometry.composerBottom - geometry.asideBottom),
+    `composer bottom ${String(geometry.composerBottom)} vs aside bottom ${String(geometry.asideBottom)}`,
+  ).toBeLessThanOrEqual(1);
+
+  await archive(page, testInfo, "stream-aside-parity-empty");
+});
+
+// --------------------------------------------------------------------------
+// J-web-stream-3 — the general invariant: every descendant of the stream
+// aside fits inside it. The composer's unavailable-provider refusal is the
+// reproduction (a 621px path chip inside a 395px column), but the fix note
+// itself asks for the invariant "that would catch the next one too" rather
+// than a pinned pixel count for this one case.
+
+test("every descendant of the stream aside fits inside it, at two widths (J-web-stream-3)", async ({
+  page,
+}, testInfo) => {
+  for (const width of [1280, 1920]) {
+    await page.setViewportSize({ width, height: 900 });
+    // No provider configuration is the reproduction's own state (the fixture
+    // project attaches a runtime, so the panel is reached the same route every
+    // other stream test uses; the invariant is checked over WHATEVER is
+    // mounted, which already includes the composer's normal input row).
+    await open(page, route(PART));
+    await expect(page.locator('[data-testid="stream-panel"]')).toBeVisible();
+
+    const escaped = await page.evaluate(() => {
+      const asideEl = document.querySelector("aside");
+      if (asideEl === null) throw new Error("no aside");
+      const asideBox = asideEl.getBoundingClientRect();
+      const bad: string[] = [];
+      for (const node of asideEl.querySelectorAll("*")) {
+        const box = node.getBoundingClientRect();
+        if (box.width === 0 && box.height === 0) continue;
+        if (box.right > asideBox.right + 1) {
+          bad.push(
+            `${node.tagName}.${String(node.className)} right ${String(Math.round(box.right))} > aside right ${String(Math.round(asideBox.right))}`,
+          );
+        }
+      }
+      return bad;
+    });
+    expect(escaped, `at ${String(width)}px`).toEqual([]);
+  }
+  await archive(page, testInfo, "stream-aside-descendant-invariant");
+});
+
+// --------------------------------------------------------------------------
 // B-9 — creating a session keeps every other session in the strip
 // (audit-2026-09-04-broken.md B-9). THE REGRESSION THIS GUARDS: before the fix,
 // the strip rendered only the selected session's own thread walk, so creating
@@ -673,6 +827,83 @@ test("creating a session keeps every other session in the strip, and the new one
   );
 
   await archive(page, testInfo, "b9-create-keeps-strip");
+});
+
+// --------------------------------------------------------------------------
+// J-web-stream-7 — the project observer re-creates its socket on every query
+// settle.
+//
+// §7A.11's specified steady state is TWO open sockets per page — the stream
+// column subscribes to the selected session, the project observer to every
+// enumerated session — and the defect was a THIRD socket opened and closed a
+// few milliseconds after load: invisible to a socket count taken once at rest,
+// which is why this counts every CONSTRUCTION across the load and one tab
+// switch rather than sampling the open set afterwards.
+
+test("a load and one tab switch construct exactly two WebSockets (J-web-stream-7)", async ({
+  page,
+}) => {
+  // Two counters, because "two sockets" is checked two ways:
+  //
+  // * `openCount` — sockets constructed and not yet closed. §7A.11's specified
+  //   STEADY STATE ("two sockets per page") is this number, and it must read 2
+  //   at rest after the load AND again at rest after the switch — the stream
+  //   column's own socket is *expected* to close-and-reopen on a session
+  //   change (it is keyed on the selected session by design), so the open
+  //   count is what stays invariant, not the identity of which sockets are up.
+  // * `totalConstructed` — every construction ever, which is what actually
+  //   catches the regression: the bug was an EXTRA close+open pair on the
+  //   project observer's own socket, which nets to zero change in `openCount`
+  //   (one closes, one opens) and would therefore be invisible to an
+  //   open-count check alone. A load constructs exactly 2 (one stream socket,
+  //   one observer); switching to a DIFFERENT session legitimately adds ONE
+  //   MORE (the stream column's own reconnect to the new session) for a total
+  //   of 3 — never 4, which is what an observer that also reconnected on the
+  //   switch would produce.
+  await page.addInitScript(() => {
+    const counters = { open: 0, total: 0 };
+    (window as unknown as { __ws: typeof counters }).__ws = counters;
+    const Native = window.WebSocket;
+    class CountedSocket extends Native {
+      constructor(...args: ConstructorParameters<typeof WebSocket>) {
+        super(...args);
+        counters.total += 1;
+        counters.open += 1;
+        this.addEventListener("close", () => {
+          counters.open -= 1;
+        });
+      }
+    }
+    Object.defineProperty(window, "WebSocket", { value: CountedSocket, writable: true });
+  });
+
+  await openSession(page, ORCHESTRATOR);
+  // Let the churn defect's own window pass: it opened a third socket and tore
+  // it down again within milliseconds, so both counters must settle rather
+  // than being read mid-churn.
+  await page.waitForTimeout(1_000);
+  const afterLoad = await page.evaluate(
+    () => (window as unknown as { __ws: { open: number; total: number } }).__ws,
+  );
+  expect(afterLoad.open, "sockets open at rest after load").toBe(2);
+  expect(afterLoad.total, "sockets ever constructed by load").toBe(2);
+
+  // One tab switch, to a DIFFERENT session, with the observer's subscribed
+  // SET unchanged (both sessions were already listed): §7A.11 says the
+  // observer reconnects only when the content of that set changes, never on a
+  // tab switch — the second reconnect source the root cause names, separate
+  // from the stream column's own legitimate per-session resubscribe.
+  await page.locator(`[data-session-tab="${QUICK_EDIT}"]`).click();
+  await expect(page.locator('[data-testid="transcript"]')).toBeVisible();
+  await page.waitForTimeout(1_000);
+  const afterSwitch = await page.evaluate(
+    () => (window as unknown as { __ws: { open: number; total: number } }).__ws,
+  );
+  expect(afterSwitch.open, "sockets open at rest after the switch — the steady state").toBe(2);
+  expect(
+    afterSwitch.total,
+    "sockets ever constructed by load + one tab switch — 2 plus the stream column's own expected reconnect, and no more",
+  ).toBe(3);
 });
 
 // --------------------------------------------------------------------------
@@ -745,6 +976,21 @@ test("a session started by `heph agent` streams live into the panel (G4.8)", asy
       timeout: 120_000,
     });
     await expect(page.locator("[data-terminal-backpressure]")).toHaveCount(0);
+
+    // J-web-stream-9: the id stays on the data attribute and the `title`, and
+    // is NEVER drawn as visible text — §7.1's 2026-09-03 house rule, applied
+    // here. The band's own attribute is the ground truth for what the raw
+    // identity looks like, so the negative reads directly against it rather
+    // than against a guessed shape.
+    const terminalId = await terminal.getAttribute("data-terminal-id");
+    expect(terminalId, "the band minted no data-terminal-id to check against").toBeTruthy();
+    const bandText = (await terminal.textContent()) ?? "";
+    if (terminalId !== null) {
+      expect(bandText, `the band's visible text contains its own id "${terminalId}"`).not.toContain(
+        terminalId,
+      );
+    }
+    expect(await terminal.getAttribute("title")).toContain(terminalId ?? "");
 
     // §7.3 C1/C21 (amended 2026-09-02), the observer's negative halves: this
     // browser did not send the prompt, so it mints NO local-prompt echo — an

@@ -140,7 +140,11 @@ describe("§7A.10(f) — the composer's resting copy is one sentence", () => {
     "cancelNoRun", // A disabled reason (§7A.10's `unavailable` cause).
     "cancelNoStream", // A disabled reason.
     "cancelIdle", // A disabled reason.
-    "attachHow", // §7A.8's remedy, printed beside the cause it belongs to.
+    // `attachHow` is NOT listed: J-web-stream-6 moved §7A.8's whole attach
+    // vocabulary — including the remedy — out of `copy.composer` into the
+    // surface-neutral `copy.attach` namespace (`copy.attach.how`), so it is no
+    // longer a member of the object this describe block scans at all, exempt
+    // or otherwise.
   ];
 
   const resting: [string, string][] = Object.entries(
@@ -164,13 +168,16 @@ describe("§7A.10(f) — the composer's resting copy is one sentence", () => {
 
   it("keeps every disabled reason and every attach cause, unshortened", () => {
     // §7A.10(f): "every disabled *reason*" is exempt, and §7A.8's causes are
-    // the state that produced a product review finding.
+    // the state that produced a product review finding. The cause vocabulary
+    // itself now lives at `copy.attach.cause` (J-web-stream-6): moving it out
+    // of `copy.composer` does not exempt it from this rule, only from being
+    // scanned by the `copy.composer`-only loop above.
     expect(Object.keys(copy.composer.disabled).sort()).toEqual([
       "agent_unavailable",
       "no_session",
       "run_in_flight",
     ]);
-    for (const value of Object.values(copy.composer.attachCause)) {
+    for (const value of Object.values(copy.attach.cause)) {
       expect(value).not.toBe("");
     }
   });

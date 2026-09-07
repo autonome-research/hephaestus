@@ -7,12 +7,18 @@
  * makes the canvas above it identical across all five tabs by construction.
  */
 
+/*
+ * Three rows, for the reason `Stage.module.css`'s `.region` has three: the tab
+ * strip, §4.1's held-pin marking (0px unless the two axes disagree), and the
+ * content. The drawer's own height is still the Stage's grid row and is not
+ * affected by the marking mounting (J-web-viewport-9).
+ */
 .drawer {
   border-top: 1px solid var(--border);
   background: var(--surface-panel);
   min-height: 0;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 .content {

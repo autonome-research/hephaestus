@@ -54,6 +54,8 @@
 import type { BuildDocument } from "../api/types";
 import { copy } from "../copy";
 import { workspaceStore, useWorkspace } from "../state/react";
+import { useHeldPart } from "../state/heldPart";
+import { pinSplit } from "../state/pinSplit";
 import { Button, CHIP_REF_WIDTH, formatRef } from "../system";
 import { BuildStateBadge, buildState } from "./BuildStateChip";
 import { Fact } from "./Fact";
@@ -71,8 +73,14 @@ export function ArtifactPin({ build }: ArtifactPinProps): React.JSX.Element {
   const held = mode === "pinned";
   const currentRef = build?.artifact_ref ?? null;
   const state = buildState(build);
-  const heldFrom = workspaceStore.heldFromPart();
+  // READ, not remembered (J-web-viewport-5). `useHeldPart` asks the artifact
+  // metadata route which part this reference was minted for and falls back to
+  // the store's private field only while the projection does not name it — so
+  // the sentence survives a reload and a pasted URL the moment the server field
+  // lands, and the closed §4.5 record does not grow a member.
+  const heldFrom = useHeldPart();
   const banner = copy.header.pinnedBanner(heldFrom, selected);
+  const split = pinSplit(mode, heldFrom, selected);
   const followBlocked = currentRef === null;
 
   return (
@@ -104,6 +112,15 @@ export function ArtifactPin({ build }: ArtifactPinProps): React.JSX.Element {
       {held ? (
         <span className={styles["mode"]} data-pin-state="held">
           {copy.pinMode.pinned}
+          {/* §4.1 (J-web-viewport-5): the source part as VISIBLE TEXT beside the
+              word, not only in a `title` and a data attribute. "Hold jig, select
+              kerf_card" is the state §4.1 says the operator must not be able to
+              misread, and a tooltip is not a statement — it is a statement a
+              mouse can find. `data-pin-from` is unchanged; the words are added
+              beside it. */}
+          {split === null ? null : (
+            <span className={styles["from"]}>{copy.header.pinFrom(split.heldPart)}</span>
+          )}
         </span>
       ) : null}
       {/* The badge is mounted whenever the server gave us a build, INCLUDING

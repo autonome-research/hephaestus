@@ -19,6 +19,9 @@
 // distinction must be visible, the assertion is that two states render
 // *different* text — never that either says any particular words.
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactElement } from "react";
@@ -37,7 +40,14 @@ import {
 } from "../src/api/providers";
 import { availabilityChip, healthObserved } from "../src/components/ProvidersPanel";
 import { formatObservedAt } from "../src/system";
-import { SignInDialog, refusalText } from "../src/components/SignInDialog";
+import { SignInDialog } from "../src/components/SignInDialog";
+// J-web-stream-6: `refusalText` moved out of `SignInDialog.tsx` into a
+// surface-neutral module neither surface owns, because the providers panel and
+// the composer's attach action both render `POST /providers/attach` refusals a
+// few inches apart on the same screen. The old import path no longer exports
+// it at all — that is this test file catching the move rather than a defect.
+import { refusalCode, refusalText } from "../src/components/refusalText";
+import { ATTACH_CAUSES, type AttachCause } from "../src/api/attach";
 import { WorkspaceError } from "../src/api/client";
 import { copy } from "../src/copy";
 
@@ -269,11 +279,97 @@ describe("every named refusal has exactly one sentence", () => {
     expect(refusalText(error)).toBe(copy.providers.refusal.credential_scope_required);
   });
 
-  it("falls back to the server's own message for a reason it does not know", () => {
-    // A client that paraphrased a refusal it did not recognise would be
-    // guessing; the server named it, so the server's words stand.
+  it("falls back to the generic title for a reason it does not know, never the raw message (J-web-stream-6)", () => {
+    // REVERSED, on purpose. The raw-message fallback used to stand here on the
+    // reasoning that "the server named it, so the server's words stand" — true
+    // of a plain sentence and false of a COMPOSED one: `agent_unavailable`'s
+    // message is `f"{cause}: {detail}"`, so that fallback is what rendered
+    // `no_provider_config: no provider config at <path>` inside a `role="alert"`
+    // for the one route whose reason the map had no row for. The root fix
+    // removes the fallback entirely, for every reason absent from the map, not
+    // only the attach one — an unknown reason must never reach the screen as
+    // the server's own words.
     const error = new WorkspaceError(400, "something_new", "the server's own sentence");
-    expect(refusalText(error)).toBe("the server's own sentence");
+    expect(refusalText(error)).toBe(copy.errors.title);
+    expect(refusalText(error)).not.toBe("the server's own sentence");
+    expect(refusalText(error)).not.toMatch(/something_new/);
+  });
+
+  it("never renders a machine-reason shape as the sentence, for any reason string", () => {
+    // A copy lint over the map itself: no mapped sentence is a bare
+    // underscore_case word or a colon-prefixed code, the shape a raw `cause` or
+    // `f"{cause}: {detail}"` composition would produce.
+    const shape = /^[a-z]+(?:_[a-z]+)+$|^[a-z_]+:\s/;
+    for (const sentence of Object.values(copy.providers.refusal)) {
+      expect(sentence).not.toMatch(shape);
+    }
+    for (const sentence of Object.values(copy.attach.cause)) {
+      expect(sentence).not.toMatch(shape);
+    }
+  });
+});
+
+// --------------------------------------------------------------------------
+// J-web-stream-6 — the structured attach cause is the shared vocabulary
+// --------------------------------------------------------------------------
+//
+// §7A.8's `agent_unavailable` / `attach_failed` refusal carries a structured
+// `cause` in its `data`, and it is consulted BEFORE the plain reason map: three
+// distinct conditions (missing config, invalid config, no Node…) share one
+// `reason` string, so mapping by reason alone would read them all identically.
+
+describe("the structured attach cause is mapped ahead of the plain reason map", () => {
+  function attachError(cause: string, detail?: string): WorkspaceError {
+    return new WorkspaceError(
+      503,
+      "agent_unavailable",
+      detail === undefined ? `${cause}: reduced detail` : `${cause}: ${detail}`,
+      {
+        attached: false,
+        config_path: "/project/.heph/providers.json",
+        generation: 0,
+        cause,
+        ...(detail === undefined ? {} : { detail }),
+      },
+    );
+  }
+
+  it("maps every member of the closed cause vocabulary to its own sentence, never the composed message", () => {
+    for (const cause of ATTACH_CAUSES) {
+      const error = attachError(cause);
+      const text = refusalText(error);
+      expect(text, cause).toBe(copy.attach.cause[cause]);
+      expect(text, cause).not.toMatch(new RegExp(`^${cause}:`));
+    }
+  });
+
+  it("still exposes the machine reason for the chip, alongside the mapped sentence", () => {
+    const error = attachError("no_provider_config");
+    expect(refusalCode(error)).toBe("agent_unavailable");
+    expect(refusalText(error)).toBe(copy.attach.cause.no_provider_config);
+  });
+
+  it("falls through to the plain reason map for a refusal with no structured cause", () => {
+    const error = new WorkspaceError(400, "credential_scope_required", "server text");
+    expect(refusalText(error)).toBe(copy.providers.refusal.credential_scope_required);
+  });
+
+  it("pins the client's cause vocabulary against a fixed list, so a server addition is caught here", () => {
+    // Not a drift-against-the-server test (that needs the server's own
+    // vocabulary, out of this lane's reach) — a change-detector so the seven
+    // named causes cannot silently become six or eight without a reviewer
+    // seeing this test fail and updating both this list and the copy map.
+    const known: readonly AttachCause[] = [
+      "no_provider_config",
+      "provider_config_invalid",
+      "node_missing",
+      "node_too_old",
+      "sidecar_failed",
+      "auth_link_refused",
+      "detached",
+    ];
+    expect([...ATTACH_CAUSES].sort()).toEqual([...known].sort());
+    expect(Object.keys(copy.attach.cause).sort()).toEqual([...known].sort());
   });
 
   it("gives each refusal a distinct sentence", () => {
@@ -284,6 +380,79 @@ describe("every named refusal has exactly one sentence", () => {
   it("names the two refusals the 2026-08-28 ruling added", () => {
     expect(copy.providers.refusal.path_not_web_writable).toBeTruthy();
     expect(copy.providers.refusal.discovery_source_unknown).toBeTruthy();
+  });
+});
+
+// --------------------------------------------------------------------------
+// J-web-stream-6 — the class-closing test.
+//
+// Removing the raw-message fallback (above) changes behaviour for every
+// provider refusal whose reason is absent from `copy.providers.refusal`: an
+// unmapped reason used to leak the server's own composed sentence and now
+// degrades SILENTLY to the generic §2.4 title, with no test failing. So the
+// map must be checked against the server's own closed vocabulary rather than
+// against a second copy of it retyped here — the same drift class L8 exists to
+// catch, applied to this one map.
+//
+// `PROVIDER_REFUSALS` (`server/src/hephaestus/http/providers.py`) is that
+// vocabulary: "Every refusal §23.11 introduces, plus the engine codes it
+// reuses. Enumerated so `test_http_providers.py` can test the vocabulary BY
+// ENUMERATION and a reason cannot arrive without a status, a test, and a copy
+// string." Read as text rather than imported — this is a `.ts` suite with no
+// Python runtime — exactly as the CSS-source assertions elsewhere in this lane
+// read a stylesheet as text rather than executing it.
+// --------------------------------------------------------------------------
+
+const here = dirname(fileURLToPath(import.meta.url));
+const PROVIDERS_PY = join(here, "..", "..", "server", "src", "hephaestus", "http", "providers.py");
+
+/** `PROVIDER_REFUSALS`'s own quoted entries, parsed out of the source text. */
+function serverProviderRefusals(): readonly string[] {
+  const source = readFileSync(PROVIDERS_PY, "utf8");
+  // `PROVIDER_REFUSALS` also appears earlier in the module's `__all__` export
+  // list, so anchor on the DECLARATION itself rather than the bare name.
+  const start = source.indexOf("PROVIDER_REFUSALS: Final[tuple[str, ...]] =");
+  if (start === -1) {
+    throw new Error(
+      "PROVIDER_REFUSALS's declaration not found in providers.py — has its type annotation changed?",
+    );
+  }
+  const open = source.indexOf("(", start);
+  const close = source.indexOf(")", open);
+  const body = source.slice(open + 1, close);
+  const reasons = [...body.matchAll(/"([a-z_]+)"/g)].map((m) => m[1] ?? "");
+  if (reasons.length === 0) {
+    throw new Error("parsed zero reasons out of PROVIDER_REFUSALS — the regex no longer matches its shape");
+  }
+  return reasons;
+}
+
+describe("copy.providers.refusal — a class-closing check against the SERVER's vocabulary (J-web-stream-6)", () => {
+  it("maps every reason PROVIDER_REFUSALS enumerates, not a second hand-typed copy of it", () => {
+    const server = serverProviderRefusals();
+    const client = Object.keys(copy.providers.refusal);
+    // Guard the guard: a parse that silently returned too few entries would
+    // make this assertion vacuously pass.
+    expect(server.length).toBeGreaterThanOrEqual(20);
+    const missing = server.filter((reason) => !client.includes(reason));
+    expect(missing, `reasons the server can emit with no mapped sentence: ${missing.join(", ")}`).toEqual(
+      [],
+    );
+  });
+
+  it("never renders a machine-reason shape for ANY reason in the server's own list, even if unmapped", () => {
+    // The behavioural half: simulate the server emitting each of its own
+    // reasons and assert the rendered sentence is never the raw text this
+    // fallback used to leak — the exact regression the ledger's fix note
+    // describes ("no_provider_config: no provider config at <path>" behind a
+    // role="alert").
+    for (const reason of serverProviderRefusals()) {
+      const raw = `${reason}: some engine-composed detail nobody should read`;
+      const error = new WorkspaceError(400, reason, raw);
+      const text = refusalText(error);
+      expect(text, reason).not.toBe(raw);
+      expect(text, reason).not.toMatch(new RegExp(`^${reason}:`));
+    }
   });
 });
 

@@ -209,7 +209,9 @@ function stubDownloadEnvironment(): { readonly created: string[]; readonly revok
 // assertion below only reads the bytes back.
 describe("§22.4 — bytes without a token in a URL", () => {
   beforeEach(() => {
-    vi.unstubAllGlobals();
+    // No `unstubAllGlobals` here: `vitest.config.ts` sets `unstubGlobals`, so
+    // every stub below is undone after the test that made it rather than after
+    // the next one in this block (J-mirrors-and-dx-19).
     // The token enters exactly as it does in the product: out of the URL
     // fragment, into `sessionStorage`, and out of the URL again (§2.2).
     window.location.hash = `#t=${TOKEN}`;
@@ -322,6 +324,19 @@ function panel(
 }
 
 describe("§22.7 — the export panel", () => {
+  // J-mirrors-and-dx-19's construction assertion, and it is the FIRST test in
+  // the block on purpose: the §22.4 block above replaces `URL` with a SPREAD OF
+  // THE CONSTRUCTOR — a plain object with no `[[Construct]]` — and its only
+  // restore was that block's own `beforeEach`, which protects the next test IN
+  // that block and nothing after it. Nothing else here constructs a `URL`,
+  // which is exactly why the leak was silent; this makes it loud. It fails
+  // under the leak and passes with `unstubGlobals: true` in `vitest.config.ts`.
+  it("runs against the real globals the block above stubs (J-mirrors-and-dx-19)", () => {
+    expect(() => new URL("https://example.invalid/probe")).not.toThrow();
+    expect(new URL("https://example.invalid/a").pathname).toBe("/a");
+    expect(typeof URL.createObjectURL).toBe("function");
+  });
+
   it("is an Inspector tab, and sourcing sits beside it", () => {
     expect([...INSPECTOR_TABS]).toContain("export");
     expect([...INSPECTOR_TABS]).toContain("sourcing");

@@ -42,10 +42,28 @@ import roles from "./type.module.css";
 export const BUTTON_VARIANTS = ["primary", "secondary", "quiet", "toggle"] as const;
 export type ButtonVariant = (typeof BUTTON_VARIANTS)[number];
 
-/** The disabled half of the union: the reason is not optional when it applies. */
+/**
+ * The disabled half of the union: the reason is not optional when it applies.
+ *
+ * `reasonElementId` names an element ALREADY IN THE DOCUMENT that says the same
+ * thing, in which case this primitive points `aria-describedby` at it instead of
+ * minting a second copy of the sentence. §4.7's second empty-state rule — a
+ * shared cause is detected once, one cause, one sentence — is otherwise
+ * unsatisfiable for a control that sits inside a composed refusal saying exactly
+ * why it is disabled: the composer rendered `agent_unavailable`'s sentence in
+ * its empty state and handed the same string to Send, which rendered it again in
+ * the clipped reason span, so one form held two elements with one sentence
+ * (J-web-stream-4). Dropping the reason instead would take the keyboard's only
+ * route to it, which is the failure #63 named; pointing at the visible sentence
+ * keeps both properties.
+ */
 type Disablement =
-  | { readonly disabled: true; readonly reason: string }
-  | { readonly disabled?: false | undefined; readonly reason?: undefined };
+  | { readonly disabled: true; readonly reason: string; readonly reasonElementId?: string }
+  | {
+      readonly disabled?: false | undefined;
+      readonly reason?: undefined;
+      readonly reasonElementId?: undefined;
+    };
 
 /**
  * `pressed` is part of the variant discriminant, the same shape `Disablement`
@@ -96,6 +114,7 @@ export function Button(props: ButtonProps): React.JSX.Element {
     children,
     disabled,
     reason,
+    reasonElementId,
   } = props;
   const pressed = props.variant === "toggle" ? props.pressed : undefined;
   const reasonId = useId();
@@ -121,7 +140,9 @@ export function Button(props: ButtonProps): React.JSX.Element {
         {...(isDisabled ? { "aria-disabled": true as const } : {})}
         // A disabled control that cannot say why is indistinguishable from a
         // broken one. Both carriers are present: the pointer one and the AT one.
-        {...(isDisabled ? { title: reason, "aria-describedby": reasonId } : { title })}
+        {...(isDisabled
+          ? { title: reason, "aria-describedby": reasonElementId ?? reasonId }
+          : { title })}
         {...(variant === "toggle" ? { "aria-pressed": pressed === true } : {})}
         {...(expanded === undefined ? {} : { "aria-expanded": expanded })}
         {...(labelled ? { "aria-label": iconLabel } : {})}
@@ -131,7 +152,10 @@ export function Button(props: ButtonProps): React.JSX.Element {
         {icon === undefined ? null : <Icon id={icon} size={13} />}
         {children === undefined ? null : <span>{children}</span>}
       </button>
-      {isDisabled ? (
+      {/* The sentence, once. When the caller named an element that already
+          carries it, that element IS the description and this span would be its
+          second copy (see `Disablement`). */}
+      {isDisabled && reasonElementId === undefined ? (
         <span id={reasonId} className={styles["reason"]}>
           {reason}
         </span>

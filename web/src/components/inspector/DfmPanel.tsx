@@ -61,10 +61,10 @@ import {
   PanelNote,
   PanelSection,
   SeverityBadge,
-  formatValue,
   type Severity,
 } from "../../system";
 import { Fact } from "../Fact";
+import { MeasuredAside, MeasuredText, measuredText, readMeasured } from "./MeasuredValue";
 import { useWorkspace } from "../../state/react";
 import styles from "./panels.module.css";
 
@@ -95,11 +95,6 @@ export function dfmSource(run: DfmRun): "current" | "preview" {
 /** §6.4's closed severity vocabulary, mapped onto the system's own (§4.7). */
 function severityOf(value: string): Severity {
   return value === "error" || value === "warning" || value === "info" ? value : "info";
-}
-
-/** A finding's `measured` map as the rule reported it. Serialized, not computed. */
-function measuredText(measured: unknown): string {
-  return measured === undefined || measured === null ? "" : JSON.stringify(measured);
 }
 
 /** One descriptor, as a control. Never the bare integer (§6.4). */
@@ -183,12 +178,22 @@ function Finding({
       />
 
       <div className={styles["chips"]}>
+        {/* §4.7 (J-web-stream-8): a finding's `measured` is a flat FACT MAP —
+            `{kerf_mm: 0.2, minimum_feature_mm: 0.8, …}` — and it used to reach
+            the chip through `formatValue`'s `JSON.stringify` fall-through, so
+            four of the fixture's findings rendered as JSON objects and one of
+            them was truncated mid-token. Label/value pairs, in the rule's own
+            order; `data-value` is byte-identical to before. */}
         <Chip data-finding-measured="">
           {copy.dfm.measured}:{" "}
           <Fact source="dfm.last.findings[].measured" value={measuredText(finding.measured)}>
-            {formatValue(finding.measured)}
+            <MeasuredText shape={readMeasured(finding.measured)} />
           </Fact>
         </Chip>
+        <MeasuredAside
+          shape={readMeasured(finding.measured)}
+          raw={measuredText(finding.measured)}
+        />
         {finding.suggested_bound === null ? null : (
           <Chip data-finding-bound="">
             {copy.dfm.suggested}:{" "}

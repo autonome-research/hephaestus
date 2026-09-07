@@ -79,6 +79,32 @@ describe("NoToken copy (#73)", () => {
     expect(refused).toContain('data-token-absence="unauthorized"');
     expect(refused).not.toBe(none);
   });
+
+  // J-web-stream-10: the heading was unconditional — "No workspace token" —
+  // even in the live-rejection state, where a token WAS held and the server
+  // refused it. The heading and the body then asserted opposite things about
+  // the same state, and the heading is read first. `copy.noToken.title` is
+  // §2.2's absence-at-open string; the rejected state needs its own.
+  it("gives the two absence states two different headings (J-web-stream-10)", () => {
+    window.history.replaceState(null, "", "/");
+    claimToken();
+    const noneHtml = renderToStaticMarkup(<NoToken />);
+    const noneHeading = /<h1[^>]*>([\s\S]*?)<\/h1>/.exec(noneHtml)?.[1] ?? "";
+    expect(noneHeading).toBe(copy.noToken.title);
+
+    window.history.replaceState(null, "", "/#t=was-held");
+    claimToken();
+    dropToken();
+    expect(tokenAbsence()).toBe("unauthorized");
+    const rejectedHtml = renderToStaticMarkup(<NoToken />);
+    const rejectedHeading = /<h1[^>]*>([\s\S]*?)<\/h1>/.exec(rejectedHtml)?.[1] ?? "";
+    // The two states must not share a heading: a token that WAS held and was
+    // refused is not honestly described by "No workspace token", which reads
+    // as absence-at-open.
+    expect(rejectedHeading).not.toBe(noneHeading);
+    expect(rejectedHeading).not.toBe(copy.noToken.title);
+    expect(rejectedHeading.length).toBeGreaterThan(0);
+  });
 });
 
 describe("NoToken paste recovery (#47)", () => {
@@ -150,6 +176,11 @@ describe("App gate (#80)", () => {
       expect(panel).not.toBeNull();
       expect(panel?.getAttribute("data-token-absence")).toBe("unauthorized");
       expect(panel?.querySelector("[data-token-paste]")).not.toBeNull();
+      // J-web-stream-10: the remount path is where a real 401 lands, so its
+      // heading must be the rejected one too, not the absence-at-open string.
+      const heading = panel?.querySelector("h1")?.textContent ?? "";
+      expect(heading).not.toBe(copy.noToken.title);
+      expect(heading.length).toBeGreaterThan(0);
     } finally {
       drop(mounted);
     }

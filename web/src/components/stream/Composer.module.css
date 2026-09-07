@@ -139,11 +139,32 @@
   color: var(--ink-base);
 }
 
+/*
+ * §7A.8's composed refusal. `stretch` — NOT `flex-start` (J-web-stream-3).
+ *
+ * `align-items: flex-start` sizes every flex item to its own MAX-CONTENT along
+ * the cross axis, so `.path` became the min-content width of its no-wrap child
+ * and drew a 621px box inside a 395px column, 214px past the column's right
+ * edge, clipped, with no ellipsis — on the one refusal whose entire point is to
+ * NAME the file the server looked for. `.path`'s `min-width: 0` and
+ * `overflow-wrap: anywhere` were both already there and neither could fire,
+ * because the paragraph was unconstrained. Stretching is what makes those two
+ * declarations mean something.
+ */
 .refusal {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  align-items: flex-start;
+  align-items: stretch;
+}
+
+/*
+ * The one item that must NOT stretch. A `stretch` cross axis renders a button
+ * at the column's full width, which reads as a banner rather than as a control;
+ * `flex-start` here is scoped to the item instead of to the container.
+ */
+.refusalAction {
+  align-self: flex-start;
 }
 
 .cause {
@@ -154,7 +175,26 @@
 
 .path {
   margin: 0;
+  /* The cap `align-items: stretch` above makes reachable: without a definite
+     cross size the paragraph took its child's max-content width, and a
+     percentage max-width against an unconstrained parent is a no-op. */
+  max-width: 100%;
   min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * The configuration path, as code text rather than as a `Chip`.
+ *
+ * §4.7 (amended 2026-09-05): a chip is a COMPACT READOUT and is never the
+ * container for a value whose whole text is load-bearing. A chip is `nowrap` by
+ * construction, so a ninety-character path in one could only overflow; this
+ * wraps at any character, which is the behaviour the paragraph's
+ * `overflow-wrap` was written for.
+ */
+.pathText {
+  composes: code from "../../system/type.module.css";
+  color: var(--ink-strong);
   overflow-wrap: anywhere;
 }
 
@@ -191,4 +231,12 @@
   justify-content: center;
   gap: var(--space-2);
   padding: 0;
+}
+
+/* §7A.8's path label, beside the path it introduces. The cause sentence above
+   is complete on its own (J-web-stream-6 made that vocabulary surface-neutral),
+   so the file gets its own words rather than borrowing the cause's trailing
+   colon. */
+.pathLabel {
+  color: var(--ink-muted);
 }

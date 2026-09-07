@@ -96,7 +96,9 @@ import {
   type ChipStatus,
 } from "../system";
 import { Fact } from "./Fact";
-import { SignInDialog, refusalText } from "./SignInDialog";
+import { SignInDialog } from "./SignInDialog";
+import { refusalCode, refusalText } from "./refusalText";
+import { RefusalBanner } from "./RefusalBanner";
 import styles from "./ProvidersPanel.module.css";
 
 export interface ProvidersPanelProps {
@@ -137,7 +139,15 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
   const client = useQueryClient();
   const [offers, setOffers] = useState<readonly DiscoveryOffer[] | null>(null);
   const [dialogFor, setDialogFor] = useState<string | null>(null);
-  const [refusal, setRefusal] = useState<string | null>(null);
+  /**
+   * The refusal ITSELF, not its sentence (J-web-stream-6).
+   *
+   * §4.7's banner recipe needs the machine reason for its code chip as well as
+   * the mapped sentence, and a `string` had already discarded it — which is how
+   * the panel came to print `no_provider_config: no provider config at <path>`
+   * as prose: the only thing left to render was the server's composed message.
+   */
+  const [refusal, setRefusal] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   // Collapsed by default: the full configuration table + discovery explainer
   // put Sign-in buttons at ~3000px in the rail. Compact keeps the actions
@@ -166,7 +176,7 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
       try {
         await work();
       } catch (error) {
-        setRefusal(refusalText(error));
+        setRefusal(error);
         if (error instanceof WorkspaceError && error.reason === "runs_in_flight") {
           // Surfaced, never swallowed: the operator is told what a restart
           // would end, and re-confirms in the dialog (§23.7).
@@ -192,7 +202,12 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
   if (document_ === null) {
     // A named state, not a blank one (§4.4): either the read is in flight or it
     // was refused, and the two do not render the same.
-    const note = query.error === null ? copy.absent.loading : refusalText(query.error);
+    const note =
+      refusal !== null
+        ? refusalText(refusal)
+        : query.error === null
+          ? copy.absent.loading
+          : refusalText(query.error);
     return (
       <Panel
         label={copy.providers.title}
@@ -201,7 +216,7 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
       >
         <PanelHeader title={copy.providers.title} />
         <PanelBody className={styles["body"]}>
-          <PanelNote>{refusal ?? note}</PanelNote>
+          <PanelNote>{note}</PanelNote>
         </PanelBody>
       </Panel>
     );
@@ -376,6 +391,23 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
           // §4.7 (C8): `secondary`. The attach re-read is a remedy, not the
           // sign-in action C9 promotes, and a primary here would stand beside
           // the promoted Sign-in as a second accent fill.
+          //
+          // ONE ROUTE, ONE NAME (J-web-stream-6). This control and the
+          // composer's `data-attach-retry` post the SAME `POST
+          // /providers/attach`, and this one used to be called "Add a
+          // provider" while the composer, a few inches away, called it "Attach
+          // a runtime". §2.3's route table says the route creates a runtime
+          // from configuration that already EXISTS and cannot create
+          // configuration, so the old label was a promise the route cannot
+          // keep — pressing it re-read the same missing file. Both surfaces now
+          // spend `copy.attach.action`, and the phrase "Add a provider" is
+          // reserved for a control that writes provider specs (on this panel
+          // that is discovery's adopt, below).
+          //
+          // The title names what the press does. The composer appends
+          // `copy.attach.how` to its own title because its ~380px column has
+          // no room for the remedy as prose; the rail does not, because the
+          // remedy is the discovery section rendered directly beneath.
           <Button
             variant="secondary"
             onClick={() => {
@@ -384,9 +416,10 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
                 afterCredentialChange();
               });
             }}
+            title={copy.attach.actionTitle}
             data-providers-attach
           >
-            {copy.providers.addProvider}
+            {copy.attach.action}
           </Button>
         )}
 
@@ -411,10 +444,22 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
           }}
         />
 
-        {refusal === null ? null : (
-          <p className={styles["refusal"]} role="alert" data-providers-refusal>
-            {refusal}
-          </p>
+        {/* §4.7's banner recipe — title, sentence, the reason as a CODE CHIP,
+            and a retry — rather than a bare `role="alert"` paragraph holding
+            whatever string the server composed (J-web-stream-6). The code is
+            never inside the sentence; `data-providers-refusal` still carries
+            the machine reason for the gates, which used to read it off the
+            prose. */}
+        {refusalCode(refusal) === null ? null : (
+          <div className={styles["refusal"]} data-providers-refusal={refusalCode(refusal)}>
+            <RefusalBanner
+              error={refusal}
+              sentence={refusalText(refusal)}
+              onRetry={() => {
+                act(reload);
+              }}
+            />
+          </div>
         )}
       </PanelBody>
 

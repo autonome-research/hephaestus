@@ -510,14 +510,25 @@ function intersects(a: Box, b: Box): boolean {
   return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 }
 
-/** §5.5 C19's named surface set. The section plate header joins when mounted. */
+/**
+ * §5.5 C19's named surface set.
+ *
+ * `[data-plate-header]`, NOT `[data-section-plate]` (J-web-viewport-2). The
+ * clause names the plate's HEADER; the plate itself is absolutely positioned to
+ * the whole well, so listing it makes the sweep assert that a full-bleed layer
+ * does not intersect the six things drawn on top of it — which is false by
+ * construction the moment a plate mounts, and was never noticed because this
+ * test never engaged a section, so the selector matched nothing and the helper
+ * skipped it. A gate that has never run against the state it governs asserts
+ * nothing (RC-10).
+ */
 const OVERLAY_SURFACES = [
   "[data-view-cube]",
   "[data-appearance]",
   "[data-grid-readout]",
   "[data-explode-t]",
   "[data-section-control]",
-  "[data-section-plate]",
+  "[data-plate-header]",
 ] as const;
 
 async function overlayBoxes(page: Page): Promise<{ selector: string; box: Box }[]> {
@@ -600,6 +611,202 @@ test("viewport overlays are pairwise non-intersecting at 1280x800 and at the yie
   // disclosure (the fixture has ≥3 solids, so this is the C18 yield, not #60).
   await expect(page.locator("[data-explode-collapsed]")).toHaveCount(1);
   assertPairwiseDisjoint(await overlayBoxes(page));
+});
+
+// --------------------------------------------------------------------------
+// §5.3 / §5.5 C19 (amended 2026-09-05) — THE PLATE-MOUNTED SWEEP.
+//
+// The sweep above has never run against a mounted plate: this test is the one
+// that engages a section, waits for the server's rendered plate, and only then
+// measures. With the plate up, §5.3 says the plate owns the well
+// (J-web-viewport-2), so the four CANVAS-AUTHORING overlays unmount — a view
+// cube, an appearance cluster, an axis triad and a grid readout all address or
+// describe a live camera the reader is no longer looking at — and the section
+// control stays, because it is the exit.
+//
+// THE SURFACE FLOOR IS THE POINT. `overlayBoxes` skips a selector that matches
+// nothing, so a plate that fails to mount would shrink the set to the surfaces
+// that happen to be there and pass. The floor makes a missing plate a failure.
+
+test("with a rendered plate the plate owns the well, and the header is readable (§5.3, C19)", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await open(page, route(PART, { tab: "viewport", view: SECTION_VIEW, t: "0" }));
+  await awaitViewport(page);
+
+  await page.locator('[data-testid="section-enable"]').click();
+  await page.locator('[data-testid="section-axis"]').selectOption("X");
+  await page.locator('[data-testid="section-render"]').click();
+
+  const viewport = page.locator('[data-testid="viewport"]');
+  await expect(viewport).toHaveAttribute("data-section-state", "rendered", { timeout: 120_000 });
+  const header = page.locator("[data-plate-header]");
+  await expect(header).toHaveCount(1, { timeout: 120_000 });
+
+  // The four that unmount, and the one that must not.
+  for (const gone of [
+    "[data-view-cube]",
+    "[data-appearance]",
+    "[data-axis-triad]",
+    "[data-grid-readout]",
+  ]) {
+    await expect(page.locator(gone), `${gone} is painted over a rendered plate`).toHaveCount(0);
+  }
+  await expect(page.locator("[data-section-control]")).toHaveCount(1);
+
+  const boxes = await overlayBoxes(page);
+  expect(
+    boxes.map((entry) => entry.selector),
+    "the plate header must be in the measured set — a plate that did not mount must FAIL, not shrink the sweep",
+  ).toContain("[data-plate-header]");
+  expect(boxes.length, "expected at least the header and the section control").toBeGreaterThanOrEqual(2);
+  assertPairwiseDisjoint(boxes);
+
+  // §5.3's reference is shown, and shown INSIDE the bar: a ninety-character ref
+  // that runs to the plate's edge is not "shown in the header".
+  const headerBox = await header.boundingBox();
+  const refBox = await page.locator('[data-source="inspect.source_artifact_ref"]').boundingBox();
+  expect(headerBox, "the plate header has no box").not.toBeNull();
+  expect(refBox, "the plate header names no artifact").not.toBeNull();
+  if (headerBox !== null && refBox !== null) {
+    expect(refBox.x).toBeGreaterThanOrEqual(headerBox.x - 1);
+    expect(refBox.x + refBox.width).toBeLessThanOrEqual(headerBox.x + headerBox.width + 1);
+    expect(refBox.y).toBeGreaterThanOrEqual(headerBox.y - 1);
+    expect(refBox.y + refBox.height).toBeLessThanOrEqual(headerBox.y + headerBox.height + 1);
+  }
+});
+
+// --------------------------------------------------------------------------
+// §5.5 C18 (amended 2026-09-05) — no band occupant paints outside its own card.
+//
+// The negative half J-web-viewport-3 adds. The ladder used to compare a width
+// constant against the stage width and never measured what the band demands, so
+// a section engaged at 1600px squeezed the explode card to 113px around 172px of
+// content and drew its Collapse button on the canvas.
+
+test("no bottom-band occupant paints outside its own card, section engaged (§5.5 C18)", async ({
+  page,
+}) => {
+  for (const width of [1280, 1600, 1920]) {
+    await page.setViewportSize({ width, height: 900 });
+    await open(page, route(PART, { tab: "viewport", t: "0.5" }));
+    await awaitViewport(page);
+    await page.locator('[data-testid="section-enable"]').click();
+    await expect(page.locator("[data-section-control]")).toHaveCount(1);
+
+    const overflow = await page.evaluate(() => {
+      const band = document.querySelector("[data-viewport-band]");
+      if (band === null) throw new Error("no [data-viewport-band]");
+      const escaped: string[] = [];
+      for (const card of band.children) {
+        const cardBox = card.getBoundingClientRect();
+        if (card.scrollWidth > card.clientWidth + 1) {
+          escaped.push(`${card.className}: content ${String(card.scrollWidth)} > box ${String(card.clientWidth)}`);
+        }
+        for (const child of card.querySelectorAll("*")) {
+          const box = child.getBoundingClientRect();
+          if (box.width === 0 && box.height === 0) continue;
+          if (box.right > cardBox.right + 1 || box.left < cardBox.left - 1) {
+            escaped.push(`${child.tagName}.${String(child.className)} escapes ${card.className}`);
+          }
+        }
+      }
+      return {
+        escaped,
+        bandOverflow: band.scrollWidth > band.clientWidth + 1,
+      };
+    });
+    expect(overflow.escaped, `at ${String(width)}px`).toEqual([]);
+    expect(overflow.bandOverflow, `the band overflows at ${String(width)}px`).toBe(false);
+  }
+});
+
+// --------------------------------------------------------------------------
+// J-web-viewport-4 — a 7ch readout cannot hold `0.00`.
+//
+// The reproduction IS a width measurement ("both readouts report a client
+// width of 48 and a scroll width of 51-52 for the value 0.00"), so the test is
+// the same measurement, taken at the values that stress it: minimum, middle
+// and maximum. jsdom cannot lay out a `<input type="number">`'s spin buttons
+// at all, which is exactly why this has to run here rather than in vitest.
+
+/** The editable number-input readout beside a range input carrying `testid`. */
+function readoutFor(page: Page, testid: string) {
+  return page.locator(`[data-testid="${testid}"]`).locator("xpath=..").locator('input[type="number"]');
+}
+
+async function assertNoOverflow(readout: ReturnType<typeof readoutFor>, label: string): Promise<void> {
+  const { scrollWidth, clientWidth, value } = await readout.evaluate((el: HTMLInputElement) => ({
+    scrollWidth: el.scrollWidth,
+    clientWidth: el.clientWidth,
+    value: el.value,
+  }));
+  expect(scrollWidth, `${label} clips its value "${value}" (scroll ${String(scrollWidth)} > client ${String(clientWidth)})`).toBeLessThanOrEqual(clientWidth);
+}
+
+test("the explode readout never clips its value, at min/mid/max (J-web-viewport-4)", async ({ page }) => {
+  await open(page, route(PART, { tab: "viewport" }));
+  await awaitViewport(page);
+  const range = page.locator('[data-testid="explode-slider"]');
+  const readout = readoutFor(page, "explode-slider");
+  for (const value of ["0", "0.5", "1"]) {
+    await range.fill(value);
+    await assertNoOverflow(readout, `explode readout at t=${value}`);
+  }
+});
+
+test("the section-offset readout never clips its value, at min/mid/max (J-web-viewport-4)", async ({
+  page,
+}) => {
+  await open(page, route(PART, { tab: "viewport" }));
+  await awaitViewport(page);
+  await page.locator('[data-testid="section-enable"]').click();
+  const range = page.locator('[data-testid="section-offset"]');
+  const readout = readoutFor(page, "section-offset");
+  const { min, max } = await range.evaluate((el: HTMLInputElement) => ({
+    min: Number(el.min),
+    max: Number(el.max),
+  }));
+  const mid = (min + max) / 2;
+  for (const value of [min, mid, max]) {
+    await range.fill(String(value));
+    await assertNoOverflow(readout, `section-offset readout at ${String(value)}`);
+  }
+});
+
+test("a PARAMS readout stays fully visible carrying a rejected out-of-bounds value (J-web-viewport-4, §10)", async ({
+  page,
+}) => {
+  // The case the fix note calls out as mattering more: a PARAMS slider does
+  // not clamp (`clamp={false}`), so a typed out-of-bounds value is sent for
+  // the server to refuse — and a refused value the operator cannot read back
+  // is a refusal they cannot act on.
+  const document = await api<{
+    readonly status: string;
+    readonly params: readonly { readonly name: string; readonly min: number; readonly max: number }[];
+  }>(`/parts/${PART}/params`);
+  const first = document.params[0];
+  if (first === undefined) throw new Error("fixture part has no params to drive");
+
+  await open(page, route(PART, { tab: "script" }));
+  const range = page.locator(`[data-param-slider="${first.name}"]`);
+  await expect(range).toBeVisible();
+  const readout = page
+    .locator(`[data-param-slider="${first.name}"]`)
+    .locator("xpath=..")
+    .locator('input[type="number"]');
+  const outOfBounds = first.max + Math.max(1, Math.abs(first.max - first.min));
+  await readout.fill(String(outOfBounds));
+  await readout.blur();
+  // Not an exact-string match: an integer-valued param renders its readout at
+  // 0 decimal places (`isIntegerParam`), so the only thing worth pinning here
+  // is that the CONTROL WAS NOT CLAMPED BACK — clamp is off for PARAMS
+  // sliders by contract (§10, G5.3) — never a particular formatting.
+  await expect
+    .poll(async () => Number(await readout.inputValue()))
+    .toBeGreaterThanOrEqual(outOfBounds - 0.005);
+  await assertNoOverflow(readout, `PARAMS readout for ${first.name} carrying a rejected value`);
 });
 
 // --------------------------------------------------------------------------

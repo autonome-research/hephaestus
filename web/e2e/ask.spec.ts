@@ -158,13 +158,30 @@ test("a browser answers a suspended ask_user; a second client sees who won (§7A
     const result = await turn;
     expect(result.run_status).toBe("completed");
 
-    // A client that answers now is not a loser, it is late: the winning answer
-    // released the suspended run, and the run took its question with it. §7A.7
-    // makes that one rendered state — "answered, abandoned, or never asked".
+    // THE SECOND ANSWERER IS A LOSER, NOT A GHOST (audit-2026-09-04
+    // J-agent-wiring-7). This assertion used to demand a 404
+    // `unknown_question` — "it was answered, abandoned, or never asked" — which
+    // told the operator the question had been thrown away when in fact it had
+    // been answered, and never showed them what the run was told. The registry
+    // now separates the SUSPENSION's lifetime from the RECORD's: the asker's
+    // `finally` moves the entry into a bounded settled map instead of dropping
+    // it, so the loser gets 200, `accepted: false`, `answered_by: "other"` and
+    // **the winner's** selection — both clients agree on what the run was told.
+    //
+    // The 404 keeps its exact meaning for an id nobody ever asked about, which
+    // is asserted below and which §7A.6 depends on.
     const questionId = questionIdOf(await widget(observing).getAttribute("data-question-id"));
     const late = await answerLate(session, questionId);
-    expect(late.status).toBe(404);
-    expect(late.reason).toBe("unknown_question");
+    expect(late.status).toBe(200);
+    expect(late.document?.accepted).toBe(false);
+    expect(late.document?.answered_by).toBe("other");
+    expect(late.document?.answer).toBe(labels[1] ?? "");
+
+    // A question id that was never asked is still a 404, so the fix did not
+    // soften the real case.
+    const unknown = await answerLate(session, "question-that-never-existed");
+    expect(unknown.status).toBe(404);
+    expect(unknown.reason).toBe("unknown_question");
 
     await archive(answering, testInfo, "ask-answered-self");
     await archive(observing, testInfo, "ask-answered-other");

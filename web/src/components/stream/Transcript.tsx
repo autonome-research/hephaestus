@@ -474,16 +474,24 @@ function TerminalBand({ item }: { readonly item: TranscriptItem }): React.JSX.El
       {...(payload?.backpressure === true ? { "data-terminal-backpressure": "1" } : {})}
       role="status"
       aria-live="polite"
+      // §7.1's 2026-09-03 house rule for a machine identity, applied here
+      // (J-web-stream-9): the id stays on the `title` and the data attribute
+      // and is NOT drawn. §7.3 says the band "carries" the state and the
+      // terminal id, and "carries" was read as "prints" — which the attribute
+      // above already satisfies. The id's only functional role in this client
+      // is backpressure detection, and the band renders THAT as its own
+      // sentence below, so the operator never needs to read the id to learn
+      // the fact it encodes.
+      title={
+        payload === null || payload.terminalId === null
+          ? copy.stream.terminal.title
+          : `${copy.stream.terminal.title}. ${copy.stream.terminal.identity}: ${payload.terminalId}`
+      }
     >
       <span className={styles["terminalTitle"]}>{copy.stream.terminal.title}</span>
       <span>
         {copy.stream.terminal.state}: {state ?? copy.absent.unavailable}
       </span>
-      {payload?.terminalId === null || payload === null ? null : (
-        <span className={styles["terminalId"]}>
-          {copy.stream.terminal.id}: {payload.terminalId}
-        </span>
-      )}
       {payload?.backpressure === true ? (
         <span className={styles["note"]}>{copy.stream.terminal.backpressure}</span>
       ) : null}

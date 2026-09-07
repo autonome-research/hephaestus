@@ -26,6 +26,7 @@ import { apiJson } from "./client";
 import { fetchExports, type ExportsDocument } from "./exports";
 import { loadProviders, type ProvidersDocument } from "./providers";
 import type {
+  ArtifactMetaDocument,
   BuildDocument,
   ChecksDocument,
   DfmDocument,
@@ -64,6 +65,8 @@ export const keys = {
    * is about *outbound* traffic, and a cached local read makes none.
    */
   providers: () => ["providers"] as const,
+  /** §2.3's keyless artifact metadata, keyed by the ref it describes. */
+  artifactMeta: (ref: string) => ["artifacts", ref, "meta"] as const,
 };
 
 /**
@@ -88,6 +91,25 @@ export function useProject(): UseQueryResult<ProjectDocument, Error> {
     queryKey: keys.project(),
     queryFn: () => apiJson<ProjectDocument>("/project"),
     staleTime: PROJECT_STALE_MS,
+  });
+}
+
+/**
+ * `GET /artifacts/{ref}/meta` — the artifact's own description (§2.3).
+ *
+ * Issued only where the answer is needed: the header pin asks for it while a pin
+ * is HELD, to name the part the held artifact came from as a server value rather
+ * than as something the store remembered (§4.1, J-web-viewport-5). An artifact
+ * is immutable, so its metadata never goes stale.
+ */
+export function useArtifactMeta(ref: string | null): UseQueryResult<ArtifactMetaDocument, Error> {
+  return useQuery({
+    queryKey: keys.artifactMeta(ref ?? ""),
+    queryFn: () =>
+      apiJson<ArtifactMetaDocument>(`/artifacts/${encodeURIComponent(ref ?? "")}/meta`),
+    enabled: ref !== null,
+    staleTime: Number.POSITIVE_INFINITY,
+    retry: false,
   });
 }
 
@@ -123,12 +145,28 @@ export function useBuild(
 }
 
 /** `GET /parts/{part}/params` — the §10 slider projection. */
+/**
+ * `GET /parts/{part}/params` — §10's projection.
+ *
+ * `placeholderData` retains the PREVIOUS part's document across a part switch
+ * (J-cli-startup-8). A part switch is a new query key, so without it the panel
+ * hits the `undefined` branch on every first arrival and — since the Script tab
+ * unmounts the panel on every tab switch while the query cache survives — the
+ * rail went to a single line of loading text for the whole request, which on
+ * this endpoint is seconds (J-cli-startup-7, the dominant half).
+ *
+ * What the panel does with it is the other half of that item, and it is not
+ * "render it": a previous part's parameter names and `state_hash` are facts
+ * about a different part, so `ParamSliders` renders the retained document as a
+ * LAYOUT SKELETON and refuses to commit while `isPlaceholderData` holds.
+ */
 export function useParams(part: string | null): UseQueryResult<ParamsDocument, Error> {
   return useQuery({
     queryKey: keys.params(part ?? ""),
     queryFn: () => apiJson<ParamsDocument>(`/parts/${encodeURIComponent(part ?? "")}/params`),
     enabled: part !== null,
     staleTime: PROJECT_STALE_MS,
+    placeholderData: (previous: ParamsDocument | undefined) => previous,
   });
 }
 

@@ -111,7 +111,12 @@ export function SectionPlate({ plane }: SectionPlateProps): React.JSX.Element | 
       data-section-plate="rendered"
       data-plate-ref={plate.data.render_artifact_ref}
     >
-      <header className={styles["header"]}>
+      {/* §5.3's header names the artifact the pixels came from, and C19's sweep
+          selects THIS bar rather than the whole plate (J-web-viewport-2): the
+          plate is inset to the entire well, so a sweep that lists the plate
+          finds it intersecting every overlay by construction, while the clause
+          is about the header being readable. */}
+      <header className={styles["header"]} data-plate-header="">
         <Badge status="info">{copy.viewport.section.plateLabel}</Badge>
         <span className={styles["from"]}>
           {copy.viewport.section.plateFrom}{" "}

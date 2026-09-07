@@ -274,6 +274,30 @@ describe("rail providers — collapsed by default so Sign-in stays in the box", 
     expect(markup).not.toContain(copy.providers.allowlistNote);
   });
 
+  // J-web-stream-6, the label half. `POST /providers/attach` has ONE control
+  // name across the two surfaces that offer it, and it is not the phrase §2.3
+  // reserves for a control that writes provider specs — the route re-reads
+  // configuration that must already exist. The composer spends the same
+  // `copy.attach.action`, so the constant is the shared vocabulary and this
+  // asserts the rail is wired to it.
+  it("names the attach route for what it does, on the rail as in the composer", () => {
+    const markup = providersMarkup(
+      providersDocument({
+        providers: [],
+        attach: {
+          attached: false,
+          config_path: "/tmp/p/.heph/providers.json",
+          generation: 0,
+        },
+      }),
+    );
+    expect(markup).toContain(`>${copy.attach.action}<`);
+    expect(markup).toContain(copy.attach.actionTitle);
+    // The negative half: the reserved phrase appears nowhere the panel renders,
+    // including the empty state's body, which used to point at this button.
+    expect(markup).not.toContain("Add a provider");
+  });
+
   it("splits health into two Facts with unformatted wire values (#94)", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     client.setQueryData(
@@ -321,6 +345,66 @@ describe("rail providers — collapsed by default so Sign-in stays in the box", 
       });
       host.remove();
     }
+  });
+});
+
+/*
+ * J-web-stream-5: the audit's "duplicated explanation" reading came from a
+ * script that clicked "Add a provider" expecting a sign-in dialog, got the
+ * attach re-read instead, and screenshotted the unchanged page — the panel's
+ * copy is single-sourced and has never contained a duplicate sentence. This is
+ * the guard that makes that claim checkable rather than judged from a
+ * screenshot: no leaf text node the panel renders repeats, in any state.
+ */
+describe("providers panel — no sentence repeats within the panel itself (J-web-stream-5)", () => {
+  /** Every non-empty leaf text node's trimmed content, in document order. */
+  function leafTexts(markup: string): string[] {
+    const doc = new DOMParser().parseFromString(`<body>${markup}</body>`, "text/html");
+    const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+    const texts: string[] = [];
+    let node = walker.nextNode();
+    while (node !== null) {
+      const text = (node.textContent ?? "").trim();
+      if (text.length > 0) texts.push(text);
+      node = walker.nextNode();
+    }
+    return texts;
+  }
+
+  function duplicates(texts: readonly string[]): string[] {
+    const seen = new Set<string>();
+    const dupes: string[] = [];
+    for (const text of texts) {
+      if (seen.has(text)) dupes.push(text);
+      seen.add(text);
+    }
+    return dupes;
+  }
+
+  it("repeats no sentence with the configuration section collapsed (the default)", () => {
+    const markup = providersMarkup(providersDocument());
+    expect(duplicates(leafTexts(markup))).toEqual([]);
+  });
+
+  it("repeats no sentence with an egress acknowledgement present", () => {
+    const markup = providersMarkup(
+      providersDocument({
+        egress_acknowledged: [{ host: "api.example.invalid", at: "2026-09-01T00:00:00Z" }],
+      }),
+    );
+    expect(duplicates(leafTexts(markup))).toEqual([]);
+  });
+
+  it("repeats no sentence with no providers rows at all (the empty state)", () => {
+    const markup = providersMarkup(providersDocument({ providers: [] }));
+    expect(duplicates(leafTexts(markup))).toEqual([]);
+  });
+
+  it("repeats no sentence while unattached (the attach re-read button is visible)", () => {
+    const markup = providersMarkup(
+      providersDocument({ attach: { attached: false, config_path: "/tmp/p/.heph/providers.json", generation: 0 } }),
+    );
+    expect(duplicates(leafTexts(markup))).toEqual([]);
   });
 });
 
@@ -657,5 +741,50 @@ describe("header — one row of facts on the artifact axis", () => {
     expect(markup).toContain("data-chrome-bom");
     expect(markup).toContain("data-part-chrome");
     expect(markup).toContain("data-testid=\"artifact-pin\"");
+  });
+});
+
+/*
+ * J-web-stream-3: the composer's unavailable refusal overflowed the column by
+ * 214px. `.refusal`'s cross-axis alignment defeated three declarations that
+ * each looked like they handled overflow (`.path`'s zero minimum and
+ * `overflow-wrap: anywhere`, the chip's own width cap) because none of them
+ * had a definite cross size to work against. jsdom cannot measure the 214px
+ * overflow itself; what is asserted is the CSS shape that made it structurally
+ * impossible, and that the path is rendered as full text rather than a
+ * `Chip` (a chip is a compact readout and this is a load-bearing identifier).
+ */
+describe("the composer's refusal stretches to fit its column (J-web-stream-3)", () => {
+  const composer = css("components/stream/Composer.module.css");
+
+  it("stretches the refusal's children instead of sizing each to its own max-content", () => {
+    expect(composer).toMatch(/\.refusal\s*\{[^}]*align-items:\s*stretch;?[^}]*\}/);
+    expect(composer).not.toMatch(/\.refusal\s*\{[^}]*align-items:\s*flex-start/);
+  });
+
+  it("still keeps the action button at its own intrinsic width, not full-width", () => {
+    // Without this override a `stretch` container renders the retry button as
+    // a full-width banner.
+    expect(composer).toMatch(/\.refusalAction\s*\{[^}]*align-self:\s*flex-start;?[^}]*\}/);
+  });
+
+  it("caps the path at the column's width with a zero minimum, so it can actually shrink", () => {
+    expect(composer).toMatch(/\.path\s*\{[^}]*max-width:\s*100%;?[^}]*\}/);
+    expect(composer).toMatch(/\.path\s*\{[^}]*min-width:\s*0;?[^}]*\}/);
+    expect(composer).toMatch(/\.path\s*\{[^}]*overflow-wrap:\s*anywhere;?[^}]*\}/);
+  });
+
+  it("renders the path as wrapping code text, not a no-wrap chip", () => {
+    expect(composer).toMatch(/\.pathText\s*\{[^}]*overflow-wrap:\s*anywhere;?[^}]*\}/);
+  });
+
+  it("renders the full configuration path as visible text, not only as the machine-readable attribute", () => {
+    const source = readFileSync(join(webSrc, "components/stream/Composer.tsx"), "utf8");
+    // The machine-readable attribute must still be present (tests/harnesses
+    // read it); the path text itself must be a rendered child, not only a
+    // prop passed to a `Chip`.
+    expect(source).toMatch(/data-attach-path=\{attach\.config_path\}/);
+    expect(source).toMatch(/<code className=\{styles\["pathText"\]\}>\{attach\.config_path\}<\/code>/);
+    expect(source).not.toMatch(/<Chip[^>]*>\s*\{attach\.config_path\}/);
   });
 });

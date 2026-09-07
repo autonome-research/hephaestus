@@ -24,15 +24,32 @@
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
   background: var(--surface-panel);
+  /* The header is one bar across a well of any width; nothing inside it may run
+     to the edge (J-web-viewport-2). */
+  min-width: 0;
+  overflow: hidden;
 }
 
+/* The truncation recipe `Panel.module.css`'s `.title` already uses: a long
+   reference ELLIPSES inside the bar rather than running past it. The full value
+   stays on `data-value`, which is what the gates and the archive matcher read,
+   so nothing machine-readable is lost to the ellipsis (§4.7). */
 .from {
   composes: label from "../../../system/type.module.css";
   color: var(--ink-muted);
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.35em;
+  overflow: hidden;
 }
 
 .ref {
   color: var(--ink-strong);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .image {

@@ -257,6 +257,33 @@ export function Viewport(): React.JSX.Element {
   const [scale, setScale] = useState(0);
   /** §5.5 C18: the stage column's width, for the bottom band's yield ladder. */
   const [stageWidth, setStageWidth] = useState<number | null>(null);
+  const bandRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * §5.5 C18's yield ladder, MEASURED (J-web-viewport-3).
+   *
+   * The ladder compared a width constant against the stage width and never
+   * looked at what the band actually demands — which depends on whether a
+   * section is engaged (the control's natural size goes from 131px collapsed to
+   * 624px engaged), whether explode is engaged, and how wide the readout's
+   * numbers are. So at 1600px with a section engaged the explode card was
+   * squeezed to 113px around 172px of content and its Collapse button was drawn
+   * entirely on the canvas, while nothing yielded, because both widths are above
+   * the trigger.
+   *
+   * `level` is how far down C18's fixed order the band has yielded: 1 collapses
+   * the explode slider to its disclosure, 2 also yields the section control. The
+   * legend is last and stays on the width constant, because a readout that lies
+   * about camera scale is worse than a missing control.
+   *
+   * `width` is the band width the level was latched at, and it is what keeps
+   * this from oscillating: yielding makes the band fit, which would otherwise
+   * un-yield it. The latch is released only when the band gets WIDER than the
+   * width that produced it, so the term is monotone in one direction per size.
+   */
+  const [pressure, setPressure] = useState<{ level: number; width: number }>({
+    level: 0,
+    width: 0,
+  });
   /** §3.11.5's grid spacing, so the readout describes the grid it is next to. */
   const [step, setStep] = useState(0);
   // The ref whose geometry the engine last finished loading. It is written only
@@ -465,6 +492,64 @@ export function Viewport(): React.JSX.Element {
   /** C18's yield ladder input: unmeasured means "wide" — nothing yields early. */
   const bandWidth = stageWidth ?? Number.POSITIVE_INFINITY;
 
+  /**
+   * §5.3 (amended 2026-09-05): while a plate covers the well, THE PLATE OWNS THE
+   * WELL (J-web-viewport-2).
+   *
+   * The plate is absolutely positioned over the whole well with a full-bleed
+   * header, and every viewport overlay used to be painted on top of it: the
+   * appearance cluster covered the header's left end and the view cube its right
+   * end, so the `source_artifact_ref` §5.3 requires be shown was partly
+   * unreadable — and six controls that address a live canvas were drawn over a
+   * rendered image they cannot affect, which is the deeper incoherence that
+   * merely nudging them down would have left in place.
+   *
+   * So the four CANVAS-AUTHORING overlays unmount: the view cube, the appearance
+   * cluster, the axis triad and the grid readout all describe or drive a camera
+   * that is not what the reader is looking at. The section control stays because
+   * it is the EXIT — without it the plate is a state with no way out — and the
+   * explode slider stays only while engaged, so its `t` can be returned to 0.
+   * The surface set under a plate is then the header, the section control and
+   * (sometimes) the explode card: disjoint by construction.
+   */
+  const plateOwnsWell = overlay === "section" && plane !== null;
+
+  // -- the bottom band: does it fit? (§5.5 C18, J-web-viewport-3) -----------
+  //
+  // The band's own box tracks the host, so a host resize is one input; the other
+  // is the band's DEMAND, which changes with no resize at all when a section is
+  // engaged and the section control goes from 131px to 624px. Observing every
+  // CHILD as well as the band catches that, and re-running this effect whenever
+  // the occupant set changes re-observes — `observe()` delivers an initial
+  // callback, which is how a fresh measurement is taken after a render without
+  // this effect setting state in its own body.
+  useEffect(() => {
+    const band = bandRef.current;
+    if (band === null) return;
+    const measure = (): void => {
+      const width = band.clientWidth;
+      const over = band.scrollWidth > width + 1;
+      setPressure((current) => {
+        if (!over) {
+          // Released only when the band is WIDER than the width that latched
+          // it; releasing at the same width is what would oscillate, because
+          // yielding is exactly what made it fit.
+          return width > current.width && current.level > 0 ? { level: 0, width: 0 } : current;
+        }
+        if (width > current.width) return { level: 1, width };
+        // C18's fixed order: explode first, then the section control. The
+        // legend never yields on this term.
+        return current.level >= 2 ? current : { level: current.level + 1, width };
+      });
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(band);
+    for (const child of band.children) observer.observe(child);
+    return () => {
+      observer.disconnect();
+    };
+  }, [hasGeometry, plateOwnsWell, plane, explodeT, stageWidth, pressure.level]);
+
   return (
     <div
       ref={hostRef}
@@ -506,12 +591,12 @@ export function Viewport(): React.JSX.Element {
 
       {!hasGeometry ? null : (
         <>
-          <ViewCube />
+          {plateOwnsWell ? null : <ViewCube />}
           {/* §3.11.6. Bottom-left with the readout, and — like the readout — an
               overlay that never changes size, because a Playwright element
               screenshot composites what is painted over the canvas and G4.5's
               control region is exactly that frame (see `GridReadout`'s header). */}
-          <AxisTriad engine={engine} visible={appearance.triad} />
+          {plateOwnsWell ? null : <AxisTriad engine={engine} visible={appearance.triad} />}
           {/* The grid step is a fact about a grid, so it is reported only while
               there is one. Derived at render rather than cleared from the load
               effect: an effect that calls `setState` in its own body is the
@@ -519,7 +604,9 @@ export function Viewport(): React.JSX.Element {
               answer is a pure function of state we already hold. Off is the same
               as "no framing": the readout must not describe a grid the operator
               has hidden. */}
-          <AppearanceControls canFit={displayedRef !== null && state === "ready"} onFit={onFit} />
+          {plateOwnsWell ? null : (
+            <AppearanceControls canFit={displayedRef !== null && state === "ready"} onFit={onFit} />
+          )}
           {/* §5.5 C18: the bottom overlays share ONE flex band — the legend at
               `flex: none` (a readout never stretches), the explode slider at
               `flex: 1` with a 120px minimum track, the section control at its
@@ -527,24 +614,33 @@ export function Viewport(): React.JSX.Element {
               fixed order — explode to its disclosure first, then the section
               control, the legend last — and no bottom overlay is ever
               absolutely positioned over another. */}
-          <div className={styles["band"]} data-viewport-band="">
-            {bandWidth < LEGEND_YIELD_WIDTH ? null : (
+          <div className={styles["band"]} data-viewport-band="" ref={bandRef}>
+            {bandWidth < LEGEND_YIELD_WIDTH || plateOwnsWell ? null : (
               <GridReadout
                 scale={scale}
                 step={displayedRef === null || !appearance.grid ? 0 : step}
               />
             )}
-            <ExplodeSlider
-              noop={glb.data !== undefined && glb.data.geometry.mesh_count <= 1}
-              yielded={bandWidth < BAND_YIELD_WIDTH}
-            />
+            {/* Under a plate the explode card mounts only while engaged: an
+                explode of 0 authors nothing and the plate is not showing it,
+                but an engaged `t` must stay returnable to 0 (§5.2). */}
+            {plateOwnsWell && explodeT === 0 ? null : (
+              <ExplodeSlider
+                noop={glb.data !== undefined && glb.data.geometry.mesh_count <= 1}
+                // The measured term ORs with the constant and can only yield
+                // EARLIER, so C18's specified behaviour below 560px is
+                // unchanged: "nothing yields above 560px" becomes "nothing
+                // yields above 560px while the band fits".
+                yielded={bandWidth < BAND_YIELD_WIDTH || pressure.level >= 1}
+              />
+            )}
             {/* The bounds belong to the *loaded* GLB: while none is loaded the
                 control seats its offset on its own fallback range rather than on
                 the previous artifact's, which would name a plane in the wrong
                 model. */}
             <SectionControl
               bounds={glb.data === undefined ? null : bounds}
-              yielded={bandWidth < SECTION_YIELD_WIDTH}
+              yielded={bandWidth < SECTION_YIELD_WIDTH || pressure.level >= 2}
               noop={glb.data !== undefined && glb.data.geometry.mesh_count <= 1}
             />
           </div>

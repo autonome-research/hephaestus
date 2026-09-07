@@ -28,6 +28,14 @@ import styles from "./NoToken.module.css";
 
 export function NoToken(): React.JSX.Element {
   const absence = tokenAbsence();
+  // §2.2 (amended 2026-09-05): ONE branch produces BOTH strings. Branching the
+  // body and leaving the heading unconditional is what shipped, and it put "No
+  // workspace token" over "the token this page holds was not accepted" — the
+  // heading and the body asserting opposite things about one state, with the
+  // heading the one an operator reads first (J-web-stream-10).
+  const rejected = absence === "unauthorized";
+  const title = rejected ? copy.noToken.rejectedTitle : copy.noToken.title;
+  const body = rejected ? copy.errors.unauthorized : copy.noToken.body;
   const [paste, setPaste] = useState("");
   const [invalid, setInvalid] = useState<string | undefined>(undefined);
   const empty = paste.trim() === "";
@@ -51,10 +59,8 @@ export function NoToken(): React.JSX.Element {
     >
       <div className={styles["card"]}>
         <Icon id="alert" size={22} className={styles["icon"]} />
-        <h1 className={styles["title"]}>{copy.noToken.title}</h1>
-        <p className={styles["body"]}>
-          {absence === "unauthorized" ? copy.errors.unauthorized : copy.noToken.body}
-        </p>
+        <h1 className={styles["title"]}>{title}</h1>
+        <p className={styles["body"]}>{body}</p>
         <pre className={styles["command"]}>{copy.noToken.command}</pre>
         <p className={styles["hint"]}>{copy.noToken.hint}</p>
         <form className={styles["recover"]} onSubmit={apply}>

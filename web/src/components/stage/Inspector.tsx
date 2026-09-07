@@ -51,6 +51,9 @@ import { PropertiesPanel } from "../inspector/PropertiesPanel";
 import { ProvenancePanel } from "../inspector/ProvenancePanel";
 import { ResultsPanel } from "../inspector/ResultsPanel";
 import { SourcingPanel } from "../inspector/SourcingPanel";
+import { PinSplitMarker } from "../PinSplitMarker";
+import { useHeldPart } from "../../state/heldPart";
+import { pinSplit } from "../../state/pinSplit";
 import styles from "./Inspector.module.css";
 
 export function Inspector(): React.JSX.Element {
@@ -59,6 +62,10 @@ export function Inspector(): React.JSX.Element {
   const tab = effectiveInspectorTab(stageTab, requested);
   const tabs = inspectorTabsFor(stageTab);
   const [intent, setIntent] = useState<DescriptorIntent | undefined>(undefined);
+  // §4.1's held-pin marking, the selection half (J-web-viewport-9).
+  const part = useWorkspace((s) => s.part);
+  const pinMode = useWorkspace((s) => s.pin_mode);
+  const split = pinSplit(pinMode, useHeldPart(), part);
 
   return (
     <section className={styles["drawer"]} aria-label={copy.inspector.tabs[tab]}>
@@ -72,6 +79,14 @@ export function Inspector(): React.JSX.Element {
         }}
         tabs={tabs.map((name) => ({ id: name, label: copy.inspector.tabs[name] }))}
       />
+      {/* §4.1's inherited marking, the SELECTION half (J-web-viewport-9). Two
+          regions follow the pin (the stage and Export) and two follow the rail
+          selection (this drawer and the Script tab); while they disagree each
+          says which part it is showing, in words. */}
+      <div data-pin-split-slot="inspector">
+        <PinSplitMarker split={split} region="inspector" />
+      </div>
+
       <div
         className={styles["content"]}
         role="tabpanel"

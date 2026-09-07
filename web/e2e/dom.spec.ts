@@ -33,7 +33,9 @@ interface PropertiesDocument {
 
 interface ChecksDocument {
   readonly badges: Readonly<Record<string, string>>;
-  readonly report: unknown;
+  readonly report: {
+    readonly checks: Readonly<Record<string, { readonly pass: boolean; readonly measured: unknown }>>;
+  };
 }
 
 interface DfmDocument {
@@ -256,6 +258,72 @@ test("the check badges match a subprocess `heph check --json` (G4.4)", async ({
 });
 
 // --------------------------------------------------------------------------
+// J-web-stream-8 — a `measured` structure is PROSE, never `JSON.stringify`.
+//
+// §4.7 carries the clause as a known defect — "a reading surface never receives
+// `JSON.stringify` output" — naming this exact check row and prescribing the
+// shape: the message is the row value, the code is a chip, the raw object goes
+// behind a disclosure. The fixture's `tread_clears_the_absent_stringer` names a
+// part this project does not have, so `run_checks` records `measured.error` and
+// the row used to print the whole envelope as JSON beside `250 × 156 × 5.5`.
+//
+// The negative half is the class-closing one and it is asserted on RENDERED
+// text (`innerText`), not on markup: the disclosure below the row still holds
+// every byte, and a closed `<details>` contributes none of it to rendered text,
+// which is exactly the distinction §4.7 draws.
+
+test("a check whose measurement failed renders its message, a code chip and no JSON (J-web-stream-8)", async ({
+  page,
+}, testInfo) => {
+  const served = await api<ChecksDocument>(`/parts/${PART}/checks`);
+  const errored = Object.entries(served.report.checks).find(
+    ([, result]) =>
+      typeof result.measured === "object" &&
+      result.measured !== null &&
+      "error" in (result.measured as Record<string, unknown>),
+  );
+  // The fixture declares one on purpose (`checks/tread_checks.py`); if it ever
+  // stops doing so this test must FAIL rather than quietly assert nothing.
+  expect(errored, "the workspace fixture must keep a check that cannot be evaluated").toBeDefined();
+  if (errored === undefined) return;
+  const [name, result] = errored;
+  const envelope = (result.measured as { readonly error: Record<string, string> }).error;
+
+  await openInspector(page, "checks");
+  // `data-check` is minted on the row's BADGE (`ChecksPanel.tsx`), so the row
+  // is its parent — the badge, the name, the measured value and the disclosure
+  // are siblings inside one <li>.
+  const badge = page.locator(`[data-inspector-panel='checks'] [data-check="${name}"]`);
+  await expect(badge).toHaveAttribute("data-badge", "error");
+  const row = badge.locator("xpath=..");
+
+  // The MESSAGE is the row value, in words.
+  await expect(row).toContainText(envelope["message"] ?? "");
+  // The code is a chip BESIDE the sentence, never inside it.
+  await expect(row.locator(`[data-measured-code="${envelope["code"] ?? ""}"]`)).toHaveCount(1);
+  // The machine-readable half is untouched: `data-value` still carries the
+  // verbatim serialization the archive matcher and the audit harness read.
+  const value = await row
+    .locator("[data-source='checks.report.checks[].measured']")
+    .getAttribute("data-value");
+  expect(JSON.parse(value ?? "null")).toEqual(result.measured);
+  // The raw object is still reachable — behind §4.7's disclosure.
+  await expect(row.locator("[data-measured-raw]")).toHaveCount(1);
+
+  // The class-closing negative, over the whole panel and on RENDERED text: no
+  // visible text opens a JSON object or array. A closed <details> contributes
+  // none of its body to `innerText`, which is exactly the distinction §4.7
+  // draws between a reading surface and a disclosure.
+  const visible = (await page.locator("[data-inspector-panel='checks']").innerText()).replace(
+    /\s+/g,
+    " ",
+  );
+  expect(visible, "a reading surface received JSON").not.toMatch(/[{[]\s*"/);
+
+  await archive(page, testInfo, "checks-measured-error");
+});
+
+// --------------------------------------------------------------------------
 // G4.X — the DFM toggle surfacing findings (deferred from G6 to G4/G5)
 
 test("running DFM surfaces the pack's findings as topology descriptors (G4.X)", async ({
@@ -297,6 +365,19 @@ test("running DFM surfaces the pack's findings as topology descriptors (G4.X)", 
     "data-dfm-source",
     /current|preview/,
   );
+
+  // J-web-stream-8's other half: a finding's `measured` is a flat FACT MAP and
+  // reached the chip through the same `JSON.stringify` fall-through, so four
+  // findings rendered as JSON objects, one truncated mid-token. Label/value
+  // pairs now, in the rule's own order — and no visible text in the panel opens
+  // a JSON object.
+  const facts = page.locator("[data-inspector-panel='dfm'] [data-measured-fact]");
+  expect(await facts.count(), "no finding rendered a fact pair").toBeGreaterThan(0);
+  const dfmVisible = (await page.locator("[data-inspector-panel='dfm']").innerText()).replace(
+    /\s+/g,
+    " ",
+  );
+  expect(dfmVisible, "a reading surface received JSON").not.toMatch(/[{[]\s*"/);
 
   await archive(page, testInfo, "g4.x-dfm");
 });

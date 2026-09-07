@@ -4,7 +4,12 @@
 // Compact export control for header chrome. Bound to the workspace pin
 // (INTERFACE.md §22.5): the request carries `WorkspaceState.artifact_ref`
 // verbatim. Formats, blockers, and the submission key are the same ones the
-// inspector tab uses — this is not a second exporter.
+// inspector tab uses — AND SO IS THE STATE MACHINE
+// (`components/export/submission.ts`). This is not a second exporter, and until
+// J-web-stream-11 it was: the two components held identical `useState` and ran
+// hand-copied transitions that had already diverged, with this one's `run`
+// clearing the previous result and the panel's not. The markup below is all
+// that is this component's own.
 //
 // TWO STEPS IN THIS DIALOG (#77, after #100). Export runs the keyed mutation.
 // Download fetches the bytes (`downloadExport`) with the byte count stated
@@ -23,9 +28,7 @@ import {
   type ExportResult,
   type ExportRow,
   type ExportsDocument,
-  type ExportState,
 } from "../../api/exports";
-import { WorkspaceError } from "../../api/client";
 import { copy } from "../../copy";
 import {
   Button,
@@ -38,10 +41,12 @@ import {
 } from "../../system";
 import { Fact } from "../Fact";
 import {
+  blockerReasonText,
   exportBlocker,
   submissionKeyFor,
+  useExportSubmission,
   type Submission,
-} from "../inspector/ExportPanel";
+} from "../export/submission";
 import styles from "./PartChrome.module.css";
 
 const CHROME_SUBMISSION = {
@@ -92,64 +97,20 @@ export function producedRow(
 export function ExportChrome(props: ExportChromeProps): React.JSX.Element {
   const { part, pinned, pinMode, history, onExport, onDownload, onOpenInspector } = props;
   const [format, setFormat] = useState<ExportFormat>("step");
-  const [state, setState] = useState<ExportState>("idle");
-  const [result, setResult] = useState<ExportResult | null>(null);
-  const [refusal, setRefusal] = useState<keyof typeof copy.export.refusals | null>(null);
-  const [downloadRefusal, setDownloadRefusal] = useState<
-    keyof typeof copy.export.refusals | null
-  >(null);
+  // The SAME state machine the Inspector tab runs (J-web-stream-11). This
+  // component's two `catch` blocks used to inline, byte for byte, the body of a
+  // helper the panel declared without an export — one mapping in three copies —
+  // and its `run` had a clear the panel's did not, which is how the two drifted.
+  const { state, result, refusal, downloadRefusal, run, download, reset } = useExportSubmission(
+    onExport,
+    onDownload,
+  );
 
   const submission: Submission = { ...CHROME_SUBMISSION, format, artifactRef: pinned, part };
   const idempotencyKey = submissionKeyFor(submission);
   const blocker = exportBlocker(part, pinned);
-  const blockerReason =
-    blocker === "no_part"
-      ? copy.export.noPart
-      : blocker === "no_pin"
-        ? copy.export.noPin
-        : blocker === "invalid_source"
-          ? copy.export.refusals.invalid_source
-          : null;
+  const blockerReason = blockerReasonText(blocker);
   const row = producedRow(history, result, format);
-
-  const run = (): void => {
-    setState("exporting");
-    setRefusal(null);
-    setDownloadRefusal(null);
-    setResult(null);
-    void onExport(submission)
-      .then((document) => {
-        setResult(document);
-        setState("idle");
-      })
-      .catch((error: unknown) => {
-        const reason = error instanceof WorkspaceError ? error.reason : "";
-        setRefusal(
-          reason in copy.export.refusals
-            ? (reason as keyof typeof copy.export.refusals)
-            : "run_failed",
-        );
-        setState("refused");
-      });
-  };
-
-  const download = (output: ExportOutput): void => {
-    setState("transferring");
-    setDownloadRefusal(null);
-    void onDownload(output)
-      .then(() => {
-        setState("idle");
-      })
-      .catch((error: unknown) => {
-        const reason = error instanceof WorkspaceError ? error.reason : "";
-        setDownloadRefusal(
-          reason in copy.export.refusals
-            ? (reason as keyof typeof copy.export.refusals)
-            : "run_failed",
-        );
-        setState("refused");
-      });
-  };
 
   return (
     <Panel
@@ -192,9 +153,9 @@ export function ExportChrome(props: ExportChromeProps): React.JSX.Element {
               data-export-format={name}
               onClick={() => {
                 setFormat(name);
-                setResult(null);
-                setRefusal(null);
-                setDownloadRefusal(null);
+                // A changed field is a different submission (§22.2), so nothing
+                // the previous one produced may survive the change.
+                reset();
               }}
             >
               {name}
@@ -211,7 +172,11 @@ export function ExportChrome(props: ExportChromeProps): React.JSX.Element {
               ? { disabled: true as const, reason: blockerReason }
               : state === "exporting"
                 ? { disabled: true as const, reason: copy.export.running }
-                : { onClick: run })}
+                : {
+                    onClick: () => {
+                      run(submission);
+                    },
+                  })}
           >
             {state === "exporting" ? copy.export.running : copy.export.run}
           </Button>

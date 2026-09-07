@@ -19,7 +19,7 @@
 // The primitive cannot mint one either — that is `<Fact>`'s exclusive right
 // (§4.6, and `heph/no-derived-fact` enforces it).
 
-import { useId, type ReactNode, type Ref } from "react";
+import { useId, type CSSProperties, type ReactNode, type Ref } from "react";
 import { cx, dataProps, type DataAttributes } from "./dataAttrs";
 import styles from "./Input.module.css";
 import roles from "./type.module.css";
@@ -174,6 +174,33 @@ export type SliderProps = FieldFrame & {
   readonly trailing?: ReactNode | undefined;
 } & DataAttributes;
 
+/**
+ * How many glyphs the editable readout must be able to show (J-web-viewport-4).
+ *
+ * §4.7 (amended 2026-09-05): the editable readout renders its value IN FULL at
+ * every value the control can reach — sign, integer digits and the declared
+ * precision. The old `width: 7ch` was a guess that held for `0.00` only until
+ * the browser put spin buttons inside the content box, and never held for the
+ * section offset's six- and seven-glyph values.
+ *
+ * `value` is in the maximum because a PARAMS slider does not clamp (§10, G5.3):
+ * a typed out-of-bounds value is sent so the server can reject it, and a
+ * rejected value the operator cannot read is a refusal they cannot act on. The
+ * `+ 1` is room for a minus sign typed into a non-negative range, which exists
+ * only between the keystroke and the next render.
+ */
+export function readoutGlyphs(
+  min: number,
+  max: number,
+  value: number,
+  precision: number,
+): number {
+  const widths = [min, max, value]
+    .filter((candidate) => Number.isFinite(candidate))
+    .map((candidate) => candidate.toFixed(precision).length);
+  return Math.max(4, ...widths) + 1;
+}
+
 export function Slider(props: SliderProps): React.JSX.Element {
   const {
     label,
@@ -248,6 +275,9 @@ export function Slider(props: SliderProps): React.JSX.Element {
       <input
         type="number"
         className={cx(styles["readout"], roles["data"])}
+        // Not a type declaration: a glyph COUNT the stylesheet turns into a
+        // width beside its own padding and borders (`Input.module.css`).
+        style={{ "--readout-glyphs": String(readoutGlyphs(min, max, value, precision)) } as CSSProperties}
         aria-label={label}
         {...(clamp === true ? { min, max } : {})}
         step={step}

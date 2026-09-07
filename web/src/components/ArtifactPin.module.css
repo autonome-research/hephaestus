@@ -52,3 +52,16 @@
 .pin[data-pin-mode="pinned"] .mode {
   color: var(--status-error-ink);
 }
+
+/* §4.1 (J-web-viewport-5): the source part, as words beside `held`. Muted so it
+   reads as an annotation on the state word rather than as a second state word,
+   and truncating so a long part name cannot push the pin's controls off the bar
+   — the full sentence is still on the chip's `title` and `data-pin-from`. */
+.from {
+  margin-left: 0.4em;
+  color: var(--ink-muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

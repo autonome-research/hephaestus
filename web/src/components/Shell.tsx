@@ -52,8 +52,16 @@ export function Shell(): React.JSX.Element {
   useProjectRefresh();
   const shell = useBreakpoint();
   // §4.1: when the pin is not the current build "the header is visibly marked
-  // and every panel below inherits that marking". The attribute is the
-  // inheritance: any panel can style against `[data-pin-mode="pinned"] …`.
+  // and every panel below inherits that marking".
+  //
+  // THIS ATTRIBUTE IS NOT THE INHERITANCE, and the comment that said it was is
+  // the whole of J-web-viewport-9. It is a MECHANISM for one — a hook a panel
+  // could style against — and for the workspace's whole life no panel did: a
+  // grep found six hits, three comments, two mints and CSS scoped to the header
+  // chip itself. The clause is discharged in words instead, by
+  // `components/PinSplitMarker.tsx`, which marks the STAGE and the INSPECTOR
+  // with what each is showing while the two axes disagree. The attribute stays
+  // as the machine-readable half and now has human-readable consumers.
   const pinMode = useWorkspace((s) => s.pin_mode);
   // `GET /project` is the read every other panel presupposes. When *it* is
   // refused, saying which refusal it was beats N empty panels (§2.4).

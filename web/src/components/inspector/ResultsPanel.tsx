@@ -42,12 +42,12 @@ import {
   PanelHeader,
   PanelNote,
   PanelSection,
-  formatValue,
   metricLabel,
   metricUnit,
 } from "../../system";
 import { formatSolids } from "../../system/format";
 import { Fact } from "../Fact";
+import { MeasuredText, readMeasured } from "./MeasuredValue";
 import { useWorkspace } from "../../state/react";
 import { visibilityKey, visibilityStore } from "../../state/visibility";
 import { useSyncExternalStore } from "react";
@@ -219,7 +219,14 @@ export function ResultsView({ part, build, hidden, onToggle }: ResultsViewProps)
                       label: metricLabel(name),
                       value: (
                         <Fact source="build.metrics[]" value={metricValue(metrics[name])}>
-                          {formatValue(metrics[name])}
+                          {/* `formatValue` returns `null` for a structure it
+                              cannot render as a scalar (J-web-stream-8), and a
+                              metric is a scalar or a numeric triple by §6.1 —
+                              so `null` here means the server sent something
+                              this table has no column shape for. It is said,
+                              not stringified; the raw value stays on
+                              `data-value` either way. */}
+                          <MeasuredText shape={readMeasured(metrics[name])} />
                         </Fact>
                       ),
                       unit: metricUnit(name) ?? "",

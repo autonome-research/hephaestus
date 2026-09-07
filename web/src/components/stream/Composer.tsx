@@ -123,11 +123,26 @@
 // takes `primary`. The reason is published through
 // `stream/composerGate.ts`'s store so both surfaces read one fact.
 
-import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useSyncExternalStore,
+  useState,
+} from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { WorkspaceError } from "../../api/client";
+import { refusalText } from "../refusalText";
 import { refreshAfterTurn } from "../../api/refresh";
-import { attachAgent, type AttachProjection, isAttachCause } from "../../api/attach";
+import {
+  attachAgent,
+  attachDetailAdds,
+  type AttachCause,
+  type AttachProjection,
+  isAttachCause,
+} from "../../api/attach";
 import {
   cancelRun,
   createSession,
@@ -606,9 +621,12 @@ export function Composer(props: ComposerProps): React.JSX.Element {
         void client.invalidateQueries({ queryKey: ["sessions"] });
       })
       .catch((cause: unknown) => {
-        setAttachError(
-          cause instanceof WorkspaceError ? cause.message : copy.composer.attachFailed,
-        );
+        // NEVER the server's raw sentence (RC-5, J-web-stream-6). A refused
+        // attach carries the same closed §7A.8 `cause` the refusal that
+        // disabled this composer carried, and `refusalText` maps it; an
+        // unmapped reason falls back to §2.4's title, not to
+        // `f"{cause}: {detail}"` in a reading surface.
+        setAttachError(refusalText(cause));
       })
       .finally(() => {
         setAttaching(false);
@@ -622,6 +640,18 @@ export function Composer(props: ComposerProps): React.JSX.Element {
       : sending
         ? copy.composer.sending
         : copy.composer.placeholder;
+  // §7A.8's cause, resolved ONCE. `null` covers "no projection" and "a cause
+  // word this build has never heard of"; both render the generic start failure
+  // and both keep the server's word on `data-attach-cause`.
+  const attachCause: AttachCause | null =
+    attach !== null && isAttachCause(attach.cause) ? attach.cause : null;
+  // §4.7's shared-cause rule (J-web-stream-4). While the composed refusal is
+  // mounted it has ALREADY rendered `disabled.agent_unavailable` as prose; Send
+  // describes itself from that element instead of rendering the same sentence a
+  // second time in its own clipped reason span. Outside that state Send mints
+  // its own, because there is nothing else on screen that says why.
+  const unavailableReasonId = useId();
+  const sendDescribes = disabledReason === "agent_unavailable";
   const sendHint =
     sending || refusedRunInFlight ? copy.composer.sendHintBusy : copy.composer.sendHint;
 
@@ -670,40 +700,66 @@ export function Composer(props: ComposerProps): React.JSX.Element {
           <EmptyState
             icon="alert"
             title={copy.stream.noAgentTitle}
-            body={copy.composer.disabled.agent_unavailable}
+            // The sentence, ONCE, in an element with an id — Send's
+            // `aria-describedby` points here rather than minting a second copy
+            // (§4.7's shared-cause rule; J-web-stream-4).
+            body={<span id={unavailableReasonId}>{copy.composer.disabled.agent_unavailable}</span>}
             density="inline"
           />
           {attach !== null ? (
             <>
+              {/* One cause, one sentence. The attribute is unconditional so a
+                  harness reads the server's word even where this build has no
+                  sentence for it; the visible text falls back to the generic
+                  start failure rather than to the raw word. */}
               <p className={styles["cause"]} data-attach-cause={attach.cause ?? ""}>
-                {isAttachCause(attach.cause)
-                  ? copy.composer.attachCause[attach.cause]
-                  : copy.composer.attachCause.sidecar_failed}
+                {copy.attach.cause[attachCause ?? "sidecar_failed"]}
               </p>
+              {/* §7A.8's named file, as WRAPPING CODE TEXT and not a `Chip`
+                  (J-web-stream-3). A chip is a compact readout; this is a
+                  ninety-character identifier whose whole text is load-bearing —
+                  the refusal exists to name it — and `Chip` is `white-space:
+                  nowrap` by construction, so inside a 395px column it drew a
+                  621px box whose right edge sat 214px past the column's, with
+                  the end of the path clipped away and no ellipsis to say so.
+                  `data-attach-path` is unchanged: it is what the gates read. */}
               <p className={styles["path"]} data-attach-path={attach.config_path}>
-                <Chip tone="code">{attach.config_path}</Chip>
+                <span className={styles["pathLabel"]}>{copy.attach.pathLabel}</span>{" "}
+                <code className={styles["pathText"]}>{attach.config_path}</code>
               </p>
-              {attach.detail !== undefined ? (
-                <p className={styles["cause"]} data-attach-detail="">
-                  {attach.detail}
-                </p>
+              {/* The detail is DIAGNOSTIC and renders only where it adds
+                  something the mapped cause does not (`attachDetailAdds`), and
+                  then behind §4.7's disclosure — never as a fourth bare
+                  paragraph. For the other five causes the server derives it
+                  from the same raise the cause word came from, so it restated
+                  the sentence above and re-printed the path beside it
+                  (J-web-stream-4). */}
+              {attach.detail !== undefined && attachDetailAdds(attachCause) ? (
+                <details className={styles["disclosure"]} data-attach-detail="">
+                  <summary className={styles["cause"]}>{copy.attach.detailLabel}</summary>
+                  <pre className={styles["block"]}>{attach.detail}</pre>
+                </details>
               ) : null}
             </>
           ) : null}
           {/* §7A.8's remedy rides on the one action rather than on a fourth
               paragraph. The section's requirement is that the refusal NAME the
-              file the server looked for — the chip above does that — and that
+              file the server looked for — the path above does that — and that
               it not offer to write it. Four stacked paragraphs and a button in
               a ~380px column is the wall the operator read as a broken chat;
-              the sentence is still here, on the control it describes. */}
+              the sentence is still here, on the control it describes, together
+              with what the press itself does (§2.3: this route creates a
+              runtime from configuration that already exists — it cannot create
+              configuration, which is why it is not called "Add a provider"). */}
           <Button
             variant="secondary"
             onClick={retryAttach}
-            title={copy.composer.attachHow}
+            title={`${copy.attach.actionTitle} ${copy.attach.how}`}
+            className={styles["refusalAction"]}
             data-attach-retry=""
             {...(attaching ? { disabled: true as const, reason: copy.composer.sending } : {})}
           >
-            {copy.composer.attachRetry}
+            {copy.attach.action}
           </Button>
           {attachError !== null ? (
             <p className={styles["cause"]} data-attach-error="">
@@ -789,7 +845,13 @@ export function Composer(props: ComposerProps): React.JSX.Element {
           title={sendHint}
           data-composer-send=""
           onClick={submit}
-          {...(sendDisabled ? { disabled: true as const, reason: sendReason } : {})}
+          {...(sendDisabled
+            ? {
+                disabled: true as const,
+                reason: sendReason,
+                ...(sendDescribes ? { reasonElementId: unavailableReasonId } : {}),
+              }
+            : {})}
         >
           {post.phase === "sending" ? copy.composer.sending : copy.composer.send}
         </Button>

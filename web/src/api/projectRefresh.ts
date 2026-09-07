@@ -70,31 +70,61 @@ export function useProjectRefresh(): void {
     return collectSessionIds(listed, nodes);
   }, [sessions.data, thread.data]);
 
+  /**
+   * The subscribed set, as ONE stable value (§7A.11).
+   *
+   * `sessionIds` is memoised on two queries that settle at different times, so
+   * when the second lands the memo returns a NEW ARRAY whose joined form is
+   * unchanged. Listing both this key and the array in the effect's dependencies
+   * therefore defeated the key: the identity comparison failed, the socket was
+   * closed and reopened three milliseconds later, and the replacement sent a
+   * byte-identical subscribe frame (J-web-stream-7). The separator is `\0`
+   * because a session id cannot contain one, so the key is injective over the
+   * set — as an ESCAPE, never a raw byte in this source (J-web-stream-12).
+   */
   const sessionKey = sessionIds.join("\0");
   const partRef = useRef(part);
   useEffect(() => {
     partRef.current = part;
   }, [part]);
 
+  // Read through refs, the technique `stream/useStream.ts` already uses for its
+  // cursor: the effect must react to the CONTENT of the subscribed set and to
+  // nothing else. `selected` in particular changes on every tab switch and is
+  // used only inside the frame handler, so listing it reconnected the socket on
+  // a switch that changed no subscription at all.
+  const selectedRef = useRef(selected);
   useEffect(() => {
-    if (sessionIds.length === 0) return;
+    selectedRef.current = selected;
+  }, [selected]);
+
+  useEffect(() => {
+    // TRAP, for the next reader and for an exhaustive-dependency lint that may
+    // one day be enabled here (J-mirrors-and-dx-36): do NOT add `sessionIds` or
+    // `selected` back to this list. The key IS the set, and the two refs above
+    // are how the handler stays current without the effect re-running.
+    if (sessionKey === "") return;
     const token = workspaceToken();
     if (token === null) return;
-    const lead = sessionIds[0];
+    // Derived from the KEY, not from the array beside it, so the frame this
+    // socket sends and the key that decided to open it cannot disagree.
+    const subscribed = sessionKey.split("\0");
+    const lead = subscribed[0];
     if (lead === undefined) return;
     const socket = new StreamSocket(
-      { sessionId: lead, sessionIds, token },
+      { sessionId: lead, sessionIds: subscribed, token },
       {
         onFrame: (frame) => {
           const sid = frame.session_id;
-          if (sid !== null && !sessionIds.includes(sid)) return;
+          if (sid !== null && !subscribed.includes(sid)) return;
           if (frame.kind === "tool_result") {
             // A delegated child is minted before it writes. Refresh the
             // inventory so the next subscribe includes it — still a refetch
             // of enumerated keys, never a merge of the tool payload.
             void client.invalidateQueries({ queryKey: ["sessions"] });
-            if (selected !== null) {
-              void client.invalidateQueries({ queryKey: ["thread", selected] });
+            const openThread = selectedRef.current;
+            if (openThread !== null) {
+              void client.invalidateQueries({ queryKey: ["thread", openThread] });
             }
           }
           if (frame.kind !== "terminal") return;
@@ -109,7 +139,7 @@ export function useProjectRefresh(): void {
     return () => {
       socket.close();
     };
-  }, [sessionKey, sessionIds, client, selected]);
+  }, [sessionKey, client]);
 
   // Sidecar death produces neither a terminal nor a prompt response. The
   // Stream column already handles this when it is mounted (#59); this copy

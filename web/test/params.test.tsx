@@ -38,6 +38,7 @@ describe("the projection is the inventory", () => {
         rejected={[]}
         conflict={false}
         committing={false}
+        placeholder={false}
         onDraft={() => undefined}
         onRelease={() => undefined}
       />,
@@ -87,6 +88,7 @@ describe("G5.3 — rejected[] is verbatim, and the primitive does not clamp", ()
         rejected={rejected}
         conflict={false}
         committing={false}
+        placeholder={false}
         onDraft={() => undefined}
         onRelease={() => undefined}
       />,
@@ -125,5 +127,59 @@ describe("a slider write refreshes the inspector, not just params and build", ()
 
   it("a conflict invalidates only the params projection", () => {
     expect(keysAfterParamCommit("tread", false)).toEqual([keys.params("tread")]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// J-cli-startup-8 — the Script tab's "Loading parameters…" full-panel
+// replacement, on a part switch that hits a slow (server-side) params read.
+// ---------------------------------------------------------------------------
+
+describe("placeholder rendering keeps the panel's layout instead of a blocking note (J-cli-startup-8)", () => {
+  function placeholderView(overrides: Partial<Parameters<typeof ParamSlidersView>[0]> = {}) {
+    return (
+      <ParamSlidersView
+        part="tread"
+        document={paramsDoc}
+        draft={{}}
+        rejected={[]}
+        conflict={false}
+        committing={false}
+        placeholder
+        onDraft={() => undefined}
+        onRelease={() => undefined}
+        {...overrides}
+      />
+    );
+  }
+
+  it("mounts the panel and its header, not a bare loading string, while placeholder data is showing", () => {
+    const host = render(placeholderView());
+    expect(host.querySelector('[data-panel="params"]')).not.toBeNull();
+    expect(host.querySelector('[data-params-placeholder]')).not.toBeNull();
+    // The panel keeps its shape: a row per the RETAINED (previous part's) row
+    // count, not a full-panel replacement note.
+    expect(host.querySelectorAll("li").length).toBe(paramsDoc.params.length);
+  });
+
+  it("mounts no interactive Slider while placeholder data is showing — nothing here is commit-eligible", () => {
+    const host = render(placeholderView());
+    // A placeholder row set carries the PREVIOUS part's `state_hash`; a control
+    // that could commit against it would send a write under an expectation
+    // that belongs to a different part, or matches nothing at all.
+    expect(host.querySelectorAll("[data-param-slider]")).toHaveLength(0);
+    expect(host.querySelectorAll('input[type="range"]')).toHaveLength(0);
+  });
+
+  it("marks the list busy for assistive tech rather than swapping in a blocking note", () => {
+    const host = render(placeholderView());
+    const list = host.querySelector("ul");
+    expect(list?.getAttribute("aria-busy")).toBe("true");
+  });
+
+  it("renders the normal interactive list once placeholder clears, with the same document", () => {
+    const host = render(placeholderView({ placeholder: false }));
+    expect(host.querySelector('[data-params-placeholder]')).toBeNull();
+    expect(host.querySelectorAll("[data-param-slider]").length).toBe(paramsDoc.params.length);
   });
 });

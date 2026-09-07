@@ -76,9 +76,29 @@
 }
 
 /* The editable readout. Right-aligned and tabular, like every other number the
-   reader reads (§4.7's DataTable value column, same rule). */
+   reader reads (§4.7's DataTable value column, same rule).
+ *
+ * SIZED FOR THE WIDEST VALUE THE CONTROL CAN PRODUCE, not for a magic character
+ * count (J-web-viewport-4). The shipped `width: 7ch` was a BORDER box, so the
+ * content box was about 40px — which the four glyphs of `0.00` would have fitted
+ * — and then the browser laid this number input's spin buttons INSIDE that
+ * content box, taking the scroll width to 51-52px against a 48px client width
+ * and clipping the last glyph. §4.7 makes the readout editable precisely so a
+ * value can be read and typed exactly, and a readout that cannot show four
+ * characters undoes that. The latent, larger instance was the section offset,
+ * whose six- and seven-glyph values overflowed 40px with or without spin
+ * buttons.
+ *
+ * `--readout-glyphs` is the count `Input.tsx::readoutGlyphs` measures from the
+ * control's own bounds and precision; the fallback is the old constant so a
+ * caller that does not set it is no worse off than before. The `+ 2px` is the
+ * two 1px borders and the padding is the declared padding — spelled out because
+ * this is a border box and `7ch` silently was not. */
 .readout {
-  width: 7ch;
+  width: calc(var(--readout-glyphs, 7) * 1ch + 2 * var(--space-1) + 2px);
+  /* So the readout can still yield inside a flex row; J-web-viewport-3 gives the
+     explode card a floor that absorbs the pressure instead. */
+  min-width: 0;
   min-height: var(--target-min);
   padding: 0 var(--space-1);
   border: 1px solid var(--border-control);
@@ -86,4 +106,19 @@
   color: var(--ink-strong);
   background: var(--surface-control);
   text-align: right;
+}
+
+/* The spin buttons are a redundant, coarser stepper beside a range input that
+   already steps — and they are what makes the box unmeasurable, because the UA
+   lays them inside the content box at a width the page cannot know. */
+.readout {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.readout::-webkit-outer-spin-button,
+.readout::-webkit-inner-spin-button {
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
 }

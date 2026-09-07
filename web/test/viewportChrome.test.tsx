@@ -35,7 +35,16 @@ import {
 import { ExplodeSlider } from "../src/components/stage/viewport/ExplodeSlider";
 import { SectionControl } from "../src/components/stage/viewport/SectionControl";
 import { ViewCube } from "../src/components/stage/viewport/ViewCube";
+import { readoutGlyphs } from "../src/system/Input";
 import { copy } from "../src/copy";
+
+/** One stylesheet, comments stripped, read relative to `web/src`. */
+function css(relative: string): string {
+  return readFileSync(join(process.cwd(), "src", relative), "utf8").replace(
+    /\/\*[\s\S]*?\*\//g,
+    "",
+  );
+}
 import { DEFAULT_STATE } from "../src/state/workspace";
 import { workspaceStore } from "../src/state/react";
 import { ISO_ELEVATION_DEG, viewAngles } from "../src/viewport/cameras";
@@ -401,5 +410,60 @@ describe("SectionControl — a 1-solid sheet hides section (issue 113 leftover)"
     expect(host.querySelector("[data-section-control]")).toBeNull();
     expect(host.querySelector("[data-section-disclose]")).toBeNull();
     expect(host.querySelector("[data-testid='section-enable']")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// J-web-viewport-4 — the editable readout must show every glyph the control
+// can produce, not a magic character count (§4.7, amended 2026-09-05).
+// ---------------------------------------------------------------------------
+
+describe("readoutGlyphs — sized for the widest value the control can produce", () => {
+  it("holds a minimum of 4 (the '0.00' case) plus one for a sign that might appear", () => {
+    expect(readoutGlyphs(0, 1, 0, 2)).toBe(5); // "0.00" is 4 glyphs, +1 for a sign.
+  });
+
+  it("grows to fit the widest of min, max and the current value", () => {
+    // A 100mm section offset at 2dp: "-100.00" is 7 glyphs (the sign is real
+    // here, since `min` itself is negative), +1 for the reserved sign slot.
+    expect(readoutGlyphs(-100, 100, 0, 2)).toBe(8);
+    expect(readoutGlyphs(-100, 100, -87.5, 2)).toBe(8);
+  });
+
+  it("grows for a typed OUT-OF-BOUNDS value — §10/G5.3's no-clamp rule means it must stay readable", () => {
+    // A PARAMS slider never clamps; a rejected value the operator cannot read
+    // is a refusal they cannot act on.
+    expect(readoutGlyphs(0, 10, 12345, 2)).toBeGreaterThan(readoutGlyphs(0, 10, 5, 2));
+  });
+
+  it("ignores a non-finite candidate rather than producing NaN glyphs", () => {
+    expect(Number.isFinite(readoutGlyphs(0, 100, NaN, 2))).toBe(true);
+  });
+
+  it("never regresses below the shipped 7ch default for the common min/max/value shape", () => {
+    // The section offset's latent 6-7 glyph case, the one the shipped 40px
+    // content box overflowed regardless of spin buttons.
+    expect(readoutGlyphs(-50, 50, -49.99, 2)).toBeGreaterThanOrEqual(7);
+  });
+});
+
+describe("the readout's box declares the widest-value width, a zero minimum, and no spin buttons (J-web-viewport-4)", () => {
+  const input = css("system/Input.module.css");
+
+  it("sizes width from --readout-glyphs rather than a fixed 7ch", () => {
+    expect(input).toMatch(
+      /\.readout\s*\{[^}]*width:\s*calc\(var\(--readout-glyphs,\s*7\)\s*\*\s*1ch/,
+    );
+    expect(input).not.toMatch(/\.readout\s*\{[^}]*width:\s*7ch/);
+  });
+
+  it("keeps a zero minimum so the readout can still shrink in a flex row", () => {
+    expect(input).toMatch(/\.readout\s*\{[^}]*min-width:\s*0;?[^}]*\}/);
+  });
+
+  it("suppresses the native spin buttons, which made the box unmeasurable", () => {
+    expect(input).toMatch(/appearance:\s*textfield/);
+    expect(input).toMatch(/-moz-appearance:\s*textfield/);
+    expect(input).toMatch(/::-webkit-(?:outer|inner)-spin-button/);
   });
 });

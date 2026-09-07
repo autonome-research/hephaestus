@@ -7,10 +7,21 @@
  * four classes with one shared `border` declaration — is gone.
  */
 
-/* §5.5 C18: one occupant of the viewport's bottom flex band, at its natural
-   size — never stretched, never absolutely stacked over a neighbour. */
+/* §5.5 C18 (amended 2026-09-05): one occupant of the viewport's bottom flex
+   band, at its natural size — never stretched, never absolutely stacked over a
+   neighbour, and **it wraps internally under pressure rather than evicting its
+   neighbour** (J-web-viewport-3).
+ *
+ * `flex: none` was literally what the clause said and it is why the explode card
+ * was crushed: this control has TWO natural sizes — about 131px collapsed and
+ * about 624px engaged — and the band's yield trigger was derived from the
+ * collapsed one, so engaging a section added ~490px of unyielding demand to a
+ * band that could not grow. `0 1 auto` lets it give width back down to its own
+ * `min-content`, and `flex-wrap: wrap` below is how it spends the loss: on its
+ * own second line, not on its neighbour's box. */
 .control {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: min-content;
   pointer-events: auto;
   display: flex;
   align-items: center;

@@ -19,6 +19,16 @@
 // where they are addressed by a blob the server named and labelled with a
 // filename the server derived (§22.4 — the client re-derives neither).
 //
+// THE STATE MACHINE IS SHARED, NOT COPIED (J-web-stream-11). The five pieces of
+// submission state and the two transitions live in
+// `components/export/submission.ts`, which `chrome/ExportChrome.tsx` runs too.
+// They used to be hand-copied, and the copies diverged: this component's `run`
+// cleared neither the previous result nor the download refusal, so after a
+// successful export a second, refused submission left the earlier run's kerf
+// block on screen under a live alert — a `<Fact>` binding a rendered value to a
+// submission that produced no kerf, which is a §1/§4.6 violation rather than an
+// untidiness. A hook makes that divergence unrepresentable.
+//
 // THE KEY IS THE PANEL'S. §22.2's TIGHTENING binds this component specifically:
 // "the key is minted once per *submission*, not once per click: the client reuses
 // it across transport retries of one export and mints a fresh UUIDv7 the moment
@@ -45,7 +55,7 @@
 //
 // §4.7's last line: this component declares no colour, type or border of its own.
 
-import { useCallback, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   DOC_KINDS,
   DRAWING_KINDS,
@@ -58,17 +68,14 @@ import {
   runDoc,
   runDrawing,
   runExport,
-  submissionKey,
   tooLargeToBuffer,
   type DocKind,
   type DrawingKind,
   type DrawingSheet,
-  type ExportFormat,
   type ExportLayout,
   type ExportOutput,
   type ExportResult,
   type ExportRow,
-  type ExportState,
   type ExportSubject,
   type ExportsDocument,
   type KerfDecision,
@@ -95,40 +102,33 @@ import {
   type DataRow,
 } from "../../system";
 import { Fact } from "../Fact";
+import {
+  blockerReasonText,
+  exportBlocker,
+  submissionKeyFor,
+  useExportSubmission,
+  type Submission,
+} from "../export/submission";
 import styles from "./ExportPanel.module.css";
 
 /**
- * Why the controls are disabled, when they are — §22.7's refusal table, decided
- * **before** a request rather than after one.
- *
- * Closed, and each value is either an engine reason or the absence of a subject.
- * §22.7: "the controls are disabled with the checkpoint or addressing reason
- * above and the panel names the build error rather than rendering an enabled
- * button that will 4xx".
+ * §22.2 / §22.7's export state machine and its four helpers now live in
+ * `components/export/submission.ts`, a module neither export surface owns
+ * (J-web-stream-11). Re-exported from here because both components, the e2e
+ * harness and three test files import them from this path, and a rename in the
+ * same commit as a behaviour change is two changes to review as one.
  */
-export const EXPORT_BLOCKERS = ["no_part", "no_pin", "invalid_source"] as const;
-export type ExportBlocker = (typeof EXPORT_BLOCKERS)[number];
+export {
+  EXPORT_BLOCKERS,
+  exportBlocker,
+  resetSubmissionKeys,
+  signature,
+  submissionKeyFor,
+  type ExportBlocker,
+  type Submission,
+} from "../export/submission";
 
-/** The submission fields, from which the idempotency key is derived (§22.2). */
-export interface Submission {
-  readonly subject: ExportSubject;
-  readonly format: ExportFormat;
-  readonly layout: ExportLayout;
-  readonly blankWidth: string;
-  readonly blankHeight: string;
-  readonly drawingKind: DrawingKind;
-  readonly sheet: DrawingSheet;
-  readonly docKind: DocKind;
-  readonly artifactRef: string | null;
-  /**
-   * The route path parameter, and the tool argument `name`. A held pin can
-   * outlive a rail click (#100): hold jig, select kerf_card, export STEP —
-   * that is a different submission than the jig's, and a key that omits the
-   * part is `key_payload_mismatch` for the life of the page.
-   */
-  readonly part: string | null;
-}
-
+/** The resting field set. Layout only lives here; the key is derived from it. */
 const INITIAL: Omit<Submission, "artifactRef" | "part"> = {
   subject: "export",
   format: "step",
@@ -139,82 +139,6 @@ const INITIAL: Omit<Submission, "artifactRef" | "part"> = {
   sheet: "A4",
   docKind: "bom",
 };
-
-/**
- * The signature §22.2 keys on: a fresh key the moment any field changes, and the
- * same key for every retry of one unchanged submission.
- *
- * The artifact ref is in the signature because it is a field of the request —
- * exporting the same format from a different pin is a different submission, and
- * reusing the key across the two would be `key_payload_mismatch` by the server's
- * own reckoning. The part is in it for the same reason: it is the route's path
- * parameter and it lands in the tool arguments as `name` (#100).
- */
-export function signature(submission: Submission): string {
-  const parts: readonly string[] =
-    submission.subject === "export"
-      ? [submission.format, submission.layout, submission.blankWidth, submission.blankHeight]
-      : submission.subject === "drawing"
-        ? [submission.drawingKind, submission.sheet]
-        : [submission.docKind];
-  return [submission.subject, submission.part ?? "", submission.artifactRef ?? "", ...parts].join(
-    "|",
-  );
-}
-
-/** The kind segment of an artifact ref — the only thing this panel reads off one. */
-function refKind(ref: string): string {
-  const parts = ref.split(":");
-  return parts.length === 4 && parts[0] === "artifact" ? (parts[1] ?? "") : "";
-}
-
-/**
- * Whether the pinned artifact can be exported at all, and why not.
- *
- * The one check the client makes ahead of the server, and it is admissible
- * because it reads nothing the server would have to compute: `artifact:<kind>:…`
- * is the ref's own grammar, and `_freeze_export_source` refuses any kind but
- * `build` by that same segment. §22.7 asks for exactly this — a disabled control
- * that states its reason beats an enabled one that 4xxes.
- */
-export function exportBlocker(part: string | null, pinned: string | null): ExportBlocker | null {
-  if (part === null) return "no_part";
-  if (pinned === null) return "no_pin";
-  return refKind(pinned) === "build" ? null : "invalid_source";
-}
-
-/** A named refusal reason, or `run_failed` for anything without one. */
-function refusalKey(error: unknown): keyof typeof copy.export.refusals {
-  const reason = error instanceof WorkspaceError ? error.reason : "";
-  return reason in copy.export.refusals
-    ? (reason as keyof typeof copy.export.refusals)
-    : "run_failed";
-}
-
-/**
- * The key for one submission, stable across retries of that submission.
- *
- * Module-scoped rather than component state so a remount — switching Inspector
- * tabs, which unmounts this panel — does not re-mint a key for a submission the
- * operator has already sent. Remounting and then clicking Export again is
- * precisely the "transport retry" §22.2 wants replayed, and a per-component map
- * would execute it a second time instead.
- */
-const SUBMISSION_KEYS = new Map<string, string>();
-
-export function submissionKeyFor(submission: Submission): string {
-  const id = signature(submission);
-  const existing = SUBMISSION_KEYS.get(id);
-  if (existing !== undefined) return existing;
-  const minted = submissionKey();
-  SUBMISSION_KEYS.set(id, minted);
-  return minted;
-}
-
-/** Test seam: forget every minted key (a fresh workspace, a fresh test). */
-export function resetSubmissionKeys(): void {
-  SUBMISSION_KEYS.clear();
-}
 
 export interface ExportViewProps {
   readonly part: string | null;
@@ -247,12 +171,16 @@ export interface ExportViewProps {
 export function ExportView(props: ExportViewProps): React.JSX.Element {
   const { part, pinned, pinMode, history, stale, onExport, onDownload } = props;
   const [fields, setFields] = useState(INITIAL);
-  const [state, setState] = useState<ExportState>("idle");
-  const [result, setResult] = useState<ExportResult | null>(null);
-  const [refusal, setRefusal] = useState<keyof typeof copy.export.refusals | null>(null);
-  const [downloadRefusal, setDownloadRefusal] = useState<
-    keyof typeof copy.export.refusals | null
-  >(null);
+  // ONE state machine, shared with `ExportChrome` (J-web-stream-11). The two
+  // used to hold identical state and run hand-copied transitions, and this
+  // component's `run` was the copy that did not clear the previous result — so
+  // a refused submission after a successful one left the earlier run's kerf
+  // block on screen, attributed by `<Fact>` to a submission that produced no
+  // kerf. The hook's `run` clears it.
+  const { state, result, refusal, downloadRefusal, run, download } = useExportSubmission(
+    onExport,
+    onDownload,
+  );
 
   const submission: Submission = { ...fields, artifactRef: pinned, part };
   // One key per distinct field set (§22.2's TIGHTENING), minted by the same
@@ -261,52 +189,11 @@ export function ExportView(props: ExportViewProps): React.JSX.Element {
   const idempotencyKey = submissionKeyFor(submission);
 
   const blocker = exportBlocker(part, pinned);
-  const blockerReason =
-    blocker === "no_part"
-      ? copy.export.noPart
-      : blocker === "no_pin"
-        ? copy.export.noPin
-        : blocker === "invalid_source"
-          ? copy.export.refusals.invalid_source
-          : null;
+  const blockerReason = blockerReasonText(blocker);
 
   const layoutOffered =
     fields.subject === "export" && (LAYOUT_FORMATS as readonly string[]).includes(fields.format);
   const blankOffered = layoutOffered && fields.layout === "nested_sheet";
-
-  // Deliberately not memoized: it closes over `submission`, which is rebuilt
-  // from the field state on every render, so a `useCallback` over it would be a
-  // dependency list that changes every render — the memo with none of the
-  // benefit. Nothing downstream is memoized on this identity.
-  const run = (): void => {
-    setState("exporting");
-    setRefusal(null);
-    void onExport(submission)
-      .then((document) => {
-        setResult(document);
-        setState("idle");
-      })
-      .catch((error: unknown) => {
-        setRefusal(refusalKey(error));
-        setState("refused");
-      });
-  };
-
-  const download = useCallback(
-    (output: ExportOutput) => {
-      setState("transferring");
-      setDownloadRefusal(null);
-      void onDownload(output)
-        .then(() => {
-          setState("idle");
-        })
-        .catch((error: unknown) => {
-          setDownloadRefusal(refusalKey(error));
-          setState("refused");
-        });
-    },
-    [onDownload],
-  );
 
   return (
     <Panel
@@ -491,7 +378,11 @@ export function ExportView(props: ExportViewProps): React.JSX.Element {
                 ? { disabled: true as const, reason: blockerReason }
                 : state === "exporting"
                   ? { disabled: true as const, reason: copy.export.running }
-                  : { onClick: run })}
+                  : {
+                      onClick: () => {
+                        run(submission);
+                      },
+                    })}
             >
               {state === "exporting" ? copy.export.running : copy.export.run}
             </Button>

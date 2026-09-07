@@ -60,3 +60,55 @@ export function showsHistoryBar(history: HistoryProgress): boolean {
   if (history.state === "failed") return true;
   return history.state === "truncated" && history.pages > 1;
 }
+
+/**
+ * §7.4(e), added 2026-09-05: the state of a session that exists and has no
+ * transcript.
+ *
+ * The panel had no branch for it. `Transcript` maps rows and renders nothing
+ * for zero of them, and the only stream empty state was gated on the SESSION
+ * LIST being empty — a different claim, and a false one whenever a session is
+ * selected. So selecting a session that has never been prompted painted an
+ * empty column while `data-history-state="complete"` reported the read had
+ * succeeded: §3.3's principle 5 says every state — refusal, absence, no runtime
+ * — is a first-class composed state, and this one had no producer of any copy
+ * anywhere.
+ *
+ * SIX EXCLUSIONS, and every one of them is a state that already has its own
+ * composed shape which this must not shadow:
+ *
+ * 1. no session selected — §7A.2's create invitation, or nothing at all;
+ * 2. `agent_unavailable` — the composer's §7A.8 refusal owns that cause;
+ * 3. a runtime fault — the fault band says the runtime stopped answering;
+ * 4. the session listing was refused — the generic §2.4 refusal renders;
+ * 5. the history read is not `complete` — `loading` is visibly filling
+ *    (§8(b)), `failed` and `truncated` have their own sentences, and claiming
+ *    "no turns yet" over a read that did not finish is the lie §4.4 forbids;
+ * 6. rows exist — there is a transcript.
+ *
+ * NO ACTION. §7.1 forbids a create affordance here: the composer directly below
+ * is the action, and this session is the one it will prompt.
+ */
+export interface EmptyTranscript {
+  /** §4.5's `?s=` — `null` is "no session addressed", not "an empty one". */
+  readonly selected: string | null;
+  /** `GET /sessions` refused `agent_unavailable` (§2.4). */
+  readonly unavailable: boolean;
+  /** The runtime stopped answering (`stream/runtimeFault.ts`). */
+  readonly fault: RuntimeFault | null;
+  /** `GET /sessions` refused for any other reason. */
+  readonly listRefused: boolean;
+  /** The paged history walk's own report (§8). */
+  readonly history: HistoryProgress;
+  /** Rendered transcript rows, live suffix included. */
+  readonly rows: number;
+}
+
+export function showsEmptyTranscript(state: EmptyTranscript): boolean {
+  if (state.selected === null) return false;
+  if (state.unavailable) return false;
+  if (state.fault !== null) return false;
+  if (state.listRefused) return false;
+  if (state.history.state !== "complete") return false;
+  return state.rows === 0;
+}

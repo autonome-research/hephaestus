@@ -18,7 +18,7 @@
 // not a token, not a provider's response body; `detail` is reduced at the
 // server's boundary before it is ever serialized.
 
-import { apiJson } from "./client";
+import { apiJson, WorkspaceError } from "./client";
 
 /**
  * §7A.8's closed `cause` vocabulary, plus the seventh value §23.0 added.
@@ -83,6 +83,47 @@ export function attachProjection(data: Readonly<Record<string, unknown>>): Attac
     ...(typeof cause === "string" ? { cause } : {}),
     ...(typeof detail === "string" ? { detail } : {}),
   };
+}
+
+/**
+ * The §7A.8 cause carried by an `agent_unavailable` / `attach_failed` refusal.
+ *
+ * `null` where there is none to read: a refusal that is not about the attach, a
+ * refusal from a process that never attempted one, or a `cause` word this build
+ * has never heard of. Every caller falls back to a mapped generic rather than
+ * to the server's raw sentence, so an unrecognised cause degrades to the §2.4
+ * title and never to `f"{cause}: {detail}"` in a reading surface (RC-5).
+ *
+ * A helper rather than a JSX condition because it is the join between the
+ * server's structured refusal and the ONE mapped cause vocabulary both surfaces
+ * render (`copy.attach.cause`), and a join spelled twice is the defect
+ * J-web-stream-6 recorded: the composer mapped the cause, the rail did not.
+ */
+export function attachCauseOf(error: unknown): AttachCause | null {
+  if (!(error instanceof WorkspaceError)) return null;
+  const projection = attachProjection(error.data);
+  if (projection === null) return null;
+  return isAttachCause(projection.cause) ? projection.cause : null;
+}
+
+/**
+ * Whether a cause's `detail` says anything its mapped sentence does not.
+ *
+ * §4.7's second empty-state rule — "a shared cause is detected once, one cause,
+ * one sentence" — is why this is a predicate and not a `detail !== undefined`
+ * in the markup. For five of the seven causes the server derives `detail` from
+ * the same raise the `cause` word came from, so it restates the mapped sentence
+ * and re-prints the path the refusal already names: four paragraphs and a
+ * button in a ~380px column, which is the wall an operator reads as a broken
+ * chat (J-web-stream-4).
+ *
+ * The two exceptions carry a REDUCED EXCEPTION from the server boundary — a
+ * parse error's position, a sidecar's exit — which is information no mapped
+ * sentence can hold, so those two render it, behind the disclosure §4.7
+ * prescribes.
+ */
+export function attachDetailAdds(cause: AttachCause | null): boolean {
+  return cause === "provider_config_invalid" || cause === "sidecar_failed";
 }
 
 /**

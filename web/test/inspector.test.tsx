@@ -541,6 +541,45 @@ describe("ChecksView renders the report's own badges (§6.3)", () => {
       String(checks.report.check_set_generation),
     );
   });
+
+  // J-web-stream-8: `format.ts`'s `JSON.stringify` fall-through renders a check
+  // whose predicate raised as raw punctuation — `measured: {"error":{"type":…}}`
+  // — at the exact spot the actual sentence, "unknown part 'lid' …", is buried
+  // about 120 characters in. §4.7's clause: message as the row value, code as a
+  // chip, raw object behind a disclosure — never `JSON.stringify` on a reading
+  // surface. This asserts the VISIBLE text, not `data-value` (already covered
+  // above): the `data-value` attribute is unconditionally allowed to keep
+  // serializing, so a check on it alone cannot catch this defect.
+  it("renders an error-envelope measured value as its message, not as JSON (§4.7)", () => {
+    const errored = host.querySelector('[data-check="panel_checks:panel_clears_the_absent_lid"]');
+    const row = errored?.closest("li") ?? null;
+    expect(row, "fixture must carry the addressing-error row this asserts against").not.toBeNull();
+    const measuredNode = row?.querySelector('[data-source="checks.report.checks[].measured"]');
+    const visible = measuredNode?.textContent ?? "";
+    // The actual information — the fixture's own message — must be readable.
+    expect(visible).toMatch(/unknown part 'lid'/);
+    // And it must not be JSON: no braces, no quoted keys, on the rendered text.
+    expect(visible).not.toMatch(/[{}]/);
+    expect(visible).not.toMatch(/"type"|"code"|"message"/);
+    // The typed code is still findable as its own element (a chip), not fused
+    // into the sentence.
+    expect(row?.textContent).toMatch(/addressing_error/);
+    // The raw envelope survives on the machine-readable attribute, unchanged.
+    const result = checks.report.checks["panel_checks:panel_clears_the_absent_lid"];
+    expect(measuredNode?.getAttribute("data-value")).toBe(JSON.stringify(result?.measured));
+  });
+
+  it("renders a numeric-array measured value as a formatted triple, not JSON", () => {
+    // The negative control: `panel_is_narrow_enough`'s `measured` is `[73, 40,
+    // 5.5]`, which `format.ts` already renders correctly today. This pins that
+    // the fix for the error-envelope case does not regress the array case.
+    const row = host
+      .querySelector('[data-check="panel_checks:panel_is_narrow_enough"]')
+      ?.closest("li");
+    const visible = row?.querySelector('[data-source="checks.report.checks[].measured"]')?.textContent ?? "";
+    expect(visible).toMatch(/73.*40.*5\.5/);
+    expect(visible).not.toMatch(/[[\]]/);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -706,6 +745,28 @@ describe("DfmView renders a run_dfm result (§6.4)", () => {
     expect(absent.querySelector("[data-dfm-auto-run-toggle]")?.getAttribute("data-dfm-auto-run")).toBe(
       String(dfmAbsent.auto_run),
     );
+  });
+
+  // J-web-stream-8: every finding's `measured` is a flat fact map from the
+  // fixture (e.g. `{kerf_mm: 0.2, minimum_feature_mm: 0.8, …}`), and `formatValue`
+  // falls through to `JSON.stringify` on it — the same defect as the Checks
+  // panel, one layer up. §4.7 wants label/value pairs, never braces.
+  it("renders a finding's measured fact map as label/value pairs, not JSON (§4.7)", () => {
+    if (run === null) return;
+    const chips = [...host.querySelectorAll("[data-finding-measured]")];
+    expect(chips.length).toBe(run.findings.length);
+    for (const [index, chip] of chips.entries()) {
+      const measured = run.findings[index]?.measured;
+      if (measured === undefined || measured === null || typeof measured !== "object") continue;
+      const keys = Object.keys(measured as Record<string, unknown>);
+      if (keys.length === 0) continue;
+      const visible = chip.textContent ?? "";
+      expect(visible, `finding ${String(index)}`).not.toMatch(/[{}]/);
+      // Every key of the fact map renders as visible text somewhere in the chip.
+      for (const key of keys) {
+        expect(visible, `finding ${String(index)} missing key ${key}`).toContain(key);
+      }
+    }
   });
 
   it("renders a missing sandbox as an explanatory refusal, not as an empty list", () => {

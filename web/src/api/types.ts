@@ -30,6 +30,22 @@ export interface PartSummary {
   readonly path: string;
   readonly content_hash: string;
   readonly snapshot_ref: string;
+  /**
+   * `BuildResult.status` for this part, hoisted into the listing (§4.5's landing
+   * default, J-web-viewport-7).
+   *
+   * The same closed vocabulary `GET /parts/{part}/build` serves — `ok`, `error`,
+   * `not_built` — so the two cannot mean different things by the same word.
+   *
+   * **OPTIONAL because the server does not send it yet.** The workspace opens on
+   * the alphabetically first part with no regard for build state, which in the
+   * fixture is the part that has never been built, so the first screen is the
+   * not-built absence and every panel below it is an empty state. `defaultPart`
+   * reads this field where it is present and falls back to position zero where
+   * it is not, so landing the server half is a one-field change with no client
+   * change beside it. Until then the fallback IS the shipped behaviour.
+   */
+  readonly build_status?: "ok" | "error" | "not_built";
 }
 
 export interface PartsDocument {
@@ -191,6 +207,36 @@ export interface ParamsDocument {
   readonly status: "ok";
   readonly params: readonly ParamRow[];
   readonly state_hash: string;
+}
+
+/**
+ * `GET /api/v1/artifacts/{ref}/meta` — `http/artifacts.py::artifact_meta`.
+ *
+ * Keyless and already served (§2.3's third route group).
+ */
+export interface ArtifactMetaDocument {
+  readonly status: "ok";
+  readonly kind: string;
+  readonly mime_type: string;
+  readonly total_bytes: number;
+  readonly sha256: string;
+  readonly links: Readonly<Record<string, string>>;
+  /**
+   * The part this artifact was minted for (§4.1's held-pin marking,
+   * J-web-viewport-5).
+   *
+   * The workspace used to REMEMBER which part a held pin came from, in a private
+   * field outside §4.5's closed record — so the fact survived a click and died
+   * on a reload, and a pasted URL could hold a reference without saying which
+   * part minted it. Reading it off the artifact instead makes it a server value:
+   * attributable, reload-surviving, and the closed record does not grow.
+   *
+   * **OPTIONAL because the projection does not name the part yet.** That is the
+   * one small server change this needs — a field, not a route. Until it lands
+   * the client falls back to the remembered value, which is honest within a
+   * session and null after a reload; the fallback says so where it is spent.
+   */
+  readonly part?: string;
 }
 
 /** One `set_params` `rejected[]` entry (`cad_ops/_params.py`). */

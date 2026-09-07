@@ -76,6 +76,7 @@ import { Button, EmptyState, tabControlId } from "../../system";
 import { useWorkspace, workspaceStore } from "../../state/react";
 import { shellStore } from "../../state/shell";
 import { sessionEmptyBody, sessionEmptyKind } from "../../stream/sessionEmpty";
+import { showsEmptyTranscript } from "../../stream/streamChrome";
 import { useStream } from "../../stream/useStream";
 import { useFollowScroll } from "../../stream/followScroll";
 import { sessionPromptStore } from "../../stream/sessionPrompts";
@@ -265,6 +266,21 @@ export function StreamPanel(): React.JSX.Element {
     ) : null;
   const emptyInvitation = !unavailable && rows.length === 0 && sessions.isFetched;
 
+  // §7.4(e), added 2026-09-05: a session that exists and has never been
+  // prompted. Decided in `stream/streamChrome.ts` beside the badge and counter
+  // decisions, for the reason those two live there: "renders when required" and
+  // "mounts in no other state" are two assertions, and a decision spelled in a
+  // component that mounts a query client, a socket and the workspace store can
+  // only be tested through the one path a fixture happens to reach.
+  const emptyTranscript = showsEmptyTranscript({
+    selected,
+    unavailable,
+    fault,
+    listRefused: sessions.error !== null,
+    history: stream.history,
+    rows: stream.rows.length,
+  });
+
   // §4.1(h) C25: the collapse affordance is the session tab strip's TRAILING
   // item — the former `streamHeader` band is struck. The shell still owns the
   // open/closed state (`state/shell.ts` is §4.1(a)'s one breakpoint authority);
@@ -419,6 +435,23 @@ export function StreamPanel(): React.JSX.Element {
                 the first would leave a transcript that is silently short. */}
             {stream.history.state === "truncated" ? (
               <p className={styles["historyNote"]}>{copy.stream.historyTruncated}</p>
+            ) : null}
+            {/* §7.4(e), added 2026-09-05: the read succeeded and there is
+                nothing in it. Rendered HERE — in the body, above the scroll
+                host — rather than inside `Transcript`, which renders §7.3's
+                closed row vocabulary and decides nothing. No action: §7.1 puts
+                the create in the strip, and the composer directly below is what
+                starts this session's first turn, so a second create affordance
+                in the middle of the column would be the "wall of buttons" §7.1
+                rules out. */}
+            {emptyTranscript ? (
+              <EmptyState
+                className={styles["emptyTranscript"]}
+                icon="info"
+                title={copy.stream.emptyTranscriptTitle}
+                body={copy.stream.emptyTranscript}
+                data-transcript-empty=""
+              />
             ) : null}
             <div
               className={styles["scrollHost"]}

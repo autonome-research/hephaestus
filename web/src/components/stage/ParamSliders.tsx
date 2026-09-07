@@ -33,6 +33,18 @@ export interface ParamSlidersViewProps {
   readonly rejected: readonly ParamRejection[];
   readonly conflict: boolean;
   readonly committing: boolean;
+  /**
+   * `document` is the PREVIOUS part's, retained across a part switch
+   * (J-cli-startup-8).
+   *
+   * The rows keep the panel's shape while the new part's projection is in
+   * flight — the whole point, since that request is seconds long — but they are
+   * facts about another part, so nothing is drawn from them: no name, no value,
+   * no `<Fact>` attribution and no control. §4.6 binds a rendered value to the
+   * answer it came from, and a slider labelled with another part's parameter
+   * would break that binding while looking entirely normal.
+   */
+  readonly placeholder: boolean;
   readonly onDraft: (name: string, value: number) => void;
   readonly onRelease: (name: string, value: number) => void;
 }
@@ -86,7 +98,26 @@ function rejectionText(entry: ParamRejection): string {
 
 /** The panel's rendering half: a pure function of one params document. */
 export function ParamSlidersView(props: ParamSlidersViewProps): React.JSX.Element {
-  const { document, draft, rejected, conflict, committing, onDraft, onRelease } = props;
+  const { document, draft, rejected, conflict, committing, placeholder, onDraft, onRelease } =
+    props;
+  if (placeholder) {
+    // §8(b)'s "visibly filling", not a replaced panel. The row count is the
+    // previous part's and is a LAYOUT guess, which is all it is used for.
+    return (
+      <Panel label={copy.params.heading} data-panel="params" data-params-placeholder="">
+        <PanelHeader title={copy.params.heading} level={3} />
+        <PanelBody>
+          <ul className={styles["list"]} aria-busy="true" aria-label={copy.params.loading}>
+            {document.params.map((row) => (
+              <li key={row.name} className={styles["row"]}>
+                <span className={styles["skeleton"]} />
+              </li>
+            ))}
+          </ul>
+        </PanelBody>
+      </Panel>
+    );
+  }
   return (
     <Panel label={copy.params.heading} data-panel="params">
       <PanelHeader title={copy.params.heading} level={3} />
@@ -160,17 +191,33 @@ export function ParamSliders(): React.JSX.Element {
   const draft = local.hash === hash ? local.values : {};
   const rejected = local.hash === hash ? local.rejected : [];
   const conflict = local.hash === hash ? local.conflict : false;
+  /**
+   * The retained previous part's document is showing (J-cli-startup-8).
+   *
+   * THE COMMIT GUARD, and it is a correctness guard rather than a cosmetic one:
+   * `document.state_hash` here belongs to the PREVIOUS part, and §10 sends it
+   * as `expected_state_hash`. Sending it would either conflict against the new
+   * part or — worse — match nothing and write under an expectation that was
+   * never read. So every write path returns early while this holds, which is
+   * also why the placeholder branch mounts no controls at all.
+   */
+  const placeholder = query.isPlaceholderData;
 
   if (part === null) {
     return <EmptyState icon="file" title={copy.params.noPartTitle} body={copy.params.noPart} />;
   }
   if (query.data === undefined) {
+    // Genuinely nothing to show — a first visit with a cold cache. Every other
+    // "no data yet" now keeps the panel's shape instead of replacing it.
     return <PanelNote>{copy.params.loading}</PanelNote>;
   }
 
   const commit = (name: string, value: number): void => {
     const document = query.data;
     if (document === undefined) return;
+    // A placeholder row set is NEVER commit-eligible: its `state_hash` is the
+    // previous part's (see `placeholder` above).
+    if (placeholder) return;
     setCommitting(true);
     setLocal((current) => ({
       hash: document.state_hash,
@@ -217,6 +264,7 @@ export function ParamSliders(): React.JSX.Element {
   };
 
   const schedule = (name: string, value: number): void => {
+    if (placeholder) return;
     pending.current = { name, value };
     if (timer.current !== null) clearTimeout(timer.current);
     timer.current = setTimeout(() => {
@@ -234,6 +282,7 @@ export function ParamSliders(): React.JSX.Element {
       rejected={rejected}
       conflict={conflict}
       committing={committing}
+      placeholder={placeholder}
       onDraft={(name, value) => {
         setLocal((current) => ({
           hash,

@@ -19,9 +19,20 @@
   min-width: 0;
 }
 
+/*
+ * Three rows: the tab strip, §4.1's held-pin marking, and the content.
+ *
+ * The marking's row is `auto` and its container is ALWAYS rendered (empty in
+ * every state but the split), so the row is 0px unless a marker mounts and the
+ * content row stays `minmax(0, 1fr)` — which is what keeps `Viewport`'s
+ * `height: 100%` resolving against a definite track, and keeps the drawer-height
+ * parity across the five stage tabs that this file's header exists to protect
+ * (J-web-viewport-9 mounts the marker INSIDE the region for exactly that
+ * reason).
+ */
 .region {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   min-height: 0;
   min-width: 0;
 }

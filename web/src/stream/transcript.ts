@@ -541,6 +541,14 @@ export function canonicalJson(value: unknown): string {
  * text: it has no document to canonicalize, so byte-identity of what the chip
  * actually renders is the honest test, and the `unparsed` refusal renders once
  * with its cause exactly as it does on a lone chip.
+ *
+ * The signature is a **structured** serialization, not a concatenation with a
+ * sentinel. It used to join the three parts with raw NUL bytes, which made this
+ * source binary to `grep` and invisible to review (J-web-stream-12); and a
+ * signature used only for equality needs no sentinel at all, because
+ * `canonicalJson` over a tuple is injective — `["a", "raw", "b:c"]` and
+ * `["a:raw", "b", "c"]` serialize differently by construction, so the separator
+ * question the raw byte was answering does not arise.
  */
 function repeatSignature(row: TranscriptRow): string | null {
   if (row.row !== "chip") return null;
@@ -553,9 +561,9 @@ function repeatSignature(row: TranscriptRow): string | null {
   try {
     parsed = JSON.parse(payload.text) as unknown;
   } catch {
-    return `${row.toolName} raw ${payload.text}`;
+    return canonicalJson([row.toolName, "raw", payload.text]);
   }
-  return `${row.toolName} doc ${canonicalJson(parsed)}`;
+  return canonicalJson([row.toolName, "doc", parsed]);
 }
 
 /**

@@ -27,7 +27,23 @@ export const copy = {
 
   /** §2.2: with no token the app renders one absence panel. */
   noToken: {
+    /**
+     * The panel has TWO states and names both (§2.2, amended 2026-09-05).
+     *
+     * The two-valued absence (`api/token.ts::TokenAbsence`) reached the data
+     * attribute and the body and never the heading, because there was no
+     * heading string for the second one — so a rejected token rendered "No
+     * workspace token" over a paragraph saying the token this page holds was
+     * not accepted, two opposite claims about one state with the heading read
+     * first (J-web-stream-10). Both strings are now derived from ONE branch in
+     * `NoToken.tsx`, so a half-update is unrepresentable.
+     *
+     * The two states share no string except the invitation to paste: the
+     * guidance below (start the server, open the address it prints) serves both
+     * and is unconditional.
+     */
     title: "No workspace token",
+    rejectedTitle: "Workspace token not accepted",
     body:
       "This page has no token held, so it cannot talk to the workspace API. " +
       "Start the server in the project directory and open the address it prints — " +
@@ -103,6 +119,38 @@ export const copy = {
       }
       return `Showing a held artifact, not the current build. ${copy.header.pinSplit}`;
     },
+    /**
+     * The source part, beside the word `held` (§4.1, J-web-viewport-5).
+     *
+     * It used to live only on the chip's `title` and `data-pin-from`, so the
+     * visible face read "digest · held · Follow current" while the stage was
+     * showing one part and the inspector another. A tooltip is not a statement.
+     */
+    pinFrom: (part: string): string => `from ${part}`,
+    /**
+     * §4.1's inherited marking, in words (J-web-viewport-9).
+     *
+     * §4.1 says the header is visibly marked "and every panel below inherits
+     * that marking", and nothing below the header ever did — the shell minted
+     * `data-pin-mode` and the only three consumers were the chip's own CSS.
+     * Each region now names WHAT IT IS SHOWING, and only while the two axes
+     * disagree; a marker that is always on is not a marking.
+     *
+     * Two strings, not one, because the fact is not "something is unusual" but
+     * "this region is showing THIS part and the other one is showing that one" —
+     * which is precisely what one tint painted on both regions could not say.
+     */
+    pinSplitMarkerLabel: {
+      stage: "Held",
+      inspector: "Selected",
+    },
+    pinSplitMarker: {
+      stage: (part: string): string => `This canvas and Export are showing ${part}'s held artifact.`,
+      inspector: (part: string): string => `These panels are showing ${part}, the selected part.`,
+    },
+    /** The accessible form: both parts, because a region is met one at a time. */
+    pinSplitMarkerFull: (heldPart: string, selectedPart: string): string =>
+      `A held artifact from ${heldPart} is on the canvas while ${selectedPart} is selected. ${copy.header.pinSplit}`,
     unpinned: "Following the current build",
     /**
      * §4.7: "Disabled requires a `reason` prop… a disabled control in this app
@@ -561,6 +609,20 @@ export const copy = {
     pending: "This panel is not part of this build of the workspace yet.",
     noPartTitle: "No part selected",
     selectPart: "Select a part in the rail to inspect it.",
+    /**
+     * §4.7's disclosure over a `measured` value that is a structure
+     * (`components/inspector/MeasuredValue.tsx`, J-web-stream-8). The clause
+     * puts the raw object BEHIND a disclosure; this is the summary that opens
+     * it, so the bytes stay reachable without being the reading surface.
+     */
+    measuredRaw: "As the engine recorded it",
+    /**
+     * A structure this build has no reader for. Said out loud rather than
+     * stringified: §4.4 — a state that exists for a reason reads as designed,
+     * and the same state with its content missing reads as a bug — and the
+     * disclosure beside this sentence still carries every byte.
+     */
+    measuredUnreadable: "This measurement is a structure this page cannot summarize.",
   },
 
   /** §6.1 and §5.4: the build result's geometry list, and what may be hidden. */
@@ -952,6 +1014,18 @@ export const copy = {
     noSessionsTitle: "No sessions",
     noSessions: "No sessions are attached to this server.",
     /**
+     * §7.4(e), added 2026-09-05: this session exists and has no transcript.
+     *
+     * Distinct from `noSessionsTitle` on purpose — that one says the SERVER has
+     * no sessions, which is a different and, with a session selected, false
+     * claim. The read succeeded and there is nothing in it; that is a fact, so
+     * it is said. No action string: §7.1 puts the create in the strip and the
+     * composer directly below this state is what starts the first turn
+     * (`stream/streamChrome.ts::showsEmptyTranscript`).
+     */
+    emptyTranscriptTitle: "No turns yet",
+    emptyTranscript: "This session has not been prompted. What you send goes here.",
+    /**
      * §7.1(a), amended 2026-09-01: retained as the tab list's `aria-label` and
      * drawn nowhere. The `<h2>` it used to fill is struck — a heading over a
      * list whose accessible name is the same word said "session" twice above a
@@ -1276,7 +1350,19 @@ export const copy = {
     terminal: {
       title: "Run ended",
       state: "Outcome",
-      id: "Terminal",
+      /**
+       * §7.3, amended 2026-09-05: the terminal id's LABEL, spent on the band's
+       * `title` and nowhere else.
+       *
+       * It used to be drawn as a third visible line — `Terminal: terminal:run-…`
+       * — an internal identity at the weight of the outcome, labelled with a
+       * noun that reads as a shell terminal (J-web-stream-9). §7.1's
+       * 2026-09-03 rule puts a machine identity on the `title` and the data
+       * attribute; the band already carried `data-terminal-id`, so the visible
+       * line was the third copy of a value nobody reads by eye. Renamed from
+       * `id` so a re-add has to be deliberate.
+       */
+      identity: "Terminal id",
       /** §7.3: "the model stopped" and "the plumbing gave up" are different facts. */
       backpressure:
         "This run was stopped because a client attached to it could not keep up with its events, not because the model or a tool failed.",
@@ -1446,27 +1532,6 @@ export const copy = {
     runInFlightCompose: "You can write the next message while this turn finishes.",
     runInFlightHolder: (title: string): string => `The live run belongs to ${title}.`,
 
-    /**
-     * §7A.8's cause vocabulary, rendered where the operator can act on it.
-     * The `config_path` comes from the server and is printed beside these —
-     * §7A.8: "the disabled composer **names the file the server looked for and
-     * does not offer to write it**, because until §23 lands there is nothing
-     * behind such an offer but a text editor."
-     */
-    attachCause: {
-      no_provider_config: "No provider configuration was found at:",
-      provider_config_invalid: "The provider configuration could not be read:",
-      node_missing: "Node is not installed, and the agent runtime needs it.",
-      node_too_old: "The installed Node is older than the agent runtime needs.",
-      sidecar_failed: "The agent runtime failed to start.",
-      auth_link_refused: "The configured credential could not be linked.",
-      detached: "The agent runtime was detached from this server.",
-    },
-    attachHow:
-      "Write a provider configuration at that path and restart the server, or run `heph agent` once to create one. This page does not write credential files.",
-    attachRetry: "Attach a runtime",
-    attachFailed: "Attaching a runtime failed.",
-
     /** §7A.3's chip row: the references this turn will carry, each droppable. */
     contextHeading: "This message will carry",
     /**
@@ -1604,10 +1669,24 @@ export const copy = {
     detailsHide: "Hide configuration",
     /** §23.0: the empty state is an action, not a green checkmark. */
     emptyTitle: "No model provider yet",
+    /**
+     * The second sentence points at the remedies THIS PANEL actually offers.
+     *
+     * It used to open "Add a provider below", naming the attach control
+     * directly beneath it — a control that posts `POST /providers/attach`,
+     * which re-reads the very file this state exists to report missing and
+     * cannot write one (J-web-stream-6). The panel's only control that puts a
+     * provider into this project's configuration is discovery's adopt, so that
+     * is what the sentence names, with the off-page route beside it.
+     *
+     * `addProvider` — the key this line used to precede — is GONE rather than
+     * retained unused: §2.3 reserves that phrase for a control that writes
+     * provider specs, and a copy key holding a reserved phrase with no consumer
+     * is how the wrong label gets wired back in.
+     */
     emptyBody:
       "This project has no provider configuration, so there is nothing to run a session against. " +
-      "Add a provider below, or look for one this machine already has.",
-    addProvider: "Add a provider",
+      "Look for a sign-in this machine already has and adopt it, or write a configuration file and restart the server.",
     configPath: "Configuration file",
     fileMode: "File mode",
     /** §23.2: a hand-authored file's mode is reported, never changed. */
@@ -1757,6 +1836,64 @@ export const copy = {
       runs_in_flight: "A turn is running. Applying this would end it.",
       unsupported_auth_type: "The provider does not offer that way of signing in.",
     },
+  },
+
+  /**
+   * §7A.8's attach vocabulary, in a SURFACE-NEUTRAL namespace (J-web-stream-6).
+   *
+   * It used to live under `composer`, so the providers panel — which posts the
+   * same route, a few inches away on the same screen — could not reach it and
+   * fell through to the server's raw `f"{cause}: {detail}"` string, rendering
+   * `no_provider_config: no provider config at <path>` inside a `role="alert"`.
+   * One route, one cause vocabulary, one place: both surfaces read these.
+   */
+  attach: {
+    /**
+     * The closed `cause` vocabulary (`api/attach.ts::ATTACH_CAUSES`), one
+     * COMPLETE sentence each.
+     *
+     * Two of them used to end in a colon, because the composer prints the
+     * configuration path directly beneath them. That worked on one surface and
+     * left a dangling colon on the other the moment this vocabulary became
+     * shared (J-web-stream-6), so the path now carries its own label
+     * (`pathLabel`) and every sentence here stands alone.
+     */
+    cause: {
+      no_provider_config: "No provider configuration was found.",
+      provider_config_invalid: "The provider configuration could not be read.",
+      node_missing: "Node is not installed, and the agent runtime needs it.",
+      node_too_old: "The installed Node is older than the agent runtime needs.",
+      sidecar_failed: "The agent runtime failed to start.",
+      auth_link_refused: "The configured credential could not be linked.",
+      detached: "The agent runtime was detached from this server.",
+    },
+    /**
+     * §7A.8's obligation: the refusal NAMES the file the server looked for. The
+     * label is separate from the cause sentence so the path can be printed by a
+     * surface that has room for it and omitted by one that does not, without
+     * either surface owning a fragment of the other's sentence.
+     */
+    pathLabel: "The server looked for it at:",
+    /**
+     * The label of `POST /providers/attach`'s control, on BOTH surfaces.
+     *
+     * The rail called it "Add a provider" and the composer "Attach a runtime"
+     * for one call (J-web-stream-6). §2.3's route table says this route creates
+     * a *runtime* from configuration that already exists and cannot create
+     * configuration, so "Add a provider" was a promise the route cannot keep;
+     * that phrase is reserved for a control that writes provider specs.
+     */
+    action: "Attach a runtime",
+    /** What the press does — §4.7: a control names its own effect. */
+    actionTitle:
+      "Re-reads the provider configuration the server already looked for and starts an agent runtime from it. It writes no files and creates no configuration.",
+    how: "Write a provider configuration at that path and restart the server, or run `heph agent` once to create one. This page does not write credential files.",
+    /**
+     * The disclosure summary for a cause whose `detail` carries something the
+     * mapped sentence does not (§4.7's disclosure recipe; see
+     * `api/attach.ts::attachDetailAdds`). Never a fourth bare paragraph.
+     */
+    detailLabel: "What the server reported",
   },
 
   errors: {

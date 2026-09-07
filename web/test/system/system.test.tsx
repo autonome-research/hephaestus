@@ -19,6 +19,9 @@
 //   carriers, because a `title` alone is not reachable from the keyboard and a
 //   disabled control is exactly where a keyboard user is stuck.
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, beforeEach } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactElement } from "react";
@@ -72,6 +75,29 @@ describe("§4.7 — format.ts renders numbers without deriving them", () => {
 
   it("renders a bbox triple as a dimension, not as JSON punctuation", () => {
     expect(formatValue([250, 156, 5.5])).toBe("250 × 156 × 5.5");
+  });
+
+  it("returns null for a plain object, never a JSON.stringify fall-through (J-web-stream-8)", () => {
+    expect(formatValue({ error: { type: "AddressingError", code: "addressing_error" } })).toBeNull();
+    expect(formatValue({})).toBeNull();
+    // A mixed array is not "an array of numbers" — the one shape formatValue
+    // special-cases — so it must fall to the same null, not a partial join.
+    expect(formatValue([250, "156", 5.5])).toBeNull();
+  });
+
+  it("declares a return type that ADMITS null, so a bare `{formatValue(x)}` fails on structures at the type level (J-web-stream-8)", () => {
+    // The repo-wide guard the ledger asks for. `null` alone does not stop a
+    // regression: `null` is a valid `ReactNode`, so a call site that dropped
+    // `<MeasuredText>` and rendered `{formatValue(x)}` directly would compile
+    // clean and silently render an empty cell for a structure — tsc enforces
+    // nothing at a JSX-children position. What CAN be pinned outside a browser
+    // is that the signature itself still says `string | null`, so a future
+    // edit that widened it back to a bare `string` (restoring the temptation to
+    // stringify inline, since there is no longer a `null` branch to route
+    // around) is caught here rather than only by a reviewer's eye.
+    const here = dirname(fileURLToPath(import.meta.url));
+    const source = readFileSync(join(here, "..", "..", "src", "system", "format.ts"), "utf8");
+    expect(source).toMatch(/export function formatValue\(value: unknown\): string \| null \{/);
   });
 
   it("splits a SCREAMING_SNAKE key into a label and a unit column", () => {
