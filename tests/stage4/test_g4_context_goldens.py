@@ -24,10 +24,22 @@ The three cases are the three shapes §7A.3 distinguishes:
   and the server composes nothing");
 * **a part alone** — the plainest non-empty envelope;
 * **the pinned workspace** — §7A.12's case 2: pin A, the part, the Checks tab,
-  a hidden geometry label, an explode parameter and a section plane. It is the
-  case that proves the two honesty limits §7A.3 names: the block reports the
-  hidden **toggle** and never what is visible, and it carries the explode
+  a hidden geometry label, an explode parameter, a section plane and a focus. It
+  is the case that proves the two honesty limits §7A.3 names: the block reports
+  the hidden **toggle** and never what is visible, and it carries the explode
   **parameter** and never a displacement.
+
+RE-BASELINED once for a reason worth stating, because a golden diff is the only
+review this file gets. The pinned case's ``focus`` was ``geometry:tread_plate``,
+a name that matches no labelled solid and no tag in the workspace fixture — it
+was invented when the case was written and never resolved against a build, so
+``pinned_workspace.txt`` ended with ``focused on: geometry:tread_plate``: the
+golden pinned, and told a model, an address that does not exist.
+audit-2026-09-04 J-http-envelope-5 made ``focus`` an address the server resolves
+or refuses, and it refuses that one. The case now names ``tread_top``, the face
+tagged in ``parts/tread.py``, and the golden's last line changed with it. That
+line is the **only** change in the family: ``part_only.txt`` names no focus and
+is byte-identical, and no other golden directory was touched.
 """
 
 from __future__ import annotations

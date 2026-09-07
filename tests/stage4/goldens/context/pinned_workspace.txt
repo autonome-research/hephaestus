@@ -40,4 +40,4 @@ section plane: +X@0
 ## Panels the operator has open
 stage tab: viewport
 inspector tab: checks
-focused on: geometry:tread_plate
+focused on: tread_top

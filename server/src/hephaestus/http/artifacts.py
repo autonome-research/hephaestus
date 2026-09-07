@@ -48,13 +48,17 @@ nowhere for a transformation to hide.
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Final
+import json
+from typing import Any, Final, cast
 
 from hephaestus.agent_bridge.cad_ops._artifacts import TEXT_ARTIFACT_MIME
 from hephaestus.core.artifacts import page_text
 from hephaestus.core.errors import ValidationError
 from hephaestus.core.project_store.artifact_kinds import recorded_kinds
-from hephaestus.core.project_store.publication import EXPORT_ARTIFACT_KIND
+from hephaestus.core.project_store.publication import (
+    BUILD_BUNDLE_ARTIFACT_KIND,
+    EXPORT_ARTIFACT_KIND,
+)
 from hephaestus.core.project_store.store import artifact_kind_of_ref, blob_hash_of_ref
 
 from opstore import OpStore
@@ -73,6 +77,7 @@ __all__ = [
     "artifact_meta",
     "artifact_text_page",
     "mime_for_kind",
+    "minting_part",
     "reachable_blob",
     "verify_recorded_kind",
 ]
@@ -255,12 +260,69 @@ def mime_for_kind(kind: str) -> str:
     return _BYTES_MIME.get(kind, "application/octet-stream")
 
 
+def minting_part(store: OpStore, ref: str) -> str | None:
+    """The part ``ref`` was minted for, read from its publication record.
+
+    ``None`` is a fact and never a guess: a ref whose bytes carry no build bundle
+    — a render, an export, a checkpoint, a build published before bundles were
+    durable — simply has no part recorded, and answering with one would be the
+    fabricated content §4.4 forbids.
+
+    **Why the record and not a scan of the parts.** Two parts whose geometry is
+    byte-identical share one artifact ref, and the bundle pointer is keyed by
+    *part and artifact* for exactly that reason
+    (:func:`~hephaestus.core.project_store.publication.build_bundle_pointer`); a
+    scan would answer with whichever part it met first. The bundle is also the
+    only record that survives the part moving on — a held pin names a build that
+    is no longer current, which is the whole case §4.1's marking exists for
+    (``audit-2026-09-04`` J-web-viewport-5).
+
+    The route from the artifact to its bundle is the GC edge publication already
+    records (``Publisher._record_artifact_bundle`` links artifact → bundle so the
+    namespace is collected with the geometry it describes). Reading it here costs
+    one edge-set read plus one small blob per candidate, and the candidates are
+    the edges out of *this* blob — not the store. The bundle's own
+    ``artifact_ref`` is re-checked before its ``part`` is believed, the same
+    guard :meth:`~hephaestus.core.project_store.publication.Publisher.bundle_for_artifact`
+    applies: a record naming a different artifact is a record about a different
+    build, and answering from it would be a silent wrong answer.
+    """
+    blob = blob_hash_of_ref(ref)
+    for source, target in store.gc.links():
+        if source != blob or BUILD_BUNDLE_ARTIFACT_KIND not in recorded_kinds(store, target):
+            continue
+        if not store.blobs.has(target):  # pragma: no cover - collected mid-read
+            continue
+        record = json.loads(store.blobs.get(target).decode("utf-8"))
+        if not isinstance(record, dict):  # pragma: no cover - our own canonical JSON
+            continue
+        fields = cast("dict[str, Any]", record)
+        if fields.get("artifact_ref") != ref:
+            continue
+        part = fields.get("part")
+        if isinstance(part, str):
+            return part
+    return None
+
+
 def artifact_meta(store: OpStore, ref: str) -> dict[str, Any]:
-    """``GET /artifacts/{ref}/meta`` — ``{kind, mime_type, total_bytes, sha256, links}``.
+    """``GET /artifacts/{ref}/meta`` — ``{kind, mime_type, total_bytes, sha256,
+    links, part}``.
 
     ``links`` names which of the two content routes this ref may be read
     through, so the client branches on the server's answer instead of on a kind
     list it would otherwise have to carry (and drift from).
+
+    ``part`` is the part this artifact was minted for, or ``null`` where no
+    publication record names one (:func:`minting_part`). It exists because §4.1's
+    held-pin marking has to survive a reload: the workspace used to *remember*
+    which part a held pin came from, in a private field outside §4.5's closed
+    record, so the fact died on a reload and a pasted URL could hold a reference
+    without saying which part minted it (``audit-2026-09-04`` J-web-viewport-5).
+    Reading it off the artifact instead makes it a server value — attributable,
+    reload-surviving — and the closed record does not grow a field for a
+    sentence. A field, not a route: the metadata route was already served and
+    already keyless to the workspace principal.
     """
     kind = artifact_kind(ref)
     data = reachable_blob(store, ref)
@@ -283,6 +345,7 @@ def artifact_meta(store: OpStore, ref: str) -> dict[str, Any]:
         "total_bytes": len(data),
         "sha256": hashlib.sha256(data).hexdigest(),
         "links": links,
+        "part": minting_part(store, ref),
     }
 
 

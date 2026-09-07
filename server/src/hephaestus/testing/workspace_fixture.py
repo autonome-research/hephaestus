@@ -176,7 +176,19 @@ CONTEXT_GOLDEN_CASES: tuple[tuple[str, dict[str, Any]], ...] = (
             "explode_t": 0.5,
             "section_plane": SECTION_PLANE,
             "hidden_labels": ["cleat_left"],
-            "focus": "geometry:tread_plate",
+            # A focus this fixture's build actually resolves, and deliberately a
+            # **tag** rather than a label: `tread_top` is the face tagged in
+            # `parts/tread.py`, so the case exercises the second of the two
+            # namespaces `_resolve_focus` addresses into, while `hidden_labels`
+            # above already exercises the label one.
+            #
+            # It used to read `geometry:tread_plate` — a name that matches no
+            # solid and no tag in this fixture, invented when the case was
+            # written and never resolved against a build. J-http-envelope-5 made
+            # `focus` an address that is resolved or refused, and it refuses this
+            # one: the golden had baked in exactly the unvalidated focus the item
+            # exists to stop reaching a model (audit-2026-09-04 J-http-envelope-5).
+            "focus": "tread_top",
         },
     ),
 )

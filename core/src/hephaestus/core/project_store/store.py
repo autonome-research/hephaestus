@@ -184,6 +184,21 @@ class ProjectStore:
         self._store = store
         self.locks = locks or LockManager(store, owner=owner)
 
+    @property
+    def store(self) -> OpStore:
+        """The opstore handle this project store reads and writes through.
+
+        Read-only, and public so a projection handed a ``ProjectStore`` can reach
+        the *same* handle rather than opening a second one. Opening a second
+        handle inside one process is the thing §2.1's "one process owns the
+        leases" exists to prevent, so the honest way to give
+        ``list_parts_projection`` its build reads was to expose the handle it was
+        already holding — not to open another (``audit-2026-09-04``
+        J-web-viewport-7). ``locks`` is public beside it for the same reason and
+        was already.
+        """
+        return self._store
+
     # -- reads --------------------------------------------------------------
 
     def _record_snapshot_kind(self, blob_hash: str) -> None:

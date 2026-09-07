@@ -11,9 +11,13 @@ outcomes are asserted equal.
 
 What "equal" means is the interesting part, and §2.5 pins it:
 
-* **Mutation** — identical result documents. Both transports call one dispatcher
-  over one core; a difference here would mean the route had grown a projection
-  of its own.
+* **Mutation** — identical result documents, modulo §2.4's envelope. Both
+  transports call one dispatcher over one core; a difference here would mean the
+  route had grown a projection of its own. The one member the HTTP lane adds is
+  ``status`` — the envelope discriminator every 200 document on this surface
+  carries (audit-2026-09-04 J-http-envelope-20) — and each test that excludes it
+  also *asserts* it, on both sides, so the exclusion states a known difference
+  rather than widening the parity claim.
 * **Paging** — identical pages at every cursor, because both call one
   ``page_text``.
 * **Conflict** — identical discriminated results. A CAS conflict is a *result*,
@@ -54,7 +58,16 @@ def test_read_parity_the_route_returns_the_dispatch_result_verbatim(
     with workspace(tmp_path / "proj") as web:
         route = web.get("/parts/widget/script").json()
         direct = web.dispatch("read_part", {"name": "widget"}, entry="parity-read")
-    assert route == direct
+    # §2.4's envelope discriminator is the one member the HTTP lane adds, and it
+    # is asserted rather than excused (audit-2026-09-04 J-http-envelope-20): the
+    # route wraps the tool's document in `status`, the dispatch lane hands the
+    # document to a caller that discriminates tool results differently. Pinning
+    # both halves — the envelope on the route, its absence on the dispatch
+    # result — keeps this a statement about *one* known difference instead of a
+    # hole a second divergence could hide in.
+    assert route["status"] == "ok"
+    assert "status" not in direct
+    assert {k: v for k, v in route.items() if k != "status"} == direct
 
 
 def test_paging_parity_every_cursor_agrees(tmp_path: Path) -> None:
@@ -79,6 +92,9 @@ def test_paging_parity_every_cursor_agrees(tmp_path: Path) -> None:
                 {"ref": ref, "offset_bytes": offset, "max_bytes": 13},
                 entry=f"parity-page-{offset}",
             )
+            # The envelope, then everything else — see the read-parity test.
+            assert route["status"] == "ok"
+            assert "status" not in direct
             assert {k: v for k, v in route.items() if k != "status"} == direct
             if not route["truncated"]:
                 break
@@ -114,9 +130,13 @@ def test_mutation_parity_one_dispatcher_one_result(tmp_path: Path) -> None:
 
     assert route.status_code == 200, route.text
     body = route.json()
-    # `path` is absolute and therefore project-specific; everything else is the
-    # engine's answer and must match exactly.
-    assert {k: v for k, v in body.items() if k != "path"} == {
+    # `path` is absolute and therefore project-specific, and `status` is §2.4's
+    # envelope discriminator the HTTP lane adds to every 200 document
+    # (J-http-envelope-20) — asserted here, on both sides, rather than merely
+    # excluded. Everything else is the engine's answer and must match exactly.
+    assert body["status"] == "ok"
+    assert "status" not in direct
+    assert {k: v for k, v in body.items() if k not in {"path", "status"}} == {
         k: v for k, v in direct.items() if k != "path"
     }
 
