@@ -34,6 +34,7 @@ from hephaestus.agent_bridge.events import EventPump, HephaestusEvent, ObserverC
 from hephaestus.agent_bridge.protocol import ErrorCode
 from hephaestus.agent_bridge.supervisor import SupervisorError
 from opstore.admission import AdmissionControl
+from opstore.errors import NotFoundError
 
 __all__ = ["HISTORY_PAGE_SIZE", "FakeAgent", "MalformedCursor", "decode_cursor", "encode_cursor"]
 
@@ -211,6 +212,25 @@ class FakeAgent:
         return PromptResult(run_id=run, status="completed", events=events, terminal=None)
 
     def cancel(self, run_id: str) -> None:
+        """Cancel a run, refusing an id this backend never issued.
+
+        THE LOAD-BEARING HALF of audit-2026-09-04 J-http-envelope-12. This was a
+        no-op with no admission lookup, so cancelling a run that never existed
+        answered 200 here and 404 against a real bridge — and because the
+        sidecar-backed lane skips silently without a ``pnpm`` on PATH, no
+        in-process test could see the real behaviour. The refusal is the real
+        admission's own exception type, so the two backends now disagree about
+        nothing: :meth:`WorkspaceSessions.cancel_run` maps it to
+        ``404 unknown_run`` whichever one is behind it.
+
+        A run this backend *did* issue stays a quiet, repeatable no-op, which is
+        §2.3's idempotence: that clause is about a run's lifecycle, not a licence
+        to accept an unknown address.
+        """
+        with self._lock:
+            known = run_id in self._run_sessions
+        if not known:
+            raise NotFoundError(f"run {run_id} has no admission row")
         self.cancelled.append(run_id)
 
     # -- events ------------------------------------------------------------

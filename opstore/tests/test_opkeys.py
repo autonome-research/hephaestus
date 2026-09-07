@@ -338,3 +338,67 @@ def test_property_uniqueness_replay_mismatch(
             other = OTHER_PAYLOAD if payload_hash == PAYLOAD else PAYLOAD
             with pytest.raises(KeyPayloadMismatchError):
                 opkeys.begin(raw_id, other)
+
+
+# --------------------------------------------------------------------------
+# audit-2026-09-04 J-http-envelope-13 — the idempotency refusal message
+# embeds the composed ledger key.
+#
+# At the HTTP layer ``raw_id`` arrives fully composed: the REST namespace
+# prefix, the principal's fingerprint, the route template and the client's own
+# ``Idempotency-Key`` value (``http/idempotency.py``'s ``route_identity`` +
+# ``entry_id=f"rest:{route_identity(method, template)}:{key}"``). ``begin``'s
+# two first-sight refusals (``opkeys.py``:178-184) format that raw identifier
+# straight into the sentence — written for a log, and every engine message has
+# been a wire message since §2.4's amendment. Neither call site was revisited.
+
+#: Shaped like the HTTP layer's own composition — a namespace prefix, a route
+#: identity, and the client's own presented key — the exact shape whose
+#: presence in a refusal sentence is the leak this item is about.
+COMPOSED_RAW_ID = "rest:POST:/parts/{part}/build:018f3b2b-70b1-7000-9000-000000000000"
+
+
+def test_a_stale_first_sight_key_refusal_does_not_quote_the_composed_identifier(
+    opkeys: OpKeys, fake_clock: FakeClock
+) -> None:
+    """``KeyExpiredError`` on first sight (older than the idempotency window).
+
+    Today: ``f"operation key for {raw_id!r} is older than the idempotency
+    window"`` — the composed id, quoted whole, in a sentence a browser
+    renders verbatim (§2.4's engine-message-is-wire-message promise). The fix
+    names the condition and the window, not the identifier.
+    """
+    stale_ts = fake_clock.now() - WINDOW - 60.0
+    with pytest.raises(KeyExpiredError) as caught:
+        opkeys.begin(COMPOSED_RAW_ID, PAYLOAD, ts=stale_ts)
+    assert COMPOSED_RAW_ID not in str(caught.value), (
+        f"the refusal must not quote the composed operation key: {caught.value}"
+    )
+
+
+def test_a_first_sight_skew_refusal_does_not_quote_the_composed_identifier(
+    opkeys: OpKeys, fake_clock: FakeClock
+) -> None:
+    """``KeyTimestampSkewError`` — the sibling first-sight freshness refusal.
+
+    Today: ``f"first-seen key for {raw_id!r} has timestamp outside the
+    freshness window"`` — same shape, same leak.
+    """
+    skewed_ts = fake_clock.now() - SKEW - 30.0
+    with pytest.raises(KeyTimestampSkewError) as caught:
+        opkeys.begin(COMPOSED_RAW_ID, PAYLOAD, ts=skewed_ts)
+    assert COMPOSED_RAW_ID not in str(caught.value), (
+        f"the refusal must not quote the composed operation key: {caught.value}"
+    )
+
+
+def test_the_ladders_reasons_and_statuses_are_unchanged_by_the_message_fix(
+    opkeys: OpKeys, fake_clock: FakeClock
+) -> None:
+    """The fix is message-text only: the exception TYPES (and therefore the
+    §2.4 reasons/statuses they map to) must not move.
+    """
+    with pytest.raises(KeyExpiredError):
+        opkeys.begin(COMPOSED_RAW_ID, PAYLOAD, ts=fake_clock.now() - WINDOW - 60.0)
+    with pytest.raises(KeyTimestampSkewError):
+        opkeys.begin("other-raw-id", PAYLOAD, ts=fake_clock.now() - SKEW - 30.0)

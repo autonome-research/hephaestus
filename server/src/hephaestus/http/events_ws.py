@@ -52,7 +52,6 @@ __all__ = [
     "BEARER_SUBPROTOCOL",
     "CONTROL_FRAME_KEYS",
     "INVALID_FRAME_CLOSE_CODE",
-    "UNAUTHORIZED_CLOSE_CODE",
     "serve_events",
 ]
 
@@ -64,9 +63,6 @@ CONTROL_FRAME_KEYS: Final[frozenset[str]] = frozenset({"subscribe", "resume"})
 
 #: Standard policy-violation close for a malformed or unknown control frame.
 INVALID_FRAME_CLOSE_CODE: Final[int] = 1008
-
-#: …and for a socket that never presented a usable bearer.
-UNAUTHORIZED_CLOSE_CODE: Final[int] = 1008
 
 #: DEVIATION, recorded rather than smuggled (see the module note in ``app.py``).
 #: §2.2 says the app "sends ``Authorization: Bearer …`` on every request
@@ -116,9 +112,18 @@ async def serve_events(websocket: WebSocket, sessions: WorkspaceSessions, token:
     presented = _bearer(websocket)
     if presented is None or not verify_token(presented[0], token):
         # Refused **before** ``accept``: an unauthenticated upgrade is denied at
-        # the handshake (the client sees an HTTP rejection), never accepted and
-        # then closed, which would leak the existence of a valid stream.
-        await websocket.close(code=UNAUTHORIZED_CLOSE_CODE, reason="unauthorized")
+        # the handshake, never accepted and then closed, which would leak the
+        # existence of a valid stream. That is a security property and it stays.
+        #
+        # NO CODE, and no reason (audit-2026-09-04 J-http-envelope-19). Under
+        # ASGI a close sent in the connect phase is delivered as an **HTTP 403**
+        # with no handshake and no close frame, so a code passed here has
+        # nowhere to go: the module used to export an `UNAUTHORIZED_CLOSE_CODE`
+        # and hand it to this call, and a reader would reasonably have believed
+        # a client saw it. What a client actually observes is
+        # `403 Forbidden` — which is what `server/tests/test_http_events.py`
+        # asserts, in a form that does not mention a close code at all.
+        await websocket.close()
         return
     _presented_token, via_subprotocol = presented
 

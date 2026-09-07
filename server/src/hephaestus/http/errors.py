@@ -34,7 +34,8 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from typing import Any, Final
+from collections.abc import Sequence
+from typing import Any, Final, cast
 
 from hephaestus.agent_bridge.app import AgentUnavailableError, UnknownSessionError
 from hephaestus.agent_bridge.dispatch import DispatchError
@@ -49,17 +50,20 @@ from hephaestus.agent_bridge.supervisor import SupervisorError
 from hephaestus.core.errors import HephaestusError
 from opstore.errors import OpStoreError, ProtectedQuotaExceededError
 
-from .agent_attach import ATTACH_CAUSES, DETAIL_MAX_CHARS, reduce_detail
+from .agent_attach import ATTACH_CAUSES, DETAIL_MAX_CHARS, reduce_detail, reduce_text
 
 __all__ = [
     "CAPABILITY_REASONS",
+    "CLIP_MARKER",
     "INTERNAL_ERROR_MESSAGE",
     "PROTOCOL_CODE_REASON",
     "REASON_STATUS",
+    "REFUSAL_VALUE_MAX_CHARS",
     "SIDECAR_REFUSALS",
     "STALE_SELECTION_REASONS",
     "HttpRefusal",
     "capability_result",
+    "clip_text",
     "error_body",
     "internal_error",
     "refusal_for",
@@ -129,6 +133,21 @@ REASON_STATUS: Final[dict[str, int]] = {
     # cannot add a name to that allowlist, which is the property mission rule 7
     # actually needs (§23.14 item 11).
     "credential_not_allowlisted": 400,
+    # §2.9's git family, audit-2026-09-04 J-http-envelope-14. All five were
+    # raised with a status written as a literal at the raise site and had no row
+    # here, so :func:`status_for_reason` answered 400 for every one of them and
+    # disagreed with the wire on three. The literals are gone
+    # (``git_projection`` now looks each status up here) and the reasoning for
+    # each status is recorded where every other reason's is:
+    #
+    # * `git_failed` — the subcommand ran and exited non-zero. A refusal of the
+    #   *request* (a bad revision, an unknown path), so 400 with the family.
+    # * `git_timeout` — the subcommand exceeded `GIT_TIMEOUT_SECONDS`. 504
+    #   beside the bridge's own `timeout` row and for the same reason: a
+    #   deadline crossed is not a malformed request, and the remedy is to wait
+    #   or to ask for less, not to fix the arguments.
+    "git_failed": 400,
+    "git_timeout": 504,
     # 401 — the only authentication this surface has.
     "unauthorized": 401,
     # 403 — dispatch's own object-scope and reviewer rules, unchanged.
@@ -138,6 +157,11 @@ REASON_STATUS: Final[dict[str, int]] = {
     # the §2.6 pattern — a refusal a future configuration change could quietly
     # contradict is worse than no refusal, because a reader stops looking.
     "not_loopback": 403,
+    # §2.9's enumeration refusal: a verb outside `ALLOWED_SUBCOMMANDS`. 403 and
+    # not 400 because the request is well formed and the server is healthy —
+    # what fails is that the workspace *may not* run it, which is the same fact
+    # `scope_denied` states one row above.
+    "git_verb_refused": 403,
     # 404 — an unknown tool, part, or artifact.
     "unknown_tool": 404,
     "unknown_artifact": 404,
@@ -151,6 +175,11 @@ REASON_STATUS: Final[dict[str, int]] = {
     # 400) because it is an addressing miss and not a malformed request.
     "artifact_kind_mismatch": 404,
     "unknown_part": 404,
+    # §2.9: the project root is not inside a git work tree. An addressing miss
+    # on the project's OWN state — the answer to "show me this project's
+    # history" is that there is no history to address — so it sits with the
+    # other 404s rather than reading as a malformed request.
+    "not_a_git_repository": 404,
     "not_found": 404,
     # §23.6's 404 row. `provider_unknown` and `model_unknown` are the engine's
     # own strings, reused rather than renamed (§23.11's "existing engine/runtime
@@ -162,6 +191,55 @@ REASON_STATUS: Final[dict[str, int]] = {
     # 404, because §22.7's table states the status normatively and a reason whose
     # status is only implied is one refactor away from moving.
     "unknown_export": 404,
+    # §2.7/§7A.6's three session-scoped addressing misses, tabulated for the
+    # same reason `unknown_export` is, and now for a second one: the standing
+    # guard in `server/tests/test_http_errors.py` asserts that **every** reason
+    # this package raises with a literal name has a row here, so the table can
+    # be read as the complete set §2.4 presents it as. Each would already reach
+    # 404 through the `unknown_` family rule below; a status that is only
+    # implied is one refactor away from moving (audit-2026-09-04
+    # J-http-envelope-12, -18).
+    #
+    # * `unknown_session` — the id names no session this project knows, from
+    #   the thread route's durable check and from the sidecar's own refusal
+    #   (`SIDECAR_REFUSALS` below), which is why it is not a synonym for
+    #   `not_found`.
+    # * `unknown_run` — a cancel for a run this server never issued. §2.3's
+    #   idempotence is a property of a *run's lifecycle*, not a licence to
+    #   accept an unknown address, so a finished run is still 200 and an
+    #   unissued one is this.
+    # * `unknown_question` — an `ask_user` id that is neither live nor in the
+    #   bounded settled map: answered long ago and evicted, abandoned, or never
+    #   asked. §7A.6 reads it as exactly that disjunction.
+    "unknown_session": 404,
+    "unknown_run": 404,
+    "unknown_question": 404,
+    # §2.4, amended 2026-09-04 (J-http-envelope-18): the size refusals, decided
+    # ON PURPOSE rather than left as one careful row and two literals.
+    #
+    # The **request** rungs are 400/413 and the split is the point. A string
+    # inside a well-formed body that exceeds the per-value cap is a
+    # malformed-by-size *input*, refused before anything executes, so it sits
+    # with `invalid_params` at 400 — that is `json_string_too_large`, raised as
+    # a `LimitError` by the shared bounded walk, and `prompt_too_large`, which
+    # is the §7A.4 `text` cap the prompt route now applies. A **body** past the
+    # transport ceiling is different in kind: nothing about it has been parsed,
+    # and the server is declining to carry it at all, which is literally what
+    # `Content Too Large` means — so `request_too_large` is 413 beside
+    # `export_too_large`, and neither is the fallback 400.
+    # The other four rungs of the same structural walk. They reached 400 through
+    # the fallback and agreed with it, which is precisely why nobody noticed
+    # they were untabulated: `status_for_reason` answering correctly by accident
+    # is what the fallback is *for*, and it is not a row. The standing guard in
+    # `server/tests/test_http_errors.py` cannot see them either — they are
+    # raised as `LimitError(code, ...)` and re-wrapped with a computed reason —
+    # so a row here is the only place their status can be stated at all.
+    "json_too_deep": 400,
+    "json_too_many_members": 400,
+    "json_array_too_long": 400,
+    "json_string_too_large": 400,
+    "prompt_too_large": 400,
+    "request_too_large": 413,
     # 413 — §22.4's ceiling. DEVIATION, recorded rather than reconciled: §2.4's
     # table has no row for this reason, because §22 is a later section than §2.4
     # and adds it. 413 rather than the fallback 400 for the same reason
@@ -268,6 +346,10 @@ REASON_STATUS: Final[dict[str, int]] = {
     # 502 — the provider could not be reached. Names the host and NEVER the
     # body: a provider's response text is the channel §23.6 exists to contain.
     "provider_unreachable": 502,
+    # §2.9: `git` is not installed. 503 beside the other runtime-absence reasons
+    # (`agent_unavailable`, `process_down`): a dependency this process needs is
+    # not present, which is a fact about the server rather than the request.
+    "git_unavailable": 503,
     # 503 — the session routes with no runtime behind them (§7A.8). Tabulated so
     # the reason has a status even where it is raised without one; the refusal
     # itself carries the closed `cause`, `config_path` and reduced `detail`.
@@ -400,6 +482,33 @@ INTERNAL_ERROR_MESSAGE: Final[str] = (
 )
 
 
+#: The per-value ceiling every string in a §2.4 refusal body is bounded to
+#: (audit-2026-09-04 J-http-limits-2). Two orders of magnitude above
+#: :data:`~.agent_attach.DETAIL_MAX_CHARS` on purpose: a ``detail`` is one
+#: operator sentence, while a refusal's ``data`` legitimately carries a
+#: candidate list, a lease record or a stale-selection payload, and a bound
+#: tight enough for the first would truncate the second. What it is sized
+#: *against* is the amplifier: the largest string this surface admits is 16 MiB
+#: (``json.max_string_bytes``), and this turns a 33.5 MB refusal into one under
+#: eight kilobytes.
+REFUSAL_VALUE_MAX_CHARS: Final[int] = 2048
+
+#: What a clipped value says about itself. ``{dropped}`` is the character count
+#: removed, so a reader can tell "this is the value" from "this is its head".
+CLIP_MARKER: Final[str] = "…[{dropped} more characters clipped]"
+
+
+#: The operator sentence every ``agent_unavailable`` this module mints carries.
+#: Fixed, because the *variable* half — what the runtime actually said — is
+#: ``detail``, which is bounded and redacted; putting the same text in both
+#: fields (which is what an unbounded ``str(exc)`` message did) made one of them
+#: a second, unbounded copy of the other (J-http-envelope-15).
+_AGENT_UNAVAILABLE_MESSAGE: Final[str] = (
+    "this server has no agent runtime that can serve the request; "
+    "see `cause` for why and `detail` for what the runtime reported"
+)
+
+
 def internal_error(exc: BaseException) -> HttpRefusal:
     """§2.4's ``internal_error`` row: a fixed message plus a correlation id.
 
@@ -466,7 +575,7 @@ _SUPERVISOR_TIMEOUT_RE: Final[re.Pattern[str]] = re.compile(
 )
 
 
-def _refusal_for_supervisor_error(exc: SupervisorError) -> HttpRefusal:
+def _refusal_for_supervisor_error(exc: SupervisorError, secrets: Sequence[str]) -> HttpRefusal:
     """§2.4's two new rows, both reached only through :class:`SupervisorError`.
 
     **Preferred path.** ``agent_bridge/app.py`` already does the §2.8(6) work —
@@ -498,15 +607,33 @@ def _refusal_for_supervisor_error(exc: SupervisorError) -> HttpRefusal:
     at the end. An answered frame in which the sidecar names
     ``agent_unavailable`` about itself is a different thing entirely, and is
     read as the token it is (see :data:`SIDECAR_REFUSALS`).
+
+    **``secrets`` is required, not defaulted** (audit-2026-09-04
+    J-http-envelope-15). Both ``agent_unavailable`` branches used to build
+    ``detail`` through :func:`~.agent_attach.reduce_detail` with the argument
+    omitted — so the redaction loop iterated an empty sequence and did nothing —
+    and put a raw, unbounded ``str(exc)`` in ``message`` beside the bounded
+    detail. A silent default is what let that pass review, so this parameter has
+    none: the caller must say which secrets this layer holds (``guarded`` passes
+    the serve bearer, the one secret this process owns that a sidecar message
+    could quote back), and passing ``()`` is then a visible claim rather than an
+    omission.
     """
     if isinstance(exc, UnknownSessionError):
-        return HttpRefusal(404, exc.reason, str(exc), data={"session_id": exc.session_id})
+        return HttpRefusal(
+            404, exc.reason, reduce_text(str(exc), secrets), data={"session_id": exc.session_id}
+        )
     if isinstance(exc, AgentUnavailableError):
         return HttpRefusal(
             503,
             exc.reason,
-            str(exc),
-            data={"cause": exc.cause, "detail": reduce_detail(exc)},
+            # The operator sentence and the engine text are DIFFERENT fields
+            # with different jobs: `message` says what this server concluded,
+            # `detail` is the reduced text the runtime produced. Both are
+            # bounded and both are redacted; making them the same string would
+            # be the duplication §2.4 already refuses elsewhere.
+            _AGENT_UNAVAILABLE_MESSAGE,
+            data={"cause": exc.cause, "detail": reduce_detail(exc, secrets)},
         )
     if exc.error:
         # **THE STRUCTURAL HALF** (§2.4, amended 2026-09-04). A populated
@@ -536,7 +663,7 @@ def _refusal_for_supervisor_error(exc: SupervisorError) -> HttpRefusal:
         # ``internal_error`` instead was a strictly less informative answer
         # than the one that shipped before the fix — an opaque 500 with a fixed
         # sentence, where an operator previously got a 503 naming the runtime.
-        return _refusal_from_envelope(exc)
+        return _refusal_from_envelope(exc, secrets)
     # A hard-wait timeout (no `error` envelope — see `_SUPERVISOR_TIMEOUT_RE`)
     # is a live, slow sidecar, not an unreachable one. Checked before the
     # catch-all below so it is never folded into `agent_unavailable`: the two
@@ -545,7 +672,7 @@ def _refusal_for_supervisor_error(exc: SupervisorError) -> HttpRefusal:
     # this module must not re-collapse a distinction the bridge's own protocol
     # codes (`PROTOCOL_CODE_REASON[ErrorCode.TIMEOUT]` above) already keep.
     if _SUPERVISOR_TIMEOUT_RE.match(str(exc)):
-        return HttpRefusal(504, "timeout", str(exc))
+        return HttpRefusal(504, "timeout", reduce_text(str(exc), secrets))
     # Everything else is *this runtime's* sidecar being unreachable: a spawn
     # that failed, a child that died with no respawn budget left, a call sent
     # into (or timed out against) a process that stopped answering. §7A.8's
@@ -559,12 +686,12 @@ def _refusal_for_supervisor_error(exc: SupervisorError) -> HttpRefusal:
     return HttpRefusal(
         503,
         "agent_unavailable",
-        str(exc),
-        data={"cause": "sidecar_failed", "detail": reduce_detail(exc)},
+        _AGENT_UNAVAILABLE_MESSAGE,
+        data={"cause": "sidecar_failed", "detail": reduce_detail(exc, secrets)},
     )
 
 
-def _refusal_from_envelope(exc: SupervisorError) -> HttpRefusal:
+def _refusal_from_envelope(exc: SupervisorError, secrets: Sequence[str]) -> HttpRefusal:
     """Name a refusal the sidecar **answered** with, from the frame's own fields.
 
     Ordered by how much the sidecar said, most explicit first, and every branch
@@ -599,7 +726,11 @@ def _refusal_from_envelope(exc: SupervisorError) -> HttpRefusal:
     named = fields.get("reason")
     if isinstance(named, str) and named in SIDECAR_REFUSALS:
         raw_message = error.get("message")
-        text = raw_message if isinstance(raw_message, str) and raw_message else str(exc)
+        raw_text = raw_message if isinstance(raw_message, str) and raw_message else str(exc)
+        # The sidecar is another process: its sentence is foreign text on the
+        # same footing as a provider's or git's, so it is bounded and redacted
+        # before it becomes a wire message (J-http-envelope-15).
+        text = reduce_text(raw_text, secrets)
         data = {k: v for k, v in fields.items() if k != "reason"}
         if named == "agent_unavailable":
             data = _agent_unavailable_data(data, text)
@@ -609,10 +740,15 @@ def _refusal_from_envelope(exc: SupervisorError) -> HttpRefusal:
     if code == ErrorCode.INVALID_PARAMS and isinstance(message, str):
         match = _UNKNOWN_SESSION_RE.match(message)
         if match is not None:
-            return HttpRefusal(404, "unknown_session", message, data={"session_id": match.group(1)})
+            return HttpRefusal(
+                404,
+                "unknown_session",
+                reduce_text(message, secrets),
+                data={"session_id": match.group(1)},
+            )
     reason = PROTOCOL_CODE_REASON.get(code) if isinstance(code, int) else None
     if reason is not None:
-        return HttpRefusal(status_for_reason(reason), reason, str(exc))
+        return HttpRefusal(status_for_reason(reason), reason, reduce_text(str(exc), secrets))
     return internal_error(exc)
 
 
@@ -677,13 +813,55 @@ class HttpRefusal(Exception):
         return error_body(self.reason, self.message, self.data)
 
 
+def clip_text(value: str) -> str:
+    """One string, bounded to :data:`REFUSAL_VALUE_MAX_CHARS`, **marked** if cut.
+
+    Marked and not silently shortened: §2.4's whole discipline is that a client
+    is told what happened, and a value quietly returned three characters shorter
+    than it was sent is the silence :mod:`hephaestus.http.context` refuses one
+    layer up (its ``TRUNCATION_MARKER`` sets the same precedent for the composed
+    block).
+    """
+    if len(value) <= REFUSAL_VALUE_MAX_CHARS:
+        return value
+    dropped = len(value) - REFUSAL_VALUE_MAX_CHARS
+    return value[:REFUSAL_VALUE_MAX_CHARS] + CLIP_MARKER.format(dropped=dropped)
+
+
+def _clipped(value: Any) -> Any:
+    """:func:`clip_text` over one ``data`` value, recursing into containers."""
+    if isinstance(value, str):
+        return clip_text(value)
+    if isinstance(value, dict):
+        return {k: _clipped(v) for k, v in cast("dict[Any, Any]", value).items()}
+    if isinstance(value, list):
+        return [_clipped(item) for item in cast("list[Any]", value)]
+    if isinstance(value, tuple):
+        return [_clipped(item) for item in cast("tuple[Any, ...]", value)]
+    return value
+
+
 def error_body(reason: str, message: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
-    """The §2.4 envelope. ``reason`` and ``message`` always win over ``data``."""
-    body: dict[str, Any] = dict(data or {})
+    """The §2.4 envelope. ``reason`` and ``message`` always win over ``data``.
+
+    **Bounded** (``INTERFACE.md`` §2.4, audit-2026-09-04 J-http-limits-2). Every
+    refusal that interpolates a client string into both its sentence and its
+    machine payload was an amplifier: a context preview naming a 16 MiB part
+    returned a 33.5 MB 404 — a ratio of exactly 2.00, because the same string
+    was written twice. Clipping happens **here**, at the one function every
+    refusal body goes through, rather than at each of the dozens of raise sites
+    that interpolate an argument, because a per-site clip is a rule the next
+    refusal does not inherit.
+
+    ``reason`` is deliberately **not** clipped: it is a closed vocabulary whose
+    every member is short, and a truncated reason would be a token no client can
+    dispatch on. ``status`` is this module's own literal.
+    """
+    body: dict[str, Any] = {k: _clipped(v) for k, v in (data or {}).items()}
     body.pop("status", None)
     body["status"] = "error"
     body["reason"] = reason
-    body["message"] = message
+    body["message"] = clip_text(message)
     return body
 
 
@@ -710,11 +888,19 @@ def status_for_reason(reason: str) -> int:
     return 400
 
 
-def refusal_for(exc: BaseException) -> HttpRefusal:
+def refusal_for(exc: BaseException, *, secrets: Sequence[str] = ()) -> HttpRefusal:
     """Map one engine exception onto its §2.4 status and body.
 
     Ordered most-specific first. Every branch keeps the engine's own reason
     string; none is rewritten, and none is collapsed into a neighbour.
+
+    ``secrets`` are the values *this process holds* that a message from another
+    process could quote back — the serve bearer, in practice. They reach only
+    the branches whose text came from somewhere else (the sidecar's); every
+    other branch's message was written in this repository and has nothing to
+    redact. Defaulted to empty because most callers are exercising an engine
+    exception with no foreign text in it at all; ``build_app``'s guard, which is
+    the one path a browser reaches, passes the bearer explicitly.
     """
     if isinstance(exc, HttpRefusal):
         return exc
@@ -726,7 +912,7 @@ def refusal_for(exc: BaseException) -> HttpRefusal:
         # falls all the way to the bare ``raise exc`` — which is exactly how an
         # intact 29 KB transcript became a permanent unnamed 500 (§2.4's own
         # amendment note).
-        return _refusal_for_supervisor_error(exc)
+        return _refusal_for_supervisor_error(exc, secrets)
     if isinstance(exc, StaleSelectionError):
         # The five-value vocabulary rides as `reason` inside the payload when the
         # resolver supplies one (Stage 5's SelectionResolver, §19 item 8); the

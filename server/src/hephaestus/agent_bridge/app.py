@@ -32,7 +32,7 @@ import contextlib
 import stat
 import threading
 import uuid
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -55,7 +55,13 @@ from .cad_ops import (
     release_run_request_text,
 )
 from .dispatch import DispatchError, Principal, ToolDispatcher
-from .events import EventPump, HephaestusEvent, ObserverClient, PerClientQueue
+from .events import (
+    BUFFERED_EVENTS_MAX,
+    EventPump,
+    HephaestusEvent,
+    ObserverClient,
+    PerClientQueue,
+)
 from .protocol import ErrorCode, ProtocolError
 from .query_snapshot import (
     QuerySnapshotError,
@@ -129,23 +135,68 @@ def default_dist_main() -> Path:
 
 @dataclass
 class _Run:
-    """Per-run event buffer + terminal record, filled by the notification sink."""
+    """Per-run event buffer + terminal record, filled by the notification sink.
+
+    **The buffer is bounded** (audit-2026-09-04 J-http-limits-4). It used to be a
+    plain list, so one long tool-heavy run accumulated every event it ever
+    emitted in the serving process — for the whole turn, and then again in the
+    prompt response — while the *live* path through
+    :class:`~.events.PerClientQueue` had a bound, coalescing and a documented
+    backpressure cancel. Two halves of one event stream with two memory
+    disciplines. This is the same bound, from the same key
+    (:data:`~.events.BUFFERED_EVENTS_MAX`), so neither half can grow without
+    limit and neither can be raised alone.
+
+    **Which end survives: the tail.** ``deque(maxlen=…)`` drops from the *left*,
+    so the events kept are the newest. That is right for this buffer's one
+    consumer — a synchronous prompt caller reading the transcript of a turn that
+    has just ended, whose interesting part is how it finished — and it is
+    **wrong** for anyone who needs the run's opening; that reader wants the
+    durable history, which the pump made durable and this buffer never was.
+    Drops are counted rather than silent: :attr:`events_dropped` is what lets the
+    response say ``events_truncated`` by name instead of shipping a short list
+    that reads like a complete one.
+
+    Nothing here touches the WebSocket path. ``_on_notification`` hands every
+    event to the pump *before* this buffer sees it, so a socket client still
+    receives the events this deque drops.
+    """
 
     run_id: str
     session_id: str
-    events: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    events: deque[dict[str, Any]] = field(
+        default_factory=lambda: deque[dict[str, Any]](maxlen=BUFFERED_EVENTS_MAX)
+    )
+    #: How many events the bound discarded from the front of :attr:`events`.
+    events_dropped: int = 0
     terminal: dict[str, Any] | None = None
     on_event: EventCallback | None = None
+
+    def record(self, event: dict[str, Any]) -> None:
+        """Append one event, counting what the bound pushes out."""
+        if self.events.maxlen is not None and len(self.events) == self.events.maxlen:
+            self.events_dropped += 1
+        self.events.append(event)
 
 
 @dataclass(frozen=True)
 class PromptResult:
-    """The outcome of one ``session.prompt`` run."""
+    """The outcome of one ``session.prompt`` run.
+
+    ``events`` is the run's **bounded tail** (see :class:`_Run`): at most
+    :data:`~.events.BUFFERED_EVENTS_MAX` events, newest kept, with
+    ``events_dropped`` counting what the bound discarded so a caller can report
+    the truncation by name rather than pass off a cut list as a whole one. A
+    turn shorter than the bound — which is every turn in the test tree — carries
+    ``events_dropped == 0`` and is byte-identical to what this returned before.
+    """
 
     run_id: str
     status: str
     events: list[dict[str, Any]]
     terminal: dict[str, Any] | None
+    #: Events the run's bounded buffer dropped before ``events`` was taken.
+    events_dropped: int = 0
 
     def kinds(self) -> list[str]:
         """The ordered event kinds (handy for shape assertions)."""
@@ -1311,7 +1362,13 @@ class BridgeRuntime:
             with self._lock:
                 self._answerers.pop(run_id, None)
                 self._runs.pop(run_id, None)
-        return PromptResult(run_id=run_id, status=status, events=run.events, terminal=run.terminal)
+        return PromptResult(
+            run_id=run_id,
+            status=status,
+            events=list(run.events),
+            terminal=run.terminal,
+            events_dropped=run.events_dropped,
+        )
 
     def _admit_turn(self, run: _Run, answerer: AskUserAnswerer | None) -> None:
         """Register a turn, or refuse it ``run_in_flight`` (``INTERFACE.md`` §7A.5).
@@ -1520,7 +1577,10 @@ class BridgeRuntime:
             run = self._runs.get(run_id)
         if run is None:
             return
-        run.events.append(params)
+        # Bounded, and the drop is counted (J-http-limits-4). The pump already
+        # has this event — `_on_notification` gives it to the live path first —
+        # so what this bound discards is never lost to a socket client.
+        run.record(params)
         if run.on_event is not None:
             run.on_event(params)
 

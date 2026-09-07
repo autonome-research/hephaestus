@@ -62,6 +62,7 @@ __all__ = [
     "AttachRefused",
     "provider_config_path",
     "reduce_detail",
+    "reduce_text",
     "start_agent_runtime",
 ]
 
@@ -188,20 +189,35 @@ def provider_config_path(project_root: Path) -> Path:
     return resolve_config_path(project_root)
 
 
-def reduce_detail(exc: BaseException, secrets: Sequence[str] = ()) -> str:
-    """A bounded, secret-free sentence for a failure that crosses to a browser.
+def reduce_text(text: str, secrets: Sequence[str] = (), limit: int = DETAIL_MAX_CHARS) -> str:
+    """Bound and redact one piece of foreign text before it reaches the wire.
 
-    Exact-substring redaction over the values this attach was about to forward,
-    **before** truncation: the threat §23.6 names is a provider's error text
-    quoting back what it was sent, and the one place that value is known exactly
-    is here, in the process that holds it. A pattern-matching redactor would be
-    a guess about what a secret looks like; this is not.
+    THE ONE REDUCER for this surface (audit-2026-09-04 J-http-envelope-11/-15).
+    Three boundaries hand a browser text they did not write — an attach failure
+    (:func:`reduce_detail`), a sidecar refusal (``errors._refusal_for_supervisor_error``)
+    and a failed ``git`` subcommand (``git_projection._git``) — and each had its
+    own answer: one truncated and redacted, one truncated with the redaction
+    argument omitted so the loop iterated an empty sequence, and one echoed raw
+    stderr. It lives here rather than in :mod:`hephaestus.http.errors` because
+    that module imports this one for :data:`ATTACH_CAUSES` and
+    :data:`DETAIL_MAX_CHARS`, and because :data:`REDACTED` and the bound are
+    already this module's constants.
+
+    Redaction is **exact substring** and happens *before* truncation: the threat
+    §23.6 names is a remote quoting back what it was sent, and the one place
+    those values are known exactly is the process that holds them. A
+    pattern-matching redactor would be a guess about what a secret looks like;
+    this is not.
     """
-    text = f"{type(exc).__name__}: {exc}"
     for secret in secrets:
         if secret:
             text = text.replace(secret, REDACTED)
-    return text[:DETAIL_MAX_CHARS]
+    return text[:limit]
+
+
+def reduce_detail(exc: BaseException, secrets: Sequence[str] = ()) -> str:
+    """A bounded, secret-free sentence for a failure that crosses to a browser."""
+    return reduce_text(f"{type(exc).__name__}: {exc}", secrets)
 
 
 def start_agent_runtime(

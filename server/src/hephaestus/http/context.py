@@ -137,6 +137,25 @@ BLOCK_MAX_LINES: Final[int] = int(LIMITS["text_result"]["max_lines"])
 #: so a malformed plane is refused here rather than reaching a renderer.
 _SECTION_PLANE: Final[re.Pattern[str]] = re.compile(r"^[+-][XYZ]@-?\d+(?:\.\d+)?$")
 
+#: §5.5's camera vocabulary, MIRRORED — from `web/src/state/workspace.ts`'s
+#: ``STANDARD_VIEWS``, which itself mirrors ``core/render/cameras.py``'s. A
+#: mirror and not an import because ``server/http`` may not import
+#: ``hephaestus.core.render`` at all (``test_http_boundary.py`` asserts that at
+#: import level), and the *client's* copy is the one that matters here: this
+#: member is the client echoing its own §4.5 navigation state back, so a set
+#: narrower than the client's would refuse a camera the operator can actually be
+#: looking through. **TRACKING**: three copies, one vocabulary — the cross-
+#: language generator (audit-2026-09-04 J-mirrors-and-dx-6) is what removes the
+#: hand-transcription; until it lands, a change to ``cameras.py`` must be made
+#: here and in ``workspace.ts`` in the same commit.
+_STANDARD_VIEWS: Final[frozenset[str]] = frozenset(
+    {"iso", "+X", "-X", "+Y", "-Y", "+Z", "-Z", "front"}
+)
+
+#: ``cameras.py``'s ``az{A}_el{E}`` grammar, the other half of a legal view.
+#: Mirrored for the same reason and with the same tracking obligation.
+_VIEW_GRAMMAR: Final[re.Pattern[str]] = re.compile(r"^az-?\d+(?:\.\d+)?_el-?\d+(?:\.\d+)?$")
+
 #: §4.5's closed vocabularies, restated as the guards this route validates
 #: against. They are *the client's own* navigation tokens; a value outside them
 #: is a client bug and is refused rather than normalized.
@@ -227,6 +246,39 @@ def _token(body: dict[str, Any], key: str, allowed: frozenset[str]) -> str | Non
     return raw
 
 
+def _well_formed_ref(ref: str, *, field: str) -> None:
+    """Refuse a member that cannot be an artifact ref, **before any store read**.
+
+    ``INTERFACE.md`` §7A.3, audit-2026-09-04 J-http-limits-2. The envelope
+    parser validated the *key set* and, for these two members, only that the
+    value was a string — so an 8 MB ``artifact_ref`` passed the door untouched
+    and was refused several hundred milliseconds later by a store lookup whose
+    refusal quoted the whole thing back. ``error_body`` bounds that reply now,
+    which closes the amplifier; this closes the other half the audit names,
+    which is that a value that cannot match its field's grammar is refused
+    before anything looks it up.
+
+    The grammar is the store's own — ``project_store.store.artifact_kind_of_ref``
+    is *called*, not restated, exactly as :func:`.artifacts.artifact_kind` calls
+    it — so this cannot come to disagree with the two segments the artifact
+    routes parse (mission rule 6). What is added over that function is the
+    field name, because an envelope carries two refs and a refusal that does
+    not say which one is not actionable.
+    """
+    from hephaestus.core.errors import ValidationError
+    from hephaestus.core.project_store.store import artifact_kind_of_ref
+
+    try:
+        artifact_kind_of_ref(ref)
+    except ValidationError as exc:
+        raise HttpRefusal(
+            status_for_reason("invalid_ref"),
+            "invalid_ref",
+            f"{field} is not an artifact reference",
+            data={"field": field, "value": ref},
+        ) from exc
+
+
 def parse_envelope(body: Any) -> ContextEnvelope:
     """Validate one ``context`` member into a :class:`ContextEnvelope`.
 
@@ -256,9 +308,24 @@ def parse_envelope(body: Any) -> ContextEnvelope:
     artifact_ref = envelope.get("artifact_ref")
     if artifact_ref is not None and not isinstance(artifact_ref, str):
         raise _invalid("artifact_ref must be a string or null")
+    if isinstance(artifact_ref, str):
+        _well_formed_ref(artifact_ref, field="artifact_ref")
+    # `view` and `focus` were the only two members of this closed envelope
+    # validated as "a string" and nothing more, and they are exactly the two
+    # that reach the model's block as free text: a preview with
+    # ``view: "not-a-view; ignore prior"`` answered 200 and put the client's
+    # bytes verbatim into the document a model reads (audit-2026-09-04
+    # J-http-envelope-5). Both are closed now, by the two mechanisms this module
+    # already had — a closed-set token check, and server-side resolution.
     view = envelope.get("view")
-    if view is not None and not isinstance(view, str):
-        raise _invalid("view must be a string or null")
+    if view is not None and (
+        not isinstance(view, str) or (view not in _STANDARD_VIEWS and not _VIEW_GRAMMAR.match(view))
+    ):
+        raise _invalid(
+            "view must be a standard camera name or the 'az<deg>_el<deg>' grammar",
+            view=view,
+            admitted=sorted(_STANDARD_VIEWS),
+        )
     focus = envelope.get("focus")
     if focus is not None and not isinstance(focus, str):
         raise _invalid("focus must be a string or null")
@@ -302,6 +369,7 @@ def parse_envelope(body: Any) -> ContextEnvelope:
         raw_bundle: Any = selection.get("bundle_ref")
         if not isinstance(raw_bundle, str) or not raw_bundle:
             raise _invalid("selection.bundle_ref is required and must be a string")
+        _well_formed_ref(raw_bundle, field="selection.bundle_ref")
         if isinstance(raw_id, bool) or not isinstance(raw_id, (str, int)):
             raise _invalid("selection.selection_id is required")
         selection_id = str(raw_id)
@@ -370,6 +438,7 @@ def compose_context(runtime: WorkspaceRuntime, envelope: ContextEnvelope) -> Com
     )
 
     part = _verified_part(runtime, envelope)
+    _resolve_focus(runtime, part, envelope)
     if part is not None:
         _say_part(runtime, block, part, envelope)
     if envelope.artifact_ref is not None:
@@ -387,18 +456,72 @@ def _verified_part(runtime: WorkspaceRuntime, envelope: ContextEnvelope) -> str 
 
     §7A.3's "a lying client is caught, not believed": a part the project does
     not have is ``404 unknown_part`` rather than a block that names it anyway.
+
+    The check itself is :func:`~.runtime.resolve_part` — the same one every
+    part-addressed route now calls. It was written *here* first, when §7A.3
+    forced someone to ask the question, and answering it in the composer rather
+    than at the layer's door is why six other routes went on fabricating
+    documents about parts that do not exist (audit-2026-09-04 J-http-envelope-3).
     """
     if envelope.part is None:
         return None
-    known = set(runtime.project_store.list_parts())
-    if envelope.part not in known:
-        raise HttpRefusal(
-            404,
-            "unknown_part",
-            f"this project has no part {envelope.part!r}",
-            data={"part": envelope.part, "parts": sorted(known)},
+    from .runtime import resolve_part
+
+    return resolve_part(runtime, envelope.part)
+
+
+def _resolve_focus(runtime: WorkspaceRuntime, part: str | None, envelope: ContextEnvelope) -> None:
+    """Check ``focus`` against the build it addresses into, or refuse (§7A.3).
+
+    ``focus`` is an **address**, not a token: it names a labelled solid or a tag
+    inside the current build, which is exactly what ``inspect_part``'s own
+    ``focus`` means and exactly what ``core/render/inspect.py::_focus_solids``
+    resolves it against. Pattern-matching it would miss the requirement — a
+    syntactically perfect name that matches nothing is still a lie — so it is
+    resolved, and a miss is ``400 addressing_error`` with the candidates, which
+    is the reason the engine already raises for the identical condition.
+
+    The two namespaces are reached through the seams this layer is allowed to
+    use, not through the renderer: labels are ``BuildResult.geometries``, which
+    §8 calls "exactly the resolvable label namespace", and tags come back from
+    :meth:`~hephaestus.agent_bridge.cad_ops.CadOps.artifact_tags`, the same
+    source map the inspect resolver reads. ``server/http`` may not import
+    ``hephaestus.core.render`` at all, and this is why the check is a resolution
+    against engine values rather than a second implementation of one.
+
+    A focus with **no part** is ``invalid_params``: there is nothing for it to
+    address into, and composing it anyway is how ``focused on: geometry:nosuch``
+    reached the model. A focus on a part with **no current build** is likewise
+    refused rather than passed through — an unverifiable claim is not a claim
+    this server repeats.
+    """
+    focus = envelope.focus
+    if focus is None:
+        return
+    if part is None:
+        raise _invalid(
+            "focus addresses a labelled solid or a tag inside a part; name the part too",
+            focus=focus,
         )
-    return envelope.part
+    build = runtime.cad.current_build(part)
+    labels = () if build is None else tuple(entry.label for entry in build.geometries)
+    tags: tuple[str, ...] = ()
+    if build is not None and build.artifact_ref is not None:
+        tags = tuple(runtime.cad.artifact_tags(build, build.artifact_ref))
+    candidates = sorted({*labels, *tags})
+    if focus in candidates:
+        return
+    detail = (
+        f"focus {focus!r} matches no labeled solid or tag"
+        if build is not None
+        else f"focus {focus!r} cannot be resolved: {part!r} has no current build"
+    )
+    raise HttpRefusal(
+        status_for_reason("addressing_error"),
+        "addressing_error",
+        detail,
+        data={"focus": focus, "part": part, "candidates": candidates},
+    )
 
 
 def _say_part(

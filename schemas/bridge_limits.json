@@ -5,6 +5,9 @@
     "frame_version": 1,
     "max_frame_bytes": 67108864
   },
+  "http": {
+    "max_request_bytes": 1048576
+  },
   "json": {
     "max_depth": 64,
     "max_members": 10000,

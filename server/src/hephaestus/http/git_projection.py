@@ -45,12 +45,15 @@ from typing import Any, Final
 
 from hephaestus.agent_bridge.limits import LIMITS
 
-from .errors import HttpRefusal
+from .agent_attach import reduce_text
+from .errors import HttpRefusal, status_for_reason
 
 __all__ = [
     "ALLOWED_SUBCOMMANDS",
     "DIFF_MAX_BYTES",
     "DIFF_MAX_LINES",
+    "GIT_HISTORY_TIMEOUT_SECONDS",
+    "GIT_TIMEOUT_SECONDS",
     "GitUnavailable",
     "git_diff",
     "git_log",
@@ -72,6 +75,26 @@ ALLOWED_SUBCOMMANDS: Final[frozenset[str]] = frozenset(
 #: surface uses, not a second pair of literals.
 DIFF_MAX_BYTES: Final[int] = int(LIMITS["text_result"]["max_bytes"])
 DIFF_MAX_LINES: Final[int] = int(LIMITS["text_result"]["max_lines"])
+
+#: The wall clock every ``git`` subprocess runs under (``INTERFACE.md`` §2.9,
+#: audit-2026-09-04 J-http-limits-6). This was the **one** request-path
+#: subprocess in the repository with no timeout, and it is the choke point for
+#: four git routes, one post and — through :func:`is_work_tree` — the project
+#: route's capability map: with a ``git`` that slept 30 s, one project request
+#: returned at 30.05 s and took two unrelated routes down with it.
+#:
+#: Two bounds, not one, because the verbs are not alike. A ref lookup, a status
+#: and a tag write are index-and-refs operations that are fast on any repository
+#: a human works in; ``log --follow`` and ``diff`` walk history and legitimately
+#: cost more on a large repository, so refusing them at the short bound would
+#: turn a slow answer into no answer. Both are ceilings on pathology, not
+#: budgets: the measured cost of each verb on the fixture project is under
+#: 50 ms.
+GIT_TIMEOUT_SECONDS: Final[float] = 15.0
+GIT_HISTORY_TIMEOUT_SECONDS: Final[float] = 60.0
+
+#: The verbs that walk history and therefore run under the longer bound.
+_HISTORY_SUBCOMMANDS: Final[frozenset[str]] = frozenset({"log", "diff"})
 
 #: A revision the caller may name. Deliberately narrow: hex shas, tags, and
 #: branch-ish names. It exists to keep an argument that *looks* like an option
@@ -100,28 +123,56 @@ def _git(root: Path, *args: str, check: bool = True) -> str:
     either a literal in this file or a value one of the validators above
     accepted.
     """
-    if not args or args[0] not in ALLOWED_SUBCOMMANDS:
+    subcommand = args[0] if args else ""
+    if not args or subcommand not in ALLOWED_SUBCOMMANDS:
         raise HttpRefusal(
-            403,
+            status_for_reason("git_verb_refused"),
             "git_verb_refused",
-            f"the workspace may not run 'git {args[0] if args else ''}'",
+            f"the workspace may not run 'git {subcommand}'",
             data={"allowed": sorted(ALLOWED_SUBCOMMANDS)},
         )
+    timeout = (
+        GIT_HISTORY_TIMEOUT_SECONDS if subcommand in _HISTORY_SUBCOMMANDS else GIT_TIMEOUT_SECONDS
+    )
     try:
         completed = subprocess.run(
             ["git", "-C", str(root), *args],
             capture_output=True,
             text=True,
             check=False,
+            timeout=timeout,
         )
     except FileNotFoundError as exc:  # pragma: no cover - git absent from the image
         raise GitUnavailable("git is not installed") from exc
-    if check and completed.returncode != 0:
+    except subprocess.TimeoutExpired as exc:
+        # NAMED, and it names the ceiling: an operator whose repository is large
+        # enough to cross it can act on that, where a hung request tells them
+        # nothing. `subprocess.run` has already killed the child and reaped it
+        # before raising, so nothing is left behind.
         raise HttpRefusal(
-            400,
+            status_for_reason("git_timeout"),
+            "git_timeout",
+            f"git {subcommand} did not finish within {timeout:g}s",
+            data={"subcommand": subcommand, "timeout_seconds": timeout},
+        ) from exc
+    if check and completed.returncode != 0:
+        # §2.9 / audit-2026-09-04 J-http-envelope-11: the SUBCOMMAND and the exit
+        # code, never the argv and never raw stderr. The argv carries ref names
+        # and, through the pathspec, the project's filesystem structure; git's
+        # stderr is a subprocess writing straight into a browser. The subcommand
+        # alone is already public through `git_verb_refused`'s `allowed` list,
+        # and what git said rides in a bounded, redacted `detail` — the same
+        # containment `agent_credentials` applies to a provider's error text,
+        # through the same reducer (`agent_attach.reduce_text`).
+        raise HttpRefusal(
+            status_for_reason("git_failed"),
             "git_failed",
-            completed.stderr.strip() or f"git {args[0]} failed",
-            data={"argv": ["git", *args], "returncode": completed.returncode},
+            f"git {subcommand} failed with exit status {completed.returncode}",
+            data={
+                "subcommand": subcommand,
+                "returncode": completed.returncode,
+                "detail": reduce_text(completed.stderr.strip()),
+            },
         )
     return completed.stdout
 
@@ -137,7 +188,11 @@ def is_work_tree(root: Path) -> bool:
 
 def _require_work_tree(root: Path) -> None:
     if not is_work_tree(root):
-        raise HttpRefusal(404, "not_a_git_repository", f"{root} is not inside a git work tree")
+        raise HttpRefusal(
+            status_for_reason("not_a_git_repository"),
+            "not_a_git_repository",
+            f"{root} is not inside a git work tree",
+        )
 
 
 def git_status(root: Path) -> dict[str, Any]:

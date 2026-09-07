@@ -80,6 +80,15 @@ COVERED: Final[frozenset[str]] = frozenset(
     {
         "wire.frame_version",
         "wire.max_frame_bytes",
+        # The HTTP surface's own request ceiling (audit-2026-09-04
+        # J-http-limits-1). Enforced by ``hephaestus.http.app._read_body`` — a
+        # server-side boundary, not a bridge-wire one — so its at-the-limit and
+        # limit+1 boundary tests live where the enforcement does,
+        # ``server/tests/test_http_limits.py``
+        # (``test_a_body_at_the_real_ceiling_is_admitted_and_one_byte_over_is_413``),
+        # which also pins that the constant is read from this document rather
+        # than duplicated. Registered here so the census stays complete.
+        "http.max_request_bytes",
         "json.max_depth",
         "json.max_members",
         "json.max_array_items",

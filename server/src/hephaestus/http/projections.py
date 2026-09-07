@@ -30,9 +30,11 @@ from typing import Any, Final, Literal
 
 from hephaestus.core.checks.report import badge, report_json
 from hephaestus.core.executor.namespace import METADATA_FIELDS
+from hephaestus.core.project_store.listing import BUILD_STATUS_VALUES, part_build_status
 from hephaestus.core.types import BuildFreshness, BuildResult
 
 __all__ = [
+    "BUILD_STATUS_VALUES",
     "METADATA_FIELDS",
     "PROPERTY_SOURCES",
     "PropertySource",
@@ -89,6 +91,13 @@ def build_projection(
     axis). The route prefers the current successful record when both exist
     (G4.2's ``geometry_count`` is a fact about the current build).
 
+    ``status`` itself is :func:`~hephaestus.core.project_store.listing.part_build_status`
+    and not three literals spelled here, because ``GET /parts`` now hoists the
+    same token per part (``audit-2026-09-04`` J-web-viewport-7) and two spellings
+    of one closed vocabulary is how the two come to mean different things by the
+    same word. The rule lives below both callers — core may not import this
+    module — and a server test asserts the two routes agree part by part.
+
     ``stale`` and ``stale_inputs`` are the freshness fact ``current`` is not
     (audit-2026-09-04 B-5). ``current`` stays exactly what
     ``architecture.md`` §3.5 defines — publication state, stamped by the pointer
@@ -117,7 +126,7 @@ def build_projection(
     """
     if result is None:
         return {
-            "status": "not_built",
+            "status": part_build_status(None),
             "current": False,
             "stale": False,
             "stale_inputs": [],
@@ -126,7 +135,7 @@ def build_projection(
             "checkpoints": [],
         }
     payload: dict[str, Any] = {
-        "status": "ok" if result.status == "ok" else "error",
+        "status": part_build_status(result),
         "current": result.current,
         "artifact_ref": result.artifact_ref,
         "project_snapshot_ref": result.project_snapshot_ref,

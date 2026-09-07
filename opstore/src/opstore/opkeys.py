@@ -18,6 +18,16 @@ Contract (DESIGN.md "opkeys.py" + architecture.md §3.5):
     seen) or at/past the tombstone horizon (recognized) raise
     ``KeyExpiredError`` without execution. Recognized keys replay through the
     full window without the freshness check.
+- Refusal messages name the **condition and its window**, never the composed
+  identifier. ``raw_id`` reaches this module fully composed — namespace prefix,
+  principal fingerprint, route template, the caller's own key, ordinal, lane —
+  and ``op_key`` additionally carries the keyring key id and the HMAC. Both were
+  formatted into these messages, which was harmless while the messages were for
+  a log and stopped being so when ``INTERFACE.md`` §2.4 made every engine
+  message a **wire** message (audit-2026-09-04 J-http-envelope-13). A refusal's
+  message names what the caller sent; correlation belongs in the log, and the
+  identifier the *caller* holds — its ``Idempotency-Key`` header — is attached
+  by the HTTP layer, which is the only layer that knows it.
 - Outcome GC: ``purge()`` collapses ``COMMITTED``/``CONFLICTED`` rows older
   than the window into tombstones ``(op_key, payload_hash, terminal_state,
   commit_hash)`` expiring at ``ts + window + tombstone_margin_s`` (7 days), and
@@ -102,6 +112,27 @@ def format_ts(ts: float) -> str:
     return repr(float(ts))
 
 
+def format_window(seconds: float) -> str:
+    """One configured duration, as an operator reads it (not as a float prints).
+
+    The refusal sentences below name a *window*, and a window an operator can
+    act on is "30 days", not ``2.592e+06s`` — which is what ``{seconds:g}``
+    produces for the shipped 30-day window and is a machine string in a
+    human sentence, the same class of defect as the composed key these
+    messages stopped quoting (audit-2026-09-04 J-http-envelope-13, RC-5).
+    The largest whole unit is used and nothing is rounded into a lie: a
+    duration that is not a whole number of its unit falls back to seconds.
+    """
+    for unit, size in (("day", 86400.0), ("hour", 3600.0), ("minute", 60.0)):
+        if seconds >= size and seconds % size == 0:
+            count = int(seconds // size)
+            return f"{count} {unit}" if count == 1 else f"{count} {unit}s"
+    if seconds == int(seconds):
+        whole = int(seconds)
+        return f"{whole} second" if whole == 1 else f"{whole} seconds"
+    return f"{seconds:g} seconds"
+
+
 def parse_key(op_key: str) -> ParsedKey:
     """Split a normalized key into its embedded fields (``ValueError`` if malformed)."""
     parts = op_key.split(".")
@@ -176,11 +207,15 @@ class OpKeys:
             key_ts = now if ts is None else float(ts)
             if now - key_ts > window:
                 raise KeyExpiredError(
-                    f"operation key for {raw_id!r} is older than the idempotency window"
+                    "this idempotency key's embedded timestamp is older than this "
+                    f"server's idempotency window of {format_window(window)}; "
+                    "it was never executed"
                 )
             if abs(key_ts - now) > self._config.freshness_skew_s:
                 raise KeyTimestampSkewError(
-                    f"first-seen key for {raw_id!r} has timestamp outside the freshness window"
+                    "this idempotency key is being presented for the first time and its "
+                    "embedded timestamp is more than "
+                    f"{format_window(self._config.freshness_skew_s)} from this server's clock"
                 )
             key_id = self._keyring.active_key_id
             op_key = self.normalize(raw_id, key_ts, key_id)
@@ -240,10 +275,13 @@ class OpKeys:
         op_key = str(row["op_key"])
         if str(row["payload_hash"]) != payload_hash:
             raise KeyPayloadMismatchError(
-                f"operation key {op_key} reused with a different payload hash"
+                "this idempotency key has already been used for a different request body"
             )
         if now - float(row["ts"]) >= horizon:
-            raise KeyExpiredError(f"operation key {op_key} is past the tombstone horizon")
+            raise KeyExpiredError(
+                "this idempotency key is past this server's tombstone horizon of "
+                f"{format_window(horizon)}"
+            )
         state = OperationState(str(row["state"]))
         if state is OperationState.PREPARED:
             return PendingRecovery(op_key=op_key)
@@ -262,10 +300,11 @@ class OpKeys:
         op_key = str(tomb["op_key"])
         if str(tomb["payload_hash"]) != payload_hash:
             raise KeyPayloadMismatchError(
-                f"operation key {op_key} (tombstone) reused with a different payload hash"
+                "this idempotency key has already been used for a different request body "
+                "(its outcome has since been collapsed to a tombstone)"
             )
         if now >= float(tomb["expires_at"]):
-            raise KeyExpiredError(f"operation key {op_key} is past the tombstone horizon")
+            raise KeyExpiredError("this idempotency key is past the tombstone horizon")
         commit = tomb["commit_hash"]
         return Replay(
             op_key=op_key,

@@ -240,6 +240,20 @@ def with_bundle(api: ASGIApp, bundle: Path | None = None) -> ASGIApp:
 
     With no bundle built, the wrapper is not applied at all — the API is served
     alone, which is exactly what it was before this existed.
+
+    **The miss policy, decided rather than left to the next reader** (§3,
+    audit-2026-09-04 J-http-envelope-2). A path the bundle does not contain is a
+    genuine **404**, and this is deliberately *not* a single-page fallback: the
+    client keeps all of its navigation state in the URL **fragment** (§2.1's
+    ``#t=<token>``, §4.5's workspace state) and never pushes a new path, so
+    there is no client-side route for a missed path to belong to. Serving
+    ``index.html`` for every miss would turn a stale asset URL after a rebuild —
+    and every mistyped path and every probe — into a 200 carrying a document
+    the requester did not ask for. ``StaticFiles`` is therefore left to raise
+    its 404, and the wrapper's whole job is that the raise reaches an exception
+    handler: both branches of :func:`dispatch` are exception-carrying
+    applications, which is exactly the property the bare ASGI callable lacked
+    when every page load's ``/favicon.ico`` was a 500 with a traceback.
     """
     resolved = bundle if bundle is not None else web_bundle()
     if resolved is not None and not (resolved / "index.html").is_file():

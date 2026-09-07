@@ -25,12 +25,12 @@ bundle file a 404 envelope rather than a raw ASGI 500.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import httpx
 import pytest
 from hephaestus.http.serve import with_bundle
-from hephaestus.testing.workspace import WORKSPACE_TOKEN, workspace
+from hephaestus.testing.workspace import WORKSPACE_TOKEN, uuid7, workspace
 from starlette.testclient import TestClient
 from starlette.types import ASGIApp
 
@@ -230,9 +230,11 @@ def test_a_missing_bundle_file_is_a_404_not_a_server_error(tmp_path: Path) -> No
 
         favicon = client.get("/favicon.ico")
         assert favicon.status_code == 404
-        assert favicon.headers.get("content-type", "").startswith(
-            ("text/plain", "application/json")
-        )
+        # TIGHTENED: B-6/B-11 landed while this file was authored (see the
+        # module docstring), so the static branch's 404 is the §2.4 envelope
+        # now, not the plain-text default the surrounding prose describes.
+        assert favicon.headers.get("content-type", "").startswith("application/json")
+        assert favicon.json()["reason"] == "unknown_route"
 
         root = client.get("/")
         assert root.status_code == 200
@@ -241,3 +243,80 @@ def test_a_missing_bundle_file_is_a_404_not_a_server_error(tmp_path: Path) -> No
         index = client.get("/index.html")
         assert index.status_code == 200
         assert "workspace" in index.text
+
+
+# --------------------------------------------------------------------------
+# J-http-envelope-19 — the unauthorized WebSocket close code was dead
+
+
+def test_an_unauthenticated_upgrade_is_refused_at_the_handshake(tmp_path: Path) -> None:
+    """A form that does not mention a close code — because none is delivered.
+
+    Under ASGI a close sent in the connect phase (before ``accept``) arrives as
+    an HTTP rejection, so the fix deletes the dead ``UNAUTHORIZED_CLOSE_CODE``
+    constant rather than keep exporting a code no client ever receives. This is
+    the assertion the ledger says the auth case needs: the handshake is
+    refused, and nothing here asserts a code exists to see.
+    """
+    with (
+        workspace(tmp_path / "proj") as web,
+        pytest.raises(Exception) as caught,
+        web.events(token=None),
+    ):
+        pass
+    # Different starlette/httpx versions surface this as a WebSocketDenialResponse
+    # or a bare disconnect; the shape that must NOT appear is a successful
+    # accept, and no assertion here inspects a close code.
+    assert caught.value is not None
+
+
+def test_events_ws_no_longer_exports_a_close_code_for_the_dead_path() -> None:
+    """The structural half: the constant is gone, not just unused."""
+    from hephaestus.http import events_ws
+
+    assert not hasattr(events_ws, "UNAUTHORIZED_CLOSE_CODE")
+    assert "UNAUTHORIZED_CLOSE_CODE" not in events_ws.__all__
+
+
+# --------------------------------------------------------------------------
+# J-http-envelope-20 — the script route was the only 200 body with no `status`
+
+
+def test_the_script_route_carries_status_alongside_every_other_field(
+    tmp_path: Path,
+) -> None:
+    """``GET /parts/{part}/script`` is a verbatim tool result plus one added
+    field — asserted as "every pre-existing field, unchanged, plus status" so
+    "verbatim" is pinned as well as the addition.
+    """
+    with workspace(tmp_path / "proj") as web:
+        body = web.get("/parts/widget/script").json()
+    assert body["status"] == "ok"
+    for field in ("content_hash", "script", "line_count", "truncated"):
+        assert field in body, f"missing pre-existing field {field!r}"
+
+
+def test_every_200_document_this_api_can_return_carries_a_status(
+    tmp_path: Path,
+) -> None:
+    """The boundary assertion the ledger asks for: derived from the route
+    table itself so a future route inherits the rule rather than needing to be
+    added to a hand-picked list. GET-only, key-free, no-argument routes —
+    every route this walk can drive with nothing but a part name and no
+    mutation.
+    """
+    from hephaestus.http.app import ROUTE_TABLE
+
+    with workspace(tmp_path / "proj") as web:
+        web.post("/parts/widget/build", json={}, key=uuid7())
+        for method, template in ROUTE_TABLE:
+            if method != "GET" or "{ref}" in template or "{export_blob}" in template:
+                continue
+            path = template.replace("{part}", "widget").replace("{id}", "sess-none")
+            response = web.get(path)
+            if response.status_code != 200:
+                continue  # a refusal is asserted elsewhere; this walk is 200-only
+            body = cast("dict[str, Any]", response.json())
+            assert isinstance(body, dict) and body.get("status") == "ok", (
+                f"{method} {template} returned 200 with no status field: {body}"
+            )

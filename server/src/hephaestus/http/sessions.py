@@ -30,8 +30,8 @@ event stream (§2.8 — the durable edge table is the only source).
 from __future__ import annotations
 
 import threading
-from collections import deque
-from collections.abc import Callable, Iterable, Sequence
+from collections import OrderedDict, deque
+from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final, Protocol
 
@@ -42,20 +42,24 @@ from hephaestus.agent_bridge.session_edges import (
     THREAD_UNLINKED,
     SessionEdgeStore,
 )
+from opstore.errors import NotFoundError
 
 from .errors import HttpRefusal
 
 __all__ = [
     "CREATABLE_PROFILES",
     "LIVE_BUFFER_MAX",
+    "PROMPT_EVENTS_MAX",
     "QUICK_EDIT_PROFILE",
     "SESSION_PROFILES",
+    "SETTLED_QUESTIONS_MAX",
     "AskAbandoned",
     "LiveBuffer",
     "PendingQuestion",
     "PendingQuestions",
     "SessionBackend",
     "WorkspaceSessions",
+    "in_thread",
     "profiles_projection",
     "thread_projection",
 ]
@@ -66,6 +70,26 @@ __all__ = [
 #: ring would buy nothing and a smaller one would make ``resume`` weaker than
 #: the drop policy it answers.
 LIVE_BUFFER_MAX: Final[int] = BUFFERED_EVENTS_MAX
+
+#: How many of a turn's events ``POST /sessions/{id}/prompt`` carries back
+#: (audit-2026-09-04 J-http-limits-4). The *same* number the live socket path is
+#: already bounded by, and deliberately so: the response list exists for a
+#: client with no socket, so the two delivery paths of one event stream must
+#: have one memory discipline, not two. Before this the list was unbounded on
+#: both ends — every event of a long tool-heavy run accumulated in the serving
+#: process and was then serialized whole into one response.
+PROMPT_EVENTS_MAX: Final[int] = BUFFERED_EVENTS_MAX
+
+#: How many settled ``ask_user`` questions are retained so a second answerer can
+#: be told what the run was actually told (§2.7, audit-2026-09-04
+#: J-agent-wiring-7). Bounded by count with oldest-first eviction: an answer
+#: arriving after this many further questions degrades to the 404 the route gave
+#: before, which is the pre-existing behaviour rather than a new failure, and
+#: nothing in a long-running serve grows without limit. Sized well above any
+#: plausible number of questions a human is answering at once and far below
+#: anything that matters for memory — each record is a question, its options and
+#: one selection.
+SETTLED_QUESTIONS_MAX: Final[int] = 256
 
 #: ``POST /sessions`` — "profile from a closed set" (§2.3). These are the three
 #: profiles a *human operator* may open a session as; ``query_snapshot`` and
@@ -266,6 +290,10 @@ class PendingQuestions:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._by_id: dict[str, PendingQuestion] = {}
+        #: Questions whose suspension has ended, newest last, bounded by
+        #: :data:`SETTLED_QUESTIONS_MAX`. See :meth:`answer` for why the record
+        #: has to outlive the suspension.
+        self._settled: OrderedDict[str, PendingQuestion] = OrderedDict()
         self._minted = 0
 
     def answerer(self, session_id: str) -> Callable[[dict[str, Any]], Any]:
@@ -315,19 +343,56 @@ class PendingQuestions:
             return pending.selection
         finally:
             with self._lock:
-                self._by_id.pop(question_id, None)
+                settled = self._by_id.pop(question_id, None)
+                # ONLY an answered question is retained. An abandoned one keeps
+                # today's 404 on purpose: §7A.6 reads that refusal as "answered,
+                # abandoned, or never asked", and a 200 for an abandoned
+                # question would need a discriminated *abandoned* response the
+                # client does not have yet. Retaining it here with a flag is the
+                # named second step, not this fix.
+                if settled is not None and settled.answered:
+                    # The SUSPENSION is over; the RECORD is not (audit-2026-09-04
+                    # J-agent-wiring-7). Dropping it here is what made the
+                    # `accepted: false` branch unreachable: the loser's answer
+                    # arrived microseconds after this `finally` and found an
+                    # empty map, so it got the 404 that means "abandoned or
+                    # never asked" and its widget rendered as abandoned — about
+                    # a question that had in fact been answered.
+                    self._settled[question_id] = settled
+                    self._settled.move_to_end(question_id)
+                    while len(self._settled) > SETTLED_QUESTIONS_MAX:
+                        self._settled.popitem(last=False)
 
     def answer(self, question_id: str, selection: Any) -> tuple[PendingQuestion, bool]:
-        """Answer a pending question. Returns ``(question, accepted)``.
+        """Answer a question. Returns ``(question, accepted)``.
 
-        ``accepted`` is ``False`` when another client got there first; the
-        recorded selection is the winner's, returned unchanged, so both clients
-        agree on what the run was told.
+        Three outcomes, and the middle one is the point (audit-2026-09-04
+        J-agent-wiring-7):
+
+        * **live and unanswered** — record, wake the suspended tool call, and
+          return ``accepted=True``;
+        * **settled** — someone already answered (or the run was cancelled and
+          the question abandoned). The **winner's** selection comes back
+          unchanged with ``accepted=False``, so both clients agree on what the
+          run was told and the loser's widget can render "answered by someone
+          else" instead of "abandoned";
+        * **neither** — ``KeyError``, which the route maps to 404
+          ``unknown_question``. Its meaning is unchanged and §7A.6 depends on
+          that: an id nobody ever asked about is still a 404.
+
+        The separation is between the *suspension's* lifetime and the *record's*.
+        The live map is exactly what it was; the asker's ``finally`` now moves
+        the entry into a bounded settled map instead of dropping it. Eviction
+        past :data:`SETTLED_QUESTIONS_MAX` degrades an ancient loser to today's
+        404 and nothing grows without limit.
         """
         with self._lock:
             pending = self._by_id.get(question_id)
             if pending is None:
-                raise KeyError(question_id)
+                settled = self._settled.get(question_id)
+                if settled is None:
+                    raise KeyError(question_id)
+                return settled, False
             if pending.answered:
                 return pending, False
             pending.selection = selection
@@ -336,8 +401,9 @@ class PendingQuestions:
         return pending, True
 
     def get(self, question_id: str) -> PendingQuestion | None:
+        """The live question, or the settled record if its suspension has ended."""
         with self._lock:
-            return self._by_id.get(question_id)
+            return self._by_id.get(question_id) or self._settled.get(question_id)
 
     def open_questions(self, session_id: str | None = None) -> list[PendingQuestion]:
         with self._lock:
@@ -416,23 +482,85 @@ def profiles_projection() -> list[dict[str, Any]]:
     return rows
 
 
-def thread_projection(edges: SessionEdgeStore, session_id: str) -> dict[str, Any]:
+def in_thread(edges: SessionEdgeStore, session_id: str) -> bool:
+    """Whether ``session_id`` **participates in a thread** — parent or children.
+
+    THE definition of §2.8's ``linked``/``unlinked`` axis (audit-2026-09-04
+    J-http-envelope-7). There were two: the listing set the state from the
+    presence of a *parent* edge alone, the thread route from a parent **or** any
+    children, and a session that is a parent and not a child satisfied the
+    second and not the first — so one session was labelled ``unlinked`` in the
+    tab strip and ``linked`` in the panel, on one screen, for the same id.
+    Neither site carried a note that the other existed.
+
+    The parent-or-children reading is the right one because it is what the state
+    is *used* for: a session with children is manifestly not isolated, and
+    telling an orchestrator with a quick-edit child that it is unlinked is
+    exactly the copy §2.8's honest-limit clause exists to avoid. The
+    specification defines the two values and never defined the predicate, which
+    is why both readings survived; the amendment naming this one is in the
+    lane's hand-off.
+
+    COST, stated: the session listing now performs two edge reads per row rather
+    than one. Both are indexed local SQLite reads on the same open connection —
+    the rule that the listing never probes the runtime is untouched — and a
+    listing large enough for that to matter wants a grouped query, not a second
+    definition of the field.
+    """
+    return edges.get(session_id) is not None or bool(edges.children(session_id))
+
+
+def thread_projection(
+    edges: SessionEdgeStore, session_id: str, *, listed: Collection[str] = ()
+) -> dict[str, Any]:
     """``GET /sessions/{id}/thread`` — the transitive tree rooted at ``id`` (§2.8).
 
-    ``thread_state`` is the honest half. ``unlinked`` means this session has no
-    recorded parent *and* no recorded children: either it genuinely is a root
-    with no delegations yet, or it is a transcript that predates the edge table
-    and whose parent **cannot be recovered**. The UI renders that state
-    (``data-thread-state="unlinked"``) rather than guessing a parent, which is
-    what §2.8's "honest limit" requires.
+    ``thread_state`` is the honest half, and it is :func:`in_thread`'s answer —
+    the one definition, called from here and from the listing.  ``unlinked``
+    means this session has no recorded parent *and* no recorded children: either
+    it genuinely is a root with no delegations yet, or it is a transcript that
+    predates the edge table and whose parent **cannot be recovered**. The UI
+    renders that state (``data-thread-state="unlinked"``) rather than guessing a
+    parent, which is what §2.8's "honest limit" requires.
+
+    **The id must name something** (audit-2026-09-04 J-http-envelope-8). The
+    store below synthesises a depth-0 root for a session with no edges, which is
+    correct and deliberate — a session with no edges *is* a one-node tree, and
+    that is the honest answer for a transcript predating the table — but it is
+    correct only for a session that **exists**. The route used to pass its path
+    parameter straight through, so any string at all came back 200 with a
+    one-node tree naming it: content the server invented about nothing, and a
+    client with no way to tell "this session is a root" from "this session does
+    not exist".
+
+    Existence is established against the **durable** record, never against an
+    attached runtime: threading is a fact in ``state.db``, readable long after
+    the process that created it is gone, and refusing to answer "what was this a
+    child of" because no model is configured today would make a durable record
+    unreadable for an unrelated reason. So a session exists here when it appears
+    in the edge table (as parent or child) or when the caller supplies it in
+    ``listed``.
+
+    **HONEST LIMIT, recorded rather than left implicit.** ``listed`` is what the
+    runtime currently holds, so with no runtime attached — or for a persisted
+    transcript no live runtime has open — a session that never wrote an edge
+    answers 404. Closing that needs a "has this id a persisted transcript?"
+    question no surface answers today; the narrower rule is the one implemented,
+    and this paragraph is the record of what it costs.
     """
+    if not in_thread(edges, session_id) and session_id not in listed:
+        raise HttpRefusal(
+            404,
+            "unknown_session",
+            f"no session {session_id!r} is known to this project",
+            data={"session_id": session_id},
+        )
     nodes = edges.thread(session_id)
     root = nodes[0]
-    linked = root.parent_session_id is not None or len(nodes) > 1
     return {
         "status": "ok",
         "session_id": session_id,
-        "thread_state": THREAD_LINKED if linked else THREAD_UNLINKED,
+        "thread_state": THREAD_LINKED if in_thread(edges, session_id) else THREAD_UNLINKED,
         "parent_session_id": root.parent_session_id,
         "nodes": [node.as_dict() for node in nodes],
     }
@@ -585,15 +713,26 @@ class WorkspaceSessions:
         """
         rows = self.backend.sessions()
         for row in rows:
-            edge = self.edges.get(str(row["session_id"]))
+            session_id = str(row["session_id"])
+            edge = self.edges.get(session_id)
             row["parent_session_id"] = None if edge is None else edge.parent_session_id
-            row["thread_state"] = THREAD_UNLINKED if edge is None else THREAD_LINKED
+            # `in_thread`, not `edge is not None`: see that function for the two
+            # definitions this row used to disagree with the thread route about.
+            row["thread_state"] = (
+                THREAD_LINKED if in_thread(self.edges, session_id) else THREAD_UNLINKED
+            )
             row.setdefault("readable", True)
             row.setdefault("unreadable_reason", None)
         return {"status": "ok", "sessions": rows, "profiles": profiles_projection()}
 
     def run_prompt(
-        self, session_id: str, text: str, *, run_id: str | None = None, context: str | None = None
+        self,
+        session_id: str,
+        text: str,
+        *,
+        run_id: str | None = None,
+        context: str | None = None,
+        include_events: bool = True,
     ) -> dict[str, Any]:
         """One prompt turn, blocking, projected onto the wire.
 
@@ -601,10 +740,30 @@ class WorkspaceSessions:
         because the same words twice are two turns, and a replay that swallowed a
         deliberate re-ask would be worse than a duplicate.
 
-        The turn's events are returned as well as streamed. The socket is the
-        live surface; this list is what a client with no socket (the ``heph
-        agent`` client-mode CLI on a machine where the upgrade failed) renders
-        instead, so a run is never invisible.
+        The turn's events are returned as well as streamed, and **that
+        duplication is by design**: the socket is the live surface, and this list
+        is what a client with no socket (the ``heph agent`` client-mode CLI on a
+        machine where the upgrade failed) renders instead, so a run is never
+        invisible.
+
+        **Bounded, and declinable** (audit-2026-09-04 J-http-limits-4). The list
+        carries at most :data:`PROMPT_EVENTS_MAX` events — the same bound the
+        live path already has, from the same key — and says so with
+        ``events_truncated`` and ``events_dropped`` when it had to cut. The
+        surviving end is the **tail**: the newest events, because this list is
+        read as a live transcript of a turn that has just ended, and a client
+        that needs the run's opening reads history.
+
+        The cut happens **twice, at one number**. The backend's own per-run
+        buffer is a bounded deque of the same size, so a long orchestrator run
+        never accumulates in the serving process either — the half of the item
+        the response bound alone would have left open — and
+        ``PromptResult.events_dropped`` carries what *it* discarded up to here,
+        so the ``events_dropped`` on the wire counts the whole turn rather than
+        only this layer's share of it. ``include_events=False`` is
+        for the client that already holds the socket (the web client does), which
+        also removes one source from its dedupe window; the default is today's
+        behaviour, so every run shorter than the bound is byte-identical.
 
         ``context`` is §7A.3's composed block and travels **beside** ``text``,
         never inside it: ``BridgeRuntime.prompt`` forwards it to the sidecar and
@@ -619,12 +778,31 @@ class WorkspaceSessions:
             context=context,
             answerer=self.questions.answerer(session_id),
         )
+        # What the turn EMITTED, not what survived: the backend's own buffer is
+        # bounded by the same key (J-http-limits-4's memory half), so
+        # ``len(result.events)`` is already a tail and adding what it dropped is
+        # the only way this layer can still say how long the run really was.
+        produced = len(result.events) + result.events_dropped
+        kept: list[dict[str, Any]] = []
+        if include_events:
+            tail = (
+                result.events[-PROMPT_EVENTS_MAX:]
+                if produced > PROMPT_EVENTS_MAX
+                else (result.events)
+            )
+            kept = [dict(event, session_id=session_id) for event in tail]
         return {
             "status": "ok",
             "session_id": session_id,
             "run_id": result.run_id,
             "run_status": result.status,
-            "events": [dict(event, session_id=session_id) for event in result.events],
+            "events": kept,
+            # Named absences, both of them: a client that asked for no events
+            # must be able to tell that from a turn that emitted none, and a
+            # truncated tail must never read as a complete one (§6.3).
+            "events_included": include_events,
+            "events_truncated": include_events and produced > PROMPT_EVENTS_MAX,
+            "events_dropped": max(0, produced - len(kept)) if include_events else produced,
             "terminal": result.terminal,
         }
 
@@ -635,8 +813,26 @@ class WorkspaceSessions:
         nothing, and after close it is a quiet no-op; a key here would record a
         replay of a no-op. Questions suspended on the run are released so the
         tool call fails honestly instead of hanging on an operator who has left.
+
+        **Idempotence is a property of a run's lifecycle, not a licence to
+        accept an unknown address** (audit-2026-09-04 J-http-envelope-12). A run
+        that existed and has finished is still 200 — that is what the clause is
+        about. An id this server never issued is a client bug, and a quiet
+        no-op would hide it, so the admission miss is refused ``unknown_run``
+        with the id, where it used to surface as the generic ``not_found``
+        carrying a message about an internal table and no run id at all. The
+        fake backend is taught the same refusal, without which the two backends
+        disagree and only the sidecar-backed lane can see the truth.
         """
-        self.backend.cancel(run_id)
+        try:
+            self.backend.cancel(run_id)
+        except NotFoundError as exc:
+            raise HttpRefusal(
+                404,
+                "unknown_run",
+                f"this server never issued run {run_id!r}",
+                data={"run_id": run_id},
+            ) from exc
         abandoned = self.questions.abandon_run(run_id)
         return {
             "status": "ok",
@@ -699,8 +895,14 @@ class WorkspaceSessions:
         )
         return {"status": "ok", "session_id": session_id, **page}
 
+    def listed_session_ids(self) -> tuple[str, ...]:
+        """The ids this runtime currently holds, for the thread route's existence
+        check. Reads what ``backend.sessions()`` already carried back — it never
+        probes, exactly as :meth:`list_sessions` does not."""
+        return tuple(str(row["session_id"]) for row in self.backend.sessions())
+
     def thread(self, session_id: str) -> dict[str, Any]:
-        return thread_projection(self.edges, session_id)
+        return thread_projection(self.edges, session_id, listed=self.listed_session_ids())
 
     def close(self) -> None:
         self.questions.abandon_all()

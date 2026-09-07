@@ -39,12 +39,19 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from itertools import count
 from typing import Any, Final, cast
 
 from hephaestus.agent_bridge.dispatch import DispatchError
-from hephaestus.agent_bridge.limits import LimitError, validate_json_structure
+from hephaestus.agent_bridge.limits import (
+    MAX_REQUEST_BYTES,
+    PROMPT_MAX_UTF8_BYTES,
+    LimitError,
+    enforce_max_utf8_bytes,
+    validate_json_structure,
+)
 from hephaestus.agent_bridge.project_projections import (
     list_parts_projection,
     open_project_projection,
@@ -54,6 +61,7 @@ from hephaestus.agent_bridge.supervisor import SupervisorError
 from hephaestus.contract import toolgen
 from hephaestus.contract.tools_decl import READ_ARTIFACT_PAGE_MAX, TOOLS_BY_NAME
 from hephaestus.core.checks.report import project_check_report
+from hephaestus.core.errors import HephaestusError
 from hephaestus.core.types import BuildFreshness, BuildResult
 from hephaestus.mcp.validate import SchemaError, normalize_arguments
 from starlette.applications import Starlette
@@ -90,6 +98,7 @@ from .errors import (
     internal_error,
     refusal_for,
     router_refusal,
+    status_for_reason,
 )
 from .events_ws import serve_events
 from .exports import (
@@ -114,7 +123,7 @@ from .projections import (
     params_projection,
     properties_projection,
 )
-from .runtime import WorkspaceRuntime
+from .runtime import WorkspaceRuntime, resolve_part
 from .sessions import (
     QUICK_EDIT_PROFILE,
     SESSION_PROFILES,
@@ -125,6 +134,7 @@ from .sessions import (
 __all__ = [
     "API_PREFIX",
     "ROUTE_TABLE",
+    "UNSERVED_SPEC_ROUTES",
     "WEBSOCKET_ROUTES",
     "build_app",
     "with_error_envelope",
@@ -136,6 +146,38 @@ __all__ = [
 #: constant — a client-mode CLI spelling the prefix itself would be a second copy
 #: of a versioned surface.
 API_PREFIX: Final[str] = WORKSPACE_API_PREFIX
+
+#: The closed member sets of the bodies this server **defines** (§2.3,
+#: audit-2026-09-04 J-http-envelope-10). Named here rather than spelled at each
+#: route so the refusal and the admitted list cannot drift apart, and kept out
+#: of the tool-argument routes on purpose: `inspect`, `measure` and the three
+#: export mutations pass a tool's own argument document through, validated
+#: against the canonical schema, and a second gate here would be a second table.
+_PREVIEW_MEMBERS: Final[frozenset[str]] = frozenset({"context"})
+_PROMPT_MEMBERS: Final[frozenset[str]] = frozenset({"text", "run_id", "context", "include_events"})
+_ANSWER_MEMBERS: Final[frozenset[str]] = frozenset({"question_id", "answer"})
+_SESSION_CREATE_MEMBERS: Final[frozenset[str]] = frozenset(
+    {"profile", "part", "session_id", "resume"}
+)
+
+#: The ceiling on a request body, applied before the body is buffered (§2.4,
+#: audit-2026-09-04 J-http-limits-1).
+#:
+#: SOURCED, not invented: ``http.max_request_bytes`` in
+#: ``schemas/bridge_limits.json``, the same document every other §5 bound comes
+#: from, so this cannot become a seventh un-sourced literal and cannot be raised
+#: on one side of the bridge alone.
+#:
+#: It is **not** the frame cap, which this constant read for one round while the
+#: key was landing. 64 MiB is what the *bridge transport* may carry between two
+#: trusted processes; a body under it was still read into memory in full before
+#: anything looked at it, which is exactly how a 64 MiB request carrying 64
+#: unknown 1 MiB members was accepted, 200, in 2.11 s. The HTTP surface's own
+#: ceiling is a megabyte: the largest legitimate body here is a part script, and
+#: a prompt is capped at 32 KiB (:data:`PROMPT_MAX_UTF8_BYTES`) one rung further
+#: in. Peak allocation for one request is now this number rather than whatever
+#: the sender chose to transmit.
+REQUEST_MAX_BYTES: Final[int] = MAX_REQUEST_BYTES
 
 #: Immutable, content-addressed refs make this honest rather than optimistic.
 _IMMUTABLE_CACHE: Final[str] = "public, max-age=31536000, immutable"
@@ -250,6 +292,46 @@ ROUTE_TABLE: Final[tuple[tuple[str, str], ...]] = (
     ("GET", "/git/tags"),
 )
 
+#: ``INTERFACE.md`` §2.3 rows this application **does not serve**, named here so
+#: the gap is a fact in the code rather than a discrepancy only a reader of the
+#: specification can find (audit-2026-09-04 J-http-envelope-16).
+#:
+#: **Three, not two.** The audit reported the two §12.3/§5.3 rows; re-deriving
+#: the set mechanically from §2.3's own tables — which is what
+#: ``test_http_boundary.py`` now does, and the reason to derive rather than to
+#: list — turns up a third, ``POST /parts/{part}/quick_edit``, in the
+#: session-control key-policy table. It is §12.5 work,
+#: ``server/tests/test_http_sessions.py`` already carries a skipped case saying
+#: so, and it had never been counted. That is the whole argument for binding the
+#: two tables instead of transcribing one into the other.
+#:
+#: The first two are specified in detail — §12.3 for the selection resolver
+#: (whose TIGHTENING binds gate clause G5.12) and §5.3 for the section render —
+#: and all three answer a §2.4 ``unknown_route`` today, because
+#: :data:`ROUTE_TABLE` simply lacks
+#: the rows and ``build_app``'s drift check compares the served set to *this
+#: table*: code against code, in both directions, with nothing anywhere
+#: comparing either to the specification. So §2.3 could name a route that does
+#: not exist indefinitely with a green suite, and here it has.
+#:
+#: **What the audit's decision procedure answers.** Its question is whether the
+#: two engine functions §12.3 names exist: if they do the routes are a thin
+#: binding, if not the clause is unlanded. They exist —
+#: ``core/render/bundle.py::resolve_selection`` and
+#: ``core/render/gltf.py::resolve_gltf_pick`` — so this is unlanded *binding*,
+#: not specification debris. Landing it needs a ``CadOps`` seam for the
+#: GLTF-pick shape (``server/http`` may not import ``core.render`` at all, which
+#: ``test_http_boundary.py`` asserts at import level, so the existing
+#: ``describe_selection`` seam is the shape to extend) and one for the section
+#: render. Those files, and §2.3's own marking, belong to other lanes; this
+#: constant is the part that belongs here, and it is what the route-table
+#: binding test parses §2.3 against as its explicit allowlist.
+UNSERVED_SPEC_ROUTES: Final[tuple[tuple[str, str], ...]] = (
+    ("POST", "/parts/{part}/selection/resolve"),
+    ("POST", "/parts/{part}/render/section"),
+    ("POST", "/parts/{part}/quick_edit"),
+)
+
 #: The rows of :data:`ROUTE_TABLE` served as WebSocket upgrades rather than as
 #: HTTP verbs. Kept as data beside the table so the §1 boundary test can assert
 #: the served surface is the table across *both* transports.
@@ -274,6 +356,89 @@ def _authorize(request: Request, runtime: WorkspaceRuntime) -> None:
         raise HttpRefusal(401, "unauthorized", "a valid bearer token is required")
 
 
+async def _read_body(request: Request) -> bytes:
+    """The request body, **refused past the ceiling before it is buffered**.
+
+    ``INTERFACE.md`` §2.4, audit-2026-09-04 J-http-limits-1. Until this existed
+    the only guard was a *per-string* 16 MiB cap that fired after the whole body
+    was already resident, with no aggregate rung at all: a 64 MiB body carrying
+    64 unknown 1 MiB members was accepted, 200, in 2.11 s, and above 64 MiB the
+    bridge's frame layer finally objected — as a supervisor error mapped to 503
+    ``agent_unavailable``, which told the operator their runtime was broken.
+
+    Two rungs, in this order:
+
+    * ``Content-Length``, when the client sent one, is checked **before a single
+      byte is read**, so a client that declares an oversized body is answered
+      without this process ever allocating for it;
+    * then the stream is read chunk by chunk and **aborted** the moment the
+      running total passes the cap, so a chunked body with no declared length
+      cannot evade the first rung. Peak allocation is bounded by the cap rather
+      than by the sender, which is the whole property.
+
+    :data:`REQUEST_MAX_BYTES` is not a number this module invented — it is
+    ``http.max_request_bytes`` from the shared limits document; see its
+    definition for why the HTTP ceiling is far below the frame cap.
+    """
+    declared = request.headers.get("content-length")
+    if declared is not None:
+        try:
+            length = int(declared)
+        except ValueError as exc:
+            raise HttpRefusal(400, "invalid_params", "Content-Length is not an integer") from exc
+        if length > REQUEST_MAX_BYTES:
+            raise _too_large(length)
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > REQUEST_MAX_BYTES:
+            # Aborted mid-stream: what was read is dropped and the rest is never
+            # asked for. The refusal names the ceiling and the count so far, and
+            # deliberately nothing from the payload.
+            raise _too_large(size, exact=False)
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _too_large(size: int, *, exact: bool = True) -> HttpRefusal:
+    """413 ``request_too_large``, naming the ceiling and never the payload."""
+    observed = "observed_bytes" if exact else "observed_bytes_at_least"
+    return HttpRefusal(
+        status_for_reason("request_too_large"),
+        "request_too_large",
+        f"the request body exceeds this server's {REQUEST_MAX_BYTES}-byte ceiling",
+        data={"max_bytes": REQUEST_MAX_BYTES, observed: size},
+    )
+
+
+def _closed_body(body: dict[str, Any], admitted: frozenset[str], *, what: str) -> None:
+    """Refuse a body member this route does not know (§2.3, J-http-envelope-10).
+
+    THE one implementation of a rule this module previously kept twice and
+    skipped where it mattered most: ``POST /context/preview`` compared its key
+    set against an admitted set, the context envelope parser did the same for
+    its own members, and ``POST /sessions/{id}/prompt`` — the one route whose
+    consequence is a **model turn** rather than a preview — read three members
+    and never compared anything. A client that misspelt ``context`` got a turn
+    with no workspace context and no indication that anything had been dropped.
+
+    Applied to the bodies this server **defines**, and deliberately *not* to a
+    body that is a tool's argument document passed through verbatim (inspect,
+    measure, the export mutations): those are validated against the canonical
+    schema by ``normalize_arguments``, and a second gate here would be a second
+    table of admitted arguments to keep in step with the first.
+    """
+    unexpected = sorted(set(body) - admitted)
+    if unexpected:
+        raise HttpRefusal(
+            400,
+            "invalid_params",
+            f"{what} carries members this route does not admit",
+            data={"unexpected": unexpected, "admitted": sorted(admitted)},
+        )
+
+
 async def _json_body(request: Request) -> dict[str, Any]:
     """Parse the request body **as bytes**, then validate scalars ourselves.
 
@@ -287,7 +452,7 @@ async def _json_body(request: Request) -> dict[str, Any]:
     ``invalid_unicode_scalar`` for a ``\\uD800`` escape that survived JSON
     parsing as a lone surrogate).
     """
-    raw = await request.body()
+    raw = await _read_body(request)
     if not raw:
         return {}
     try:
@@ -304,7 +469,13 @@ async def _json_body(request: Request) -> dict[str, Any]:
     try:
         validate_json_structure(body)
     except LimitError as exc:
-        raise HttpRefusal(400, exc.code, exc.message) from exc
+        # THE TABLE, not a literal (audit-2026-09-04 J-http-envelope-18). Every
+        # rung of the structural walk reaches the wire through this one wrap, so
+        # a hardcoded 400 here would be a second source of truth for five
+        # reasons at once — and it is how `json_string_too_large` came to be
+        # "400 and untabulated" while its sibling `export_too_large` had a
+        # carefully argued 413 row.
+        raise HttpRefusal(status_for_reason(exc.code), exc.code, exc.message) from exc
     return body
 
 
@@ -318,8 +489,22 @@ def _int_param(request: Request, name: str, default: int) -> int:
         raise HttpRefusal(400, "invalid_params", f"{name} must be an integer") from exc
 
 
-def _part(request: Request) -> str:
-    return str(request.path_params["part"])
+def _part(request: Request, runtime: WorkspaceRuntime) -> str:
+    """The path's part, **resolved** (§2.4, audit-2026-09-04 J-http-envelope-3).
+
+    This function used to return the path parameter as a string, and that one
+    line is the whole of RC-4 on this surface: with nothing resolving the name,
+    each part-addressed route discovered the miss — or did not — as a side
+    effect of what it happened to call, so one absent part was answered six
+    different ways, three of them 200 with a fabricated document.
+
+    Every part-addressed route calls this, including the projecting ones, which
+    is what makes the answer uniform rather than six patches the next route does
+    not inherit. No route creates a part: ``PUT /parts/{part}/script`` is
+    ``write_part``, which reads the part first and refuses if it is absent, so
+    resolving here takes nothing away.
+    """
+    return resolve_part(runtime, str(request.path_params["part"]))
 
 
 def _session(request: Request) -> str:
@@ -391,7 +576,9 @@ class _Api:
         except SchemaError as exc:
             raise HttpRefusal(400, "invalid_params", str(exc)) from exc
         except LimitError as exc:
-            raise HttpRefusal(400, exc.code, exc.message) from exc
+            # Same rule as `_json_body`'s wrap: the status is the table's
+            # (J-http-envelope-18), never a literal beside a computed reason.
+            raise HttpRefusal(status_for_reason(exc.code), exc.code, exc.message) from exc
 
         principal = self.runtime.dispatch_principal()
         params: dict[str, Any] = {
@@ -506,13 +693,20 @@ class _Api:
 
 
 def _result_body(result: Any) -> Any:
-    """A dispatch result, on the wire.
+    """A dispatch result, on the wire, **carrying a status**.
 
     A tool result is already a document; a non-dict result (no canonical tool has
     one today) is wrapped rather than dropped.
+
+    §2.4's envelope discriminator is added when the tool's own document does not
+    carry one (audit-2026-09-04 J-http-envelope-20). Most tool results already
+    do — which is why the script route stood out as the single exception — and
+    an existing ``status`` is never overwritten: a discriminated result such as
+    ``capability_error`` says something this function must not flatten.
     """
     if isinstance(result, dict):
-        return cast("dict[str, Any]", result)
+        body = cast("dict[str, Any]", result)
+        return body if "status" in body else {"status": "ok", **body}
     return {"status": "ok", "result": result}
 
 
@@ -644,7 +838,18 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
                 _authorize(request, runtime)
                 return await handler(request)
             except RestKeyError as exc:
-                refusal = refusal_for(HttpRefusal(_key_status(exc.reason), exc.reason, exc.message))
+                refusal = refusal_for(
+                    HttpRefusal(
+                        _key_status(exc.reason),
+                        exc.reason,
+                        exc.message,
+                        # The CALLER's key, never the composed ledger key
+                        # (J-http-envelope-13). Omitted when the refusal is about
+                        # a header that was missing or malformed, because then
+                        # there is no key to name.
+                        data={} if exc.key is None else {"idempotency_key": exc.key},
+                    )
+                )
                 return JSONResponse(refusal.body(), status_code=refusal.status)
             except DispatchError as exc:
                 # §2.4 DECISION: a capability refusal is a *discriminated result*
@@ -653,14 +858,25 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
                 capability = capability_result(exc)
                 if capability is not None:
                     return JSONResponse(capability)
-                refusal = refusal_for(exc)
+                refusal = refusal_for(exc, secrets=(runtime.token,))
                 return JSONResponse(refusal.body(), status_code=refusal.status)
             except git.GitUnavailable as exc:
-                body = error_body("git_unavailable", str(exc))
-                return JSONResponse(body, status_code=503)
+                # Through the table like every other reason (audit-2026-09-04
+                # J-http-envelope-14). This was the one place in the wrapper that
+                # built a §2.4 body by hand with the status as a literal, so the
+                # wire said 503 while `status_for_reason` said 400 and nothing
+                # noticed, because nothing round-tripped.
+                refusal = HttpRefusal(
+                    status_for_reason("git_unavailable"), "git_unavailable", str(exc)
+                )
+                return JSONResponse(refusal.body(), status_code=refusal.status)
             except Exception as exc:
                 try:
-                    refusal = refusal_for(exc)
+                    # The serve bearer is the one secret this process holds that
+                    # a message from another process could quote back, and this
+                    # is the one path a browser reaches, so it is passed
+                    # explicitly rather than defaulted (J-http-envelope-15).
+                    refusal = refusal_for(exc, secrets=(runtime.token,))
                 except BaseException:
                     raise exc from None
                 # NOTHING is merged onto the refusal here. §2.4's RECONCILIATION
@@ -681,14 +897,25 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
     # -- read routes -------------------------------------------------------
 
     async def get_project(_: Request) -> Response:
-        return JSONResponse(
-            open_project_projection(
+        # OFF THE EVENT LOOP, like the other twenty-eight engine calls in this
+        # module (audit-2026-09-04 J-http-limits-7). This route was the first in
+        # the read section and the shortest, written before the pattern
+        # hardened, and it called the capability probe synchronously — which
+        # spawns a sandbox version check, then a full sandboxed worker, and
+        # shells to `git`. With a `git` that slept 30 s, one project request
+        # blocked *every other route* for its whole duration, including routes
+        # that touch no git at all. `capabilities()` is additionally cached (see
+        # `CAPABILITY_TTL_SECONDS`), because moving a 25 s probe off the loop
+        # only converts an event-loop stall into thread-pool consumption.
+        def read() -> dict[str, Any]:
+            return open_project_projection(
                 runtime.layout,
                 runtime.project_store,
                 serve_mode=runtime.serve_mode,
                 capabilities=runtime.capabilities(),
             )
-        )
+
+        return JSONResponse(await asyncio.to_thread(read))
 
     async def get_parts(_: Request) -> Response:
         return JSONResponse(list_parts_projection(runtime.root, runtime.project_store))
@@ -696,7 +923,17 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
     async def get_script(request: Request) -> Response:
         # `read_part` verbatim, paging fields intact: the route hands the tool's
         # own arguments through and returns its own result.
-        arguments: dict[str, Any] = {"name": _part(request)}
+        #
+        # …plus `status` (audit-2026-09-04 J-http-envelope-20). This was the one
+        # 200 document on the whole surface with no status member, so a client
+        # could not use one predicate to tell a success document from a refusal
+        # and `web/src/api/*` carried a permanent type exception for it. §2.4's
+        # envelope discriminator is a property of *every* document this surface
+        # returns; "verbatim" means no field is dropped or renamed, which adding
+        # one does not violate. `_result_body` is where the addition happens for
+        # every tool-backed route, so this one is consistent with its siblings
+        # rather than wrapped by a shape of its own.
+        arguments: dict[str, Any] = {"name": _part(request, runtime)}
         if "offset_line" in request.query_params:
             arguments["offset_line"] = _int_param(request, "offset_line", 1)
         if "limit_lines" in request.query_params:
@@ -704,7 +941,7 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         return JSONResponse(_result_body(await api.read_tool("read_part", arguments)))
 
     async def get_build(request: Request) -> Response:
-        part = _part(request)
+        part = _part(request, runtime)
 
         # Every read of the build axis in ONE worker-thread hop, because this is
         # the part-switch path and each of the three is a store read. The
@@ -723,7 +960,8 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         return JSONResponse(build_projection(result, freshness, last_failure=failure))
 
     async def get_properties(request: Request) -> Response:
-        return JSONResponse(await asyncio.to_thread(part_properties, runtime, _part(request)))
+        part = _part(request, runtime)
+        return JSONResponse(await asyncio.to_thread(part_properties, runtime, part))
 
     async def get_part_checks(request: Request) -> Response:
         # §2.3: "the shared `heph check --json` serializer" — the SAME document
@@ -732,7 +970,7 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         # a project check is named `<file stem>:<check name>` and measures across
         # parts, so there is no part-scoped subset to return. Inventing one here
         # would be the client-side derivation §1 forbids, one layer down.
-        part = _part(request)
+        part = _part(request, runtime)
         report = await asyncio.to_thread(project_checks, runtime)
         body = checks_projection(report)
         body["part"] = part
@@ -743,15 +981,23 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         return JSONResponse(checks_projection(report))
 
     async def get_params(request: Request) -> Response:
-        part = _part(request)
-        probe = await asyncio.to_thread(runtime.cad.probe_part_params, part)
-        state_hash = await asyncio.to_thread(runtime.cad.param_state_hash, "part", part)
+        part = _part(request, runtime)
+        resolved = await asyncio.to_thread(resolve_part_params, runtime, part)
         return JSONResponse(
-            params_projection(probe.declaration, dict(probe.effective), state_hash, "part")
+            {
+                **params_projection(
+                    resolved.declaration, dict(resolved.effective), resolved.state_hash, "part"
+                ),
+                # WHICH TIER ANSWERED, as a field. The three readings are not
+                # equally strong — see `resolve_part_params` — and a client that
+                # renders a bound the operator can drag deserves to be able to
+                # say where the number came from.
+                "source": resolved.source,
+            }
         )
 
     async def get_dfm(request: Request) -> Response:
-        part = _part(request)
+        part = _part(request, runtime)
         last: dict[str, Any] | None = runtime.last_dfm(part)
         resolved_from: Any = None if last is None else last.get("resolved_from")
         body: dict[str, Any] = {
@@ -839,7 +1085,7 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         # is no unpin surface anywhere in the product — so the panel carries a
         # history with a running byte total rather than a fire-and-forget button.
         # The total is computed here because §1 puts numbers on the server side.
-        part = _part(request)
+        part = _part(request, runtime)
         return JSONResponse(await asyncio.to_thread(exports_projection, runtime.store, part))
 
     async def get_export_bytes(request: Request) -> Response:
@@ -888,7 +1134,7 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         request to a second route.
         """
         body = await _json_body(request)
-        arguments = export_arguments(body, part=_part(request), template=template)
+        arguments = export_arguments(body, part=_part(request, runtime), template=template)
         return await api.keyed_mutation(
             request, template=template, tool=EXPORT_ROUTE_TOOLS[template], arguments=arguments
         )
@@ -897,7 +1143,7 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
 
     async def post_inspect(request: Request) -> Response:
         body = await _json_body(request)
-        arguments = {**body, "name": _part(request)}
+        arguments = {**body, "name": _part(request, runtime)}
         result = await api.read_tool("inspect_part", arguments)
         return JSONResponse(_result_body(result))
 
@@ -924,14 +1170,7 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         two separate calls cannot keep.
         """
         body = await _json_body(request)
-        unexpected = sorted(set(body) - {"context"})
-        if unexpected:
-            raise HttpRefusal(
-                400,
-                "invalid_params",
-                "this route takes a context envelope and nothing else",
-                data={"unexpected": unexpected},
-            )
+        _closed_body(body, _PREVIEW_MEMBERS, what="the context preview body")
         envelope = parse_envelope(body.get("context"))
         composed = await asyncio.to_thread(compose_context, runtime, envelope)
         return JSONResponse(composed.projection())
@@ -944,7 +1183,7 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
             request,
             template="/parts/{part}/script",
             tool="write_part",
-            arguments={**body, "name": _part(request)},
+            arguments={**body, "name": _part(request, runtime)},
         )
 
     async def patch_script(request: Request) -> Response:
@@ -953,7 +1192,7 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
             request,
             template="/parts/{part}/script",
             tool="edit_part",
-            arguments={**body, "name": _part(request)},
+            arguments={**body, "name": _part(request, runtime)},
         )
 
     async def post_params(request: Request) -> Response:
@@ -963,7 +1202,7 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         # `bracket`. `scope` defaults ahead of the body because it IS a body
         # choice (a project-scope write is legitimate here); `name` follows the
         # body because it is not.
-        arguments = {"scope": "part", **body, "name": _part(request)}
+        arguments = {"scope": "part", **body, "name": _part(request, runtime)}
         return await api.keyed_mutation(
             request, template="/parts/{part}/params", tool="set_params", arguments=arguments
         )
@@ -974,11 +1213,11 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
             request,
             template="/parts/{part}/build",
             tool="build_part",
-            arguments={**body, "name": _part(request)},
+            arguments={**body, "name": _part(request, runtime)},
         )
 
     async def post_dfm(request: Request) -> Response:
-        part = _part(request)
+        part = _part(request, runtime)
         body = await _json_body(request)
         return await api.keyed_mutation(
             request,
@@ -1154,6 +1393,14 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
 
         def write() -> dict[str, Any]:
             written = providers.write_specs(current, specs, acknowledge=acknowledge)
+            # §7A.8, audit-2026-09-04 J-http-envelope-6: this route changes WHAT
+            # A FUTURE ATTACH WOULD FIND, so the stored no-runtime cause stops
+            # being true the moment it returns. Without this the credential
+            # routes went on refusing "no provider config" while `GET /providers`
+            # reported the file existed — a refusal telling the operator to do
+            # the thing they had just done. It recomputes; it does **not**
+            # attach, because §23 separates the two deliberately.
+            runtime.invalidate_attach_state()
             return {
                 "status": "ok",
                 "config_path": str(written.path),
@@ -1404,6 +1651,9 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         offer = runtime.discoveries.resolve(discovery_id)
         config_path = agent_attach.provider_config_path(runtime.root)
         written = providers.adopt_offer(offer, config_path=config_path)
+        # Same reason as `PUT /providers/specs`: adopting writes a provider
+        # configuration where there may have been none (J-http-envelope-6).
+        runtime.invalidate_attach_state()
         return JSONResponse(
             {
                 "status": "ok",
@@ -1453,6 +1703,7 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         # orphan and the operator closes it (§2.3).
         sessions = sessions_or_refuse()
         body = await _json_body(request)
+        _closed_body(body, _SESSION_CREATE_MEMBERS, what="the session-create body")
         profile = body.get("profile", "orchestrator")
         if profile not in SESSION_PROFILES:
             raise HttpRefusal(
@@ -1551,17 +1802,55 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         # created it is gone. Refusing to answer "what was this session a child
         # of" because no model is configured today would make a durable record
         # unreadable for a reason that has nothing to do with it.
-        return JSONResponse(thread_projection(runtime.edges, _session(request)))
+        #
+        # It DOES check that the id names something (audit-2026-09-04
+        # J-http-envelope-8): the store synthesises a depth-0 root for a session
+        # with no edges — correct for a session that exists, and content
+        # invented about nothing for a string that never was one. Existence is
+        # established against the durable edge table, plus whatever the runtime
+        # currently lists when there is one; with no runtime the edge table
+        # alone answers, which is the honest limit `thread_projection` records.
+        session_id = _session(request)
+        sessions = runtime.sessions
+        if sessions is None:
+            return JSONResponse(thread_projection(runtime.edges, session_id))
+        listed = await asyncio.to_thread(sessions.listed_session_ids)
+        return JSONResponse(thread_projection(runtime.edges, session_id, listed=listed))
 
     async def post_session_prompt(request: Request) -> Response:
         sessions = sessions_or_refuse()
         session_id = _session(request)
         body = await _json_body(request)
+        # CLOSED (audit-2026-09-04 J-http-envelope-10). The sibling preview route
+        # has always refused an unknown member by name; this one read three and
+        # compared nothing — so a client that misspelt `context` got a model turn
+        # with no workspace context and nothing said about it.
+        _closed_body(body, _PROMPT_MEMBERS, what="the prompt body")
         text = body.get("text")
         if not isinstance(text, str) or not text:
             raise HttpRefusal(400, "invalid_params", "text is required and must be a string")
+        # THE DECLARED CAP, applied (audit-2026-09-04 J-http-limits-1). The
+        # 32 KiB `prompt.max_utf8_bytes` bound is enforced at every *other*
+        # prompt boundary in the repository and was never applied here, so an
+        # 8 MB `text` was accepted, forwarded, and spent real tokens on a turn
+        # that ends in an overflow compaction. Measured as exact UTF-8 by the
+        # bridge's own enforcer, so an astral-plane string lands on the same side
+        # of the boundary on both surfaces.
+        try:
+            enforce_max_utf8_bytes(text, PROMPT_MAX_UTF8_BYTES, field="text")
+        except LimitError as exc:
+            raise HttpRefusal(
+                status_for_reason("prompt_too_large"),
+                "prompt_too_large",
+                exc.message,
+                data={"max_bytes": PROMPT_MAX_UTF8_BYTES},
+            ) from exc
         run_raw = body.get("run_id")
         run_id = None if run_raw is None else str(run_raw)
+        # §2.7's bounded tail, declinable by a client that holds the socket.
+        include_events = body.get("include_events", True)
+        if not isinstance(include_events, bool):
+            raise HttpRefusal(400, "invalid_params", "include_events must be a boolean")
         # §7A.3/§7A.4/§19.22 — the one optional member this route gained.
         #
         # THE INVARIANT, and it is the reason the block travels beside `text`
@@ -1585,7 +1874,13 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         return JSONResponse(
             await asyncio.to_thread(
                 lambda: {
-                    **sessions.run_prompt(session_id, text, run_id=run_id, context=block),
+                    **sessions.run_prompt(
+                        session_id,
+                        text,
+                        run_id=run_id,
+                        context=block,
+                        include_events=include_events,
+                    ),
                     # The block ACTUALLY SENT, echoed — §7A.3 makes
                     # `/context/preview` advisory precisely because this is the
                     # composition that happened.
@@ -1601,6 +1896,7 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         sessions = sessions_or_refuse()
         session_id = _session(request)
         body = await _json_body(request)
+        _closed_body(body, _ANSWER_MEMBERS, what="the answer body")
         question_id = body.get("question_id")
         if not isinstance(question_id, str) or not question_id:
             raise HttpRefusal(400, "invalid_params", "question_id is required")
@@ -1629,7 +1925,21 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         """``GET /events`` (§2.7) — the non-durable observer's socket."""
         sessions = runtime.sessions
         if sessions is None:
-            await websocket.close(code=1008, reason="agent_unavailable")
+            # Refused at the handshake, and DELIBERATELY with no code and no
+            # reason (audit-2026-09-04 J-http-envelope-19). A close sent before
+            # `accept` is delivered by ASGI as an HTTP rejection: the code and
+            # reason have nowhere to go, so passing `1008, "agent_unavailable"`
+            # here only made a reader believe a client saw them.
+            #
+            # DECIDED, not defaulted: the alternative — accept, then close with
+            # §7A.8's cause — leaks nothing, because the bearer has already
+            # validated. It is not taken because the condition is already
+            # readable, by name and with its full closed `cause`, from every
+            # session route (`sessions_or_refuse`), and because turning a
+            # handshake rejection into an accepted-then-closed socket changes
+            # what the client's reconnect loop sees. The client learns this
+            # condition from REST; the socket simply does not open.
+            await websocket.close()
             return
         await serve_events(websocket, sessions, runtime.token)
 
@@ -1837,6 +2147,100 @@ def _failure_of_the_live_script(
     if live is None or live == current.input_hashes.script:
         return None
     return failure if failure.input_hashes.script == live else None
+
+
+#: Where a ``GET /parts/{part}/params`` answer came from — a CLOSED vocabulary,
+#: served as a field so the panel reads a fact rather than infers one.
+PARAM_SOURCES: Final[tuple[str, str, str]] = ("build_record", "script_literals", "sandbox_probe")
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedParams:
+    """One parameter declaration, its effective values, and which tier answered."""
+
+    declaration: Mapping[str, Any]
+    effective: Mapping[str, int | float]
+    state_hash: str
+    source: str
+
+
+def resolve_part_params(runtime: WorkspaceRuntime, part: str) -> ResolvedParams:
+    """A part's ``PARAMS`` declaration, from the cheapest authority that can answer.
+
+    ``INTERFACE.md`` §2.3's params row, audit-2026-09-04 J-cli-startup-7 (root
+    causes RC-6 and RC-7). Reading a declaration used to cost **2.8-3.4 s**
+    in-process against 0.010 s for reading the script it is declared in, and a
+    part declaring *zero* parameters paid the same: the route called the
+    sandboxed probe, which freezes inputs and runs the full build path, then
+    discarded everything except two fields. Essentially all of it is the 3.35 s
+    sandbox floor — spawn, worker interpreter, the build123d import — so the
+    worker cannot be optimised and caching the probe would still cost 3 s per
+    part per serve behind an invalidation key it does not have.
+
+    Three tiers, cheapest first, each with a stated authority:
+
+    **Tier 1 — ``build_record``, about a millisecond.** There is a current build
+    whose recorded inputs still match the live ones
+    (:meth:`~hephaestus.agent_bridge.cad_ops.CadOps.build_freshness`), the static
+    literal pass resolves *every* key it finds, and those keys are exactly the
+    ones the build's own ``params`` map names. The last condition is what makes
+    this the **sandbox's** answer rather than a re-derivation: the worker
+    evaluated ``PARAMS`` and recorded the effective values, so the key set is the
+    sandbox's, and bounds that are literal in the source evaluate identically
+    inside it. Effective values are the record's — the numbers the worker
+    actually used — not a re-merge.
+
+    **Tier 2 — ``script_literals``, about half a millisecond.** No usable build,
+    but the script's ``PARAMS`` block resolves completely to literal ``Param``
+    calls. That is exactly the completeness condition ``heph params`` has relied
+    on since it shipped, and effective values recompose from the declaration
+    defaults and the persisted overrides through the engine's own
+    :func:`~hephaestus.core.params.merge_overrides`.
+
+    **Tier 3 — ``sandbox_probe``, unchanged.** Anything else: a computed default,
+    a key added by a comprehension, a script that does not parse, an override the
+    live declaration would now reject. The probe is the authority and it is still
+    here; it is simply no longer the *only* one.
+
+    **Staleness is the safety argument.** Tier 1 requires freshness, so editing a
+    bound and reading without rebuilding cannot serve the recorded declaration —
+    it falls to tier 2, which reads the *live* script, or to tier 3. And the
+    **write** path is untouched: ``POST /parts/{part}/params`` goes through
+    ``set_params``, which probes, because a write must never be validated against
+    a literal-only reading of the source.
+
+    Deferred alternative, recorded rather than smuggled in: a **warm pooled
+    worker** would cut the 3.35 s floor for every sandboxed operation at once.
+    That is its own design item; this ladder is what makes it unnecessary for
+    *reads*.
+    """
+    from hephaestus.core.params import merge_overrides, static_params
+
+    state_hash = runtime.cad.param_state_hash("part", part)
+    overrides = dict(runtime.cad.params.read("part", part).values)
+    snapshot = runtime.project_store.read_part(part)
+    literal, declared_names = static_params(snapshot.content)
+    complete = set(literal) == set(declared_names)
+
+    build = runtime.cad.current_build(part)
+    if build is not None and complete:
+        freshness = runtime.cad.build_freshness(part)
+        if freshness is not None and freshness.fresh and set(build.params) == set(literal):
+            return ResolvedParams(literal, dict(build.params), state_hash, "build_record")
+
+    if complete:
+        try:
+            effective = merge_overrides(literal, overrides)
+        except HephaestusError:
+            # A persisted override the live declaration would now reject. The
+            # probe is the authority on what that means; guessing here would be
+            # the silent reinterpretation §6.3 forbids.
+            effective = None
+        else:
+            return ResolvedParams(literal, effective, state_hash, "script_literals")
+
+    probe = runtime.cad.probe_part_params(part)
+    return ResolvedParams(probe.declaration, dict(probe.effective), state_hash, "sandbox_probe")
 
 
 def part_properties(runtime: WorkspaceRuntime, part: str) -> dict[str, Any]:

@@ -75,11 +75,20 @@ def test_script_route_returns_read_part_verbatim_with_paging_fields(tmp_path: Pa
     Asserted as equality against the same call through dispatch rather than by
     listing keys: "verbatim" is a claim about the *whole* document, and a key
     list would pass while a value drifted.
+
+    UPDATED for J-http-envelope-20 (audit-2026-09-04): "verbatim" now means
+    every dispatch-level field unchanged, **plus** a ``status`` member — the
+    one 200 document on this surface that used to lack the discriminator every
+    sibling route carries. Adding a field the tool result does not have is not
+    a violation of "verbatim"; dropping or renaming one would be, which is why
+    the assertion below is "the route's document minus ``status`` equals the
+    direct dispatch call" rather than a weaker key-subset check.
     """
     with workspace(tmp_path / "proj") as web:
         route = web.get("/parts/widget/script").json()
         direct = web.dispatch("read_part", {"name": "widget"}, entry="read-parity")
-    assert route == direct
+    assert route["status"] == "ok"
+    assert {k: v for k, v in route.items() if k != "status"} == direct
     assert "truncated" in route  # the paging contract's required member
 
 
@@ -455,6 +464,102 @@ def test_params_route_returns_declarations_and_the_state_hash_to_echo(
     assert rows["width"]["scope"] == "part"
 
 
+def test_params_route_does_not_probe_the_sandbox_for_a_fresh_current_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """J-cli-startup-7: the regression guard is an INVOCATION COUNT, not a
+    timing — spy the sandboxed probe and assert it is called **zero** times
+    for a part with a current build and an unmodified script (tier 1,
+    ``build_record``). Before the fix every read of this route cost 2.8-3.4 s
+    because it called the sandboxed probe unconditionally.
+    """
+    calls: list[str] = []
+    with workspace(tmp_path / "proj") as web:
+        assert web.post("/parts/widget/build", json={}, key=uuid7()).status_code == 200
+        real_probe = web.runtime.cad.probe_part_params
+
+        def spy(name: str) -> Any:
+            calls.append(name)
+            return real_probe(name)
+
+        monkeypatch.setattr(web.runtime.cad, "probe_part_params", spy)
+        body = web.get("/parts/widget/params").json()
+    assert calls == [], f"the sandboxed probe was invoked for a current, unmodified build: {calls}"
+    assert body["source"] == "build_record"
+
+
+def test_params_route_source_falls_through_to_the_probe_for_a_computed_default(
+    tmp_path: Path,
+) -> None:
+    """Tier 3 (``sandbox_probe``) still answers — and is attributed as such —
+    for a script whose declaration the literal pass cannot resolve.
+    """
+    root = tmp_path / "proj"
+    with workspace(root) as web:
+        path = root / "parts" / "widget.py"
+        path.write_text(
+            "PARAMS = {\n"
+            '    "width": Param(20.0 + 20.0, min=10.0, max=80.0),\n'
+            "}\n\n"
+            "body = Box(p.width, 20.0, 5.0)\n"
+            "part.geometry = body\n",
+            encoding="utf-8",
+        )
+        body = web.get("/parts/widget/params").json()
+    assert body["source"] == "sandbox_probe"
+    assert body["params"][0]["name"] == "width"
+
+
+def test_params_route_source_is_script_literals_with_no_build_at_all(tmp_path: Path) -> None:
+    """Tier 2: a fully-literal declaration with no build yet still answers
+    cheaply, attributed honestly as the static reading it is.
+    """
+    with workspace(tmp_path / "proj") as web:
+        body = web.get("/parts/bracket/params").json()
+    assert body["source"] == "script_literals"
+
+
+def test_params_route_never_serves_a_recorded_declaration_for_an_edited_script(
+    tmp_path: Path,
+) -> None:
+    """THE SAFETY ARGUMENT of J-cli-startup-7's ladder (audit-2026-09-04).
+
+    Build a part, change a **bound** in its script, and read the params route
+    without rebuilding. Tier 1 (``build_record``) must not answer: its whole
+    licence is that the build's recorded input hashes still match the live
+    ones, and they no longer do. The reading that comes back has to be of the
+    script **as it stands now** — the new bound, not the built one — because a
+    slider whose maximum came from a superseded build is exactly the lie the
+    three-tier ladder was allowed to exist only by ruling out.
+
+    Shares its reasoning with B-5 (a build's currency recomputed against the
+    current inputs); the two are the same invariant read from two routes.
+    """
+    root = tmp_path / "proj"
+    with workspace(root) as web:
+        assert web.post("/parts/widget/build", json={}, key=uuid7()).status_code == 200
+        built = web.get("/parts/widget/params").json()
+        assert built["source"] == "build_record"
+        assert _row(built, "width")["max"] == 80.0
+
+        path = root / "parts" / "widget.py"
+        path.write_text(
+            path.read_text(encoding="utf-8").replace("max=80.0", "max=55.0"), encoding="utf-8"
+        )
+        after = web.get("/parts/widget/params").json()
+
+    assert after["source"] != "build_record", (
+        "an edited script must not be answered from the superseded build's declaration"
+    )
+    assert _row(after, "width")["max"] == 55.0
+
+
+def _row(body: dict[str, Any], name: str) -> dict[str, Any]:
+    """One params row by name, so the assertions above read as facts."""
+    rows = {str(row["name"]): row for row in body["params"]}
+    return cast("dict[str, Any]", rows[name])
+
+
 def test_dfm_route_reports_auto_run_and_a_named_absence_before_any_run(
     tmp_path: Path,
 ) -> None:
@@ -581,3 +686,82 @@ def test_an_unevaluable_check_badges_error_and_never_fail(tmp_path: Path) -> Non
     assert body["badges"]["broken:measures_a_missing_part"] == "error"
     measured = body["report"]["checks"]["broken:measures_a_missing_part"]["measured"]
     assert "error" in measured
+
+
+# -- the parts listing's build axis (audit-2026-09-04 J-web-viewport-7) --------
+
+
+def test_the_parts_listing_carries_each_parts_build_status(tmp_path: Path) -> None:
+    """§4.5's landing default needs a build state per row, and here it is.
+
+    The workspace opened on the alphabetically first part with no regard for
+    build state — in the shipped fixture the one part that has never been built,
+    so the first screen was the not-built absence and every panel below it an
+    empty state. The client-side alternative (read each part's build route and
+    pick) would make the landing part depend on request timing; the field makes
+    the pick a stable read of a document the client already has.
+    """
+    root = tmp_path / "proj"
+    with workspace(root) as web:
+        before = web.get("/parts").json()["parts"]
+        assert [(p["name"], p["build_status"]) for p in before] == [
+            ("bracket", "not_built"),
+            ("widget", "not_built"),
+        ]
+        assert web.post("/parts/widget/build", json={}, key=uuid7()).status_code == 200
+        after = web.get("/parts").json()["parts"]
+    assert [(p["name"], p["build_status"]) for p in after] == [
+        ("bracket", "not_built"),
+        ("widget", "ok"),
+    ]
+    # The addition drops nothing: the four keys the projection already served
+    # are still every other key it serves.
+    for part in after:
+        assert set(part) == {"name", "path", "content_hash", "snapshot_ref", "build_status"}
+
+
+def test_the_listings_build_status_is_the_build_routes_own_word_part_by_part(
+    tmp_path: Path,
+) -> None:
+    """The anti-drift assertion: two routes, one vocabulary, asserted equal.
+
+    A part that built, a part that failed, and — after the fixture's two are
+    spent — the ``not_built`` row the first assertion already covered. For each,
+    the listing's ``build_status`` is compared against ``GET
+    /parts/{part}/build``'s own ``status``, so the two cannot come to mean
+    different things by the same word. Both are computed by
+    :func:`hephaestus.core.project_store.listing.part_build_status`; this is what
+    proves the reuse rather than asserting it in a comment.
+    """
+    root = tmp_path / "proj"
+    with workspace(root) as web:
+        assert web.post("/parts/widget/build", json={}, key=uuid7()).status_code == 200
+        (root / "parts" / "bracket.py").write_text(
+            "plate = Box(30, 20, 6)\n"
+            "bad = fillet(plate.edges(), radius=99.0)\n"
+            "part.geometry = plate\n",
+            encoding="utf-8",
+        )
+        assert web.post("/parts/bracket/build", json={}, key=uuid7()).json()["status"] == "error"
+        listing = web.get("/parts").json()["parts"]
+        per_route = {
+            part["name"]: web.get(f"/parts/{part['name']}/build").json()["status"]
+            for part in listing
+        }
+    assert {part["name"]: part["build_status"] for part in listing} == per_route
+    # Non-vacuous: the comparison would pass on two constant maps, so the three
+    # states have to be genuinely present between them.
+    assert set(per_route.values()) == {"ok", "error"}
+
+
+def test_the_listings_build_status_never_leaves_the_closed_vocabulary(tmp_path: Path) -> None:
+    """§2.3's build axis is a closed three-value set, and the listing stays inside it."""
+    from hephaestus.core.project_store.listing import BUILD_STATUS_VALUES
+
+    root = tmp_path / "proj"
+    with workspace(root) as web:
+        assert web.post("/parts/widget/build", json={}, key=uuid7()).status_code == 200
+        parts = web.get("/parts").json()["parts"]
+    assert BUILD_STATUS_VALUES == ("ok", "error", "not_built")
+    for part in parts:
+        assert part["build_status"] in BUILD_STATUS_VALUES

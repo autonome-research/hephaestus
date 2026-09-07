@@ -36,6 +36,7 @@ it.
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 from typing import Any
 
@@ -145,6 +146,122 @@ def test_the_served_surface_is_exactly_the_closed_route_table(tmp_path: Path) ->
                 served.add((method, template))
     assert served == set(ROUTE_TABLE)
     assert sockets == set(WEBSOCKET_ROUTES)
+
+
+def test_the_unserved_spec_routes_are_a_named_disjoint_allowlist(tmp_path: Path) -> None:
+    """J-http-envelope-16: §2.3 names two routes that are not served, and the
+    boundary check above (code against code) cannot see that — it would stay
+    green even if the specification named a route the app never implements,
+    indefinitely.
+
+    ``UNSERVED_SPEC_ROUTES`` is the interim, explicit record of that fact
+    (the product decision — land the two routes, or mark them unlanded in
+    INTERFACE.md's own table — is a separate step this lane's hand-off names;
+    the full binding test that parses §2.3's markdown tables and asserts set
+    equality against ``ROUTE_TABLE | UNSERVED_SPEC_ROUTES`` needs the docs
+    checker widened to read INTERFACE.md at all, which is
+    J-mirrors-and-dx-33's prerequisite and not this lane's file to write).
+    This test is the part that IS this lane's: the allowlist is disjoint from
+    what is actually served, and hitting either route gets the same §2.4
+    envelope every other miss does — never a bare, envelope-less 404.
+    """
+    from hephaestus.http.app import UNSERVED_SPEC_ROUTES
+
+    assert set(UNSERVED_SPEC_ROUTES).isdisjoint(set(ROUTE_TABLE)), (
+        "a route cannot be both served and named as unserved"
+    )
+    with workspace(tmp_path / "proj") as web:
+        for method, template in UNSERVED_SPEC_ROUTES:
+            path = template.replace("{part}", "widget")
+            response = web.request(method, path, json={})
+            assert response.status_code == 404, (method, path, response.status_code)
+            body = response.json()
+            assert body["status"] == "error"
+            assert body["reason"] == "unknown_route"
+
+
+def _spec_route_rows() -> set[tuple[str, str]]:
+    """Every ``METHOD /path`` §2.3's markdown tables name, as route-table pairs.
+
+    §2.3 is a run of markdown tables whose first cell is a backticked
+    ``METHOD /template``; the tables are regular, which is what makes this
+    parseable at all. Normalization is deliberately small and stated:
+
+    * a query string is dropped — ``GET /parts/{part}/script?offset_line`` and
+      ``GET /parts/{part}/script`` are one route, and the query members are
+      documented in the cell rather than in the path;
+    * ``(WebSocket)`` after ``GET /events`` is dropped — the transport is a
+      property of the row, and :data:`WEBSOCKET_ROUTES` already carries it;
+    * an alternatives cell (a history row naming both ``?cursor=`` and
+      ``?after=``) keeps its first form, for the same reason.
+
+    The **credential mutations** are enumerated in §2.3's *prose*, not in a
+    table (``POST /providers/{id}/auth/key`` and its siblings), so this reads
+    the tables only and the assertion below is one-directional by construction:
+    every route the specification tabulates must be served or explicitly named
+    unserved. The other direction — every served route appears in §2.3 — is
+    what the docs checker gains when it learns to read INTERFACE.md at all
+    (audit-2026-09-04 J-mirrors-and-dx-33), and is deliberately not
+    half-implemented here against prose it cannot parse.
+    """
+    text = (Path(__file__).parents[2] / "INTERFACE.md").read_text(encoding="utf-8")
+    start = text.index("### 2.3 Route table")
+    end = text.index("### 2.4 Error mapping")
+    section = text[start:end]
+    rows: set[tuple[str, str]] = set()
+    cell = re.compile(r"^\|\s*`(GET|POST|PUT|PATCH|DELETE) ([^`|]+)`")
+    for line in section.splitlines():
+        match = cell.match(line.strip())
+        if match is not None:
+            template = match.group(2).split("?", 1)[0].strip()
+            rows.add((match.group(1), template))
+    return rows
+
+
+def test_every_route_the_specification_tabulates_is_served_or_named_unserved(
+    tmp_path: Path,
+) -> None:
+    """§2.3's table, bound to the code's (audit-2026-09-04 J-http-envelope-16).
+
+    THE defect this closes: ``build_app``'s drift check compares the served set
+    to ``ROUTE_TABLE`` — code against code, in both directions — and nothing
+    anywhere compared either to the specification. So §2.3 could name a route
+    that does not exist indefinitely with a green suite, and it did: two rows
+    (§12.3's selection resolver, whose TIGHTENING binds gate clause G5.12, and
+    §5.3's section render) answered 404 while a gate clause cited one of them as
+    evidence.
+
+    Deriving the set rather than transcribing it is the point, and it paid
+    immediately: the audit reported two unserved rows and this finds
+    **three** — ``POST /parts/{part}/quick_edit`` (§12.5) had never been
+    counted, though ``test_http_sessions.py`` already carried a skipped case
+    saying it is not served.
+    """
+    from hephaestus.http.app import UNSERVED_SPEC_ROUTES
+
+    tabulated = _spec_route_rows()
+    assert len(tabulated) >= 30, f"§2.3 parsed to only {len(tabulated)} rows; the parser is stale"
+    accounted = set(ROUTE_TABLE) | set(UNSERVED_SPEC_ROUTES)
+    unaccounted = sorted(tabulated - accounted)
+    assert not unaccounted, (
+        "INTERFACE.md §2.3 tabulates routes this application neither serves nor "
+        f"names in UNSERVED_SPEC_ROUTES: {unaccounted}"
+    )
+    del tmp_path
+
+
+def test_the_unserved_allowlist_names_nothing_the_specification_dropped() -> None:
+    """The allowlist may not outlive its rows.
+
+    Stronger than the substring check it replaces: a row removed from §2.3
+    entirely, or demoted out of a table into prose, must not leave an entry
+    here describing a route the specification no longer tabulates.
+    """
+    from hephaestus.http.app import UNSERVED_SPEC_ROUTES
+
+    tabulated = _spec_route_rows()
+    stale = sorted(set(UNSERVED_SPEC_ROUTES) - tabulated)
+    assert not stale, f"UNSERVED_SPEC_ROUTES names routes §2.3 no longer tabulates: {stale}"
 
 
 def test_no_delete_route_and_no_artifact_minting_route() -> None:

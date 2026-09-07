@@ -491,6 +491,97 @@ def test_a_supplied_key_is_ignored_by_the_attach_route(ws: Workspace) -> None:
     assert keyed.json()["reason"] == "attach_failed"
 
 
+# --------------------------------------------------------------------------
+# J-http-envelope-6 — the attach cause is frozen at the last attempt and goes
+# stale. `runtime.attach_state` is written at exactly three places (attach,
+# attach failure, detach); `PUT /providers/specs` touches none of them, so a
+# credential route reads a cause about the LAST ATTEMPT rather than the
+# CURRENT condition. After writing a configuration the honest cause is no
+# longer "no config exists" — the fix invalidates the stored state on every
+# route that changes what a future attach would find, recomputing it from disk
+# under the same attach lock. This test is red against the tree this lane
+# found: nothing in `PUT /providers/specs` touches `attach_state`.
+
+
+def test_writing_a_config_invalidates_the_stale_no_config_cause(
+    ws: Workspace, staged_sidecar: Path
+) -> None:
+    """The exact reproduction: attach fails for no config, a config is written,
+    and the credential route must stop repeating the refusal that is no longer
+    true — even though nothing has attached yet.
+
+    The write goes through ``PUT /providers/specs`` — the real route, not a
+    direct file write — because the invalidation is wired into that route's
+    handler; a write that bypasses it (as ``write_providers``'s direct
+    ``path.write_text`` does, used elsewhere in this file to model a config an
+    operator wrote by hand outside the app) would not exercise the fix at all.
+    """
+    with pytest.raises(AttachRefused) as caught:
+        ws.runtime.attach_agent()
+    assert caught.value.cause == "no_provider_config"
+    generation_before = ws.runtime.agent_attach_state().generation  # type: ignore[union-attr]
+
+    written = ws.request(
+        "PUT",
+        "/providers/specs",
+        json={
+            "providers": [
+                {
+                    "id": "fake",
+                    "kind": "openai_compatible",
+                    "baseUrl": "http://127.0.0.1:9/v1",
+                    "models": [{"id": "m"}],
+                }
+            ]
+        },
+        key=uuid7(),
+    )
+    assert written.status_code == 200, written.text
+
+    listing = ws.get("/providers").json()
+    assert listing["config_path"].endswith("providers.json")
+    assert any(str(row.get("id")) == "fake" for row in listing["providers"])
+
+    refreshed = ws.get("/providers/fake/auth/status")
+    assert refreshed.status_code == 503
+    body = refreshed.json()
+    assert body["reason"] == "agent_unavailable"
+    # THE ASSERTION: the shipped fix keeps `cause` at `no_provider_config` —
+    # §7A.8's closed cause vocabulary has no member for "a config exists and
+    # nothing is attached to it", and widening a closed vocabulary needs a
+    # specification change no bug fix may take on its own authority — but
+    # `detail` must carry the true, current sentence rather than repeat the
+    # one that is no longer true.
+    assert body["cause"] == "no_provider_config"
+    assert (
+        "attach one" in body["detail"] and "no provider configuration exists" not in body["detail"]
+    ), (
+        "the credential route still tells the operator to do the thing they "
+        f"just did: {body['detail']!r}"
+    )
+    # Recomputed under the lock, not a fresh attach: the generation counts
+    # spawns, and no runtime has spawned yet.
+    assert body["generation"] == generation_before
+
+
+def test_a_detach_direction_is_not_overwritten_by_a_config_write(
+    ws: Workspace, staged_sidecar: Path
+) -> None:
+    """The mirror the ledger asks for: a config write must not erase a state
+    the operator's own detach caused, the same hazard the runtime's own detach
+    path already guards against in the other direction.
+    """
+    write_providers(ws)
+    assert ws.post(ATTACH_ROUTE).status_code == 200
+    assert ws.runtime.detach_agent().cause == "detached"
+
+    write_providers(ws, provider_id="fake-2")
+
+    status = ws.get("/providers/fake-2/auth/status")
+    assert status.status_code == 503
+    assert status.json()["cause"] == "detached"
+
+
 def test_the_attach_cause_vocabulary_is_closed() -> None:
     """Nothing constructs a cause at a call site; an unknown one is refused."""
     assert ATTACH_CAUSES == (

@@ -36,6 +36,7 @@ from hephaestus.agent_bridge.cad_ops import CadOps
 from hephaestus.agent_bridge.dispatch import Principal, ToolDispatcher
 from hephaestus.agent_bridge.session_edges import SessionEdgeStore
 from hephaestus.agent_bridge.wiring import build_dispatcher
+from hephaestus.core.errors import ValidationError
 from hephaestus.core.executor.sandbox.base import ExecBackend
 from hephaestus.core.executor.sandbox.probe import refuse_unsafe, secure_backend
 from hephaestus.core.project_store.layout import ProjectLayout, load_project
@@ -52,6 +53,7 @@ from .agent_attach import (
     start_agent_runtime,
 )
 from .agent_credentials import CredentialBackend
+from .errors import HttpRefusal
 from .git_projection import is_work_tree
 from .idempotency import RestLedger
 from .principal import WORKSPACE_PROFILE, WorkspacePrincipal, token_id
@@ -61,7 +63,36 @@ from .sessions import SessionBackend, WorkspaceSessions
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from hephaestus.agent_bridge.app import BridgeRuntime
 
-__all__ = ["WorkspaceRuntime"]
+__all__ = [
+    "CAPABILITY_TTL_SECONDS",
+    "PART_FILENAME_MAX_BYTES",
+    "WorkspaceRuntime",
+    "resolve_part",
+]
+
+#: How long a computed capability map may be re-served without re-probing
+#: (audit-2026-09-04 J-http-limits-7). The probe fails **open** by design — it
+#: caches only successes, so installing bubblewrap later is picked up without a
+#: restart — and that is right for a build about to run and wrong for a
+#: projection the web client polls: with a `bwrap` that stalls, two consecutive
+#: `GET /project` calls cost 25.035 s and 25.034 s, because the failure was
+#: re-probed every time. The cache lives HERE rather than inside the probe for
+#: exactly that reason: the probe's policy is correct for its own callers, and
+#: this is a different question asked on a different cadence.
+#:
+#: Five seconds is short enough that an operator who installs bubblewrap and
+#: reloads sees it, and long enough that a page load's worth of requests pays
+#: for one probe. :meth:`WorkspaceRuntime.capabilities` takes ``refresh=True``
+#: for the caller that must not be served a stale answer, and attach, detach and
+#: a manifest reload invalidate it outright.
+CAPABILITY_TTL_SECONDS: Final[float] = 5.0
+
+#: The longest ``parts/<name>.py`` this server will address. ``NAME_MAX`` on
+#: every filesystem this project runs on (ext4, xfs, btrfs, apfs, ntfs) is 255
+#: bytes, so a longer name cannot name a file and is therefore not a part name —
+#: a fact the store's identifier *pattern* does not cover, because it bounds the
+#: alphabet and not the length. See :func:`resolve_part`.
+PART_FILENAME_MAX_BYTES: Final[int] = 255
 
 _DFM_TABLE: Final[str] = "http_dfm_last"
 _CREATE_DFM_TABLE: Final[str] = f"""
@@ -134,6 +165,9 @@ class WorkspaceRuntime:
     #: The live §23.5 discovery offers. Per-runtime rather than module-level so
     #: two serves in one test process cannot adopt each other's handles.
     discoveries: DiscoveryRegistry = field(default_factory=DiscoveryRegistry, repr=False)
+    #: The §2.3 capability map and the moment it was computed, or ``None``.
+    #: See :data:`CAPABILITY_TTL_SECONDS` for why this is cached at all.
+    _capabilities: tuple[float, dict[str, bool]] | None = field(default=None, repr=False)
 
     @classmethod
     def open(
@@ -259,6 +293,7 @@ class WorkspaceRuntime:
                 raise
             self.agent = bridge
             self.attach_sessions(bridge)
+            self._invalidate_capabilities()
             state = self.attach_state
             if state is None:  # pragma: no cover - attach_sessions always records one
                 raise RuntimeError("attach bound a session backend without recording a state")
@@ -316,6 +351,7 @@ class WorkspaceRuntime:
                 ),
                 generation=self._attach_generation(),
             )
+            self._invalidate_capabilities()
             return self.attach_state
 
     def spawn_executor(self) -> ThreadPoolExecutor:
@@ -344,6 +380,67 @@ class WorkspaceRuntime:
         """The current attach state, for the surfaces that report it (§7A.8)."""
         return self.attach_state
 
+    def invalidate_attach_state(self) -> AgentAttachState | None:
+        """Recompute the no-runtime cause from disk (audit-2026-09-04 J-http-envelope-6).
+
+        The stored state is written at exactly three places — attach, attach
+        failure and detach — so a route that changes *what a future attach would
+        find* left the cause describing the last attempt while presenting it as
+        a fact about the present: after writing a provider configuration, the
+        credential routes still refused with cause ``no_provider_config`` while
+        ``GET /providers`` reported the file existed. The refusal told the
+        operator to do the thing they had just done.
+
+        Invalidate on write rather than derive on read: the cause is a fact
+        about *this process's* attach history for every case except the one this
+        method fixes — an unattached serve whose configuration has changed —
+        and re-deriving it on every read would throw away ``sidecar_failed`` and
+        ``node_missing``, which no amount of disk-reading can recover.
+
+        **It does not attach.** §23 separates "write a config" from "attach a
+        runtime" deliberately, and an implicit attach from a config write is the
+        deadlock that section exists to remove. When a configuration now exists
+        and nothing is attached, the honest cause is still
+        ``no_provider_config``'s *sibling* condition — a config exists and no
+        runtime has been attached to it — and §7A.8's closed vocabulary has no
+        member for it, so the **message** carries it and the cause stays
+        ``no_provider_config``. Widening a closed vocabulary needs a
+        specification change, a client change and a copy string, none of which a
+        bug fix may take on its own authority; the amendment is recorded in the
+        lane's hand-off.
+
+        Attached runtimes are left alone: this answers "why is there nothing
+        attached", and when there *is* something attached there is no question.
+        The generation counter is preserved, because it counts spawns and
+        nothing here spawns.
+        """
+        with self._attach_lock:
+            if self.sessions is not None or self.attach_state is None:
+                return self.attach_state
+            state = self.attach_state
+            if state.attached:  # pragma: no cover - `sessions is None` implies not attached
+                return state
+            config_path = provider_config_path(self.root)
+            if state.cause == DETACHED_CAUSE:
+                # An operator's own act, not a fact about the file. Overwriting
+                # it would be the mirror of the bug: `detach_agent` already
+                # argues that a real cause must not be replaced by one that
+                # never happened.
+                return state
+            self.attach_state = AgentAttachState(
+                attached=False,
+                config_path=str(config_path),
+                cause="no_provider_config" if not config_path.is_file() else state.cause,
+                detail=(
+                    "no provider configuration exists at this path"
+                    if not config_path.is_file()
+                    else "a provider configuration exists and no runtime has been attached "
+                    "to it; attach one (POST /providers/attach)"
+                ),
+                generation=state.generation,
+            )
+            return self.attach_state
+
     def _attach_generation(self) -> int:
         return 0 if self.attach_state is None else self.attach_state.generation
 
@@ -371,12 +468,47 @@ class WorkspaceRuntime:
 
     # -- capabilities ------------------------------------------------------
 
-    def capabilities(self) -> dict[str, bool]:
-        """The closed ``GET /project`` capability map (see ``CAPABILITY_KEYS``)."""
-        return {
+    def capabilities(self, *, refresh: bool = False) -> dict[str, bool]:
+        """The closed ``GET /project`` capability map (see ``CAPABILITY_KEYS``).
+
+        **Both members spawn a subprocess**, which is why this is cached and why
+        every caller runs it off the event loop (audit-2026-09-04 J-http-limits-6
+        and -7): ``secure_executor`` runs a sandbox version check and then a full
+        sandboxed worker, and ``git`` shells to ``git rev-parse``. Serving the
+        map from a :data:`CAPABILITY_TTL_SECONDS` window means a page load pays
+        for one probe rather than one per request, and it bounds the damage a
+        pathological probe can do to a client that polls this route.
+
+        ``refresh=True`` bypasses the window for the caller that must not be
+        handed a value up to five seconds old; :meth:`_invalidate_capabilities`
+        drops it outright on attach, detach and a manifest reload, so a state
+        change is never waited out.
+
+        A ``git`` that exceeds :data:`~.git_projection.GIT_TIMEOUT_SECONDS` is
+        reported as ``git: false`` rather than failing this call. That is the
+        same discipline ``secure_executor`` already applies to a failed probe:
+        the capability map answers "can this server do X **right now**", and a
+        git that will not answer within the ceiling cannot. The *git routes*
+        still surface ``git_timeout`` by name — a capability map is a summary,
+        and a summary is the wrong place to raise.
+        """
+        cached = self._capabilities
+        if (
+            not refresh
+            and cached is not None
+            and time.monotonic() - cached[0] < (CAPABILITY_TTL_SECONDS)
+        ):
+            return dict(cached[1])
+        computed = {
             "secure_executor": self._secure_executor_available(),
-            "git": is_work_tree(self.root),
+            "git": self._git_available(),
         }
+        self._capabilities = (time.monotonic(), computed)
+        return dict(computed)
+
+    def _invalidate_capabilities(self) -> None:
+        """Drop the cached map: something happened that could have changed it."""
+        self._capabilities = None
 
     def _secure_executor_available(self) -> bool:
         try:
@@ -384,6 +516,14 @@ class WorkspaceRuntime:
         except Exception:
             return False
         return True
+
+    def _git_available(self) -> bool:
+        try:
+            return is_work_tree(self.root)
+        except HttpRefusal:
+            # `git_timeout` — see :meth:`capabilities`. Not `GitUnavailable`,
+            # which `is_work_tree` already answers `False` for.
+            return False
 
     # -- the last DFM evaluation ------------------------------------------
 
@@ -464,6 +604,62 @@ class WorkspaceRuntime:
         if pool is not None:
             pool.shutdown(wait=True)
         self.store.close()
+
+
+def resolve_part(runtime: WorkspaceRuntime, name: str) -> str:
+    """``name``, or the §2.4 refusal a part-addressed route owes its caller.
+
+    THE ONE PART RESOLVER for ``server/http`` (audit-2026-09-04 J-http-envelope-3,
+    root cause RC-4). Before it, ``app.py``'s ``_part()`` returned the path
+    parameter as a string and every route discovered the miss — or did not — as a
+    side effect of what it happened to call: for one absent name the script route
+    refused ``invalid_part``, params and properties refused ``addressing_error``,
+    build answered 200 ``not_built``, checks answered 200 with the whole project
+    report and the fictional name echoed into it, DFM and exports answered 200
+    with empty documents, and only ``POST /context/preview`` — which checked the
+    part list explicitly, in the wrong place to be shared — answered correctly.
+    Three of those routes fabricated a document about a part that does not exist.
+
+    Two rungs, and the split is §2.4's vocabulary (J-http-envelope-4/-17): a name
+    that cannot be a part **at all** is ``invalid_part`` at 400, because the
+    request is malformed; a well-formed name this project does not have is
+    ``unknown_part`` at 404, because it is an addressing miss. The grammar is the
+    store's own — :meth:`ProjectLayout.part_path` is *called*, not restated — so
+    the web layer cannot drift from what the store will accept, and the check
+    runs **before** the directory listing, so an 8 MB name is refused without a
+    store read (J-http-limits-2).
+
+    The known parts ride on the 404 so a client can offer them; ``error_body``
+    bounds every string in that payload.
+    """
+    try:
+        path = runtime.layout.part_path(name)
+    except ValidationError as exc:
+        raise HttpRefusal(
+            400, "invalid_part", exc.message, data={"part": name, "field": "part"}
+        ) from exc
+    if len(path.name.encode("utf-8")) > PART_FILENAME_MAX_BYTES:
+        # The store's identifier pattern is unbounded in length, so a name of a
+        # million legal characters passed the grammar and was answered
+        # `unknown_part` — a 404 about an address that can never exist, whose
+        # refusal then quoted the whole megabyte back (audit-2026-09-04
+        # J-http-limits-2). This is the same "is it a part name at all" question
+        # the pattern asks, on the axis the pattern does not cover.
+        raise HttpRefusal(
+            400,
+            "invalid_part",
+            f"a part name may be at most {PART_FILENAME_MAX_BYTES - len('.py')} bytes",
+            data={"part": name, "field": "part", "max_bytes": PART_FILENAME_MAX_BYTES},
+        )
+    known = runtime.project_store.list_parts()
+    if name not in known:
+        raise HttpRefusal(
+            404,
+            "unknown_part",
+            f"this project has no part {name!r}",
+            data={"part": name, "parts": sorted(known)},
+        )
+    return name
 
 
 def _backend_for(layout: ProjectLayout, serve_mode: bool) -> ExecBackend:

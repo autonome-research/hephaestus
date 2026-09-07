@@ -97,6 +97,31 @@ def test_the_envelope_never_lets_payload_data_overwrite_reason_or_message() -> N
         ("session_exists", 409),
         ("no_active_run", 500),
         ("ambiguous_run", 500),
+        # J-http-envelope-14: §2.9's git family, each with its own row now
+        # rather than a literal at the raise site with no table row at all.
+        ("git_verb_refused", 403),
+        ("git_failed", 400),
+        ("not_a_git_repository", 404),
+        ("git_unavailable", 503),
+        ("git_timeout", 504),
+        # J-http-envelope-18: the size refusals, decided on purpose — 400/413
+        # for the request rungs (malformed-by-size input, versus a transport
+        # that will not carry a well-formed body at all), 413 beside it for
+        # §22.4's pre-existing export ceiling.
+        ("json_too_deep", 400),
+        ("json_too_many_members", 400),
+        ("json_array_too_long", 400),
+        ("json_string_too_large", 400),
+        ("prompt_too_large", 400),
+        ("request_too_large", 413),
+        ("export_too_large", 413),
+        # J-http-envelope-12/-18: the three session-scoped addressing misses.
+        # Each already reached 404 through the `unknown_`-family rule; each has
+        # a row now so the table is the complete set of reasons this surface
+        # emits and a rename cannot move a status in silence.
+        ("unknown_session", 404),
+        ("unknown_run", 404),
+        ("unknown_question", 404),
     ],
 )
 def test_the_section_two_four_table_row_by_row(reason: str, status: int) -> None:
@@ -225,9 +250,30 @@ def test_a_param_cas_conflict_is_two_hundred_with_the_discriminated_result(
 def test_an_unknown_part_is_a_four_hundred_invalid_part_not_a_crash(
     tmp_path: Path,
 ) -> None:
-    """``invalid_part`` verbatim — the dispatcher's own reason, not a rewrite."""
+    """A part-scoped route never crashes on an absent part — it refuses, named.
+
+    UPDATED for J-http-envelope-3 (audit-2026-09-04): every part-scoped route
+    now resolves the part through the shared ``resolve_part``, which raises
+    404 ``unknown_part`` for a syntactically legal name this project does not
+    have (the RC-4 fix — see ``test_http_parts_refusals.py`` for the full
+    parametrised sweep over every part-scoped route). ``invalid_part`` is the
+    OTHER rung of that resolver: a name that cannot be a part *at all*, which
+    is the sibling test right below.
+    """
     with workspace(tmp_path / "proj") as web:
         response = web.get("/parts/nosuchpart/script")
+    assert response.status_code == 404
+    assert response.json()["reason"] == "unknown_part"
+
+
+def test_a_syntactically_illegal_part_name_is_invalid_part_not_unknown_part(
+    tmp_path: Path,
+) -> None:
+    """The rung ``unknown_part`` is not: a name the store's own grammar rejects
+    outright is a malformed request, refused before any part-list read.
+    """
+    with workspace(tmp_path / "proj") as web:
+        response = web.get("/parts/not-a-valid-identifier/script")
     assert response.status_code == 400
     assert response.json()["reason"] == "invalid_part"
 
@@ -336,18 +382,21 @@ def test_the_bridge_liveness_terminals_map_to_503_and_504() -> None:
 def test_a_refusal_payload_rides_through_whole(tmp_path: Path) -> None:
     """§2.4: "full refusal payload verbatim" — every field, not just the reason.
 
-    A misspelled part on ``POST /parts/{part}/build`` refuses ``invalid_part``
-    and carries the ``candidates`` the addressing layer computed. A mapping that
-    kept only reason and message would throw away the one thing that makes the
-    refusal actionable, and the client would have to re-derive the part list —
-    the client-side derivation §1 forbids, one layer down.
+    A misspelled part on ``POST /parts/{part}/build`` refuses ``unknown_part``
+    (UPDATED for J-http-envelope-3: the part is resolved before the route
+    reaches the dispatcher at all, so this is a 404 addressing miss rather than
+    a dispatch-layer ``invalid_part``) and carries the known ``parts`` list the
+    resolver computed. A mapping that kept only reason and message would throw
+    away the one thing that makes the refusal actionable, and the client would
+    have to re-derive the part list — the client-side derivation §1 forbids,
+    one layer down.
     """
     with workspace(tmp_path / "proj") as web:
         response = web.post("/parts/widgt/build", json={}, key=uuid7())
     body = response.json()
-    assert response.status_code == 400
-    assert body["reason"] == "invalid_part"
-    assert sorted(body["candidates"]) == ["bracket", "widget"]
+    assert response.status_code == 404
+    assert body["reason"] == "unknown_part"
+    assert sorted(body["parts"]) == ["bracket", "widget"]
 
 
 def test_a_refusal_with_extra_data_keeps_it_and_cannot_relabel_itself() -> None:
@@ -581,6 +630,68 @@ def test_the_sidecar_failed_refusal_never_carries_the_provider_config_path(
 
 
 # --------------------------------------------------------------------------
+# J-http-envelope-15 (audit-2026-09-04) — the supervisor path used to reduce
+# `detail` and leave `message` a raw, unbounded `str(exc)` beside it: both
+# `_refusal_from_envelope`'s and the below-the-runtime catch-all's
+# `agent_unavailable` branches passed the exception through `reduce_detail`
+# for `detail` and `str(exc)` positionally for `message`, and the reducer's
+# own redaction loop iterated an empty `secrets` sequence by default — so the
+# redaction half was a no-op even where it ran. The fix makes `secrets`
+# required (not defaulted) at `_refusal_for_supervisor_error` and reduces
+# BOTH fields: `message` is now a fixed operator sentence
+# (`_AGENT_UNAVAILABLE_MESSAGE`), never the raw exception text, and `detail`
+# is bounded through the same `reduce_detail`/`reduce_text` helpers the git
+# and credential boundaries already use, with the caller's own bearer passed
+# as a secret (`app.py` calls `refusal_for(exc, secrets=(runtime.token,))`).
+
+
+def test_a_supervisor_failure_naming_the_bearer_leaks_it_in_neither_field() -> None:
+    """A sidecar-level failure whose text embeds this process's own secret
+    (the one secret this layer could plausibly leak) must not surface it in
+    ``message`` or in ``detail``.
+    """
+    bearer = "sk-live-definitely-a-real-bearer-token"
+    exc = SupervisorError(f"child died while holding {bearer} in its argv")
+    refusal = refusal_for(exc, secrets=(bearer,))
+    body = refusal.body()
+    assert bearer not in body["message"]
+    assert bearer not in str(body.get("detail", ""))
+    assert (refusal.status, refusal.reason) == (503, "agent_unavailable")
+
+
+def test_a_supervisor_failures_message_is_fixed_never_the_raw_exception_text() -> None:
+    """``message`` is an operator sentence, not a second copy of the engine
+    text — the same discipline the internal-error path already keeps for its
+    own message (``test_the_internal_error_message_is_fixed_not_the_exceptions_own_text``
+    in ``test_http_envelope.py``, not owned by this lane, is the sibling case).
+    """
+    exc = SupervisorError("no process to write to: pid 41317 exited with code -9")
+    refusal = refusal_for(exc, secrets=())
+    assert "41317" not in refusal.message
+    assert "-9" not in refusal.message
+
+
+def test_a_very_long_supervisor_message_is_bounded_the_same_as_detail() -> None:
+    """The message is capped at the same budget the detail already was — a
+    verbose exception must not amplify one field while the other stays
+    bounded, which is exactly the asymmetry the ledger measured.
+    """
+    from hephaestus.http.agent_attach import DETAIL_MAX_CHARS
+
+    huge = "x" * 20_000
+    exc = SupervisorError(f"sidecar died: {huge}")
+    refusal = refusal_for(exc, secrets=())
+    assert len(refusal.message) <= DETAIL_MAX_CHARS + 40, (
+        f"message is {len(refusal.message)} chars, unbounded beside a "
+        f"{DETAIL_MAX_CHARS}-char detail"
+    )
+    body = refusal.body()
+    detail = body.get("detail")
+    if isinstance(detail, str):
+        assert len(detail) <= DETAIL_MAX_CHARS + 40
+
+
+# --------------------------------------------------------------------------
 # The sidecar's own refusals, each named rather than flattened (§2.4, amended
 # 2026-09-05). Every one of these is an ANSWERED frame, so the structural half
 # of the B-11(a) fix routes it to `_refusal_from_envelope`; before the sidecar
@@ -755,3 +866,115 @@ def test_an_envelope_that_names_no_reason_still_cannot_reach_agent_unavailable()
         refusal = refusal_for(exc)
         assert refusal.reason == "internal_error", data
         assert refusal.status == 500, data
+
+
+# --------------------------------------------------------------------------
+# audit-2026-09-04 J-http-envelope-14/-18 — THE STANDING GUARD.
+#
+# The row-by-row test above is a list somebody has to remember to extend. This
+# pair is the rule: it reads the HTTP package's own source and holds every
+# refusal it constructs against `REASON_STATUS`. It is what turns "a reason
+# raised at 403 with a table that says 400" — four git reasons did exactly that
+# — into a red test rather than a divergence nothing computes and nothing sees.
+
+
+def _refusal_constructions() -> list[tuple[str, int, int | None, str | None]]:
+    """Every ``HttpRefusal(...)`` / ``_refuse(...)`` in ``hephaestus.http``.
+
+    Returns ``(module, lineno, status, reason)`` with ``None`` where the
+    argument is not a literal — a computed status (``status_for_reason(...)``)
+    is *already* the table by construction and needs no assertion, and a
+    computed reason cannot be resolved without running the code.
+
+    ``events_ws`` is excluded: its module-private ``_refuse`` is a WebSocket
+    close helper with an entirely different signature (socket, sentence), not a
+    §2.4 refusal, and matching on the name alone would read its close messages
+    as reason tokens.
+    """
+    import ast
+
+    package = Path(__file__).parents[1] / "src" / "hephaestus" / "http"
+    found: list[tuple[str, int, int | None, str | None]] = []
+    for path in sorted(package.glob("*.py")):
+        if path.name == "events_ws.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or len(node.args) < 2:
+                continue
+            func = node.func
+            name = (
+                func.id
+                if isinstance(func, ast.Name)
+                else func.attr
+                if isinstance(func, ast.Attribute)
+                else None
+            )
+            if name not in {"HttpRefusal", "_refuse"}:
+                continue
+            status_arg, reason_arg = node.args[0], node.args[1]
+            status = (
+                status_arg.value
+                if isinstance(status_arg, ast.Constant) and isinstance(status_arg.value, int)
+                else None
+            )
+            reason = (
+                reason_arg.value
+                if isinstance(reason_arg, ast.Constant) and isinstance(reason_arg.value, str)
+                else None
+            )
+            found.append((path.name, node.lineno, status, reason))
+    return found
+
+
+def test_every_hardcoded_refusal_status_agrees_with_the_shared_table() -> None:
+    """No refusal in this package sends a status the §2.4 table disagrees with.
+
+    THE guard J-http-envelope-14 asks for. Four git reasons were raised at 403,
+    400, 503 and 404 with literals at their raise sites and **no rows at all**,
+    so ``status_for_reason`` answered 400 for every one of them and disagreed
+    with the wire on three — invisibly, because nothing round-tripped a status
+    through the table. A per-reason list would have caught those four; only a
+    walk catches the fifth one somebody adds next year.
+    """
+    disagreements = [
+        f"{module}:{line} sends {status} for {reason!r}, "
+        f"but the table says {status_for_reason(reason)}"
+        for module, line, status, reason in _refusal_constructions()
+        if status is not None and reason is not None and status_for_reason(reason) != status
+    ]
+    assert not disagreements, "\n".join(disagreements)
+
+
+def test_every_named_refusal_reason_has_a_row_in_the_closed_table() -> None:
+    """§2.4's table is the COMPLETE set of reasons this surface emits.
+
+    J-http-envelope-18's sentence, made executable: a reason with no row is a
+    defect. Three session-scoped reasons (``unknown_session``, ``unknown_run``,
+    ``unknown_question``) reached the right status only through the
+    ``unknown_``-family fallback, which is a rule about *spelling* — rename one
+    of them and its status moves silently. The fallback stays, because it is
+    the honest answer for an engine reason this package never spells; what it
+    may no longer do is stand in for a row this package's own raise sites need.
+    """
+    orphans = sorted(
+        {
+            f"{reason!r} (raised at {module}:{line})"
+            for module, line, _status, reason in _refusal_constructions()
+            if reason is not None and reason not in REASON_STATUS
+        }
+    )
+    assert not orphans, "reasons this package raises with no §2.4 row:\n" + "\n".join(orphans)
+
+
+def test_the_standing_guard_is_not_vacuous() -> None:
+    """A walk that finds nothing passes everything.
+
+    Pinned as a floor rather than an equality so that adding a refusal does not
+    fail this test; what it catches is the walk silently matching zero calls
+    after a rename of ``HttpRefusal`` or a move of the package.
+    """
+    constructions = _refusal_constructions()
+    assert len(constructions) >= 100, f"only {len(constructions)} refusal constructions found"
+    pairs = [row for row in constructions if row[2] is not None and row[3] is not None]
+    assert len(pairs) >= 60, f"only {len(pairs)} literal status/reason pairs found"

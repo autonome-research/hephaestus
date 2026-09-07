@@ -330,12 +330,25 @@ def test_a_session_with_no_edge_reads_unlinked_rather_than_guessed(tmp_path: Pat
 
     Pre-existing transcripts reopen flat and the UI says so, rather than
     inferring a parent from a naming convention or from stream adjacency.
+
+    UPDATED for J-http-envelope-8 (audit-2026-09-04): the route now requires
+    the id to name something before projecting a tree — a session with no
+    edge at all is no longer distinguishable from one that never existed, so
+    this case is exercised over a session the backend actually knows about
+    (via ``agent.create_session``, i.e. "currently listed"), which is exactly
+    the honest-limit boundary the route's own docstring now states: a
+    pre-existing, edgeless *transcript* with no live listing and no recorded
+    edge is the one case this fix still cannot answer for, and is covered
+    separately by ``test_a_thread_id_that_never_existed_anywhere_is_404_unknown_session``.
     """
     with workspace(tmp_path / "proj", agent=True) as web:
-        body = web.get("/sessions/sess-nothing/thread").json()
+        agent = web.agent
+        assert agent is not None
+        session = agent.create_session("orchestrator")
+        body = web.get(f"/sessions/{session}/thread").json()
     assert body["thread_state"] == "unlinked"
     assert body["parent_session_id"] is None
-    assert [node["session_id"] for node in body["nodes"]] == ["sess-nothing"]
+    assert [node["session_id"] for node in body["nodes"]] == [session]
     assert body["nodes"][0]["depth"] == 0
 
 
@@ -410,6 +423,51 @@ def test_the_thread_is_the_transitive_tree_from_the_durable_edge_table(
     assert [n["session_id"] for n in child["nodes"]] == ["qe-1"]
 
 
+def test_a_thread_id_that_never_existed_anywhere_is_404_unknown_session(
+    tmp_path: Path,
+) -> None:
+    """J-http-envelope-8: the route must not fabricate a tree about nothing.
+
+    ``session_edges.thread()`` always synthesises a depth-0 root for a session
+    with no edges, which is correct for a session that **exists**. The route
+    passes the path parameter straight through with no existence check at all,
+    so ANY string — including one nothing ever created, listed, or recorded an
+    edge for — gets a 200 one-node tree today. This id is deliberately touched
+    by nothing: not `agent.create_session`, not `edges.record`, not the
+    listing. Contrast with ``test_a_session_with_no_edge_reads_unlinked_rather_
+    than_guessed``, which pins the SAME shape of call as correct — that
+    existing test encodes exactly the bug this one is written against, and the
+    two cannot both be right; see this lane's report for the reconciliation
+    note.
+    """
+    with workspace(tmp_path / "proj", agent=True) as web:
+        response = web.get("/sessions/sess-never-touched-at-all/thread")
+    assert response.status_code == 404, response.text
+    body = response.json()
+    assert body["reason"] == "unknown_session"
+    assert body.get("session_id") == "sess-never-touched-at-all"
+
+
+def test_a_session_known_only_through_the_edge_table_still_answers_200(
+    tmp_path: Path,
+) -> None:
+    """The positive case the fix must not over-tighten: existence via the
+    DURABLE edge table alone, never through a live listing.
+    """
+    root = tmp_path / "proj"
+    with workspace(root, agent=True) as web:
+        web.runtime.edges.record(
+            child_session_id="qe-durable",
+            parent_session_id="part:widget",
+            kind="quick_edit",
+            origin={"part": "widget"},
+        )
+    with workspace(root, scaffold=False) as reopened:
+        response = reopened.get("/sessions/qe-durable/thread")
+    assert response.status_code == 200
+    assert response.json()["parent_session_id"] == "part:widget"
+
+
 def test_listed_sessions_carry_their_recorded_parent(tmp_path: Path) -> None:
     with workspace(tmp_path / "proj", agent=True) as web:
         agent = web.agent
@@ -425,7 +483,52 @@ def test_listed_sessions_carry_their_recorded_parent(tmp_path: Path) -> None:
         rows = {row["session_id"]: row for row in web.get("/sessions").json()["sessions"]}
     assert rows[child]["parent_session_id"] == parent
     assert rows[child]["thread_state"] == "linked"
-    assert rows[parent]["thread_state"] == "unlinked"
+    # UPDATED for J-http-envelope-7 (audit-2026-09-04): `thread_state` is now
+    # ONE definition — "this session participates in a thread", parent or
+    # children — shared by the listing and the thread route. A parent with a
+    # child is manifestly not isolated, so it reads `linked` here too; before
+    # the fix the listing derived the state from a parent edge alone and this
+    # assertion read `"unlinked"`, which was the divergence
+    # J-http-envelope-7 is about, not a fact worth preserving.
+    assert rows[parent]["thread_state"] == "linked"
+
+
+def test_a_parent_with_children_and_no_parent_of_its_own_reads_linked_everywhere(
+    tmp_path: Path,
+) -> None:
+    """J-http-envelope-7: `thread_state` has two producers with two definitions.
+
+    ``sessions.py``'s listing sets the state from the presence of a *parent*
+    edge alone (``edges.get(session_id)``, keyed by CHILD id); the thread
+    projection sets it from a parent **or any children**
+    (``root.parent_session_id is not None or len(nodes) > 1``). A session that
+    is a parent and not a child satisfies the second and not the first, so the
+    SAME session reads ``linked`` on the thread route and ``unlinked`` on the
+    listing — the exact divergence
+    ``test_listed_sessions_carry_their_recorded_parent`` above pins as
+    *correct* today (``rows[parent]["thread_state"] == "unlinked"``). The
+    ledger's decided definition is "this session participates in a thread" —
+    parent or children — because a session with children is manifestly not
+    isolated; this test asserts that definition on both routes and is red
+    until the listing's derivation is unified with the thread projection's.
+    """
+    with workspace(tmp_path / "proj", agent=True) as web:
+        agent = web.agent
+        assert agent is not None
+        parent = agent.create_session("orchestrator")
+        child = agent.create_session("part", part="widget")
+        web.runtime.edges.record(
+            child_session_id=child,
+            parent_session_id=parent,
+            kind="delegation",
+            origin={"delegation_ref": "dg-linked"},
+        )
+        listed = {row["session_id"]: row for row in web.get("/sessions").json()["sessions"]}
+        threaded = web.get(f"/sessions/{parent}/thread").json()
+    assert threaded["thread_state"] == "linked"
+    assert listed[parent]["thread_state"] == "linked", (
+        "the listing and the thread route must report the SAME thread_state for the same session"
+    )
 
 
 # --------------------------------------------------------------------------
@@ -465,6 +568,136 @@ def test_a_prompt_without_text_is_refused(tmp_path: Path) -> None:
         refused = web.post(f"/sessions/{session}/prompt", json={})
     assert refused.status_code == 400
     assert refused.json()["reason"] == "invalid_params"
+
+
+def test_a_prompt_with_an_unknown_body_member_is_refused_by_name(tmp_path: Path) -> None:
+    """J-http-envelope-10: the prompt route silently accepts unknown members.
+
+    ``POST /context/preview`` already refuses an unexpected key by name
+    (`app.py`'s ``unexpected = sorted(set(body) - {"context"})`` check); the
+    prompt route reads ``text``, ``run_id`` and ``context`` and never compares
+    the key set at all, so a misspelt member (``contxt`` instead of
+    ``context``, most plausibly) is silently dropped and the run proceeds with
+    no workspace context and no indication anything was lost. Today this is
+    200; the fix is a shared `_closed_body` helper applied here too.
+    """
+    with workspace(tmp_path / "proj", agent=True) as web:
+        agent = web.agent
+        assert agent is not None
+        session = agent.create_session("orchestrator")
+        response = web.post(
+            f"/sessions/{session}/prompt",
+            json={"text": "hi", "contxt": {"part": "widget"}},
+        )
+    assert response.status_code == 400, response.text
+    body = response.json()
+    assert body["reason"] == "invalid_params"
+    assert "contxt" in str(body)
+
+
+def test_cancelling_a_run_the_server_never_admitted_is_unknown_run(tmp_path: Path) -> None:
+    """J-http-envelope-12: cancelling an unknown run refuses `not_found` on a
+    real bridge, and the fake backend answers 200 for the identical request —
+    so no in-process test can observe the real behaviour without the fake
+    learning the same refusal (the ledger's own "load-bearing half"). Today
+    ``FakeAgent.cancel`` is an unconditional no-op
+    (``self.cancelled.append(run_id)``) with no admission lookup, so this
+    route always answers 200 regardless of whether the run id was ever
+    issued. Written against the target behaviour — 404 ``unknown_run`` — so it
+    is red until the fake backend is taught the refusal alongside the real
+    admission-miss mapping.
+    """
+    with workspace(tmp_path / "proj", agent=True) as web:
+        agent = web.agent
+        assert agent is not None
+        agent.create_session("orchestrator")
+        response = web.post("/runs/run-the-server-never-issued/cancel")
+    assert response.status_code == 404, response.text
+    body = response.json()
+    assert body["reason"] == "unknown_run"
+    assert body.get("run_id") == "run-the-server-never-issued"
+
+
+def test_a_completed_runs_cancel_is_still_200_idempotent(tmp_path: Path) -> None:
+    """The sibling the fix must not break: idempotence is about a run's
+    LIFECYCLE, not a licence to accept an unknown address. A run this process
+    actually issued and already finished stays 200.
+    """
+    with workspace(tmp_path / "proj", agent=True) as web:
+        agent = web.agent
+        assert agent is not None
+        session = agent.create_session("orchestrator")
+        prompted = web.post(f"/sessions/{session}/prompt", json={"text": "hi"})
+        run_id = prompted.json()["run_id"]
+        response = web.post(f"/runs/{run_id}/cancel")
+    assert response.status_code == 200, response.text
+
+
+def test_the_second_answerer_gets_not_accepted_with_the_winners_selection(
+    tmp_path: Path,
+) -> None:
+    """J-agent-wiring-7: the second answerer of a question gets 404, not
+    `accepted: false`.
+
+    ``PendingQuestions.ask`` pops the entry from the live map in a ``finally``
+    the instant the suspended tool call wakes — before this test's
+    ``worker.join()`` returns, so by the time the second answer is posted the
+    id is provably gone from the registry and the loser's ``accepted: false``
+    branch (`sessions.py:327-328`) is unreachable. The fix adds a bounded
+    SETTLED map the asker's `finally` moves the entry into rather than
+    dropping it, so answering resolves to one of three outcomes: live (record,
+    wake, accept), settled (return the WINNER'S selection, not accepted — both
+    clients then agree on what the run was told), or neither (the 404 this
+    test's sibling, ``test_answering_an_unknown_question_is_a_named_refusal``,
+    already pins and which must stay truthful for an actually-abandoned
+    question).
+    """
+    with workspace(tmp_path / "proj", agent=True) as web:
+        agent = web.agent
+        assert agent is not None
+        session = agent.create_session("orchestrator")
+
+        def script(a: Any, sid: str, run: str, text: str, answerer: Any) -> None:
+            a.emit(run, 0, "question", payload={"question_id": "q-two", "question": "which?"})
+            answerer({"run_id": run, "question_id": "q-two", "question": "which?"})
+
+        agent.on_prompt = script
+
+        def prompt_thread() -> None:
+            web.post(f"/sessions/{session}/prompt", json={"text": "ask me"})
+
+        worker = threading.Thread(target=prompt_thread)
+        worker.start()
+        sessions = web.runtime.sessions
+        assert sessions is not None
+        deadline = time.monotonic() + 5
+        while not sessions.questions.open_questions(session) and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        first = web.post(
+            f"/sessions/{session}/answer", json={"question_id": "q-two", "answer": "left"}
+        )
+        worker.join(timeout=5)
+        # By construction: the asker's `finally` has already run by the time
+        # `worker.join()` returns, so the entry is provably gone from the LIVE
+        # map — the exact microsecond-wide window the ledger says the loser
+        # "essentially always loses" is made deterministic here rather than
+        # raced.
+        second = web.post(
+            f"/sessions/{session}/answer", json={"question_id": "q-two", "answer": "right"}
+        )
+
+    assert first.status_code == 200
+    assert first.json()["accepted"] is True
+
+    assert second.status_code == 200, (
+        "the second answerer must be told the question was already answered, "
+        f"not refused as though it never existed: got {second.status_code} {second.text}"
+    )
+    second_body = second.json()
+    assert second_body["accepted"] is False
+    assert second_body["answered_by"] == "other"
+    assert second_body["answer"] == "left", "both clients must agree on what the run was told"
 
 
 def test_cancel_is_idempotent_by_construction(tmp_path: Path) -> None:
@@ -541,12 +774,22 @@ def test_cancelling_a_run_abandons_its_question_instead_of_fabricating_an_answer
     tmp_path: Path,
 ) -> None:
     """A cancelled run whose question "answered itself" would write an answer the
-    operator never gave into the requirement ledger."""
+    operator never gave into the requirement ledger.
+
+    UPDATED for J-http-envelope-12 (audit-2026-09-04): cancelling a run this
+    backend never issued is now a named 404 ``unknown_run``, so ``run-x`` must
+    first be a run the fake backend actually admitted — this test is about
+    cancellation abandoning a live question, not about the unknown-run
+    refusal, which has its own coverage above.
+    """
     from hephaestus.http.sessions import AskAbandoned
 
     with workspace(tmp_path / "proj", agent=True) as web:
         sessions = web.runtime.sessions
         assert sessions is not None
+        agent = web.agent
+        assert agent is not None
+        agent._run_sessions["run-x"] = "sess-1"  # pyright: ignore[reportPrivateUsage]  # admitted, as a real prompt would
         outcome: list[str] = []
 
         def waiter() -> None:

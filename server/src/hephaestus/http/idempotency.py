@@ -215,12 +215,23 @@ CREDENTIAL_ROUTES: Final[tuple[tuple[str, str], ...]] = (
 
 
 class RestKeyError(Exception):
-    """A key-ladder refusal; ``reason`` is the §2.4 machine token."""
+    """A key-ladder refusal; ``reason`` is the §2.4 machine token.
 
-    def __init__(self, reason: str, message: str) -> None:
+    ``key`` is the caller's **own** ``Idempotency-Key`` header value, when the
+    refusal came from the ladder rather than from the header check itself. It is
+    carried so the §2.4 body can identify *which* key was refused without
+    naming a server-internal one: the opstore's messages used to embed the
+    composed ledger identifier — namespace prefix, principal fingerprint, route
+    template, ordinal and lane — in an operator sentence (audit-2026-09-04
+    J-http-envelope-13), and the honest replacement is the value the client
+    already holds.
+    """
+
+    def __init__(self, reason: str, message: str, *, key: str | None = None) -> None:
         super().__init__(message)
         self.reason = reason
         self.message = message
+        self.key = key
 
 
 def route_identity(method: str, template: str) -> str:
@@ -408,7 +419,7 @@ class RestLedger:
         try:
             self._store.opkeys.begin(_RAW_ID_PREFIX + op_id, digest, ts=_uuid7_timestamp(key))
         except OpStoreError as exc:
-            raise RestKeyError(exc.code, exc.message) from exc
+            raise RestKeyError(exc.code, exc.message, key=key) from exc
         row = self._store.db.conn.execute(
             f"SELECT response FROM {_TABLE} WHERE op_id = ?", (op_id,)
         ).fetchone()

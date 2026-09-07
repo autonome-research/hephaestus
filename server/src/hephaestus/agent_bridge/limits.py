@@ -61,9 +61,22 @@ _WIRE: Final[dict[str, Any]] = LIMITS["wire"]
 _JSON: Final[dict[str, Any]] = LIMITS["json"]
 _IMAGE: Final[dict[str, Any]] = LIMITS["image"]
 _BINARY: Final[dict[str, Any]] = LIMITS["binary"]
+_HTTP: Final[dict[str, Any]] = LIMITS["http"]
 
 FRAME_VERSION: Final[int] = int(_WIRE["frame_version"])
 MAX_FRAME_BYTES: Final[int] = int(_WIRE["max_frame_bytes"])
+
+#: The ceiling on ONE HTTP request body, enforced by ``hephaestus.http.app``
+#: from ``Content-Length`` and again while the body streams (``INTERFACE.md``
+#: §2.4, audit-2026-09-04 J-http-limits-1). Exported beside the frame cap and
+#: deliberately far below it: the frame cap bounds what the *bridge transport*
+#: can carry between two trusted processes, while this bounds what an untrusted
+#: client can make the serving process allocate. The largest legitimate body on
+#: the HTTP surface is a part script; a prompt is capped an order of magnitude
+#: smaller again (:data:`PROMPT_MAX_UTF8_BYTES`), so a megabyte leaves every
+#: real body room and still refuses the 64 MiB one that used to be buffered
+#: whole before anything looked at it.
+MAX_REQUEST_BYTES: Final[int] = int(_HTTP["max_request_bytes"])
 MAX_JSON_DEPTH: Final[int] = int(_JSON["max_depth"])
 MAX_JSON_MEMBERS: Final[int] = int(_JSON["max_members"])
 MAX_JSON_ARRAY_ITEMS: Final[int] = int(_JSON["max_array_items"])
