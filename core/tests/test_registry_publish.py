@@ -299,13 +299,14 @@ def test_verify_against_a_record_passes_and_then_names_the_drift(
     capsys.readouterr()
 
     assert _run(monkeypatch, project, "verify", "demo", "--record", "rec.json", "--json") == 0
-    records = json.loads(capsys.readouterr().out)
+    # One listing envelope, never a bare array (ledger J-cli-robustness-7).
+    records = json.loads(capsys.readouterr().out)["registries"]
     assert records[0]["status"] == "ok"
     assert records[0]["record_digest"] == read_pins(project)["demo"].digest
 
     (registry_root / "alpha.md").write_text("# Alpha\n\nDrifted.\n", encoding="utf-8")
     assert _run(monkeypatch, project, "verify", "demo", "--record", "rec.json", "--json") == 1
-    drifted = json.loads(capsys.readouterr().out)[0]
+    drifted = json.loads(capsys.readouterr().out)["registries"][0]
     # The pin check fails first; the record check names the file either way.
     assert drifted["status"] in ("drifted", "record_mismatch")
 

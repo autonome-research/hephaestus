@@ -223,9 +223,13 @@ def test_heph_lint_reports_both_rules_from_a_ledger_and_a_request(
     )
     # unsourced_requirement is an error, so the command fails.
     assert exit_code == 1
+    # `lint --json` is one envelope, not a bare array (ledger J-cli-robustness-7).
     findings = [
         cast("dict[str, JSONValue]", entry)
-        for entry in cast("list[JSONValue]", json.loads(capsys.readouterr().out))
+        for entry in cast(
+            "list[JSONValue]",
+            cast("dict[str, JSONValue]", json.loads(capsys.readouterr().out))["findings"],
+        )
     ]
     codes = [finding["code"] for finding in findings]
     assert codes.count("unsourced_constant") == 3
@@ -238,9 +242,13 @@ def test_heph_lint_without_a_ledger_leaves_the_constant_rule_off(
     script = tmp_path / "bracket.py"
     script.write_text(MISREAD_SCRIPT, encoding="utf-8")
     assert main(["lint", str(script), "--json"]) == 0
+    # `lint --json` is one envelope, not a bare array (ledger J-cli-robustness-7).
     findings = [
         cast("dict[str, JSONValue]", entry)
-        for entry in cast("list[JSONValue]", json.loads(capsys.readouterr().out))
+        for entry in cast(
+            "list[JSONValue]",
+            cast("dict[str, JSONValue]", json.loads(capsys.readouterr().out))["findings"],
+        )
     ]
     assert not [f for f in findings if str(f["code"]).startswith("unsourced")]
 

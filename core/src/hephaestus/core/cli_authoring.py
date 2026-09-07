@@ -31,14 +31,20 @@ import json
 import re
 import sys
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
+from hephaestus.core.cli_errors import (
+    CliUsageError,
+    guard,
+    parse_content_hash,
+    project_root_or_refuse,
+    require_input_file,
+)
 from hephaestus.core.params import Param, static_params
 from hephaestus.core.part_templates import PART_TEMPLATES, TEMPLATE_NAMES
 from hephaestus.core.project_store.layout import (
-    find_project_root,
     load_project,
     open_store,
 )
@@ -58,12 +64,8 @@ _PART_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 REQUEST_FILENAME = ".heph/request.txt"
 
 
-class _UsageError(Exception):
-    """CLI misuse: reported on stderr with exit code 2."""
-
-
 def _project() -> tuple[Path, ProjectStore, OpStore]:
-    root = find_project_root(Path.cwd())
+    root = project_root_or_refuse()
     layout = load_project(root)
     opstore = open_store(layout)
     return root, ProjectStore(layout, opstore), opstore
@@ -71,7 +73,7 @@ def _project() -> tuple[Path, ProjectStore, OpStore]:
 
 def _require_part_name(name: str) -> str:
     if not _PART_NAME_RE.match(name):
-        raise _UsageError(f"invalid part name {name!r}")
+        raise CliUsageError(f"invalid part name {name!r}")
     return name
 
 
@@ -85,17 +87,15 @@ def _read_source(*, file_arg: str | None, allow_empty: bool, required: bool) -> 
     """
     if file_arg is None:
         if required and sys.stdin.isatty():
-            raise _UsageError("script source required: pass --file PATH or --file -")
+            raise CliUsageError("script source required: pass --file PATH or --file -")
         source = sys.stdin.read()
     elif file_arg == "-":
         source = sys.stdin.read()
     else:
-        path = Path(file_arg)
-        if not path.is_file():
-            raise _UsageError(f"no such file: {path}")
+        path = require_input_file(Path(file_arg), what="script file")
         source = path.read_text(encoding="utf-8")
     if not source and not allow_empty:
-        raise _UsageError("script source is empty")
+        raise CliUsageError("script source is empty")
     return source
 
 
@@ -256,9 +256,13 @@ def _cmd_script_show(args: argparse.Namespace) -> int:
 
 def _cmd_script_write(args: argparse.Namespace) -> int:
     name = _require_part_name(cast("str", args.name))
-    expected = cast("str | None", args.expected_hash)
-    if not expected:
-        raise _UsageError("write_part requires --expected-hash (the current content_hash)")
+    raw_expected = cast("str | None", args.expected_hash)
+    if not raw_expected:
+        raise CliUsageError("write_part requires --expected-hash (the current content_hash)")
+    # Format is usage, staleness is a conflict: an unvalidated value became a
+    # conflict document whose base_snapshot_ref was the artifact kind prefixed
+    # onto the typo (ledger J-cli-robustness-16).
+    expected = parse_content_hash(raw_expected, flag="--expected-hash")
     script = _read_source(file_arg=cast("str | None", args.file), allow_empty=False, required=True)
     _root, store, opstore = _project()
     try:
@@ -425,7 +429,7 @@ def _request_path(root: Path) -> Path:
 
 
 def _cmd_prompt_show(args: argparse.Namespace) -> int:
-    root = find_project_root(Path.cwd())
+    root = project_root_or_refuse()
     path = _request_path(root)
     text = path.read_text(encoding="utf-8") if path.is_file() else ""
     payload = {
@@ -445,7 +449,7 @@ def _cmd_prompt_show(args: argparse.Namespace) -> int:
 
 def _cmd_prompt_set(args: argparse.Namespace) -> int:
     text = _read_source(file_arg=cast("str | None", args.file), allow_empty=True, required=True)
-    root = find_project_root(Path.cwd())
+    root = project_root_or_refuse()
     # Opening the store creates ``.heph/``; the request file is not a blob.
     layout = load_project(root)
     opstore = open_store(layout)
@@ -466,17 +470,6 @@ def _cmd_prompt_set(args: argparse.Namespace) -> int:
 # registration
 
 
-def _guard(command: Callable[[argparse.Namespace], int]) -> Callable[[argparse.Namespace], int]:
-    def run(args: argparse.Namespace) -> int:
-        try:
-            return command(args)
-        except _UsageError as exc:
-            print(f"heph: {exc}", file=sys.stderr)
-            return 2
-
-    return run
-
-
 def add_subparsers(
     sub: argparse._SubParsersAction[argparse.ArgumentParser],  # pyright: ignore[reportPrivateUsage]
 ) -> None:
@@ -486,7 +479,7 @@ def add_subparsers(
 
     listing = part_verbs.add_parser("list", help="list parts in this project")
     listing.add_argument("--json", action="store_true", help="emit the list_parts projection")
-    listing.set_defaults(func=_guard(_cmd_part_list))
+    listing.set_defaults(func=guard(_cmd_part_list))
 
     create = part_verbs.add_parser(
         "create", help="create parts/<name>.py (create_part: fails if it exists)"
@@ -509,12 +502,12 @@ def add_subparsers(
         help="accepted for create_part parity; the engine does not apply it",
     )
     create.add_argument("--json", action="store_true", help="emit the create_part result")
-    create.set_defaults(func=_guard(_cmd_part_create))
+    create.set_defaults(func=guard(_cmd_part_create))
 
     show = part_verbs.add_parser("show", help="show the last published build for a part")
     show.add_argument("part", help="part name")
     show.add_argument("--json", action="store_true", help="emit the BuildResult JSON")
-    show.set_defaults(func=_guard(_cmd_part_show))
+    show.set_defaults(func=guard(_cmd_part_show))
 
     script = sub.add_parser("script", help="read or write a part script")
     script_verbs = script.add_subparsers(dest="script_command", required=True)
@@ -522,7 +515,7 @@ def add_subparsers(
     script_show = script_verbs.add_parser("show", help="print a part script and its content hash")
     script_show.add_argument("name", help="part name")
     script_show.add_argument("--json", action="store_true", help="emit the read_part result")
-    script_show.set_defaults(func=_guard(_cmd_script_show))
+    script_show.set_defaults(func=guard(_cmd_script_show))
 
     script_write = script_verbs.add_parser(
         "write", help="replace a part script (write_part: expected-hash CAS)"
@@ -540,24 +533,24 @@ def add_subparsers(
         help="current content_hash from heph script show / heph part create (required)",
     )
     script_write.add_argument("--json", action="store_true", help="emit the write_part result")
-    script_write.set_defaults(func=_guard(_cmd_script_write))
+    script_write.set_defaults(func=guard(_cmd_script_write))
 
     params = sub.add_parser("params", help="show PARAMS declarations and effective values")
     params.add_argument("part", nargs="?", default=None, help="part name (omit for every part)")
     params.add_argument("--json", action="store_true", help="emit the PARAMS document")
-    params.set_defaults(func=_guard(_cmd_params))
+    params.set_defaults(func=guard(_cmd_params))
 
     prompt = sub.add_parser(
         "prompt",
         help="show or store the operator request text (not a hosted chat)",
     )
     prompt.add_argument("--json", action="store_true", help="emit {status, text, path}")
-    prompt.set_defaults(func=_guard(_cmd_prompt_show))
+    prompt.set_defaults(func=guard(_cmd_prompt_show))
     prompt_verbs = prompt.add_subparsers(dest="prompt_command", required=False)
 
     prompt_show = prompt_verbs.add_parser("show", help="print the stored request text")
     prompt_show.add_argument("--json", action="store_true", help="emit {status, text, path}")
-    prompt_show.set_defaults(func=_guard(_cmd_prompt_show))
+    prompt_show.set_defaults(func=guard(_cmd_prompt_show))
 
     prompt_set = prompt_verbs.add_parser("set", help="store request text from --file or stdin")
     prompt_set.add_argument(
@@ -566,4 +559,4 @@ def add_subparsers(
         help="request text (path or - for stdin; stdin if omitted and not a TTY)",
     )
     prompt_set.add_argument("--json", action="store_true", help="emit the stored record")
-    prompt_set.set_defaults(func=_guard(_cmd_prompt_set))
+    prompt_set.set_defaults(func=guard(_cmd_prompt_set))

@@ -18,23 +18,24 @@ the parser and owns ``--mcp``, this module extends it with ``--web``, and
 arrangement cannot quietly invert.
 
 ``--project DIR`` (default: the working directory) is registered here for the
-same reason ``--web`` is: it is the web half's flag, and it is spelled and
-resolved exactly as ``heph agent --project`` so the two verbs cannot disagree
-about which project they are serving and discovering. A ``DIR`` that is not
-inside a project is refused by ``find_project_root`` with the ordinary
-``validation_error`` — the identical answer the working-directory path gives,
-because it *is* that path with a different starting point. A ``DIR`` that is
-not a *directory* is refused one step earlier, here: ``find_project_root``
-walks upward from a non-strict ``resolve()``, so a mistyped name or a path
-pointing at ``hephaestus.toml`` itself would otherwise resolve to the nearest
-ancestor project and serve *that* — a different project than the operator
-named, with no diagnostic. That guard is a *narrowing*, not a divergence:
-every ``DIR`` that is a real directory still resolves through
-``find_project_root`` exactly as ``heph agent --project`` resolves it, so the
-two verbs still cannot land on different roots for the same input, and
-``heph agent --project`` refuses a non-directory the same way, by name and with
-the same exit status (:mod:`hephaestus.agent_bridge.cli`), so the two verbs
-answer alike for every ``DIR`` — real or mistyped.
+same reason ``--web`` is: it is the web half's flag, and it must land on the
+same root ``heph agent --project`` lands on, because ``heph agent`` discovers
+this serve by reading ``<root>/.heph/serve.json``. Both verbs call
+:func:`hephaestus.core.cli_errors.project_root_or_refuse` — one mechanism, not
+two comments promising each other parity. Before that, the two disagreed on the
+not-a-project half: ``heph agent`` refused exit 2 and ``heph serve --web``
+deferred the resolve to ``serve_web`` and returned exit 1 with a different
+message shape (ledger J-cli-robustness-22). The resolve happens *here*, eagerly,
+and the resolved root is what ``serve_web`` is handed, so both verbs fail at the
+same point with the same words.
+
+A ``DIR`` that is not a *directory* is refused one step earlier still:
+``find_project_root`` walks upward from a non-strict ``resolve()``, so a
+mistyped name or a path pointing at ``hephaestus.toml`` itself would otherwise
+resolve to the nearest ancestor project and serve *that* — a different project
+than the operator named, with no diagnostic. That guard is a *narrowing*, not a
+divergence: every ``DIR`` that is a real directory still walks up, which is the
+flag's point.
 """
 
 from __future__ import annotations
@@ -44,6 +45,8 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import cast
+
+from hephaestus.core.cli_errors import CliUsageError, project_root_or_refuse
 
 __all__ = ["extend_serve"]
 
@@ -64,13 +67,11 @@ def extend_serve(parser: argparse.ArgumentParser) -> None:
         dest="web_address",
         help="bind address for --web (loopback only; default 127.0.0.1:8760)",
     )
-    # Mirrors `heph agent --project` exactly — same spelling, same metavar, same
-    # default, and the same resolution (`find_project_root` from that directory).
-    # That symmetry is the point rather than a convenience: the two verbs must
-    # agree on *which* project they are talking about, because `heph agent`
-    # discovers this serve by reading `<root>/.heph/serve.json` (INTERFACE.md
-    # §2.1, "no new flag"). Resolving the same DIR through the same function
-    # means both land on the same root and therefore on the same record.
+    # Same spelling, same metavar, same default and the same resolver as
+    # `heph agent --project` (`cli_errors.project_root_or_refuse`). The symmetry
+    # is the point rather than a convenience: `heph agent` discovers this serve
+    # by reading `<root>/.heph/serve.json` (INTERFACE.md §2.1, "no new flag"),
+    # so both verbs must land on the same root and therefore the same record.
     parser.add_argument(
         "--project",
         default=None,
@@ -119,8 +120,8 @@ def _router(
         # `expanduser` here rather than in `serve_web`: it is a shell-shaped
         # courtesy owed to a string that came off a command line, and the
         # library entry point takes a `Path` that a caller has already meant.
-        root = Path(project).expanduser() if project is not None else None
-        if root is not None and not root.is_dir():
+        start = Path(project).expanduser() if project is not None else None
+        if start is not None and not start.is_dir():
             # `find_project_root` resolves non-strictly and then walks *up*, so a
             # typo'd or file-shaped DIR does not fail — it quietly lands on the
             # nearest ancestor project and serves that one instead. Serving a
@@ -130,11 +131,14 @@ def _router(
             # merely sits *inside* a project; it is the wrong behaviour for a
             # path that is not a directory at all, so that is the only case
             # refused here, by name, before `serve_web` sees it.
-            print(
-                f"heph: serve: --project {project}: not a directory",
-                file=sys.stderr,
-            )
-            return 2
+            raise CliUsageError(f"serve: --project {project}: not a directory")
+        # Resolve eagerly, so "not a Hephaestus project" is answered here — with
+        # the same exit code and the same words `heph agent` gives — rather than
+        # deep inside `serve_web` as a `validation_error` (J-cli-robustness-22).
+        # `serve_web` re-resolves from what it is handed and finds the same root
+        # immediately, so nothing about where the token and the serve record are
+        # written moves.
+        root = project_root_or_refuse(start)
         return serve_web(web=getattr(args, "web_address", None), root=root)
 
     return command

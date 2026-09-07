@@ -51,7 +51,12 @@ from pathlib import Path
 from types import FrameType
 from typing import Any, Protocol, TextIO, cast
 
-from hephaestus.core.project_store.layout import find_project_root
+from hephaestus.core.cli_errors import (
+    CliUsageError,
+    dispatch,
+    guard,
+    project_root_or_refuse,
+)
 from opstore.types import JSONValue
 
 from .app import AskUserAnswerer, AuthLinkError, BridgeRuntime, PromptResult
@@ -355,22 +360,19 @@ def _cmd_agent(args: argparse.Namespace) -> int:
     explicit = cast("str | None", args.project)
     start = Path(explicit or Path.cwd()).expanduser()
     if explicit is not None and not start.is_dir():
-        # Mirrors `heph serve --web --project` exactly (see
-        # :mod:`hephaestus.http.cli_web`), because docs/cli.md promises the two
-        # verbs resolve `--project` identically. `find_project_root` resolves
-        # non-strictly and then walks *up*, so a mistyped DIR — or one naming
-        # `hephaestus.toml` itself — would otherwise land on the nearest ancestor
-        # project and run against *that* one, silently: a different root than the
-        # operator named, holding a different transcript and different leases.
-        # Only a path that is not a directory is refused; a real subdirectory
-        # still walks up, which is the flag's point.
-        print(f"heph: agent: --project {explicit}: not a directory", file=sys.stderr)
-        return 2
-    try:
-        project_root = find_project_root(start)
-    except Exception as exc:
-        print(f"heph: not a Hephaestus project ({exc})", file=sys.stderr)
-        return 2
+        # `find_project_root` resolves non-strictly and then walks *up*, so a
+        # mistyped DIR — or one naming `hephaestus.toml` itself — would otherwise
+        # land on the nearest ancestor project and run against *that* one,
+        # silently: a different root than the operator named, holding a different
+        # transcript and different leases. Only a path that is not a directory is
+        # refused; a real subdirectory still walks up, which is the flag's point.
+        raise CliUsageError(f"agent: --project {explicit}: not a directory")
+    # The shared resolver, which `heph serve --web --project` also calls
+    # (:mod:`hephaestus.http.cli_web`): one mechanism, so the two verbs cannot
+    # disagree about which project they are talking about. The broad
+    # `except Exception` this replaces reported an unrelated bug as "not a
+    # Hephaestus project" (ledger J-cli-robustness-22).
+    project_root = project_root_or_refuse(start)
 
     # INTERFACE.md §2.1: **no new flag**. If a live server already owns this
     # project's leases, this verb runs in CLIENT MODE against it rather than
@@ -643,7 +645,7 @@ def add_subparsers(
     agent.add_argument(
         "--providers", default=None, metavar="FILE", help="provider config JSON path"
     )
-    agent.set_defaults(func=_cmd_agent)
+    agent.set_defaults(func=guard(_cmd_agent))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -652,8 +654,9 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     add_subparsers(sub)
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
-    command = cast("Callable[[argparse.Namespace], int]", args.func)
-    return int(command(args))
+    # Through the shared taxonomy, so this entry point refuses exactly as `heph`
+    # does instead of raising a traceback (ledger J-cli-robustness-20).
+    return dispatch(cast("Callable[[argparse.Namespace], int]", args.func), args)
 
 
 if __name__ == "__main__":  # pragma: no cover - manual entry

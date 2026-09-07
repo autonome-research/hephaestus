@@ -428,7 +428,12 @@ def test_heph_lint_resolves_the_component_facts_from_the_pinned_registries(
             "--json",
         ]
     )
-    findings = json.loads(capsys.readouterr().out)
+    payload = json.loads(capsys.readouterr().out)
+    # `lint --json` is a listing envelope, not a bare array (ledger
+    # J-cli-robustness-7): the findings live under the plural key and `status`
+    # mirrors the exit code, which is 0 here because the rule is a warning.
+    assert payload["status"] == "ok"
+    findings = payload["findings"]
     codes = [finding["code"] for finding in findings]
     assert "uncited_component_datum" in codes, (
         "the CLI did not resolve the pinned registry's claim values, so the rule "
@@ -490,7 +495,12 @@ def test_heph_lint_reports_a_digest_mismatch_it_can_see(
             "--json",
         ]
     )
-    findings = json.loads(capsys.readouterr().out)
+    payload = json.loads(capsys.readouterr().out)
+    # The envelope again, and here the digest mismatch is an *error* finding, so
+    # the envelope's `status` says so rather than the reader having to re-derive
+    # it from the severities.
+    assert payload["status"] == "error"
+    findings = payload["findings"]
     mismatch = [f for f in findings if f["code"] == "datasheet_digest_mismatch"]
     assert len(mismatch) == 1
     assert PART_ID in mismatch[0]["message"]

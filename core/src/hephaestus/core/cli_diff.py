@@ -19,19 +19,17 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any, cast
 
-from hephaestus.core.errors import HephaestusError
+from hephaestus.core.cli_errors import guard, project_root_or_refuse
 from hephaestus.core.project_compare import (
     ALIGN_MODES,
     CompareTimeout,
     ProjectComparer,
     SolidComparison,
 )
-from hephaestus.core.project_store.layout import find_project_root, load_project, open_store
+from hephaestus.core.project_store.layout import load_project, open_store
 
 __all__ = ["add_subparsers", "format_comparison", "format_timeout"]
 
@@ -138,7 +136,7 @@ def format_timeout(refusal: CompareTimeout) -> str:
 
 
 def _cmd_diff(args: argparse.Namespace) -> int:
-    root = find_project_root(Path.cwd())
+    root = project_root_or_refuse()
     layout = load_project(root)
     store = open_store(layout)
     try:
@@ -164,14 +162,6 @@ def _cmd_diff(args: argparse.Namespace) -> int:
     return 0
 
 
-def _guard(args: argparse.Namespace) -> int:
-    try:
-        return _cmd_diff(args)
-    except HephaestusError as exc:
-        print(f"heph: error ({exc.code}): {exc.message}", file=sys.stderr)
-        return 1
-
-
 def add_subparsers(
     sub: argparse._SubParsersAction[argparse.ArgumentParser],  # pyright: ignore[reportPrivateUsage]
 ) -> None:
@@ -186,4 +176,4 @@ def add_subparsers(
         help="comparison frame (default: as_posed — a moved part IS different)",
     )
     diff.add_argument("--json", action="store_true", help="emit the comparison document as JSON")
-    diff.set_defaults(func=_guard)
+    diff.set_defaults(func=guard(_cmd_diff))

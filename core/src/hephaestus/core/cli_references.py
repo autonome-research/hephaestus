@@ -28,21 +28,21 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
-from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
-from hephaestus.core.project_store.layout import find_project_root, load_project, open_store
+from hephaestus.core.cli_errors import (
+    guard,
+    json_listing,
+    project_root_or_refuse,
+    require_input_file,
+)
+from hephaestus.core.project_store.layout import load_project, open_store
 from hephaestus.core.project_store.references import ReferenceRegistry, TextExtractor
 
 from opstore import OpStore
 
 __all__ = ["add_subparsers", "resolve_extractor"]
-
-
-class _UsageError(Exception):
-    """CLI misuse: reported on stderr with exit code 2."""
 
 
 def resolve_extractor() -> TextExtractor | None:
@@ -60,16 +60,14 @@ def resolve_extractor() -> TextExtractor | None:
 
 
 def _registry(start: Path) -> tuple[ReferenceRegistry, OpStore]:
-    root = find_project_root(start)
+    root = project_root_or_refuse(start)
     layout = load_project(root)
     store = open_store(layout)
     return (ReferenceRegistry(layout, store), store)
 
 
 def _cmd_add(args: argparse.Namespace) -> int:
-    source = Path(cast("str", args.path))
-    if not source.is_file():
-        raise _UsageError(f"no such file: {source}")
+    source = require_input_file(Path(cast("str", args.path)), what="reference file")
     registry, store = _registry(Path.cwd())
     try:
         entry = registry.add_file(
@@ -94,7 +92,8 @@ def _cmd_list(args: argparse.Namespace) -> int:
     finally:
         store.close()
     if bool(args.json):
-        print(json.dumps([entry.listing() for entry in entries], sort_keys=True))
+        # One listing envelope, never a bare array (ledger J-cli-robustness-7).
+        print(json_listing("references", [entry.listing() for entry in entries]))
         return 0
     if not entries:
         print("no references registered")
@@ -118,19 +117,6 @@ def _cmd_remove(args: argparse.Namespace) -> int:
     return 0
 
 
-def _guard(command: Callable[[argparse.Namespace], int]) -> Callable[[argparse.Namespace], int]:
-    """Report reference-verb misuse as exit 2 regardless of the entry point."""
-
-    def run(args: argparse.Namespace) -> int:
-        try:
-            return command(args)
-        except _UsageError as exc:
-            print(f"heph: {exc}", file=sys.stderr)
-            return 2
-
-    return run
-
-
 def add_subparsers(
     sub: argparse._SubParsersAction[argparse.ArgumentParser],  # pyright: ignore[reportPrivateUsage]
 ) -> None:
@@ -144,13 +130,13 @@ def add_subparsers(
     add.add_argument("path", help="file to register (pdf, txt, md, png, jpg)")
     add.add_argument("--name", default=None, help="register under this name (default: filename)")
     add.add_argument("--json", action="store_true", help="emit the registry entry as JSON")
-    add.set_defaults(func=_guard(_cmd_add))
+    add.set_defaults(func=guard(_cmd_add))
 
     listing = verbs.add_parser("list", help="list registered references")
     listing.add_argument("--json", action="store_true", help="emit JSON records")
-    listing.set_defaults(func=_guard(_cmd_list))
+    listing.set_defaults(func=guard(_cmd_list))
 
     remove = verbs.add_parser("remove", help="deregister a reference and delete its copy")
     remove.add_argument("name", help="registered reference name")
     remove.add_argument("--json", action="store_true", help="emit the removed entry as JSON")
-    remove.set_defaults(func=_guard(_cmd_remove))
+    remove.set_defaults(func=guard(_cmd_remove))

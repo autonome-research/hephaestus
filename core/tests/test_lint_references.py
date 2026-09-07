@@ -182,9 +182,10 @@ def _lint_json(
             str(request),
         ]
     )
+    # `lint --json` is one envelope, not a bare array (ledger J-cli-robustness-7).
+    document = cast("dict[str, JSONValue]", json.loads(capsys.readouterr().out))
     findings = [
-        cast("dict[str, JSONValue]", item)
-        for item in cast("list[JSONValue]", json.loads(capsys.readouterr().out))
+        cast("dict[str, JSONValue]", item) for item in cast("list[JSONValue]", document["findings"])
     ]
     return (code, findings)
 

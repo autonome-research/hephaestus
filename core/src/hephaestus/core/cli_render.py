@@ -37,13 +37,22 @@ it reads the published current build, so a build must have run first.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import cast
 
-from hephaestus.core.cli_errors import ensure_writable_dir, guard
-from hephaestus.core.project_store.layout import find_project_root, load_project, open_store
+from hephaestus.core.cli_errors import (
+    dispatch,
+    ensure_writable_dir,
+    guard,
+    json_listing,
+    project_root_or_refuse,
+)
+from hephaestus.core.project_store.layout import load_project, open_store
+from opstore.types import JSONValue
 
 __all__ = ["add_subparsers", "main"]
 
@@ -79,7 +88,7 @@ def _cmd_render(args: argparse.Namespace) -> int:
     # it to be refused.
     from hephaestus.core.render.inspect import RenderProject, inspect_part
 
-    root = find_project_root(Path.cwd())
+    root = project_root_or_refuse()
     layout = load_project(root)
     store = open_store(layout)
     project = RenderProject(layout=layout, store=store)
@@ -162,7 +171,7 @@ def _cmd_render_pose(
             kind="contract",
         )
 
-    root = find_project_root(Path.cwd())
+    root = project_root_or_refuse()
     layout = load_project(root)
     store = open_store(layout)
     result = render_posed_scene(layout, store, pose_id=pose, views=views)
@@ -200,6 +209,85 @@ def _cmd_render_pose(
     return 0
 
 
+def _golden_rows(out_dir: Path) -> list[dict[str, JSONValue]]:
+    """One verification row per golden image: the sidecar checked against disk.
+
+    The three facts a golden's sidecar records are exactly the three that make a
+    pinned render reproducible — the generator's own source hash, the GL
+    renderer string, and the digest of the bytes — so verifying is reading them
+    back rather than re-rendering. A missing golden is drift too: a spec with no
+    committed image is a claim nothing backs.
+
+    Verification stays a pure read of committed bytes: the GL renderer is probed
+    for the advisory row below, and a machine with no usable software EGL simply
+    does not get that row. `renderer_string()` opens a real GL context and
+    raises `RenderUnavailableError`, which is a `RuntimeError` rather than a
+    `HephaestusError` — letting it out would traceback a verb whose two *failing*
+    checks (the digest and the generator hash) need no GL at all.
+    """
+    from hephaestus.core.render.goldens import (
+        GOLDEN_SPECS,
+        renderer_string,
+        script_hash,
+    )
+    from hephaestus.core.render.offscreen import RenderUnavailableError
+
+    expected_script = script_hash()
+    try:
+        renderer: str | None = renderer_string()
+    except RenderUnavailableError:
+        renderer = None
+    rows: list[dict[str, JSONValue]] = []
+    for spec in GOLDEN_SPECS:
+        for view in spec.views:
+            stem = f"{spec.name}_{_slug(view)}_{spec.channel}"
+            row: dict[str, JSONValue] = {"golden": stem, "status": "ok"}
+            png_path = out_dir / f"{stem}.png"
+            sidecar_path = out_dir / f"{stem}.json"
+            if not png_path.is_file() or not sidecar_path.is_file():
+                row["status"] = "missing"
+                row["detail"] = f"no committed golden at {png_path}"
+                rows.append(row)
+                continue
+            try:
+                raw: object = json.loads(sidecar_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as exc:
+                row["status"] = "unreadable"
+                row["detail"] = f"{sidecar_path} is not valid JSON: {exc}"
+                rows.append(row)
+                continue
+            if not isinstance(raw, dict):
+                row["status"] = "unreadable"
+                row["detail"] = f"{sidecar_path} must be a JSON object"
+                rows.append(row)
+                continue
+            sidecar = cast("Mapping[str, object]", raw)
+            digest = "sha256:" + hashlib.sha256(png_path.read_bytes()).hexdigest()
+            if sidecar.get("png_sha256") != digest:
+                row["status"] = "drifted"
+                row["detail"] = f"{png_path.name} hashes to {digest}, sidecar says "
+                row["detail"] = f"{row['detail']}{sidecar.get('png_sha256')}"
+            elif sidecar.get("goldens_script_sha256") != expected_script:
+                row["status"] = "stale_generator"
+                row["detail"] = (
+                    "recorded against a different goldens.py "
+                    f"({sidecar.get('goldens_script_sha256')}, now {expected_script})"
+                )
+            elif renderer is not None and sidecar.get("gl_renderer") != renderer:
+                # Reported, never failing: the corpus is pinned to the CI
+                # container's rasterizer, so a different GL_RENDERER says this
+                # machine cannot re-render these bytes — not that the committed
+                # bytes are wrong. Failing here would make the verb red on every
+                # developer machine, which is a gate nobody can act on.
+                row["status"] = "renderer_mismatch"
+                row["detail"] = (
+                    f"recorded on {sidecar.get('gl_renderer')!r}, this machine is {renderer!r}: "
+                    "pixels are only reproducible under the pinned render container"
+                )
+            rows.append(row)
+    return rows
+
+
 def _cmd_goldens(args: argparse.Namespace) -> int:
     from hephaestus.core.render.goldens import (
         DEFAULT_GOLDEN_DIR,
@@ -208,10 +296,25 @@ def _cmd_goldens(args: argparse.Namespace) -> int:
         update_goldens,
     )
 
-    if not bool(args.update):
-        print("heph goldens: nothing to do (pass --update to regenerate)", file=sys.stderr)
-        return 2
     out_dir = Path(cast("str", args.dir)) if args.dir else DEFAULT_GOLDEN_DIR
+    if not bool(args.update):
+        # A bare verb with one useful mode refused rather than doing it, so the
+        # flag added a step without adding a decision (ledger
+        # J-cli-robustness-13). Verification is the read-only mode, shaped like
+        # `heph registry verify`: a per-golden table, exit 1 on drift.
+        rows = _golden_rows(out_dir)
+        drifted = [row for row in rows if row["status"] not in ("ok", "renderer_mismatch")]
+        if bool(args.json):
+            print(json_listing("goldens", rows, status="error" if drifted else "ok"))
+            return 1 if drifted else 0
+        for row in rows:
+            print(f"{row['golden']}: {row['status']}")
+            detail = row.get("detail")
+            if isinstance(detail, str):
+                print(f"  {detail}")
+        if not rows:
+            print("no goldens declared")
+        return 1 if drifted else 0
     fixtures_dir = cast("str | None", args.fixtures_dir)
     try:
         written = update_goldens(
@@ -298,14 +401,22 @@ def add_subparsers(
     render.add_argument("--json", action="store_true", help="emit the render metadata JSON")
     render.set_defaults(func=guard(_cmd_render))
 
-    goldens = sub.add_parser("goldens", help="regenerate golden renders (refuses on a dirty tree)")
-    goldens.add_argument("--update", action="store_true", help="regenerate the golden corpus")
+    goldens = sub.add_parser(
+        "goldens",
+        help="verify the golden corpus against its sidecars (--update regenerates it)",
+    )
+    goldens.add_argument(
+        "--update",
+        action="store_true",
+        help="regenerate the golden corpus (refuses on a dirty tree)",
+    )
     goldens.add_argument(
         "--dir",
         default=None,
         metavar="DIR",
         help="golden output directory (default tests/render/goldens)",
     )
+    goldens.add_argument("--json", action="store_true", help="emit the verification rows")
     goldens.add_argument(
         "--fixtures-dir",
         default=None,
@@ -317,13 +428,18 @@ def add_subparsers(
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Standalone entry point (``python -m hephaestus.core.cli_render``) for tests."""
+    """Standalone entry point (``python -m hephaestus.core.cli_render``) for tests.
+
+    Goes through :func:`hephaestus.core.cli_errors.dispatch`, so the condition
+    ``heph`` refuses in one line refuses here in the same line with the same
+    exit code instead of raising a traceback — a test exercising a module
+    ``main()`` observes the product's behaviour (ledger J-cli-robustness-20).
+    """
     parser = argparse.ArgumentParser(prog="heph", description="Hephaestus render verbs")
     sub = parser.add_subparsers(dest="command", required=True)
     add_subparsers(sub)
     args = parser.parse_args(argv)
-    func = cast("object", args.func)
-    return cast("int", func(args))  # type: ignore[operator]
+    return dispatch(cast("Callable[[argparse.Namespace], int]", args.func), args)
 
 
 if __name__ == "__main__":

@@ -33,10 +33,10 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 from typing import TYPE_CHECKING
 
-from hephaestus.core.project_store.layout import find_project_root, load_project, open_store
+from hephaestus.core.cli_errors import guard, project_root_or_refuse
+from hephaestus.core.project_store.layout import load_project, open_store
 
 if TYPE_CHECKING:  # the motion module binds the geometry kernel; the verb loads it lazily
     from hephaestus.core.motion import MotionStatus
@@ -52,7 +52,7 @@ def _cmd_joints(args: argparse.Namespace) -> int:
     """Print the declared sets with the projected status (no evaluation)."""
     from hephaestus.core.motion import MotionEvaluator
 
-    root = find_project_root(Path.cwd())
+    root = project_root_or_refuse()
     layout = load_project(root)
     store = open_store(layout)
     try:
@@ -217,4 +217,4 @@ def add_subparsers(
         "joints", help="show declared joints and poses with their latest motion outcomes"
     )
     joints.add_argument("--json", action="store_true", help="emit the machine form")
-    joints.set_defaults(func=_cmd_joints)
+    joints.set_defaults(func=guard(_cmd_joints))

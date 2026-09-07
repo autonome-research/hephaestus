@@ -64,10 +64,30 @@ for something impossible (bad usage, a refused capability).
 An exit-1 refusal the verb actually *ran* to reach still carries its result
 document on stdout (`{"part":"…","status":"already_exists"}`). An exit-2 usage
 error has no result to report, so it goes to stderr and stdout stays empty.
-Where a verb refuses on a **precondition** — the `--out` checks under `heph
-render` and `heph cam emit`, the target check under `heph init` — a `--json`
-invocation gets that refusal as an object on stderr,
-`{"status":"refused","code":"usage","message":"…"}`, rather than prose.
+
+**Refusals under `--json`.** One boundary maps every engine refusal
+(`hephaestus/core/cli_errors.py`), so with `--json` requested a refusal is a
+JSON object on **stderr** rather than a prose line — stdout stays reserved for
+the result document and stays empty, so a caller never has to tell two shapes
+apart on one stream:
+
+```console
+$ heph script write spacer --file spacer.py --expected-hash bogus --json; echo $?
+{"code": "usage", "message": "--expected-hash must be 'sha256:<64 hex>' (got 'bogus')", "status": "refused"}
+2
+```
+
+`status` is always `refused`; `code` is `usage` for misuse, otherwise the
+engine's own code (`addressing_error`, `validation_error`, `sandbox_denied`, …).
+An addressing refusal adds `candidates` — names you might have meant — unless
+the name resolved and something *else* about it failed, when there is no
+alternative to offer. A verb whose refusal has a bespoke JSON shape (`part
+create`'s `already_exists`, a solve's document) keeps it; this is the fallback.
+
+**`--json` listings** are objects, never bare arrays: one `status` and one
+plural array key (`parts`, `imports`, `references`, `registries`, `findings`,
+`goldens`, `exports`), so a wrapper can treat every list verb alike and a future
+cursor has somewhere to live.
 
 ---
 
@@ -110,15 +130,17 @@ directory (or from `--project DIR`, where a verb has one) looking for
 Hephaestus clone is not a project, which is the usual way to meet this:
 
 ```
-heph: error (validation_error): no hephaestus.toml found at or above /home/you/hephaestus:
-a Hephaestus project is a directory holding hephaestus.toml (plus globals.py, parts/ and
-checks/). Create one with `heph init DIR`, then run from inside it (or pass `--project DIR`
-to `heph agent` / `heph serve --web`)
+heph: no hephaestus.toml found at or above /home/you/hephaestus: a Hephaestus project is a
+directory holding hephaestus.toml (plus globals.py, parts/ and checks/). Create one with
+`heph init DIR`, then run from inside it (or pass `--project DIR` to `heph agent` /
+`heph serve --web`)
 ```
 
-The code is `validation_error` (kind `contract`) and the fix is in the message:
-`heph init DIR`, then `cd` there — or point `--project` at a project you
-already have.
+Every verb answers this one condition identically — exit **2**, that message,
+and under `--json` the object `{"status":"refused","code":"usage","message":"…"}`
+— because they all resolve the root through one helper. The fix is in the
+message: `heph init DIR`, then `cd` there — or point `--project` at a project
+you already have.
 
 ### `heph part list` / `heph part create` / `heph part show`
 
@@ -265,9 +287,26 @@ fit:bracket_seats_at_joint_clearance: pass (measured: 0.29999999999999716)
 Every check reports its **measured value**, passing or failing. A check that
 cannot tell you what it measured cannot tell you how far off you are.
 
-`--project` requires and records a coherent project snapshot (every part built
+The badge vocabulary is the four values `INTERFACE.md` §6.3 fixes — `pass`,
+`fail`, `error`, `not_run` — and the CLI prints the same classifier the HTTP
+route and the web badges use. A check that could not be *evaluated* is `error`,
+never `FAIL`: it has no verdict to report, and it prints the reason rather than
+the raw measured envelope.
+
+```console
+$ heph check
+fit:bracket_clears_frame: pass (measured: 0.0)
+fit:raises: error — addressing_error: part 'nosuch' does not exist under /tmp/gadget/parts
+```
+
+Exit code 1 whenever anything is not `pass` — an unevaluated check is not a
+green run.
+
+`--snapshot` requires and records a coherent project snapshot (every part built
 from the same globals) rather than checking against whatever is lying around.
-`--json` emits the `CheckReport`. Exit code 1 if any check fails.
+It was spelled `--project` (still accepted), which collided with the
+`--project DIR` of `heph agent` and `heph serve --web`; this verb's flag takes
+no value. `--json` emits the `CheckReport`.
 
 ### `heph lint PATH`
 
@@ -280,11 +319,24 @@ parts/bracket.py: clean
 ```
 
 `--requirements FILE` and `--request FILE` turn on the requirement-ledger rules
-from `VALIDATION.md` §2: `--request` is a path to the original request text
-(the file `heph prompt` writes is `.heph/request.txt`). Given that text, `lint`
-can flag an `unsourced_requirement` — a dimension in the script that nothing
-in the request asked for. That is the rule that catches a model inventing a
-spec.
+from `VALIDATION.md` §2. **They are required together**: `unsourced_requirement`
+is a join between the ledger's entries and the original request text, so
+`--request` alone has one operand and is refused with exit 2 rather than
+reporting "clean" about a rule that never ran.
+
+```console
+$ heph lint parts/bracket.py --requirements ledger.json --request .heph/request.txt
+parts/bracket.py:12:5: error unsourced_requirement: 4.5 mm is not supported by the request [wall]
+```
+
+`--request` is a path to the original request text (the file `heph prompt`
+writes is `.heph/request.txt`). Given both, `lint` flags an
+`unsourced_requirement` — a dimension in the script that nothing in the request
+asked for. That is the rule that catches a model inventing a spec.
+`--json` emits `{"status": "ok"|"error", "findings": [...]}`.
+
+`lint` takes exactly one part script. A directory is refused as a directory,
+not as a missing file.
 
 ### `heph render PART`
 
@@ -321,13 +373,27 @@ created if absent, as it always has been. The same precondition covers
 
 ### `heph goldens`
 
-Regenerate the golden render corpus.
+Verify the golden render corpus, or regenerate it.
 
 ```console
+$ heph goldens
+assembly_primary_rgb_iso_rgb: ok
+assembly_primary_rgb_pX_rgb: ok
+…
+
 $ heph goldens --update
 ```
 
-It **refuses on a dirty tree**, by design: a golden regenerated alongside
+With no flag the verb **verifies**: for every declared golden it checks that the
+committed PNG hashes to what the sidecar records, that the sidecar was written
+by this `goldens.py`, and that the GL renderer matches. Exit 1 on drift, naming
+the drifted golden; exit 0 otherwise. `renderer_mismatch` is reported but does
+not fail — the corpus is pinned to the render container's rasterizer, so a
+different `GL_RENDERER` says *this machine* cannot re-render those bytes, not
+that the committed bytes are wrong. `--json` emits
+`{"status": …, "goldens": [...]}`.
+
+`--update` **refuses on a dirty tree**, by design: a golden regenerated alongside
 uncommitted changes cannot be attributed to anything. Goldens carry provenance
 (script hash + renderer version), and `verification.md` makes this the only
 sanctioned path to change them. `--dir DIR` points at a different golden
@@ -518,7 +584,9 @@ a positive-dimensional solution set comes back is a design decision. Provenance
 is compulsory (`--requirement ID`, or `--assumed --reason TEXT`). Repeat
 `--start ID=JOINT:VALUE,...` to declare more starts; there are no random
 restarts, and two starts that converge apart return
-`multiple_poses_from_starts` with **both** answers and neither chosen.
+`multiple_poses_from_starts` with **both** answers and neither chosen. A start
+spec needs both its separators: `--start nonsense` is a refusal, not a second
+`as_built` start under a name nobody declared.
 
 Exit 0 only for `pose_found` and `pose_converged_at_tolerance`; 1 for every
 other verdict — an under-determined answer and a multiplicity are facts to
@@ -577,6 +645,20 @@ interference beside four satisfied mates.
 `--bound VAR=MIN:MAX` bounds one free variable (`<part>.tx|ty|tz|rx|ry|rz`);
 transform space is otherwise unbounded, and a bound is never clamped in
 silence — a variable that reaches one comes back in the record's active list.
+Both separators are required: `MIN` or `MAX` may be empty for a half-open
+window, but `--bound bogus` is a refusal, not an unbounded window on a variable
+nobody declared, and a `--bound` naming a variable outside the `--free` set is
+refused by name.
+
+**Argument-shape errors are reported before the project is opened**, and all of
+them at once: provenance, weighting, a non-empty `--constraint`/`--free`, the
+bounds and the starts are all checked ahead of the solve request, so several bad
+flags produce one refusal listing every one of them rather than a full solve
+setup per mistake. "Every one" includes several bad specs of the *same*
+repeatable flag — three malformed `--bound`s are three lines of one refusal, not
+three runs. The same ordering holds for `heph solve pose` and
+`heph solve params`.
+
 Exit 0 only for `converged_at_tolerance`; 1 for every other verdict and for
 every named refusal.
 
@@ -662,10 +744,23 @@ See [registry-pinning.md](registry-pinning.md) — it is a topic, not a flag lis
 ```console
 $ heph registry list
 dfm: unpinned (dfm)
+  pin:    bundled:dfm
   path:   /home/you/hephaestus/registries/dfm
   digest: sha256:891ca6c88c661a8f…
 …
 ```
+
+`pin:` is what `hephaestus.toml` carries; `path:` is where those bytes are on
+*this* machine. The registries shipped with an installation are pinned as
+`bundled:<kind>` and resolved per machine at read time, because
+`hephaestus.toml` is committed and an absolute path into one developer's clone
+makes the project unusable everywhere else. The digest still pins the bytes: a
+machine whose installation ships different ones fails `heph registry verify` by
+design. `heph registry pin NAME` refuses to persist an absolute path outside the
+project unless you named it with `--path DIR`; an installation that ships no
+bundled registries refuses a `bundled:` pin by name, naming `--path DIR` as the
+remedy. `--json` on `list`, `update` and `verify` emits
+`{"status": …, "registries": [...]}`.
 
 ### `heph reference {add,list,remove}`
 
@@ -683,8 +778,13 @@ $ heph reference remove bearing-datasheet
 
 `add` takes a `pdf`, `txt`, `md`, `png` or `jpg`, **copies** it into the
 project's `references/` directory and registers it under `--name` (default: the
-filename). The original is untouched and the project stays self-contained.
-`remove` deregisters and deletes the copy. `--json` emits the registry entry.
+filename). The kind and mime type come from the *source file's* extension, so
+`--name` may be any plain filename — `--name bearing-datasheet`, with no
+suffix, is the documented form and registers the PDF as a document. An
+unsupported **source** extension is still refused whatever `--name` says. The
+original is untouched and the project stays self-contained. `remove`
+deregisters and deletes the copy. `--json` emits the registry entry; `list
+--json` emits `{"status": "ok", "references": [...]}`.
 
 ### `heph import {add,list}`
 
@@ -699,7 +799,7 @@ $ heph import list
 no imports
 
 $ heph import add ~/Downloads/vendor_plate.step --json
-{"kind":"step","name":"vendor_plate.step","path":"imports/vendor_plate.step","sha256":"sha256:…"}
+{"kind":"step","name":"vendor_plate.step","path":"imports/vendor_plate.step","recorded":true,"sha256":"sha256:…","units":null}
 
 $ heph import add ~/Downloads/limb-l.stl --units mm --part socket
 copied limb-l.stl (mesh, units=mm) sha256:… -> imports/limb-l.stl
@@ -714,7 +814,23 @@ file is untouched; the copy under `imports/` is a regular file (no symlink
 escape). `--part NAME` writes `part.geometry = import_step("copied-name")` for
 STEP, or `import_mesh` plus `mesh_to_solid` with the declared unit for a mesh,
 and refuses `already_exists` without force if the part is already there.
-`--json` on `add` emits `{name, kind: step|mesh|points, sha256, path, units?}`.
+`--json` on `add` emits `{name, kind: step|mesh|points, sha256, path, units,
+recorded}`; `list --json` emits `{"status": "ok", "imports": [...]}` of the same
+rows.
+
+**The declared unit is recorded with the admission.** `--units` is compulsory on
+a mesh precisely because the file carries none (`MESH_INGEST.md`), so discarding
+it after the copy would make it unrecoverable; `heph import add` writes a
+`{name, kind, sha256, units}` admission into project state and `heph import list`
+reports it. A file copied into `imports/` by hand is still listed — with
+`units: null` and `recorded: false`, rather than hidden.
+
+Re-admitting a name has three outcomes. Identical bytes under an identical unit
+is an idempotent success naming the prior admission. The same name with
+different bytes is refused `import_bytes_conflict`; with a different unit,
+`import_unit_conflict` — both naming the two declarations, and neither touching
+`imports/`. `--redeclare` is the explicit escape: it replaces the admission and,
+when the bytes changed, marks the importing parts stale.
 
 Scan-to-part is this verb plus Stage 12: `heph import add scan.stl --units mm
 --part socket`, then `heph build socket`, then `heph scan` / `heph scan check
@@ -748,7 +864,13 @@ store: 13507 protected of 10737418240 quota (52923 stored)
 ```
 
 `list` takes an optional part name to filter, computes nothing, and loads no
-geometry kernel. The `pin` column has three values and they are three different
+geometry kernel. The filter is validated against the project's parts first: a
+name that does not exist is the same addressing refusal `heph part show` gives —
+exit 2, with candidates — not "no exports recorded", which is what a real part
+with no exports says. A typo must not read as a clean answer. `--json` emits
+`{"status": "ok", "part": …, "exports": [...]}`.
+
+The `pin` column has three values and they are three different
 facts: `pinned` is a garbage collection root in its own right, `reachable` is
 unpinned but still protected by something else (so unpinning it reclaimed
 nothing), and `collectable` is eligible for the next pass once past its
@@ -920,19 +1042,21 @@ $ heph serve --web --project ~/designs/bracket      # from any directory
 | `--web-address HOST:PORT` | Bind address, loopback only (default `127.0.0.1:8760`). |
 | `--project DIR` | Where the search for the project starts (default: cwd). |
 
-`--project DIR` resolves exactly as it does for [`heph agent`](#heph-agent):
-the nearest ancestor of `DIR` holding `hephaestus.toml` is the project served,
-so `--project parts/` and `--project .` name the same one. It exists so the
-workspace can be started without a `cd`, and everything the serve derives moves
-with it — `.heph/serve.token`, `.heph/serve.json`, the provider config, and the
-agent runtime's working directory. Because both verbs resolve a directory the
-same way, `heph agent --project DIR` finds the `serve.json` that
-`heph serve --web --project DIR` wrote and runs in client mode against it. A
-`DIR` that is not inside a project is refused with the same `validation_error`
-a bad working directory gives. The flag applies to `--web` only: passing it
-with `--mcp` is a usage error (exit 2) rather than a silently ignored flag,
-because the MCP transport resolves the project per request from the working
-directory.
+`--project DIR` resolves exactly as it does for [`heph agent`](#heph-agent) —
+through the same helper, not through two implementations that agree by
+convention: the nearest ancestor of `DIR` holding `hephaestus.toml` is the
+project served, so `--project parts/` and `--project .` name the same one. It
+exists so the workspace can be started without a `cd`, and everything the serve
+derives moves with it — `.heph/serve.token`, `.heph/serve.json`, the provider
+config, and the agent runtime's working directory. Because both verbs resolve a
+directory the same way, `heph agent --project DIR` finds the `serve.json` that
+`heph serve --web --project DIR` wrote and runs in client mode against it. The
+resolve happens before the server starts, so a `DIR` that is not inside a
+project is refused with exit 2 and the same one-line message `heph agent
+--project DIR` prints, and a `DIR` that is not a directory at all is refused
+one step earlier still. The flag applies to `--web` only: passing it with
+`--mcp` is a usage error (exit 2) rather than a silently ignored flag, because
+the MCP transport resolves the project per request from the working directory.
 
 The command prints `http://127.0.0.1:PORT/#t=<token>` and, on a TTY, opens it.
 The token rides in the URL **fragment**, never a query string, so it never

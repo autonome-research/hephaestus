@@ -62,12 +62,17 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
-from collections.abc import Callable, Sequence
-from pathlib import Path
+from collections.abc import Sequence
 from typing import Any
 
-from hephaestus.core.project_store.layout import find_project_root, load_project, open_store
+from hephaestus.core.cli_errors import (
+    CliUsageError,
+    guard,
+    parse_content_hash,
+    project_root_or_refuse,
+)
+from hephaestus.core.errors import AddressingError
+from hephaestus.core.project_store.layout import load_project, open_store
 
 from opstore import OpStore
 
@@ -76,10 +81,6 @@ from .cad_ops.export_history import EXPORTS_DIR, ExportRecord, export_records
 __all__ = ["add_subparsers"]
 
 _HEADER = ("part", "format", "layout", "bytes", "pin", "blob", "path")
-
-
-class _UsageError(Exception):
-    """CLI misuse: reported on stderr with exit code 2."""
 
 
 def _files(
@@ -108,8 +109,19 @@ def _files(
 def _cmd_list(args: argparse.Namespace) -> int:
     """Print the committed export rows and their outputs (no evaluation)."""
     part = args.part if isinstance(args.part, str) else None
-    root = find_project_root(Path.cwd())
+    root = project_root_or_refuse()
     layout = load_project(root)
+    # A filter naming a part that does not exist is a typo, not a clean answer:
+    # before this check it was indistinguishable from a real part with no
+    # exports ("no exports recorded", exit 0 — ledger J-cli-robustness-11).
+    # Same wording and same candidates as `ProjectStore.read_part`, so "unknown
+    # part" does not gain a fourth spelling.
+    if part is not None and not layout.part_path(part).is_file():
+        raise AddressingError(
+            f"part {part!r} does not exist under {layout.parts_dir}",
+            selector=part,
+            candidates=layout.part_names(),
+        )
     store = open_store(layout)
     try:
         records = export_records(store, part=part)
@@ -200,7 +212,7 @@ def _cmd_unpin(args: argparse.Namespace) -> int:
     from hephaestus.agent_bridge.cad_ops import CadOps
 
     blob = _normalized_blob(str(args.blob))
-    root = find_project_root(Path.cwd())
+    root = project_root_or_refuse()
     layout = load_project(root)
     store = open_store(layout)
     try:
@@ -211,7 +223,7 @@ def _cmd_unpin(args: argparse.Namespace) -> int:
             if candidate == blob
         ]
         if not named:
-            raise _UsageError(
+            raise CliUsageError(
                 f"{blob} is not an output of any committed export in this project "
                 f"(list them with 'heph export list')"
             )
@@ -287,33 +299,17 @@ def _normalized_blob(raw: str) -> str:
     matching: an unpin resolved by prefix is an irreversible-feeling operation
     whose subject depends on what else happens to be in the store.
     """
-    candidate = raw.strip()
-    if not candidate:
-        raise _UsageError("unpin needs an export blob (see 'heph export list')")
-    if candidate.startswith("sha256:"):
-        return candidate
-    if len(candidate) == 64 and all(c in "0123456789abcdef" for c in candidate.lower()):
-        return f"sha256:{candidate.lower()}"
-    raise _UsageError(f"{raw!r} is not an export blob: expected 'sha256:<hex>' or the bare digest")
+    if not raw.strip():
+        raise CliUsageError("unpin needs an export blob (see 'heph export list')")
+    # One hash grammar across the CLI (ledger J-cli-robustness-16): the
+    # hand-rolled copy here accepted `sha256:` followed by anything at all.
+    return parse_content_hash(raw, flag="export blob")
 
 
 def _print_table(rows: list[tuple[str, ...]]) -> None:
     widths = [max(len(row[column]) for row in rows) for column in range(len(rows[0]))]
     for row in rows:
         print("  ".join(cell.ljust(widths[column]) for column, cell in enumerate(row)).rstrip())
-
-
-def _guard(command: Callable[[argparse.Namespace], int]) -> Callable[[argparse.Namespace], int]:
-    """Report export-verb misuse as exit 2 regardless of the entry point."""
-
-    def run(args: argparse.Namespace) -> int:
-        try:
-            return command(args)
-        except _UsageError as exc:
-            print(f"heph: {exc}", file=sys.stderr)
-            return 2
-
-    return run
 
 
 def add_subparsers(
@@ -326,9 +322,9 @@ def add_subparsers(
     listing = verbs.add_parser("list", help="show every committed export and its pinned outputs")
     listing.add_argument("part", nargs="?", default=None, help="only this part's exports")
     listing.add_argument("--json", action="store_true", help="emit the machine form")
-    listing.set_defaults(func=_guard(_cmd_list))
+    listing.set_defaults(func=guard(_cmd_list))
 
     unpin = verbs.add_parser("unpin", help="drop one exported blob's GC root (deletes nothing)")
     unpin.add_argument("blob", help="the export blob, 'sha256:<hex>' as 'heph export list' prints")
     unpin.add_argument("--json", action="store_true", help="emit the machine form")
-    unpin.set_defaults(func=_guard(_cmd_unpin))
+    unpin.set_defaults(func=guard(_cmd_unpin))

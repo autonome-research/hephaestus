@@ -29,9 +29,11 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
-from hephaestus.core.cli_errors import CliUsageError, ensure_writable_dir, guard
-from hephaestus.core.errors import ValidationError
-from hephaestus.core.project_store.layout import find_project_root
+from hephaestus.core.cli_errors import (
+    ensure_writable_dir,
+    guard,
+    project_root_or_refuse,
+)
 
 __all__ = ["add_subparsers"]
 
@@ -78,18 +80,11 @@ def format_program(payload: Mapping[str, Any], *, path: str) -> str:
     return "\n".join(lines)
 
 
-def _project_root() -> Path:
-    try:
-        return find_project_root(Path.cwd())
-    except ValidationError as exc:
-        raise CliUsageError(exc.message) from exc
-
-
 def _cmd_emit(args: argparse.Namespace) -> int:
     from hephaestus.core.cam import emit_part
 
     name = cast("str", args.part)
-    root = _project_root()
+    root = project_root_or_refuse()
     # The output precondition runs BEFORE the emit (ledger B-10): kerf, nesting
     # and DXF generation are the expensive part, and an unwritable `--out`
     # discovered afterwards throws all of it away to report an OS error the

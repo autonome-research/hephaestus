@@ -352,8 +352,10 @@ class TestLintMessyFixture:
     def test_messy_script_findings_and_exit_code(self, messy_project: Path) -> None:
         completed = run_cli(["lint", "parts/messy.py", "--json"], messy_project)
         assert completed.returncode == 1  # shadowed-param is error severity
-        findings_raw = cast("list[JSONValue]", json.loads(completed.stdout))
-        assert isinstance(findings_raw, list)
+        # `lint --json` is one envelope, not a bare array (ledger J-cli-robustness-7).
+        document = cast("dict[str, JSONValue]", json.loads(completed.stdout))
+        assert document["status"] == "error"
+        findings_raw = cast("list[JSONValue]", document["findings"])
         findings = [cast("dict[str, JSONValue]", f) for f in findings_raw]
         by_code: dict[str, list[dict[str, JSONValue]]] = {}
         for finding in findings:

@@ -321,8 +321,12 @@ def test_a_real_part_script_lints_with_no_node(installed_venv: Path, tmp_path: P
         cwd=str(installed_venv),
     )
     assert proc.returncode == 0, proc.stderr
-    findings = json.loads(proc.stdout)
-    assert isinstance(findings, list), "lint --json must emit a findings array"
+    payload = json.loads(proc.stdout)
+    # The listing envelope (ledger J-cli-robustness-7): `lint --json` emits
+    # `{"status", "findings"}`, never a bare array, and the wheel has to serve
+    # that same shape.
+    assert payload["status"] == "ok", payload
+    assert isinstance(payload["findings"], list), "lint --json must emit a findings array"
     # No build artifacts: linting must not have executed the script.
     assert not (project / ".heph").exists(), "lint executed the part script"
 

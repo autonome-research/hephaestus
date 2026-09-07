@@ -59,10 +59,10 @@ import argparse
 import json
 import sys
 from collections.abc import Callable, Sequence
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
-from hephaestus.core.project_store.layout import find_project_root, load_project, open_store
+from hephaestus.core.cli_errors import CliUsageError, guard, project_root_or_refuse
+from hephaestus.core.project_store.layout import load_project, open_store
 
 if TYPE_CHECKING:  # the placement engine binds the geometry kernel; verbs load it lazily
     from hephaestus.core.placement import SolveRecord
@@ -77,9 +77,32 @@ _SUCCESS_VERDICTS = frozenset(
     {"pose_found", "pose_converged_at_tolerance", "converged_at_tolerance"}
 )
 
+_T = TypeVar("_T")
 
-class _UsageError(Exception):
-    """CLI misuse: reported on stderr with exit code 2."""
+
+class _ArgumentProblems(CliUsageError):
+    """Several bad specs in ONE repeatable flag, banked as one refusal.
+
+    A flag taking ``action="append"`` can be wrong several times in a single
+    invocation, and a parser that raises on the first spec hides the rest: three
+    malformed ``--bound`` specs cost three runs to learn about three mistakes.
+    The ledger asks for one refusal listing all of them
+    (J-cli-robustness-17), and the per-flag banking in :func:`_collect` only
+    delivers that if each parser reports every spec it rejected rather than the
+    first. A ``CliUsageError`` subclass, so a caller that does not bank still
+    sees the ordinary refusal with the ordinary exit code.
+    """
+
+    def __init__(self, problems: Sequence[str]) -> None:
+        self.problems: tuple[str, ...] = tuple(problems)
+        super().__init__(_joined(self.problems))
+
+
+def _joined(problems: Sequence[str]) -> str:
+    """One problem as itself; several as a bulleted list under one heading."""
+    if len(problems) == 1:
+        return problems[0]
+    return "several arguments are wrong:\n  - " + "\n  - ".join(problems)
 
 
 def _targets(args: argparse.Namespace) -> list[Any]:
@@ -87,47 +110,81 @@ def _targets(args: argparse.Namespace) -> list[Any]:
     from hephaestus.core.placement import ConstraintTarget, PointTarget
 
     out: list[Any] = []
+    problems: list[str] = []
     for constraint_id in cast("Sequence[str]", args.constraint or ()):
         out.append(ConstraintTarget(constraint_id=constraint_id))
     for index, spec in enumerate(cast("Sequence[str]", args.point or ())):
         parts = spec.split(",")
         if len(parts) != 5:
-            raise _UsageError(
+            problems.append(
                 f"--point {spec!r} must be ANCHOR,X,Y,Z,TOL_MM "
                 "(the anchor, the world-mm target point, and the tolerance)"
             )
+            continue
         try:
             x, y, z, tol = (float(value) for value in parts[1:])
-        except ValueError as exc:
-            raise _UsageError(f"--point {spec!r}: X, Y, Z and TOL_MM must be numbers") from exc
+        except ValueError:
+            problems.append(f"--point {spec!r}: X, Y, Z and TOL_MM must be numbers")
+            continue
         out.append(PointTarget(id=f"t{index}", anchor=parts[0], point_mm=(x, y, z), tol_mm=tol))
+    if problems:
+        raise _ArgumentProblems(problems)
     if not out:
-        raise _UsageError(
+        raise CliUsageError(
             "declare at least one target: --constraint ID or --point ANCHOR,X,Y,Z,TOL_MM"
         )
     return out
 
 
-def _starts(args: argparse.Namespace) -> list[Any]:
-    """The declared starts; absent, the single ``as_built`` start (``SOLVER.md`` §5)."""
+def _starts(args: argparse.Namespace, *, what: str = "JOINT") -> list[Any]:
+    """The declared starts; absent, the single ``as_built`` start (``SOLVER.md`` §5).
+
+    Both separators are compulsory, for the reason they are in :func:`_box`
+    (ledger J-cli-robustness-17). ``--start nonsense`` used to partition into an
+    id with an empty body, iterate no pairs, and become a second ``as_built``
+    start under a name nobody meant — a *declared* start declaring nothing,
+    accepted in silence, while the flag's own metavar says the id, the ``=`` and
+    a ``VAR:VALUE`` pair. The empty assignment is meaningful (it is exactly what
+    ``as_built`` is), which is why it has to be the default rather than
+    something a typo can reach: the record would otherwise name a start whose
+    values the operator never wrote. ``what`` is the flag's own noun — joints
+    for a pose solve, variables for a placement, params for a params solve — so
+    the refusal quotes the metavar the operator read.
+    """
     from hephaestus.core.placement import SolveStart
 
     specs = cast("Sequence[str]", args.start or ())
     if not specs:
         return [SolveStart()]
+    form = f"expected ID={what}:VALUE[,{what}:VALUE...]"
     out: list[Any] = []
-    for index, spec in enumerate(specs):
+    problems: list[str] = []
+    for spec in specs:
+        name, sep, body = spec.partition("=")
+        if not sep or not name or not body:
+            problems.append(
+                f"--start {spec!r}: {form} - the id, '=' and at least one "
+                f"{what}:VALUE pair are required (the default start is as_built)"
+            )
+            continue
         values: dict[str, float] = {}
-        name, _sep, body = spec.partition("=")
-        for pair in body.split(",") if body else []:
-            joint, _eq, raw = pair.partition(":")
+        bad = False
+        for pair in body.split(","):
+            variable, colon, raw = pair.partition(":")
+            if not colon or not variable:
+                problems.append(f"--start {spec!r}: {form} - {pair!r} is not a {what}:VALUE pair")
+                bad = True
+                break
             try:
-                values[joint] = float(raw)
-            except ValueError as exc:
-                raise _UsageError(
-                    f"--start {spec!r}: expected ID=JOINT:VALUE[,JOINT:VALUE...]"
-                ) from exc
-        out.append(SolveStart(id=name or f"s{index}", values=values))
+                values[variable] = float(raw)
+            except ValueError:
+                problems.append(f"--start {spec!r}: {form} - {raw!r} is not a number")
+                bad = True
+                break
+        if not bad:
+            out.append(SolveStart(id=name, values=values))
+    if problems:
+        raise _ArgumentProblems(problems)
     return out
 
 
@@ -142,21 +199,16 @@ def _cmd_pose(args: argparse.Namespace) -> int:
     )
     from hephaestus.core.project_store.constraints import ConstraintProvenance
 
-    if args.requirement is None and not args.assumed:
-        raise _UsageError(
-            "provenance is compulsory: cite --requirement ID, or pass --assumed with "
-            "--reason TEXT. A solve is an interpretation of intent for the same "
-            "reason a constraint is (ASSEMBLY.md §1)"
-        )
-    if args.assumed and not args.reason:
-        raise _UsageError("--assumed requires --reason TEXT (why is this solve believed?)")
+    # Same ordering rule as `solve placement` (ledger J-cli-robustness-17).
+    problems = _declaration_problems(args)
+    targets = _collect(lambda: _targets(args), problems)
+    starts = _collect(lambda: _starts(args), problems)
+    _refuse_arguments(problems)
     weights = (
         (float(args.weight_mm), float(args.weight_deg)) if args.weighting == "declared" else None
     )
-    if args.weighting == "declared" and (args.weight_mm is None or args.weight_deg is None):
-        raise _UsageError("--weighting declared requires --weight-mm and --weight-deg")
     request = PoseSolveRequest(
-        targets=tuple(_targets(args)),
+        targets=tuple(targets or ()),
         tol=float(args.tol),
         weighting=str(args.weighting),
         weights=weights,
@@ -167,10 +219,10 @@ def _cmd_pose(args: argparse.Namespace) -> int:
             reason=args.reason,
         ),
         free_joints=tuple(cast("Sequence[str]", args.joint)) if args.joint else None,
-        starts=tuple(_starts(args)),
+        starts=tuple(starts or ()),
         ceiling=int(args.ceiling) if args.ceiling is not None else None,
     )
-    root = find_project_root(Path.cwd())
+    root = project_root_or_refuse()
     layout = load_project(root)
     store = open_store(layout)
     try:
@@ -231,19 +283,6 @@ def _emit(record: SolveRecord) -> int:
     return 0 if record.verdict in _SUCCESS_VERDICTS else 1
 
 
-def _guard(command: Callable[[argparse.Namespace], int]) -> Callable[[argparse.Namespace], int]:
-    """Report solve-verb misuse as exit 2 regardless of the entry point."""
-
-    def run(args: argparse.Namespace) -> int:
-        try:
-            return command(args)
-        except _UsageError as exc:
-            print(f"heph: {exc}", file=sys.stderr)
-            return 2
-
-    return run
-
-
 def add_subparsers(
     sub: argparse._SubParsersAction[argparse.ArgumentParser],  # pyright: ignore[reportPrivateUsage]
 ) -> None:
@@ -300,7 +339,7 @@ def add_subparsers(
     pose.add_argument("--reason", default=None, help="why the assumption is believed")
     pose.add_argument("--ceiling", type=int, default=None, help="iteration ceiling")
     pose.add_argument("--json", action="store_true", help="emit the machine form")
-    pose.set_defaults(func=_guard(_cmd_pose))
+    pose.set_defaults(func=guard(_cmd_pose))
 
     placement = verbs.add_parser(
         "placement",
@@ -360,7 +399,7 @@ def add_subparsers(
     placement.add_argument("--reason", default=None, help="why the assumption is believed")
     placement.add_argument("--ceiling", type=int, default=None, help="iteration ceiling")
     placement.add_argument("--json", action="store_true", help="emit the machine form")
-    placement.set_defaults(func=_guard(_cmd_placement))
+    placement.set_defaults(func=guard(_cmd_placement))
 
     params = verbs.add_parser(
         "params",
@@ -410,7 +449,7 @@ def add_subparsers(
         help="cap on total preview builds this solve's iteration may issue (SOLVER.md §10)",
     )
     params.add_argument("--json", action="store_true", help="emit the machine form")
-    params.set_defaults(func=_guard(_cmd_params))
+    params.set_defaults(func=guard(_cmd_params))
 
 
 def add_proposal_subparser(
@@ -425,12 +464,13 @@ def add_proposal_subparser(
         "--id", action="append", metavar="PROPOSAL_ID", help="restrict to these proposals"
     )
     proposals.add_argument("--json", action="store_true", help="emit the machine form")
-    proposals.set_defaults(func=_guard(_cmd_proposals))
+    proposals.set_defaults(func=guard(_cmd_proposals))
 
 
 def _cmd_placement(args: argparse.Namespace) -> int:
     """Propose placements for the declared free parts, and apply nothing."""
     from hephaestus.core.placement import (
+        TRANSFORM_AXES,
         InvalidSolveRequest,
         PlacementSolveRequest,
         SolveRunRefusal,
@@ -439,22 +479,26 @@ def _cmd_placement(args: argparse.Namespace) -> int:
     )
     from hephaestus.core.project_store.constraints import ConstraintProvenance
 
-    if args.requirement is None and not args.assumed:
-        raise _UsageError(
-            "provenance is compulsory: cite --requirement ID, or pass --assumed with "
-            "--reason TEXT. A solve is an interpretation of intent for the same "
-            "reason a constraint is (ASSEMBLY.md §1)"
-        )
-    if args.assumed and not args.reason:
-        raise _UsageError("--assumed requires --reason TEXT (why is this solve believed?)")
-    if args.weighting == "declared" and (args.weight_mm is None or args.weight_deg is None):
-        raise _UsageError("--weighting declared requires --weight-mm and --weight-deg")
+    # Every pure-argument check runs BEFORE the request is built and before the
+    # project is opened, and they are collected so several bad flags produce one
+    # refusal listing all of them (ledger J-cli-robustness-17).
+    problems = _declaration_problems(args)
+    constraints = tuple(cast("Sequence[str]", args.constraint or ()))
+    free = tuple(cast("Sequence[str]", args.free or ()))
+    if not constraints:
+        problems.append("declare at least one --constraint ID to solve towards")
+    if not free:
+        problems.append("declare at least one --free PART whose placement is proposed")
+    box = _collect(lambda: _box(args), problems)
+    starts = _collect(lambda: _starts(args, what="VAR"), problems)
+    problems.extend(_bound_scope_problems(box, free, TRANSFORM_AXES))
+    _refuse_arguments(problems)
     weights = (
         (float(args.weight_mm), float(args.weight_deg)) if args.weighting == "declared" else None
     )
     request = PlacementSolveRequest(
-        constraints=tuple(cast("Sequence[str]", args.constraint or ())),
-        free=tuple(cast("Sequence[str]", args.free or ())),
+        constraints=constraints,
+        free=free,
         ground=tuple(cast("Sequence[str]", args.ground)) if args.ground else None,
         tol=float(args.tol),
         weighting=str(args.weighting),
@@ -463,15 +507,11 @@ def _cmd_placement(args: argparse.Namespace) -> int:
         provenance=ConstraintProvenance(
             requirement=args.requirement, assumed=bool(args.assumed), reason=args.reason
         ),
-        starts=tuple(_starts(args)),
-        box=_box(args),
+        starts=tuple(starts or ()),
+        box=box,
         ceiling=int(args.ceiling) if args.ceiling is not None else None,
     )
-    if not request.constraints:
-        raise _UsageError("declare at least one --constraint ID to solve towards")
-    if not request.free:
-        raise _UsageError("declare at least one --free PART whose placement is proposed")
-    root = find_project_root(Path.cwd())
+    root = project_root_or_refuse()
     layout = load_project(root)
     store = open_store(layout)
     try:
@@ -487,24 +527,121 @@ def _cmd_placement(args: argparse.Namespace) -> int:
 
 
 def _box(args: argparse.Namespace) -> dict[str, tuple[float | None, float | None]] | None:
-    """``--bound VAR=MIN:MAX`` pairs, or ``None`` for an unbounded solve."""
+    """``--bound VAR=MIN:MAX`` pairs, or ``None`` for an unbounded solve.
+
+    Both separators are required. The parser used to raise only on a failed
+    float conversion, so ``--bound bogus`` partitioned into an empty window,
+    partitioned that into two empty bounds, and became an unbounded window on a
+    variable nobody declared — a flag whose own help says "never clamped in
+    silence", silently ignored (ledger J-cli-robustness-17). A genuinely
+    half-open window still parses: it is the *separators* that are compulsory,
+    not the numbers.
+    """
     specs = cast("Sequence[str]", args.bound or ())
     if not specs:
         return None
     out: dict[str, tuple[float | None, float | None]] = {}
+    problems: list[str] = []
     for spec in specs:
-        name, _sep, window = spec.partition("=")
-        low, _colon, high = window.partition(":")
+        name, sep, window = spec.partition("=")
+        low, colon, high = window.partition(":")
+        if not sep or not colon or not name:
+            problems.append(
+                f"--bound {spec!r}: expected VAR=MIN:MAX (either bound may be empty "
+                "for a half-open window, but VAR, '=' and ':' are required)"
+            )
+            continue
         try:
             out[name] = (
                 None if low in ("", "none") else float(low),
                 None if high in ("", "none") else float(high),
             )
-        except ValueError as exc:
-            raise _UsageError(
-                f"--bound {spec!r}: expected VAR=MIN:MAX (either may be empty)"
-            ) from exc
+        except ValueError:
+            problems.append(f"--bound {spec!r}: MIN and MAX must be numbers (either may be empty)")
+    if problems:
+        raise _ArgumentProblems(problems)
     return out
+
+
+def _collect(build: Callable[[], _T], problems: list[str]) -> _T | None:
+    """Run one argument parser, banking its refusal instead of raising it.
+
+    Argument-shape errors were reported one per run and *after* the request was
+    built, so a user fixing several bad flags paid a full solve setup per
+    mistake — and a malformed ``--bound`` was never reported at all, because the
+    semantic checks fired first (ledger J-cli-robustness-17).
+    """
+    try:
+        return build()
+    except _ArgumentProblems as exc:
+        # A repeatable flag reports every spec it rejected, and they join the
+        # shared list individually so the refusal reads as one flat inventory
+        # rather than a list with a list nested inside it.
+        problems.extend(exc.problems)
+        return None
+    except CliUsageError as exc:
+        problems.append(str(exc))
+        return None
+
+
+def _refuse_arguments(problems: Sequence[str]) -> None:
+    """Raise one refusal listing every bad argument, or return if there are none."""
+    if not problems:
+        return
+    raise CliUsageError(_joined(problems))
+
+
+def _declaration_problems(args: argparse.Namespace) -> list[str]:
+    """What the invocation must declare about itself, checked without opening anything.
+
+    Provenance (``SOLVER.md`` §1 / ``ASSEMBLY.md`` §1: a solve must say why it
+    is believed) and the weights a declared weighting needs. Both are pure
+    namespace reads, so they belong in the collected set ahead of the request
+    (ledger J-cli-robustness-17) — and the weighting check has to run before
+    ``float(args.weight_mm)`` is evaluated at all.
+    """
+    problems: list[str] = []
+    if args.requirement is None and not args.assumed:
+        problems.append(
+            "provenance is compulsory: cite --requirement ID, or pass --assumed with "
+            "--reason TEXT. A solve is an interpretation of intent for the same "
+            "reason a constraint is (ASSEMBLY.md §1)"
+        )
+    if args.assumed and not args.reason:
+        problems.append("--assumed requires --reason TEXT (why is this solve believed?)")
+    if args.weighting == "declared" and (args.weight_mm is None or args.weight_deg is None):
+        problems.append("--weighting declared requires --weight-mm and --weight-deg")
+    return problems
+
+
+def _bound_scope_problems(
+    box: dict[str, tuple[float | None, float | None]] | None,
+    free: Sequence[str],
+    axes: Sequence[str],
+) -> list[str]:
+    """A ``--bound`` on a variable this request does not have clamps nothing.
+
+    A placement request's free *variables* are ``<part>.<axis>`` over the six
+    transform axes, not the ``--free`` part names themselves, so the membership
+    test has to decompose the spelling — comparing ``bracket.tx`` against
+    ``bracket`` would refuse every legitimate bound there is. The engine already
+    refuses a stray box with ``no_free_variables`` once the free set is
+    resolved (``placement.py``, ``SOLVER.md`` §6.3); this is the same fact
+    reported before the project is opened, in the one refusal that also carries
+    the other bad flags (ledger J-cli-robustness-17), and it deliberately says
+    nothing the engine's refusal does not.
+    """
+    if not box or not free:
+        return []
+    known = {f"{part}.{axis}" for part in free for axis in axes}
+    unknown = sorted(set(box) - known)
+    if not unknown:
+        return []
+    return [
+        f"--bound names {', '.join(unknown)}, which is not a free variable of this "
+        f"request: they are named '<part>.{'|'.join(axes)}' over the declared "
+        f"--free parts ({', '.join(free)})"
+    ]
 
 
 def _emit_placement(record: SolveRecord) -> int:
@@ -569,22 +706,22 @@ def _cmd_params(args: argparse.Namespace) -> int:
     )
     from hephaestus.core.project_store.constraints import ConstraintProvenance
 
-    if args.requirement is None and not args.assumed:
-        raise _UsageError(
-            "provenance is compulsory: cite --requirement ID, or pass --assumed with "
-            "--reason TEXT. A solve is an interpretation of intent for the same "
-            "reason a constraint is (ASSEMBLY.md §1)"
-        )
-    if args.assumed and not args.reason:
-        raise _UsageError("--assumed requires --reason TEXT (why is this solve believed?)")
-    if args.weighting == "declared" and (args.weight_mm is None or args.weight_deg is None):
-        raise _UsageError("--weighting declared requires --weight-mm and --weight-deg")
+    # Same ordering rule as `solve placement` (ledger J-cli-robustness-17).
+    problems = _declaration_problems(args)
+    constraints = tuple(cast("Sequence[str]", args.constraint or ()))
+    free = tuple(cast("Sequence[str]", args.free or ()))
+    if not constraints:
+        problems.append("declare at least one --constraint ID to solve towards")
+    if not free:
+        problems.append("declare at least one --free PARAM whose value is proposed")
+    starts = _collect(lambda: _starts(args, what="PARAM"), problems)
+    _refuse_arguments(problems)
     weights = (
         (float(args.weight_mm), float(args.weight_deg)) if args.weighting == "declared" else None
     )
     request = PlacementSolveRequest(
-        constraints=tuple(cast("Sequence[str]", args.constraint or ())),
-        free=tuple(cast("Sequence[str]", args.free or ())),
+        constraints=constraints,
+        free=free,
         tol=float(args.tol),
         weighting=str(args.weighting),
         weights=weights,
@@ -592,16 +729,12 @@ def _cmd_params(args: argparse.Namespace) -> int:
         provenance=ConstraintProvenance(
             requirement=args.requirement, assumed=bool(args.assumed), reason=args.reason
         ),
-        starts=tuple(_starts(args)),
+        starts=tuple(starts or ()),
         ceiling=int(args.ceiling) if args.ceiling is not None else None,
         space="parameters",
         build_budget=int(args.build_budget) if args.build_budget is not None else None,
     )
-    if not request.constraints:
-        raise _UsageError("declare at least one --constraint ID to solve towards")
-    if not request.free:
-        raise _UsageError("declare at least one --free PARAM whose value is proposed")
-    root = find_project_root(Path.cwd())
+    root = project_root_or_refuse()
     layout = load_project(root)
     store = open_store(layout)
     try:
@@ -665,7 +798,7 @@ def _cmd_proposals(args: argparse.Namespace) -> int:
     )
     from hephaestus.core.project_store.publication import Publisher
 
-    root = find_project_root(Path.cwd())
+    root = project_root_or_refuse()
     layout = load_project(root)
     store = open_store(layout)
     try:

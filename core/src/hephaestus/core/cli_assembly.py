@@ -24,12 +24,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
-from collections.abc import Callable, Sequence
-from pathlib import Path
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, cast
 
-from hephaestus.core.project_store.layout import find_project_root, load_project, open_store
+from hephaestus.core.cli_errors import guard, project_root_or_refuse
+from hephaestus.core.project_store.layout import load_project, open_store
 
 if TYPE_CHECKING:  # the assembly module binds the geometry kernel; verbs load it lazily
     from hephaestus.core.assembly import AssemblyStatus
@@ -39,15 +38,11 @@ __all__ = ["add_subparsers"]
 _HEADER = ("id", "kind", "a", "b", "state", "measured", "detail")
 
 
-class _UsageError(Exception):
-    """CLI misuse: reported on stderr with exit code 2."""
-
-
 def _cmd_assembly(args: argparse.Namespace) -> int:
     """Print the projected status (no evaluation)."""
     from hephaestus.core.assembly import AssemblyEvaluator
 
-    root = find_project_root(Path.cwd())
+    root = project_root_or_refuse()
     layout = load_project(root)
     store = open_store(layout)
     try:
@@ -84,7 +79,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
     from hephaestus.core.assembly import AssemblyEvaluator
 
     ids = cast("Sequence[str]", args.id) or None
-    root = find_project_root(Path.cwd())
+    root = project_root_or_refuse()
     layout = load_project(root)
     store = open_store(layout)
     try:
@@ -133,19 +128,6 @@ def _emit(status: AssemblyStatus, *, json_out: bool, stale_note: bool) -> int:
     return 1 if status.blocking() else 0
 
 
-def _guard(command: Callable[[argparse.Namespace], int]) -> Callable[[argparse.Namespace], int]:
-    """Report assembly-verb misuse as exit 2 regardless of the entry point."""
-
-    def run(args: argparse.Namespace) -> int:
-        try:
-            return command(args)
-        except _UsageError as exc:
-            print(f"heph: {exc}", file=sys.stderr)
-            return 2
-
-    return run
-
-
 def add_subparsers(
     sub: argparse._SubParsersAction[argparse.ArgumentParser],  # pyright: ignore[reportPrivateUsage]
 ) -> None:
@@ -154,7 +136,7 @@ def add_subparsers(
         "assembly", help="show declared constraints and their latest residuals"
     )
     assembly.add_argument("--json", action="store_true", help="emit the AssemblyStatus JSON")
-    assembly.set_defaults(func=_guard(_cmd_assembly))
+    assembly.set_defaults(func=guard(_cmd_assembly))
 
     verbs = assembly.add_subparsers(dest="assembly_command", required=False)
     check = verbs.add_parser("check", help="re-evaluate every constraint against current builds")
@@ -166,4 +148,4 @@ def add_subparsers(
         help="evaluate only this constraint (repeatable; not projected)",
     )
     check.add_argument("--json", action="store_true", help="emit the AssemblyStatus JSON")
-    check.set_defaults(func=_guard(_cmd_check))
+    check.set_defaults(func=guard(_cmd_check))

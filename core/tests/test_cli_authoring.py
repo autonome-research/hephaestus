@@ -229,6 +229,67 @@ class TestScriptWrite:
         incoming.write_text(SPACER_V2, encoding="utf-8")
         assert run(project, monkeypatch, "script", "write", "plate", "--file", str(incoming)) == 2
 
+    def test_malformed_expected_hash_is_usage_not_a_conflict(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A malformed ``--expected-hash`` is usage (exit 2), never a "stale
+        hash" conflict (ledger J-cli-robustness-16). Before validation, any
+        string reached ``write_part`` and came back as a conflict document
+        whose ``base_snapshot_ref`` was ``artifact:part-snapshot:`` prefixed
+        onto the typo — a malformed ref handed back as if it named something.
+        """
+        incoming = project.parent / "v2.py"
+        incoming.write_text(SPACER_V2, encoding="utf-8")
+        before = (project / "parts" / "plate.py").read_text(encoding="utf-8")
+
+        code = run(
+            project,
+            monkeypatch,
+            "script",
+            "write",
+            "plate",
+            "--file",
+            str(incoming),
+            "--expected-hash",
+            "bogusnothash",
+        )
+        err = capsys.readouterr().err
+        assert code == 2, err
+        assert "--expected-hash" in err
+        assert "bogusnothash" in err
+        assert "artifact:part-snapshot:" not in err
+        assert (project / "parts" / "plate.py").read_text(encoding="utf-8") == before
+
+    def test_well_formed_bare_hex_expected_hash_is_normalised(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The bare 64-hex form (no ``sha256:`` prefix) is accepted and
+        normalised — that is what a reader copies out of a filename — and a
+        bare-hex value that is *stale* still discriminates as a conflict, not
+        usage, proving the well-formed path is unaffected by the new check."""
+        incoming = project.parent / "v2.py"
+        incoming.write_text(SPACER_V2, encoding="utf-8")
+
+        assert (
+            run(
+                project,
+                monkeypatch,
+                "script",
+                "write",
+                "plate",
+                "--file",
+                str(incoming),
+                "--expected-hash",
+                "ab" * 32,
+                "--json",
+            )
+            == 1
+        )
+        result = load_json(capsys)
+        assert result["applied"] is False
+        conflict = cast("dict[str, JSONValue]", result["conflict"])
+        assert conflict["base_snapshot_ref"] == f"artifact:part-snapshot:sha256:{'ab' * 32}"
+
     def test_write_missing_part_exits_2(
         self,
         project: Path,

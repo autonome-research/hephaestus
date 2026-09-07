@@ -55,11 +55,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from hephaestus.core.errors import HephaestusError
-from hephaestus.core.project_store.layout import find_project_root, load_project
+from hephaestus.core.cli_errors import guard, project_root_or_refuse
+from hephaestus.core.project_store.layout import load_project
 
 if TYPE_CHECKING:
     from hephaestus.geom.mesh import MeshAsset, PointCloudAsset
@@ -216,7 +215,7 @@ def _cmd_scan_check(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    layout = load_project(find_project_root(Path.cwd()))
+    layout = load_project(project_root_or_refuse())
     store = open_store(layout)
     try:
         comparer = ProjectScanComparer(layout, store)
@@ -264,7 +263,7 @@ def _cmd_scan_facts(args: argparse.Namespace) -> int:
 
     path = cast("str", args.path)
     units = cast("str", args.units)
-    layout = load_project(find_project_root(Path.cwd()))
+    layout = load_project(project_root_or_refuse())
     kind = extension_kind(path) or "mesh"
     data = read_import(layout.imports_dir, path, max_bytes=max_bytes_for_kind(kind))
     # Admission decides the kind from the bytes, not from the guess above: a
@@ -281,14 +280,6 @@ def _cmd_scan_facts(args: argparse.Namespace) -> int:
     )
     print(json.dumps(asset.to_json(), sort_keys=True) if args.json else format_mesh(asset))
     return 0
-
-
-def _guard(args: argparse.Namespace) -> int:
-    try:
-        return _cmd_scan(args)
-    except HephaestusError as exc:
-        print(f"heph: error ({exc.code}): {exc.message}", file=sys.stderr)
-        return 1
 
 
 def add_subparsers(
@@ -338,4 +329,4 @@ def add_subparsers(
         "partial, so its sampled principal axes are not the object's",
     )
     scan.add_argument("--json", action="store_true", help="emit the facts document as JSON")
-    scan.set_defaults(func=_guard)
+    scan.set_defaults(func=guard(_cmd_scan))

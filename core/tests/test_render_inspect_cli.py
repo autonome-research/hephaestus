@@ -295,3 +295,181 @@ def test_render_pose_out_precondition_runs_before_the_gl_session(
     err = capsys.readouterr().err
     assert code == 2, err
     assert "--out" in err
+
+
+# -- J-cli-robustness-10: a part that does not exist is told so, not told it
+# -- "has no current successful build" (that sentence is true only of a part
+# -- that exists and was never built) --------------------------------------
+
+
+def test_render_of_a_nonexistent_part_says_does_not_exist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``heph render nosuch`` must not send the operator to build a part that
+    is not there. ``core/src/hephaestus/core/render/inspect.py`` tests
+    ``current is None or current.artifact_ref is None`` and raises one message
+    for two distinct conditions without first asking whether the part exists —
+    with the part list right there, already passed as ``candidates``
+    (ledger J-cli-robustness-10). The correct wording already exists in the
+    tree, at ``ProjectStore.read_part`` — what ``heph part show nosuch``
+    prints.
+    """
+    from hephaestus.core import cli_init, cli_render
+
+    target = tmp_path / "proj"
+    cli_init.scaffold(target)
+    monkeypatch.chdir(target)
+
+    code = cli_render.main(["render", "nosuch"])
+    err = capsys.readouterr().err
+    assert code == 2, err
+    assert "does not exist" in err, err
+    assert "example" in err  # the candidate list, not a guess
+    assert "has no current successful build" not in err, err
+
+
+def test_render_of_an_unbuilt_but_real_part_still_says_no_current_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The guard against over-correcting J-cli-robustness-10: a part that
+    genuinely exists and was never built keeps its own, different, message."""
+    from hephaestus.core import cli_init, cli_render
+
+    target = tmp_path / "proj"
+    cli_init.scaffold(target)
+    monkeypatch.chdir(target)
+
+    code = cli_render.main(["render", "example"])
+    err = capsys.readouterr().err
+    assert code == 2, err
+    assert "has no current successful build" in err, err
+    assert "does not exist" not in err, err
+
+
+def test_the_unbuilt_part_is_not_offered_as_a_candidate_for_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The other half of not conflating the two states.
+
+    Candidates answer "which name did you mean instead?". Attaching the whole
+    part list to a refusal about a part that *resolved* offers the part as an
+    alternative to itself, and re-blurs at the reporting layer exactly the
+    distinction J-cli-robustness-10 draws at the raise site: the operator reads
+    "primary ... (candidates: ..., primary)" and cannot tell which of the two
+    states they are in.
+    """
+    from hephaestus.core import cli_init, cli_render
+
+    target = tmp_path / "proj"
+    cli_init.scaffold(target)
+    monkeypatch.chdir(target)
+
+    code = cli_render.main(["render", "example"])
+    err = capsys.readouterr().err
+    assert code == 2, err
+    assert "candidates" not in err, err
+
+
+def test_a_nonexistent_part_keeps_its_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The guard on the guard: suppressing a self-referential candidate list
+    must not suppress a genuine one, which is the actionable half of an
+    addressing refusal (``core/DESIGN.md`` §7)."""
+    from hephaestus.core import cli_init, cli_render
+
+    target = tmp_path / "proj"
+    cli_init.scaffold(target)
+    monkeypatch.chdir(target)
+
+    code = cli_render.main(["render", "nosuch"])
+    err = capsys.readouterr().err
+    assert code == 2, err
+    assert "candidates: " in err, err
+    assert "example" in err, err
+
+
+# -- J-cli-robustness-13: `heph goldens` with no flag verifies, not refuses --
+
+
+@pytest.fixture()
+def single_spec_fixtures(tmp_path: Path) -> Path:
+    """A copy of one golden spec's fixture, so regeneration is cheap and does
+    not touch the real Hephaestus checkout (whose tree is not guaranteed clean
+    while other lanes are editing it)."""
+    spec = GOLDEN_SPECS[0]
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+    shutil.copytree(FIXTURES / spec.fixture, fixtures_dir / spec.fixture)
+    return fixtures_dir
+
+
+def test_goldens_bare_verb_verifies_instead_of_refusing(
+    tmp_path: Path, single_spec_fixtures: Path
+) -> None:
+    """A bare verb with exactly one useful mode should do it or show help, not
+    refuse (ledger J-cli-robustness-13). Today ``heph goldens`` with no
+    ``--update`` prints "nothing to do" and exits 2 regardless of whether the
+    corpus matches — asking for nothing is not "you asked for something
+    impossible". Regenerate once into ``out``, then run the bare verb against
+    that same, matching corpus: it must not refuse, and it must not say
+    "nothing to do"."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(["init"], repo)
+    _git(["config", "user.email", "t@example.com"], repo)
+    _git(["config", "user.name", "t"], repo)
+    (repo / "seed.txt").write_text("seed\n", encoding="utf-8")
+    _git(["add", "-A"], repo)
+    _git(["commit", "-m", "seed"], repo)
+
+    out = repo / "golden-out"
+    generate = _heph(
+        ["goldens", "--update", "--dir", str(out), "--fixtures-dir", str(single_spec_fixtures)],
+        repo,
+    )
+    assert generate.returncode == 0, (generate.stdout, generate.stderr)
+
+    verify = _heph(
+        ["goldens", "--dir", str(out), "--fixtures-dir", str(single_spec_fixtures)], repo
+    )
+    assert verify.returncode == 0, (verify.returncode, verify.stdout, verify.stderr)
+    assert "nothing to do" not in verify.stderr
+
+
+def test_goldens_bare_verb_reports_drift_by_name(
+    tmp_path: Path, single_spec_fixtures: Path
+) -> None:
+    """A corrupted golden sidecar must be reported by name with a nonzero exit
+    — the verify mode has to actually check something, not just succeed
+    unconditionally once it no longer refuses."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(["init"], repo)
+    _git(["config", "user.email", "t@example.com"], repo)
+    _git(["config", "user.name", "t"], repo)
+    (repo / "seed.txt").write_text("seed\n", encoding="utf-8")
+    _git(["add", "-A"], repo)
+    _git(["commit", "-m", "seed"], repo)
+
+    out = repo / "golden-out"
+    generate = _heph(
+        ["goldens", "--update", "--dir", str(out), "--fixtures-dir", str(single_spec_fixtures)],
+        repo,
+    )
+    assert generate.returncode == 0, (generate.stdout, generate.stderr)
+
+    spec = GOLDEN_SPECS[0]
+    sidecars = list(out.glob("*.json"))
+    assert sidecars, sorted(p.name for p in out.iterdir())
+    sidecar = sidecars[0]
+    sidecar.write_text(
+        sidecar.read_text(encoding="utf-8").replace(script_hash(), "sha256:" + "0" * 64),
+        encoding="utf-8",
+    )
+
+    verify = _heph(
+        ["goldens", "--dir", str(out), "--fixtures-dir", str(single_spec_fixtures)], repo
+    )
+    assert verify.returncode == 1, (verify.returncode, verify.stdout, verify.stderr)
+    assert spec.name in verify.stdout + verify.stderr

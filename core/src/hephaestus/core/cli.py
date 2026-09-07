@@ -72,18 +72,19 @@ import re
 import shutil
 import sys
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
 
-from hephaestus.core.checks.report import project_check_report, report_json
-from hephaestus.core.cli_errors import CliUsageError
-from hephaestus.core.errors import (
-    AddressingError,
-    HephaestusError,
-    SandboxDeniedError,
-    ValidationError,
+from hephaestus.core.checks.report import badge, project_check_report, report_json
+from hephaestus.core.cli_errors import (
+    CliUsageError,
+    dispatch,
+    json_listing,
+    project_root_or_refuse,
+    require_input_file,
 )
+from hephaestus.core.errors import ValidationError
 from hephaestus.core.executor.runner import BuildRequest, run_build
 from hephaestus.core.executor.sandbox.base import (
     CapabilityReport,
@@ -111,9 +112,8 @@ from hephaestus.core.project_store.layout import (
 )
 from hephaestus.core.project_store.projections import SnapshotRejectedError
 from hephaestus.core.project_store.publication import PublicationKind, Publisher
-from hephaestus.core.types import BuildResult
+from hephaestus.core.types import BuildResult, CheckResult
 from hephaestus.core.version import version as _version
-from opstore.errors import OpStoreError
 from opstore.types import JSONValue
 
 from opstore import canonical_json
@@ -126,13 +126,6 @@ _PART_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 #: evaluate globals.py in the sandbox and refresh the live hc projection.
 _SYNC_PART = "__hc_sync__"
 _SYNC_SCRIPT = "part.geometry = Box(1.0, 1.0, 1.0)\n"
-
-
-#: The shared usage error (:mod:`hephaestus.core.cli_errors`). Kept under the
-#: module-private name every call site below already uses, so the taxonomy in
-#: :func:`main` catches the refusals raised by ``cli_cam`` / ``cli_render`` /
-#: ``cli_init`` too — ledger B-10: one boundary, not one per output verb.
-_UsageError = CliUsageError
 
 
 # --------------------------------------------------------------------------
@@ -163,13 +156,6 @@ class _ProbedBackend:
         return self._inner.execute(spec, stdin_payload)
 
 
-def _project_root_from_cwd() -> Path:
-    try:
-        return find_project_root(Path.cwd())
-    except ValidationError as exc:
-        raise _UsageError(exc.message) from exc
-
-
 def _make_backend(layout: ProjectLayout, *, unsafe: bool) -> ExecBackend:
     if unsafe:
         print(
@@ -187,7 +173,7 @@ def _parse_kv(pairs: Sequence[str], flag: str) -> dict[str, str]:
     for pair in pairs:
         key, sep, value = pair.partition("=")
         if not sep or not key or not value:
-            raise _UsageError(f"{flag} expects name=value, got {pair!r}")
+            raise CliUsageError(f"{flag} expects name=value, got {pair!r}")
         overrides[key] = value
     return overrides
 
@@ -198,17 +184,14 @@ def _resolve_build_target(target: str) -> tuple[Path, str]:
     if path.suffix == ".py" or path.is_file():
         script = path.resolve()
         if not script.is_file():
-            raise _UsageError(f"no such part script: {target}")
-        try:
-            root = find_project_root(script.parent)
-        except ValidationError as exc:
-            raise _UsageError(exc.message) from exc
+            raise CliUsageError(f"no such part script: {target}")
+        root = project_root_or_refuse(script.parent)
         if script != (root / PARTS_DIRNAME / script.name).resolve():
-            raise _UsageError(f"{target} is not a part script under {root / PARTS_DIRNAME}/")
+            raise CliUsageError(f"{target} is not a part script under {root / PARTS_DIRNAME}/")
         return root, script.stem
     if not _PART_NAME_RE.match(target):
-        raise _UsageError(f"invalid part name {target!r}")
-    return _project_root_from_cwd(), target
+        raise CliUsageError(f"invalid part name {target!r}")
+    return project_root_or_refuse(), target
 
 
 def _sync_projections(publisher: Publisher, hc_state_raw: JSONValue | None) -> None:
@@ -348,11 +331,11 @@ def _cmd_build(args: argparse.Namespace) -> int:
     stale = bool(args.stale)
     json_out = bool(args.json)
     if target is None and not stale:
-        raise _UsageError("build: a part name or script path is required (or --stale)")
+        raise CliUsageError("build: a part name or script path is required (or --stale)")
     if target is not None:
         root, part = _resolve_build_target(target)
     else:
-        root, part = _project_root_from_cwd(), None
+        root, part = project_root_or_refuse(), None
     layout = load_project(root)
     store = open_store(layout)
     publisher = Publisher(layout, store)
@@ -401,9 +384,40 @@ def _cmd_build(args: argparse.Namespace) -> int:
     return exit_code
 
 
+def _check_line(outcome: CheckResult) -> str:
+    """One human check row, in ``checks/report.py``'s four-value vocabulary.
+
+    ``heph check`` rendered a two-valued verdict and dumped ``measured``
+    verbatim, so a check that could not be *evaluated* was badged ``FAIL`` with
+    its error object printed as prose — asserting a measurement the engine
+    explicitly declined to take, and leaving ``not_run`` unrepresentable
+    (ledger J-cli-robustness-15). :func:`hephaestus.core.checks.report.badge` is
+    the classifier the HTTP route and the web badges already share; the CLI
+    prints its state, and for ``error`` prints the reason the envelope carries
+    instead of the envelope.
+    """
+    state = badge(outcome)
+    if state != "error":
+        return f"{state} (measured: {json.dumps(outcome.measured)})"
+    measured = outcome.measured
+    envelope = (
+        measured.get("error") or measured.get("unverifiable")
+        if isinstance(measured, dict)
+        else None
+    )
+    if not isinstance(envelope, dict):  # pragma: no cover - badge() implies one of the two
+        return state
+    # `error` carries the engine `code` (or the exception `type` for a
+    # non-Hephaestus raise); `unverifiable` carries the timeout's `reason`.
+    reason = envelope.get("code") or envelope.get("reason") or envelope.get("type")
+    message = envelope.get("message")
+    detail = ": ".join(str(part) for part in (reason, message) if isinstance(part, str))
+    return f"{state} — {detail}" if detail else state
+
+
 def _cmd_check(args: argparse.Namespace) -> int:
     json_out = bool(args.json)
-    root = _project_root_from_cwd()
+    root = project_root_or_refuse()
     layout = load_project(root)
     store = open_store(layout)
 
@@ -420,14 +434,13 @@ def _cmd_check(args: argparse.Namespace) -> int:
         return 1
 
     if json_out:
+        # Byte-bound to the web client (§6.3 parity gate) — never reshaped here.
         print(json.dumps(report_json(report)))
     else:
         if not report.checks:
             print("no cross-part checks")
         for name in sorted(report.checks):
-            outcome = report.checks[name]
-            verdict = "pass" if outcome.passed else "FAIL"
-            print(f"{name}: {verdict} (measured: {json.dumps(outcome.measured)})")
+            print(f"{name}: {_check_line(report.checks[name])}")
     return 0 if all(outcome.passed for outcome in report.checks.values()) else 1
 
 
@@ -510,8 +523,18 @@ def _component_facts(
 def _cmd_lint(args: argparse.Namespace) -> int:
     json_out = bool(args.json)
     path = Path(cast("str", args.path))
-    if not path.is_file():
-        raise _UsageError(f"no such file: {path}")
+    raw_requirements = cast("str | None", args.requirements)
+    raw_request = cast("str | None", args.request)
+    if raw_request is not None and raw_requirements is None:
+        # VALIDATION.md §2 / INGEST.md §2: `unsourced_requirement` is a JOIN
+        # between the ledger's entries and the request text. With no ledger the
+        # rule has one operand and yields nothing by construction, so the flag
+        # read as live and reported "clean" (ledger J-cli-robustness-2).
+        raise CliUsageError(
+            "--request needs --requirements: unsourced_requirement joins the "
+            "requirement ledger against the request text (VALIDATION.md §2)"
+        )
+    require_input_file(path, what="part script")
     source = path.read_text(encoding="utf-8")
     resolved = path.resolve()
     globals_source: str | None = None
@@ -527,11 +550,8 @@ def _cmd_lint(args: argparse.Namespace) -> int:
     # No --requirements: the ledger rules stay off entirely (None), rather than
     # reporting every threshold against a ledger the caller never showed us.
     ledger_ids: list[str] | None = None
-    raw_requirements = cast("str | None", args.requirements)
     if raw_requirements is not None:
-        ledger_path = Path(raw_requirements)
-        if not ledger_path.is_file():
-            raise _UsageError(f"no such requirements file: {ledger_path}")
+        ledger_path = require_input_file(Path(raw_requirements), what="requirements file")
         entries = requirement_entries(json.loads(ledger_path.read_text(encoding="utf-8")))
         ledger_ids = [str(entry.get("id", "")) for entry in entries]
     component_data, component_facts = _component_facts(root)
@@ -551,11 +571,8 @@ def _cmd_lint(args: argparse.Namespace) -> int:
             reference_digests=_reference_digests(root),
             components=component_facts,
         )
-    raw_request = cast("str | None", args.request)
     if raw_request is not None:
-        request_path = Path(raw_request)
-        if not request_path.is_file():
-            raise _UsageError(f"no such request file: {request_path}")
+        request_path = require_input_file(Path(raw_request), what="request file")
         # INGEST.md §2: a citation is checked against the project's own
         # registered references, so the text a lint verifies is exactly the text
         # `read_reference` showed the model. Resolved only when the script lives
@@ -567,8 +584,17 @@ def _cmd_lint(args: argparse.Namespace) -> int:
             references=documents,
             image_references=images,
         )
+    failed = any(finding.severity == "error" for finding in findings)
     if json_out:
-        print(json.dumps([finding.to_json() for finding in findings]))
+        # One listing envelope, not a bare array (ledger J-cli-robustness-7):
+        # `status` mirrors the exit code, so a wrapper reads one shape.
+        print(
+            json_listing(
+                "findings",
+                [finding.to_json() for finding in findings],
+                status="error" if failed else "ok",
+            )
+        )
     else:
         for finding in findings:
             suffix = f" [{finding.name}]" if finding.name else ""
@@ -578,11 +604,63 @@ def _cmd_lint(args: argparse.Namespace) -> int:
             )
         if not findings:
             print(f"{path}: clean")
-    return 1 if any(finding.severity == "error" for finding in findings) else 0
+    return 1 if failed else 0
 
 
 # --------------------------------------------------------------------------
 # entrypoint
+
+
+#: The one option string allowed to be zero-arity on one verb and value-taking
+#: on another: ``heph check --project``, kept only as the retiring alias of
+#: ``--snapshot`` (ledger J-cli-robustness-4). This set must shrink, never grow
+#: — a second entry means the collision it exists to catch was waved through.
+_ARITY_COLLISION_ALLOWED = frozenset({"--project"})
+
+
+def _walk_parsers(parser: argparse.ArgumentParser) -> Iterator[argparse.ArgumentParser]:
+    """``parser`` and every subparser reachable from it, depth-first."""
+    yield parser
+    # argparse exposes no public walk over a built parser tree.
+    for action in parser._actions:  # pyright: ignore[reportPrivateUsage]
+        if isinstance(action, argparse._SubParsersAction):  # pyright: ignore[reportPrivateUsage]
+            children = cast(
+                "Mapping[str, argparse.ArgumentParser]",
+                action.choices,  # pyright: ignore[reportUnknownMemberType]
+            )
+            for child in children.values():
+                yield from _walk_parsers(child)
+
+
+def _assert_no_arity_collisions(parser: argparse.ArgumentParser) -> None:
+    """One option string may not be a flag on one verb and take a value on another.
+
+    ``--project`` was a ``store_true`` on ``heph check`` and a ``DIR`` on
+    ``heph agent`` / ``heph serve --web``, so the directory became an unmatched
+    positional and argparse reported "unrecognized arguments" with no hint that
+    this verb's ``--project`` takes nothing (ledger J-cli-robustness-4). This is
+    the parser-construction counterpart of the HTTP layer's route-table drift
+    check: a build-time assertion, so the next engine verb that wants a
+    directory named by an existing flag fails here rather than at a user.
+    """
+    zero_arity: dict[str, str] = {}
+    valued: dict[str, str] = {}
+    for sub_parser in _walk_parsers(parser):
+        for action in sub_parser._actions:  # pyright: ignore[reportPrivateUsage]
+            if not action.option_strings:
+                continue
+            seen = zero_arity if action.nargs == 0 else valued
+            for option in action.option_strings:
+                seen.setdefault(option, sub_parser.prog)
+    collisions = sorted(
+        (zero_arity.keys() & valued.keys()) - _ARITY_COLLISION_ALLOWED,
+    )
+    if collisions:  # pragma: no cover - a construction bug, asserted by test
+        detail = ", ".join(
+            f"{option} (flag on {zero_arity[option]!r}, takes a value on {valued[option]!r})"
+            for option in collisions
+        )
+        raise AssertionError(f"option arity collision across heph verbs: {detail}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -629,8 +707,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     check = sub.add_parser("check", help="run the cross-part check set")
     check.add_argument(
+        # `--project` means a directory on `heph agent` and `heph serve --web`,
+        # so the boolean spelling made one name mean two things and turned
+        # `heph check --project ./demo` into a bare "unrecognized arguments"
+        # (ledger J-cli-robustness-4). `--snapshot` says what the flag does;
+        # `--project` stays as a retiring alias so no script breaks, and is the
+        # single exemption `_assert_no_arity_collisions` carries.
+        "--snapshot",
         "--project",
         action="store_true",
+        dest="project",
         help="require and record a coherent project snapshot",
     )
     check.add_argument("--json", action="store_true", help="emit the CheckReport JSON")
@@ -647,7 +733,11 @@ def build_parser() -> argparse.ArgumentParser:
     lint.add_argument(
         "--request",
         default=None,
-        help="original request text; enables the unsourced_requirement rule",
+        help=(
+            "original request text; with --requirements this enables the "
+            "unsourced_requirement rule (the rule joins the two, so --request "
+            "alone is refused rather than reporting a clean run)"
+        ),
     )
     lint.set_defaults(func=_cmd_lint)
 
@@ -802,6 +892,7 @@ def build_parser() -> argparse.ArgumentParser:
             pass
         else:
             cli_web.extend_serve(serve_parser)
+    _assert_no_arity_collisions(parser)
     return parser
 
 
@@ -809,47 +900,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
     command = cast("Callable[[argparse.Namespace], int]", args.func)
-    try:
-        return command(args)
-    except _UsageError as exc:
-        print(f"heph: {exc}", file=sys.stderr)
-        return 2
-    except AddressingError as exc:
-        detail = exc.message
-        if exc.candidates:
-            detail += f" (candidates: {', '.join(exc.candidates)})"
-        print(f"heph: {detail}", file=sys.stderr)
-        return 2
-    except SandboxDeniedError as exc:
-        print(f"heph: error ({exc.code}): {exc.message}", file=sys.stderr)
-        return 1
-    except OpStoreError as exc:
-        # The store's own taxonomy is not a `HephaestusError`, so before this
-        # branch every opstore refusal left the CLI as a traceback. §19.40 made
-        # that reachable on the ordinary path: `Publisher.freeze_inputs` now runs
-        # `gc.admission_guard()`, so a project whose protected bytes exceed its
-        # quota refuses `protected_quota_exceeded` on `heph build` — the refusal
-        # §22.6 calls "the most confusing failure this section is capable of
-        # producing", which a stack trace would make worse rather than better.
-        # Reported in the same shape as every other engine refusal, exit 1: the
-        # operation ran and the answer was no.
-        print(f"heph: error ({exc.code}): {exc.message}", file=sys.stderr)
-        return 1
-    except HephaestusError as exc:
-        print(f"heph: error ({exc.code}): {exc.message}", file=sys.stderr)
-        return 1
-    except OSError as exc:
-        # Last-resort net beneath the output preconditions (ledger B-10). Every
-        # verb that takes an operator-supplied path validates it up front with
-        # `cli_errors.ensure_writable_dir`, which refuses by name; this arm
-        # catches the OS failures no precondition can anticipate (a filesystem
-        # that fills between the check and the write, a revoked mount) and
-        # reports them as what they are — "you asked for something impossible",
-        # exit 2 — rather than as an interpreter traceback.
-        reason = exc.strerror or exc.__class__.__name__
-        detail = f"{reason} ({exc.filename})" if exc.filename else reason
-        print(f"heph: {detail}", file=sys.stderr)
-        return 2
+    # The taxonomy lives in `cli_errors.dispatch`, not here, so a verb group's
+    # `guard()` and a module `main()` map exactly what `heph` maps
+    # (ledger J-cli-robustness-5, -6, -20).
+    return dispatch(command, args)
 
 
 if __name__ == "__main__":

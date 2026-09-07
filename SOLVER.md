@@ -166,7 +166,7 @@ touched anything.
 - `script_contract.md:119-140` — "PARAMS"
 - `script_contract.md:141-149` — "globals.py"
 - `script_contract.md:164-172` — "a part MUST NOT shadow an `hc` name"
-- `docs/cli.md:443-446` — "no solver **in"
+- `docs/cli.md:508-511` — "no solver **in"
 - `bench/src/hephaestus/bench/scoring.py:282-304` — "def split_name"
 - `contract/tests/test_toolgen.py:98-115` — "declared additions, not drift"
 - `tests/stage2/test_g2_contract_drift.py:357` — "solve_pose"
@@ -271,9 +271,10 @@ holds it.*
   finding it then rather than at 13A is the citation audit paying for itself.
   The sentence "there is no per-script joint syntax and no solver: scripts
   position geometry, poses exist only inside an evaluation"
-  (`docs/cli.md:443-446`, re-resolved at 13C: 13A's, 13B's and 13C's own
-  `heph solve` sections land above this one, so the anchor moved 255 → 390 and
-  the audit is what noticed) is **true today** — no `heph solve` verb exists — and
+  (`docs/cli.md:508-511`, re-resolved at 13C and again by the 2026-09-04
+  janky ledger's L1 pass, whose exit-code, `--json`-envelope and per-verb
+  paragraphs land above this one: the anchor has moved 255 → 390 → 443 → 508,
+  and the audit is what noticed each time) is **true today** — no `heph solve` verb exists — and
   becomes false the moment 13A ships `heph solve pose` (§11). It is scoped, not
   deleted, on the same pattern as the three sentences above: "no solver **in
   this surface** — `heph solve` (Stage 13, `SOLVER.md`) proposes and writes

@@ -22,6 +22,7 @@ from ._fields import req_str, table
 from ._layout import BUNDLED_KINDS, MANIFEST_FILENAME
 
 __all__ = [
+    "BUNDLED_SCHEME",
     "REGISTRIES_TABLE",
     "RegistryPin",
     "bundled_pins",
@@ -32,6 +33,17 @@ __all__ = [
 
 #: The ``hephaestus.toml`` table holding registry pins.
 REGISTRIES_TABLE: Final[str] = "registries"
+
+#: Symbolic ``path`` prefix meaning "the registries bundled with whichever
+#: installation reads this manifest", resolved per machine by
+#: :meth:`RegistryPin.resolve`. ``bundled_registries_root()`` is a *runtime*
+#: convenience — under an editable install it is the developer's clone — and
+#: writing its answer into ``hephaestus.toml`` put an absolute path into a file
+#: the documentation says to commit, making the project unusable on any other
+#: machine (ledger J-cli-robustness-3). The digest beside the pin still pins the
+#: bytes, so a machine whose installation ships different bytes fails
+#: ``heph registry verify`` by design.
+BUNDLED_SCHEME: Final[str] = "bundled:"
 
 _SECTION_RE: Final[re.Pattern[str]] = re.compile(r"^\s*\[")
 _REGISTRIES_SECTION_RE: Final[re.Pattern[str]] = re.compile(
@@ -47,7 +59,30 @@ class RegistryPin:
     path: str
     digest: str | None = None
 
+    @property
+    def is_bundled(self) -> bool:
+        """Whether ``path`` is the symbolic :data:`BUNDLED_SCHEME` form."""
+        return self.path.startswith(BUNDLED_SCHEME)
+
     def resolve(self, project_root: Path) -> Path:
+        """The directory this pin names on *this* machine.
+
+        A ``bundled:<kind>`` path resolves through
+        :func:`bundled_registries_root` at read time; an installation that ships
+        none refuses by name rather than resolving to a path that is not there.
+        Absolute and project-relative paths resolve exactly as before, so pins
+        written before the symbolic form existed keep working with no migration.
+        """
+        if self.is_bundled:
+            root = bundled_registries_root()
+            if root is None:
+                raise ValidationError(
+                    f"registry {self.name!r} is pinned as {self.path!r}, but this "
+                    "installation ships no bundled registries; pass --path DIR to pin "
+                    "a tree this machine has",
+                    kind="contract",
+                )
+            return root / self.path[len(BUNDLED_SCHEME) :]
         candidate = Path(self.path)
         return candidate if candidate.is_absolute() else (project_root / candidate)
 
@@ -137,12 +172,18 @@ def bundled_registries_root() -> Path | None:
 
 
 def bundled_pins() -> dict[str, RegistryPin]:
-    """Unverified pins for the bundled registries (path only, no digest)."""
+    """Unverified pins for the bundled registries (symbolic path, no digest).
+
+    The path is :data:`BUNDLED_SCHEME` plus the kind, never the resolved
+    directory: these pins are a *write* source for ``heph registry pin``, and an
+    absolute host path in a committed manifest is a note to yourself, not the
+    reviewable claim ``docs/registry-pinning.md`` requires.
+    """
     root = bundled_registries_root()
     if root is None:
         return {}
     pins: dict[str, RegistryPin] = {}
     for kind in BUNDLED_KINDS:
         if (root / kind / MANIFEST_FILENAME).is_file():
-            pins[kind] = RegistryPin(name=kind, path=str(root / kind), digest=None)
+            pins[kind] = RegistryPin(name=kind, path=f"{BUNDLED_SCHEME}{kind}", digest=None)
     return pins

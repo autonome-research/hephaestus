@@ -426,6 +426,11 @@ def test_clause31_the_lint_is_reachable_through_heph_lint(
     script = tmp_path / "socket.py"
     script.write_text(FLAGGED, encoding="utf-8")
     code = main(["lint", str(script), "--json"])
-    findings = json.loads(capsys.readouterr().out)
+    # `lint --json` emits the listing envelope, not a bare array (ledger
+    # J-cli-robustness-7); `status` is the exit code's own reading of the
+    # findings, so a warning-only run says "ok" on both channels.
+    payload = json.loads(capsys.readouterr().out)
+    findings = payload["findings"]
     assert "mesh_derived_offset" in [finding["code"] for finding in findings]
     assert code == 0
+    assert payload["status"] == "ok"

@@ -43,8 +43,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
+from hephaestus.core.cli_errors import (
+    CliUsageError,
+    dispatch,
+    guard,
+    json_listing,
+    project_root_or_refuse,
+)
 from hephaestus.core.errors import ValidationError
-from hephaestus.core.project_store.layout import find_project_root
 from hephaestus.core.registry import (
     MANIFEST_FILENAME,
     PublicationRecord,
@@ -63,17 +69,6 @@ from opstore.types import JSONValue
 __all__ = ["add_subparsers", "main"]
 
 
-class _UsageError(Exception):
-    """CLI misuse: reported on stderr with exit code 2."""
-
-
-def _project_root() -> Path:
-    try:
-        return find_project_root(Path.cwd())
-    except ValidationError as exc:
-        raise _UsageError(exc.message) from exc
-
-
 def _resolved_pins(project_root: Path) -> dict[str, RegistryPin]:
     """Project pins, with the bundled registries filling any gap."""
     pins = dict(read_pins(project_root))
@@ -88,18 +83,29 @@ def _select(pins: dict[str, RegistryPin], names: list[str]) -> list[str]:
     unknown = sorted(name for name in names if name not in pins)
     if unknown:
         known = ", ".join(sorted(pins)) or "(none)"
-        raise _UsageError(f"unknown registry {', '.join(unknown)}; known registries: {known}")
+        raise CliUsageError(f"unknown registry {', '.join(unknown)}; known registries: {known}")
     return sorted(set(names))
 
 
 def _describe(name: str, pin: RegistryPin, project_root: Path) -> dict[str, JSONValue]:
-    root = pin.resolve(project_root)
+    # `pin_path` is what the manifest carries (a project-relative path, or the
+    # symbolic `bundled:<kind>`); `path` stays the resolved directory, because
+    # an operator asking "where are the bytes?" wants the answer for THIS
+    # machine (ledger J-cli-robustness-3).
     record: dict[str, JSONValue] = {
         "name": name,
-        "path": str(root),
+        "pin_path": pin.path,
         "pinned_digest": pin.digest,
         "pinned": pin.digest is not None,
     }
+    try:
+        root = pin.resolve(project_root)
+    except ValidationError as exc:
+        record["path"] = None
+        record["status"] = "missing"
+        record["detail"] = exc.message
+        return record
+    record["path"] = str(root)
     if not (root / MANIFEST_FILENAME).is_file():
         record["status"] = "missing"
         return record
@@ -129,17 +135,19 @@ def _describe(name: str, pin: RegistryPin, project_root: Path) -> dict[str, JSON
 
 
 def _cmd_list(args: argparse.Namespace) -> int:
-    project_root = _project_root()
+    project_root = project_root_or_refuse()
     pins = _resolved_pins(project_root)
     records = [_describe(name, pins[name], project_root) for name in sorted(pins)]
     if bool(args.json):
-        print(json.dumps(records))
+        # One listing envelope, never a bare array (ledger J-cli-robustness-7).
+        print(json_listing("registries", records))
         return 0
     if not records:
         print("no registries resolved (no [registries] pins and no bundled registries)")
         return 0
     for record in records:
         print(f"{record['name']}: {record['status']} ({record.get('kind', '?')})")
+        print(f"  pin:    {record['pin_path']}")
         print(f"  path:   {record['path']}")
         print(f"  digest: {record.get('digest', '(unreadable)')}")
         if record["pinned_digest"] is not None and record["status"] == "drifted":
@@ -156,7 +164,7 @@ def _cmd_components(args: argparse.Namespace) -> int:
     """
     from hephaestus.core.registry import RegistrySet
 
-    project_root = _project_root()
+    project_root = project_root_or_refuse()
     try:
         registries = RegistrySet.open(project_root)
     except RegistryIntegrityError as exc:
@@ -202,19 +210,42 @@ def _cmd_components(args: argparse.Namespace) -> int:
     return 0
 
 
+def _path_to_persist(
+    name: str, pins: Mapping[str, RegistryPin], explicit: str | None, project_root: Path
+) -> str:
+    """The ``path`` string ``heph registry pin`` will write into the manifest.
+
+    An explicit ``--path`` is the operator's word and is recorded verbatim.
+    Otherwise the value comes from the existing pin or from
+    :func:`bundled_pins`, and an absolute path outside the project is refused
+    rather than persisted: ``hephaestus.toml`` is committed, and a pin is a
+    reviewable claim about which bytes a design was verified against, not a
+    path into somebody's home directory (ledger J-cli-robustness-3).
+    """
+    if explicit is not None:
+        return explicit
+    candidate = pins.get(name) or bundled_pins().get(name)
+    if candidate is None:
+        raise CliUsageError(f"registry {name!r} has no recorded path; pass --path DIR")
+    path = candidate.path
+    if candidate.is_bundled or not Path(path).is_absolute():
+        return path
+    if Path(path).is_relative_to(project_root):
+        return path
+    raise CliUsageError(
+        f"registry {name!r} resolves to the host path {path!r}, which is not portable "
+        "in a committed hephaestus.toml; pass --path DIR to record it deliberately"
+    )
+
+
 def _cmd_pin(args: argparse.Namespace) -> int:
-    project_root = _project_root()
+    project_root = project_root_or_refuse()
     name = cast("str", args.name)
     pins = dict(read_pins(project_root))
-    path = cast("str | None", args.path)
-    if path is None:
-        candidate = pins.get(name) or bundled_pins().get(name)
-        if candidate is None:
-            raise _UsageError(f"registry {name!r} has no recorded path; pass --path DIR")
-        path = candidate.path
+    path = _path_to_persist(name, pins, cast("str | None", args.path), project_root)
     root = RegistryPin(name=name, path=path).resolve(project_root)
     if not (root / MANIFEST_FILENAME).is_file():
-        raise _UsageError(f"{root} is not a registry ({MANIFEST_FILENAME} missing)")
+        raise CliUsageError(f"{root} is not a registry ({MANIFEST_FILENAME} missing)")
     digest = merkle_digest(root)
     existing = pins.get(name)
     if existing is not None and existing.digest is not None and existing.digest != digest:
@@ -231,19 +262,27 @@ def _cmd_pin(args: argparse.Namespace) -> int:
 
 
 def _cmd_publish(args: argparse.Namespace) -> int:
-    """Validate a tree end to end, state its digest, and record the pin."""
-    project_root = _project_root()
+    """Validate a tree end to end, state its digest, and record the pin.
+
+    Unlike ``pin`` this verb does not *choose* a location: with no ``--path`` it
+    carries the recorded (or bundled) one forward verbatim, exactly as ``update``
+    does, so :func:`_path_to_persist`'s portability guard does not apply. The
+    leak J-cli-robustness-3 names is closed upstream — ``bundled_pins()`` no
+    longer hands anyone a resolved absolute path — so nothing new can enter the
+    manifest here.
+    """
+    project_root = project_root_or_refuse()
     name = cast("str", args.name)
     pins = dict(read_pins(project_root))
     path = cast("str | None", args.path)
     if path is None:
         candidate = pins.get(name) or bundled_pins().get(name)
         if candidate is None:
-            raise _UsageError(f"registry {name!r} has no recorded path; pass --path DIR")
+            raise CliUsageError(f"registry {name!r} has no recorded path; pass --path DIR")
         path = candidate.path
     root = RegistryPin(name=name, path=path).resolve(project_root)
     if not (root / MANIFEST_FILENAME).is_file():
-        raise _UsageError(f"{root} is not a registry ({MANIFEST_FILENAME} missing)")
+        raise CliUsageError(f"{root} is not a registry ({MANIFEST_FILENAME} missing)")
     try:
         record = publish_registry(
             root, published_at=datetime.now(UTC).replace(microsecond=0).isoformat()
@@ -299,21 +338,21 @@ def _read_record(path_text: str, project_root: Path) -> PublicationRecord:
     if not path.is_absolute():
         path = project_root / path
     if not path.is_file():
-        raise _UsageError(f"publication record {path} does not exist")
+        raise CliUsageError(f"publication record {path} does not exist")
     try:
         raw: object = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        raise _UsageError(f"publication record {path} is not valid JSON: {exc}") from exc
+        raise CliUsageError(f"publication record {path} is not valid JSON: {exc}") from exc
     if not isinstance(raw, dict):
-        raise _UsageError(f"publication record {path} must be a JSON object")
+        raise CliUsageError(f"publication record {path} must be a JSON object")
     try:
         return PublicationRecord.from_json(cast("Mapping[str, JSONValue]", raw))
     except ValidationError as exc:
-        raise _UsageError(f"publication record {path}: {exc.message}") from exc
+        raise CliUsageError(f"publication record {path}: {exc.message}") from exc
 
 
 def _cmd_update(args: argparse.Namespace) -> int:
-    project_root = _project_root()
+    project_root = project_root_or_refuse()
     pins = dict(read_pins(project_root))
     for name, pin in bundled_pins().items():
         pins.setdefault(name, pin)
@@ -323,7 +362,7 @@ def _cmd_update(args: argparse.Namespace) -> int:
         pin = pins[name]
         root = pin.resolve(project_root)
         if not (root / MANIFEST_FILENAME).is_file():
-            raise _UsageError(f"{root} is not a registry ({MANIFEST_FILENAME} missing)")
+            raise CliUsageError(f"{root} is not a registry ({MANIFEST_FILENAME} missing)")
         digest = merkle_digest(root)
         updated.append(
             {
@@ -337,7 +376,7 @@ def _cmd_update(args: argparse.Namespace) -> int:
         pins[name] = RegistryPin(name=name, path=pin.path, digest=digest)
     write_pins(project_root, pins)
     if bool(args.json):
-        print(json.dumps(updated))
+        print(json_listing("registries", updated))
         return 0
     for record in updated:
         mark = "re-pinned" if record["changed"] else "unchanged"
@@ -346,12 +385,12 @@ def _cmd_update(args: argparse.Namespace) -> int:
 
 
 def _cmd_verify(args: argparse.Namespace) -> int:
-    project_root = _project_root()
+    project_root = project_root_or_refuse()
     pins = _resolved_pins(project_root)
     selected = _select(pins, cast("list[str]", args.name))
     record_path = cast("str | None", args.record)
     if record_path is not None and len(selected) != 1:
-        raise _UsageError("--record verifies exactly one registry; name it explicitly")
+        raise CliUsageError("--record verifies exactly one registry; name it explicitly")
     publication = None if record_path is None else _read_record(record_path, project_root)
     records: list[dict[str, JSONValue]] = []
     failed = False
@@ -394,7 +433,7 @@ def _cmd_verify(args: argparse.Namespace) -> int:
                 record["record_digest"] = publication.digest
         records.append(record)
     if bool(args.json):
-        print(json.dumps(records))
+        print(json_listing("registries", records, status="error" if failed else "ok"))
     else:
         for record in records:
             print(f"{record['name']}: {record['status']}")
@@ -414,19 +453,6 @@ def _report_pin(name: str, root: Path, digest: str, *, json_out: bool, verb: str
         print(f"  path: {root}")
 
 
-def _guard(command: Callable[[argparse.Namespace], int]) -> Callable[[argparse.Namespace], int]:
-    """Report registry-verb misuse as exit 2 regardless of which entry point ran it."""
-
-    def run(args: argparse.Namespace) -> int:
-        try:
-            return command(args)
-        except _UsageError as exc:
-            print(f"heph: {exc}", file=sys.stderr)
-            return 2
-
-    return run
-
-
 # --------------------------------------------------------------------------
 # entrypoint
 
@@ -440,13 +466,13 @@ def add_subparsers(
 
     listing = verbs.add_parser("list", help="list resolved registries and their digests")
     listing.add_argument("--json", action="store_true", help="emit JSON records")
-    listing.set_defaults(func=_guard(_cmd_list))
+    listing.set_defaults(func=guard(_cmd_list))
 
     components = verbs.add_parser(
         "components", help="list the component records in the pinned registries"
     )
     components.add_argument("--json", action="store_true", help="emit JSON records")
-    components.set_defaults(func=_guard(_cmd_components))
+    components.set_defaults(func=guard(_cmd_components))
 
     publish = verbs.add_parser(
         "publish", help="validate a registry end to end, state its digest, and pin it"
@@ -457,18 +483,18 @@ def add_subparsers(
         "--record", default=None, metavar="FILE", help="write the publication record here"
     )
     publish.add_argument("--json", action="store_true", help="emit JSON records")
-    publish.set_defaults(func=_guard(_cmd_publish))
+    publish.set_defaults(func=guard(_cmd_publish))
 
     pin = verbs.add_parser("pin", help="record a registry's current digest (never changes a pin)")
     pin.add_argument("name", help="registry name (the [registries.<name>] key)")
     pin.add_argument("--path", default=None, metavar="DIR", help="registry directory to pin")
     pin.add_argument("--json", action="store_true", help="emit JSON records")
-    pin.set_defaults(func=_guard(_cmd_pin))
+    pin.set_defaults(func=guard(_cmd_pin))
 
     update = verbs.add_parser("update", help="re-pin registries to their current digests")
     update.add_argument("name", nargs="*", default=[], help="registries to re-pin (default: all)")
     update.add_argument("--json", action="store_true", help="emit JSON records")
-    update.set_defaults(func=_guard(_cmd_update))
+    update.set_defaults(func=guard(_cmd_update))
 
     verify = verbs.add_parser("verify", help="verify every pinned registry tree")
     verify.add_argument("name", nargs="*", default=[], help="registries to verify (default: all)")
@@ -479,17 +505,21 @@ def add_subparsers(
         help="also verify the named registry against a publication record",
     )
     verify.add_argument("--json", action="store_true", help="emit JSON records")
-    verify.set_defaults(func=_guard(_cmd_verify))
+    verify.set_defaults(func=guard(_cmd_verify))
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Standalone entry point (``python -m hephaestus.core.cli_registry``) for tests."""
+    """Standalone entry point (``python -m hephaestus.core.cli_registry``) for tests.
+
+    Goes through :func:`hephaestus.core.cli_errors.dispatch` so a module entry
+    point maps the engine taxonomy exactly as ``heph`` does, rather than raising
+    a traceback where the product refuses (ledger J-cli-robustness-20).
+    """
     parser = argparse.ArgumentParser(prog="heph", description="Hephaestus registry verbs")
     sub = parser.add_subparsers(dest="command", required=True)
     add_subparsers(sub)
     args = parser.parse_args(argv)
-    command = cast("Callable[[argparse.Namespace], int]", args.func)
-    return command(args)
+    return dispatch(cast("Callable[[argparse.Namespace], int]", args.func), args)
 
 
 if __name__ == "__main__":

@@ -243,25 +243,32 @@ def test_cli_pin_update_verify_cycle(
     assert _run(monkeypatch, project, "verify", "skills") == 1
     assert "unpinned" in capsys.readouterr().out
 
-    assert _run(monkeypatch, project, "pin", "skills", "--json") == 0
+    # `--path` is compulsory whenever the pin would persist an absolute path
+    # outside the project (ledger J-cli-robustness-3): a path recorded in a
+    # committed manifest is a claim about which bytes were verified, so the
+    # operator has to name it rather than have `bundled_registries_root()`'s
+    # answer written for them. This fixture's registry is a sibling of the
+    # project, so every `pin` here names it.
+    assert _run(monkeypatch, project, "pin", "skills", "--path", str(registry_root), "--json") == 0
     pinned = json.loads(capsys.readouterr().out)
     assert pinned["digest"] == merkle_digest(registry_root)
     assert _run(monkeypatch, project, "verify", "skills", "--json") == 0
-    assert json.loads(capsys.readouterr().out)[0]["status"] == "ok"
+    # One listing envelope, never a bare array (ledger J-cli-robustness-7).
+    assert json.loads(capsys.readouterr().out)["registries"][0]["status"] == "ok"
 
     # Drift: verify fails, and pin refuses to silently re-pin.
     (registry_root / "alpha.md").write_text("# alpha\n\nchanged\n", encoding="utf-8")
     assert _run(monkeypatch, project, "verify", "skills", "--json") == 1
-    record = json.loads(capsys.readouterr().out)[0]
+    record = json.loads(capsys.readouterr().out)["registries"][0]
     assert record["status"] == "drifted"
     assert record["expected_digest"] != record["digest"]
 
-    assert _run(monkeypatch, project, "pin", "skills") == 1
+    assert _run(monkeypatch, project, "pin", "skills", "--path", str(registry_root)) == 1
     assert "registry_integrity" in capsys.readouterr().err
 
     # update is the one deliberate re-pin path.
     assert _run(monkeypatch, project, "update", "skills", "--json") == 0
-    updated = json.loads(capsys.readouterr().out)[0]
+    updated = json.loads(capsys.readouterr().out)["registries"][0]
     assert updated["changed"] is True
     assert updated["digest"] == merkle_digest(registry_root)
     assert _run(monkeypatch, project, "verify", "skills") == 0
@@ -272,7 +279,7 @@ def test_cli_list_reports_status(
     project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     assert _run(monkeypatch, project, "list", "--json") == 0
-    records = {r["name"]: r for r in json.loads(capsys.readouterr().out)}
+    records = {r["name"]: r for r in json.loads(capsys.readouterr().out)["registries"]}
     assert records["skills"]["status"] == "unpinned"
     assert records["skills"]["kind"] == "skills"
     assert records["skills"]["registry_name"] == "demo-skills"

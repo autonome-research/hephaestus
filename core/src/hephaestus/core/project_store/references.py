@@ -59,6 +59,7 @@ __all__ = [
     "TextExtractor",
     "classify",
     "extract_pages",
+    "kind_for_mime",
 ]
 
 #: CAS pointer naming the current reference-registry generation.
@@ -128,6 +129,24 @@ def classify(name: str) -> tuple[str, str]:
     supported = sorted({*DOCUMENT_MIME_TYPES, *IMAGE_MIME_TYPES})
     raise ValidationError(
         f"reference {name!r}: unsupported extension {suffix!r} (supported: {supported})",
+        kind="contract",
+    )
+
+
+def kind_for_mime(mime_type: str, *, subject: str) -> str:
+    """``"document"`` or ``"image"`` for an already-known mime type.
+
+    The other half of :func:`classify`, for the caller that knows the mime type
+    without having to re-derive it from a name. ``subject`` names whatever the
+    mime type was derived from, so a refusal points at the file rather than at
+    the registry entry's name.
+    """
+    if mime_type in DOCUMENT_MIME_TYPES.values():
+        return "document"
+    if mime_type in IMAGE_MIME_TYPES.values():
+        return "image"
+    raise ValidationError(  # pragma: no cover - closed over the two tables above
+        f"reference {subject!r}: unsupported mime type {mime_type!r}",
         kind="contract",
     )
 
@@ -363,30 +382,60 @@ class ReferenceRegistry:
             raise ValidationError(f"no such file: {path}", kind="contract")
         target_name = name if name is not None else path.name
         data = path.read_bytes()
-        entry = self.add_bytes(data, name=target_name, extractor=extractor)
+        # INGEST.md §2 makes `kind` a property of the registered bytes, and
+        # `_NAME_RE` deliberately admits an extensionless name — so the *source*
+        # file decides the kind and mime type and `--name` decides only what the
+        # entry is called. Classifying the name refused the documented
+        # `--name bearing-datasheet` form for "unsupported extension ''"
+        # (ledger J-cli-robustness-1).
+        _, mime_type = classify(path.name)
+        entry = self.add_bytes(
+            data,
+            name=target_name,
+            mime_type=mime_type,
+            source=path.name,
+            extractor=extractor,
+        )
         destination = self._reference_path(target_name)
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(data)
         return entry
 
     def add_bytes(
-        self, data: bytes, *, name: str, extractor: TextExtractor | None = None
+        self,
+        data: bytes,
+        *,
+        name: str,
+        mime_type: str | None = None,
+        source: str | None = None,
+        extractor: TextExtractor | None = None,
     ) -> ReferenceEntry:
-        """Register payload bytes under ``name`` (upsert), advancing a generation."""
+        """Register payload bytes under ``name`` (upsert), advancing a generation.
+
+        ``mime_type`` is the classification when the caller already knows it —
+        :meth:`add_file` derives it from the source file. Left ``None`` (the
+        bytes-only entry point, where the name is the only source of truth) the
+        name is classified as before. ``source`` names what the bytes came from
+        for refusal messages.
+        """
         if not _NAME_RE.match(name):
             raise ValidationError(
                 f"reference name {name!r} must match {REFERENCE_NAME_PATTERN} "
                 "(one plain filename, no path separators)",
                 kind="contract",
             )
-        kind, mime_type = classify(name)
-        _check_magic(name, mime_type, data)
+        subject = source if source is not None else name
+        if mime_type is None:
+            kind, mime_type = classify(name)
+        else:
+            kind = kind_for_mime(mime_type, subject=subject)
+        _check_magic(subject, mime_type, data)
         blob = self._store.blobs.put(data)
         self._store.gc.pin(blob)
         pages: int | None = None
         text_blob: str | None = None
         if kind == "document":
-            texts = extract_pages(data, mime_type=mime_type, name=name, extractor=extractor)
+            texts = extract_pages(data, mime_type=mime_type, name=subject, extractor=extractor)
             pages = len(texts)
             text_blob = self._store.blobs.put(
                 canonical_json({"name": name, "pages": list(texts)}).encode("utf-8")

@@ -349,6 +349,17 @@ def resolve_render_source(
     artifact_ref: str | None,
 ) -> RenderSource:
     """Resolve the geometry to render (current / artifact_ref / last-good)."""
+    # A part that does not exist and a part that exists and was never built are
+    # separate named reasons because the fix differs (`assembly.py`'s vocabulary,
+    # ASSEMBLY.md). Asking about build state first sent the operator off to build
+    # a part that is not there (ledger J-cli-robustness-10); the wording is the
+    # store's own, so "unknown part" has one spelling across the CLI.
+    if not project.layout.part_path(name).is_file():
+        raise AddressingError(
+            f"part {name!r} does not exist under {project.layout.parts_dir}",
+            selector=name,
+            candidates=project.layout.part_names(),
+        )
     store = project.store
     publisher = project.publisher()
     if artifact_ref is not None:
@@ -367,10 +378,12 @@ def resolve_render_source(
     if last_good:
         pointer = store.blobs.read_pointer(last_failure_pointer(name))
         if pointer is None:
+            # No candidates: the part resolved, so the part list is not a set of
+            # alternatives to it (ledger J-cli-robustness-10, and `errors.py`:
+            # candidates are near-misses "when nothing matched").
             raise AddressingError(
                 f"part {name!r} has no recorded failed build to inspect (last_good)",
                 selector=name,
-                candidates=project.layout.part_names(),
             )
         record = json.loads(store.blobs.get(pointer).decode("utf-8"))
         failed = BuildResult.from_json(cast("Mapping[str, JSONValue]", record))
@@ -386,10 +399,11 @@ def resolve_render_source(
         )
     current = publisher.current_result(name)
     if current is None or current.artifact_ref is None:
+        # No candidates, for the reason above: this part exists, and offering it
+        # as an alternative to itself is what blurred the two states.
         raise AddressingError(
             f"part {name!r} has no current successful build to inspect",
             selector=name,
-            candidates=project.layout.part_names(),
         )
     return RenderSource(
         source_artifact_ref=current.artifact_ref,

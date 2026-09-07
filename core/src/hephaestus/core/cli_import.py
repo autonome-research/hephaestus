@@ -33,10 +33,18 @@ import re
 import stat as stat_module
 import sys
 import uuid
-from collections.abc import Callable
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Final, cast
 
+from hephaestus.core.cli_errors import (
+    CliUsageError,
+    guard,
+    json_listing,
+    project_root_or_refuse,
+    require_input_file,
+)
 from hephaestus.core.errors import ValidationError
 from hephaestus.core.executor.imports import (
     IMPORTS_DIRNAME,
@@ -46,14 +54,18 @@ from hephaestus.core.executor.imports import (
     read_import,
     validate_import_path,
 )
-from hephaestus.core.project_store.layout import find_project_root, load_project, open_store
+from hephaestus.core.project_store.layout import ProjectLayout, load_project, open_store
+from hephaestus.core.project_store.locks import PROJECT_CONFIG_LOCK, LockManager
 from hephaestus.core.project_store.store import ProjectStore, WriteConflictError
 from opstore.types import JSONValue
 
-from opstore import sha256_bytes
+from opstore import OpStore, canonical_json, sha256_bytes
 
 __all__ = [
+    "ADMISSIONS_POINTER",
     "STEP_SUFFIXES",
+    "AdmissionIndex",
+    "ImportAdmission",
     "add_subparsers",
     "classify_import_name",
     "seed_part_script",
@@ -65,10 +77,6 @@ _PART_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 #: STEP application-protocol suffixes (AP203/AP214). Case-insensitive at
 #: classify time; the copied name is stored as the operator wrote it.
 STEP_SUFFIXES: Final[frozenset[str]] = frozenset({".step", ".stp"})
-
-
-class _UsageError(Exception):
-    """CLI misuse: reported on stderr with exit code 2."""
 
 
 class ImportIngressError(ValidationError):
@@ -315,16 +323,167 @@ def _iter_import_relpaths(imports_dir: Path) -> tuple[str, ...]:
     return tuple(found)
 
 
-def _record(name: str, *, kind: ImportKind, digest: str, units: str | None) -> dict[str, JSONValue]:
-    out: dict[str, JSONValue] = {
+#: Opstore pointer naming the current admission-index generation. The index is
+#: the *declaration* record, distinct from the projection's ``import_state``
+#: (which is the live ``{path: sha256}`` build input tree): a unit is not
+#: recoverable from a mesh file, which is exactly why ``--units`` is compulsory
+#: (``MESH_INGEST.md``), so discarding it after admission is the failure that
+#: clause guards against (ledger J-cli-robustness-8).
+ADMISSIONS_POINTER: Final[str] = "imports-admissions"
+
+
+@dataclass(frozen=True)
+class ImportAdmission:
+    """One recorded ``heph import add``: what was admitted, and as what."""
+
+    name: str
+    kind: ImportKind
+    sha256: str
+    units: str | None = None
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "name": self.name,
+            "kind": self.kind,
+            "sha256": self.sha256,
+            "units": self.units,
+        }
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, JSONValue]) -> ImportAdmission:
+        name = data.get("name")
+        kind = data.get("kind")
+        digest = data.get("sha256")
+        if not (isinstance(name, str) and isinstance(digest, str)):
+            raise ValidationError("import admission is malformed", kind="contract")
+        if kind not in ("step", "mesh", "points"):
+            raise ValidationError(f"import admission {name}: unknown kind", kind="contract")
+        units = data.get("units")
+        return cls(
+            name=name,
+            kind=kind,
+            sha256=digest,
+            units=units if isinstance(units, str) else None,
+        )
+
+
+@dataclass(frozen=True)
+class AdmissionState:
+    """One immutable admission-index generation."""
+
+    generation: int
+    entries: tuple[ImportAdmission, ...]
+    blob: str | None
+    parent: str | None = None
+
+    @property
+    def by_name(self) -> dict[str, ImportAdmission]:
+        return {entry.name: entry for entry in self.entries}
+
+    def document(self) -> JSONValue:
+        return {
+            "generation": self.generation,
+            "parent": self.parent,
+            "entries": [entry.to_json() for entry in self.entries],
+        }
+
+    @classmethod
+    def from_document(cls, data: Mapping[str, JSONValue], blob: str) -> AdmissionState:
+        generation = data.get("generation")
+        if not isinstance(generation, int) or isinstance(generation, bool):
+            raise ValidationError("admission index generation must be an integer", kind="contract")
+        raw = data.get("entries")
+        if not isinstance(raw, list):
+            raise ValidationError("admission index entries must be an array", kind="contract")
+        parent = data.get("parent")
+        return cls(
+            generation=generation,
+            entries=tuple(
+                ImportAdmission.from_json(cast("Mapping[str, JSONValue]", item))
+                for item in cast("list[JSONValue]", raw)
+                if isinstance(item, dict)
+            ),
+            blob=blob,
+            parent=parent if isinstance(parent, str) else None,
+        )
+
+
+_EMPTY_ADMISSIONS: Final[AdmissionState] = AdmissionState(
+    generation=0, entries=(), blob=None, parent=None
+)
+
+
+class AdmissionIndex:
+    """What ``heph import add`` declared, kept as an immutable generation chain.
+
+    The same generation-under-lock shape
+    :class:`hephaestus.core.project_store.references.ReferenceRegistry` uses, and
+    for the same reason: an admission is an operator claim that later work is
+    checked against, so it needs a parent chain rather than a mutable file. It
+    is deliberately *not* the projection's ``import_state`` — that records the
+    live bytes of every file under ``imports/`` and is what makes an importer
+    stale; this records what an operator said those bytes *are*.
+    """
+
+    def __init__(self, layout: ProjectLayout, store: OpStore) -> None:
+        self.layout = layout
+        self._store = store
+
+    def state(self) -> AdmissionState:
+        """The current generation (empty generation 0 when nothing was recorded)."""
+        blob = self._store.blobs.read_pointer(ADMISSIONS_POINTER)
+        if blob is None:
+            return _EMPTY_ADMISSIONS
+        raw = json.loads(self._store.blobs.get(blob).decode("utf-8"))
+        if not isinstance(raw, dict):  # pragma: no cover - our own canonical JSON
+            raise ValidationError("admission index document is malformed", kind="contract")
+        return AdmissionState.from_document(cast("Mapping[str, JSONValue]", raw), blob)
+
+    def get(self, name: str) -> ImportAdmission | None:
+        """The recorded admission for ``name``, or ``None`` for a hand-copied file."""
+        return self.state().by_name.get(name)
+
+    def record(self, admission: ImportAdmission) -> AdmissionState:
+        """Publish one new generation carrying ``admission`` (upsert by name)."""
+        locks = LockManager(self._store)
+        with locks.holding(PROJECT_CONFIG_LOCK):
+            current = self.state()
+            kept = tuple(entry for entry in current.entries if entry.name != admission.name)
+            candidate = AdmissionState(
+                generation=current.generation + 1,
+                entries=tuple(sorted((*kept, admission), key=lambda item: item.name)),
+                blob=None,
+                parent=current.blob,
+            )
+            new_blob = self._store.blobs.put(canonical_json(candidate.document()).encode("utf-8"))
+            self._store.gc.pin(new_blob)
+            self._store.blobs.cas_swap(ADMISSIONS_POINTER, current.blob, new_blob)
+            return replace(candidate, blob=new_blob)
+
+
+def _record(
+    name: str,
+    *,
+    kind: ImportKind,
+    digest: str,
+    units: str | None,
+    recorded: bool = True,
+) -> dict[str, JSONValue]:
+    """One ``heph import list`` row.
+
+    ``units`` is always present — ``null`` for a STEP (where the flag is
+    forbidden) and for a file hand-copied into ``imports/`` — and ``recorded``
+    says which of those two a ``null`` is: a listing that hides an
+    unrecorded file would be worse than one that admits it does not know.
+    """
+    return {
         "kind": kind,
         "name": name,
         "path": f"{IMPORTS_DIRNAME}/{name}",
+        "recorded": recorded,
         "sha256": digest,
+        "units": units,
     }
-    if units is not None:
-        out["units"] = units
-    return out
 
 
 def _copy_source(source: Path) -> bytes:
@@ -334,9 +493,34 @@ def _copy_source(source: Path) -> bytes:
     and the destination write plants a regular file, so ``imports/`` never
     gains an escape hatch.
     """
-    if not source.is_file():
-        raise _UsageError(f"no such file: {source}")
+    require_input_file(source, what="import source")
     return source.read_bytes()
+
+
+def _refuse_contradictory_readmission(
+    prior: ImportAdmission, *, digest: str, units: str | None
+) -> None:
+    """Re-admitting the same name with different bytes or a different unit refuses.
+
+    Identical bytes under an identical declaration is an idempotent success —
+    the copy helper is idempotent by rename, so re-running the command is a
+    legitimate no-op. Anything else silently rewrites geometry that earlier work
+    depends on, and (before the admission index existed) left nothing to audit
+    it against, so it is refused by name with ``--redeclare`` as the explicit
+    escape (ledger J-cli-robustness-9).
+    """
+    if prior.sha256 != digest:
+        raise ImportIngressError(
+            f"import {prior.name!r} was admitted as {prior.sha256} and these bytes are "
+            f"{digest}; pass --redeclare to replace it (importing parts go stale)",
+            reason="import_bytes_conflict",
+        )
+    if prior.units != units:
+        raise ImportIngressError(
+            f"import {prior.name!r} was admitted with units={prior.units!r} and this "
+            f"declares units={units!r}; pass --redeclare to replace the declaration",
+            reason="import_unit_conflict",
+        )
 
 
 def _cmd_add(args: argparse.Namespace) -> int:
@@ -347,10 +531,11 @@ def _cmd_add(args: argparse.Namespace) -> int:
     units = _require_units(kind, cast("str | None", args.units))
     part_name = cast("str | None", args.part)
     if part_name is not None and not _PART_NAME_RE.match(part_name):
-        raise _UsageError(f"invalid part name {part_name!r}")
+        raise CliUsageError(f"invalid part name {part_name!r}")
     script = None if part_name is None else seed_part_script(dest_name, kind=kind, units=units)
 
-    layout = load_project(find_project_root(Path.cwd()))
+    layout = load_project(project_root_or_refuse())
+    readmitted = False
     if part_name is not None and layout.part_path(part_name).is_file():
         payload = {"part": part_name, "status": "already_exists"}
         if bool(args.json):
@@ -362,8 +547,32 @@ def _cmd_add(args: argparse.Namespace) -> int:
             )
         return 1
 
-    write_import_copy(layout.imports_dir, dest_name, data)
     digest = sha256_bytes(data)
+    opstore_for_index = open_store(layout)
+    try:
+        index = AdmissionIndex(layout, opstore_for_index)
+        prior = index.get(dest_name)
+        redeclare = bool(args.redeclare)
+        if prior is not None and not redeclare:
+            _refuse_contradictory_readmission(prior, digest=digest, units=units)
+            # Nothing to conflict with means nothing changed: same bytes, same
+            # unit, same name.
+            readmitted = True
+        write_import_copy(layout.imports_dir, dest_name, data)
+        if not readmitted:
+            # An idempotent re-run advances no generation. The chain is the
+            # audit trail of what an operator *declared*, so a link that
+            # records "someone re-ran the same command" is noise in the one
+            # place a reader goes to ask when a unit last changed.
+            index.record(ImportAdmission(name=dest_name, kind=kind, sha256=digest, units=units))
+        if prior is not None and redeclare and prior.sha256 != digest:
+            # INGEST.md §1: a replaced imports/ file is a changed build input,
+            # so its importers go stale now rather than at the next build.
+            from hephaestus.core.project_store.publication import Publisher
+
+            Publisher(layout, opstore_for_index).sync_import_state()
+    finally:
+        opstore_for_index.close()
     record = _record(dest_name, kind=kind, digest=digest, units=units)
 
     if part_name is not None and script is not None:
@@ -393,7 +602,10 @@ def _cmd_add(args: argparse.Namespace) -> int:
         print(json.dumps(record, sort_keys=True))
     else:
         extra = "" if units is None else f", units={units}"
-        print(f"copied {dest_name} ({kind}{extra}) {digest} -> {IMPORTS_DIRNAME}/{dest_name}")
+        # An identical re-admission is a success, but saying "copied" about a
+        # no-op hides that the prior declaration is what still governs.
+        verb = "already admitted" if readmitted else "copied"
+        print(f"{verb} {dest_name} ({kind}{extra}) {digest} -> {IMPORTS_DIRNAME}/{dest_name}")
         if part_name is not None:
             print(f"created parts/{part_name}.py")
             if kind == "mesh":
@@ -406,35 +618,45 @@ def _cmd_add(args: argparse.Namespace) -> int:
 
 
 def _cmd_list(args: argparse.Namespace) -> int:
-    layout = load_project(find_project_root(Path.cwd()))
+    layout = load_project(project_root_or_refuse())
+    opstore = open_store(layout)
+    try:
+        admitted = AdmissionIndex(layout, opstore).state().by_name
+    finally:
+        opstore.close()
     records: list[dict[str, JSONValue]] = []
+    # The filesystem walk stays the source of truth for *what is there*; the
+    # index supplies what was *declared*. A file copied in by hand is still
+    # listed, with a null unit and recorded=false, rather than hidden.
     for name in _iter_import_relpaths(layout.imports_dir):
         try:
             kind = classify_import_name(name)
         except ImportIngressError:
             continue
         data = read_import(layout.imports_dir, name, max_bytes=max_bytes_for_kind(kind))
-        records.append(_record(name, kind=kind, digest=sha256_bytes(data), units=None))
+        digest = sha256_bytes(data)
+        prior = admitted.get(name)
+        records.append(
+            _record(
+                name,
+                kind=kind,
+                digest=digest,
+                units=None if prior is None or prior.sha256 != digest else prior.units,
+                recorded=prior is not None and prior.sha256 == digest,
+            )
+        )
     if bool(args.json):
-        print(json.dumps(records, sort_keys=True))
+        # One listing envelope, never a bare array (ledger J-cli-robustness-7).
+        print(json_listing("imports", records))
         return 0
     if not records:
         print("no imports")
         return 0
     for entry in records:
-        print(f"{entry['name']}\t{entry['kind']}\t{entry['sha256']}")
+        units = entry["units"]
+        suffix = "" if not isinstance(units, str) else f"\tunits={units}"
+        print(f"{entry['name']}\t{entry['kind']}\t{entry['sha256']}{suffix}")
     return 0
-
-
-def _guard(command: Callable[[argparse.Namespace], int]) -> Callable[[argparse.Namespace], int]:
-    def run(args: argparse.Namespace) -> int:
-        try:
-            return command(args)
-        except _UsageError as exc:
-            print(f"heph: {exc}", file=sys.stderr)
-            return 2
-
-    return run
 
 
 def add_subparsers(
@@ -470,9 +692,21 @@ def add_subparsers(
             "a point cloud is point_cloud_has_no_solid (no reconstruction)"
         ),
     )
-    add.add_argument("--json", action="store_true", help="emit {name, kind, sha256, path, units?}")
-    add.set_defaults(func=_guard(_cmd_add))
+    add.add_argument(
+        "--redeclare",
+        action="store_true",
+        help=(
+            "replace a prior admission of this name whose bytes or units differ "
+            "(importing parts go stale); without it a contradiction is refused"
+        ),
+    )
+    add.add_argument(
+        "--json",
+        action="store_true",
+        help="emit {name, kind, sha256, path, units, recorded}",
+    )
+    add.set_defaults(func=guard(_cmd_add))
 
     listing = verbs.add_parser("list", help="list admitted files under imports/")
     listing.add_argument("--json", action="store_true", help="emit JSON records")
-    listing.set_defaults(func=_guard(_cmd_list))
+    listing.set_defaults(func=guard(_cmd_list))

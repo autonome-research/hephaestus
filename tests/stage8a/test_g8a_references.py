@@ -227,7 +227,12 @@ def lint(project: Project, tmp_path: Path, request: str) -> tuple[int, list[dict
                 str(request_path),
             ]
         )
-    findings = cast("list[dict[str, Any]]", json.loads(out.getvalue()))
+    payload = cast("dict[str, Any]", json.loads(out.getvalue()))
+    # `lint --json` is one listing envelope, not a bare array (ledger
+    # J-cli-robustness-7). The envelope's `status` is the exit code said in the
+    # document, so every caller below gets that cross-check for free.
+    assert payload["status"] == ("ok" if code == 0 else "error"), payload
+    findings = cast("list[dict[str, Any]]", payload["findings"])
     return code, findings
 
 

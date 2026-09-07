@@ -43,11 +43,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections.abc import Callable, Sequence
-from pathlib import Path
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, cast
 
-from hephaestus.core.project_store.layout import find_project_root, load_project, open_store
+from hephaestus.core.cli_errors import CliUsageError, guard, project_root_or_refuse
+from hephaestus.core.project_store.layout import load_project, open_store
 
 if TYPE_CHECKING:  # the motion module binds the geometry kernel; verbs load it lazily
     from hephaestus.core.motion import MotionStatus, SweepResult
@@ -66,15 +66,11 @@ _COUPLING_HEADER = ("id", "child", "=", "provenance", "state", "detail")
 _SUCCESS_VERDICTS = frozenset({"holds_at_samples", "satisfied"})
 
 
-class _UsageError(Exception):
-    """CLI misuse: reported on stderr with exit code 2."""
-
-
 def _cmd_motion(args: argparse.Namespace) -> int:
     """Print the projected status and latest sweep results (no evaluation)."""
     from hephaestus.core.motion import MotionEvaluator, SweepEvaluator
 
-    root = find_project_root(Path.cwd())
+    root = project_root_or_refuse()
     layout = load_project(root)
     store = open_store(layout)
     try:
@@ -141,14 +137,14 @@ def _cmd_check(args: argparse.Namespace) -> int:
     from hephaestus.core.motion import MotionTimeout, check_motion_with_results
 
     ids = cast("Sequence[str]", args.ids) or None
-    root = find_project_root(Path.cwd())
+    root = project_root_or_refuse()
     layout = load_project(root)
     store = open_store(layout)
     try:
         try:
             status, results, partial = check_motion_with_results(layout, store, ids=ids)
         except AddressingError as exc:
-            raise _UsageError(
+            raise CliUsageError(
                 f"{exc.message} (declared: {', '.join(exc.candidates) or 'none'})"
             ) from exc
         except MotionTimeout as exc:
@@ -279,19 +275,6 @@ def _exit_code(status: MotionStatus | None, results: Sequence[SweepResult] | Non
     return 0
 
 
-def _guard(command: Callable[[argparse.Namespace], int]) -> Callable[[argparse.Namespace], int]:
-    """Report motion-verb misuse as exit 2 regardless of the entry point."""
-
-    def run(args: argparse.Namespace) -> int:
-        try:
-            return command(args)
-        except _UsageError as exc:
-            print(f"heph: {exc}", file=sys.stderr)
-            return 2
-
-    return run
-
-
 def add_subparsers(
     sub: argparse._SubParsersAction[argparse.ArgumentParser],  # pyright: ignore[reportPrivateUsage]
 ) -> None:
@@ -301,7 +284,7 @@ def add_subparsers(
         help="show declared motion checks, their latest sweep results, and couplings",
     )
     motion.add_argument("--json", action="store_true", help="emit the machine form")
-    motion.set_defaults(func=_guard(_cmd_motion))
+    motion.set_defaults(func=guard(_cmd_motion))
 
     verbs = motion.add_subparsers(dest="motion_command", required=False)
     check = verbs.add_parser(
@@ -314,4 +297,4 @@ def add_subparsers(
         help="evaluate only these motion checks (a named subset is not projected)",
     )
     check.add_argument("--json", action="store_true", help="emit the machine form")
-    check.set_defaults(func=_guard(_cmd_check))
+    check.set_defaults(func=guard(_cmd_check))

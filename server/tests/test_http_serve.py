@@ -482,11 +482,13 @@ def test_serve_project_is_expanded_and_handed_to_the_web_half(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """``~`` is expanded at the CLI boundary, where the string came from."""
-    from hephaestus.core.cli import build_parser
     from hephaestus.http import serve as serve_module
 
     monkeypatch.setenv("HOME", str(tmp_path))
     (tmp_path / "proj").mkdir()
+    # The resolve now happens eagerly, here, before `serve_web` is ever called
+    # (ledger J-cli-robustness-22) — the stub below no longer stands in for it.
+    (tmp_path / "proj" / "hephaestus.toml").write_text("", encoding="utf-8")
     seen: dict[str, object] = {}
 
     def _serve_web(*, web: str | None = None, root: Path | None = None) -> int:
@@ -495,8 +497,9 @@ def test_serve_project_is_expanded_and_handed_to_the_web_half(
         return 0
 
     monkeypatch.setattr(serve_module, "serve_web", _serve_web)
-    args = build_parser().parse_args(["serve", "--web", "--project", "~/proj"])
-    assert args.func(args) == 0
+    from hephaestus.core.cli import main
+
+    assert main(["serve", "--web", "--project", "~/proj"]) == 0
     assert seen["root"] == tmp_path / "proj"
 
 
@@ -510,7 +513,6 @@ def test_serve_project_that_is_not_a_directory_is_refused(
     ``hephaestus.toml`` used to resolve to that project and serve it — minting a
     token and a serve record under a root the operator never named.
     """
-    from hephaestus.core.cli import build_parser
     from hephaestus.http import serve as serve_module
 
     (tmp_path / "hephaestus.toml").write_text("", encoding="utf-8")
@@ -520,9 +522,10 @@ def test_serve_project_that_is_not_a_directory_is_refused(
 
     monkeypatch.setattr(serve_module, "serve_web", _unreachable)
 
+    from hephaestus.core.cli import main
+
     for target in (tmp_path / "typoo", tmp_path / "hephaestus.toml"):
-        args = build_parser().parse_args(["serve", "--web", "--project", str(target)])
-        assert args.func(args) == 2
+        assert main(["serve", "--web", "--project", str(target)]) == 2
         assert f"--project {target}: not a directory" in capsys.readouterr().err
 
 
@@ -530,9 +533,9 @@ def test_serve_project_that_is_a_directory_still_walks_up(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The guard refuses non-directories only; a real subdirectory still resolves."""
-    from hephaestus.core.cli import build_parser
     from hephaestus.http import serve as serve_module
 
+    (tmp_path / "hephaestus.toml").write_text("", encoding="utf-8")
     nested = tmp_path / "parts"
     nested.mkdir()
     seen: dict[str, object] = {}
@@ -542,9 +545,13 @@ def test_serve_project_that_is_a_directory_still_walks_up(
         return 0
 
     monkeypatch.setattr(serve_module, "serve_web", _serve_web)
-    args = build_parser().parse_args(["serve", "--web", "--project", str(nested)])
-    assert args.func(args) == 0
-    assert seen["root"] == nested
+    from hephaestus.core.cli import main
+
+    assert main(["serve", "--web", "--project", str(nested)]) == 0
+    # The resolve is eager now (J-cli-robustness-22): `serve_web` is handed the
+    # already-*resolved* project root, not the raw --project string, so a
+    # nested subdirectory walks up before it ever reaches here.
+    assert seen["root"] == tmp_path
 
 
 def test_serve_project_without_web_is_refused_by_name(

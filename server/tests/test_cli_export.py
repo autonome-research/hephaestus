@@ -212,21 +212,44 @@ def test_list_filters_by_part_and_says_so_in_the_document(
 def test_list_outside_a_project_refuses_by_name(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The engine CLI's own no-project refusal, unchanged.
+    """The shared "not a Hephaestus project" boundary (ledger J-cli-robustness-5).
 
-    ``find_project_root`` raises ``ValidationError``, which
-    ``hephaestus.core.cli.main`` reports as ``error (validation_error)`` and
-    exit **1** — the same answer ``heph assembly`` and ``heph joints`` give
-    outside a project. Pinned rather than "fixed": ``cli.py``'s module docstring
-    reads "2 usage (bad arguments, **no project**, unknown part)", so the
-    docstring and the behaviour disagree *for every verb in the CLI*, and
-    changing one verb's answer would make that inconsistency worse rather than
-    better. Reported in this item's notes for whoever owns that sentence.
+    ``project_root_or_refuse`` converts ``find_project_root``'s
+    ``ValidationError`` into the shared ``CliUsageError``, so this verb answers
+    exactly as ``heph assembly`` and ``heph joints`` do outside a project: exit
+    **2**, the bare ``heph: `` prefix — not the exit-1
+    ``error (validation_error):`` shape a bypassed ``find_project_root`` call
+    used to produce.
     """
     outside = tmp_path / "not-a-project"
     outside.mkdir()
-    assert _run(outside, monkeypatch, "export", "list") == 1
-    assert "no hephaestus.toml found" in capsys.readouterr().err
+    assert _run(outside, monkeypatch, "export", "list") == 2
+    err = capsys.readouterr().err
+    assert "no hephaestus.toml found" in err
+    assert "error (validation_error):" not in err
+
+
+def test_list_of_an_unknown_part_refuses_with_candidates(
+    exported: Exported, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A part filter matching nothing is a typo, not a clean "no exports
+    recorded" answer (ledger J-cli-robustness-11): it must be validated
+    against the project's parts before filtering, with the same wording and
+    candidates ``heph part show nosuch`` already gives."""
+    code = _run(exported.root, monkeypatch, "export", "list", "nosuchpart")
+    err = capsys.readouterr().err
+    assert code == 2, err
+    assert "does not exist" in err
+    assert "bracket" in err  # the candidate list
+
+
+def test_list_of_a_real_part_with_no_exports_still_says_so(
+    exported: Exported, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The guard against over-correcting J-cli-robustness-11: a real part with
+    genuinely no exports keeps its own, unchanged, message."""
+    assert _run(exported.root, monkeypatch, "export", "list", "bracket") == 0
+    assert "no exports recorded" in capsys.readouterr().out
 
 
 # ==========================================================================
@@ -345,8 +368,14 @@ def test_unpin_refuses_a_blob_no_committed_export_names(
 def test_unpin_refuses_a_string_that_is_not_a_blob(
     exported: Exported, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """The digest grammar is now the one shared validator (ledger
+    J-cli-robustness-16 folds this hand-rolled check into
+    ``parse_content_hash``, so a malformed value reads the same way whatever
+    verb rejected it) rather than this verb's own wording."""
     assert _run(exported.root, monkeypatch, "export", "unpin", "widget-1.step") == 2
-    assert "is not an export blob" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "sha256:<64 hex>" in err
+    assert "widget-1.step" in err
 
 
 # ==========================================================================

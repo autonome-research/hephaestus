@@ -82,11 +82,72 @@ def test_add_honours_an_explicit_name(
     assert (root / "references" / "sheet1.png").is_file()
 
 
+def test_add_honours_an_extensionless_name_classified_from_the_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``--name`` may be any plain filename; the *source* file's extension
+    decides the kind and mime type (ledger J-cli-robustness-1). Before the
+    fix, ``classify(name)`` ran on the operator-chosen name — the documented
+    ``--name bearing-datasheet`` form (no extension) was refused
+    ``unsupported extension ''``."""
+    root = project(tmp_path / "proj")
+    source = tmp_path / "note.txt"
+    source.write_text("Bore diameter 6.0\n", encoding="utf-8")
+
+    assert (
+        run(
+            root,
+            monkeypatch,
+            "reference",
+            "add",
+            str(source),
+            "--name",
+            "bearing-datasheet",
+            "--json",
+        )
+        == 0
+    )
+    reported = cast("dict[str, Any]", json.loads(capsys.readouterr().out))
+    assert reported["name"] == "bearing-datasheet"
+    assert reported["kind"] == "document"
+    assert reported["mime_type"] == "text/plain"
+    assert [e["name"] for e in entries(root)] == ["bearing-datasheet"]
+
+
+def test_add_still_refuses_an_unsupported_source_extension_under_any_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The guard against over-correcting J-cli-robustness-1: classification
+    moved to the source file, so an unsupported *source* extension is still
+    refused whatever ``--name`` says — ``--name`` cannot launder a STEP file
+    into a reference by renaming it to something with no extension."""
+    root = project(tmp_path / "proj")
+    source = tmp_path / "model.step"
+    source.write_text("ISO-10303-21;\n", encoding="utf-8")
+
+    assert run(root, monkeypatch, "reference", "add", str(source), "--name", "renamed-doc") == 1
+
+
 def test_add_refuses_a_missing_file_as_usage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = project(tmp_path / "proj")
     assert run(root, monkeypatch, "reference", "add", str(tmp_path / "nope.md")) == 2
+
+
+def test_add_refuses_a_directory_as_a_directory_not_no_such_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``heph reference add <dir>`` must not assert that the directory does
+    not exist — one of the six sites ``require_input_file`` unifies
+    (ledger J-cli-robustness-12)."""
+    root = project(tmp_path / "proj")
+    a_dir = tmp_path / "adir"
+    a_dir.mkdir()
+    assert run(root, monkeypatch, "reference", "add", str(a_dir)) == 2
+    err = capsys.readouterr().err
+    assert "is a directory" in err
+    assert "no such" not in err
 
 
 def test_add_refuses_an_unsupported_format(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -109,7 +170,10 @@ def test_list_reports_registered_references(
 
     assert run(root, monkeypatch, "reference", "list", "--json") == 0
 
-    listed = cast("list[dict[str, Any]]", json.loads(capsys.readouterr().out))
+    # One listing envelope, never a bare array (ledger J-cli-robustness-7).
+    document = cast("dict[str, Any]", json.loads(capsys.readouterr().out))
+    assert document["status"] == "ok"
+    listed = cast("list[dict[str, Any]]", document["references"])
     assert [e["name"] for e in listed] == ["a.md", "b.png"]
     assert [e["kind"] for e in listed] == ["document", "image"]
 

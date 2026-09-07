@@ -34,9 +34,19 @@ pytest_plugins = ["test_e2e_fake_model"]
 
 
 def test_agent_verb_is_registered_on_the_engine_cli() -> None:
+    """``args.func`` is now ``cli_errors.guard(_cmd_agent)``, not the bare
+    handler (ledger J-cli-robustness-20 / -22: the module ``main()`` and every
+    entry point must map the shared taxonomy, so the verb group's own
+    ``add_subparsers`` wraps it at registration rather than leaving it to each
+    caller). Unwrap the closure rather than asserting an identity the fix
+    deliberately changed.
+    """
+    import inspect
+
     parser = build_parser()
     args = parser.parse_args(["agent", "--project", "/tmp/x", "--session", "s1", "--resume"])
-    assert args.func is agent_cli._cmd_agent  # pyright: ignore[reportPrivateUsage]
+    wrapped = inspect.getclosurevars(args.func).nonlocals.get("command")
+    assert wrapped is agent_cli._cmd_agent  # pyright: ignore[reportPrivateUsage]
     assert args.project == "/tmp/x"
     assert args.session == "s1"
     assert args.resume is True
@@ -89,6 +99,66 @@ def test_agent_project_that_is_a_directory_still_walks_up(
     assert args.func(args) == 1
     assert seen["root"] == tmp_path
     assert "not a directory" not in capsys.readouterr().err
+
+
+def test_agent_and_serve_web_agree_on_a_project_that_does_not_exist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``heph agent --project`` and ``heph serve --web --project`` must answer a
+    non-project directory identically: same exit code, same message shape
+    (ledger J-cli-robustness-22). Before the fix ``heph agent`` refused exit 2
+    through a broad ``except Exception`` and ``heph serve --web`` deferred the
+    resolve into ``serve_web`` and surfaced ``ValidationError`` as exit 1 with
+    the ``error (validation_error):`` prefix — two comments each claiming
+    parity with the other, and no test that ran both.
+    """
+    outside = tmp_path / "not-a-project"
+    outside.mkdir()
+
+    def _must_not_run(*args: object, **kwargs: object) -> int:  # pragma: no cover - guard
+        raise AssertionError("serve_web must not run once the project is refused")
+
+    monkeypatch.setattr("hephaestus.http.serve.serve_web", _must_not_run)
+
+    from hephaestus.core.cli import main
+
+    agent_code = main(["agent", "--project", str(outside), "--session", "s1"])
+    agent_err = capsys.readouterr().err
+
+    serve_code = main(["serve", "--web", "--project", str(outside)])
+    serve_err = capsys.readouterr().err
+
+    assert agent_code == serve_code == 2, (agent_code, serve_code)
+    assert "no hephaestus.toml found at or above" in agent_err
+    assert "no hephaestus.toml found at or above" in serve_err
+    assert "error (validation_error):" not in agent_err
+    assert "error (validation_error):" not in serve_err
+
+
+def test_agent_and_serve_web_agree_on_a_project_that_is_not_a_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Same parity claim, for the not-a-directory precheck the two verbs
+    already agreed on before this fix — locking in that it still holds."""
+    (tmp_path / "hephaestus.toml").write_text("", encoding="utf-8")
+    stray = tmp_path / "typoo"
+
+    def _must_not_run(*args: object, **kwargs: object) -> int:  # pragma: no cover - guard
+        raise AssertionError("serve_web must not run once --project is refused")
+
+    monkeypatch.setattr("hephaestus.http.serve.serve_web", _must_not_run)
+
+    from hephaestus.core.cli import main
+
+    agent_code = main(["agent", "--project", str(stray), "--session", "s1"])
+    agent_err = capsys.readouterr().err
+
+    serve_code = main(["serve", "--web", "--project", str(stray)])
+    serve_err = capsys.readouterr().err
+
+    assert agent_code == serve_code == 2, (agent_code, serve_code)
+    assert f"--project {stray}: not a directory" in agent_err
+    assert f"--project {stray}: not a directory" in serve_err
 
 
 # --------------------------------------------------------------------------
