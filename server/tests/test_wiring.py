@@ -30,6 +30,7 @@ subclass:
 
 from __future__ import annotations
 
+import importlib
 import json
 from pathlib import Path
 from typing import Any, cast
@@ -40,6 +41,7 @@ from hephaestus.agent_bridge.cad_ops import CadOps
 from hephaestus.agent_bridge.dispatch import DispatchError, ToolDispatcher
 from hephaestus.agent_bridge.session_edges import SessionEdgeStore
 from hephaestus.agent_bridge.wiring import build_dispatcher
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.core.project_store.layout import load_project, open_store
 from hephaestus.core.project_store.store import ProjectStore
 from hephaestus.core.registry import RegistryPin, merkle_digest, write_pins
@@ -81,7 +83,7 @@ def _wired(tmp_path: Path, *, seed_ledger: bool = True) -> tuple[ToolDispatcher,
     scaffold(root)
     layout = load_project(root)
     store = open_store(layout)
-    cad = CadOps(layout, store)
+    cad = CadOps(layout, store, backend=UnsafeLocalBackend())
     if seed_ledger:
         seed_minimal_ledger(cad)
     dispatcher = build_dispatcher(
@@ -219,7 +221,7 @@ def test_build_dispatcher_degrades_to_no_registry_on_a_tampered_pin(tmp_path: Pa
     layout = load_project(root)
     store = open_store(layout)
     try:
-        cad = CadOps(layout, store)
+        cad = CadOps(layout, store, backend=UnsafeLocalBackend())
         seed_minimal_ledger(cad)
         dispatcher = build_dispatcher(
             layout,
@@ -294,3 +296,152 @@ def test_the_shipped_construction_never_runs_a_generator_unsandboxed(tmp_path: P
         assert ei.value.reason == "capability_not_available"
     finally:
         project.close()
+
+
+# -- ProjectDelegationGate (J-agent-wiring-6) -------------------------------
+#
+# ``PartExistsGate`` closed the ``invalid_part`` clause (B-2); it left three
+# more of the delegation protocol's declared reasons unreachable —
+# ``part_busy``, ``session_busy`` and self-delegation's ``scope_denied`` — and
+# left a permissive default (``_AllowAllGate``) reachable from any code that
+# constructs a ``DelegationService`` without wiring a gate at all. These pin
+# the richer gate directly, and the still-open mandatory-gate half of the fix.
+
+
+class _FakeLiveRuns:
+    """A minimal ``wiring.LiveRunView`` double: no store, no sidecar."""
+
+    def __init__(self, *, owners: dict[str, str], live: frozenset[str]) -> None:
+        self._owners = owners
+        self._live = live
+
+    def session_for_run(self, run_id: str) -> str | None:
+        return self._owners.get(run_id)
+
+    def live_sessions(self) -> frozenset[str]:
+        return self._live
+
+
+def test_project_delegation_gate_refuses_a_missing_part_an_illegal_identifier_and_traversal(
+    tmp_path: Path,
+) -> None:
+    """The three ``invalid_part`` shapes the gate's docstring claims: absent,
+    illegal (traversal), and — the case ``PartExistsGate`` alone pinned —
+    simply not in the project's parts listing. An existing part is accepted
+    (returns no rejection)."""
+    from hephaestus.agent_bridge.delegation import Delivery, RejectionReason
+    from hephaestus.agent_bridge.wiring import ProjectDelegationGate
+
+    dispatcher, store = _wired(tmp_path)
+    try:
+        project_store = dispatcher._store  # pyright: ignore[reportPrivateUsage]
+        gate = ProjectDelegationGate(project_store)
+        for bogus in ("does_not_exist", "../../../etc/passwd", "", "..", "/etc/passwd"):
+            assert gate.classify("run-1", bogus, Delivery.PROMPT) == RejectionReason.INVALID_PART, (
+                bogus
+            )
+        assert gate.classify("run-1", "widget", Delivery.PROMPT) is None
+    finally:
+        store.close()
+
+
+def test_project_delegation_gate_refuses_a_part_whose_own_session_has_a_live_turn(
+    tmp_path: Path,
+) -> None:
+    """``part_busy``: the target part's own session already has a turn in
+    flight. Delegating anyway would put two interleaved turns on one
+    transcript — exactly what the per-session admission guard exists to
+    prevent, only *after* a child run had already been minted."""
+    from hephaestus.agent_bridge.delegation import Delivery, RejectionReason
+    from hephaestus.agent_bridge.wiring import ProjectDelegationGate, part_session_id
+
+    dispatcher, store = _wired(tmp_path)
+    try:
+        project_store = dispatcher._store  # pyright: ignore[reportPrivateUsage]
+        live = _FakeLiveRuns(owners={}, live=frozenset({part_session_id("widget")}))
+        gate = ProjectDelegationGate(project_store, live=live)
+        assert gate.classify("run-orch", "widget", Delivery.PROMPT) == RejectionReason.PART_BUSY
+    finally:
+        store.close()
+
+
+def test_project_delegation_gate_refuses_self_delegation(tmp_path: Path) -> None:
+    """``scope_denied``: the parent run is already running on the very session
+    this delegation would prompt — delegating to yourself."""
+    from hephaestus.agent_bridge.delegation import Delivery, RejectionReason
+    from hephaestus.agent_bridge.wiring import ProjectDelegationGate, part_session_id
+
+    dispatcher, store = _wired(tmp_path)
+    try:
+        project_store = dispatcher._store  # pyright: ignore[reportPrivateUsage]
+        live = _FakeLiveRuns(
+            owners={"run-self": part_session_id("widget")},
+            live=frozenset({part_session_id("widget")}),
+        )
+        gate = ProjectDelegationGate(project_store, live=live)
+        assert gate.classify("run-self", "widget", Delivery.PROMPT) == RejectionReason.SCOPE_DENIED
+    finally:
+        store.close()
+
+
+def test_project_delegation_gate_with_no_live_view_only_checks_existence(tmp_path: Path) -> None:
+    """``live=None`` (the no-sidecar runtimes: ``heph mcp``, the CLI) keeps the
+    part-existence check alone rather than claiming knowledge of live turns it
+    does not have — it must never refuse an existing part as busy by guessing."""
+    from hephaestus.agent_bridge.delegation import Delivery
+    from hephaestus.agent_bridge.wiring import ProjectDelegationGate
+
+    dispatcher, store = _wired(tmp_path)
+    try:
+        project_store = dispatcher._store  # pyright: ignore[reportPrivateUsage]
+        gate = ProjectDelegationGate(project_store, live=None)
+        assert gate.classify("run-1", "widget", Delivery.PROMPT) is None
+    finally:
+        store.close()
+
+
+def test_a_delegation_service_constructed_with_no_gate_is_a_type_error(tmp_path: Path) -> None:
+    """The other half of J-agent-wiring-6's fix: the permissive default must be
+    unreachable from production code, not merely unused by it.
+    ``build_dispatcher`` always passed a real gate, but nothing stopped a FUTURE
+    call site from constructing ``DelegationService`` bare and silently
+    admitting every delegation — so the fix removes the default and moves the
+    allow-everything gate into the testing package
+    (``hephaestus.testing.delegation_gates.AllowAllGate``), catching the class
+    of bug rather than only this one instance of it.
+
+    Two assertions, because either alone is weak. The ``TypeError`` is the
+    runtime half; ``# type: ignore[call-arg]`` is the STATIC half — pyright runs
+    in strict mode over ``server/`` and reports an unnecessary suppression, so
+    if ``gate`` ever regains a default this line stops being ignorable and the
+    type-check lane fails too. The second assertion pins the relocation: the
+    permissive gate must not be importable from the production module, which is
+    what "unavailable in production" actually means.
+
+    Building the opstore the way ``server/tests/conftest.py``'s own ``store``
+    fixture does, inline, so this file adds no new fixture dependency.
+    """
+    from hephaestus.agent_bridge.admission import bridge_store_config
+    from hephaestus.agent_bridge.delegation import DelegationService, Delivery
+
+    from opstore import OpStore
+
+    store = OpStore.create(tmp_path / "gate-heph", bridge_store_config())
+    try:
+        with pytest.raises(TypeError):
+            DelegationService(store.admission, store.db)  # type: ignore[call-arg]
+    finally:
+        store.close()
+
+    delegation_module = importlib.import_module("hephaestus.agent_bridge.delegation")
+    permissive = [
+        name for name in dir(delegation_module) if "allowall" in name.lower().replace("_", "")
+    ]
+    assert permissive == [], (
+        "the permissive delegation gate is still defined in the production "
+        f"module (found {permissive}); J-agent-wiring-6 moves it to "
+        "hephaestus.testing.delegation_gates so production cannot reach it"
+    )
+    from hephaestus.testing.delegation_gates import AllowAllGate
+
+    assert AllowAllGate().classify("run-1", "widget", Delivery.PROMPT) is None

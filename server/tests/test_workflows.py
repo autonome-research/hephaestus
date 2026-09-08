@@ -77,6 +77,7 @@ from hephaestus.testing.workflow_harness import (
     SHELF_INTERFERING_SRC,
     RunnerHarness,
     Wiring,
+    assert_slots_drain_to,
     completing_prompter,
     request_for,
     scaffold_workflow_project,
@@ -565,14 +566,22 @@ def test_workflow_runs_to_a_durable_terminal_and_replays_after_both_processes_di
         # Delegation went out over py.delegate — never the model-visible tool.
         assert harness.bridge.methods.count("py.delegate") == 2
         assert "py.tool_dispatch" in harness.bridge.methods
-        assert harness.bridge.branch_runs == [
-            f"{run.run_id}:bracket:0",
-            f"{run.run_id}:shelf:0",
-        ]
+        # Sorted: the two round-0 branches fan out CONCURRENTLY (and, since
+        # `py.*` dispatch moved onto a bounded worker pool, genuinely reach the
+        # bridge in either order), so an ordered comparison asserts a
+        # serialization the runner does not promise. What is being pinned is
+        # "one branch run per part, both in round 0" (J-mirrors-and-dx-24).
+        assert sorted(harness.bridge.branch_runs) == sorted(
+            [f"{run.run_id}:bracket:0", f"{run.run_id}:shelf:0"]
+        )
         # One durable, acknowledged bridge terminal; every slot released.
         terminal = harness.wiring.admission.get_terminal(run.run_id)
         assert terminal is not None and terminal.state is TerminalState.COMPLETED
-        assert harness.wiring.admission.active_count() == 0
+        assert_slots_drain_to(
+            harness.wiring.admission,
+            0,
+            label="the workflow's own terminal must release every branch slot",
+        )
         # Every phase checkpointed with the workflow version + input/output hashes.
         checkpoints = harness.service.checkpoints(run.job_id)
         assert {record.checkpoint_key for record in checkpoints} == {
@@ -976,11 +985,14 @@ def test_g2_capped_two_part_cross_check_repair_workflow(g2: G2Harness) -> None:
 
     # -- delegation went through Python, never the model-visible tool --------
     assert g2.bridge.methods.count("py.delegate") == 3  # bracket, shelf, shelf-repair
-    assert g2.bridge.branch_runs == [
-        f"{run.run_id}:bracket:0",
-        f"{run.run_id}:shelf:0",
-        f"{run.run_id}:shelf:1",
-    ]
+    # The ROUND ORDER is a real sequencing clause (round 1 cannot start before
+    # round 0 finishes) and stays ordered; the two round-0 branches fan out
+    # concurrently and their relative order is not promised, so they are
+    # compared as a set (J-mirrors-and-dx-24).
+    assert sorted(g2.bridge.branch_runs[:2]) == sorted(
+        [f"{run.run_id}:bracket:0", f"{run.run_id}:shelf:0"]
+    )
+    assert g2.bridge.branch_runs[2:] == [f"{run.run_id}:shelf:1"]
     assert not any("delegate_part_agent" in text for _part, text in g2.agents.prompted)
 
     # -- fan-out never exceeded the live admission capacity ------------------
@@ -995,7 +1007,11 @@ def test_g2_capped_two_part_cross_check_repair_workflow(g2: G2Harness) -> None:
     # -- one durable acknowledged terminal; every slot released --------------
     terminal = g2.wiring.admission.get_terminal(run.run_id)
     assert terminal is not None and terminal.state is TerminalState.COMPLETED
-    assert g2.wiring.admission.active_count() == 0
+    assert_slots_drain_to(
+        g2.wiring.admission,
+        0,
+        label="the two-part cross-check run must release every branch slot",
+    )
 
     # -- the orchestration history is durable and ordered --------------------
     replay = g2.service.replay(run.job_id)

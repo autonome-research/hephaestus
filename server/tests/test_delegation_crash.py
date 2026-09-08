@@ -10,6 +10,7 @@ from pathlib import Path
 
 from hephaestus.agent_bridge.admission import bridge_store_config
 from hephaestus.agent_bridge.delegation import DelegationPhase, DelegationService
+from hephaestus.testing.delegation_gates import AllowAllGate
 from opstore.types import CRASH_EXIT_CODE, TerminalState
 
 from opstore import OpStore
@@ -41,7 +42,7 @@ def test_crash_after_terminal_insert_one_terminal(tmp_path: Path) -> None:
     child_run_id = _ref("cr-")
     store = OpStore.open(root, bridge_store_config())
     try:
-        svc = DelegationService(store.admission, store.db)
+        svc = DelegationService(store.admission, store.db, gate=AllowAllGate())
         row = svc.get(delegation_ref)
         assert row.phase is DelegationPhase.TERMINAL
         assert row.terminal_state is TerminalState.COMPLETED

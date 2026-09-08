@@ -708,10 +708,36 @@ export function pageHistory(
   }
 
   const hwIndex = entries.findIndex((e) => e.id === hw);
-  // If the high-water entry is gone (should not happen for append-only logs),
-  // fall back to the full frozen set we do have.
-  const frozen = hwIndex >= 0 ? entries.slice(0, hwIndex + 1) : entries.slice();
+  // audit-2026-09-04 J-http-envelope-9. This used to widen the frozen snapshot
+  // to the WHOLE log whenever the mark named no entry — "should not happen for
+  // append-only logs" — and a slice past the end then produced an empty page
+  // with `done: true`: two lenient fallbacks composing into a confident wrong
+  // answer. A client walking a 250-event session with a nonsense cursor was
+  // handed exactly the shape a genuinely exhausted, quiet session returns, and
+  // rendered an empty transcript as complete.
+  //
+  // A mark that names no entry in a NON-EMPTY log is a client error, refused
+  // through the same `invalid_cursor` path a token that fails to decode takes
+  // — the two are the same class of mistake and took opposite paths only
+  // because one kind of nonsense parsed. The empty-mark case is NOT this: the
+  // sidecar mints `hw: ""` for a session with no history, and the empty-log
+  // short-circuit above has already answered it.
+  if (hwIndex < 0) {
+    throw new MalformedCursorError(`history cursor names no entry: ${hw}`);
+  }
+  const frozen = entries.slice(0, hwIndex + 1);
   const { events: all, prompts } = walkEntries(frozen, runId);
+
+  // The other half of the same distinction, and the whole of the care required.
+  // An offset EQUAL to the snapshot's length is the legitimate "you are caught
+  // up" case §2.8(5) is about, and must stay a plain page with `done: true` —
+  // refusing it would break every polling client. An offset STRICTLY beyond it
+  // names a position the snapshot never had.
+  if (offset > all.length) {
+    throw new MalformedCursorError(
+      `history cursor offset ${offset} lies beyond the snapshot it names (${all.length} events)`,
+    );
+  }
 
   const page = all.slice(offset, offset + pageSize);
   const nextOffset = offset + page.length;

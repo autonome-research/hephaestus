@@ -1,4 +1,9 @@
 {
+  // The BUILD configuration: `rootDir: "src"` + `outDir: "dist"` is what makes
+  // the package's `exports` entry `./dist/main.js` resolve. The CHECK runs from
+  // `tsconfig.check.json`, which extends this one and adds `test/**` with
+  // emission off (J-mirrors-and-dx-28) — so the two never disagree about
+  // strictness and the build output is untouched by the wider check.
   "compilerOptions": {
     "target": "ES2022",
     "module": "NodeNext",
@@ -19,5 +24,8 @@
     "skipLibCheck": true
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["dist", "node_modules", "test"]
+  // No `"test"` here: the include above already admits `src/**` only, so
+  // excluding the tests was redundant — and, read alongside the check
+  // configuration, it now reads as a claim that the tests are unchecked.
+  "exclude": ["dist", "node_modules"]
 }

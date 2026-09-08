@@ -53,12 +53,17 @@ async function makeFixture(
   const model = runtime.getModel(fake.providerId, fake.modelId);
   if (!model) throw new Error("fake model did not resolve");
   const probe: ToolProbe = { count: 0 };
+  const settings = opts.settings;
   const service = new SessionService({
     runtime,
     agentDir,
     model,
     customTools: [makeInspectTool(probe)],
-    settings: opts.settings ? () => opts.settings!() : undefined,
+    // Spread rather than `settings: … : undefined`: `SessionServiceDeps.settings`
+    // is optional under `exactOptionalPropertyTypes`, so "absent" and "present
+    // and undefined" are different types, and only the first is what a fixture
+    // with no settings factory means.
+    ...(settings === undefined ? {} : { settings: () => settings() }),
   });
   const cleanup = async (): Promise<void> => {
     await service.disposeAll();

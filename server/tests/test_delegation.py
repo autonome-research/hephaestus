@@ -18,6 +18,7 @@ from hephaestus.agent_bridge.delegation import (
     Rejected,
     RejectionReason,
 )
+from hephaestus.testing.delegation_gates import AllowAllGate
 from hephaestus.testing.doubles import FakeClock, FakeLiveness, owner
 from opstore.types import TerminalState
 
@@ -35,7 +36,15 @@ class RejectGate:
 
 
 def _svc(store: OpStore, clock: FakeClock, gate: DelegationGate | None = None) -> DelegationService:
-    return DelegationService(store.admission, store.db, gate=gate, clock=clock)
+    # `AllowAllGate` explicitly, not by default: `DelegationService.gate` is a
+    # required argument (J-agent-wiring-6), so a suite whose subject is the
+    # state machine rather than the policy says so here, once.
+    return DelegationService(
+        store.admission,
+        store.db,
+        gate=AllowAllGate() if gate is None else gate,
+        clock=clock,
+    )
 
 
 def _ref(out: DelegationRow | Rejected) -> str:

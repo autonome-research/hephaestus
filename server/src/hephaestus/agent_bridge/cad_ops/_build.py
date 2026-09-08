@@ -37,7 +37,7 @@ from opstore.types import JSONValue
 
 from opstore import LeaseHeldError
 
-from ..limits import MAX_IMAGES_PER_RESULT, parse_image_header
+from ..limits import MAX_IMAGES_PER_RESULT, LimitError, enforce_binary_budget, parse_image_header
 from ._base import CadOpError, CadOpsState, json_map
 from ._critique import (
     critique_block,
@@ -378,6 +378,13 @@ class BuildOps(CadOpsState):
                 f"{len(result.images)} images exceeds the per-result budget "
                 f"{MAX_IMAGES_PER_RESULT}",
             )
+        # The per-result AGGREGATE (J-http-limits-9): four per-image checks are
+        # not one aggregate check, and a limit enforced on one side of the
+        # bridge only is not enforced. The sidecar mirrors this on receipt.
+        try:
+            enforce_binary_budget(sum(len(image.png) for image in result.images), field="images")
+        except LimitError as exc:
+            raise CadOpError(exc.code, exc.message) from exc
         images: list[dict[str, Any]] = []
         for image in result.images:
             # Bounded header parse BEFORE anything decodes the payload (§5).

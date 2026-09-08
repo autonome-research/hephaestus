@@ -202,9 +202,19 @@ def test_bridge_bounds_progress_flood_coalesces_and_never_drops_durable_events(
     critical = int(result["critical"])
     assert progress > BUFFERED_EVENTS_MAX, "the flood must exceed the buffered-event bound"
 
+    # The positive edge, not a sleep (J-mirrors-and-dx-24). "No overflow" is a
+    # negative, and the fixed 0.2 s wait that used to stand behind it was only
+    # as strong as the wait: on a loaded runner a late delta could arrive after
+    # the sample and overflow unobserved. The real edge is already available and
+    # is exact — `_g2b_peer.py` writes every event line and THEN the response
+    # line on one lock-held stream, and `Supervisor._read_loop` dispatches
+    # notifications inline, in order, ahead of resolving the response — so
+    # `bridge.call` having returned means every event of this flood is already
+    # through the pump. Nothing can straggle; there is nothing left to wait for.
+    # `wait_for` stays as the guard on exactly that reasoning: if the ordering
+    # ever stops holding it fails by name here instead of silently weakening the
+    # assertion below.
     wait_for(lambda: queue.size >= critical, what="every critical event to arrive")
-    # Give any straggling progress deltas a moment; they must not overflow.
-    time.sleep(0.2)
 
     assert queue.overflowed is False, "coalescing must absorb a progress flood"
     drained = queue.drain()

@@ -7,7 +7,7 @@
 // `hv` fails closed. Per-request timeouts and a bounded pending map (64) guard
 // the client side.
 
-import { WIRE_FRAME_VERSION, MAX_PENDING_RPC } from "./limits.js";
+import { WIRE_FRAME_VERSION, MAX_PENDING_RPC, TOOL_TIMEOUT_MS } from "./limits.js";
 import type { JsonValue } from "./framing.js";
 
 export const FRAME_VERSION = WIRE_FRAME_VERSION;
@@ -112,7 +112,14 @@ export class RpcPeer {
     options: RpcOptions = {},
   ) {
     this.maxPending = options.maxPending ?? MAX_PENDING_RPC;
-    this.defaultTimeoutMs = options.defaultTimeoutMs ?? 120_000;
+    // The shared limits document, not a literal (audit-2026-09-04
+    // J-http-limits-11). This was `120_000` — the same number `tool_seconds`
+    // holds, related to it only by coincidence — and because the one production
+    // peer is constructed with no options it was the effective deadline for
+    // EVERY call: a CAD build that legitimately takes four minutes died here at
+    // two, and a ten-minute delegation was rejected long before the child's own
+    // deadline. The document's preamble forbids exactly this duplication.
+    this.defaultTimeoutMs = options.defaultTimeoutMs ?? TOOL_TIMEOUT_MS;
   }
 
   /** Register a handler for an incoming request method (server role). */

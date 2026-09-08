@@ -22,10 +22,13 @@
 // through runtime.configure.
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { resolve } from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import { FrameDecoder, encodeFrame, FrameTooLargeError } from "./framing.js";
 import type { JsonValue } from "./framing.js";
 import { RpcPeer, RpcError, ErrorCode, FRAME_VERSION } from "./rpc.js";
+import type { NotificationHandler, RequestHandler } from "./rpc.js";
 import type { ModelRuntime, SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
   createModelRuntime,
@@ -70,9 +73,54 @@ function log(message: string): void {
   process.stderr.write(`[heph-sidecar] ${message}\n`);
 }
 
-const peer = new RpcPeer((frame) => {
-  process.stdout.write(encodeFrame(frame));
-});
+// ── handler declaration, separated from process wiring ───────────────────────
+//
+// audit-2026-09-04 J-mirrors-and-dx-31. This module used to construct a peer
+// bound to standard output, register seventeen handlers as module-level side
+// effects, attach the stdin reader and log its own pid — so **importing it
+// started a process**. There was no seam at which a test could attach, which is
+// why the one test covering per-run context scoping had to compile the whole
+// source tree and spawn a child (J-mirrors-and-dx-20): the only test in the
+// sidecar suite that does either.
+//
+// Three boundaries replace that. `on`/`onNotify` below DECLARE a handler into a
+// table; `registerHandlers` BINDS the table to a peer; `main` does the process
+// wiring and runs only when this module is the process entry point. No handler
+// body changed. Importing this module now builds a table and starts nothing.
+const requestHandlers = new Map<string, RequestHandler>();
+const notificationHandlers = new Map<string, NotificationHandler>();
+
+function on(method: string, handler: RequestHandler): void {
+  if (requestHandlers.has(method)) throw new Error(`duplicate handler for ${method}`);
+  requestHandlers.set(method, handler);
+}
+
+function onNotify(method: string, handler: NotificationHandler): void {
+  if (notificationHandlers.has(method)) throw new Error(`duplicate notify handler for ${method}`);
+  notificationHandlers.set(method, handler);
+}
+
+//: The peer the registered handlers answer on, set by `registerHandlers`.
+let peer: RpcPeer | undefined;
+
+/**
+ * The bound peer, or a loud failure.
+ *
+ * A handler can only run because a peer routed a frame to it, so this is
+ * unreachable in practice; it is a named error rather than a `!` so a future
+ * caller that emits an event outside a registered runtime is told what it did.
+ */
+function activePeer(): RpcPeer {
+  if (peer === undefined) throw new Error("handlers are not registered on a peer");
+  return peer;
+}
+
+/** Bind every declared handler to `target` (the seam a test attaches to). */
+export function registerHandlers(target: RpcPeer): void {
+  peer = target;
+  for (const [method, handler] of requestHandlers) target.on(method, handler);
+  for (const [method, handler] of notificationHandlers) target.onNotify(method, handler);
+}
 
 // ── per-run tool-invocation context ──────────────────────────────────────────
 //
@@ -172,7 +220,7 @@ function currentRun(): ActiveContext {
 
 /** Emit one normalized event frame on the private bridge (stdout, never logs). */
 function emitEvent(ev: HephaestusEvent): void {
-  peer.notify("event", wireEvent(ev));
+  activePeer().notify("event", wireEvent(ev));
 }
 
 function resolveContext(toolCallId: string): ProxyContext {
@@ -231,8 +279,13 @@ function resolveContext(toolCallId: string): ProxyContext {
 // is already part of the question id, so one monotonic counter cannot collide
 // across concurrent runs, and a per-run counter would buy nothing.
 let questionOrdinal = 0;
-const proxy = new ToolProxy(async (method, params) => {
-  if (method !== "py.ask_user") return peer.request(method, params);
+const proxy = new ToolProxy(async (method, params, timeoutMs) => {
+  // `timeoutMs` is the proxy's per-call deadline CLASS (tools/proxy.ts
+  // `selectTimeout`): the CAD-build budget for a tool that runs the sandboxed
+  // worker, the child's deadline plus the grace for a synchronous delegation,
+  // the ordinary tool budget otherwise. Forwarded verbatim — this transport
+  // chooses nothing (audit-2026-09-04 J-http-limits-8/-11).
+  if (method !== "py.ask_user") return activePeer().request(method, params, timeoutMs);
   // THE BRACKET BELONGS TO THE RUN THAT ASKED — which, with turns overlapping,
   // is not "whichever run is current". `params.run_id` is the invoking run's id:
   // the proxy stamps it from the per-call context `resolveContext` handed that
@@ -261,8 +314,10 @@ const proxy = new ToolProxy(async (method, params) => {
     });
   }
   // No client-side timeout: the question stays open until the operator answers
-  // (Python owns the interaction deadline).
-  const answer = await peer.request(method, { ...params, question_id: questionId }, 0);
+  // (Python owns the interaction deadline). This is the third deadline class,
+  // and the proxy selects the same zero for `ask_user`; the literal is restated
+  // here because this call is issued by the bracket rather than by the proxy.
+  const answer = await activePeer().request(method, { ...params, question_id: questionId }, 0);
   if (active !== undefined) {
     emitEvent({
       runId,
@@ -381,7 +436,7 @@ function readRuntimeConfig(params: { [k: string]: JsonValue }): RuntimeConfig {
   return { ...base, runtimeKeys: keys };
 }
 
-peer.on("runtime.configure", async (params) => {
+on("runtime.configure", async (params) => {
   const config = readRuntimeConfig(params);
   const configured = await createModelRuntime(config, { agentDir });
   runtime = configured.runtime;
@@ -450,7 +505,7 @@ function credentialFailure(err: unknown, providerId: string): RpcError {
   });
 }
 
-peer.on("providers.list", () => {
+on("providers.list", () => {
   const rt = requireRuntime();
   return {
     catalog: rt.getProviders().map((provider) => ({
@@ -468,7 +523,7 @@ peer.on("providers.list", () => {
   };
 });
 
-peer.on("credentials.status", async (params) => {
+on("credentials.status", async (params) => {
   const rt = requireRuntime();
   const providerId = String(params.provider_id);
   // `getProviderAuthStatus` is the AUTHORITY for axis 1, and the distinction is
@@ -501,7 +556,7 @@ peer.on("credentials.status", async (params) => {
   };
 });
 
-peer.on("credentials.set_key", async (params) => {
+on("credentials.set_key", async (params) => {
   const rt = requireRuntime();
   const providerId = String(params.provider_id);
   const key = String(params.key);
@@ -534,7 +589,7 @@ peer.on("credentials.set_key", async (params) => {
   return { ok: true, provider_id: providerId, scope, replaced };
 });
 
-peer.on("credentials.signout", async (params) => {
+on("credentials.signout", async (params) => {
   const rt = requireRuntime();
   const providerId = String(params.provider_id);
   try {
@@ -553,7 +608,7 @@ peer.on("credentials.signout", async (params) => {
   return { ok: true, provider_id: providerId, state: "none" };
 });
 
-peer.on("login.begin", async (params) => {
+on("login.begin", async (params) => {
   const rt = requireRuntime();
   const providerId = String(params.provider_id);
   const type = String(params.type);
@@ -570,13 +625,13 @@ peer.on("login.begin", async (params) => {
   }
 });
 
-peer.on("login.status", (params) => {
+on("login.status", (params) => {
   const providerId = String(params.provider_id);
   const flow = logins.status(providerId);
   return flow === undefined ? { ok: true, flow: null } : { ok: true, flow: wireFlow(flow) };
 });
 
-peer.on("login.complete", async (params) => {
+on("login.complete", async (params) => {
   const providerId = String(params.provider_id);
   try {
     return { ok: true, ...wireFlow(await logins.complete(providerId, String(params.input ?? ""))) };
@@ -585,7 +640,7 @@ peer.on("login.complete", async (params) => {
   }
 });
 
-peer.on("login.cancel", async (params) => {
+on("login.cancel", async (params) => {
   const providerId = String(params.provider_id);
   const flow = await logins.cancel(providerId);
   return { ok: true, flow: flow === undefined ? null : wireFlow(flow) };
@@ -599,7 +654,7 @@ function sourceOf(source: string | undefined): string {
   return "none";
 }
 
-peer.on("session.create", async (params) => {
+on("session.create", async (params) => {
   const svc = requireService();
   const profile = String(params.profile) as SessionProfile;
   const projectRoot = String(params.project_root);
@@ -679,7 +734,7 @@ function pinnedSummary(managed: ManagedSession): PinnedCadSummary {
   return summarize(entries, managed);
 }
 
-peer.on("session.prompt", async (params) => {
+on("session.prompt", async (params) => {
   const svc = requireService();
   const sessionId = String(params.session_id);
   const runId = String(params.run_id);
@@ -881,7 +936,7 @@ peer.on("session.prompt", async (params) => {
 
   const terminalPayload: { [k: string]: JsonValue } =
     errorMessage !== undefined ? { error: errorMessage } : {};
-  peer.notify("terminal", {
+  activePeer().notify("terminal", {
     run_id: runId,
     terminal_id: `terminal:${runId}`,
     state,
@@ -918,7 +973,7 @@ async function applyContextPolicy(
       });
     } else {
       // Budget escalation: surface a question to the operator via py.ask_user.
-      await peer.request("py.ask_user", {
+      await activePeer().request("py.ask_user", {
         run_id: run.runId,
         question: `Context budget at ${Math.round(action.percent * 100)}%. Continue?`,
         options: ["continue", "stop"],
@@ -929,20 +984,20 @@ async function applyContextPolicy(
   }
 }
 
-peer.on("session.cancel", async (params) => {
+on("session.cancel", async (params) => {
   const svc = requireService();
   const runId = String(params.run_id);
   await svc.cancel(runId);
   return { ok: true, run_id: runId };
 });
 
-peer.onNotify("cancel", (params) => {
+onNotify("cancel", (params) => {
   const svc = service;
   if (svc === undefined) return;
   void svc.cancel(String(params.run_id));
 });
 
-peer.on("session.compact", async (params) => {
+on("session.compact", async (params) => {
   const svc = requireService();
   const sessionId = String(params.session_id);
   const managed = svc.get(sessionId);
@@ -975,7 +1030,7 @@ function wireUserPrompt(prompt: HistoryUserPrompt): { [k: string]: JsonValue } {
   return wire;
 }
 
-peer.on("history.page", (params) => {
+on("history.page", (params) => {
   const svc = requireService();
   const sessionId = String(params.session_id);
   const managed = svc.get(sessionId);
@@ -1028,7 +1083,7 @@ peer.on("history.page", (params) => {
   };
 });
 
-peer.on("query.snapshot", async (params) => {
+on("query.snapshot", async (params) => {
   const svc = requireService();
   const runId = String(params.run_id);
   const question = String(params.question);
@@ -1046,7 +1101,7 @@ peer.on("query.snapshot", async (params) => {
   }
 });
 
-peer.on("shutdown", () => {
+on("shutdown", () => {
   log("shutdown requested");
   queueMicrotask(() => {
     void service?.disposeAll().finally(() => process.exit(0));
@@ -1054,28 +1109,57 @@ peer.on("shutdown", () => {
   return { ok: true };
 });
 
-const decoder = new FrameDecoder();
+/** Construct the peer, attach stdin, announce the process. The only side effects. */
+export function main(): void {
+  const bound = new RpcPeer((frame) => {
+    process.stdout.write(encodeFrame(frame));
+  });
+  registerHandlers(bound);
+  const decoder = new FrameDecoder();
 
-process.stdin.on("data", (chunk: Buffer) => {
-  let frames: Buffer[];
-  try {
-    frames = decoder.push(chunk);
-  } catch (err) {
-    if (err instanceof FrameTooLargeError) {
-      log(`fatal framing error: ${err.message}`);
-    } else {
-      log(`fatal framing error: ${String(err)}`);
+  process.stdin.on("data", (chunk: Buffer) => {
+    let frames: Buffer[];
+    try {
+      frames = decoder.push(chunk);
+    } catch (err) {
+      if (err instanceof FrameTooLargeError) {
+        log(`fatal framing error: ${err.message}`);
+      } else {
+        log(`fatal framing error: ${String(err)}`);
+      }
+      process.exit(1);
+      return;
     }
-    process.exit(1);
-    return;
-  }
-  for (const frame of frames) {
-    void peer.handleFrame(frame);
-  }
-});
+    for (const frame of frames) {
+      void bound.handleFrame(frame);
+    }
+  });
 
-process.stdin.on("end", () => {
-  process.exit(0);
-});
+  process.stdin.on("end", () => {
+    process.exit(0);
+  });
 
-log(`started pid=${process.pid} hv=${FRAME_VERSION}`);
+  log(`started pid=${process.pid} hv=${FRAME_VERSION}`);
+}
+
+/**
+ * True when this module IS the process entry point.
+ *
+ * Compared on the resolved path rather than on a module-system predicate,
+ * because the guard has to hold under BOTH build outputs and the bundler
+ * rewrites module identity: `agent/dist/main.js` from `tsc` and the single
+ * bundled file the wheel ships are both started as `node <that file>`, so
+ * `argv[1]` and `import.meta.url` name the same path in each. An importer (a
+ * test, a future embedder) is neither, and gets the declaration table alone.
+ */
+function isProcessEntryPoint(): boolean {
+  const argv1 = process.argv[1];
+  if (argv1 === undefined) return false;
+  try {
+    return resolve(argv1) === resolve(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isProcessEntryPoint()) main();

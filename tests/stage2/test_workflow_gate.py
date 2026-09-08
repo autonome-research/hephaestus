@@ -33,6 +33,7 @@ from hephaestus.testing.sidecar import build_agent_dist
 from hephaestus.testing.workflow_harness import (
     SHELF_INTERFERING_SRC,
     RunnerHarness,
+    assert_slots_drain_to,
     completing_prompter,
     request_for,
     scaffold_workflow_project,
@@ -103,14 +104,31 @@ def test_workflow_fanout_collapses_to_the_live_admission_capacity(
         # No branch ever exceeded the derived bound.
         assert all(bound <= capacity for bound, capacity in zip(fanout, sampled, strict=False))
 
-        # All four parts were still delegated, one branch run each, in order.
+        # All four parts were still delegated, one branch run each.
+        #
+        # Compared as a SET, not a sequence (J-mirrors-and-dx-24). The fan-out
+        # is concurrent by construction — that is this test's whole subject —
+        # and since `py.*` dispatch moved onto a bounded worker pool
+        # (J-agent-wiring-13) the order in which branches reach
+        # `WorkflowBridge._delegate` is genuinely nondeterministic: an ordered
+        # comparison here failed as `'…:shelf:0' != '…:bracket:0'` at index 0.
+        # The order was never the clause; "every part delegated exactly once,
+        # each in round 0" is, and a set says that without asserting a
+        # serialization the runner does not promise.
         assert harness.bridge.methods.count("py.delegate") == len(parts)
-        assert harness.bridge.branch_runs == [f"{run.run_id}:{name}:0" for name, _p, _r in parts]
+        assert sorted(harness.bridge.branch_runs) == sorted(
+            f"{run.run_id}:{name}:0" for name, _p, _r in parts
+        )
 
         # The workflow's own terminal is durable and every branch slot is back.
         terminal = harness.wiring.admission.get_terminal(run.run_id)
         assert terminal is not None and terminal.state is TerminalState.COMPLETED
-        assert harness.wiring.admission.active_count() == len(held)
+        assert_slots_drain_to(
+            harness.wiring.admission,
+            len(held),
+            holders=frozenset(held),
+            label="fan-out: every branch slot must come back to the 12 held runs",
+        )
     finally:
         harness.close()
         harness.assert_no_orphans()
@@ -143,14 +161,18 @@ def test_workflow_repair_cap_stops_without_claiming_verification(
 
         # One initial delegation per part, then one repair delegation per round,
         # attributed to the failing part only.
+        #
+        # The two halves are asserted differently on purpose (J-mirrors-and-dx-24).
+        # The ROUND ORDER is a real sequencing clause — round 1 cannot start
+        # before round 0 finishes — so it stays an ordered comparison. The two
+        # round-0 branches, by contrast, fan out concurrently and their relative
+        # order is not promised, so comparing them as a sequence asserts a
+        # serialization the runner does not offer.
         rounds = [entry.split(":")[-1] for entry in harness.bridge.branch_runs]
         assert rounds == ["0", "0", "1", "2"], harness.bridge.branch_runs
-        assert [entry.split(":")[1] for entry in harness.bridge.branch_runs] == [
-            "bracket",
-            "shelf",
-            "shelf",
-            "shelf",
-        ]
+        by_part = [entry.split(":")[1] for entry in harness.bridge.branch_runs]
+        assert sorted(by_part[:2]) == ["bracket", "shelf"], harness.bridge.branch_runs
+        assert by_part[2:] == ["shelf", "shelf"], harness.bridge.branch_runs
 
         # Every phase still checkpointed, and the terminal is durable+released.
         keys = {record.checkpoint_key for record in harness.service.checkpoints(run.job_id)}
@@ -163,7 +185,12 @@ def test_workflow_repair_cap_stops_without_claiming_verification(
         }
         terminal = harness.wiring.admission.get_terminal(run.run_id)
         assert terminal is not None and terminal.state is TerminalState.COMPLETED
-        assert harness.wiring.admission.active_count() == 0
+        assert_slots_drain_to(
+            harness.wiring.admission,
+            0,
+            holders=frozenset(),
+            label="repair cap: a capped, unverified halt must still release every slot",
+        )
 
         # The durable record is the honest one: a stopped run keeps its job row
         # and its unresolved verification in the replayable log.

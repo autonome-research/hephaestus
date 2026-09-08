@@ -31,6 +31,7 @@ import asyncio
 import contextlib
 import stat
 import threading
+import time
 import uuid
 from collections import OrderedDict, deque
 from collections.abc import Callable, Sequence
@@ -38,10 +39,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
+from hephaestus.contract.tools_decl import TOOLS_BY_NAME
 from hephaestus.core.executor.sandbox.base import ExecBackend
 from hephaestus.core.project_store.layout import ProjectLayout, load_project
 from hephaestus.core.project_store.retention import DefaultProtectedRoots
 from hephaestus.core.project_store.store import ProjectStore
+from opstore.errors import NotFoundError, TerminalConflictError
 from opstore.types import JSONValue, TerminalState
 
 from opstore import OpStore
@@ -53,8 +56,15 @@ from .cad_ops import (
     question_refusal,
     record_answers,
     release_run_request_text,
+    run_request_text,
 )
-from .dispatch import DispatchError, Principal, ToolDispatcher
+from .delegation import (
+    DEADLINE_DEFAULT_S,
+    DelegationPhase,
+    DelegationRow,
+    DelegationService,
+)
+from .dispatch import DispatchError, Invocation, Principal, ToolDispatcher
 from .events import (
     BUFFERED_EVENTS_MAX,
     EventPump,
@@ -73,6 +83,7 @@ from .sessions import RunInFlightError
 from .sidecar import SidecarResolution, node_executable, resolve_sidecar
 from .supervisor import ProcessLossEvent, Supervisor, SupervisorConfig, SupervisorError
 from .wiring import build_dispatcher
+from .workflows import PartPrompter, PartPromptOutcome, PromptRegistry
 
 __all__ = [
     "AgentUnavailableError",
@@ -388,61 +399,114 @@ def _provider_status_of(result: Any) -> list[dict[str, Any]]:
     return out
 
 
-#: Set for the duration of a ``py.*`` handler on the thread running it.
-#:
-#: ``Supervisor._read_loop`` is a SINGLE thread: it reads every frame the child
-#: sends, and it calls the ``py.*`` handler inline (``_dispatch_py_request``).
-#: A handler that issues ``Supervisor.call`` therefore blocks waiting for a
-#: response only the thread it is blocking could ever read — the call times out,
-#: the watchdog kills the child as unresponsive, and the reader thread dies with
-#: it. So the invariant is: **inside a ``py.*`` handler, do not call the
-#: sidecar.** It is recorded as a thread flag rather than by comparing thread
-#: identities because the invariant is about *what this thread is doing*, not
-#: about which thread it happens to be.
-_PY_HANDLER = threading.local()
+#: The ``py.*`` handler that a sidecar request runs on, for the sequential-tool
+#: lock below. There is no longer a "do not call the sidecar from here" flag:
+#: ``Supervisor._dispatch_py_request`` submits every ``py.*`` request to a
+#: bounded worker pool instead of running it inline on the single reader thread
+#: (audit-2026-09-04 J-agent-wiring-13), so a handler that issues
+#: ``Supervisor.call`` is waiting on a thread that is free to read the answer.
+#: What that removes is the deadlock; what it *introduces* is genuine
+#: concurrency between two ``py.tool_dispatch`` handlers from one sidecar, which
+#: is what :data:`BridgeRuntime._sequential_lock` is for.
+
+
+def _declares_image_input(spec: ProviderSpec) -> bool:
+    """Does any model in this provider spec declare ``image`` input?
+
+    The shape is ``runtime.configure``'s own (``{"models": [{"input": [...]}]}``
+    — see ``testing/fake_openai.py``'s provider spec and the sidecar's
+    ``session/runtime.ts``), read defensively because a provider config is
+    operator-written JSON: anything that is not the expected shape simply does
+    not count as evidence of a multimodal model.
+    """
+    models = spec.get("models")
+    if not isinstance(models, list):
+        return False
+    for model in cast("list[Any]", models):
+        if not isinstance(model, dict):
+            continue
+        inputs = cast("dict[str, Any]", model).get("input")
+        if isinstance(inputs, list) and any(
+            isinstance(kind, str) and kind == "image" for kind in cast("list[Any]", inputs)
+        ):
+            return True
+    return False
 
 
 class _BridgeSnapshotCaller:
     """``query.snapshot`` over the live sidecar: the ephemeral vision child.
 
-    One dispatcher serves two kinds of caller, and only one of them can reach
-    the child. An HTTP tool route runs on a worker thread (``http/app.py`` hands
-    every dispatch to ``asyncio.to_thread``) and is free to call the sidecar. A
-    model turn arrives inside ``py.tool_dispatch``, on the supervisor's reader
-    thread, where calling the sidecar is a deadlock the watchdog resolves by
-    killing the child (see :data:`_PY_HANDLER`).
+    Both callers can now reach the child *thread-wise*. An HTTP tool route runs
+    on a worker thread (``http/app.py`` hands every dispatch to
+    ``asyncio.to_thread``); a model turn arrives inside ``py.tool_dispatch``,
+    which since audit-2026-09-04 J-agent-wiring-13 runs on the supervisor's
+    **handler pool** rather than inline on its single reader thread. That was
+    the one blocker named in audit-2026-09-04-broken.md B-2 ("Dependencies
+    outside this document"): the vision child is reached over the same pipe the
+    request came in on, and a handler occupying the only reader could never have
+    been answered. Nothing occupies the reader now.
 
-    So this caller answers :meth:`unavailable` on the second case and refuses
-    with the tool's own ``capability_not_available`` — the exact result the
-    model already read when no caller was configured at all, so nothing
-    regresses — instead of taking the sidecar down. It becomes live for model
-    turns the moment ``py.*`` dispatch moves onto a worker pool, with no change
-    here (audit-2026-09-04-broken.md B-2, "Dependencies outside this document").
-
-    **Today no shipped HTTP route dispatches ``query_snapshot``** — §2.3
-    exposes ``read_part``/``inspect_part``/``measure`` and the keyed mutations,
-    not this tool — so in practice every caller is a model turn and every
-    answer is the refusal. That is honest, and it is one blocker away from
-    working; it is not a claim that vision is live.
+    Reaching the child is not the same as the child being able to *see*, and
+    :meth:`unavailable` is where the difference is stated: it reports the two
+    conditions that survive — no multimodal model on this runtime, and a sidecar
+    handler that never delivers the prepared renders — instead of the deadlock
+    it used to report. Deleting the deadlock reason without asking what else the
+    method was answering is what made ``query_snapshot`` return the *render's*
+    refusal about an unbuilt part in place of the runtime's own.
     """
 
-    def __init__(self, sup: Supervisor) -> None:
+    def __init__(self, sup: Supervisor, providers: Sequence[ProviderSpec] = ()) -> None:
         self._sup = sup
+        self._providers = list(providers)
 
     def unavailable(self) -> str | None:
-        """:class:`~.dispatch.SnapshotAvailability`: usable off the reader thread only.
+        """:class:`~.dispatch.SnapshotAvailability`: why this runtime cannot look.
 
-        Answered before the dispatcher prepares a render bundle, so a refusal
+        Answered BEFORE the dispatcher prepares a render bundle, so a refusal
         names the runtime rather than borrowing the render's own complaint about
-        an unbuilt part.
+        an unbuilt part — which is exactly what went wrong when this method was
+        reduced to ``return None``: ``query_snapshot`` on a runtime that cannot
+        show a model an image stopped saying so, rendered anyway, and handed the
+        model ``addressing_error: part 'widget' has no current successful build``
+        as if the part were the problem.
+
+        The caller-thread restriction this used to report IS gone, and that is a
+        real gain: J-agent-wiring-13 moved ``py.*`` dispatch off the supervisor's
+        single reader thread, so a handler can now call the sidecar. It was
+        never the only reason to refuse. Two remain, and each is checked in the
+        order a reader would ask them:
+
+        1. **No model here can read an image.** The vision child runs on this
+           runtime's configured models (``profiles.ts``'s ``query_snapshot``
+           profile is toolless and single-turn, not separately provisioned), so
+           when no configured model declares ``image`` input there is nothing to
+           ask. This is the same fact ``inspect_part`` reports on the sidecar as
+           ``image_model_required``.
+        2. **The renders do not reach the child.** ``agent/src/main.ts``'s
+           ``query.snapshot`` handler creates the ephemeral session and prompts
+           it with the QUESTION ONLY: the ``image_refs`` this side prepares are
+           accepted on the wire and then dropped (``image_refs`` appears nowhere
+           else in ``agent/src``). A single-turn child that answers a visual
+           question having seen no image does not report a gap — it invents an
+           answer, and the model has no way to tell that apart from a real
+           observation. So the gap is reported here, honestly, instead.
+
+        Condition 2 holds on every runtime today, which is why this method still
+        never returns ``None``; it collapses to condition 1 alone the moment the
+        sidecar delivers the refs it is already handed. Both sentences name the
+        runtime, so the model is told what is missing rather than being told its
+        part is broken.
         """
-        if getattr(_PY_HANDLER, "active", False):
+        if not any(_declares_image_input(spec) for spec in self._providers):
             return (
-                "query_snapshot cannot run inside a sidecar request on this runtime: "
-                "the vision child is reached over the same channel this call is "
-                "already occupying"
+                "no multimodal model is configured on this runtime: no provider "
+                "declares a model with image input, so no child could read the renders"
             )
-        return None
+        return (
+            "this runtime has no vision child wired: the sidecar's query.snapshot "
+            "prompts an ephemeral single-turn session with the question alone and "
+            "delivers none of the prepared renders to it"
+        )
 
     async def call(self, request: SnapshotRequest) -> SnapshotResult:
         # Second enforcement of the same rule: the dispatcher asks
@@ -487,6 +551,85 @@ class _BridgeSnapshotCaller:
         )
 
 
+def _part_session_id(part: str) -> str:
+    """The conventional per-part session id.
+
+    Mirrors ``dispatch._part_session_id``, which mints the same string into the
+    delegation result's ``part_session_id``. The two must agree — this is the
+    session the runner actually prompts — and the convention has no public home
+    yet; promoting it to one shared helper is recorded for the tool-results lane
+    that owns ``dispatch.py``.
+    """
+    return f"part:{part}"
+
+
+class _BridgeDelegationRunner:
+    """Executes an admitted child delegation on the live sidecar (J-agent-wiring-6).
+
+    Satisfies :class:`~.dispatch.DelegationRunner`. Structurally the same shape
+    as :class:`~.workflows.SessionDelegationRunner` — CAS ``ADMITTED →
+    DISPATCHED``, prompt the child, write exactly one terminal — with one
+    difference that only exists on this runtime: **the child's terminal is
+    already durable by the time the prompt returns.** The child ran as an
+    ordinary bridge run, so the sidecar's ``terminal`` notification went through
+    the event pump, which inserted and acknowledged it. Inserting a second,
+    differently-named terminal for the same run is a ``terminal_conflict``, so
+    this runner *projects* the authoritative one onto the delegation row
+    (:meth:`~.delegation.DelegationService.recover`, whose first precedence rule
+    is exactly "an existing child terminal wins") and only mints one itself when
+    the child produced none — which is the interrupted case.
+    """
+
+    def __init__(self, prompter: PartPrompter, prompts: PromptRegistry) -> None:
+        self._prompter = prompter
+        self._prompts = prompts
+
+    def run(self, service: DelegationService, row: DelegationRow) -> None:
+        service.dispatch(row.delegation_ref)
+        prompt = self._prompts.get(row.invocation_key)
+        if prompt is None:
+            service.ingest_terminal(
+                row.delegation_ref,
+                TerminalState.INTERRUPTED,
+                error="delegation prompt was not registered",
+            )
+            return
+        try:
+            outcome = self._prompter(row.part, prompt, row.child_run_id)
+        except Exception as exc:  # a prompter fault is a child failure, not a hang
+            self._finalize(service, row, TerminalState.FAILED, error=f"{type(exc).__name__}: {exc}")
+            return
+        finally:
+            self._prompts.forget(row.invocation_key)
+        self._finalize(
+            service,
+            row,
+            outcome.state,
+            result_artifact_ref=outcome.result_artifact_ref,
+            error=outcome.error,
+        )
+
+    def _finalize(
+        self,
+        service: DelegationService,
+        row: DelegationRow,
+        state: TerminalState,
+        *,
+        result_artifact_ref: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Exactly one terminal: project the child's own if it wrote one."""
+        current = service.recover(row.delegation_ref)
+        if current.phase is DelegationPhase.TERMINAL:
+            return  # a terminal already won (the pump's, a cancellation, a deadline)
+        service.ingest_terminal(
+            row.delegation_ref,
+            state,
+            result_artifact_ref=result_artifact_ref,
+            error=error,
+        )
+
+
 class BridgeRuntime:
     """Composed runtime: supervised sidecar + Python dispatch/admission/events."""
 
@@ -521,22 +664,59 @@ class BridgeRuntime:
         self._project = (
             ProjectStore(self._layout, self._store) if project_store is None else project_store
         )
-        self._cad = CadOps(self._layout, self._store) if cad is None else cad
+        # ``backend`` is now the executor posture for BOTH halves of this
+        # runtime: the CAD ops' own builds and the registry generators
+        # ``wiring.resolve_registry`` gates below. Ledger J-agent-wiring-4: the
+        # CAD ops used to be built here with no backend at all, so they fell to
+        # ``CadOpsState``'s "for fast tests" unsafe default and every
+        # model-authored part script under ``heph agent`` ran with no OS
+        # sandbox. That default is gone; the parameter is required, and each
+        # entry point decides. ``heph agent`` injects what
+        # ``core.cli.make_backend`` returns (a probed bwrap backend, or the
+        # warned unsafe one behind ``--unsafe-local-executor``); ``heph serve
+        # --web`` injects nothing here because it passes its already-probed
+        # ``cad``. A caller that injects neither has not decided the posture,
+        # and this constructor will not decide it for them: the bench, a test
+        # or a library embedding names its backend in one word here, or gets a
+        # ``TypeError`` at construction rather than an unsandboxed build later.
+        if cad is not None:
+            self._cad = cad
+        elif backend is None:
+            raise TypeError(
+                "BridgeRuntime() needs backend=... (an ExecBackend: a probed "
+                "`secure_backend`, `core.cli.make_backend`'s result, or an explicit "
+                "UnsafeLocalBackend()) when no `cad` is injected; there is no default "
+                "executor posture (ledger J-agent-wiring-4)"
+            )
+        else:
+            self._cad = CadOps(self._layout, self._store, backend=backend)
         # B-2: the capability set is resolved by ``wiring.build_dispatcher`` and
         # nowhere else, so this runtime, ``heph serve --web`` and ``heph mcp``
         # cannot disagree about which of the 57 tools actually work. Before
         # this, every shipped runtime built ``ToolDispatcher(project, cad=cad)``
         # and nine model-visible tools refused in all three.
         #
-        # ``backend`` is the SECURE backend registry generators may run under.
-        # ``heph agent`` has none — ``CadOpsState`` defaults to the unsafe local
-        # backend and nothing injects a probed one — so ``instance_store_part``
-        # stays at ``capability_not_available`` here by the contract
-        # ``core/registry/_ops.py`` already states, rather than degrading to an
-        # unsandboxed generator run. ``wiring.resolve_registry`` drops an unsafe
-        # backend on its own, so passing one cannot open that hole either.
+        # ``backend`` is also the SECURE backend registry generators may run
+        # under. ``wiring.resolve_registry`` DROPS an unsafe backend rather than
+        # running registry code under it, so ``instance_store_part`` reports
+        # ``capability_not_available`` exactly when the posture is unsafe —
+        # under ``--unsafe-local-executor``, or in a test that injected nothing
+        # — and works when ``heph agent`` probed a real sandbox. That is the
+        # contract ``core/registry/_ops.py`` already states, and it is now
+        # decided by one value instead of by the absence of one.
         self._dispatcher = (
-            build_dispatcher(self._layout, self._store, self._project, self._cad, backend=backend)
+            build_dispatcher(
+                self._layout,
+                self._store,
+                self._project,
+                self._cad,
+                backend=backend,
+                # This runtime IS the live-run view the delegation gate reads
+                # (`session_for_run` / `live_sessions`). Passing `self` mid-
+                # construction is safe because the gate only ever calls it from
+                # a later `delegate_part_agent`, long after `__init__` returns.
+                live_runs=self,
+            )
             if dispatcher is None
             else dispatcher
         )
@@ -671,6 +851,16 @@ class BridgeRuntime:
         # retained un-redacted.
         for secret in self._credentials.values():
             self._sup.add_redaction(secret)
+        # -- delegation (J-agent-wiring-6) ----------------------------------
+        #: Serializes the tools the contract declares ``sequential`` — see
+        #: :meth:`_handle_tool_dispatch`.
+        self._sequential_lock = threading.Lock()
+        #: Invocation key → the prompt a delegation carried. The durable
+        #: delegation row stores the prompt's *hash* only (payload bytes are
+        #: never duplicated into the WAL), so the runner is handed the text
+        #: through this registry; ``_handle_delegate`` writes it, the runner
+        #: reads it and forgets it.
+        self._delegation_prompts = PromptRegistry()
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -768,20 +958,96 @@ class BridgeRuntime:
         """Hand the dispatcher the capabilities that need a live child (B-2).
 
         Separate from construction because the ``query_snapshot`` vision child
-        is a *session*, and there is no session until a sidecar exists. Called
-        again from :meth:`rebind_project`, because a manifest reload builds a
-        fresh dispatcher and a capability silently lost across a settings toggle
-        is exactly the kind of drift §6.4 splits that surface to avoid.
+        and the delegated part agent are *sessions*, and there is no session
+        until a sidecar exists. Called again from :meth:`rebind_project`,
+        because a manifest reload builds a fresh dispatcher and a capability
+        silently lost across a settings toggle is exactly the kind of drift §6.4
+        splits that surface to avoid.
 
-        No delegation runner is bound: executing a child part agent means
-        prompting it over the sidecar, and every ``delegate_part_agent`` arrives
-        inside a ``py.*`` handler on the supervisor's single reader thread
-        (see :data:`_PY_HANDLER`). Until that dispatch moves onto a worker pool,
-        an absent runner is the correct state — the dispatcher then writes
-        exactly one durable ``INTERRUPTED`` terminal rather than inventing a
-        completion.
+        The delegation runner is bound here for the first time
+        (audit-2026-09-04 J-agent-wiring-6, unblocked by J-agent-wiring-13).
+        Executing a child part agent means prompting it over the sidecar from
+        inside the ``py.delegate`` handler; that used to be a deadlock, because
+        the handler ran on the supervisor's single reader thread and would have
+        been waiting for a frame only it could read. ``py.*`` dispatch now runs
+        on a bounded worker pool, so the handler blocks a worker and the reader
+        keeps reading — the child's own events, its tool calls and its terminal
+        all arrive while the parent turn is held open.
         """
-        self._dispatcher.bind_runtime(snapshot_caller=_BridgeSnapshotCaller(self._sup))
+        self._dispatcher.bind_runtime(
+            snapshot_caller=_BridgeSnapshotCaller(self._sup, self._providers),
+            delegation_runner=_BridgeDelegationRunner(
+                self._prompt_part_session, self._delegation_prompts
+            ),
+        )
+
+    def _prompt_part_session(self, part: str, prompt: str, child_run_id: str) -> PartPromptOutcome:
+        """Run one delegated child part agent to its outcome (``PartPrompter``).
+
+        The child is a real part session on the live sidecar: opened on first
+        use under the conventional per-part id, then prompted under the
+        delegation's own **child run id**, so its events, its admission row and
+        its terminal all carry the id the durable delegation row persisted.
+
+        The bridge waits exactly the child's own deadline, and on expiry
+        cancels the child and reports ``timed_out`` itself (``INTERFACE.md``
+        §2.6: the delegation's own ``timed_out`` terminal wins over a transport
+        timeout rather than racing it). The grace lives on the SIDECAR side
+        only — ``py.delegate`` is armed at deadline + ``GRACE_S`` there — so
+        this side always answers first, with the delegation's vocabulary; a
+        transport failure before the deadline is the child's ``failed``.
+        """
+        session_id = _part_session_id(part)
+        with self._lock:
+            known = session_id in self._principals
+        if not known:
+            # `resume=False`: a part session id the sidecar already holds is
+            # returned as-is by `session.create`, and one it does not is created.
+            self.create_session("part", part=part, session_id=session_id)
+        deadline_s = self._deadline_of(child_run_id)
+        started = time.monotonic()
+        try:
+            result = self.prompt(session_id, prompt, run_id=child_run_id, timeout=deadline_s)
+        except SupervisorError as exc:
+            if time.monotonic() - started >= deadline_s:
+                # The child's deadline elapsed: that is the delegation's own
+                # ``timed_out``, not a transport fault. Cancel the child so it
+                # does not keep running against a run this side has closed,
+                # then let the runner finalize by the delegation's precedence
+                # (an elapsed deadline projects as ``timed_out`` either way).
+                with contextlib.suppress(Exception):
+                    self.cancel(child_run_id)
+                return PartPromptOutcome(state=TerminalState.TIMED_OUT, error="timed_out")
+            # A transport failure is the CHILD's failure, not the parent's: the
+            # runner turns it into one durable `failed` terminal.
+            return PartPromptOutcome(state=TerminalState.FAILED, error=str(exc))
+        if result.status == "completed":
+            return PartPromptOutcome(state=TerminalState.COMPLETED)
+        if result.status == "cancelled":
+            return PartPromptOutcome(state=TerminalState.CANCELLED, error="cancelled")
+        error = None
+        if isinstance(result.terminal, dict):
+            payload = result.terminal.get("payload")
+            if isinstance(payload, dict):
+                raw = cast("dict[str, Any]", payload).get("error")
+                error = str(raw) if raw is not None else None
+        return PartPromptOutcome(state=TerminalState.FAILED, error=error or result.status)
+
+    def _deadline_of(self, child_run_id: str) -> float:
+        """Seconds the child was admitted for, from its own durable row.
+
+        Read rather than assumed: a delegation may name any deadline in the
+        1-1200 s window, and a bridge call bounded by the *default* would cut a
+        legitimately long child short.
+        """
+        try:
+            row = self._admission.get(child_run_id)
+        except Exception:
+            return float(DEADLINE_DEFAULT_S)
+        deadline_at = getattr(row, "deadline_at", None)
+        if deadline_at is None:
+            return float(DEADLINE_DEFAULT_S)
+        return max(1.0, float(deadline_at) - time.time())
 
     def restart(self, *, reason: str = "manual") -> None:
         """Kill the whole sidecar and respawn it; the spawn hook re-configures.
@@ -895,6 +1161,17 @@ class BridgeRuntime:
         """
         with self._lock:
             return sorted(self._runs)
+
+    def live_sessions(self) -> frozenset[str]:
+        """Session ids with a turn in flight right now (``wiring.LiveRunView``).
+
+        Read by the delegation gate before a child run is minted, so delegating
+        to a part that is already thinking is refused ``part_busy`` rather than
+        admitted and then refused ``run_in_flight`` one layer down, after a
+        durable row and an admission slot already exist.
+        """
+        with self._lock:
+            return frozenset(run.session_id for run in self._runs.values())
 
     def close(self) -> None:
         """Graceful shutdown: close the sidecar (no orphan) and the opstore."""
@@ -1335,7 +1612,13 @@ class BridgeRuntime:
             # never pass through this method; they inherit the parent run's text
             # at the dispatcher, so a part agent's build is still critiqued
             # against the original.
-            bind_run_request_text(run_id, text)
+            # A DELEGATED child arrives here with its request text already
+            # inherited from the parent run (``inherit_run_request_text`` in
+            # the dispatcher), and that text must survive: the child's builds
+            # are judged against the operator's words, not the orchestrator's
+            # hand-off sentence. Bind only when nothing is bound yet.
+            if run_request_text(run_id) is None:
+                bind_run_request_text(run_id, text)
             self._admission.admit_run(run_id)
             self._sup.track_run(run_id)
             params: dict[str, Any] = {
@@ -1453,18 +1736,16 @@ class BridgeRuntime:
     # -- py.* request handling (sidecar -> python) -------------------------
 
     def _on_py_request(self, method: str, params: dict[str, Any]) -> Any:
-        # Marks this thread as "servicing a sidecar request" for the whole
-        # handler, including everything the dispatcher reaches. Nothing under
-        # here may call back into the sidecar; see :data:`_PY_HANDLER` for why
-        # that is a deadlock and not merely slow. try/finally rather than a
-        # plain reset: a handler that raises still has to clear the flag, or the
-        # reader thread would refuse every later snapshot for the life of the
-        # process.
-        _PY_HANDLER.active = True
-        try:
-            return self._route_py_request(method, params)
-        finally:
-            _PY_HANDLER.active = False
+        """Answer one ``py.*`` request. Runs on a supervisor **pool worker**.
+
+        It used to run inline on the supervisor's single reader thread, and the
+        wrapper's whole job was to raise a "do not call the sidecar from here"
+        flag for everything underneath. J-agent-wiring-13 moved dispatch onto a
+        bounded pool, so a handler may now issue ``Supervisor.call`` — which is
+        what makes a real delegation and the ``query_snapshot`` vision child
+        possible at all — and the flag is gone with the deadlock it described.
+        """
+        return self._route_py_request(method, params)
 
     def _route_py_request(self, method: str, params: dict[str, Any]) -> Any:
         if method == "py.tool_dispatch":
@@ -1511,16 +1792,46 @@ class BridgeRuntime:
         for optional in ("delivery", "deadline_seconds"):
             if params.get(optional) is not None:
                 arguments[optional] = params[optional]
-        return self._dispatcher.dispatch(
-            principal,
-            {
-                "session_id": session_id,
-                "run_id": str(params.get("parent_run_id", "")),
-                "tool": "delegate_part_agent",
-                "arguments": arguments,
-                "invocation": raw_inv,
-            },
-        )
+        # The runner is handed the durable row, which stores the prompt's HASH —
+        # the WAL never duplicates payload bytes. So the text is registered here,
+        # against the same trusted-invocation key the row carries verbatim, and
+        # the runner reads it back (J-agent-wiring-6). Registered before the
+        # dispatch, because a synchronous delegation runs the child *inside* it.
+        #
+        # And forgotten in a ``finally``, on EVERY exit, because the registry is
+        # an unbounded dict and the prompt is model-authored text bounded only by
+        # ``PROMPT_MAX_UTF8_BYTES``. Only one of the dispatcher's exits ever
+        # reaches the runner that forgets for itself; the two early ones — a
+        # rejection (unknown part, prompt too large, gate refusal) and a
+        # ``follow_up`` delivery, which returns the queued row without running
+        # anything — reach no runner at all, so a model looping on
+        # ``invalid_part`` would grow this process without limit. Forgetting
+        # here is safe for the synchronous case precisely because that runner
+        # executes INSIDE ``dispatch`` on this thread: by the time the call
+        # returns the prompt has already been consumed.
+        #
+        # A ``follow_up`` row therefore keeps no text in this process, which is
+        # correct today and is the reason to say so: nothing in this bridge ever
+        # runs a queued row (``ToolDispatcher._delegate`` returns before it
+        # reaches a runner), and a future coordinator that does must re-derive
+        # the prompt from its own record rather than from this cache.
+        prompt = params.get("prompt")
+        invocation_key = Invocation.from_params(session_id, raw_inv).op_id
+        if isinstance(prompt, str):
+            self._delegation_prompts.remember(invocation_key, prompt)
+        try:
+            return self._dispatcher.dispatch(
+                principal,
+                {
+                    "session_id": session_id,
+                    "run_id": str(params.get("parent_run_id", "")),
+                    "tool": "delegate_part_agent",
+                    "arguments": arguments,
+                    "invocation": raw_inv,
+                },
+            )
+        finally:
+            self._delegation_prompts.forget(invocation_key)
 
     def _handle_tool_dispatch(self, params: dict[str, Any]) -> Any:
         session_id = str(params.get("session_id", ""))
@@ -1530,7 +1841,26 @@ class BridgeRuntime:
             raise DispatchError(
                 "session_busy", f"unknown session {session_id!r}", code=ErrorCode.INVALID_PARAMS
             )
-        return self._dispatcher.dispatch(principal, params)
+        # J-agent-wiring-13's ordering consequence, handled where the facts are.
+        # Two ``py.tool_dispatch`` requests from one sidecar used to be serial by
+        # construction (one reader thread ran both, one after the other); with
+        # the handler pool they are genuinely concurrent for the first time. Two
+        # concurrent *reads* are fine and stay concurrent. A tool the contract
+        # declares ``sequential`` is one that writes through the project — the
+        # journal, the parameter state, the build store — and those are the ones
+        # the HTTP surface already serializes with a lock of its own
+        # (``http/app.py``); the model-turn path had none because it could not
+        # need one. This lock serializes the MODEL-TURN path across this
+        # runtime's sessions; it does not span the HTTP tool route's own
+        # ``asyncio.Lock``, so an HTTP ``edit_part`` and a model-turn
+        # ``edit_part`` can still overlap (as they could before the pool). The
+        # per-project guarantee is the store's CAS and the lease manager, not
+        # this lock.
+        decl = TOOLS_BY_NAME.get(str(params.get("tool", "")))
+        if decl is None or not decl.sequential:
+            return self._dispatcher.dispatch(principal, params)
+        with self._sequential_lock:
+            return self._dispatcher.dispatch(principal, params)
 
     def _handle_ask_user(self, params: dict[str, Any]) -> Any:
         """Ask, then record the answer against the ledger (``VALIDATION.md`` §3).
@@ -1602,18 +1932,64 @@ class BridgeRuntime:
         self._sup.notify("cancel", {"run_id": run_id})
 
     def _on_process_loss(self, event: ProcessLossEvent) -> None:
-        """Mark generic tracked runs interrupted when the sidecar is lost."""
+        """Mark generic tracked runs interrupted when the sidecar is lost.
+
+        J-build-state-2. The ``continue`` is deliberate and is the reason this
+        loop catches at all: one run whose terminal cannot be written must not
+        cost the *other* tracked runs theirs. What changed is which failures are
+        expected and what happens to the rest.
+
+        Two are expected and stay silent, because both mean the row is already
+        in the state this loop wants it in: ``NotFoundError`` — a run this
+        runtime never admitted, so there is no admission row to terminate — and
+        ``TerminalConflictError`` — another writer won the race the
+        ``get_terminal`` guard above is already testing for. Anything else (a
+        busy database, a full disk, a corrupted state file) leaves the run with
+        **no** terminal and its admission slot occupied, which is precisely the
+        "job appearing live forever" the digest forbids; it is recorded as
+        archived evidence on the supervisor's restart list, naming the run.
+        Recorded, not repaired: the next startup reconstruction is what repairs
+        it, and pretending here to have written a terminal would be the same
+        silence with an extra step.
+
+        The acknowledgement gets the same treatment: an insert that succeeds
+        followed by an ack that fails is a distinct state (the terminal exists,
+        the slot is still held) that only the next start resolves.
+        """
         for run_id in event.tracked_run_ids:
             existing = self._admission.get_terminal(run_id)
             if existing is not None:
                 continue
+            terminal_id = f"interrupted:{run_id}"
             try:
                 self._admission.ingest_terminal(
                     run_id,
-                    f"interrupted:{run_id}",
+                    terminal_id,
                     TerminalState.INTERRUPTED,
                     {"reason": "interrupted"},
                 )
-                self._admission.acknowledge(run_id, f"interrupted:{run_id}")
-            except Exception:
+            except (NotFoundError, TerminalConflictError):
                 continue
+            except Exception as exc:
+                self._record_recovery_fault(run_id, "terminal", exc, event)
+                continue
+            try:
+                self._admission.acknowledge(run_id, terminal_id)
+            except Exception as exc:
+                self._record_recovery_fault(run_id, "acknowledge", exc, event)
+
+    def _record_recovery_fault(
+        self, run_id: str, stage: str, exc: BaseException, event: ProcessLossEvent
+    ) -> None:
+        """Archive one recovery-path fault; never raise out of the recovery hook.
+
+        The supervisor's ``_fire_recovery`` suppresses whatever this hook throws
+        — correctly, since a recovery fault must not wedge the restart path —
+        so raising from here would restore the silence this records away.
+        """
+        with contextlib.suppress(Exception):
+            self._sup.record_recovery_fault(
+                run_id=run_id,
+                detail=f"{stage}: {type(exc).__name__}: {exc}",
+                generation=event.restart_generation,
+            )

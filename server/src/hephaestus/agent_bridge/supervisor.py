@@ -16,8 +16,22 @@ Design points (architecture §5, digest §6):
   :mod:`protocol` (``hv`` negotiation, frozen method sets, error codes). A
   ``FrameTooLargeError`` on the sidecar's stdout fails the bridge closed.
 * **Correlation + timeouts.** Each outbound request gets a monotonic id and a
-  per-call deadline; the default is the ``tool_seconds`` bridge limit and the
-  ``cad_build`` class the ``cad_build_seconds`` limit.
+  per-call deadline; the default is the ``tool_seconds`` bridge limit. The
+  ``cad_build_seconds`` class is **not** selectable here and never was: builds
+  travel sidecar-to-Python (the model calls the tool, the proxy issues
+  ``py.tool_dispatch``), so the deadline that decides one is the sidecar's own
+  RPC peer default — ``agent/src/rpc.ts`` / ``agent/src/tools/proxy.ts``, which
+  read both classes off ``schemas/bridge_limits.json``
+  (audit-2026-09-04 J-http-limits-8/-11). A field here would be a correctly
+  named field on the wrong object.
+* **``py.*`` handlers run on a bounded pool, never on the frame reader.** A
+  handler may issue outbound requests — a delegation prompts its child part
+  session over this same pipe — so running it inline on the reader thread would
+  block the only thread that can deliver its response. The reader decodes and
+  routes; :data:`SupervisorConfig.py_handler_workers` workers execute. When
+  every worker is busy the request is refused with a named ``handler_overloaded``
+  overload error rather than queued behind the pipe: failing one tool call is
+  strictly better than stalling every frame (audit-2026-09-04 J-agent-wiring-13).
 * **Watchdog.** A background thread kills the *whole* sidecar once a pending
   call passes its deadline by ``watchdog_grace_s`` (unresponsive process), then
   hands the set of tracked run ids to the injected recovery hook **before** any
@@ -66,6 +80,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from io import BufferedReader
@@ -100,7 +115,19 @@ __all__ = [
 BASE_ENV_VARS: tuple[str, ...] = ("PATH", "HOME", "LANG", "TMPDIR")
 
 _TOOL_SECONDS: float = float(LIMITS["timeouts"]["tool_seconds"])
-_CAD_BUILD_SECONDS: float = float(LIMITS["timeouts"]["cad_build_seconds"])
+
+#: Size of the pool that runs ``py.*`` handlers, read from the shared limits
+#: document rather than written here (``schemas/bridge_limits.json`` preamble:
+#: no limit literal may be duplicated in code on either side). It is twice
+#: ``admission.run_slots`` because a handler may nest one level: an
+#: orchestrator's ``py.delegate`` occupies a worker for as long as its child
+#: part session runs, and that child's own tool calls arrive as further ``py.*``
+#: requests needing workers of their own. That is the nesting bound, not the
+#: fan-out bound: a turn's non-sequential tools dispatch in parallel
+#: (``agent/src/tools/preflight.ts``), so many admitted runs each fanning out
+#: reads can exceed it and meet ``handler_overloaded`` — backpressure by name,
+#: never a deadlock.
+_PY_HANDLER_WORKERS: int = int(LIMITS["rpc"]["py_handler_workers"])
 
 # Linux prctl option to receive a signal when the parent thread dies.
 _PR_SET_PDEATHSIG = 1
@@ -197,7 +224,10 @@ class SupervisorConfig:
     argv: list[str]
     credential_allowlist: frozenset[str] = frozenset()
     default_timeout_s: float = _TOOL_SECONDS
-    cad_build_timeout_s: float = _CAD_BUILD_SECONDS
+    #: Concurrent ``py.*`` handlers. Beyond it a request is refused
+    #: ``handler_overloaded`` instead of waiting for a worker, so a sidecar that
+    #: floods the bridge cannot make the reader thread the queue.
+    py_handler_workers: int = _PY_HANDLER_WORKERS
     watchdog_interval_s: float = 0.1
     watchdog_grace_s: float = 5.0
     #: How many times an *unexpected* child exit may be respawned automatically
@@ -281,6 +311,15 @@ class Supervisor:
         self._wlock = threading.Lock()
         self._reader: threading.Thread | None = None
         self._watchdog: threading.Thread | None = None
+        # -- py.* handler pool ----------------------------------------------
+        #: Created on the first spawn, shared across respawns, shut down by
+        #: :meth:`close`. Handlers run here and never on the reader thread, so a
+        #: handler is free to issue :meth:`call` (J-agent-wiring-13).
+        self._handler_pool: ThreadPoolExecutor | None = None
+        self._hlock = threading.Lock()
+        self._handler_inflight = 0
+        #: Requests refused because every worker was busy (regression evidence).
+        self.handler_overloads = 0
         self._closing = threading.Event()
         self._restart_generation = 0
         self.last_exit: int | None = None
@@ -368,6 +407,11 @@ class Supervisor:
             if self._watchdog is None or not self._watchdog.is_alive():
                 self._watchdog = threading.Thread(target=self._watchdog_loop, daemon=True)
                 self._watchdog.start()
+            if self._handler_pool is None and not self._closing.is_set():
+                self._handler_pool = ThreadPoolExecutor(
+                    max_workers=max(1, self.config.py_handler_workers),
+                    thread_name_prefix="heph-py-handler",
+                )
             self.spawn_count += 1
             self._spawned_at = time.monotonic()
         # Outside the process lock on purpose: the hook issues real requests, and
@@ -456,6 +500,13 @@ class Supervisor:
         )
         if self._reader is not None:
             self._reader.join(timeout=5)
+        # After the child is gone and every pending call has its structured
+        # error, so a handler blocked in `call` is already unblocked. Never
+        # waited on: a wedged handler must not hold `close` open, and the pool's
+        # threads are cancelled rather than joined at interpreter exit.
+        pool, self._handler_pool = self._handler_pool, None
+        if pool is not None:
+            pool.shutdown(wait=False, cancel_futures=True)
         self._safe_unregister_atexit()
         return rc
 
@@ -729,26 +780,90 @@ class Supervisor:
             self._sink(method, params)
 
     def _dispatch_py_request(self, msg_id: Any, method: str, params: dict[str, Any]) -> None:
+        """Hand one ``py.*`` request to a worker; never run it on this thread.
+
+        J-agent-wiring-13. The reader thread is the only thread that can deliver
+        a response frame, so a handler that issues :meth:`call` — which every
+        real delegation does, and which the ``query_snapshot`` vision child does
+        — would wait here for a message only it could read. The read loop
+        therefore *routes* and the pool *executes*; ordering is preserved for
+        notifications (still dispatched inline, in arrival order) and requests
+        are correlated by id, as every response already was.
+        """
         if self._py_handler is None:
-            self._write_frame(
-                make_error(msg_id, ErrorCode.METHOD_NOT_FOUND, f"no handler: {method}")
-            )
+            self._safe_send(make_error(msg_id, ErrorCode.METHOD_NOT_FOUND, f"no handler: {method}"))
             return
+        pool = self._handler_pool
+        if pool is None:
+            # No pool: a supervisor used as a pure frame endpoint (unit tests
+            # that never `start()`). Running inline is what it did before the
+            # pool existed and is safe precisely because such a handler has no
+            # child to call back into.
+            self._run_py_handler(msg_id, method, params, counted=False)
+            return
+        with self._hlock:
+            if self._handler_inflight >= max(1, self.config.py_handler_workers):
+                self.handler_overloads += 1
+                # Backpressure with a NAME, not a stall: an unbounded pool lets a
+                # misbehaving sidecar spawn threads without limit, and queueing
+                # behind the reader is the deadlock this change removes. Failing
+                # one tool call is strictly better than stalling the pipe.
+                self._safe_send(
+                    make_error(
+                        msg_id,
+                        ErrorCode.BUSY,
+                        f"py handler pool saturated ({self.config.py_handler_workers} workers)",
+                        {"reason": "handler_overloaded"},
+                    )
+                )
+                return
+            self._handler_inflight += 1
         try:
-            result = self._py_handler(method, params)
-        except ProtocolError as exc:
-            # Structured refusals (DispatchError and friends) carry a stable
-            # machine `reason` in `.data`; forward it so the model sees the
-            # discriminated code, not only prose.
-            data = getattr(exc, "data", None)
-            self._safe_send(make_error(msg_id, exc.code, exc.message, data))
-            return
-        except Exception as exc:
+            pool.submit(self._run_py_handler, msg_id, method, params, counted=True)
+        except RuntimeError:
+            # The pool was shut down between the read above and this submit.
+            with self._hlock:
+                self._handler_inflight -= 1
             self._safe_send(
-                make_error(msg_id, ErrorCode.INTERNAL_ERROR, f"{type(exc).__name__}: {exc}")
+                make_error(msg_id, ErrorCode.PROCESS_DOWN, "supervisor is shutting down")
             )
-            return
-        self._safe_send(make_response(msg_id, result))
+
+    def _run_py_handler(
+        self, msg_id: Any, method: str, params: dict[str, Any], *, counted: bool
+    ) -> None:
+        """Execute one handler and reply. Runs on a pool worker (or inline).
+
+        Two workers can reply concurrently; :meth:`_write_frame` serializes on
+        ``_wlock`` and writes one already-encoded frame under it, so frames are
+        never interleaved on the pipe.
+        """
+        handler = self._py_handler
+        try:
+            if handler is None:  # pragma: no cover - guarded by the caller
+                self._safe_send(
+                    make_error(msg_id, ErrorCode.METHOD_NOT_FOUND, f"no handler: {method}")
+                )
+                return
+            try:
+                result = handler(method, params)
+            except ProtocolError as exc:
+                # Structured refusals (DispatchError and friends) carry a stable
+                # machine `reason` in `.data`; forward it so the model sees the
+                # discriminated code, not only prose.
+                data = getattr(exc, "data", None)
+                self._safe_send(make_error(msg_id, exc.code, exc.message, data))
+                return
+            except Exception as exc:
+                self._safe_send(
+                    make_error(msg_id, ErrorCode.INTERNAL_ERROR, f"{type(exc).__name__}: {exc}")
+                )
+                return
+            self._safe_send(make_response(msg_id, result))
+        finally:
+            # Only the pooled path reserved a slot; the inline path never did.
+            if counted:
+                with self._hlock:
+                    self._handler_inflight -= 1
 
     def _safe_send(self, frame: dict[str, Any]) -> None:
         with contextlib.suppress(FrameTooLargeError, BrokenPipeError, OSError):
@@ -877,10 +992,56 @@ class Supervisor:
             call.complete_err(error)
 
     def _fire_recovery(self, event: ProcessLossEvent) -> None:
-        # A recovery-hook fault must not wedge the restart path.
-        if self._recovery_hook is not None:
-            with contextlib.suppress(Exception):
-                self._recovery_hook(event)
+        # A recovery-hook fault must not wedge the restart path — and must not
+        # be silent either (J-build-state-2). The suppression stays; what
+        # changes is that the fault is written to the same archived-evidence
+        # list the restart itself lands in, so "the terminal was written" and
+        # "the write failed" stop looking identical from outside. There is no
+        # logger configured anywhere in this process, so this list IS the
+        # channel.
+        if self._recovery_hook is None:
+            return
+        try:
+            self._recovery_hook(event)
+        except Exception as exc:
+            self.record_recovery_fault(
+                detail=f"{type(exc).__name__}: {exc}",
+                generation=event.restart_generation,
+            )
+
+    def record_recovery_fault(
+        self,
+        *,
+        detail: str,
+        run_id: str | None = None,
+        generation: int | None = None,
+    ) -> None:
+        """Archive one recovery-path fault beside the restart records.
+
+        J-build-state-2. The recovery hook synthesizes one interrupted terminal
+        per tracked run; a store fault on that write leaves the run with no
+        terminal and its admission slot occupied, and the run keeps appearing
+        live until the next startup reconstruction. That is exactly the state
+        ``STAGE2_DIGEST`` forbids, and before this it produced no row, no event
+        and no log line anywhere.
+
+        Same shape as :meth:`_record_restart` plus the ``run_id`` the fault is
+        about, and the detail goes through :meth:`redact` because a database
+        error message can quote a path or a connection string that carries a
+        registered secret (§23.6).
+        """
+        self.restart_events.append(
+            {
+                "reason": "recovery_fault",
+                "returncode": None,
+                "restart_generation": (
+                    generation if generation is not None else self._restart_generation
+                ),
+                "run_id": run_id,
+                "detail": self.redact(detail)[:STDERR_TAIL_LINE_CHARS],
+                "at": datetime.now(UTC).isoformat(),
+            }
+        )
 
     # -- watchdog ----------------------------------------------------------
 

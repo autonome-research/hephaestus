@@ -21,13 +21,13 @@
 //
 // This is unreachable through `SessionService` directly (lifecycle.test.ts's
 // fixture wires a hand-rolled custom tool that never calls `resolveContext`),
-// so this file drives the REAL compiled sidecar entry point
-// (`agent/dist/main.js`) as a child process over the same framed JSON-RPC
-// transport the Python supervisor uses, standing in for BOTH the supervisor
-// (session.create/session.prompt) and the Python bridge (py.tool_dispatch,
-// py.ask_user) ourselves. The fake model is `FakeModel` (session/runtime.ts),
-// a real HTTP server the child process's own `runtime.configure` points at —
-// nothing here talks to a real provider.
+// so this file drives the REAL production entry module (`src/main.ts`) — its
+// module-level `activeRuns`/`runScope` state, its `registerHandlers`-bound
+// handler table, everything `heph-agent` actually runs — standing in for BOTH
+// the supervisor (session.create/session.prompt) and the Python bridge
+// (py.tool_dispatch, py.ask_user) ourselves. The fake model is `FakeModel`
+// (session/runtime.ts), a real HTTP server the child process's own
+// `runtime.configure` points at — nothing here talks to a real provider.
 //
 // Two sessions prompt at once: "part" needs three model round trips
 // (read_part, then ask_user, then a final text) and "orchestrator" needs two
@@ -40,32 +40,29 @@
 // exactly the condition a per-run context (an `AsyncLocalStorage` scope, or
 // equivalent) is designed to. A correct per-run fix makes every assertion
 // below true regardless of which turn happens to finish first.
+//
+// audit-2026-09-04 J-mirrors-and-dx-31 landed the seam this file now uses:
+// `src/main.ts` used to construct its peer and register all seventeen
+// handlers as MODULE-LEVEL side effects, so it "cannot be imported" — the
+// only way to drive it was to compile the whole source tree with `tsc` and
+// spawn the emitted `main.js` as a child process, which is what this file did
+// until this round (a ~10s build on every run, the only file in the suite
+// that paid it). `registerHandlers(peer)` now binds that same table — the
+// exact production handlers, including the `activeRuns`/`runScope` state this
+// test exists to exercise — to any `RpcPeer`, so two `RpcPeer`s wired directly
+// to each other in-process reproduce the real two-sided protocol with no
+// compiled `dist/` tree and no subprocess. This is not a weaker substitute for
+// the child-process version: it is literally the same module (`src/main.ts`,
+// transpiled on the fly by Vitest rather than by `tsc`), so a defect in
+// per-run scoping is exactly as reachable here as it was over real stdio.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { FrameDecoder, encodeFrame, type JsonValue } from "../../src/framing.js";
+import type { JsonValue } from "../../src/framing.js";
 import { RpcPeer } from "../../src/rpc.js";
 import { FakeModel, type FakeRequestInfo, type FakeTurn, type FakeTurnResolver } from "../../src/session/runtime.js";
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const agentDir = path.resolve(here, "..", "..");
-const distMain = path.join(agentDir, "dist", "main.js");
-const tscBin = path.join(agentDir, "node_modules", ".bin", "tsc");
-
-/** Build the real emitted entry point once, from whatever `src/` currently is. */
-function buildDist(): void {
-  execFileSync(tscBin, ["-p", path.join(agentDir, "tsconfig.json")], {
-    cwd: agentDir,
-    stdio: "pipe",
-  });
-  if (!existsSync(distMain)) {
-    throw new Error(`tsc did not produce ${distMain}`);
-  }
-}
 
 // -- profile system-prompt markers (session/profiles.ts PROFILE_PROMPT_NOTE) --
 // Distinctive substrings of each profile's system prompt, used to tell the two
@@ -94,15 +91,26 @@ interface RecordedQuestion {
   readonly runId: string;
 }
 
-/** The sidecar child process plus a peer standing in for the Python bridge. */
+/**
+ * Two `RpcPeer`s wired directly to each other in-process, standing in for the
+ * stdio pipe between the Python supervisor and the sidecar. `sidecarPeer` is
+ * bound to `src/main.ts`'s real handler table via `registerHandlers`; `peer`
+ * plays the Python side of the protocol the way `BridgeRuntime` does —
+ * answering `py.tool_dispatch` / `py.ask_user`, recording `event` /
+ * `terminal` notifications.
+ *
+ * Each side's `sink` feeds the other's `handleFrame` directly with the JSON
+ * bytes `handleFrame` itself expects (`main_wiring.test.ts` drives a single
+ * peer the same way). There is no framed byte stream to encode/decode here —
+ * that machinery (`framing.ts`'s `encodeFrame`/`FrameDecoder`) exists for a
+ * real OS pipe, and this harness has none.
+ */
 class SidecarHarness {
-  readonly child: ChildProcessWithoutNullStreams;
   readonly peer: RpcPeer;
   readonly toolDispatches: RecordedDispatch[] = [];
   readonly questions: RecordedQuestion[] = [];
   readonly answers: RecordedQuestion[] = [];
   readonly events: RecordedEvent[] = [];
-  readonly stderr: string[] = [];
   /** Set when a tool result embeds the "no active run for tool invocation" fault. */
   sawNoActiveRunError = false;
   /**
@@ -116,21 +124,21 @@ class SidecarHarness {
   /** Called synchronously as each `py.ask_user` request arrives. */
   onAskUser?: (runId: string) => void;
 
-  constructor(agentDataDir: string) {
-    this.child = spawn(process.execPath, [distMain], {
-      cwd: agentDir,
-      env: { ...process.env, HEPHAESTUS_AGENT_DIR: agentDataDir },
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    this.child.stderr.on("data", (d: Buffer) => this.stderr.push(d.toString("utf8")));
+  private readonly sidecarPeer: RpcPeer;
 
+  constructor(registerHandlers: (target: RpcPeer) => void) {
+    // Each side's sink closure reaches the other through `this.sidecarPeer` /
+    // `this.peer` rather than a local variable: the closures aren't INVOKED
+    // until a later `request`/`notify`, by which point both fields are
+    // assigned, so the forward reference is safe despite `sidecarPeer` not
+    // existing yet at the moment `this.peer`'s constructor body runs.
     this.peer = new RpcPeer((frame) => {
-      this.child.stdin.write(encodeFrame(frame));
+      void this.sidecarPeer.handleFrame(Buffer.from(JSON.stringify(frame)));
     });
-    const decoder = new FrameDecoder();
-    this.child.stdout.on("data", (chunk: Buffer) => {
-      for (const frame of decoder.push(chunk)) void this.peer.handleFrame(frame);
+    this.sidecarPeer = new RpcPeer((frame) => {
+      void this.peer.handleFrame(Buffer.from(JSON.stringify(frame)));
     });
+    registerHandlers(this.sidecarPeer);
 
     // Stand in for `hephaestus.agent_bridge.dispatch.ToolDispatcher`: record
     // exactly what the sidecar attributed the call to, and return a minimal
@@ -195,18 +203,6 @@ class SidecarHarness {
       120_000,
     );
   }
-
-  async close(): Promise<void> {
-    this.child.kill();
-    await new Promise<void>((resolve) => {
-      if (this.child.exitCode !== null || this.child.signalCode !== null) {
-        resolve();
-        return;
-      }
-      this.child.once("exit", () => resolve());
-      setTimeout(resolve, 2000).unref();
-    });
-  }
 }
 
 function toolCallsTurn(name: string, args: Record<string, unknown>, id: string): FakeTurn {
@@ -221,18 +217,32 @@ let fake: FakeModel;
 let harness: SidecarHarness;
 let agentDataDir: string;
 let projectRoot: string;
+let sawProcessFault = false;
+
+function onProcessFault(reason: unknown): void {
+  sawProcessFault = true;
+  console.error("[concurrency.test] unhandled rejection/exception while both runs were in flight", reason);
+}
 
 beforeAll(async () => {
-  buildDist();
   agentDataDir = mkdtempSync(path.join(tmpdir(), "heph-conc-agent-"));
   projectRoot = mkdtempSync(path.join(tmpdir(), "heph-conc-proj-"));
+  // `src/main.ts`'s `agentDir` is read once, at module load — the equivalent
+  // of the env var the old spawned-child version passed to the subprocess —
+  // so it must be set before the dynamic import below.
+  process.env.HEPHAESTUS_AGENT_DIR = agentDataDir;
+  process.on("unhandledRejection", onProcessFault);
+  process.on("uncaughtException", onProcessFault);
+
+  const mainModule = await import("../../src/main.js");
   fake = await FakeModel.start([]);
-  harness = new SidecarHarness(agentDataDir);
+  harness = new SidecarHarness(mainModule.registerHandlers);
   await harness.configure(fake.providerSpec() as unknown as JsonValue);
 }, 60_000);
 
 afterAll(async () => {
-  await harness?.close();
+  process.off("unhandledRejection", onProcessFault);
+  process.off("uncaughtException", onProcessFault);
   await fake?.close();
   rmSync(agentDataDir, { recursive: true, force: true });
   rmSync(projectRoot, { recursive: true, force: true });
@@ -250,7 +260,7 @@ describe("concurrent session.prompt calls do not clobber the sidecar's active-ru
 
     // Shared script cursor (session/runtime.ts's FakeModel, like the Python
     // fake_openai.py it mirrors): every resolver call must identify its own
-    // session from the request body rather than from its position.
+    // session from the request body rather than from turn position.
     const resolver: FakeTurnResolver = (req: FakeRequestInfo) => {
       const isPart = req.bodyText.includes(PART_MARKER);
       const isOrch = req.bodyText.includes(ORCH_MARKER);
@@ -336,6 +346,10 @@ describe("concurrent session.prompt calls do not clobber the sidecar's active-ru
       expect(call.runId).toBe(expectedRun);
     }
 
-    expect(harness.stderr.join("")).not.toMatch(/unhandled|uncaught/i);
+    // -- (4) no fault leaked out of process while both runs were in flight --
+    expect(
+      sawProcessFault,
+      "an unhandled rejection or uncaught exception surfaced while both runs were concurrently in flight",
+    ).toBe(false);
   }, 90_000);
 });
