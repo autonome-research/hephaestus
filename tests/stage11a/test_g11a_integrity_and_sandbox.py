@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pytest
 from _g11a import DATASHEET, component_tree, motor_component, requires_bwrap
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.core.registry import (
     RegistryError,
     RegistryIntegrityError,
@@ -214,7 +215,6 @@ def test_a_component_generator_gets_no_capability_a_part_script_lacks(
 def test_the_unsafe_backend_refuses_a_component_tree(
     hostile_component: Path, store: OpStore, tmp_path: Path
 ) -> None:
-    from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 
     ops = RegistryOps(
         RegistrySet({"parts": load_registry(hostile_component)}),

@@ -35,6 +35,7 @@ from hephaestus.core.checks.template import (
 )
 from hephaestus.core.errors import AddressingError, InvalidCheckGenerationError, ValidationError
 from hephaestus.core.motion import SnapshotMotionContext
+from hephaestus.core.project_store.layout import CHECKS_DIRNAME
 from hephaestus.core.project_store.projections import SnapshotRejectedError
 from hephaestus.core.project_store.store import (
     artifact_ref as make_artifact_ref,
@@ -45,10 +46,11 @@ from hephaestus.core.project_store.store import (
 from hephaestus.core.types import BuildResult
 from opstore.types import JSONValue
 
-from ._base import CadOpError, CadOpsState
+from ._base import CHECK_SNAPSHOT_KIND, CadOpError, CadOpsState, attempted_snapshot
 
 __all__ = [
     "CHECK_DESCRIPTION_SENTINEL",
+    "CHECK_SNAPSHOT_KIND",
     "CHECK_TEMPLATE_HEADER",
     "CheckOps",
     "check_template",
@@ -76,14 +78,31 @@ class CheckOps(CadOpsState):
         """``(script, content_hash, snapshot_ref)`` for ``checks/<name>.py``."""
         path = self._layout.checks_dir / f"{name}.py"
         if not path.is_file():
+            # PROJECT-RELATIVE (audit-2026-09-04 J-agent-results-11): the
+            # absolute directory named the operator's home in every refusal
+            # that reached a model or an HTTP client, and the candidate list
+            # below already carries everything a caller can act on. The
+            # directory-name constant is interpolated rather than a resolved
+            # path so a refactor cannot reintroduce an absolute one.
             raise AddressingError(
-                f"project check {name!r} does not exist under {self._layout.checks_dir}",
+                f"project check {name!r} does not exist under {CHECKS_DIRNAME}/",
                 selector=name,
                 candidates=self.check_names(),
             )
         raw = path.read_bytes()
         blob = self._store.blobs.put(raw)
-        return raw.decode("utf-8"), blob, make_artifact_ref("part-snapshot", blob)
+        return raw.decode("utf-8"), blob, make_artifact_ref(CHECK_SNAPSHOT_KIND, blob)
+
+    def attempted_check_snapshot(self, base_hash: str, old_str: str, new_str: str) -> str | None:
+        """The candidate an ``edit_project_check`` MEANT to write, or None.
+
+        Delegates to the shared replay so a check conflict names the rejected
+        contender rather than the live file (ledger J-agent-results-2), minting
+        the check snapshot kind (J-agent-results-S5) rather than the part one.
+        """
+        return attempted_snapshot(
+            self._store, base_hash, old_str, new_str, kind=CHECK_SNAPSHOT_KIND
+        )
 
     def check_names(self) -> tuple[str, ...]:
         directory = self._layout.checks_dir
@@ -176,7 +195,28 @@ class CheckOps(CadOpsState):
     # -- run_checks --------------------------------------------------------
 
     def run_part_checks(self, name: str) -> dict[str, Any]:
-        """Re-execute ``name``'s persistent ``CHECKS`` (published as a preview)."""
+        """Re-execute ``name``'s persistent ``CHECKS`` (published as a preview).
+
+        One conservative precondition short-circuits the rebuild
+        (audit-2026-09-04 J-cli-startup-9): a part whose current successful
+        build still revalidates against the live script, parameters and
+        dependencies **and** whose record says it declared no checks has
+        nothing to re-run, and answering from the record costs a pointer read
+        instead of 3.4 s of sandbox, worker interpreter, kernel import,
+        script re-execution and a preview publication.
+
+        The rebuild is intrinsic everywhere else and stays: ``CHECKS``
+        predicates are script-local closures over a facade bound to the built
+        geometry, so there is no way to re-run a real one without re-executing
+        the script, and a check that passed on the recorded build may fail
+        against an edited one. The fast path is therefore gated on *both* the
+        freshness of the inputs and an explicitly recorded empty declaration —
+        never on the results map alone, which is empty for a part whose checks
+        failed to register (which is why the record now carries the names).
+        """
+        recorded = self._recorded_empty_check_run(name)
+        if recorded is not None:
+            return recorded
         publisher = self._publisher()
         inputs = publisher.freeze_inputs(name)
         with self._build_dir(name) as out_dir:
@@ -197,17 +237,57 @@ class CheckOps(CadOpsState):
                 build, op_id=f"heph-run-checks-{uuid.uuid4().hex}", preview=True
             )
         result: BuildResult = outcome.result
+        payload = self._part_check_payload(result)
+        if result.error is not None:
+            payload["error"] = result.error.to_json()
+        return payload
+
+    def _part_check_payload(self, result: BuildResult) -> dict[str, Any]:
+        """The part-scope ``run_checks`` document for one build record.
+
+        ``project`` is stated in both scopes and ``part`` names a part in both
+        (J-agent-results-9): a reader never has to know which scope it is in to
+        know what the two fields mean.
+        """
         payload: dict[str, Any] = {
             "status": "ok" if result.status == "ok" else "error",
             "scope": "part",
-            "part": name,
+            "part": result.part,
+            "project": self._layout.manifest.name,
             "checks": {check_name: check.to_json() for check_name, check in result.checks.items()},
         }
         if result.artifact_ref is not None:
             payload["artifact_ref"] = result.artifact_ref
-        if result.error is not None:
-            payload["error"] = result.error.to_json()
         return payload
+
+    def _recorded_empty_check_run(self, name: str) -> dict[str, Any] | None:
+        """The recorded answer for a fresh build that declared no checks, else None.
+
+        Three conditions, all required, none of them a heuristic: the part has
+        a current **successful** build; that build's recorded inputs still
+        revalidate against the live ones (the read-only predicate B-5 factored
+        out of the publisher, so this and the params route share ONE answer to
+        "is the current build still an answer for the live inputs"); and the
+        record positively says the build registered no check names. A record
+        written before ``check_names`` existed carries ``()``, which says
+        nothing, so it takes the full path — silence must not read as a pass.
+        """
+        publisher = self._publisher()
+        result = publisher.current_result(name)
+        if result is None or result.status != "ok" or result.artifact_ref is None:
+            return None
+        if result.checks:
+            return None
+        # `None` is "the record does not say" — a build published before the
+        # names were recorded — and takes the full path, because silence is not
+        # a statement that the part declares nothing.
+        declared = publisher.recorded_check_names(name)
+        if declared is None or declared:
+            return None
+        freshness = publisher.freshness(name)
+        if freshness is None or not freshness.fresh:
+            return None
+        return self._part_check_payload(result)
 
     def run_project_checks(
         self,
@@ -270,7 +350,9 @@ class CheckOps(CadOpsState):
                 report = run_bundle(
                     bundle,
                     sources,
-                    part=self._layout.manifest.name,
+                    part=None,
+                    scope="project",
+                    project=self._layout.manifest.name,
                     project_snapshot_ref=resolved_ref,
                     imports=self._import_target_shape,
                     at_pose=motion.at_pose,
@@ -279,9 +361,15 @@ class CheckOps(CadOpsState):
                 )
             except InvalidCheckGenerationError as exc:  # pragma: no cover - captured above
                 raise CadOpError("invalid_check_generation", exc.message) from exc
+        # J-agent-results-9: the subject is now declared at the run
+        # (``run_bundle(..., part=None, scope="project", project=…)``), so the
+        # report arrives correct and there is nothing to correct afterwards. It
+        # was briefly patched here with ``dataclasses.replace``; that fixed the
+        # tool's copy while ``heph check --json`` and ``GET /checks`` — which
+        # go through the same serializer from ``checks/report.py`` — kept
+        # saying the project's name was a part.
         payload = dict(report.to_json())
         payload["status"] = "ok"
-        payload["scope"] = "project"
         payload["check_set_generation"] = str(state.generation)
         payload["check_set_ref"] = state.bundle_ref
         return payload

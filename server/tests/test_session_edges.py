@@ -20,6 +20,7 @@ from hephaestus.agent_bridge.sessions import (
     ResolvedSelection,
     SessionService,
 )
+from hephaestus.testing.delegation_gates import AllowAllGate
 from hephaestus.testing.workspace import workspace
 from opstore.types import current_owner
 
@@ -164,7 +165,7 @@ def test_the_delegation_wal_records_its_edge_at_prepared(tmp_path: Path) -> None
     """§2.8's second writer, with §2.8's enumerated delegation origin."""
     store = _store(tmp_path)
     edges = SessionEdgeStore(store.db)
-    service = DelegationService(store.admission, store.db, edges=edges)
+    service = DelegationService(store.admission, store.db, gate=AllowAllGate(), edges=edges)
     store.admission.admit("parent-run")
     outcome = service.delegate(
         "parent-run",

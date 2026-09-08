@@ -16,6 +16,7 @@ WAL-recorded outcomes.
 from __future__ import annotations
 
 import contextlib
+import difflib
 import json
 import shutil
 import tempfile
@@ -31,7 +32,6 @@ from hephaestus.core.executor.artifact_geometry import ArtifactGeometry, publish
 from hephaestus.core.executor.imports import ImportPayload
 from hephaestus.core.executor.runner import BuildRequest, UnpublishedBuild, run_build
 from hephaestus.core.executor.sandbox.base import ExecBackend
-from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.core.project_store.layout import ProjectLayout
 from hephaestus.core.project_store.projections import PROJECT_SNAPSHOT_REF_PREFIX
 from hephaestus.core.project_store.publication import Publisher
@@ -41,6 +41,13 @@ from hephaestus.core.project_store.store import (
 from hephaestus.core.project_store.store import (
     blob_hash_of_ref,
 )
+from hephaestus.core.registry import TEXT_MAX_BYTES, TEXT_MAX_LINES, RegistrySet
+
+# The skill loader's tested pager, reused rather than re-implemented
+# (ledger J-http-limits-3). ``hephaestus.core.registry.__init__`` re-exports
+# the two limits but not the pager itself; importing the defining module is
+# the honest form until that package chooses to widen its own surface.
+from hephaestus.core.registry._reference import Page, paginate
 from hephaestus.core.render.inspect import RenderProject
 from opstore.types import JSONValue
 
@@ -54,6 +61,25 @@ from opstore import (
 )
 
 from ._request import request_text_for_active_run
+
+#: The artifact kind an immutable snapshot of ``checks/<name>.py`` is minted
+#: under. It used to be ``part-snapshot`` because that kind was already
+#: registered as readable Python source and the reference therefore *worked* —
+#: but the kind is the type tag in an otherwise opaque capability, and a reader
+#: holding one could not tell whether it snapshots a part script or a check
+#: script (audit-2026-09-04 J-agent-results-S5). It lives HERE, below every
+#: domain, because three modules must agree on it and none of them may import
+#: the others: ``_checks`` mints it, ``_artifacts`` registers its mime so the
+#: reference stays readable, and ``dispatch`` reconstructs a base reference from
+#: a caller's expected hash — and a client's own reconstruction must match the
+#: server's byte for byte.
+CHECK_SNAPSHOT_KIND: Final[str] = "check-snapshot"
+
+#: The kind check snapshots were minted under before that change. Accepted on
+#: *read* for one release: retained check-report and journal evidence carries
+#: it, and a reference already handed to a model must not become unreadable
+#: because the server renamed a type tag.
+LEGACY_CHECK_SNAPSHOT_KIND: Final[str] = "part-snapshot"
 
 #: CAS pointer holding a part's persisted parameter-override document.
 PART_PARAMS_POINTER_PREFIX: Final[str] = "part-params:"
@@ -262,6 +288,250 @@ class ParamStore:
 
 
 # --------------------------------------------------------------------------
+# bounded source pages: the read/edit tools' paging and near-miss contract
+
+
+@dataclass(frozen=True)
+class SourcePage:
+    """One bounded slice of a text source, with absolute line and byte cursors.
+
+    ``tools_decl`` gives ``read_part`` / ``read_globals`` / ``read_project_check``
+    an ``offset_line`` / ``limit_lines`` pair and splices four paging members
+    into their results, and until ledger J-http-limits-3 all three handlers
+    returned the whole document with ``truncated: false`` and no cursor (RC-9).
+    The sidecar's text renderer then cut the oversized result at its own byte
+    budget, so the model received a JSON string chopped mid-value beside a
+    result claiming it was complete — the one loss the paging contract exists
+    to prevent.
+
+    The paging itself is :func:`hephaestus.core.registry._reference.paginate`,
+    the tested pager the skill loader already stands on: one implementation of
+    "greedy page under a line count and a wire-byte budget, reporting a single
+    line too large to ever fit", not a fourth.
+    """
+
+    body: str
+    #: 1-based, inclusive; ``last_line + 1`` when the page is empty.
+    first_line: int
+    #: 1-based, inclusive; ``first_line - 1`` when the page is empty.
+    last_line: int
+    total_lines: int
+    total_bytes: int
+    truncated: bool
+    oversized_line: bool
+    #: Absolute byte offset of the next unread line, for ``read_artifact`` over
+    #: the same snapshot ref. ``None`` when the page reached the end.
+    next_offset_bytes: int | None
+    #: 1-based line to pass back as ``offset_line``. ``None`` at the end. The
+    #: byte cursor cannot be fed back to a *line*-paged tool, which is why both
+    #: are reported rather than only the one the pager computes.
+    next_offset_line: int | None
+    oversized_line_offset_bytes: int | None
+
+
+def page_source(
+    content: str, *, offset_line: int = 1, limit_lines: int = TEXT_MAX_LINES
+) -> SourcePage:
+    """Page ``content`` under the §5 dual text cap from an absolute line offset."""
+    data = content.encode("utf-8")
+    raw_lines = data.splitlines(keepends=True)
+    starts: list[int] = []
+    cursor = 0
+    for line in raw_lines:
+        starts.append(cursor)
+        cursor += len(line)
+    starts.append(len(data))
+
+    total_lines = len(raw_lines)
+    first = max(0, int(offset_line) - 1)
+    limit = max(1, min(int(limit_lines), TEXT_MAX_LINES))
+    if first >= total_lines:
+        # An offset past the end is an EMPTY page, never the whole file: the
+        # caller asked for lines that do not exist and answering with lines it
+        # did not ask for is how a model loses its place in a large script.
+        page = Page(
+            body="",
+            end_line=total_lines,
+            truncated=False,
+            oversized_line=False,
+            next_offset_bytes=None,
+            oversized_line_offset_bytes=None,
+        )
+    else:
+        page = paginate(raw_lines, starts, first, limit, max(1, TEXT_MAX_BYTES))
+    return SourcePage(
+        body=page.body,
+        first_line=first + 1,
+        # An empty page reports `first_line - 1`, so the window is empty
+        # rather than inverted: an offset past the end asked for lines
+        # that do not exist and the answer is that none were returned.
+        last_line=page.end_line if page.end_line > first else first,
+        total_lines=total_lines,
+        total_bytes=len(data),
+        truncated=page.truncated,
+        oversized_line=page.oversized_line,
+        next_offset_bytes=page.next_offset_bytes,
+        next_offset_line=page.end_line + 1 if page.truncated else None,
+        oversized_line_offset_bytes=page.oversized_line_offset_bytes,
+    )
+
+
+def numbered_source(body: str, *, start: int = 1) -> str:
+    """``body`` with absolute line numbers, starting at ``start``.
+
+    ``start`` is not decoration: the helper always numbered from one, so every
+    page after the first would have labelled its lines with the wrong numbers —
+    and an ``edit_part`` built from those numbers would target the wrong text.
+    """
+    lines = body.splitlines()
+    width = len(str(max(start + len(lines) - 1, 1)))
+    return "\n".join(f"{i:>{width}}  {line}" for i, line in enumerate(lines, start=start))
+
+
+def paging_fields(page: SourcePage, *, prefix: str = "") -> dict[str, JSONValue]:
+    """The declared paging members for ``page``; cursors omitted when absent.
+
+    ``prefix`` renders the same facts under the conflict payload's
+    ``current_*`` names, so a stale-hash conflict and a read report the page
+    they carry in one vocabulary.
+    """
+    fields: dict[str, JSONValue] = {
+        f"{prefix}truncated": page.truncated,
+        f"{prefix}oversized_line": page.oversized_line,
+    }
+    if not prefix:
+        # A conflict payload always pages from line 1, so its window is not a
+        # fact worth a field; a read's is.
+        fields["first_line"] = page.first_line
+        fields["last_line"] = page.last_line
+        fields["total_lines"] = page.total_lines
+        fields["total_bytes"] = page.total_bytes
+    if page.next_offset_line is not None:
+        fields[f"{prefix}next_offset_line"] = page.next_offset_line
+    if page.next_offset_bytes is not None:
+        fields[f"{prefix}next_offset_bytes"] = page.next_offset_bytes
+    if page.oversized_line_offset_bytes is not None:
+        fields[f"{prefix}oversized_line_offset_bytes"] = page.oversized_line_offset_bytes
+    return fields
+
+
+def conflict_payload(
+    *,
+    current_hash: str | None,
+    current_script: str | None,
+    current_snapshot_ref: str | None,
+    base_snapshot_ref: str | None = None,
+    attempted_snapshot_ref: str | None = None,
+) -> dict[str, JSONValue]:
+    """The ONE stale-hash conflict document, for every editor and both paths.
+
+    ``edit_part`` had two conflict shapes — a three-field one built by its own
+    pre-check and the full declared one built by the store's compare-and-set
+    failure — while the declaration lists nine members (ledger
+    J-agent-results-2). One tool, two shapes, is what makes the continuation
+    rule unenforceable: a model receiving no truncation flag cannot know
+    whether the ``current_script`` it got back is the whole file. This builds
+    the declared set once, with the page cap applied and the continuation
+    cursors set when they bite.
+    """
+    # A store conflict can be raised without live content (the part vanished
+    # between the read and the write); the members stay present and null rather
+    # than absent, so a consumer branches on a value instead of on a key.
+    page = page_source(current_script or "")
+    payload: dict[str, JSONValue] = {
+        "current_hash": current_hash,
+        "current_script": None if current_script is None else page.body,
+        "current_snapshot_ref": current_snapshot_ref,
+        **paging_fields(page, prefix="current_"),
+    }
+    # Always PRESENT, null when unknown: the declared field set is what a
+    # consumer branches on, and an absent key and a null one are different
+    # facts to a reader that does `"base_snapshot_ref" in conflict`. Only the
+    # continuation CURSORS are omitted when absent — a cursor that does not
+    # apply has no null to mean.
+    payload["base_snapshot_ref"] = base_snapshot_ref
+    payload["attempted_snapshot_ref"] = attempted_snapshot_ref
+    return payload
+
+
+def attempted_snapshot(
+    store: OpStore, base_hash: str, old_str: str, new_str: str, *, kind: str
+) -> str | None:
+    """Register the candidate the caller MEANT to write, from its own base.
+
+    The edit is replayed against the immutable snapshot registered for
+    ``expected_hash`` — not against the live file, which is a *different*
+    document — so ``attempted_snapshot_ref`` names exactly the bytes the caller
+    intended. ``edit_project_check`` used to answer with the live snapshot ref
+    instead, handing back the file already on disk under the name of the
+    rejected contender (ledger J-agent-results-2, the same defect class as
+    J-agent-results-9: a field whose value is not what its name says).
+
+    ``None`` when that base was never registered here (a fabricated hash, or one
+    from another project) or when ``old_str`` does not match it exactly once:
+    there is then no single candidate to name, and inventing one would misreport
+    the caller's intent. ``kind`` is the artifact kind to mint, so a check
+    snapshot is not minted as a part snapshot (J-agent-results-S5).
+    """
+    from hephaestus.core.project_store.artifact_kinds import record_artifact_kind
+
+    if not base_hash.startswith("sha256:") or not store.blobs.has(base_hash):
+        return None
+    base = store.blobs.get(base_hash).decode("utf-8", errors="replace")
+    if base.count(old_str) != 1:
+        return None
+    attempted = store.blobs.put(base.replace(old_str, new_str, 1).encode("utf-8"))
+    record_artifact_kind(store, kind, attempted)
+    return make_artifact_ref(kind, attempted)
+
+
+#: How many near misses an exact-match failure reports, and the similarity a
+#: window must reach to be one. Both are constants rather than tuning knobs
+#: because the tool result feeds the bench: a non-deterministic candidate list
+#: would make two identical runs produce two different transcripts.
+NEAR_MISS_LIMIT: Final[int] = 3
+NEAR_MISS_CUTOFF: Final[float] = 0.6
+
+
+def near_misses(content: str, old_str: str) -> list[JSONValue]:
+    """At most :data:`NEAR_MISS_LIMIT` ``{line, text, ratio}`` near misses.
+
+    ``tool_schema.md`` promises an exact-match failure returns the closest
+    candidates and no editor implemented it (ledger J-agent-results-2): the
+    model's only recourse was to re-read the file and guess. The pass slides a
+    window the size of ``old_str`` over the file's lines and keeps the closest
+    ones, ordered by descending ratio then by line, so the list is a function
+    of the two inputs alone.
+    """
+    needle = old_str.strip("\n")
+    if not needle:
+        return []
+    lines = content.splitlines()
+    span = max(1, len(needle.splitlines()))
+    matcher = difflib.SequenceMatcher(autojunk=False)
+    matcher.set_seq2(needle)
+    scored: list[tuple[float, int, str]] = []
+    for index in range(0, max(0, len(lines) - span + 1)):
+        window = "\n".join(lines[index : index + span])
+        matcher.set_seq1(window)
+        # The two cheap upper bounds first: a full ratio() over every window of
+        # a large script is the one thing that could make a failed edit slow.
+        if matcher.real_quick_ratio() < NEAR_MISS_CUTOFF:
+            continue
+        if matcher.quick_ratio() < NEAR_MISS_CUTOFF:
+            continue
+        ratio = matcher.ratio()
+        if ratio < NEAR_MISS_CUTOFF:
+            continue
+        scored.append((ratio, index + 1, window))
+    scored.sort(key=lambda row: (-row[0], row[1]))
+    return [
+        cast("JSONValue", {"line": line, "text": text, "ratio": round(ratio, 4)})
+        for ratio, line, text in scored[:NEAR_MISS_LIMIT]
+    ]
+
+
+# --------------------------------------------------------------------------
 # the state every domain mixin shares
 
 
@@ -273,13 +543,22 @@ class CadOpsState:
         layout: ProjectLayout,
         store: OpStore,
         *,
-        backend: ExecBackend | None = None,
+        backend: ExecBackend,
     ) -> None:
         self._layout = layout
         self._store = store
-        # Default to the unsafe local backend (no OS sandbox) for fast tests;
-        # production wiring passes a probed secure backend.
-        self._backend: ExecBackend = backend or UnsafeLocalBackend()
+        # REQUIRED, with no default (ledger J-agent-wiring-4). This parameter
+        # used to default to ``UnsafeLocalBackend()`` "for fast tests", and the
+        # one production caller that injected nothing — ``BridgeRuntime``, the
+        # runtime behind ``heph agent`` and ``heph mcp`` — inherited it, so the
+        # test default was the shipped default and every model-authored script
+        # ran with no OS sandbox at all.
+        # ``core/executor/sandbox/unsafe.py``'s governing clause is "Never a
+        # default"; making the parameter required is what enforces it, because
+        # omitting it is now a ``TypeError`` at the call site rather than an
+        # unsandboxed build at run time. Callers that genuinely want the unsafe
+        # backend (the fixtures and the stage suites) say so in one word.
+        self._backend: ExecBackend = backend
         self.params = ParamStore(layout, store)
         # The *embedder's* request, for a caller that is not a run at all: the
         # HTTP tool routes, MCP, a test driving CadOps directly. A run's own text
@@ -290,6 +569,21 @@ class CadOpsState:
     @property
     def layout(self) -> ProjectLayout:
         return self._layout
+
+    # -- registries --------------------------------------------------------
+
+    #: The project's verified registry set, opened once per ops object. Cached
+    #: on the state rather than per mixin so the DFM rule packs, the bill of
+    #: materials and ``measure``'s density binding all read one verified set —
+    #: opening it twice would verify the same Merkle pin twice and, worse,
+    #: could observe two different ones across a re-pin mid-call.
+    _registry_set: RegistrySet | None = None
+
+    def registries(self) -> RegistrySet:
+        """The project's verified registry set (loaded once per ops object)."""
+        if self._registry_set is None:
+            self._registry_set = RegistrySet.open(self._layout.root)
+        return self._registry_set
 
     # -- the original request (VALIDATION.md §4 / §5) -----------------------
 

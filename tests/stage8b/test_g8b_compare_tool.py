@@ -339,7 +339,7 @@ def test_a_part_with_no_current_build_cannot_be_compared(project: Project) -> No
 
     with pytest.raises(DispatchError) as excinfo:
         compare(project, "plate", "part:plate")
-    assert excinfo.value.reason == "invalid_part"
+    assert excinfo.value.reason == "addressing_error"  # the engine's own reason (J-http-envelope-4)
 
 
 def test_two_calls_return_identical_records(plated: Project) -> None:

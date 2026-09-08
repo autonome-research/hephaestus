@@ -10,7 +10,7 @@ from hephaestus.core.checks.facade import (
     part_measurement,
     project_measurement,
 )
-from hephaestus.core.errors import AddressingError
+from hephaestus.core.errors import AddressingError, HephaestusError
 from test_checks_helpers import (
     ARM,
     PLATE,
@@ -49,13 +49,39 @@ class TestPartScoped:
         assert m.sealed("part") is True
         assert m.genus("part") == 0
 
-    def test_mass_density_resolution(self) -> None:
+    def test_mass_with_no_density_refuses(self) -> None:
+        """J-agent-results-1: no silent ``DEFAULT_DENSITY = 1.0`` fallback.
+
+        This test replaces the old ``test_mass_density_resolution`` pin of
+        ``default.mass("part") == 2.0`` (implicit density 1.0) — the exact
+        placeholder the ledger item diagnoses: a mass reported with no density,
+        material or assumption disclosed anywhere, numerically identical to the
+        volume. A mass without a bound or explicit density must refuse by name
+        rather than invent a number.
+        """
         ops = FakeOps(volumes={PRIMARY_PART: 2000.0})
-        default = part_measurement("primary", primary_source(), ops=ops)
-        assert default.mass("part") == 2.0  # implicit density 1.0
+        m = part_measurement("primary", primary_source(), ops=ops)
+        with pytest.raises(HephaestusError) as excinfo:
+            m.mass("part")
+        assert excinfo.value.code == "mass_density_unbound"
+        assert "primary" in excinfo.value.message
+
+    def test_mass_bound_and_explicit_density(self) -> None:
+        ops = FakeOps(volumes={PRIMARY_PART: 2000.0})
         bound = part_measurement("primary", primary_source(), ops=ops, density=7.85)
         assert bound.mass("part") == pytest.approx(15.7)
-        assert bound.mass("part", density=2.0) == 4.0  # explicit wins
+        assert bound.mass("part", density=2.0) == 4.0  # explicit wins over the bound density
+
+    def test_mass_and_volume_are_not_equal_for_a_non_unit_density(self) -> None:
+        """The regression that would have caught the units bug on day one
+        (J-agent-results-1's "Tests" clause): a mass at a non-unit density must
+        not equal the volume in the same units, the exact symptom a 1.0 g/mm^3
+        placeholder produces silently.
+        """
+        ops = FakeOps(volumes={PRIMARY_PART: 4800.0})
+        m = part_measurement("primary", primary_source(), ops=ops, density=2.7)
+        assert m.volume("part") == 4800.0
+        assert m.mass("part") != m.volume("part")
 
     def test_selector_grammar_reaches_addressing(self) -> None:
         ops = FakeOps(volumes={"primary:label:rib:2": 7.0, "primary:label:rib:*": 11.0})

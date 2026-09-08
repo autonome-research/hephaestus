@@ -33,19 +33,66 @@
       "applied": {
         "type": "boolean"
       },
+      "candidates": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "line": {
+              "type": "integer"
+            },
+            "ratio": {
+              "type": "number"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "line",
+            "text",
+            "ratio"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
       "conflict": {
         "additionalProperties": true,
         "properties": {
           "attempted_snapshot_ref": {
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "base_snapshot_ref": {
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "current_hash": {
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "current_next_offset_bytes": {
+            "type": "integer"
+          },
+          "current_next_offset_line": {
             "type": "integer"
           },
           "current_oversized_line": {
@@ -55,10 +102,24 @@
             "type": "integer"
           },
           "current_script": {
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "current_snapshot_ref": {
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "current_truncated": {
             "type": "boolean"
@@ -70,17 +131,26 @@
       "content_hash": {
         "type": "string"
       },
+      "diagnostics": {
+        "type": "string"
+      },
       "diff": {
         "type": "string"
       },
       "journal_ref": {
         "type": "string"
       },
+      "kind": {
+        "const": "contract"
+      },
       "line": {
         "type": "integer"
       },
       "snapshot_ref": {
         "type": "string"
+      },
+      "status": {
+        "const": "validation_error"
       }
     },
     "required": [

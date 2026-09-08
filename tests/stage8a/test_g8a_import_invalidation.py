@@ -141,7 +141,7 @@ def test_a_file_replaced_mid_build_loses_the_current_flip(
     assert project.cad.current_build(PART) is None
     with pytest.raises(DispatchError) as excinfo:
         project.call("export_part", {"name": PART, "format": "step"})
-    assert excinfo.value.reason == "invalid_part"
+    assert excinfo.value.reason == "addressing_error"  # the engine's own reason (J-http-envelope-4)
     assert "no current successful build" in str(excinfo.value)
 
 

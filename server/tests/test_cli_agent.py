@@ -93,7 +93,15 @@ def test_agent_project_that_is_a_directory_still_walks_up(
         seen["root"] = project_root
         raise ClientModeError("server_unreachable", "stop here")
 
-    monkeypatch.setattr(agent_cli, "attach_client", _attach)
+    # `_cmd_agent` now imports `attach_client` locally (ledger J-cli-startup-1
+    # deferred the whole `.client_mode` import out of module scope so `heph
+    # --version` does not pay for it), so the patch target moved from the
+    # `agent_cli` module attribute to `client_mode`'s own — the module the
+    # local `from .client_mode import ... attach_client` resolves against at
+    # call time.
+    from hephaestus.agent_bridge import client_mode
+
+    monkeypatch.setattr(client_mode, "attach_client", _attach)
 
     args = build_parser().parse_args(["agent", "--project", str(nested), "--session", "s1"])
     assert args.func(args) == 1
@@ -602,3 +610,194 @@ def test_heph_agent_subprocess_streams_and_answers(tmp_path: Path, sidecar_dist:
     # The private bridge is never surfaced by the verb.
     assert "jsonrpc" not in out and '"hv"' not in out
     assert (project / "parts" / "widget.py").exists()
+
+
+# ==========================================================================
+# J-agent-wiring-4: `heph agent` must not acquire the unsafe local backend by
+# default; the CAD-ops constructor makes acquiring it by OMISSION impossible.
+
+
+def test_cad_ops_constructor_requires_a_backend_explicitly() -> None:
+    """``core/executor/sandbox/unsafe.py``'s own governing clause: "Never a
+    default." ``CadOpsState.__init__`` used to default to
+    ``UnsafeLocalBackend()`` with a comment saying the default was for fast
+    tests and production wiring passed a probed secure backend — but
+    ``server/src/hephaestus/agent_bridge/app.py``'s ``BridgeRuntime`` (the
+    ONE production caller of ``heph agent`` / MCP stdio) constructed
+    ``CadOps(self._layout, self._store)`` with no backend at all, so the test
+    default silently became the shipped one. The parameter is required now,
+    so every such omission is a construction-time ``TypeError`` — the fix's
+    own stated mechanism ("the compiler finds every caller").
+    """
+    import tempfile
+    from pathlib import Path as _Path
+
+    from hephaestus.agent_bridge.cad_ops import CadOps
+    from hephaestus.core.project_store.layout import load_project, open_store
+    from hephaestus.testing.tools_fixture import scaffold
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = scaffold(_Path(tmp) / "proj")
+        layout = load_project(root)
+        store = open_store(layout)
+        try:
+            with pytest.raises(TypeError):
+                CadOps(layout, store)  # type: ignore[call-arg]
+        finally:
+            store.close()
+
+
+def test_agent_verb_declares_an_unsafe_local_executor_flag() -> None:
+    """``heph build`` has had ``--unsafe-local-executor`` since Stage 0
+    (``core/cli.py:169-178``, ``core/cli.py:847-849``); ``heph agent`` has
+    always run unsandboxed with NO flag at all, and the warning it prints
+    names a flag this verb does not have
+    (``WARNING: --unsafe-local-executor: running the build worker WITHOUT OS
+    sandboxing``). The fix gives ``heph agent`` the same explicit, warned
+    opt-in.
+    """
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "agent",
+            "--project",
+            "/tmp/x",
+            "--session",
+            "s1",
+            "--unsafe-local-executor",
+        ]
+    )
+    assert getattr(args, "unsafe_local_executor", None) is True
+
+
+def test_agent_verb_defaults_to_the_safe_backend_when_the_flag_is_absent() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["agent", "--project", "/tmp/x", "--session", "s1"])
+    assert getattr(args, "unsafe_local_executor", False) is False
+
+
+def _agent_project(root: Path) -> Path:
+    """A scaffolded project with a provider config `heph agent` will accept."""
+    from hephaestus.testing.tools_fixture import scaffold
+
+    scaffold(root)
+    heph = root / ".heph"
+    heph.mkdir(exist_ok=True)
+    (heph / "providers.json").write_text(
+        json.dumps(
+            {
+                "providers": [
+                    {"id": "fake", "kind": "local", "models": [{"id": "m", "input": ["text"]}]}
+                ],
+                "credential_allowlist": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return root
+
+
+def _run_agent_capturing_the_backend(
+    project: Path, monkeypatch: pytest.MonkeyPatch, *, unsafe: bool
+) -> dict[str, Any]:
+    """Drive ``_cmd_agent`` far enough to see what backend it injects.
+
+    ``BridgeRuntime`` is stubbed out at the point the verb reaches it — the
+    construction under test is the ONE line the ledger is about, and spawning a
+    real sidecar to observe it would make the assertion a sidecar test.
+    """
+    from hephaestus.agent_bridge import app as bridge_app
+    from hephaestus.agent_bridge import client_mode
+
+    seen: dict[str, Any] = {}
+
+    def _no_server(_root: Path) -> None:
+        return None
+
+    monkeypatch.setattr(client_mode, "attach_client", _no_server)
+
+    class _StubRuntime:
+        def __init__(self, **kwargs: Any) -> None:
+            seen["backend"] = kwargs.get("backend")
+            raise bridge_app.AuthLinkError("stop here")
+
+    monkeypatch.setattr(bridge_app, "BridgeRuntime", _StubRuntime)
+
+    argv = ["agent", "--project", str(project), "--session", "s1"]
+    if unsafe:
+        argv.append("--unsafe-local-executor")
+    args = build_parser().parse_args(argv)
+    seen["exit"] = args.func(args)
+    return seen
+
+
+def test_the_agent_verb_injects_the_backend_it_selected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The half of J-agent-wiring-4 the constructor's ``TypeError`` cannot see.
+
+    Making the parameter required proves nobody *omits* a backend; it says
+    nothing about which one this verb picks. Before the fix the answer was "the
+    unsafe one, always, with no flag" — so the assertion that matters is that
+    the flag decides, and that the no-flag path hands over something that is not
+    the unsafe backend.
+    """
+    project = _agent_project(tmp_path / "proj")
+
+    unsafe = _run_agent_capturing_the_backend(project, monkeypatch, unsafe=True)
+    assert getattr(unsafe["backend"], "unsafe", False) is True
+    assert unsafe["backend"].name == "unsafe-local"
+
+    if not _bwrap_probes_clean(project):
+        pytest.skip("no working bubblewrap sandbox on this host")
+    safe = _run_agent_capturing_the_backend(project, monkeypatch, unsafe=False)
+    assert getattr(safe["backend"], "unsafe", False) is False
+    assert safe["backend"].name == "bwrap"
+
+
+def _bwrap_probes_clean(project: Path) -> bool:
+    from hephaestus.core.errors import SandboxDeniedError
+    from hephaestus.core.executor.sandbox.probe import secure_backend
+    from hephaestus.core.project_store.layout import load_project
+
+    try:
+        secure_backend(load_project(project).store_root)
+    except SandboxDeniedError:
+        return False
+    return True
+
+
+def test_a_refused_sandbox_probe_is_a_named_exit_two_not_a_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The compatibility break, reported the way ``repo_conventions.md`` requires.
+
+    ``heph agent`` on a machine with no working bubblewrap used to build
+    unsandboxed; it now refuses. What must not happen is that it refuses with a
+    ``SandboxDeniedError`` traceback — the operator needs the one sentence that
+    says which of the two things to do.
+    """
+    from hephaestus.agent_bridge import cli as agent_cli_mod
+    from hephaestus.agent_bridge import client_mode
+    from hephaestus.core import cli as core_cli
+    from hephaestus.core.errors import SandboxDeniedError
+
+    project = _agent_project(tmp_path / "proj")
+
+    def _no_server(_root: Path) -> None:
+        return None
+
+    monkeypatch.setattr(client_mode, "attach_client", _no_server)
+
+    def _denied(*_args: Any, **_kwargs: Any) -> Any:
+        raise SandboxDeniedError("sandbox_unavailable: secure sandbox probe failed: no bwrap")
+
+    monkeypatch.setattr(core_cli, "make_backend", _denied)
+    assert agent_cli_mod is not None  # the verb under test lives here
+
+    args = build_parser().parse_args(["agent", "--project", str(project), "--session", "s1"])
+    assert args.func(args) == 2
+    err = capsys.readouterr().err
+    assert "sandbox_unavailable" in err
+    assert "--unsafe-local-executor" in err
+    assert "Traceback" not in err

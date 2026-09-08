@@ -45,6 +45,27 @@
             "project_snapshot_ref"
           ]
         }
+      },
+      {
+        "if": {
+          "not": {
+            "properties": {
+              "kind": {
+                "const": "mass"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          }
+        },
+        "then": {
+          "properties": {
+            "density": {
+              "type": "null"
+            }
+          }
+        }
       }
     ],
     "properties": {
@@ -66,6 +87,18 @@
         "anyOf": [
           {
             "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "density": {
+        "anyOf": [
+          {
+            "exclusiveMinimum": 0,
+            "type": "number"
           },
           {
             "type": "null"
@@ -119,7 +152,81 @@
   "result": {
     "additionalProperties": true,
     "properties": {
-      "detail": {},
+      "detail": {
+        "additionalProperties": true,
+        "properties": {
+          "args": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "density": {
+            "additionalProperties": true,
+            "properties": {
+              "g_per_mm3": {
+                "type": "number"
+              },
+              "material": {
+                "additionalProperties": true,
+                "properties": {
+                  "density_kg_m3": {
+                    "type": "number"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "registry": {
+                    "type": "string"
+                  },
+                  "registry_digest": {
+                    "type": "string"
+                  },
+                  "spec": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "density_kg_m3"
+                ],
+                "type": "object"
+              },
+              "part": {
+                "type": "string"
+              },
+              "source": {
+                "enum": [
+                  "materials_registry",
+                  "explicit"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "part",
+              "g_per_mm3",
+              "source"
+            ],
+            "type": "object"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "measured": {},
+          "parts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
       "resolved_artifact_refs": {
         "items": {
           "type": "string"

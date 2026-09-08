@@ -17,7 +17,7 @@ import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Literal, cast
+from typing import Final, Literal, cast
 
 from hephaestus.core.addressing import GeometryIndex
 from hephaestus.core.errors import SandboxDeniedError, ValidationError
@@ -43,6 +43,7 @@ from hephaestus.core.hashing import (
     sha256_canonical_json,
     toolchain_hash,
 )
+from hephaestus.core.limits import limits_document
 from hephaestus.core.types import (
     AuditHashes,
     BuildResult,
@@ -65,7 +66,27 @@ DEFAULT_RLIMITS = Rlimits(
     address_space_bytes=6 * 1024**3,
     nproc=4096,
 )
-DEFAULT_WALL_CLOCK_S = 300.0
+
+
+def cad_build_wall_clock_s() -> float:
+    """The build's wall-clock ceiling: ``timeouts.cad_build_seconds`` (arch §5).
+
+    Read from ``schemas/bridge_limits.json`` — the same key the sidecar's tool
+    proxy selects the CAD timeout class from — rather than restated as a
+    literal here (J-http-limits-8). The two numbers agreed at 300 by
+    coincidence, and a duplicated budget is one an operator can only half
+    change: raising the shared limit left the executor killing the build at
+    the old one. Resolved per call, the ``compare_timeout_s`` local-floor
+    pattern, so an override document (``HEPHAESTUS_BRIDGE_LIMITS``) governs a
+    live process instead of only a fresh interpreter.
+    """
+    return float(limits_document()["timeouts"]["cad_build_seconds"])
+
+
+#: The shipped value of that budget, for readers who want the number rather
+#: than the resolver. Never the source of truth — :func:`cad_build_wall_clock_s`
+#: is, and the request's default calls it per build.
+DEFAULT_WALL_CLOCK_S: Final[float] = cad_build_wall_clock_s()
 
 BuildOrigin = Literal["local", "registry"]
 
@@ -114,7 +135,7 @@ class BuildRequest:
         default_factory=dict[str, "int | float | str"]
     )
     origin: BuildOrigin = "local"
-    wall_clock_s: float = DEFAULT_WALL_CLOCK_S
+    wall_clock_s: float = field(default_factory=cad_build_wall_clock_s)
     #: INGEST.md §1: the FROZEN bytes of each declared ``imports/`` file, keyed
     #: by the path as written in the script. Bytes rather than paths so a
     #: lost-response retry replays the original content even if the file has

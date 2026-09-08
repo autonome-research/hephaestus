@@ -24,6 +24,7 @@ from typing import Any, cast
 import pytest
 from hephaestus.agent_bridge.cad_ops import CadOps
 from hephaestus.agent_bridge.dispatch import REGISTRY_TOOLS, DispatchError, ToolDispatcher
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.core.project_store.layout import load_project, open_store
 from hephaestus.core.project_store.store import ProjectStore
 from hephaestus.core.registry import (
@@ -58,7 +59,7 @@ class Bench:
         scaffold(root)
         self.layout = load_project(root)
         self.store: OpStore = open_store(self.layout)
-        self.cad = CadOps(self.layout, self.store)
+        self.cad = CadOps(self.layout, self.store, backend=UnsafeLocalBackend())
         self.registries = RegistrySet(
             {
                 kind: load_registry(registries_root / kind)

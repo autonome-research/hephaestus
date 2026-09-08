@@ -37,6 +37,16 @@ not a hosted chat and not a context envelope. `--json` is on `part`, `script`,
 `params`, `prompt`, `build`, `check`, `lint`, and `render`. The rest of this
 page is the verb reference. Optional MCP: [mcp.md](mcp.md).
 
+**Startup is cheap, and that is a promise.** Building the parser registers every
+verb, and no registration loads the CAD kernel, the mesh or raster stacks, the
+solver's numerics, or the MCP and web servers — a verb reaches for what it needs
+when it *runs*, not when it is listed. So `heph --help`, a `--help` on any verb and a
+usage error all cost a Python start plus argparse (measured 2026-09-07: about
+0.3 s on a 14-core Linux host), whatever else is installed. The promise is pinned as a module-name assertion rather than a clock,
+in `tests/stage0a/test_cli_startup_budget.py`; the same file holds byte-identical
+help goldens, because the cheap way to break the budget is a deferred import that
+silently drops a flag.
+
 ---
 
 Every verb, with one worked example each. The transcripts below were produced
@@ -46,6 +56,17 @@ ships with the repository — so you can reproduce all of them:
 ```console
 $ cp -r corpus/public_fixtures/assembly /tmp/demo && cd /tmp/demo
 ```
+
+**What a fresh copy does and does not carry.** The fixture is sources: the
+manifest, `globals.py`, the part scripts and the checks. Everything the *tool
+surface* declares — joints, poses, motion checks, imports, references,
+requirements — lives in the build store under `.heph/`, which is gitignored and
+therefore not in the copy. So the verbs that read declarations print their empty
+state on a fresh copy, and the populated transcripts further down assume you
+have made those declarations first (through `heph agent`, or the equivalent
+tool calls). The empty-state transcripts below are recorded against exactly this
+fresh copy, so both halves are reproducible; which one you get depends on
+whether you have declared anything yet.
 
 `heph` is engine-first: it talks to the CAD engine directly and starts no
 server. From a clone, prefix every command with `uv run` (`uv run heph
@@ -248,13 +269,26 @@ $ heph prompt show --json
 
 ### `heph build [PART]`
 
-Build a part and publish the result. With no argument, builds every part in the
-project.
+Build a part and publish the result. There are exactly two entry paths: a named
+target, and `--stale`, which rebuilds every part the projection marks stale.
+**There is no build-everything form** — a bare `heph build` is a usage refusal,
+because an accidental bare invocation in a large project is expensive.
 
 ```console
 $ heph build primary
 primary: ok (current) artifact=artifact:build:sha256:8be53e4b2d66a336…
   checks: 4/4 passed
+```
+
+`--stale` is what rebuilds more than one part:
+
+```console
+$ heph build --stale
+```
+
+```console
+$ heph build
+heph: build: a part name or script path is required (or --stale)
 ```
 
 The artifact reference is content-addressed and immutable: it names exactly
@@ -296,7 +330,7 @@ the raw measured envelope.
 ```console
 $ heph check
 fit:bracket_clears_frame: pass (measured: 0.0)
-fit:raises: error — addressing_error: part 'nosuch' does not exist under /tmp/gadget/parts
+fit:raises: error — addressing_error: part 'nosuch' does not exist under parts/
 ```
 
 Exit code 1 whenever anything is not `pass` — an unevaluated check is not a
@@ -356,7 +390,7 @@ bracket: rendered 1 image(s) -> render
 | `--channel {rgb,mask,section}` | RGB, an ID mask, or a section cut. |
 | `--mask-mode {solid,selection}` | Which ID domain the mask encodes (`selection` requires `--channel mask`). |
 | `--section-plane PLANE` | `[+-]AXIS@OFFSET`, e.g. `+Z@30` or `+Z@c` for centred. |
-| `--explode T` | Explode factor in `[0, 1]`. |
+| `--explode T` | Explode factor: any finite value `>= 0`. `0` is assembled and `1` is the reference exploded view; values above `1` exaggerate it further and are accepted. |
 | `--focus LABEL_OR_TAG` | Centre and zoom on a labelled solid or a tag. |
 | `--last-good` | Render the last-good checkpoint of the most recent **failed** build. |
 | `--artifact-ref REF` | Render an explicit immutable build/checkpoint artifact. |
@@ -502,7 +536,7 @@ per-joint and per-pose motion outcomes.
 
 ```console
 $ heph joints
-no joints declared
+no joints or poses declared
 ```
 
 Joints and poses are **declared by the agent**, through the `declare_joint` /
@@ -519,8 +553,9 @@ re-evaluates now against current builds — pass ids to re-evaluate a subset.
 
 ```console
 $ heph motion
-no joints declared
+no motion checks declared, motion state never evaluated
 $ heph motion check
+joints 0 resolved, 0 unresolvable; poses 0 resolved, 0 unresolvable
 no motion checks declared
 ```
 
@@ -591,7 +626,7 @@ spec needs both its separators: `--start nonsense` is a refusal, not a second
 Exit 0 only for `pose_found` and `pose_converged_at_tolerance`; 1 for every
 other verdict — an under-determined answer and a multiplicity are facts to
 read, not passes — and for a named refusal (`iteration_ceiling`,
-`solver_timeout`, `rank_undecidable`, `solver_residual_disagreement`), which is
+`solver_timeout`, `verification_process_died`, `rank_undecidable`, `solver_residual_disagreement`), which is
 never printed as a verdict because a refused solve decided nothing. `--json`
 emits the machine form.
 
@@ -915,6 +950,30 @@ $ heph agent --project . --profile orchestrator
 | `--profile {orchestrator,part,quick_edit}` | Session profile (default `orchestrator`). |
 | `--part PART` | The bound part, for a `part` or `quick_edit` session. |
 | `--providers FILE` | Provider config JSON. |
+| `--unsafe-local-executor` | Run the build worker with **no OS sandboxing**. Local debugging only; refused for registry content. |
+
+**Executor posture: sandboxed by default, like `heph build`.** The scripts this
+verb builds are written by a *model*, so it takes the same posture the engine's
+own build verb has taken since Stage 0. With no flag, the verb probes bubblewrap
+before it starts anything and refuses by name if the probe fails:
+
+```console
+$ heph agent
+heph: sandbox_unavailable: secure sandbox probe failed: bwrap not found on PATH
+heph: install bubblewrap (bwrap) to run the agent sandboxed, or pass
+      --unsafe-local-executor to run model-authored scripts WITHOUT OS sandboxing
+      (see docs/install.md)
+```
+
+That is a **change**: before, `heph agent` ran model-authored scripts as ordinary
+child processes with your environment and filesystem view, with no flag and no
+way to ask for anything else. If bubblewrap is not available to you, pass
+`--unsafe-local-executor` deliberately; it prints a warning on every build and
+still refuses to execute registry content (parts-store generators and DFM rule
+packs), which may only ever run under a probed sandbox. With the flag,
+`instance_store_part` therefore reports `capability_not_available` rather than
+running a generator unsandboxed — the same answer the tool gives on a host with
+no sandbox at all.
 
 **Client mode, when a server already owns the project.** One process owns a
 project's session leases. If `heph serve --web` is already running here, this
@@ -934,6 +993,11 @@ nothing changes: the verb spawns its own sidecar exactly as it always has.
 Two flags are unavailable in client mode and say so rather than being ignored:
 `--session` and `--resume`. The owning server creates sessions; silently
 dropping them would let you believe you had reopened a transcript you had not.
+
+`--unsafe-local-executor` is also inert in client mode, and quietly so, because
+it can only ever make the posture *safer* than you asked for: the builds run in
+the server's process, and `heph serve` refuses the unsafe backend outright. The
+flag never widens what a server does.
 
 Provider configuration is explicit and app-owned. It is read from `--providers`,
 else `$HEPHAESTUS_AGENT_PROVIDERS`, else `<project>/.heph/providers.json`

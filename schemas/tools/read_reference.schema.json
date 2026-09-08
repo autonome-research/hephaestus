@@ -41,8 +41,14 @@
           "content": {
             "type": "string"
           },
+          "first_line": {
+            "type": "integer"
+          },
           "kind": {
             "const": "document"
+          },
+          "last_line": {
+            "type": "integer"
           },
           "mime_type": {
             "type": "string"
@@ -51,6 +57,9 @@
             "type": "string"
           },
           "next_offset_bytes": {
+            "type": "integer"
+          },
+          "next_offset_line": {
             "type": "integer"
           },
           "offset_bytes": {
@@ -72,6 +81,9 @@
             "const": "ok"
           },
           "total_bytes": {
+            "type": "integer"
+          },
+          "total_lines": {
             "type": "integer"
           },
           "truncated": {

@@ -240,6 +240,64 @@ def test_a_malformed_cursor_is_refused_invalid_cursor_not_agent_unavailable(
         assert len(alive.json()["events"]) == 5
 
 
+def test_a_decodable_cursor_that_names_no_entry_is_also_invalid_cursor(
+    tmp_path: Path,
+) -> None:
+    """J-http-envelope-9, mirrored onto the no-Node lane.
+
+    The two refusals below are NOT decode failures — both tokens decode
+    perfectly. They are the pair the item removed from
+    ``agent/src/session/history.ts``: a mark naming no entry used to widen the
+    frozen snapshot to the whole log, and an offset past its end used to slice
+    to an empty page with ``done: true``. Composed, they handed a client walking
+    a real session with a nonsense cursor *exactly* the shape a genuinely
+    exhausted, quiet session returns — an empty transcript rendered as complete.
+
+    The double (``testing/fake_agent.py``) carried the same leniency, so on this
+    lane — the one with no sidecar — the refusals had no coverage at all and a
+    client could have been certified against behaviour the real bridge no longer
+    has. Both must reach the HTTP envelope as 400 ``invalid_cursor``, the same
+    answer a token that fails to decode gets, because they are the same class of
+    client mistake.
+
+    The boundary is the point of the third case: an offset EQUAL to the
+    snapshot's length is §2.8(5)'s "you are caught up" and stays a 200 with an
+    empty page. Refusing it would break every polling client, which is the
+    failure mode the strictness could plausibly have introduced.
+    """
+    import base64
+    import json as _json
+
+    with workspace(tmp_path / "proj", agent=True) as web:
+        agent = web.agent
+        assert agent is not None
+        session = agent.create_session("orchestrator")
+        agent.seed_history(session, 5)
+
+        def cursor(hw: str, offset: int) -> str:
+            raw = _json.dumps({"hw": hw, "offset": offset}).encode("utf-8")
+            return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+        refused: list[dict[str, str]] = [
+            # A mark that decodes and names no entry in a NON-empty log.
+            {"cursor": cursor("e99", 0)},
+            # An offset strictly beyond the snapshot the mark names.
+            {"cursor": cursor("e4", 6)},
+        ]
+        for params in refused:
+            response = web.get(f"/sessions/{session}/history", params=params)
+            assert response.status_code == 400, params
+            body = response.json()
+            assert body["reason"] == "invalid_cursor", params
+            assert body["status"] == "error"
+
+        # …and the case that must NOT be refused: caught up, exactly.
+        caught_up = web.get(f"/sessions/{session}/history", params={"cursor": cursor("e4", 5)})
+        assert caught_up.status_code == 200
+        page = caught_up.json()
+        assert page["events"] == [] and page["done"] is True
+
+
 def test_a_multi_page_walk_delivers_every_event_exactly_once(tmp_path: Path) -> None:
     """The bounded-read machinery, exercised through the route it is served by."""
     with workspace(tmp_path / "proj", agent=True) as web:

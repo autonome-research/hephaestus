@@ -39,6 +39,7 @@ from hephaestus.agent_bridge.cad_ops import CadOps
 from hephaestus.agent_bridge.cad_ops._base import CadOpError
 from hephaestus.agent_bridge.cad_ops.export_history import EXPORTS_DIR, export_records
 from hephaestus.core.cli import main
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.core.project_store.layout import ProjectLayout, load_project, open_store
 from hephaestus.core.project_store.publication import Publisher
 from hephaestus.core.project_store.retention import DefaultProtectedRoots
@@ -402,7 +403,7 @@ def test_the_guard_refuses_an_export_with_the_engines_own_reason(exported: Expor
     layout, store = _reopen(exported.root, config=StoreConfig(quota_bytes=0))
     try:
         with pytest.raises(CadOpError) as caught:
-            CadOps(layout, store).export_part(
+            CadOps(layout, store, backend=UnsafeLocalBackend()).export_part(
                 "widget", "stl", artifact_ref=None, target=None, layout="as_built", op_id="over"
             )
     finally:
@@ -430,7 +431,7 @@ def test_a_committed_export_still_replays_over_quota(exported: Exported) -> None
 
     layout, store = _reopen(exported.root, config=StoreConfig(quota_bytes=0))
     try:
-        replayed = CadOps(layout, store).export_part(
+        replayed = CadOps(layout, store, backend=UnsafeLocalBackend()).export_part(
             "widget", "step", artifact_ref=None, target=None, layout="as_built", op_id=op_id
         )
     finally:

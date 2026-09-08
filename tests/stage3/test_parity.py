@@ -64,6 +64,7 @@ from hephaestus.agent_bridge.app import BridgeRuntime, default_dist_main
 from hephaestus.agent_bridge.dispatch import DispatchError, Principal
 from hephaestus.agent_bridge.protocol import ProtocolError
 from hephaestus.core.errors import HephaestusError
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.mcp import build_app
 from hephaestus.testing.ledger import MINIMAL_LEDGER_ENTRY
 from mcp.types import TextContent
@@ -202,7 +203,12 @@ class PiPath:
             # argv it can hold. Keeping this hermetic means the parity contract
             # is checkable on a Node-less machine.
             os.environ["HEPHAESTUS_NODE"] = str(root / ".heph" / "never-spawned-node")
-        self.runtime = BridgeRuntime(project_root=root, providers=[], dist_main=default_dist_main())
+        self.runtime = BridgeRuntime(
+            backend=UnsafeLocalBackend(),
+            project_root=root,
+            providers=[],
+            dist_main=default_dist_main(),
+        )
         # Sessions the sidecar would have created through ``session.create``.
         self._register("orchestrator", "pi-orch", None)
         self._n = 0

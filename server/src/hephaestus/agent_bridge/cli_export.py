@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections.abc import Sequence
 from typing import Any
 
@@ -72,7 +73,7 @@ from hephaestus.core.cli_errors import (
     project_root_or_refuse,
 )
 from hephaestus.core.errors import AddressingError
-from hephaestus.core.project_store.layout import load_project, open_store
+from hephaestus.core.project_store.layout import PARTS_DIRNAME, load_project, open_store
 
 from opstore import OpStore
 
@@ -118,7 +119,12 @@ def _cmd_list(args: argparse.Namespace) -> int:
     # part" does not gain a fourth spelling.
     if part is not None and not layout.part_path(part).is_file():
         raise AddressingError(
-            f"part {part!r} does not exist under {layout.parts_dir}",
+            # `PARTS_DIRNAME`, not `layout.parts_dir`: this sentence reaches a
+            # model and an HTTP client verbatim, and the resolved absolute path
+            # is the OPERATOR's filesystem layout, not an address the caller can
+            # act on (ledger J-agent-results-11; `executor/imports.py`'s
+            # `{IMPORTS_DIRNAME}/` is the settled precedent).
+            f"part {part!r} does not exist under {PARTS_DIRNAME}/",
             selector=part,
             candidates=layout.part_names(),
         )
@@ -209,7 +215,19 @@ def _cmd_unpin(args: argparse.Namespace) -> int:
     # The kernel-binding module is imported here rather than at module import:
     # `list` must not pay for it, and this is the `cli_joints`/`cli_assembly`
     # rule applied one verb further.
-    from hephaestus.agent_bridge.cad_ops import CadOps
+    try:
+        from hephaestus.agent_bridge.cad_ops import CadOps
+        from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
+    except ImportError as exc:
+        # Installed but broken (the verb exists, so the package does): refuse
+        # by name, never as a traceback (ledger J-cli-robustness-21).
+        from hephaestus.core.cli import broken_import_message
+
+        print(
+            broken_import_message("export unpin", "hephaestus.agent_bridge.cad_ops", exc),
+            file=sys.stderr,
+        )
+        return 2
 
     blob = _normalized_blob(str(args.blob))
     root = project_root_or_refuse()
@@ -230,7 +248,11 @@ def _cmd_unpin(args: argparse.Namespace) -> int:
         was_pinned = blob in store.gc.pins()
         # §19.40 names `ExportOps.unpin_export` as the operation these verbs are
         # over, so the verb calls it rather than reaching past it to `gc.unpin`.
-        CadOps(layout, store).unpin_export(blob)
+        # `unpin_export` drops a GC root and runs no build at all, so the
+        # backend this required parameter now takes is never reached; it is
+        # named rather than defaulted because `CadOpsState` no longer has a
+        # default to inherit (ledger J-agent-wiring-4).
+        CadOps(layout, store, backend=UnsafeLocalBackend()).unpin_export(blob)
         still_reachable = blob in store.gc.reachable()
         usage = store.gc.usage()
         size = store.blobs.size(blob) if store.blobs.has(blob) else 0

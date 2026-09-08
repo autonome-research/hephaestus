@@ -48,7 +48,7 @@ from hephaestus.core.executor.artifact_geometry import load_brep_shape
 from hephaestus.core.executor.published_geometry import tag_placements
 from hephaestus.core.executor.tags import TagPlacement
 from hephaestus.core.project_store.artifact_kinds import record_artifact_kind
-from hephaestus.core.project_store.layout import ProjectLayout
+from hephaestus.core.project_store.layout import PARTS_DIRNAME, ProjectLayout
 from hephaestus.core.project_store.publication import Publisher
 from hephaestus.core.project_store.retention import last_failure_pointer
 from hephaestus.core.project_store.store import artifact_ref as make_artifact_ref
@@ -356,7 +356,11 @@ def resolve_render_source(
     # store's own, so "unknown part" has one spelling across the CLI.
     if not project.layout.part_path(name).is_file():
         raise AddressingError(
-            f"part {name!r} does not exist under {project.layout.parts_dir}",
+            # `PARTS_DIRNAME/`, not the resolved absolute directory: the
+            # wording is the store's own and so is the reason (ledger
+            # J-agent-results-11 — the refusal reaches a model verbatim and the
+            # operator's host path is not an address it can act on).
+            f"part {name!r} does not exist under {PARTS_DIRNAME}/",
             selector=name,
             candidates=project.layout.part_names(),
         )

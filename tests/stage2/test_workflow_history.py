@@ -32,6 +32,7 @@ import pytest
 from _g2b import REPO_ROOT, build_agent_dist, scaffold_project
 from hephaestus.agent_bridge.app import BridgeRuntime
 from hephaestus.agent_bridge.supervisor import pid_alive
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.testing.fake_openai import FakeOpenAI, start_fake_openai
 
 WIDGET_SRC = """body = Box(20.0, 10.0, 4.0)
@@ -61,6 +62,7 @@ class Harness:
         self.dist_main = dist_main
         self.fake: FakeOpenAI = start_fake_openai([])
         self.runtime = BridgeRuntime(
+            backend=UnsafeLocalBackend(),
             project_root=self.root,
             providers=[self.fake.provider_spec()],
             dist_main=dist_main,

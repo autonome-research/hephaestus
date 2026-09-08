@@ -91,7 +91,45 @@
       {
         "additionalProperties": true,
         "properties": {
+          "artifact_ref": {
+            "type": "string"
+          },
+          "checks": {
+            "type": "object"
+          },
+          "part": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scope": {
+            "enum": [
+              "part",
+              "project"
+            ],
+            "type": "string"
+          },
           "status": {
+            "enum": [
+              "ok",
+              "error"
+            ],
             "type": "string"
           }
         },

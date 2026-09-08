@@ -22,6 +22,9 @@ from hephaestus.core.errors import AddressingError, HephaestusError, ValidationE
 from hephaestus.core.executor.runner import UnpublishedBuild
 from hephaestus.core.params import Param, merge_overrides
 from hephaestus.core.project_store.store import (
+    SNAPSHOT_ARTIFACT_KIND,
+)
+from hephaestus.core.project_store.store import (
     artifact_ref as make_artifact_ref,
 )
 from opstore.types import JSONValue
@@ -35,7 +38,16 @@ from opstore import (
     sha256_canonical_json,
 )
 
-from ._base import CadOpError, CadOpsState, json_map, numeric_map, recorded_ref
+from ._base import (
+    CadOpError,
+    CadOpsState,
+    attempted_snapshot,
+    conflict_payload,
+    json_map,
+    near_misses,
+    numeric_map,
+    recorded_ref,
+)
 
 #: Minimal probe part used to evaluate ``globals.py`` alone in the sandbox.
 SYNC_PART: Final[str] = "__hc_sync__"
@@ -327,13 +339,31 @@ class ParamOps(CadOpsState):
             return {
                 "status": "conflict",
                 "kind": "stale_hash",
-                "current_hash": live_hash,
-                "current_script": script,
-                "current_truncated": False,
-                "current_oversized_line": False,
-                "current_snapshot_ref": snapshot_ref,
-                "base_snapshot_ref": make_artifact_ref("part-snapshot", expected_hash),
-                "attempted_snapshot_ref": snapshot_ref,
+                # The ONE conflict document (ledger J-agent-results-2): the cap
+                # and the continuation cursors were hardcoded to "not
+                # truncated" here, so a `globals.py` over the text budget came
+                # back cut by the sidecar's renderer with the payload still
+                # claiming it was whole.
+                **conflict_payload(
+                    current_hash=live_hash,
+                    current_script=script,
+                    current_snapshot_ref=snapshot_ref,
+                    base_snapshot_ref=make_artifact_ref("part-snapshot", expected_hash),
+                    # The REJECTED contender, replayed against the caller's own
+                    # base — not `snapshot_ref`, which is the live file the
+                    # caller did NOT write and is already reported as
+                    # `current_snapshot_ref`. Same defect the check editor had
+                    # (ledger J-agent-results-2): a field whose value is not
+                    # what its name says. Null when the base was never
+                    # registered here or `old_str` does not match it once.
+                    attempted_snapshot_ref=attempted_snapshot(
+                        self._store,
+                        expected_hash,
+                        old_str,
+                        new_str,
+                        kind=SNAPSHOT_ARTIFACT_KIND,
+                    ),
+                ),
             }
         occurrences = script.count(old_str)
         if occurrences != 1:
@@ -344,6 +374,9 @@ class ParamOps(CadOpsState):
                 "diagnostics": (
                     f"old_str occurs {occurrences} times in globals.py; it must be unique"
                 ),
+                # tool_schema's "closest candidates" clause, satisfied
+                # identically by all three editors (J-agent-results-2).
+                "candidates": near_misses(script, old_str),
             }
         candidate = script.replace(old_str, new_str, 1)
         probe = self.probe_globals(source=candidate)

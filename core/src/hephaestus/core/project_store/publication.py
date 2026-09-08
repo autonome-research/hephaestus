@@ -375,6 +375,41 @@ class ExportOutcome:
     replayed: bool = False
 
 
+def _with_worker_facts(build: UnpublishedBuild) -> UnpublishedBuild:
+    """Carry two facts the worker computed onto the §8 record before it is stored.
+
+    RC-6, audit-2026-09-04 J-cli-startup-9 and -7. The worker has always
+    emitted both ``check_names`` (the ``CHECKS`` names it registered) and
+    ``params_declaration`` (the evaluated ``PARAMS`` bounds), and
+    ``assemble_build`` keeps only the *hash* of the second and drops the first
+    entirely — so an empty ``checks`` map was ambiguous between "this part
+    declares no checks" and "it declares some that failed to register", and no
+    reader could answer "what are this part's bounds?" without a multi-second
+    sandboxed rebuild of a build that had already computed them.
+
+    Applied here, at publication, rather than in the assembler: publication is
+    what makes a record durable, and therefore what decides what a durable
+    record says. Fields the record already carries are left exactly as they are.
+    """
+    result = build.result
+    raw_names = build.worker_result.get("check_names")
+    if not result.check_names and isinstance(raw_names, list):
+        names = tuple(
+            sorted(item for item in cast("list[JSONValue]", raw_names) if isinstance(item, str))
+        )
+        result = replace(result, check_names=names)
+    raw_decl = build.worker_result.get("params_declaration")
+    if not result.params_declaration and isinstance(raw_decl, dict):
+        # Rebuilt through `BuildResult.from_json`'s own reader so the record and
+        # the reader agree by construction; a malformed entry refuses here, at
+        # publication, rather than at every later read.
+        declaration = BuildResult.from_json(
+            {**result.to_json(), "params_declaration": cast("JSONValue", raw_decl)}
+        ).params_declaration
+        result = replace(result, params_declaration=declaration)
+    return build if result is build.result else replace(build, result=result)
+
+
 class Publisher:
     """Build and export publication policy for one project over one opstore."""
 
@@ -688,6 +723,7 @@ class Publisher:
         installed under the 7-day retention class and the build can never
         become current. Idempotent on ``op_id`` for the current-pointer flip.
         """
+        build = _with_worker_facts(build)
         part = build.result.part
         if build.result.status == "failed":
             kind: PublicationKind = "failed"
@@ -827,6 +863,27 @@ class Publisher:
                 live_hc=self.projections.state().hc_state,
             )
         )
+
+    def recorded_check_names(self, part: str) -> tuple[str, ...] | None:
+        """``part``'s current build's declared check names, or ``None`` if unstated.
+
+        The distinction the dataclass field cannot make and that one caller
+        needs: ``()`` on :class:`BuildResult` means both "this build registered
+        no checks" and "this record was written before the field existed". Here
+        the *stored document* is asked whether it carries the key at all, so
+        ``run_checks``'s no-rebuild fast path acts on a recorded fact rather
+        than on an inference from silence (audit-2026-09-04 J-cli-startup-9).
+        """
+        bundle = self._current_bundle(part)
+        if bundle is None:
+            return None
+        result_raw = bundle.get("result")
+        if not isinstance(result_raw, dict):
+            return None
+        record = cast("Mapping[str, JSONValue]", result_raw)
+        if "check_names" not in record:
+            return None
+        return BuildResult.from_json(record).check_names
 
     def freshness(self, part: str) -> BuildFreshness | None:
         """Are ``part``'s current build's recorded inputs still the live ones?
