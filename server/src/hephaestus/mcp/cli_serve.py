@@ -48,7 +48,22 @@ def parse_http_address(value: str) -> tuple[str, int]:
 
 def serve(*, http: str | None = None) -> int:
     """Run the MCP server on stdio, or on streamable HTTP when ``http`` is set."""
-    from .app import build_app
+    try:
+        from .app import build_app
+    except ImportError as exc:
+        # The app's dependencies (fastmcp and the CAD stack) are imported HERE,
+        # not at registration — that is what makes `heph --version` cost 0.14 s
+        # instead of 2.9 s (ledger J-cli-startup-3). The consequence is that a
+        # server package whose dependencies are broken now fails at invocation
+        # rather than at parser build, and it must fail the same way it would
+        # have failed there: by name, saying the package is installed and
+        # incomplete, never as a traceback (ledger J-cli-robustness-21).
+        # `hephaestus.core.cli` owns the one definition of that sentence and is
+        # imported only on this path, so the happy path pays nothing for it.
+        from hephaestus.core.cli import broken_import_message
+
+        print(broken_import_message("serve --mcp", "hephaestus.mcp.app", exc), file=sys.stderr)
+        return 2
 
     app, runtime = build_app(serve_mode=True)
     try:

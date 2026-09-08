@@ -286,8 +286,16 @@ def add_subparsers(
     sub: argparse._SubParsersAction[argparse.ArgumentParser],  # pyright: ignore[reportPrivateUsage]
 ) -> None:
     """Register the ``scan`` verb on an existing subparser set."""
+    # `core.types`, not `geom.mesh`, for the same reason `cli_import` reads it
+    # from there: registration runs on every `heph` invocation, and reaching
+    # the constant through the geometry package imported build123d, OCP,
+    # scikit-learn, scipy and sympy for a four-string tuple. This is the second
+    # instance of ledger J-cli-startup-5 (root cause RC-2); the item names only
+    # `cli_import.py`, and with that one fixed this site still cost 1.66 s.
+    # The constant is defined in `core.types` and re-exported from `geom.mesh`,
+    # so this is the same object, not a copy of it.
     from hephaestus.core.checks.facade import SCAN_ALIGN_MODES
-    from hephaestus.geom.mesh import MESH_UNITS
+    from hephaestus.core.types import MESH_UNITS
 
     scan = sub.add_parser(
         "scan",

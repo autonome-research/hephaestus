@@ -152,7 +152,7 @@ def _require_units(kind: ImportKind, units: str | None) -> str | None:
             )
         return None
     if units is None:
-        from hephaestus.geom.mesh import MESH_UNITS
+        from hephaestus.core.types import MESH_UNITS
 
         raise ImportIngressError(
             "units= is required on a mesh import: STL, PLY, OBJ, OFF and XYZ carry no "
@@ -663,7 +663,13 @@ def add_subparsers(
     sub: argparse._SubParsersAction[argparse.ArgumentParser],  # pyright: ignore[reportPrivateUsage]
 ) -> None:
     """Register the ``import`` verb group on an existing subparser set."""
-    from hephaestus.geom.mesh import MESH_UNITS
+    # `core.types`, not `geom.mesh`: registration runs on every `heph`
+    # invocation, and the geometry package's own `__init__` eagerly re-exports
+    # build123d, OCP, scikit-learn, scipy and sympy — 1.7 s of the CLI's 2.9 s
+    # startup, spent to read a four-string tuple (ledger J-cli-startup-5). The
+    # constant is defined in `core.types` and re-exported from `geom.mesh`, so
+    # this is the same object, not a copy of it.
+    from hephaestus.core.types import MESH_UNITS
 
     group = sub.add_parser("import", help="admit a STEP, mesh, or point cloud into imports/")
     verbs = group.add_subparsers(dest="import_command", required=True)

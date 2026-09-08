@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Final, Literal, TypeVar, cast, get_args
 
 from hephaestus.core.errors import ValidationError
+from hephaestus.core.params import Param, params_declaration_json
 from opstore.types import JSONValue
 
 BuildStatus = Literal["ok", "failed"]
@@ -141,6 +142,34 @@ BuildInput = Literal["script", "toolchain", "part_params", "imports", "hc_depend
 
 #: :data:`BuildInput`'s members as a value, in comparison order.
 BUILD_INPUTS: Final[tuple[BuildInput, ...]] = get_args(BuildInput)
+
+
+#: The closed unit set a mesh or point-cloud import must declare
+#: (``MESH_INGEST.md`` §1.3). STL, PLY, OBJ, OFF and XYZ carry no unit, so the
+#: declaration is the only honest source: "300 units across so probably mm" is
+#: a guess dressed as a measurement, and a limb scan is exactly the size where
+#: the guess is plausible and wrong.
+#:
+#: **It lives here rather than in** :mod:`hephaestus.geom.mesh` **because of
+#: who reads it.** ``heph import add --units`` and ``heph scan --units`` need
+#: the four strings to *register* their parsers — on every ``heph``
+#: invocation, before any verb runs — and reaching them through the geometry
+#: package imported build123d, OCP, scikit-learn, scipy and sympy for a
+#: four-string tuple: 1.7 s of the CLI's 2.9 s startup (ledger J-cli-startup-5,
+#: root cause RC-2). This module is already on the geometry package's
+#: dependency allowlist and costs about 8 ms, and
+#: :mod:`hephaestus.geom.mesh` re-exports both names, so every existing import
+#: path still resolves. Hard-coding the four values at the CLI instead would
+#: have forked ``MESH_INGEST.md``'s normative unit set into a second literal
+#: with nothing pinning them together — which is exactly the hazard
+#: ``hephaestus.geom.__init__``'s docstring warns about for the solver.
+MeshUnits = Literal["mm", "cm", "m", "in"]
+
+#: :data:`MeshUnits`'s members as a value, in declaration order (the order the
+#: ``--units`` choices and every refusal sentence list them in). Derived from
+#: the ``Literal`` rather than transcribed beside it, on the
+#: :data:`BUILD_INPUTS` precedent above: the tuple and the type cannot drift.
+MESH_UNITS: Final[tuple[MeshUnits, ...]] = get_args(MeshUnits)
 
 
 @dataclass(frozen=True)
@@ -518,6 +547,35 @@ class BuildResult:
     #: record used to drop them, which left ``GET /parts/{part}/build`` unable
     #: to name the stops the Timeline is a projection of.
     checkpoints: tuple[StatementCheckpoint, ...] = ()
+    #: Every ``CHECKS`` name the worker *registered*, sorted — which is not the
+    #: same set as :attr:`checks`'s keys: a declared check that failed to
+    #: register leaves no result, so an empty ``checks`` map alone cannot say
+    #: whether the part declares none or declares some that did not run
+    #: (audit-2026-09-04 J-cli-startup-9, root cause RC-6). The worker has
+    #: always emitted ``check_names``; the §8 record used to drop it, which is
+    #: the third time this exact omission has been repaired here — see
+    #: :attr:`metadata` and :attr:`checkpoints` above.
+    #:
+    #: ``()`` on records written before this field existed, and on a build that
+    #: registered none. The two are distinguished where it matters — by
+    #: :meth:`~hephaestus.core.project_store.publication.Publisher.recorded_check_names`,
+    #: which asks whether the stored document carries the key at all — because
+    #: the one caller that acts on "this part declares no checks"
+    #: (``run_checks``'s no-rebuild fast path) must not act on a record that
+    #: never claimed it.
+    check_names: tuple[str, ...] = ()
+    #: The part's ``PARAMS`` declaration as the worker evaluated it — bounds,
+    #: defaults, steps and docs, not just the *hash* of them that
+    #: :attr:`InputHashes.part_params` keeps. Without it no reader can answer
+    #: "what are this part's bounds?" from the current build, and
+    #: ``GET /parts/{part}/params`` fell back to a multi-second sandboxed
+    #: rebuild to recover a dict the worker had already computed and handed
+    #: back (RC-6, ledger J-cli-startup-7). Serialized through
+    #: :func:`~hephaestus.core.params.params_declaration_json`, the SAME
+    #: canonical form :attr:`InputHashes.part_params` hashes — a second JSON
+    #: shape for one declaration inside one record is the drift this field
+    #: exists to end. Empty on records written before it existed.
+    params_declaration: Mapping[str, Param] = field(default_factory=dict[str, "Param"])
 
     def __post_init__(self) -> None:
         if self.status not in ("ok", "failed"):
@@ -547,6 +605,8 @@ class BuildResult:
             "error": None if self.error is None else self.error.to_json(),
             "metadata": dict(self.metadata),
             "checkpoints": [checkpoint.to_json() for checkpoint in self.checkpoints],
+            "check_names": list(self.check_names),
+            "params_declaration": params_declaration_json(self.params_declaration),
         }
 
     @classmethod
@@ -614,6 +674,10 @@ class BuildResult:
             # Absent from records written before the HTTP Timeline projection;
             # () is the honest reading of "this build named no statement stops".
             checkpoints=_checkpoints(data) if "checkpoints" in data else (),
+            # Absent on a record written before the field existed; `()` is the
+            # honest reading, on the `metadata`/`checkpoints` precedent above.
+            check_names=_str_tuple(data, "check_names") if "check_names" in data else (),
+            params_declaration=_params_declaration(data),
         )
 
     def __eq__(self, other: object) -> bool:
@@ -625,15 +689,38 @@ class BuildResult:
         return hash((self.part, self.status, self.artifact_ref))
 
 
+#: What a check report is *about*. The record was defined for the part-scope
+#: case and grew a project scope that had nowhere to put its subject, so both
+#: project-scope callers satisfied the mandatory ``part`` field by passing the
+#: PROJECT name — a value that is not a part, and that reading refuses
+#: (audit-2026-09-04 J-agent-results-9).
+CheckScope = Literal["part", "project"]
+
+
 @dataclass(frozen=True)
 class CheckReport:
-    """architecture §3.4 check report: one immutable check-set generation run."""
+    """architecture §3.4 check report: one immutable check-set generation run.
 
-    part: str
+    The subject is scope-aware: :attr:`scope` discriminates, :attr:`part` is
+    the part a part-scope run measured (``None`` in project scope, never the
+    project name wearing a part's field), and :attr:`project` is the project
+    both scopes belong to — genuinely useful provenance, in its own field.
+    """
+
+    #: ``None`` in project scope. Kept first, and still positional, so every
+    #: existing construction site keeps working.
+    part: str | None
     check_set_generation: int
     check_bundle_ref: str
     file_hashes: Mapping[str, str] = field(default_factory=dict[str, str])
     project_snapshot_ref: str | None = None
+    #: Defaults to ``"part"``, which is what a record written before this field
+    #: existed means: project scope did not record a scope, but neither did it
+    #: exist as a *declared* one, and every stored report must still load.
+    scope: CheckScope = "part"
+    #: The project the run belongs to, in either scope. ``None`` on a record
+    #: written before this field existed.
+    project: str | None = None
     #: The frozen motion-state generations a run that resolved motion state
     #: measured against (``KINEMATICS.md`` §4: joint/pose/motion-check set
     #: generations, recorded alongside ``project_snapshot_ref`` so motion
@@ -644,7 +731,9 @@ class CheckReport:
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
+            "scope": self.scope,
             "part": self.part,
+            "project": self.project,
             "check_set_generation": self.check_set_generation,
             "check_bundle_ref": self.check_bundle_ref,
             "file_hashes": dict(self.file_hashes),
@@ -679,14 +768,20 @@ class CheckReport:
                         kind="contract",
                     )
                 motion[name] = value
+        raw_scope = data.get("scope", "part")
+        if raw_scope not in ("part", "project"):
+            raise ValidationError(f"invalid check-report scope: {raw_scope!r}", kind="contract")
+        scope: CheckScope = "project" if raw_scope == "project" else "part"
         return cls(
-            part=_req(data, "part", str),
+            part=_opt_str(data, "part"),
             check_set_generation=_req(data, "check_set_generation", int),
             check_bundle_ref=_req(data, "check_bundle_ref", str),
             file_hashes=_str_map(data, "file_hashes"),
             project_snapshot_ref=_opt_str(data, "project_snapshot_ref"),
             motion_generations=motion,
             checks=checks,
+            scope=scope,
+            project=_opt_str(data, "project"),
         )
 
     def __eq__(self, other: object) -> bool:
@@ -695,7 +790,35 @@ class CheckReport:
         return self.to_json() == other.to_json()
 
     def __hash__(self) -> int:
-        return hash((self.part, self.check_set_generation, self.check_bundle_ref))
+        return hash((self.scope, self.part, self.check_set_generation, self.check_bundle_ref))
+
+
+def _params_declaration(data: Mapping[str, JSONValue]) -> dict[str, Param]:
+    """``params_declaration`` rebuilt into ``Param`` records; ``{}`` when absent."""
+    raw = data.get("params_declaration")
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, Param] = {}
+    for name, entry in cast("Mapping[str, JSONValue]", raw).items():
+        if not isinstance(entry, dict):
+            raise ValidationError(f"params_declaration[{name!r}]: expected object", kind="contract")
+        decl = cast("Mapping[str, JSONValue]", entry)
+        bounds = (decl.get("default"), decl.get("min"), decl.get("max"))
+        if any(isinstance(v, bool) or not isinstance(v, int | float) for v in bounds):
+            raise ValidationError(
+                f"params_declaration[{name!r}]: default/min/max must be numbers", kind="contract"
+            )
+        doc = decl.get("doc")
+        raw_step = decl.get("step")
+        numeric_step = isinstance(raw_step, int | float) and not isinstance(raw_step, bool)
+        out[name] = Param(
+            default=cast("int | float", bounds[0]),
+            min=cast("int | float", bounds[1]),
+            max=cast("int | float", bounds[2]),
+            doc=doc if isinstance(doc, str) else "",
+            step=cast("int | float", raw_step) if numeric_step else None,
+        )
+    return out
 
 
 def _checkpoints(data: Mapping[str, JSONValue]) -> tuple[StatementCheckpoint, ...]:
@@ -710,6 +833,7 @@ def _checkpoints(data: Mapping[str, JSONValue]) -> tuple[StatementCheckpoint, ..
 
 __all__: Sequence[str] = (
     "BUILD_INPUTS",
+    "MESH_UNITS",
     "AuditHashes",
     "BuildFreshness",
     "BuildInput",
@@ -718,10 +842,12 @@ __all__: Sequence[str] = (
     "BuiltThrough",
     "CheckReport",
     "CheckResult",
+    "CheckScope",
     "ErrorRecord",
     "GeometryEntry",
     "InputHashes",
     "LastGood",
+    "MeshUnits",
     "Metrics",
     "StatementCheckpoint",
     "Warning",

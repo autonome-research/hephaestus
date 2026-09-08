@@ -118,7 +118,7 @@ from opstore.types import JSONValue
 
 from opstore import canonical_json
 
-__all__ = ["build_parser", "main"]
+__all__ = ["broken_import_message", "build_parser", "main", "make_backend"]
 
 _PART_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -156,8 +156,28 @@ class _ProbedBackend:
         return self._inner.execute(spec, stdin_payload)
 
 
-def _make_backend(layout: ProjectLayout, *, unsafe: bool) -> ExecBackend:
+def make_backend(layout: ProjectLayout, *, unsafe: bool) -> ExecBackend:
+    """The one backend-selection helper every model-facing runtime shares.
+
+    Public (ledger J-agent-wiring-4): ``heph build`` had this probe-and-warn
+    logic and ``heph agent`` had none — it took the CAD ops' "for fast tests"
+    unsafe default instead — so the engine and the agent disagreed about the
+    shipped sandbox posture while both ran part scripts. Rather than copy the
+    probe into a second verb, ``heph agent`` calls this: one place decides what
+    ``--unsafe-local-executor`` means, one place prints the selection line, and
+    one place raises ``sandbox_denied`` when the secure probe cannot be proven.
+    (``heph serve --mcp`` and ``--web`` reach the same posture through
+    ``serve_mode``, which has no unsafe opt-in at all and never should.)
+
+    Raises :class:`~hephaestus.core.errors.SandboxDeniedError` when ``unsafe``
+    is false and bwrap cannot be probed; the callers map that to their own
+    named exit-2 refusal rather than a traceback.
+    """
     if unsafe:
+        # One line at SELECTION, naming the flag that was actually passed; the
+        # backend itself warns again per execution and no longer names any one
+        # verb's flag, because it is reached from more than one (and from tests
+        # and library callers with no CLI at all).
         print(
             "heph: --unsafe-local-executor: builds run WITHOUT OS sandboxing",
             file=sys.stderr,
@@ -339,7 +359,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
     layout = load_project(root)
     store = open_store(layout)
     publisher = Publisher(layout, store)
-    backend = _make_backend(layout, unsafe=bool(args.unsafe_local_executor))
+    backend = make_backend(layout, unsafe=bool(args.unsafe_local_executor))
 
     exit_code = 0
     built: set[str] = set()
@@ -663,6 +683,155 @@ def _assert_no_arity_collisions(parser: argparse.ArgumentParser) -> None:
         raise AssertionError(f"option arity collision across heph verbs: {detail}")
 
 
+def _import_is_of(module_path: str, exc: ImportError) -> bool:
+    """Is *exc* the report that ``module_path`` itself is not installed?
+
+    ``ImportError`` carries the module that could not be found in ``exc.name``,
+    and that one field is the whole difference between the two conditions an
+    optional verb has to tell apart (ledger J-cli-robustness-21):
+
+    * ``exc.name`` **is** ``module_path`` or a package above it — the optional
+      package is genuinely absent, which is the supported core-only install
+      ``PACKAGING.md`` governs: the engine CLI is Node-free and fully
+      functional without the server package, and the verb is simply not there.
+    * anything else, ``None`` included — the package the user asked for exists
+      and something *it* imports does not. That is broken, not absent, and
+      swallowing it shows the operator ``invalid choice: 'serve'``, which reads
+      exactly like an uninstalled package and names nothing.
+
+    ``None`` counts as broken deliberately: an ``ImportError`` that declines to
+    say what was missing is not evidence that this module is the missing one.
+    """
+    name = exc.name
+    if name is None:
+        return False
+    return module_path == name or module_path.startswith(f"{name}.")
+
+
+def broken_import_message(what: str, module_path: str, exc: ImportError) -> str:
+    """The refusal an optional verb prints when its package is installed but broken.
+
+    Two facts, because two different things are wrong-able: the exception the
+    import actually raised, and the fact that this is *not* the "package not
+    installed" condition it would otherwise be mistaken for. ``docs/install.md``
+    carries the same pair so the two shapes can be told apart from the docs.
+
+    Public, and deliberately the ONLY definition of this sentence: the same
+    condition can now surface at two different times. Registration meets it
+    here; the ``serve`` handlers meet it when their lazily imported halves
+    (``hephaestus.mcp.app``, ``hephaestus.http.serve``) fail, because
+    J-cli-startup-3 and -4 moved those imports off the registration path. Both
+    import this rather than writing the sentence twice.
+    """
+    missing = f" (missing module: {exc.name})" if exc.name is not None else ""
+    return (
+        f"heph: the {what!r} verb is installed but could not load: {exc}{missing}\n"
+        f"heph: {module_path} is present and one of its imports is not; this is a "
+        f"broken installation, not an absent one (a package that is simply not "
+        f"installed leaves the verb off 'heph --help' entirely)"
+    )
+
+
+def _register_broken_verb(
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],  # pyright: ignore[reportPrivateUsage]
+    verb: str,
+    module_path: str,
+    exc: ImportError,
+) -> None:
+    """Register *verb* as a stub whose handler names the import that failed."""
+    if verb in cast("Mapping[str, argparse.ArgumentParser]", sub.choices):
+        # `register` added the parser and then failed; the half-built verb is
+        # more informative than a stub we cannot put in its place, and argparse
+        # refuses a second parser under the same name.
+        return  # pragma: no cover - registration imports before it adds a parser
+    parser = sub.add_parser(
+        verb,
+        help=f"unavailable: {module_path} is installed but could not be imported",
+        # Accept whatever the operator typed, flags included. They are
+        # reproducing the invocation that used to work, and answering a broken
+        # install with "unrecognized arguments" would hide the one message that
+        # explains it. `prefix_chars` is what buys that: with no prefix
+        # character in play argparse reads `--resume` as a positional rather
+        # than an unknown option, which `nargs=REMAINDER` does NOT do for a
+        # leading flag. `add_help=False` for the same reason — `heph agent
+        # --help` on a broken install should say why the verb is broken.
+        add_help=False,
+        prefix_chars="\0",
+    )
+    parser.add_argument("args", nargs="*", help=argparse.SUPPRESS)
+
+    def command(_args: argparse.Namespace) -> int:
+        print(broken_import_message(verb, module_path, exc), file=sys.stderr)
+        return 2
+
+    parser.set_defaults(func=command)
+
+
+def _register_broken_serve_web(serve_parser: argparse.ArgumentParser, exc: ImportError) -> None:
+    """Keep ``serve --web`` on the help output when its half could not import.
+
+    The web half of ``serve`` is an *extension* of a parser the MCP half
+    created, so a stub verb is not available to it the way it is to the other
+    four: the verb exists and works. What must not happen is the pre-fix
+    behaviour, where a broken ``hephaestus.http.cli_web`` silently removed
+    ``--web`` from a verb that still advertised ``serve`` — and, before that,
+    took ``--mcp`` down with it. So ``--web`` is registered here as a flag that
+    refuses by name, and every other invocation of ``serve`` is untouched.
+
+    Only ``--web`` itself: ``--web-address`` and ``--project`` are declared by
+    the half that failed to import (``cli_web.extend_serve``), and restating
+    them here would fork their declarations to describe a surface that cannot
+    run; with them absent, argparse rejects them as unrecognised, which is the
+    honest answer for a flag whose implementation is not loadable.
+    """
+    inner = cast("Callable[[argparse.Namespace], int]", serve_parser.get_default("func"))
+    serve_parser.add_argument(
+        "--web",
+        action="store_true",
+        help="unavailable: hephaestus.http.cli_web is installed but could not be imported",
+    )
+
+    def command(args: argparse.Namespace) -> int:
+        if not bool(getattr(args, "web", False)):
+            return inner(args)
+        print(
+            broken_import_message("serve --web", "hephaestus.http.cli_web", exc),
+            file=sys.stderr,
+        )
+        return 2
+
+    serve_parser.set_defaults(func=command)
+
+
+def _optional_verb(
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],  # pyright: ignore[reportPrivateUsage]
+    verb: str,
+    module_path: str,
+    register: Callable[[], None],
+) -> None:
+    """Run *register* (which imports *module_path* and adds *verb*), tolerating absence.
+
+    The four optional verbs — and the web half of ``serve``, one level in —
+    ship with packages the engine CLI does not require, and each used to be
+    registered inside a bare ``try: ... except ImportError: pass``. That net
+    swallows a broken dependency anywhere in the module's transitive closure
+    and deletes the verb, so a broken fastmcp and an uninstalled server
+    package produce the same ``invalid choice: 'serve'``
+    (ledger J-cli-robustness-21). :func:`_import_is_of` splits the two, and a
+    broken one is registered as a self-diagnosing stub instead of vanishing.
+
+    ``register`` is called inside the ``try`` on purpose: an ``add_subparsers``
+    that imports lazily (several do) fails the same way and means the same
+    thing.
+    """
+    try:
+        register()
+    except ImportError as exc:
+        if _import_is_of(module_path, exc):
+            return
+        _register_broken_verb(sub, verb, module_path, exc)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="heph", description="Hephaestus CAD engine CLI (engine-first: no server)"
@@ -840,39 +1009,57 @@ def build_parser() -> argparse.ArgumentParser:
     cli_solve.add_subparsers(sub)
     cli_solve.add_proposal_subparser(sub)
 
-    # Stage 2 agent verb (heph agent) ships with the server package; the engine
-    # CLI stays Node-free and fully functional when it is not installed.
-    try:
+    # The four optional verbs below ship with packages the engine CLI does not
+    # require: `heph agent`, `heph export`, `heph bench` and `heph serve` all
+    # live in the server package, and the engine CLI stays Node-free and fully
+    # functional without it (PACKAGING.md). `_optional_verb` is what makes that
+    # tolerance narrow instead of total — an absent package omits the verb, a
+    # broken one registers a stub that names the failing import (ledger
+    # J-cli-robustness-21).
+    #
+    # THE REGISTRATION INVARIANT, stated once for all of them: registering a
+    # verb may import only modules whose closure EXCLUDES build123d, fastmcp,
+    # starlette and `hephaestus.geom`. Three comments here used to assert that
+    # these registrations were free; they were not, and the measurement said
+    # 2.9 s for `heph --version` (ledger J-cli-startup-1 through -5, root cause
+    # RC-2). What made them false was never the leaf modules — every one of
+    # them defers its real work — but their package `__init__` files and one
+    # constant read out of the geometry package; those are fixed at the source,
+    # and `core/tests/test_cli_startup.py` asserts the closure after
+    # `build_parser()` rather than trusting a comment again.
+
+    def _register_agent() -> None:
         from hephaestus.agent_bridge import cli as agent_cli
-    except ImportError:
-        pass
-    else:
+
         agent_cli.add_subparsers(sub)
+
+    _optional_verb(sub, "agent", "hephaestus.agent_bridge.cli", _register_agent)
 
     # Stage 10A export verbs (heph export list / unpin) ship with the server
     # package because the export write-ahead table is written there
     # (`agent_bridge/cad_ops`). They need no Node and no network, and `list`
-    # imports no geometry kernel — the module is registered here on the same
-    # try/except footing as `heph agent` so the Node-free engine CLI is unchanged
-    # when the server package is absent (INTERFACE.md §19.40, §22.6).
-    try:
+    # imports no geometry kernel — true as of J-cli-startup-2, which made the
+    # `cad_ops` aggregate lazy; before that this comment was false by 3.5 s
+    # (INTERFACE.md §19.40, §22.6).
+    def _register_export() -> None:
         from hephaestus.agent_bridge import cli_export
-    except ImportError:
-        pass
-    else:
+
         cli_export.add_subparsers(sub)
+
+    _optional_verb(sub, "export", "hephaestus.agent_bridge.cli_export", _register_export)
 
     # Stage 2 bench verbs (heph bench run/score) ship with the server package too;
     # the handlers import the harness lazily, so registering costs nothing.
-    try:
+    def _register_bench() -> None:
         from hephaestus.bench import cli_bench
-    except ImportError:
-        pass
-    else:
+
         cli_bench.add_subparsers(sub)
 
+    _optional_verb(sub, "bench", "hephaestus.bench.cli_bench", _register_bench)
+
     # Stage 3 MCP verb (heph serve --mcp) ships with the server package as well;
-    # the handler imports FastMCP lazily, so registering costs nothing here.
+    # the handler imports FastMCP lazily, and since J-cli-startup-3 so does the
+    # `hephaestus.mcp` package init, so registering really does cost nothing.
     #
     # The `serve` verb is assembled from two halves on purpose (INTERFACE.md §2.1
     # and the 2026-07-26 ordering amendment): `hephaestus.mcp.cli_serve` owns
@@ -880,18 +1067,37 @@ def build_parser() -> argparse.ArgumentParser:
     # with `--web`. `server/http` is a web client API and NOT part of the
     # headless surface, so the MCP module may not import it — the assembly
     # happens here, where neither surface is.
-    try:
+    #
+    # The two halves are therefore reported SEPARATELY: a broken `http.cli_web`
+    # used to take `--mcp` down with it, which is the same swallowed-failure bug
+    # one level in (J-cli-robustness-21). `--web` becomes a flag that refuses by
+    # name; `--mcp` keeps working.
+    #
+    # The split is one-directional and that is a deliberate limit, not an
+    # oversight: `_register_serve` is itself wrapped, so a break in
+    # `hephaestus.mcp.cli_serve` — the half that CREATES the parser — stubs the
+    # whole verb and takes `--web` with it. There is no parser to hang `--web`
+    # on until that import returns. It is not reachable through a real
+    # dependency break, because `cli_serve` imports argparse, sys and typing and
+    # nothing else (0.014 s, no heavy closure) — every dependency that can
+    # actually break is behind `.app`, which `serve()` imports at invocation and
+    # refuses by name there. Making the two symmetric would mean moving the
+    # serve parser's skeleton up into this file, which would move `serve --help`
+    # away from the module that owns the verb.
+    def _register_serve() -> None:
         from hephaestus.mcp import cli_serve
-    except ImportError:
-        pass
-    else:
+
         serve_parser = cli_serve.add_subparsers(sub)
         try:
             from hephaestus.http import cli_web
-        except ImportError:
-            pass
+        except ImportError as exc:
+            if not _import_is_of("hephaestus.http.cli_web", exc):
+                _register_broken_serve_web(serve_parser, exc)
         else:
             cli_web.extend_serve(serve_parser)
+
+    _optional_verb(sub, "serve", "hephaestus.mcp.cli_serve", _register_serve)
+
     _assert_no_arity_collisions(parser)
     return parser
 

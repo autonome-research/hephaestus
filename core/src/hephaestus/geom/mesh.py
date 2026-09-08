@@ -71,6 +71,7 @@ from typing import TYPE_CHECKING, Final, Literal, cast
 
 import numpy as np
 from hephaestus.core.errors import ValidationError
+from hephaestus.core.types import MESH_UNITS, MeshUnits
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -144,12 +145,17 @@ __all__ = [
 # --------------------------------------------------------------------------
 # §1.3 units — declared, never inferred
 
-#: The closed unit set (§1.3). A file in these formats carries no unit, so the
-#: declaration is the only honest source. "300 units across so probably mm" is
-#: a guess dressed as a measurement, and a limb scan is exactly the size where
-#: the guess is plausible and wrong.
-MESH_UNITS: Final[tuple[str, ...]] = ("mm", "cm", "m", "in")
-MeshUnits = Literal["mm", "cm", "m", "in"]
+# The closed unit set of §1.3 is DEFINED in `hephaestus.core.types` and
+# re-exported here, which is the opposite of where it reads like it belongs.
+# The reason is import cost, not taste: `heph import add --units` and
+# `heph scan --units` need the four strings to register their parsers, on every
+# `heph` invocation, and this module cannot be reached without running
+# `hephaestus.geom.__init__` — build123d, OCP, scikit-learn, scipy and sympy,
+# 1.7 s, for a four-string tuple (ledger J-cli-startup-5, root cause RC-2).
+# `core.types` is already on this package's dependency allowlist and costs
+# ~8 ms. Both names stay importable from here, so every existing import path,
+# both uses below, and `MESH_INGEST.md`'s single normative unit set are
+# unchanged: there is one definition, in one place, reachable by two paths.
 
 #: Exact scale factors to the engine's millimetres. Exact, not approximate:
 #: 25.4 mm/in is the definition of the inch, not a measurement of it.
