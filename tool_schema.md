@@ -24,7 +24,16 @@ it is never installed as an ambient Pi extension or privileged skill.
 Conventions: part, new-part, and project-check `name` arguments are normalized
 identifiers matching `^[a-z][a-z0-9_]{0,63}$`; separators, absolute paths, `..`, Unicode
 lookalike separators, and encoded traversal are rejected before filesystem
-access. Every model-selected output path is relative to a declared project
+access. **AMENDED 2026-09-04 (J-agent-results-11):** a refusal names
+project-relative locations only — `parts/`, `checks/`, `imports/` — and never an
+absolute host path, symmetrically with that rule on the input side. The one
+deliberate exception is `create_project_check`'s `path`, which is documented as
+a path. **AMENDED 2026-09-04 (J-http-envelope-4):** the addressing vocabulary is
+the engine's own and reaches the tool surface unrewritten — a syntactically
+illegal name is `invalid_part`, a selector *inside* a part that resolves to
+nothing or ambiguously is `addressing_error`, and both carry the candidate list. A legal name the project lacks is an addressing miss too on this surface — `addressing_error` with the project's parts as candidates — never `unknown_part`, which is the HTTP part routes' answer (INTERFACE.md §2.4).
+Every addressing refusal used to be relabelled `invalid_part` at the dispatcher,
+which said the part was invalid about a part that was fine. Every model-selected output path is relative to a declared project
 root (exports use `.heph/exports/`) and rejected on traversal. Confinement is
 rechecked at operation time through directory descriptors with no-follow/
 beneath semantics (`openat2 RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS` on secure
@@ -162,18 +171,28 @@ Observed equivalent: `Create cat_step_shelf (part)`.
 ### read_part
 ```
 read_part(name: str, offset_line: int = 1, limit_lines: int = 2000)
-    -> {script, numbered_script, params, line_count, content_hash, snapshot_ref,
+    -> {script, numbered_script, params?, line_count, content_hash, snapshot_ref,
         part_param_state_hash, project_param_state_hash,
-        truncated, oversized_line, oversized_line_offset_bytes?,
-        next_offset_bytes?}
+        truncated, oversized_line, first_line, last_line, total_lines,
+        total_bytes, oversized_line_offset_bytes?,
+        next_offset_bytes?, next_offset_line?}
 ```
 Returns separate raw and numbered chunks (the raw chunk is suitable for exact
 edits), registers an immutable full-file content-addressed snapshot, and
 returns the hashes/refs required for optimistic writes and exact conflict
-reconstruction. `offset_line`/`limit_lines` select only the first human-friendly
-page. Any truncated response returns snapshot-bound absolute
-`next_offset_bytes`; all continuation uses `read_artifact(snapshot_ref,
-offset_bytes=...)`, never another mutable source read. When
+reconstruction. `offset_line`/`limit_lines` select the page, and are honoured: `first_line` and
+`last_line` bound the window actually returned (an offset past the end returns
+an EMPTY page with `last_line = first_line - 1`, never the whole file), and
+`numbered_script`'s line numbers are absolute, so an `old_str` copied out of a
+later page targets the right text. `total_lines`/`line_count` and `total_bytes`
+are facts about the FILE, not about the page. A truncated response returns both
+continuation cursors: `next_offset_line` to page on with this same tool, and the
+snapshot-bound absolute `next_offset_bytes` for `read_artifact(snapshot_ref,
+offset_bytes=...)` — a byte cursor cannot be fed back to a line-paged tool, so
+reporting only the second one left no way to continue here. `params` is the
+declaration read from the script's *literals*, and is omitted (never partial)
+when the declaration has a computed member no literal pass can evaluate; it is
+never a sandboxed probe, because a read must not contain a build. When
 `oversized_line=true`, `oversized_line_offset_bytes` gives that line's absolute
 UTF-8 start (including when the first page starts after line 1), and
 `next_offset_bytes` advances from the returned prefix.
@@ -191,10 +210,13 @@ snapshot ref; the model continues losslessly by byte cursor through
 ```
 edit_part(name: str, expected_hash: str, old_str: str, new_str: str)
     -> {applied, diff?, line?, content_hash?, snapshot_ref?, journal_ref?,
+        status?: "validation_error", kind?: "contract", diagnostics?,
+        candidates?: [{line, text, ratio}],
         conflict?: {current_hash, current_script, current_truncated,
                     current_oversized_line,
                     current_oversized_line_offset_bytes?,
-                    current_next_offset_bytes?, current_snapshot_ref,
+                    current_next_offset_bytes?, current_next_offset_line?,
+                    current_snapshot_ref,
                     base_snapshot_ref, attempted_snapshot_ref}}
 ```
 Exact-match string replacement; `old_str` must match exactly once (widen with
@@ -202,8 +224,14 @@ context if ambiguous — same contract as claude-code-style editors, and
 consistent with the unified diffs observed in Smith's Edit chips). The write
 runs only when `expected_hash` equals the current content hash. The store uses
 the immutable snapshot registered for `expected_hash` to materialize the exact
-attempted candidate before returning a stale conflict. An exact-match failure
-returns closest candidates. Multiple edits are separate invocations with
+attempted candidate before returning a stale conflict. An exact-match failure is
+a **discriminated refusal** — `applied: false` with
+`status: "validation_error"`, `kind: "contract"` and `diagnostics` naming the
+occurrence count — in exactly the vocabulary `edit_globals` and
+`edit_project_check` use, and it returns the closest candidates as at most three
+`{line, text, ratio}` entries ordered by descending ratio then by line. The list
+is deterministic in cutoff, count and ordering, and may be empty when nothing in
+the file is close. Multiple edits are separate invocations with
 distinct trusted idempotency metadata. Every accepted overwrite returns the
 new snapshot and preimage journal reference. Every stale-conflict
 `current_script` is a conflict-time snapshot, obeys the 50 KiB/2000-line cap,
@@ -212,6 +240,20 @@ and MUST be continued from `current_snapshot_ref` at
 `current_oversized_line=true`. `read_part`
 intentionally requests newer live state and is never conflict continuation.
 
+**AMENDED 2026-09-04 (J-agent-results-2).** The conflict document's five
+reference-and-content members — `current_hash`, `current_script`,
+`current_snapshot_ref`, `base_snapshot_ref`, `attempted_snapshot_ref` — are
+**present and nullable**, never absent: a store conflict can be raised without
+live content (the file vanished between the read and the write), and there is no
+single attempted candidate to name when the caller's base was never registered
+here or `old_str` does not match that base exactly once. A consumer branches on
+the value, not on the key. `attempted_snapshot_ref` names the **rejected
+contender** — the caller's own base with the edit applied — and never the live
+file, which is what `current_snapshot_ref` is for; when the contender cannot be
+determined the member is null rather than fabricated. This holds identically for
+`edit_globals` and `edit_project_check`, which both used to return the live
+snapshot under that name.
+
 ### write_part
 ```
 write_part(name: str, expected_hash: str, script: str)
@@ -219,7 +261,8 @@ write_part(name: str, expected_hash: str, script: str)
         conflict?: {current_hash, current_script, current_truncated,
                     current_oversized_line,
                     current_oversized_line_offset_bytes?,
-                    current_next_offset_bytes?, current_snapshot_ref,
+                    current_next_offset_bytes?, current_next_offset_line?,
+                    current_snapshot_ref,
                     base_snapshot_ref, attempted_snapshot_ref}}
 ```
 Whole-file replacement for templates or substantial rewrites. It has the same
@@ -367,15 +410,17 @@ enforced in the canonical JSON Schema.
 read_globals(offset_line: int = 1, limit_lines: int = 2000)
     -> {script, numbered_script, content_hash, snapshot_ref,
         project_param_state_hash, truncated, oversized_line,
-        oversized_line_offset_bytes?, next_offset_bytes?}
+        first_line, last_line, total_lines, total_bytes,
+        oversized_line_offset_bytes?, next_offset_bytes?, next_offset_line?}
 edit_globals(expected_hash: str, old_str: str, new_str: str)
     -> {status: "applied", diff, content_hash, snapshot_ref, journal_ref}
      | {status: "validation_error",
         kind: "syntax"|"contract"|"sandbox"|"evaluation"|"invalid_overrides",
-        diagnostics, invalid_overrides?}
+        diagnostics, invalid_overrides?, candidates?: [{line, text, ratio}]}
      | {status: "conflict", kind: "stale_hash", current_hash,
         current_script, current_truncated, current_oversized_line,
         current_oversized_line_offset_bytes?, current_next_offset_bytes?,
+        current_next_offset_line?,
         current_snapshot_ref, base_snapshot_ref, attempted_snapshot_ref}
 ```
 Project-orchestrator-only tools for the existing `globals.py`. Paging—including
@@ -401,17 +446,32 @@ create_project_check(name: str, description: str = "")
     -> {path, initial_script, content_hash, snapshot_ref}
 read_project_check(name: str, offset_line: int = 1, limit_lines: int = 2000)
     -> {script, numbered_script, content_hash, snapshot_ref,
-        truncated, oversized_line, oversized_line_offset_bytes?,
-        next_offset_bytes?}
+        truncated, oversized_line, first_line, last_line, total_lines,
+        total_bytes, oversized_line_offset_bytes?,
+        next_offset_bytes?, next_offset_line?}
 edit_project_check(name: str, expected_hash: str, old_str: str, new_str: str)
     -> {status: "applied", diff, content_hash, snapshot_ref, journal_ref}
      | {status: "validation_error",
-        kind: "syntax"|"contract"|"sandbox"|"evaluation", diagnostics}
+        kind: "syntax"|"contract"|"sandbox"|"evaluation", diagnostics,
+        candidates?: [{line, text, ratio}]}
      | {status: "conflict", kind: "stale_hash", current_hash,
         current_script, current_truncated, current_oversized_line,
         current_oversized_line_offset_bytes?, current_next_offset_bytes?,
+        current_next_offset_line?,
         current_snapshot_ref, base_snapshot_ref, attempted_snapshot_ref}
 ```
+**AMENDED 2026-09-04 (J-agent-results-S5).** Every `snapshot_ref`,
+`current_snapshot_ref`, `base_snapshot_ref`, `attempted_snapshot_ref` and
+`journal_ref` these three tools return is of kind **`check-snapshot`**, not
+`part-snapshot`: a reference is an opaque capability whose kind is its type tag,
+and a reader holding one must be able to tell whether it snapshots a part script
+or a check script. The kind is registered as readable Python source, so the
+continuation rule applies to these references exactly as it does to a part's —
+continue a truncated `current_script` from `current_snapshot_ref` through
+`read_artifact`. References minted under the old kind are still readable, so
+retained check-report and journal evidence keeps resolving; a client
+reconstructing a base reference from its own expected hash must mint the NEW
+kind, which is what the server does.
 Project-orchestrator-only, identifier-constrained APIs rooted at `checks/`.
 `list_project_checks` is the authoritative discovery path and returns no
 arbitrary filesystem entries. The first page freezes an immutable lexical check-
@@ -516,12 +576,34 @@ read_artifact(ref: str, offset_bytes: int = 0, max_bytes: int = 49152)
     -> {content, mime_type, offset_bytes, next_offset_bytes?, total_bytes,
         truncated}
      | {error: "invalid_utf8_offset", offset_bytes, total_bytes}
+     | {status: "binary_artifact", kind, mime_type, total_bytes,
+        consumed_by, message}
+     | {status: "undecodable_artifact", kind, mime_type, total_bytes, message}
 ```
 Pages model-readable text/JSON artifacts referenced by another tool result,
 including large BuildResult, CheckReport, geometry, mask-legend, skill, and
 conflict evidence. `ref` is an opaque capability scoped to the current project
-and authorized session, never a filesystem path; binary artifacts return
-metadata and must be consumed by their dedicated render/export path. Paging is UTF-8 boundary-safe: `offset_bytes` must be zero, `total_bytes`, or an
+and authorized session, never a filesystem path.
+
+**AMENDED 2026-09-04 (J-agent-results-3).** A non-text artifact returns a
+**discriminated status**, never a page. `status: "binary_artifact"` is a kind
+that is binary by design — `build`, `build-checkpoint`, `render`, `export`,
+`gltf`, and the four `selection-*` kinds — and `consumed_by` names the tool that
+does read it (`inspect_part` for every one of those but `export`, which is
+`export_part`); the mapping is total over the binary kind set, so a new binary
+kind cannot be added without naming its reader. `status:
+"undecodable_artifact"` is the different fact: an unknown kind whose bytes are
+not valid UTF-8. Neither used to exist, so both returned the success branch —
+empty content, an octet-stream mime, the real byte total and `truncated: false`,
+i.e. the claim that a multi-kilobyte artifact had been read completely and was
+empty. The page-shaped members are still emitted beside the status for one
+release; `status` is the discriminator, and a real page never carries one — the
+page and invalid-offset branches of the canonical JSON Schema say so with
+`not: {required: ["status"]}`, so the published `oneOf` stays a real exclusive
+union and a JSON-Schema client (MCP) and the sidecar's TypeBox union agree about
+which branch a binary result is.
+
+Paging is UTF-8 boundary-safe: `offset_bytes` must be zero, `total_bytes`, or an
 exact code-point boundary, otherwise the tool returns
 `invalid_utf8_offset` without normalizing it. The server shortens a page end to
 the preceding boundary and emits a boundary-aligned `next_offset_bytes`,
@@ -536,10 +618,32 @@ obeys the 50 KiB/2000-line Pi cap.
 measure(kind: "interference"|"clearance"|"distance"|"bbox"|"volume"|"mass"|
               "sealed"|"genus",
         a: str, b: str|null = null, part: str|null = null,
+        density: number|null = null,
         artifact_ref: str|null = null,
         project_snapshot_ref: str|null = null)
-    -> {value, units, detail, resolved_artifact_refs}
+    -> {value, units, resolved_artifact_refs,
+        detail: {kind, args, measured, parts,
+                 density?: {part, g_per_mm3,
+                            source: "materials_registry"|"explicit",
+                            material?: {id, name, density_kg_m3, registry,
+                                        registry_digest, spec}}}}
 ```
+**AMENDED 2026-09-04 (J-agent-results-1, `PHYSICS.md` §1).** `kind="mass"`
+takes its density from the `density` argument — **grams per cubic millimetre**,
+the unit `m.mass(selector, density=...)` takes inside a check — or, when that is
+omitted, resolves the addressed part's density from the pinned **materials**
+registry through `part.material_spec`, the same resolution the DFM and
+bill-of-materials paths use. Either way it discloses the density structurally in
+`detail.density`: the value actually multiplied, where it came from, and — for a
+registry match — the record and its published kg/m³. A part whose
+`material_spec` is absent or matches no record in this project's registry, and
+for which no `density` was supplied, refuses **`mass_density_unbound`** naming
+the part; it does not answer. It used to answer with a hardcoded density
+of 1.0, which made `measure(kind="mass")` return exactly
+`measure(kind="volume")` — the volume in cubic millimetres, relabelled grams,
+about 370x wrong for an aluminium part, with nothing in the result disclosing
+that a density had been assumed.
+
 `a`/`b` use the geometry addressing grammar of contract §7 (tags, labels
 with `#k`/`#*` dedup selectors, binding names, `"part"`, and
 `"<part>/<label>"` cross-part); addressing errors list candidates rather
@@ -625,8 +729,8 @@ so a number computed on a coarse grid is never read as if it were fine.
 **Bounded execution** (`COMPARE.md` §5). The diff is computed in a killable
 subprocess under a wall-clock ceiling (`HEPHAESTUS_COMPARE_TIMEOUT_S`, default
 300 s). The cheap facts — topology census, both bboxes, both volumes — are
-computed and streamed first; a comparison that cannot finish (or whose
-subprocess dies) refuses with **`compare_timeout`**, and the refusal's data
+computed and streamed first; a comparison that cannot finish refuses with **`compare_timeout`**, one whose
+subprocess dies with **`compare_child_died`** (carrying its exit code), and the refusal's data
 carries whatever partial facts arrived (`partial`, or `null` when nothing did)
 plus `lost` naming the halves that were cut short (`volume_boolean`,
 `surface_sampling`, and `topology_census` when even the first look was lost).
@@ -739,9 +843,15 @@ adequacy is FEA and is deferred by name.
 run_checks(scope: "part"|"project" = "part", name: str|null = null,
            project_snapshot_ref: str|null = null)
     -> CheckReport  # includes geometry/check source provenance
+                    # {status, scope, part, project, checks, ...}
      | {status: "invalid_check_generation", check_set_generation,
         check_set_ref, diagnostics_ref}
 ```
+**AMENDED 2026-09-04 (J-agent-results-9).** The report's subject is
+scope-aware. `scope` discriminates; `part` names the part a part-scope run
+measured and is **null** in project scope — it used to hold the *project* name,
+a value that is not a part and that reading refuses; and `project` names the
+project in both scopes. A stored report with no `scope` loads as part scope.
 Re-runs persistent CHECKS (and cross-part checks for project scope). `name` is
 required exactly for part scope and null/omitted for project scope; JSON Schema
 enforces the conditional for MCP callers without implicit session context.
@@ -754,6 +864,17 @@ check source bundle; every project CheckReport includes
 `check_set_generation`, `project_snapshot_ref`, opaque `check_bundle_ref`, and
 `{check_path: sha256}` hashes, so concurrent edits
 produce a later bundle rather than ambiguous evidence.
+
+**AMENDED 2026-09-04 (J-cli-startup-9).** A part whose current build recorded
+**no** declared checks and whose recorded inputs still match the live script,
+parameters and dependencies answers from that record: the empty report and the
+current artifact reference, with no rebuild and no preview artifact minted.
+There is no predicate to re-run, and re-running the build to discover that
+again cost the same 3.4 s as a build. Every other case takes the full path
+unchanged — a part with any declared check ALWAYS rebuilds, because a check that
+passed on the recorded build may fail against an edited script, and a build
+whose record predates the declared-names field says nothing about what it
+declared and is therefore not treated as saying "none".
 
 ### run_dfm
 ```
@@ -1130,6 +1251,14 @@ unresolvable — named, never skipped, never conflated with a violated
 constraint. `blocking` lists the ids the never-green rule fires on: an
 unresolvable joint or pose is not a passing one.
 
+`artifact_refs` maps each addressed part to **the reference it contributed at
+evaluation time**, and to **null** for a part whose geometry could not be
+loaded — whose reason appears in that part's own joint or pose outcome
+(**AMENDED 2026-09-04, J-agent-results-8a**: the value was the empty string,
+which reads as "this part has an artifact" rather than "this part contributed
+nothing"). The store keeps the empty string as its own sentinel, so both
+encodings are accepted on read.
+
 **Stage 9B completes the result with the per-check sweep results**, exactly as
 the 9A contract said it would: `results` carries one §4 record per evaluated
 motion check, its `verdict` from the one closed set `holds_at_samples |
@@ -1145,7 +1274,7 @@ declared ones. A named subset is evaluated but deliberately not projected, and
 says so with `partial: true` (the `check_assembly` rule; `artifact_ref` and
 `results_ref` are then `null`). A check grid hitting the §4 wall-clock ceiling
 (`MOTION_TIMEOUT_S = 300`, env `HEPHAESTUS_MOTION_TIMEOUT_S`) is the named
-`motion_timeout` refusal, its partial per-sample facts riding the error data —
+`motion_timeout` refusal (a sweep child that dies is `motion_child_died`, with its exit code), its partial per-sample facts riding the error data —
 partial evidence, never a hang and never a silent pass.
 
 The status and results are recorded and projected on a full run:
@@ -1302,7 +1431,7 @@ and `verification` is always `D2`, because it is kernel measurement.
 `not_an_objective_kind(plateau|kernel_extremum|pose_invariant)`,
 `undeclared_weighting`, `undeclared_regularization`, `missing_provenance`,
 `tolerance_below_determinism_floor`), and at run time `iteration_ceiling`,
-`solver_timeout`, `rank_undecidable` and `solver_residual_disagreement`, each
+`solver_timeout`, `verification_process_died`, `rank_undecidable` and `solver_residual_disagreement`, each
 CARRYING the best iterate and its independently re-measured residuals. A killed
 solve decided nothing, and giving a ceiling a verdict spelling would let it be
 read as an outcome. Nothing is written by any of them, or by a success.
@@ -1450,7 +1579,7 @@ at request time (`no_ground_part`, `free_part_is_jointed`,
 `not_an_objective_kind(plateau|kernel_extremum|pose_invariant)`,
 `undeclared_weighting`, `undeclared_regularization`, `missing_provenance`,
 `tolerance_below_determinism_floor`, `no_free_variables`), and at run time
-`iteration_ceiling`, `solver_timeout`, `rank_undecidable`, `non_rigid_iterate`
+`iteration_ceiling`, `solver_timeout`, `verification_process_died`, `rank_undecidable`, `non_rigid_iterate`
 and `solver_residual_disagreement`, each CARRYING the best iterate and its
 independently re-measured residuals. Observed equivalent: `Propose Placement`.
 

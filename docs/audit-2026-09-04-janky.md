@@ -265,6 +265,57 @@ for `core/src/hephaestus/core/types.py` and **before L5** for
 and regenerate the schemas once: `contract/tests/test_toolgen.py` fails on a
 partial regeneration.
 
+**CORRECTION (2026-09-08), `hephaestus.geom`'s package `__init__`.** J-cli-startup-1
+says "do **not** make `core/src/hephaestus/geom/__init__.py` lazy", because the
+solver's omission from that block is a load-bearing guarantee. The lane made it
+lazy anyway, and the reason is recorded here rather than hidden: once
+`cad_ops/__init__.py` stopped importing eagerly (J-cli-startup-2), a latent
+cycle — `geom.nesting` → `core.cutfile` → `core.dfm` → `core.dfm.context` →
+`geom.topology` — became a live `ImportError` on the plain line `from
+hephaestus.agent_bridge.cad_ops import CadOps`, because nothing imported
+`hephaestus.geom` first any more. The fix is the same root cause one layer down
+(RC-2): a package `__init__` may not turn a leaf import into a whole-closure
+import. The guarantee the ledger was protecting is kept structurally instead of
+by eagerness: `solve` is absent from the lazy export map and
+`core/tests/test_cli_startup.py::TestGeometryPackageIsLazy` pins both halves —
+the cycle stays broken and `hephaestus.geom.solve` is still unreachable from the
+package surface. The cycle itself was then cut at its root by the L3 follow-up
+(`geom/nesting.py` no longer imports `core.cutfile`).
+
+**OPEN AFTER REVIEW (2026-09-08).** The independent review of waves 2 and 3
+found three residuals that are recorded here rather than closed by assertion:
+(1) `scan_compare.bounded_scan_distance` and `mesh_solid.bounded_mesh_solid`
+run on the shared helper but still spell a dead child as `scan_timeout` /
+`mesh_sew_timeout` with a ceiling it never hit — J-build-state-4 kept scan as
+the behaviour-preserving control, so the split (`scan_child_died`,
+`mesh_sew_child_died`, bench refund rows, `compare_to_scan`'s map) is the next
+lane's first item; (2) `_bounded_floor` in `bench/src/hephaestus/bench/cadgenbench/_score.py` is a
+sixth hand-copied supervision loop outside the engine tree, with no death
+drain, that the structural guard cannot see; (3) the stage-13B `bench` fixture
+is a session project that proposals recorded through it pollute for later
+`bench_copy` counts — CI's alphabetical order hides it, a reordered run does
+not; (4) some sidecar-backed test leaves an empty `auth.json` inside the checkout's `agent` directory (mode
+0600, `{}`) in the source tree — a Pi agent directory resolving to the
+checkout's `agent/` rather than a temporary one; it is untracked and harmless
+but is a hygiene leak to find. L8 (J-mirrors-and-dx-1..10) remains deferred by
+decision.
+
+**CORRECTION (2026-09-07), the L2/L6 constructor overlap.** The line above named
+`core/src/hephaestus/core/types.py` as the only reason L6 runs after L2. It is
+not the important one. J-agent-wiring-4's fix — "the CAD-ops constructor takes a
+required backend, so the compiler finds every caller" — is *declared* in
+`cad_ops/_base.py` (L6's) but is only **reachable** through `cad_ops/__init__.py`
+(L2's): J-cli-startup-2 rewrote that module to assemble `CadOps` inside a
+function, and the assembled class carries a deliberately signature-free
+`__init__(*args, **kwargs)` that forwards to `CadOpsState.__init__`. That
+forwarding is what makes L6's required keyword arrive at every construction
+site, and — since the forwarded declaration is what pyright reads — a lane that
+restated the signature there instead would fork the constructor across two files
+and hide the drift from the type checker. So: **L6's constructor change lands
+after L2's assembly rewrite, and neither lane may restate the other's
+signature.** Landing them in the other order makes J-agent-wiring-4 look
+complete while `CadOps(layout, store)` still type-checks.
+
 **L7 — web layout, copy and state.** Owns `web/src/`, `web/test/`, `web/e2e/`
 and `web/vitest.config.ts`. Items: J-web-viewport-1 through -5, -7, -9;
 J-web-stream-1 through -12; J-cli-startup-8; J-mirrors-and-dx-19. J-web-stream-13
@@ -282,6 +333,20 @@ emits. Items: J-mirrors-and-dx-1 through -10, J-web-stream-13, -14.
 `providers.py`, `sessions.py`, `agent_attach.py` (L4), `agent/src/rpc.ts`,
 `agent/src/limits.ts` (L5) and `web/src/api/` and `web/src/stream/` (L7): its edits replace literals
 with reads and are mechanical only once the behaviour above them has settled.
+
+**STATUS (2026-09-07): DEFERRED BY DECISION, not dropped.** Waves 1-3 landed L1
+through L7 and L9; L8 did not run, and the reason is the "runs last" clause
+above rather than capacity. Its edits are mechanical only once the behaviour
+above them has settled, and that behaviour moved in the same wave — §2.4's
+envelope (L4), the bridge timeout classes (L5) and the stream client (L7) all
+changed underneath the vocabularies L8 would generate from. Generating from a
+definition still being argued about produces a generator that is rewritten with
+it. The cost of the deferral, recorded so it is not rediscovered: adding a member
+to any of these vocabularies still means editing every mirror by hand, and
+nothing fails when one is missed — each item enumerates its mirror sites. The
+same decision, with the same reasoning, is recorded in `INTERFACE.md` §19's
+"Open by decision, not by oversight" paragraph, which is where a reader planning
+new work will look.
 
 **L9 — tests, CI and documentation.** Owns `pyproject.toml`, the workflow files,
 `CONTRIBUTING.md`, `scripts/docs_check.py`, `scripts/bootstrap.sh`,

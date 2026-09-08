@@ -6,8 +6,19 @@
 > **not** normative today: the root documents (`architecture.md`,
 > `mission_plan.md`, `script_contract.md`, `tool_schema.md`, `verification.md`,
 > `repo_conventions.md`) are. Where this file and a root document disagree, the
-> root document wins. Known drift: the Tier 3 corpus budgets these stage docs
-> were written against were re-baselined in `verification.md` on 2026-07-25.
+> root document wins.
+>
+> **Known drift** — the single place to check before trusting a paragraph here.
+> A drift list that enumerates exactly one item invites a reader to assume the
+> rest is current, so every known one is named:
+>
+> 1. The Tier 3 corpus budgets these stage docs were written against were
+>    re-baselined in `verification.md` on 2026-07-25.
+> 2. §7's "Stage 2 tool-surface scope" named four tools as outside the slice
+>    (`run_dfm`, `generate_drawing`, `generate_doc`, `nested_sheet`). All four
+>    shipped in Stage 6, one day after Stage 2B; the paragraph carries a dated
+>    supersession and `tool_schema.md` is current
+>    (audit-2026-09-04 J-agent-results-S4).
 
 Sources: `architecture.md` §3.5/§3.6/§4.1–§4.5/§5/§7, `mission_plan.md` Stage 2 + Gate G2, `tool_schema.md` (conventions, delegation, knowledge/registry, export), `verification.md` Tier 3 + meta-tests. Note on numbering: in `architecture.md`, §4.1 = Pi runtime + context policy, §4.2 = agent scoping/leases, §4.3 = structured questions (`ask_user`), §4.4 = selection→scoped agent, §4.5 = thread-phase; delegation state-machine semantics live in §3.5 (delegation WAL) and §5 (slots/deadlines), not §4.3.
 
@@ -144,4 +155,4 @@ Client sends `{part, build_artifact_ref, selection_artifact_ref, selection_id}`.
 
 ---
 
-**Cross-cutting G2 items easy to miss** (mission Stage 2 gate): `pnpm --dir agent test` and `pnpm --dir agent typecheck` must exit 0 alongside `uv run pytest tests/stage2 -q`; scripted **fake model** drives every generated tool through the real Node/Python bridge including images, `ask_user`, cancellation, process restart, session resume, and a repair flow off the failure fixture; a fresh-project scripted session must complete edit-globals → create two consuming parts → discover/create/edit a persistent cross-part check → delegate, using only model-visible tools; capability tests must return discriminated `image_model_required` / `capability_not_available`; and `query_snapshot` tests must prove no tools/extensions/recursion/persistence, single-turn/time/token bounds, no child images in parent, parent-budget charging.
+**Cross-cutting G2 items easy to miss** (mission Stage 2 gate): `pnpm test` and `pnpm typecheck`, run from inside `agent/`, must exit 0 alongside `uv run pytest tests/stage2 -q`; scripted **fake model** drives every generated tool through the real Node/Python bridge including images, `ask_user`, cancellation, process restart, session resume, and a repair flow off the failure fixture; a fresh-project scripted session must complete edit-globals → create two consuming parts → discover/create/edit a persistent cross-part check → delegate, using only model-visible tools; capability tests must return discriminated `image_model_required` / `capability_not_available`; and `query_snapshot` tests must prove no tools/extensions/recursion/persistence, single-turn/time/token bounds, no child images in parent, parent-budget charging.

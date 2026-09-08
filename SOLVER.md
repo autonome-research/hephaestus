@@ -84,7 +84,7 @@ had drifted by up to 550 lines, and the surface count had moved 53 → 54 under
 `compare_to_scan`. All of them were re-resolved against `HEAD` on 2026-08-30
 and are correct as written *now*. Two of them were load-bearing rather than
 cosmetic — G13A clause 14 greps the `check_assembly` occurrence of "There is
-no solver." (`tool_schema.md:932`, which the 2026-08-30 amendment rewrote in
+no solver." (`tool_schema.md:1053`, which the 2026-08-30 amendment rewrote in
 place, so the clause now reads the amended wording at the same line), and
 G13B clause 40 repoints the two literal `assert len(...) == N` pins — so a
 stale line number here is not a typo but a gate clause nobody can write.
@@ -161,12 +161,12 @@ touched anything.
 - `VALIDATION.md:67-77` — "insufficient_scan_seeds"
 - `VALIDATION.md:163-167` — "independent second solution"
 - `VALIDATION.md:510-516` — "budget = ceil"
-- `tool_schema.md:932` — "No solver moves geometry"
-- `tool_schema.md:126-132` — "orchestrator-only"
+- `tool_schema.md:1053` — "No solver moves geometry"
+- `tool_schema.md:135-141` — "orchestrator-only"
 - `script_contract.md:119-140` — "PARAMS"
 - `script_contract.md:141-149` — "globals.py"
 - `script_contract.md:164-172` — "a part MUST NOT shadow an `hc` name"
-- `docs/cli.md:508-511` — "no solver **in"
+- `docs/cli.md:542-545` — "no solver **in"
 - `bench/src/hephaestus/bench/scoring.py:282-304` — "def split_name"
 - `contract/tests/test_toolgen.py:98-115` — "declared additions, not drift"
 - `tests/stage2/test_g2_contract_drift.py:357` — "solve_pose"
@@ -244,7 +244,7 @@ holds it.*
   authored, in Stage 9 and in Stage 13 alike (`SOLVER.md` §1)."
 - **`tool_schema.md`** — **§`check_assembly`'s "There is no solver."**
   was rewritten to the amended `ASSEMBLY.md` §1 wording and **LANDED
-  2026-08-30 with the plan amendment** (`tool_schema.md:932-947`), rather than
+  2026-08-30 with the plan amendment** (`tool_schema.md:1053-1068`), rather than
   at the **13A** the row was drafted for. The row said "at 13A, in the same
   change that adds the `solve_pose` heading"; the sentence went one step
   earlier and the heading did not move with it, because the two halves are
@@ -271,9 +271,9 @@ holds it.*
   finding it then rather than at 13A is the citation audit paying for itself.
   The sentence "there is no per-script joint syntax and no solver: scripts
   position geometry, poses exist only inside an evaluation"
-  (`docs/cli.md:508-511`, re-resolved at 13C and again by the 2026-09-04
+  (`docs/cli.md:542-545`, re-resolved at 13C and again by the 2026-09-04
   janky ledger's L1 pass, whose exit-code, `--json`-envelope and per-verb
-  paragraphs land above this one: the anchor has moved 255 → 390 → 443 → 508,
+  paragraphs land above this one: the anchor has moved 255 → 390 → 443 → 508 → 542,
   and the audit is what noticed each time) is **true today** — no `heph solve` verb exists — and
   becomes false the moment 13A ships `heph solve pose` (§11). It is scoped, not
   deleted, on the same pattern as the three sentences above: "no solver **in
@@ -303,7 +303,7 @@ holds it.*
   and `hc` are untouched, the `CHECKS` facade gains no solver surface (§12),
   and no build path changes. The 13C parameter solve rides `build_part`'s
   existing transient-override preview contract (`script_contract.md:476-481`,
-  `tool_schema.md:238-243`) without amending it.
+  `tool_schema.md:281-286`) without amending it.
 - **`COMPARE.md`, `INGEST.md`, `EXTERNAL_EVAL.md`, `architecture.md`,
   `verification.md`, `repo_conventions.md`, `INTERFACE.md`** — unchanged.
   `COMPARE.md` §5's bounded-execution pattern is *reused* (§10), not amended.
@@ -426,7 +426,7 @@ first sentence is the one below, unchanged):
 stay authored." — **unamended**, scoped at 13B.
 
 `tool_schema.md`'s `check_assembly` section, **as it stood** (now
-`tool_schema.md:932-947`, opening "**No solver moves geometry.**" and carrying
+`tool_schema.md:1053-1068`, opening "**No solver moves geometry.**" and carrying
 the amended `ASSEMBLY.md` §1 wording):
 
 > **There is no solver.** Scripts position geometry; constraints verify, they
@@ -496,7 +496,7 @@ operator's framing already points at:
 > an authoring act performed by an agent or operator through the *existing*
 > `edit_part` / `write_part` / `set_params` surface, with the existing
 > optimistic-hash, journal-backed, no-force-overwrite contract
-> (`tool_schema.md:190-227`), and it shows up in git as a normal diff.
+> (`tool_schema.md:209-246`), and it shows up in git as a normal diff.
 >
 > **The alternative that lost: mutating published artifacts** — republishing
 > transformed geometry so a constraint measures satisfied. It fails P1
@@ -595,7 +595,7 @@ inside its declared
 are bounded, named, one-home-each, already inputs to `input_hashes`, and
 already settable without touching source through transient overrides — a
 build with transient params "create[s] a preview artifact and therefore
-always return[s] `current=false`" (`tool_schema.md:238-240`). The solver can
+always return[s] `current=false`" (`tool_schema.md:281-283`). The solver can
 therefore *evaluate* candidates while writing nothing at all.
 
 **How a variable is spelled (13C).** `<part>.<param>` for a part's own
@@ -1088,7 +1088,7 @@ the number G8C's determinism clause asserts two processes agree to —
 `stale_proposal_inputs` (§8) and `no_free_variable_affects` (§2C).
 
 **Run-time** (named refusals carrying the best iterate and its independently
-re-measured residuals): `solver_timeout`, `iteration_ceiling`,
+re-measured residuals): `solver_timeout`, `verification_process_died` (the pass crashed and its exit code is carried — not a ceiling), `iteration_ceiling`,
 `build_budget_exhausted` (2C), `unbuildable_parameter_iterate` (2C — a
 candidate whose preview build failed, carrying the build error),
 `non_rigid_iterate`, `rank_undecidable`, and — the one that matters most —
@@ -1453,9 +1453,9 @@ the capability in the script or an existing enum, not on the surface — so
   → proposal ref + verdict + verified residuals. **Orchestrator profile
   only**: it reasons across parts and spends a project-scoped build budget,
   the same rationale that makes project-scoped `set_params` and `run_checks`
-  orchestrator-only (`tool_schema.md:126-132`). `space: "parameters"` is the
+  orchestrator-only (`tool_schema.md:135-141`). `space: "parameters"` is the
   13C enum extension — the `layout="nested_sheet"` precedent
-  (`tool_schema.md:1430-1454`), a schema amendment rather than a new tool, and
+  (`tool_schema.md:1559-1583`), a schema amendment rather than a new tool, and
   it **landed at 13C with the tool count unchanged at 57**. `free` carries part
   names in transform space and `Param` names (`<part>.<param>` / `hc.<param>`)
   in parameter space; `box` and `ground` are transform space's alone (a
@@ -1803,7 +1803,7 @@ do.
     `solver_residual_disagreement` and **no verdict**.
 11. Import-closure assertion: the verification process's closure excludes
     `hephaestus.geom.solve`.
-12. `solver_timeout` and `iteration_ceiling` are named refusals carrying the
+12. `solver_timeout`, `verification_process_died` and `iteration_ceiling` are named refusals carrying the
     best iterate and its verified residuals, and are absent from the verdict
     set (asserted against the literal verdict tuple).
 13. **Determinism, per block (§9), and the negative in both directions.** Two
@@ -1822,7 +1822,7 @@ do.
 14. **Amendment drift, asserted at the sub-stage that ships the heading.**
     With 13A's amendments landed: `tool_schema.md` contains a `solve_pose`
     heading **and** no un-scoped sentence "There is no solver." (the
-    `check_assembly` occurrence at `tool_schema.md:932` now reads the amended
+    `check_assembly` occurrence at `tool_schema.md:1053` now reads the amended
     `ASSEMBLY.md` §1 wording); every name in `TOOL_NAMES` has a matching
     normative heading with a parseable signature block (the
     `tests/stage2/test_g2_contract_drift.py:270-305` shape, re-run here);

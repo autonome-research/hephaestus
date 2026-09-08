@@ -728,11 +728,13 @@ HTTP status is a coarse envelope over the reason and never replaces it.
 
 | Engine condition | HTTP | Body |
 |---|---|---|
-| `invalid_params` / `invalid_part` / `invalid_cursor`, idempotency key faults | 400 | reason verbatim |
-| addressing miss on `focus` | 400 | `addressing_error` |
+| `invalid_params` / `invalid_cursor`, idempotency key faults | 400 | reason verbatim |
+| **a part identifier that is not a legal part name** (§5.1's pattern) | **400** | **`invalid_part`** + `{part}` |
+| **a legal part name the open project does not have** | **404** | **`unknown_part`** + `{part, parts}` |
+| **a selector *inside* a part that resolves to nothing** — `focus`, tag, anchor | **400** | **`addressing_error`** + candidates |
 | missing or invalid bearer | 401 | `unauthorized` |
 | `DispatchError(scope_denied)` | 403 | `scope_denied` |
-| `unknown_tool`, unknown part or artifact | 404 | reason verbatim |
+| `unknown_tool`, unknown artifact | 404 | reason verbatim |
 | `StaleSelectionError` | 409 | `stale_selection` + `reason ∈ {rgb_ref, wrong_mode, mismatched, expired, malformed}` |
 | `session_busy`, `part_busy`, `key_expired`, `key_timestamp_skew`, `key_payload_mismatch` | 409 | full refusal payload verbatim |
 | snapshot ref past retention | 410 | `snapshot_expired` |
@@ -745,6 +747,37 @@ HTTP status is a coarse envelope over the reason and never replaces it.
 | **an exception no branch of the mapper classified** | **500** | **`internal_error`** + `{incident}`, with a **fixed** message |
 | **edit / param CAS conflict** | **200** | not an error — the discriminated result carrying `conflict{…}` |
 | **`capability_not_available` / `image_model_required`** | **200** | the discriminated `capability_error` *result* |
+
+**DECISION — the three-way part distinction.** The three rows above are three
+*different conditions*, and the table used to state only two of them, adjacently
+and with no comment relating them. It therefore read as giving one condition —
+"the caller named a part we cannot serve" — both a 400 and a 404, and an
+implementer could satisfy this section with either. The implementation satisfied
+it with both plus a third, each citing this section (audit-2026-09-04
+J-http-envelope-17). The distinction, stated once so it cannot be read away:
+
+1. **Malformed.** The identifier is not a legal part name at all. This is a
+   *request* fault, decided without opening anything, so it is 400 and the
+   reason is `invalid_part`. Grounded in the project layout's name pattern
+   (§5.1), not in the project's contents.
+2. **Unknown.** The identifier is a legal name and the open project has no such
+   part. This is a *resource* fault, so it is 404, the reason is `unknown_part`,
+   and the body carries the part and the known list — a caller that mistyped
+   needs the list, and a caller that raced a delete needs to know which fact
+   changed.
+3. **Unresolvable selector.** The part exists and something *inside* it does
+   not: a `focus`, a tag, an anchor. The part is not the problem, so this is
+   neither of the above: 400 with `addressing_error` and the candidate list.
+
+A raise site answers exactly one of these. On an HTTP route `AddressingError`
+is only ever case 3, because `resolve_part` has already answered cases 1 and 2
+before any engine call runs. The tool surface (Pi and MCP) is different on the
+middle case and says so: `ProjectStore` raises `AddressingError` with
+candidates for a legal name the project lacks, and the dispatcher re-raises the
+engine's own code, so a tool call on an absent part reports `addressing_error`
+(with `candidates`), not `unknown_part`; a name that is not even legal is still
+`invalid_part` there. Any new route that takes a part identifier picks its row
+from this list rather than from a neighbouring route's behaviour.
 
 **DECISION.** CAS conflicts and capability errors return **200**. They are
 *successful, discriminated results* in `tool_schema.md`, and a web layer that
@@ -1616,7 +1649,7 @@ had bought. One rejection was upheld and was never implemented.**
 |---|---|---|---|
 | Styling | CSS Modules + a design-token file | **Upheld as a mechanism; wrong as an answer.** | Tailwind would not have picked a type ramp, assigned roles to it, given `pass`/`fail`/`error` distinct colour, right-aligned a numeric column, or lit a three.js scene. Every defect §3.3 enumerates would have shipped byte-identically on top of it, plus a `node_modules` entry. The `data-*` testability argument also survives: the e2e addresses the DOM through 28 distinct `data-*` attributes and the app mints 93; class-soup selectors would compete with that contract for the same job. |
 | Component library | None | **Upheld.** | §4.2's inventory is 28 entries, of which 24 are project-specific instruments. A library ships an accordion, a date picker, and a modal; this workspace needs a provenance popover, a section control, and a tool chip. *Rejected again:* Radix, Ark, Base UI. |
-| Icon package | "any icon package **beyond an inline SVG sprite**" | **AMBIGUOUS — tightened.** | The sentence parses two ways: an inline sprite is the permitted alternative, or even a sprite is refused. **TIGHTENING (binds §3, no gate clause):** the permissive reading is in force — a repo-owned inline SVG sprite is permitted and is now **required** (§3.12). Evidence that this needed saying: `web/src` and `web/public` contain **zero** `.svg` files and zero `<svg>` elements. The sprite was not rejected; nobody built the thing the sentence already allowed. |
+| Icon package | "any icon package **beyond an inline SVG sprite**" | **AMBIGUOUS — tightened.** | The sentence parses two ways: an inline sprite is the permitted alternative, or even a sprite is refused. **TIGHTENING (binds §3, no gate clause):** the permissive reading is in force — a repo-owned inline SVG sprite is permitted and is now **required** (§3.12). Evidence that this needed saying: at audit time `web/src` contained **zero** `.svg` files and no `<svg>` elements beyond the inline icon set it carries today (there is no public asset directory: Vite serves `web/index.html` from the package root and the bundle carries every asset). The sprite was not rejected; nobody built the thing the sentence already allowed. |
 | Accessibility | "a stated floor, not a gap" | **Upheld as policy; the floor was not met.** | The row asserted a floor with no number, and the shipped app falls under it in four named places. §3.13 replaces it with measurable clauses. |
 
 **The row that was wrong, and the arithmetic that convicts it.** *CSS Modules +
@@ -5985,6 +6018,43 @@ named, not omitted.
 Everything else in this spec is a projection of something that exists. These do
 not exist today and must be built:
 
+**How this register stays true.** It is prose maintained by hand, and every
+entry in it has the same failure mode: the work lands, nobody revisits the
+paragraph, and a reader planning from it redoes finished work — which is what
+happened to item 46's presentation half (`docs/audit-2026-09-04-janky.md`,
+J-mirrors-and-dx-37). An entry may therefore carry a marker,
+`register-check: <id>`, and `tests/stage7h/test_register_freshness.py` runs one
+small predicate per id and **fails when the predicate stops holding** — that is,
+when the work has landed and this paragraph has not caught up. A register that
+cannot go stale is worth more than one that is merely correct today. Adding a
+marker to an entry is optional; adding one with no predicate is not, and the
+test refuses that.
+
+**Open by decision, not by oversight.** The 2026-09-04 janky audit's
+cross-language vocabulary lane — **lane L8** in that ledger's workflow plan:
+`J-mirrors-and-dx-1` through `-10`, plus `J-web-stream-13` and `-14` — is
+**deferred by decision**, not forgotten. The work is a generator beside
+`contract/src/hephaestus/contract/toolgen.py` emitting the closed vocabularies
+that are transcribed by hand into as many as four files in two languages (the
+ten-member event kind vocabulary; the buffered-event bound, the resync close
+code and its reason, retyped in the browser client; the session-profile enum and
+its operator-openable subset, which one identifier names in both senses), and it
+owns `schemas/` plus the modules it would emit.
+
+Deferred for the reason the plan states rather than for capacity: **L8 runs last
+by construction.** Its edits replace literals with reads, so every one of them
+is mechanical *once the behaviour above it has settled* — and that behaviour was
+still moving in the same wave (§2.4's envelope in L4, the bridge timeouts in L5,
+the stream client in L7). Generating a vocabulary from a definition that is
+still being argued about produces a generator that has to be rewritten with it.
+
+What that costs, stated so it is not rediscovered as a surprise: until it lands,
+adding a member to any of those vocabularies means editing every mirror by hand,
+and nothing fails when one is missed. The mirror sites are enumerated in that
+ledger per item. Nothing in this section depends on L8, and no clause here is
+weakened by its absence — this paragraph exists so a reader who finds the
+duplication does not read it as an oversight and re-derive the plan.
+
 1. `server/http` in its entirety (§2), and `heph serve --web` + `serve.json`.
 2. `web/` in its entirety, the pnpm workspace, and the `test:e2e` script (§3).
 3. `heph agent` client mode against a running server (§2.1).
@@ -6217,50 +6287,90 @@ four amendments.** Each names its stage. **Updated 2026-08-28: the
     (`.proseH1`/`.proseH2`/`.proseH3` in `web/src/system/type.module.css`) give
     six markdown heading levels three rungs of §3.8's existing ramp, with levels
     4–6 mapping onto the smallest rather than falling below body size.
-    **Unfinished, and named so it is not mistaken for done:** the elements this
-    renderer can now emit — `ul`/`ol`/`li`, `blockquote`, `table`/`th`/`td`,
-    `hr`, `pre` — have **no stylesheet at all** under `[data-markdown]`, so a
-    table renders as unbordered text and a blockquote as a bare 40px browser
-    indent. That is presentation work in `Transcript.module.css`, it is the
-    remaining half of this item, and it includes the `text-align` rules for the
-    `[data-align]` attribute the renderer projects a table cell's alignment as
-    (an attribute plus a stylesheet, so the repo's `heph/no-raw-type` rule stays
-    satisfiable).
+    **LANDED 2026-09-04** (`register-check: markdown-presentation`). The half
+    this entry named as unfinished — no stylesheet at all for the elements the
+    widened renderer can emit — is delivered in
+    `web/src/components/stream/Transcript.module.css`: spacing, both list
+    styles, `pre`, `blockquote`, `hr`, a `table` whose block display makes a
+    wide table its own scroll container, `th`/`td` borders and padding, **and
+    both `[data-align]` rules**. Read the file before planning work from this
+    line; the entry stood while the work was already done, which is the failure
+    mode a hand-maintained register has by construction
+    (`docs/audit-2026-09-04-janky.md`, J-mirrors-and-dx-37).
+
+    One correction to this entry's *wording*, not a remainder: the rules are
+    scoped to a composed CSS-module class (`.prose`, which `.text`,
+    `.thoughtBody` and `.localPromptText` all `composes:`), not to the
+    `[data-markdown]` attribute this paragraph named. The attribute is still
+    emitted and is the e2e hook; the styling authority is the class, which is
+    what the repository's CSS-module convention requires and what keeps
+    `heph/no-raw-type` satisfiable. Nothing is outstanding here.
 
 *§2.1 / `ASSEMBLY.md` §2 — the 2026-09-04 audit's residue: four facts it left
 open by design, in three items. Named by `docs/audit-2026-09-04-broken.md`
 (B-1b, B-2).*
 
 47. **`py.*` dispatch on a bounded worker pool** (§2.1, added 2026-09-04).
-    `Supervisor._read_loop` calls the `py.*` handler inline, so a handler that
-    issues `Supervisor.call` waits on a response only the thread it is blocking
-    can deliver, and the watchdog then kills the child as unresponsive. Two
-    model-visible capabilities are held short by this and by nothing else, now
-    that `server/src/hephaestus/agent_bridge/wiring.py` resolves the rest.
-    **`query_snapshot` refuses every model turn** with
-    `capability_not_available`: its caller IS wired and answers
-    `dispatch.SnapshotAvailability.unavailable()` rather than deadlocking, and
-    the refusal is the same result the model read when no caller was configured
-    at all. Its other half is that **no shipped HTTP route dispatches
-    `query_snapshot`** — §2.3 exposes `read_part`/`inspect_part`/`measure` and
-    the keyed mutations, not this tool — so in practice every caller is a model
-    turn and every answer is the refusal; the wiring is honest, not a claim that
-    vision is live. **`delegate_part_agent` reaches a durable `interrupted`
-    terminal** because no `DelegationRunner` may be bound, which is the correct
-    state while the runner would have to prompt a child over the channel the
-    call is already occupying: one durable terminal beats an invented
-    completion. Both go live with no edit at either site once dispatch moves off
-    the reader thread.
+    **LANDED 2026-09-07** (`docs/audit-2026-09-04-janky.md` J-agent-wiring-13
+    and J-agent-wiring-6); kept here, rewritten, because two named consequences
+    of it are what a reader of this register was waiting for, and one of them is
+    still open. `Supervisor._read_loop` used to call the `py.*` handler inline,
+    so a handler that issued `Supervisor.call` waited on a response only the
+    thread it was blocking could deliver and the watchdog killed the child as
+    unresponsive. Dispatch now runs on a bounded pool of
+    `SupervisorConfig.py_handler_workers` workers, sized from
+    `schemas/bridge_limits.json`, with a named refusal when the pool saturates —
+    the reader thread reads and nothing else.
+
+    What that unblocked, and what it did not:
+
+    * **`delegate_part_agent` executes.** `BridgeRuntime` binds a real
+      `DelegationRunner` (`app.py`'s `_BridgeDelegationRunner`) through
+      `ToolDispatcher.bind_runtime` the moment its sidecar is up: the child is
+      prompted over the same bridge the parent call arrived on, which is
+      precisely what the reader thread made impossible. The durable
+      `interrupted` terminal is now the **runtime-specific** answer it always
+      should have been, not the only answer — `heph mcp` has no sidecar, so
+      `wiring.build_dispatcher` builds its service with no runner and one
+      `INTERRUPTED` terminal remains the honest outcome there.
+    * **The gate that decides a delegation is admitted at all is real, and
+      required.** `wiring.ProjectDelegationGate` resolves the part through the
+      project store and classifies invalid/absent, part-busy, session-busy and
+      self-delegation; `DelegationService`'s permissive default is gone, so a
+      gate-less service is a type error (J-agent-wiring-6).
+    * **STILL OPEN — `query_snapshot` has no HTTP caller.** The deadlock is gone
+      and the capability is live for a model turn, but **no shipped HTTP route
+      dispatches `query_snapshot`**: §2.3 exposes
+      `read_part`/`inspect_part`/`measure` and the keyed mutations, not this
+      tool, and the closed operator profile set (§2.3, implemented by `SESSION_PROFILES` in `server/src/hephaestus/http/sessions.py`) excludes it by name. So every caller is
+      still a model turn. Routing it is the remaining work, and it is a §2.3
+      decision (which principal may ask for a viewport snapshot, and against
+      which session) rather than a wiring one. Separately, and NOT the same
+      claim: whether a given runtime has a multimodal model configured at all is
+      what `SnapshotAvailability.unavailable()` must answer, so that a runtime
+      with no vision model refuses by name instead of returning the render's own
+      complaint about an unbuilt part.
 
 48. **A probed secure backend for `heph agent`** (§2.1, added 2026-09-04).
-    `CadOpsState` defaults to `UnsafeLocalBackend` and
-    `server/src/hephaestus/agent_bridge/cli.py` injects none, so
-    `instance_store_part` reports `capability_not_available` under `heph agent`
-    while working under `heph serve --web`, which probes bwrap. `wiring.py`'s
-    `resolve_registry` drops an unsafe backend on principle — registry content
-    never runs unsandboxed — so the fix is to pass a probed backend into
-    `BridgeRuntime(backend=…)` and nowhere else. Until then this is a **named
-    capability gap in one runtime**, not a silent one: the tool refuses by name.
+    **LANDED 2026-09-07** (`docs/audit-2026-09-04-janky.md` J-agent-wiring-4).
+    `CadOpsState` used to default to `UnsafeLocalBackend` while
+    `server/src/hephaestus/agent_bridge/cli.py` injected none, so
+    `instance_store_part` reported `capability_not_available` under `heph agent`
+    while working under `heph serve --web`, which probes bwrap. `heph agent` now
+    decides its backend the way every other verb does — `core.cli.make_backend`
+    on the opened project, a probed bwrap backend or `sandbox_denied`, or the
+    warned unsafe one only behind the explicit flag — and passes it into
+    `BridgeRuntime(backend=…)`. `wiring.resolve_registry` still drops an unsafe
+    backend on principle: registry content never runs unsandboxed, on any
+    runtime, whatever the flag says. The entry stays for one reason: the
+    *default* is gone one layer down — `CadOpsState.__init__` takes `backend`
+    as a required keyword, so any code that builds a `CadOps` directly and
+    forgets to probe fails at construction rather than silently running a
+    generator unsandboxed. `BridgeRuntime(backend=None)` still substitutes the
+    warned unsafe backend for library and test embedding when no `cad` is
+    injected; every shipped runtime passes one (`heph agent` its probed
+    backend, `heph serve --web` its probed `cad`), so a reader planning a
+    fourth runtime must pass one too, and that is what this entry is for.
 
 49. **A binding-to-solid record on a published artifact** (`ASSEMBLY.md` §2,
     `tool_schema.md`'s `measure`, added 2026-09-04). Contract §7 rule 4 — a bare
