@@ -54,7 +54,7 @@ from hephaestus.core.errors import (
     InvalidCheckGenerationError,
     ValidationError,
 )
-from hephaestus.core.types import CheckReport, CheckResult
+from hephaestus.core.types import CheckReport, CheckResult, CheckScope
 from opstore.types import JSONValue, OwnerId
 from opstore.wal import POINTER_TARGET_PREFIX
 
@@ -242,22 +242,31 @@ def run_checks(
     """Evaluate every check against a fresh facade; never raises (§6).
 
     A predicate exception (including addressing errors) fails that check's
-    report entry with the error recorded as its measured value. Two exceptions
-    are discriminated further, the same rule twice: a measurement whose
-    bounded subprocess hit the wall-clock ceiling makes the check
-    **unverifiable** — the predicate was never answered, so the entry records
-    the named refusal (with whatever partial facts arrived) under
-    ``measured.unverifiable`` instead of an ``error``. Not a pass, and not a
-    crash: the report says the measurement was cut short, not that it failed.
-    The three classes are ``compare_timeout`` (``COMPARE.md`` §5, an
-    ``m.diff``), ``motion_timeout`` (``KINEMATICS.md`` §4, an ``m.sweep`` whose
-    grid was ceiling-killed — the partial per-sample facts ride the refusal) and
-    ``scan_timeout`` (``MESH_INGEST.md`` §7.3, an ``m.scan_diff`` whose distance
-    computation was ceiling-killed — the §3 quality record, both bboxes and
-    whichever direction completed ride the refusal).
+    report entry with the error recorded as its measured value. One family is
+    discriminated further: a measurement whose bounded subprocess produced no
+    answer makes the check **unverifiable** — the predicate was never answered,
+    so the entry records the named refusal (with whatever partial facts
+    arrived) under ``measured.unverifiable`` instead of an ``error``. Never a
+    pass: the report says the measurement was cut short, not that it failed.
+
+    Cut short has **two** reasons and the entry keeps them apart, which is the
+    whole point of catching the carriage rather than one of its spellings. A
+    ceiling (``compare_timeout``, ``motion_timeout``) says the measurement was
+    slow; a dead child (``compare_child_died``, ``motion_child_died``) says it
+    crashed. ``scan_timeout`` is the one spelling that still covers both facts:
+    ``scan_compare`` was kept as the behaviour-preserving control in this
+    change and its split is recorded as open in the janky ledger. Both stay unverifiable — a crash
+    decides nothing either — but a predicate whose child keeps crashing is now
+    diagnosable instead of looking merely slow, which it was not while both
+    lived under one reason.
+
+    The measurements this covers are ``m.diff`` (``COMPARE.md`` §5),
+    ``m.sweep`` (``KINEMATICS.md`` §4 — the partial per-sample facts ride the
+    refusal) and ``m.scan_diff`` (``MESH_INGEST.md`` §7.3 — the §3 quality
+    record, both bboxes and whichever direction completed ride it).
     """
-    from hephaestus.core.motion import MotionTimeout
-    from hephaestus.core.project_compare import CompareTimeout
+    from hephaestus.core.motion import MotionCutShort
+    from hephaestus.core.project_compare import CompareCutShort
     from hephaestus.core.scan_compare import ScanTimeout
 
     results: dict[str, CheckResult] = {}
@@ -267,7 +276,7 @@ def run_checks(
         try:
             passed = bool(predicate(measurement))
             measured = measurement.measured_json()
-        except (CompareTimeout, MotionTimeout, ScanTimeout) as exc:
+        except (CompareCutShort, MotionCutShort, ScanTimeout) as exc:
             passed = False
             measured = {"unverifiable": cast("JSONValue", exc.to_json())}
         except HephaestusError as exc:
@@ -386,7 +395,9 @@ def run_bundle(
     bundle: CheckBundle,
     sources: Mapping[str, GeometrySource],
     *,
-    part: str,
+    part: str | None,
+    scope: CheckScope = "part",
+    project: str | None = None,
     ops: KernelOps | None = None,
     densities: Mapping[str, float] | None = None,
     project_snapshot_ref: str | None = None,
@@ -407,6 +418,14 @@ def run_bundle(
     ``m.diff`` could outlive the session. (Part-scope ``CHECKS`` inside the
     sandboxed build worker call :func:`run_checks` directly and keep the
     unbounded in-process diff: the worker itself is the killable subprocess.)
+
+    The report's SUBJECT is declared, not inferred (J-agent-results-9).
+    ``scope`` says which kind of run this was and ``part`` is the part a
+    part-scope run measured — ``None`` in project scope, because a project is
+    not a part and writing the project's name into the part field made every
+    project-scope report claim a part that does not exist. ``project`` carries
+    the project either scope belongs to, in its own field. The defaults are the
+    part-scope run, so an existing call site keeps its meaning.
 
     ``imports`` resolves an ``m.diff(..., "import:<path>")`` target to a shape
     (``COMPARE.md`` §2: acceptance checks may assert against a seeded import).
@@ -475,6 +494,8 @@ def run_bundle(
     results = run_checks(checks, _factory)
     return CheckReport(
         part=part,
+        scope=scope,
+        project=project,
         check_set_generation=bundle.state.generation,
         check_bundle_ref=bundle.state.bundle_ref,
         file_hashes=dict(bundle.state.files),
@@ -836,7 +857,9 @@ class CheckSet:
         self,
         sources: Mapping[str, GeometrySource],
         *,
-        part: str,
+        part: str | None,
+        scope: CheckScope = "part",
+        project: str | None = None,
         ops: KernelOps | None = None,
         densities: Mapping[str, float] | None = None,
         project_snapshot_ref: str | None = None,
@@ -851,6 +874,8 @@ class CheckSet:
             bundle,
             sources,
             part=part,
+            scope=scope,
+            project=project,
             ops=ops,
             densities=densities,
             project_snapshot_ref=project_snapshot_ref,

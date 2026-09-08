@@ -172,8 +172,12 @@ def _bounded_floor(
     parent, child = ctx.Pipe(duplex=False)
     proc = ctx.Process(
         target=_floor_child,
-        args=(child, str(candidate), None if start is None else str(start),
-              None if policy is None else dict(policy)),
+        args=(
+            child,
+            str(candidate),
+            None if start is None else str(start),
+            None if policy is None else dict(policy),
+        ),
     )
     proc.start()
     child.close()
@@ -195,8 +199,10 @@ def _bounded_floor(
                 refusal = None
                 break
         elif not proc.is_alive():
-            refusal = None if (validity is not None and not expect_score) else (
-                f"crashed:{proc.exitcode}"
+            refusal = (
+                None
+                if (validity is not None and not expect_score)
+                else (f"crashed:{proc.exitcode}")
             )
             break
     if proc.is_alive():
@@ -236,9 +242,7 @@ def score_outputs(
             entries.append(SampleFloor(sample_id=sample_id, status="missing"))
             continue
         start = _editing_start(dataset_root, sample_id)
-        validity, score_json, refusal = _bounded_floor(
-            candidate, start, policy, sample_timeout_s
-        )
+        validity, score_json, refusal = _bounded_floor(candidate, start, policy, sample_timeout_s)
         if refusal is not None:
             cut_short = (
                 f"floor computation exceeded {sample_timeout_s:g}s and was "
@@ -247,9 +251,7 @@ def score_outputs(
                 else f"floor computation died in the kernel ({refusal})"
             )
             if validity is None:
-                entries.append(
-                    SampleFloor(sample_id=sample_id, status="invalid", note=cut_short)
-                )
+                entries.append(SampleFloor(sample_id=sample_id, status="invalid", note=cut_short))
             else:
                 # Validity landed before the kill; only the diff facts are lost.
                 entries.append(

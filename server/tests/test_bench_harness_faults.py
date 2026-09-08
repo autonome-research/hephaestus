@@ -46,6 +46,20 @@ def test_harness_fault_names_every_shape_the_sweep_produced() -> None:
     assert harness_fault(_error("compare_timeout: solid diff exceeded 300.0 s")) == (
         "compare_timeout"
     )
+    # J-build-state-4: a crashed child is its own fault, refunded like a timeout
+    # but never spelled as one.
+    assert (
+        harness_fault(
+            _error("compare_child_died: solid diff subprocess died (exit code 9) before reporting")
+        )
+        == "compare_child_died"
+    )
+    assert (
+        harness_fault(
+            _error("motion_child_died: sweep subprocess died (exit code 9) before reporting")
+        )
+        == "motion_child_died"
+    )
     assert harness_fault(_error("no response for py.tool_dispatch within 120000ms")) == (
         "bridge_timeout"
     )

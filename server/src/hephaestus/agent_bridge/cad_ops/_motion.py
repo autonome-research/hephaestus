@@ -55,9 +55,9 @@ from typing import Any, cast
 
 from hephaestus.core.errors import AddressingError
 from hephaestus.core.motion import (
+    MotionCutShort,
     MotionEvaluator,
     MotionStatus,
-    MotionTimeout,
     SweepEvaluator,
     check_motion_with_results,
 )
@@ -117,6 +117,33 @@ def _clean(data: Mapping[str, Any]) -> dict[str, JSONValue]:
             continue
         out[key] = cast("JSONValue", value)
     return out
+
+
+def _model_facing_status(status: MotionStatus) -> JSONValue:
+    """``MotionStatus.to_json`` with unresolved artifact refs as ``null``.
+
+    ``KINEMATICS.md``'s ``artifact_refs`` records the reference each addressed
+    part contributed at evaluation time, and a part whose geometry could not be
+    loaded contributes the **empty string** — a sentinel the projection layer
+    depends on (its loader requires every value to be a string, and staleness
+    comparison keys on the persisted map). To a model reading the tool result
+    that sentinel says "this part has an artifact" whose id happens to be
+    empty, rather than "this part contributed nothing", while the real reason
+    is already in the payload as that joint's own named unresolvable outcome
+    (audit-2026-09-04 J-agent-results-8a).
+
+    So the split is made HERE, in the model-facing serialisation only: the
+    projection is built from the dataclass field rather than from this JSON, so
+    it costs nothing, and the store's sentinel and its loader are untouched.
+    """
+    document = dict(status.to_json())
+    refs = document.get("artifact_refs")
+    if isinstance(refs, dict):
+        document["artifact_refs"] = {
+            name: (None if value == "" else value)
+            for name, value in cast("Mapping[str, JSONValue]", refs).items()
+        }
+    return cast("JSONValue", document)
 
 
 class MotionOps(CadOpsState):
@@ -370,9 +397,10 @@ class MotionOps(CadOpsState):
         recorded and projected so a later read — and the §5 reviewer — sees
         it; a named subset is evaluated but deliberately not projected, and
         says so with ``partial: true`` (the ``check_assembly`` rule). A check
-        grid hitting the §4 wall-clock ceiling is the named ``motion_timeout``
-        refusal, its partial per-sample facts riding the error data (the
-        ``compare_timeout`` rule).
+        grid cut short is a named refusal — ``motion_timeout`` when the §4
+        wall-clock ceiling fired, ``motion_child_died`` when the sweep child
+        died — its partial per-sample facts riding the error data (the
+        ``compare_timeout``/``compare_child_died`` rule).
         """
         try:
             status, results, partial = check_motion_with_results(self.layout, self._store, ids=ids)
@@ -384,13 +412,17 @@ class MotionOps(CadOpsState):
                 "unknown_motion_check",
                 f"{exc.message} (declared: {', '.join(exc.candidates) or 'none'})",
             ) from exc
-        except MotionTimeout as exc:
-            raise CadOpError("motion_timeout", exc.message, data=exc.to_json()) from exc
+        except MotionCutShort as exc:
+            # The catch is the CARRIAGE, so both reasons reach the model; the
+            # token it is reported under is ``exc.reason`` (motion_timeout /
+            # motion_child_died), because "raise the ceiling" is the wrong
+            # remedy for a crashed child (the ``compare_child_died`` rule).
+            raise CadOpError(exc.reason, exc.message, data=exc.to_json()) from exc
         sweeps = self.sweep_evaluator()
         evaluator = self.motion_evaluator()
         return {
             "status": "ok",
-            "motion": cast("JSONValue", status.to_json()),
+            "motion": _model_facing_status(status),
             "artifact_ref": None if partial else evaluator.projected_ref(),
             "results": [cast("JSONValue", result.to_json()) for result in results],
             "results_ref": None if partial else sweeps.projected_results_ref(),
@@ -413,7 +445,7 @@ class MotionOps(CadOpsState):
             "artifact_ref": state.artifact_ref,
             "change": None if state.change is None else cast("JSONValue", state.change.to_json()),
             "entries": [cast("JSONValue", entry.to_json()) for entry in state.entries],
-            "motion": None if status is None else cast("JSONValue", status.to_json()),
+            "motion": None if status is None else _model_facing_status(status),
             "motion_ref": evaluator.projected_ref(),
         }
 
@@ -427,7 +459,7 @@ class MotionOps(CadOpsState):
             "artifact_ref": state.artifact_ref,
             "change": None if state.change is None else cast("JSONValue", state.change.to_json()),
             "entries": [cast("JSONValue", entry.to_json()) for entry in state.entries],
-            "motion": None if status is None else cast("JSONValue", status.to_json()),
+            "motion": None if status is None else _model_facing_status(status),
             "motion_ref": evaluator.projected_ref(),
         }
 
@@ -448,7 +480,7 @@ class MotionOps(CadOpsState):
             "artifact_ref": state.artifact_ref,
             "change": None if state.change is None else cast("JSONValue", state.change.to_json()),
             "entries": [cast("JSONValue", entry.to_json()) for entry in state.entries],
-            "motion": None if status is None else cast("JSONValue", status.to_json()),
+            "motion": None if status is None else _model_facing_status(status),
             "motion_ref": evaluator.projected_ref(),
         }
 

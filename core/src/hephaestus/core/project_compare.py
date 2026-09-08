@@ -26,16 +26,15 @@ returned. Reading "iou 0.994" as a failure is a claim, and claims belong to a
 from __future__ import annotations
 
 import dataclasses
-import multiprocessing
 import os
 import tempfile
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, Literal, cast
 
 from hephaestus.core.checks.facade import KernelOps, default_kernel_ops
 from hephaestus.core.errors import AddressingError, ValidationError
+from hephaestus.core.executor.bounded_pass import run_bounded_pass
 from hephaestus.core.project_store.layout import ProjectLayout
 from hephaestus.core.project_store.publication import Publisher
 from hephaestus.core.project_store.store import blob_hash_of_ref
@@ -53,6 +52,8 @@ __all__ = [
     "LOST_VOLUME",
     "PART_TARGET_PREFIX",
     "SCAN_TARGET_PREFIX",
+    "CompareChildDied",
+    "CompareCutShort",
     "CompareOperand",
     "CompareRefusal",
     "CompareRefusalReason",
@@ -92,7 +93,7 @@ COMPARE_TIMEOUT_ENV: Final[str] = "HEPHAESTUS_COMPARE_TIMEOUT_S"
 
 #: The parts of a ``SolidDiff`` a ceiling kill can lose, by cost order: the
 #: cheap first look (census + bboxes + volumes), the boolean half, and the
-#: surface-sampling half. ``CompareTimeout.lost`` names exactly which were cut.
+#: surface-sampling half. ``CompareCutShort.lost`` names exactly which were cut.
 LOST_TOPOLOGY: Final[str] = "topology_census"
 LOST_VOLUME: Final[str] = "volume_boolean"
 LOST_SURFACE: Final[str] = "surface_sampling"
@@ -110,6 +111,7 @@ def compare_timeout_s() -> float:
 
 
 CompareRefusalReason = Literal[
+    "compare_child_died",
     "compare_timeout",
     "invalid_align",
     "invalid_target",
@@ -153,8 +155,8 @@ class CompareRefusal(ValidationError):
         self.reason: CompareRefusalReason = reason
 
 
-class CompareTimeout(CompareRefusal):
-    """The diff subprocess hit the wall-clock ceiling or died (``COMPARE.md`` §5).
+class CompareCutShort(CompareRefusal):
+    """The diff subprocess produced no record — **the carriage, not the reason**.
 
     Not an empty-handed refusal: ``partial`` CARRIES whatever facts the child
     streamed before the kill (topology census, both bboxes, both volumes — the
@@ -162,6 +164,48 @@ class CompareTimeout(CompareRefusal):
     (:data:`LOST_VOLUME`, :data:`LOST_SURFACE`, and :data:`LOST_TOPOLOGY` when
     nothing arrived at all) were cut short. The caller gets signal it can act
     on — never a dead session, never a silently coarse number.
+
+    Two things can cut a diff short and they are **different facts with
+    different remedies**: the ceiling fired (:class:`CompareTimeout` — raise it,
+    or simplify the geometry) or the child died (:class:`CompareChildDied` —
+    a crash, and raising the ceiling will not help). They used to share one
+    reason, so a crash after 2.7 s was reported as a 300 s timeout to the
+    model's tool error, the CLI's JSON, the check report and the bench's budget
+    refunder alike. This class exists so every catch can be written against the
+    *carriage* — ``except CompareCutShort`` — while the ``reason`` a consumer
+    keys on stays honest.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: CompareRefusalReason,
+        partial: dict[str, JSONValue] | None,
+        lost: tuple[str, ...],
+    ) -> None:
+        super().__init__(message, reason=reason)
+        self.partial: dict[str, JSONValue] | None = partial
+        self.lost: tuple[str, ...] = lost
+
+    def to_json(self) -> dict[str, JSONValue]:
+        """The refusal shape every surface carries (tool error data, CLI --json)."""
+        return {
+            "status": self.reason,
+            "reason": self.reason,
+            "message": self.message,
+            "partial": cast("JSONValue", self.partial),
+            "lost": cast("JSONValue", list(self.lost)),
+        }
+
+
+class CompareTimeout(CompareCutShort):
+    """The diff subprocess hit the wall-clock ceiling (``COMPARE.md`` §5).
+
+    ``timeout_s`` is the ceiling that actually fired, so "raise
+    :data:`COMPARE_TIMEOUT_ENV`" is a remedy the reader can act on. It is
+    emitted **only** here: a ceiling reported for a run that never reached it
+    is an assertion about a bound that was never tested.
     """
 
     def __init__(
@@ -172,21 +216,39 @@ class CompareTimeout(CompareRefusal):
         partial: dict[str, JSONValue] | None,
         lost: tuple[str, ...],
     ) -> None:
-        super().__init__(message, reason="compare_timeout")
+        super().__init__(message, reason="compare_timeout", partial=partial, lost=lost)
         self.timeout_s = timeout_s
-        self.partial: dict[str, JSONValue] | None = partial
-        self.lost: tuple[str, ...] = lost
 
     def to_json(self) -> dict[str, JSONValue]:
-        """The refusal shape every surface carries (tool error data, CLI --json)."""
-        return {
-            "status": "compare_timeout",
-            "reason": "compare_timeout",
-            "message": self.message,
-            "timeout_s": self.timeout_s,
-            "partial": cast("JSONValue", self.partial),
-            "lost": cast("JSONValue", list(self.lost)),
-        }
+        out = super().to_json()
+        out["timeout_s"] = self.timeout_s
+        return out
+
+
+class CompareChildDied(CompareCutShort):
+    """The diff subprocess died before answering (``COMPARE.md`` §5).
+
+    Carries the child's ``exit_code`` and **no ceiling**, because none fired:
+    the run stopped after however long the child took to die. The remedy is not
+    "allow more time" — it is the crash itself, which is why this has its own
+    reason rather than borrowing the timeout's.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        exit_code: int | None,
+        partial: dict[str, JSONValue] | None,
+        lost: tuple[str, ...],
+    ) -> None:
+        super().__init__(message, reason="compare_child_died", partial=partial, lost=lost)
+        self.exit_code = exit_code
+
+    def to_json(self) -> dict[str, JSONValue]:
+        out = super().to_json()
+        out["exit_code"] = self.exit_code
+        return out
 
 
 @dataclass(frozen=True)
@@ -401,7 +463,14 @@ def _diff_child(conn: Any, a_path: str, b_path: str, align: str) -> None:  # pra
     from hephaestus.core.executor.artifact_geometry import load_brep_shape
     from hephaestus.geom.compare import AlignMode, solid_diff, topology_diff
     from hephaestus.geom.metrics import bbox_mm, shape_volume
+    from hephaestus.geom.step_io import quiet_messenger
 
+    # The kernel messenger, moved off the fd 1 this child INHERITED from the
+    # parent — where it is the ``--json`` document or the MCP JSON-RPC
+    # transport (J-cli-robustness-14). Done here, beside the import that
+    # binds OCP in this process, because a diagnostic written by the C++
+    # side passes through no Python stream and can be caught nowhere else.
+    quiet_messenger()
     a = cast("Any", load_brep_shape(Path(a_path).read_bytes()))
     b = cast("Any", load_brep_shape(Path(b_path).read_bytes()))
     cheap: dict[str, JSONValue] = {
@@ -434,9 +503,11 @@ def bounded_solid_diff(
     Both shapes cross to a spawned child as BRep files (lossless, so a
     completed diff is bit-for-bit the direct geom call's record); the child
     streams the cheap facts first and the full record second, and the parent
-    kills it at the deadline. A ceiling kill or a child death raises
-    :class:`CompareTimeout` carrying whatever arrived; the one geom refusal
-    (``no_solid_geometry``) keeps its identity across the process boundary.
+    kills it at the deadline. A ceiling kill raises :class:`CompareTimeout` and
+    a dead child raises :class:`CompareChildDied` — two reasons, one carriage
+    (:class:`CompareCutShort`), both holding whatever arrived; the one geom
+    refusal (``no_solid_geometry``) keeps its identity across the process
+    boundary.
     ``timeout_s`` defaults to :func:`compare_timeout_s`, resolved per call so
     the env override applies to long-lived engines too.
     """
@@ -450,56 +521,28 @@ def bounded_solid_diff(
         write_brep_shape(a, a_path)
         write_brep_shape(b, b_path)
 
-        ctx = multiprocessing.get_context("spawn")
-        parent, child = ctx.Pipe(duplex=False)
-        proc = ctx.Process(target=_diff_child, args=(child, str(a_path), str(b_path), align))
-        proc.start()
-        child.close()
-
         cheap: dict[str, JSONValue] | None = None
-        outcome: tuple[str, Any] | None = None
-        died = False
-        cut_short = f"did not finish within {timeout_s:g}s and was killed"
-        deadline = time.monotonic() + timeout_s
 
-        def _receive() -> bool:
+        def _receive(kind: str, payload: Any) -> bool:
             """Consume one message; True when it was terminal (full/refusal)."""
-            nonlocal cheap, outcome
-            kind, payload = parent.recv()
+            nonlocal cheap
             if kind == "cheap":
                 cheap = cast("dict[str, JSONValue]", payload)
                 return False
-            outcome = (str(kind), payload)
             return True
 
-        try:
-            while outcome is None and time.monotonic() < deadline:
-                try:
-                    if parent.poll(0.05):
-                        _receive()
-                    elif not proc.is_alive():
-                        # Death, not a deadline — drain what it sent first, so a
-                        # result that raced the exit is never misread as a crash.
-                        while parent.poll(0.2) and not _receive():
-                            pass
-                        died = outcome is None
-                        break
-                except EOFError:
-                    # The pipe closed before a terminal message: the child is
-                    # crashing.  Give it a moment to finish dying so the
-                    # refusal carries its real exit code (reading it before
-                    # the reap yields None; killing it here would forge -9);
-                    # a child that hangs instead meets the kill in `finally`.
-                    proc.join(5.0)
-                    died = True
-                    break
-        finally:
-            if proc.is_alive():
-                proc.kill()
-            proc.join()
-            parent.close()
-        if died:
-            cut_short = f"subprocess died (exit code {proc.exitcode})"
+        # The poll/drain/kill supervision is
+        # :mod:`hephaestus.core.executor.bounded_pass`, shared with every other
+        # bounded engine pass; this call site keeps only its protocol (above)
+        # and its refusal vocabulary (below).
+        pass_outcome = run_bounded_pass(
+            _diff_child,
+            (str(a_path), str(b_path), align),
+            timeout_s=timeout_s,
+            on_message=_receive,
+        )
+        outcome = pass_outcome.terminal
+        died, exit_code = pass_outcome.died, pass_outcome.exit_code
 
     if outcome is not None:
         kind, payload = outcome
@@ -510,9 +553,23 @@ def bounded_solid_diff(
             reason="no_solid_geometry",
         )
     lost = ((LOST_TOPOLOGY,) if cheap is None else ()) + (LOST_VOLUME, LOST_SURFACE)
+    if died:
+        # A crash is not a ceiling. Naming it ``compare_timeout`` and attaching
+        # a 300 s bound the run never approached told four consumers — the
+        # model's tool error, the CLI's JSON, the check report's unverifiable
+        # entry and the bench's budget refunder — to wait longer, when the
+        # actual fact is a dead child with an exit code (COMPARE.md §5).
+        raise CompareChildDied(
+            f"solid diff subprocess died (exit code {exit_code}) before "
+            f"reporting (COMPARE.md §5); lost: {', '.join(lost)}",
+            exit_code=exit_code,
+            partial=cheap,
+            lost=lost,
+        )
     raise CompareTimeout(
-        f"solid diff {cut_short} (COMPARE.md §5, ceiling {timeout_s:g}s via "
-        f"{COMPARE_TIMEOUT_ENV}); lost: {', '.join(lost)}",
+        f"solid diff did not finish within {timeout_s:g}s and was killed "
+        f"(COMPARE.md §5, ceiling {timeout_s:g}s via {COMPARE_TIMEOUT_ENV}); "
+        f"lost: {', '.join(lost)}",
         timeout_s=timeout_s,
         partial=cheap,
         lost=lost,

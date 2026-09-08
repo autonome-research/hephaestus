@@ -25,6 +25,7 @@ from typing import Any, cast
 
 from hephaestus.agent_bridge.cad_ops import CadOps
 from hephaestus.core.executor.sandbox.base import ExecBackend
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.core.project_store.layout import GLOBALS_FILENAME, load_project, open_store
 
 from ._tasks import BenchTask, solution_dir
@@ -128,13 +129,20 @@ def open_cad(project_root: Path, *, backend: ExecBackend | None = None) -> Gener
     """Open the project's store and yield a :class:`CadOps` bound to it.
 
     ``backend`` is the executor the ops object runs scripts and registry content
-    on. Left unset, ``CadOps`` picks its own default; grading passes a probed
-    secure backend for the paths that require one (DFM predicates).
+    on. Grading passes a probed secure backend for the paths that require one
+    (DFM predicates); left unset, the harness names the unsafe local backend
+    ITSELF rather than inheriting it from a library default. ``CadOps`` has no
+    default any more (ledger J-agent-wiring-4: a test default that was also
+    the shipped default meant the runtime behind ``heph agent`` ran
+    model-authored scripts with no OS sandbox), and the rule it replaced it
+    with is that a caller which genuinely wants the unsafe backend says so in
+    one word. The bench harness is such a caller: it seeds and reads corpus
+    projects it authored itself.
     """
     layout = load_project(project_root)
     store = open_store(layout)
     try:
-        yield CadOps(layout, store, backend=backend)
+        yield CadOps(layout, store, backend=backend or UnsafeLocalBackend())
     finally:
         store.close()
 

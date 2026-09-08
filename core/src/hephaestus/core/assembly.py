@@ -167,6 +167,34 @@ class AnchorRef:
             "artifact_ref": self.artifact_ref,
         }
 
+    @classmethod
+    def from_json(cls, data: object) -> AnchorRef:
+        """Decode one persisted anchor row, tolerating anything but a mapping.
+
+        Beside the type it constructs, not beside each reader: the decoder was
+        copied verbatim into ``core/motion.py`` when that module needed to read
+        the same rows, which left one type with two decoders and nothing
+        pairing them (J-mirrors-and-dx-11). A missing or non-mapping row decodes
+        to the empty ref rather than raising, on this module's general rule for
+        persisted rows: a projection that cannot be read is reported as
+        unresolved, never as a crash of the reader — which is why the parameter
+        is ``object`` and not ``JSONValue``: a decoder that promises to tolerate
+        anything must be callable with anything, or the promise is only in the
+        docstring.
+        """
+        if not isinstance(data, dict):
+            return cls(anchor="", part="", selector="")
+        raw = cast("Mapping[str, JSONValue]", data)
+        rule = raw.get("rule")
+        ref = raw.get("artifact_ref")
+        return cls(
+            anchor=str(raw.get("anchor", "")),
+            part=str(raw.get("part", "")),
+            selector=str(raw.get("selector", "")),
+            rule=rule if isinstance(rule, str) else None,
+            artifact_ref=ref if isinstance(ref, str) else None,
+        )
+
 
 PoseVerdict = Literal["satisfied", "violated", "unresolvable"]
 
@@ -287,8 +315,8 @@ class ConstraintOutcome:
         return cls(
             id=str(data.get("id", "")),
             kind=str(data.get("kind", "")),
-            a=_anchor_from_json(data.get("a")),
-            b=_anchor_from_json(data.get("b")),
+            a=AnchorRef.from_json(data.get("a")),
+            b=AnchorRef.from_json(data.get("b")),
             state=state,
             residual=(
                 cast("Mapping[str, JSONValue]", residual) if isinstance(residual, dict) else None
@@ -320,21 +348,6 @@ class ConstraintOutcome:
 
 def _opt_str(value: JSONValue | None) -> str | None:
     return value if isinstance(value, str) else None
-
-
-def _anchor_from_json(data: JSONValue | None) -> AnchorRef:
-    if not isinstance(data, dict):
-        return AnchorRef(anchor="", part="", selector="")
-    raw = cast("Mapping[str, JSONValue]", data)
-    rule = raw.get("rule")
-    ref = raw.get("artifact_ref")
-    return AnchorRef(
-        anchor=str(raw.get("anchor", "")),
-        part=str(raw.get("part", "")),
-        selector=str(raw.get("selector", "")),
-        rule=rule if isinstance(rule, str) else None,
-        artifact_ref=ref if isinstance(ref, str) else None,
-    )
 
 
 @dataclass(frozen=True)

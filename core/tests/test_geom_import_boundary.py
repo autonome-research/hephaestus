@@ -187,3 +187,40 @@ def test_geom_public_surface_is_importable_without_the_engine() -> None:
     )
     assert result.returncode == 0, f"hephaestus.geom public surface broken:\n{result.stderr}"
     assert int(result.stdout.strip()) > 0
+
+
+def test_a_name_that_is_also_a_submodule_resolves_to_the_symbol_in_any_order() -> None:
+    """``metrics`` is both a service module and the §8 function it defines.
+
+    Importing a submodule binds it onto the package under its short name, as a
+    side effect of the import system — and ``hephaestus.geom.measure``'s first
+    line imports ``hephaestus.geom.metrics``. Once the re-export table went
+    lazy, that binding won: ``from hephaestus.geom import clearance, metrics``
+    bound ``metrics`` to the MODULE (because ``clearance`` was resolved first,
+    dragging the submodule in) and the next line raised ``TypeError: 'module'
+    object is not callable``. ``core/tests/test_kernel_measure.py``'s
+    cross-process determinism probe is written exactly that way and caught it.
+
+    Each order runs in a FRESH interpreter: in one process the first import
+    decides, so an in-process assertion would only measure whichever order the
+    session happened to reach first — which is the defect itself.
+    """
+    orders = (
+        "from hephaestus.geom import clearance, interference, metrics",
+        "from hephaestus.geom import metrics, clearance",
+        "import hephaestus.geom.measure\nfrom hephaestus.geom import metrics",
+        "import hephaestus.geom.metrics\nfrom hephaestus.geom import metrics",
+        "import hephaestus.geom as g\ng.clearance\nmetrics = g.metrics",
+    )
+    for order in orders:
+        program = textwrap.dedent(order) + textwrap.dedent(
+            """
+            assert callable(metrics), f"metrics resolved to {metrics!r}, not the function"
+            print("ok")
+            """
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", program], capture_output=True, text=True, check=False
+        )
+        assert result.returncode == 0, f"import order {order!r} broke `metrics`:\n{result.stderr}"
+        assert result.stdout.strip().splitlines()[-1] == "ok"

@@ -210,9 +210,7 @@ def _cmd_package(args: argparse.Namespace) -> int:
             print(f"salvaged {entry.sample_id} from {entry.artifact_ref}", file=sys.stderr)
         for entry in salvage.refusals:
             detail = f" ({entry.detail})" if entry.detail else ""
-            print(
-                f"salvage refused {entry.sample_id}: {entry.status}{detail}", file=sys.stderr
-            )
+            print(f"salvage refused {entry.sample_id}: {entry.status}{detail}", file=sys.stderr)
 
     sanity: Path | None = None
     if not bool(args.skip_sanity_check):

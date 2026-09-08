@@ -31,7 +31,7 @@ from typing import Any, Final, cast
 from hephaestus.agent_bridge.cad_ops import EXPORT_FORMATS, CadOpError, CadOps
 from hephaestus.core.errors import SandboxDeniedError
 from hephaestus.core.executor.sandbox.probe import secure_backend
-from hephaestus.core.motion import MotionTimeout
+from hephaestus.core.motion import MotionCutShort
 from hephaestus.core.project_store.layout import ProjectLayout, load_project
 from hephaestus.geom.nesting import blank_from_metadata
 
@@ -717,8 +717,9 @@ def _validate_motion(
     check fails under the name of what actually failed): an unresolvable
     joint or pose names the engine's reason, a falsified sweep carries the
     worst sample's measured value, an off-expect verdict names both
-    spellings, and a §4 wall-clock ceiling is ``motion_timeout`` with the
-    evaluated-sample count — partial evidence, never a silent pass. An entry
+    spellings, a §4 wall-clock ceiling is ``motion_timeout`` and a dead
+    sweep child ``motion_child_died``, each with the evaluated-sample count
+    — partial evidence, never a silent pass. An entry
     the project refuses to accept is ``motion_undeclarable``, charged to the
     run: the Tier 1 meta-test proves every task's entries declare cleanly on
     a fresh project, so a live refusal reflects run-declared state the
@@ -785,9 +786,13 @@ def _validate_motion(
     if installed_checks:
         try:
             results = cad.sweep_evaluator().evaluate(installed_checks)
-        except MotionTimeout as exc:
+        except MotionCutShort as exc:
+            # The carriage: ``motion_timeout`` (the ceiling fired) and
+            # ``motion_child_died`` (the sweep child crashed) both land here
+            # and both name themselves, so a crash is never graded as a
+            # ceiling — and the harness, not the model, owns the crash.
             reasons.append(
-                f"motion_timeout:{exc.check_id}:{exc.samples_evaluated}/{exc.grid_total}_samples"
+                f"{exc.reason}:{exc.check_id}:{exc.samples_evaluated}/{exc.grid_total}_samples"
             )
             return joint_records, pose_records, check_records, reasons
         by_id = {result.id: result for result in results}

@@ -54,9 +54,22 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
-from hephaestus.core.dfm.types import TopologyDescriptor
+if TYPE_CHECKING:
+    # Annotation-only, and deliberately deferred: ``hephaestus.core.dfm.types``
+    # is itself a leaf, but reaching it runs ``hephaestus.core.dfm``'s package
+    # ``__init__``, which imports ``dfm.context`` -> ``hephaestus.geom.topology``
+    # -> the ``hephaestus.geom`` package. Since ``hephaestus.geom.nesting``
+    # imports THIS module, that made the two packages mutually dependent at
+    # import time: `python -c "import hephaestus.core.cutfile"` in a fresh
+    # interpreter raised "cannot import name 'BLANK_LAYER' from partially
+    # initialized module", and only the accident of geom being imported first
+    # kept the suites green. This module owns nothing but layer names and
+    # polyline discretisation, so it has no runtime need of the descriptor
+    # type — keeping the dependency at the type level is what makes it the leaf
+    # the geom import boundary already declares it to be.
+    from hephaestus.core.dfm.types import TopologyDescriptor
 
 __all__ = [
     "BLANK_LAYER",

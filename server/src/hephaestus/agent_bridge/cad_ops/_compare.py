@@ -23,6 +23,8 @@ from hephaestus.core.project_compare import (
     ALIGN_MODES,
     IMPORT_TARGET_PREFIX,
     PART_TARGET_PREFIX,
+    CompareChildDied,
+    CompareCutShort,
     CompareRefusal,
     CompareTimeout,
     ProjectComparer,
@@ -90,6 +92,7 @@ _SCAN_REFUSALS: Final[dict[str, str]] = {
 
 #: :class:`CompareRefusal.reason` -> the tool's refusal token.
 _COMPARE_REFUSALS: Final[dict[str, str]] = {
+    "compare_child_died": "compare_child_died",
     "compare_timeout": "compare_timeout",
     "invalid_align": "invalid_params",
     "invalid_target": "invalid_params",
@@ -115,18 +118,30 @@ class CompareOps(CadOpsState):
                     exc.message,
                     data={"path": exc.path, "reason": exc.reason},
                 ) from exc
-            except CompareTimeout as exc:
-                # COMPARE.md §5: the ceiling kill is a structured refusal the
+            except CompareCutShort as exc:
+                # COMPARE.md §5: a cut-short diff is a structured refusal the
                 # model can read — the streamed partial facts ride inline, and
-                # ``lost`` names the halves that never arrived.
+                # ``lost`` names the halves that never arrived. The token comes
+                # from ``exc.reason``, so the ceiling and the dead child are
+                # two refusals with two remedies rather than one that tells a
+                # model to wait longer for a crash; and the discriminating
+                # field rides with it — the ceiling for one, the exit code for
+                # the other, never both and never the wrong one.
+                data: dict[str, JSONValue] = {
+                    "partial": cast("JSONValue", exc.partial),
+                    "lost": cast("JSONValue", list(exc.lost)),
+                }
+                if isinstance(exc, CompareChildDied):
+                    data["exit_code"] = exc.exit_code
+                elif isinstance(exc, CompareTimeout):
+                    data["timeout_s"] = exc.timeout_s
+                # No default: a cut-short reason without a row of its own must
+                # fail loudly here rather than be reported as a timeout with the
+                # wrong remedy (J-build-state-4).
                 raise CadOpError(
-                    "compare_timeout",
+                    _COMPARE_REFUSALS[exc.reason],
                     exc.message,
-                    data={
-                        "timeout_s": exc.timeout_s,
-                        "partial": cast("JSONValue", exc.partial),
-                        "lost": cast("JSONValue", list(exc.lost)),
-                    },
+                    data=data,
                 ) from exc
             except CompareRefusal as exc:
                 raise CadOpError(

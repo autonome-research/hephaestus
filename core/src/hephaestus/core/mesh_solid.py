@@ -33,24 +33,29 @@ gets the same ceiling a tool call would.
 
 The geometry itself stays pure: :mod:`hephaestus.geom.mesh_solid` sews and
 measures, unbounded, and knows nothing about processes. Process management is an
-engine concern (``COMPARE.md``:121-123).
+engine concern (``COMPARE.md``:121-123) — and it is written **once**, in
+:mod:`hephaestus.core.executor.bounded_pass`, which this pass supervises
+through. The hand-copied loop that used to live here was the fifth generation
+of it and carried neither of the two fixes the newest copy had earned: no
+post-deadline drain (so a sew that answered a millisecond before the ceiling
+was refused as a timeout with its report unread in the pipe) and a death drain
+that read at most one message. Both come free now.
 """
 
 from __future__ import annotations
 
-import multiprocessing
 import os
-import time
 from importlib import metadata
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, cast
 
 from hephaestus.core.errors import ValidationError
+from hephaestus.core.executor.bounded_pass import run_bounded_pass
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from multiprocessing.connection import Connection
 
+    from hephaestus.core.executor.bounded_pass import ChildConnection
     from hephaestus.geom.mesh import MeshQuality
     from hephaestus.geom.mesh_solid import SewReport
     from opstore.types import JSONValue
@@ -142,7 +147,7 @@ class MeshSewTimeout(ValidationError):
         }
 
 
-def _sew_child(conn: Connection, blob_path: str, brep_path: str, source: str) -> None:
+def _sew_child(conn: ChildConnection, blob_path: str, brep_path: str, source: str) -> None:
     """The spawned half: deserialize, sew, write the BRep, report the counts.
 
     The solid crosses back as OCCT's own lossless BRep text, so a completed sew
@@ -152,8 +157,14 @@ def _sew_child(conn: Connection, blob_path: str, brep_path: str, source: str) ->
     """
     from hephaestus.geom.mesh import deserialize_mesh
     from hephaestus.geom.mesh_solid import sew_to_solid
-    from hephaestus.geom.step_io import shape_to_brep
+    from hephaestus.geom.step_io import quiet_messenger, shape_to_brep
 
+    # The kernel messenger, moved off the fd 1 this child INHERITED from the
+    # parent — where it is the ``--json`` document or the MCP JSON-RPC
+    # transport (J-cli-robustness-14). Done here, beside the import that
+    # binds OCP in this process, because a diagnostic written by the C++
+    # side passes through no Python stream and can be caught nowhere else.
+    quiet_messenger()
     try:
         vertices, faces, _factor = deserialize_mesh(Path(blob_path).read_bytes(), source=source)
         solid, report = sew_to_solid(vertices, faces, source=source)
@@ -201,41 +212,22 @@ def bounded_sew_to_solid(
         brep_path = Path(tmp) / "sewn.brep"
         blob_path.write_bytes(blob)
 
-        ctx = multiprocessing.get_context("spawn")
-        parent, child = ctx.Pipe(duplex=False)
-        proc = ctx.Process(target=_sew_child, args=(child, str(blob_path), str(brep_path), source))
-        proc.start()
-        child.close()
-
-        outcome: tuple[str, Any] | None = None
-        died = False
-        cut_short = f"did not finish within {timeout_s:g}s and was killed"
-        deadline = time.monotonic() + timeout_s
-        try:
-            while outcome is None and time.monotonic() < deadline:
-                try:
-                    if parent.poll(0.05):
-                        kind, payload = parent.recv()
-                        outcome = (str(kind), payload)
-                    elif not proc.is_alive():
-                        # Death, not a deadline — drain first, so a report that
-                        # raced the exit is never misread as a crash.
-                        if parent.poll(0.2):
-                            kind, payload = parent.recv()
-                            outcome = (str(kind), payload)
-                        died = outcome is None
-                        break
-                except EOFError:
-                    proc.join(5.0)
-                    died = True
-                    break
-        finally:
-            if proc.is_alive():
-                proc.kill()
-            proc.join()
-            parent.close()
-        if died:
-            cut_short = f"subprocess died (exit code {proc.exitcode})"
+        # The poll/drain/kill supervision is
+        # :mod:`hephaestus.core.executor.bounded_pass`, shared with every other
+        # bounded engine pass; this call site keeps only its protocol (both of
+        # the child's messages are terminal) and its refusal vocabulary below.
+        pass_outcome = run_bounded_pass(
+            _sew_child,
+            (str(blob_path), str(brep_path), source),
+            timeout_s=timeout_s,
+            on_message=lambda _kind, _payload: True,
+        )
+        outcome = pass_outcome.terminal
+        cut_short = (
+            f"subprocess died (exit code {pass_outcome.exit_code})"
+            if pass_outcome.died
+            else f"did not finish within {timeout_s:g}s and was killed"
+        )
         if outcome is not None and outcome[0] == "report":
             report = SewReport(
                 **cast("dict[str, Any]", _report_kwargs(outcome[1])),

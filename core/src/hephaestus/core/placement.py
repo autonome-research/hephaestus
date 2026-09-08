@@ -76,7 +76,6 @@ from __future__ import annotations
 
 import dataclasses
 import math
-import multiprocessing
 import os
 import re
 import shutil
@@ -95,6 +94,7 @@ from hephaestus.core.assembly import (
     UnresolvableAnchorError,
 )
 from hephaestus.core.errors import ValidationError
+from hephaestus.core.executor.bounded_pass import run_bounded_pass
 from hephaestus.core.project_store.artifact_kinds import record_artifact_kind
 from hephaestus.core.project_store.constraints import (
     WHOLE_PART_SELECTOR,
@@ -350,8 +350,18 @@ SOLVE_RESOLUTION_REFUSALS: Final[tuple[str, ...]] = (
 #: the ``MotionTimeout`` rule (``core/motion.py:1489-1498``) copied exactly: a
 #: killed solve decided nothing, and giving the kill a verdict spelling would
 #: let a ceiling be read as an outcome.
+#:
+#: ``verification_process_died`` is the §10 verification pass's own failure
+#: mode, and it is here because the vocabulary had no member for it: a pass
+#: whose child crashed used to be reported ``solver_timeout``, which told a
+#: reader — and a model — to allow more time for a ceiling that never fired.
+#: §10 mandates that the pass run in a killable separate process; a process
+#: that can be killed is a process that can die, and the failure mode of the
+#: mandated mechanism needs a name of its own. It is deliberately NOT a member
+#: of any verdict set, on the rule above.
 SOLVE_RUNTIME_REFUSALS: Final[tuple[str, ...]] = (
     "solver_timeout",
+    "verification_process_died",
     "iteration_ceiling",
     "build_budget_exhausted",
     "unbuildable_parameter_iterate",
@@ -849,8 +859,15 @@ class SolveRecord:
     solver_core: Mapping[str, JSONValue]
     verification: Mapping[str, JSONValue]
     assignments: tuple[Mapping[str, JSONValue], ...]
-    constraint_generation: int
-    joint_generation: int
+    #: The constraint- and joint-set generations the run was measured against,
+    #: or ``None`` for a verdict that established neither (J-agent-results-8b).
+    #: Minus one is not a generation: it is inside the field's normal integer
+    #: domain, so a consumer that records or diffs generations recorded it as
+    #: if it were one, and the record's own canonical form — the input to the
+    #: §9 byte-identity claim — carried the lie. "Not established" is encoded
+    #: as JSON null, never as a sentinel a reader has to know about.
+    constraint_generation: int | None
+    joint_generation: int | None
     artifact_refs: Mapping[str, str]
     #: Transform space only (``SOLVER.md`` §2B): one entry per returned
     #: solution, each naming every free part's proposed transform. Empty in
@@ -1679,7 +1696,14 @@ def _verify_child(conn: Any, spec: Mapping[str, Any]) -> None:  # pragma: no cov
         from hephaestus.core.project_store.publication import build_bundle
         from hephaestus.geom import evaluate_residual, transform_point, transformed_shape
         from hephaestus.geom.kinematics import IDENTITY_TRANSFORM, RigidTransform
+        from hephaestus.geom.step_io import quiet_messenger
 
+        # The kernel messenger, moved off the fd 1 this child INHERITED from the
+        # parent — where it is the ``--json`` document or the MCP JSON-RPC
+        # transport (J-cli-robustness-14). Done here, beside the import that
+        # binds OCP in this process, because a diagnostic written by the C++
+        # side passes through no Python stream and can be caught nowhere else.
+        quiet_messenger()
         root = Path(cast("str", spec["root"]))
         scratch = Path(cast("str", spec["scratch"]))
         layout = load_project(root)
@@ -1878,51 +1902,76 @@ def _verify_child(conn: Any, spec: Mapping[str, Any]) -> None:  # pragma: no cov
         conn.close()
 
 
-def _verify(spec: Mapping[str, Any], *, timeout_s: float) -> Mapping[str, Any]:
+def _verify(
+    spec: Mapping[str, Any],
+    *,
+    timeout_s: float,
+    payload: Mapping[str, JSONValue] | None = None,
+) -> Mapping[str, Any]:
     """Run one verification pass under its own wall-clock ceiling (``SOLVER.md`` §10).
 
-    The ``core/motion.py`` bounded-sweep loop, with one terminal message
-    instead of a stream: the pass either answers or is killed, and a kill is a
-    named refusal (``solver_timeout``), never a hang and never a verdict.
+    One terminal message rather than a stream, over the shared supervision loop
+    (:func:`~hephaestus.core.executor.bounded_pass.run_bounded_pass`) — which is
+    where the death flag and the child's exit code come from. The helper is
+    pure Python and imports no geometry, so adopting it leaves §7's
+    import-closure clause (``hephaestus.geom.solve`` must not be resident in the
+    parent) exactly as it was.
+
+    Two outcomes are refused and they are **different facts**. The ceiling fired
+    (``solver_timeout``: the pass ran long, and allowing more time is a real
+    remedy) or the verification process died (``verification_process_died``:
+    it crashed, and allowing more time is not). They used to share one reason
+    and one static message that asserted both at once — "did not finish within
+    N seconds … **or** its process died (exit code M)" — because the loop had no
+    death flag to discriminate with and the vocabulary had no member to name a
+    death by. A machine consumer saw only the reason, so a crash was
+    indistinguishable from a ceiling.
+
+    ``payload`` is the caller's best iterate and its verified residuals. §6.3
+    makes every run-time refusal carry them, and this path used to pass nothing
+    at all on either branch — so a refusal here reported no best iterate and no
+    verified residuals, which §6.3 promises. Both branches carry it now.
     """
-    ctx = multiprocessing.get_context("spawn")
-    parent, child = ctx.Pipe(duplex=False)
-    proc = ctx.Process(target=_verify_child, args=(child, dict(spec)))
-    proc.start()
-    child.close()
-    outcome: tuple[str, Any] | None = None
-    deadline = time.monotonic() + timeout_s
-    try:
-        while outcome is None and time.monotonic() < deadline:
-            try:
-                if parent.poll(0.05):
-                    outcome = cast("tuple[str, Any]", parent.recv())
-                elif not proc.is_alive():
-                    break
-            except EOFError:
-                proc.join(5.0)
-                break
-    finally:
-        if proc.is_alive():
-            proc.kill()
-        proc.join()
-        parent.close()
+    pass_outcome = run_bounded_pass(
+        _verify_child, (dict(spec),), timeout_s=timeout_s, on_message=_verify_terminal
+    )
+    outcome = pass_outcome.terminal
     if outcome is None:
+        if pass_outcome.died:
+            raise SolveRunRefusal(
+                "verification_process_died",
+                "the independent verification pass died (exit code "
+                f"{pass_outcome.exit_code}) before it reported (SOLVER.md §7, §10). "
+                "No ceiling fired: allowing more time is not the remedy. Nothing "
+                "was re-measured, so no verdict is emitted",
+                payload=payload,
+            )
         raise SolveRunRefusal(
             "solver_timeout",
             f"the independent verification pass did not finish within {timeout_s:g}s "
-            f"(SOLVER.md §7, §10; ceiling via {VERIFY_TIMEOUT_ENV}) or its process "
-            f"died (exit code {proc.exitcode}); nothing was measured, so nothing is "
-            "reported and no verdict is emitted",
+            f"and was killed (SOLVER.md §7, §10; ceiling via {VERIFY_TIMEOUT_ENV}); "
+            "nothing was re-measured, so no verdict is emitted",
+            payload=payload,
         )
-    kind, payload = outcome
+    kind, payload_out = outcome
     if kind == "refusal":
-        reason, detail = cast("tuple[str, str]", payload)
+        reason, detail = cast("tuple[str, str]", payload_out)
         raise SolveUnresolvable(
             reason,
             f"the verification pass could not re-measure this assignment: {detail}",
         )
-    return cast("Mapping[str, Any]", payload)
+    return cast("Mapping[str, Any]", payload_out)
+
+
+def _verify_terminal(kind: str, _payload: Any) -> bool:
+    """The verification protocol: every message the child sends is terminal.
+
+    The pass answers once (``done``) or refuses once (``refusal``); there is no
+    stream, which is the one thing that differs from the compare, motion and
+    scan call sites of the same supervision loop.
+    """
+    _ = kind
+    return True
 
 
 # --------------------------------------------------------------------------
@@ -2121,6 +2170,37 @@ def _assignment_json(
     }
 
 
+def _iterate_payload(iterate: Any, spec: Mapping[str, Any]) -> dict[str, JSONValue]:
+    """The best iterate a verification refusal must carry (``SOLVER.md`` §6.3).
+
+    §6.3 makes every run-time refusal carry "the best iterate and its
+    independently re-measured residuals"; the residuals are exactly what a
+    failed verification pass does not have, so what survives is the iterate the
+    caller asked it to check. It is read off the ``spec`` rather than
+    re-derived, because the spec *is* the assignment that crossed to the child
+    — one representation per solve space, and no second chance to disagree with
+    what was actually measured.
+    """
+    payload: dict[str, JSONValue] = {
+        "from_start": str(getattr(iterate, "from_start", "")),
+        "iterations": int(getattr(iterate, "iterations", 0)),
+    }
+    space = str(spec.get("space", ""))
+    if space == "pose":
+        payload["best_iterate"] = cast("JSONValue", spec.get("values", {}))
+    elif space == "transform":
+        payload["best_iterate"] = cast("JSONValue", spec.get("transforms", {}))
+    else:
+        payload["best_iterate"] = cast(
+            "JSONValue",
+            {
+                "part_overrides": spec.get("part_overrides", {}),
+                "project_overrides": spec.get("project_overrides", {}),
+            },
+        )
+    return payload
+
+
 def _remeasure(
     *,
     problem: _Problem,
@@ -2147,7 +2227,7 @@ def _remeasure(
     reporting its answer with a caveat would be exactly the overclaim this
     vocabulary exists to prevent.
     """
-    measured = _verify(spec, timeout_s=verify_timeout_s())
+    measured = _verify(spec, timeout_s=verify_timeout_s(), payload=_iterate_payload(iterate, spec))
     refs = cast("Mapping[str, str]", measured["artifact_refs"])
     drifted = sorted(
         part
@@ -2257,8 +2337,8 @@ def _unresolvable_record(request: PoseSolveRequest, exc: SolveUnresolvable) -> S
         solver_core={},
         verification={},
         assignments=(),
-        constraint_generation=-1,
-        joint_generation=-1,
+        constraint_generation=None,
+        joint_generation=None,
         artifact_refs={},
         detail=exc.detail,
         reason=exc.reason,
@@ -3246,8 +3326,8 @@ def propose_placement(
             solver_core={},
             verification={},
             assignments=(),
-            constraint_generation=-1,
-            joint_generation=-1,
+            constraint_generation=None,
+            joint_generation=None,
             artifact_refs={},
             detail=exc.detail,
             reason=exc.reason,

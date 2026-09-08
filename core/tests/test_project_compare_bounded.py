@@ -3,9 +3,11 @@
 Two properties carry the amendment. Determinism: a diff that completes through
 the bounded subprocess is the *direct geom call's record*, byte for byte — the
 BRep hand-off may not change a single number, or the bound would quietly coarsen
-every comparison. And the ceiling: a child that cannot finish (or dies) yields
-the named ``compare_timeout`` refusal CARRYING the cheap facts that arrived and
-naming the halves that did not, with the subprocess provably dead afterwards.
+every comparison. And the cut-short case: a child that cannot finish is
+``CompareTimeout`` and a child that dies is ``CompareChildDied`` — two named
+reasons under the shared ``CompareCutShort`` carriage (J-build-state-4), each
+CARRYING the cheap facts that arrived and naming the halves that did not, with
+the subprocess provably dead afterwards either way.
 """
 
 # Mirror of the kernel executionEnvironment relaxations for untyped
@@ -18,6 +20,7 @@ from __future__ import annotations
 import dataclasses
 import os
 from pathlib import Path
+from typing import Any, cast
 
 import hephaestus.core.project_compare as project_compare
 import pytest
@@ -35,6 +38,8 @@ from hephaestus.core.project_compare import (
     LOST_SURFACE,
     LOST_TOPOLOGY,
     LOST_VOLUME,
+    CompareChildDied,
+    CompareCutShort,
     CompareRefusal,
     CompareTimeout,
     bounded_solid_diff,
@@ -135,24 +140,97 @@ def test_a_ceiling_kill_carries_the_streamed_facts_and_leaves_no_child(
     _assert_child_dead(pid_file)
 
 
-def test_a_child_death_is_the_same_named_refusal_with_the_facts_kept(
+def test_a_child_death_is_its_own_reason_not_a_timeout_with_a_ceiling_it_never_hit(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A kernel crash mid-diff (the sweep's SIGSEGV mode) is not a hang and not
-    an empty hand: the streamed facts survive, and the exit is named."""
+    """J-build-state-4: a kernel crash mid-diff (the sweep's SIGSEGV mode) is
+    not a hang and not an empty hand — the streamed facts survive, and the
+    exit code is named — but it is ALSO not a timeout: no ceiling fired, the
+    child died after however long it took, and reporting a 300 s ceiling for a
+    2.7 s crash tells four consumers (the model's tool error, the CLI's JSON,
+    the check report, the bench's budget refunder) to wait longer for a bound
+    that was never tested. ``CompareChildDied`` is a sibling of
+    ``CompareTimeout`` under the shared ``CompareCutShort`` carriage, not the
+    same type under a different message."""
     pid_file = tmp_path / "child.pid"
     monkeypatch.setattr(project_compare, "_diff_child", dying_child)
     monkeypatch.setenv(PID_FILE_ENV, str(pid_file))
     plate = Box(40.0, 20.0, 5.0)
 
-    with pytest.raises(CompareTimeout) as excinfo:
+    with pytest.raises(CompareChildDied) as excinfo:
         bounded_solid_diff(plate, plate, align="as_posed", timeout_s=120.0)
 
     refusal = excinfo.value
+    assert isinstance(refusal, CompareCutShort)
+    assert not isinstance(refusal, CompareTimeout)
+    assert refusal.reason == "compare_child_died"
+    assert refusal.exit_code == 7
     assert "died" in refusal.message and "exit code 7" in refusal.message
     assert refusal.partial == CHEAP_FACTS
     assert refusal.lost == (LOST_VOLUME, LOST_SURFACE)
+    document = refusal.to_json()
+    assert document["status"] == "compare_child_died"
+    assert document["reason"] == "compare_child_died"
+    assert document["exit_code"] == 7
+    assert "timeout_s" not in document, "no ceiling fired — asserting one is dishonest"
     _assert_child_dead(pid_file)
+
+
+def test_a_genuine_ceiling_still_reports_the_ceiling_not_the_death_reason(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The other half of the split: a grinder that never dies is still
+    ``CompareTimeout`` (with its ceiling), never mistaken for a crash. This is
+    what proves the two reasons are discriminated rather than one having been
+    renamed out from under the other."""
+    pid_file = tmp_path / "child.pid"
+    monkeypatch.setattr(project_compare, "_diff_child", grinding_child)
+    monkeypatch.setenv(COMPARE_TIMEOUT_ENV, "3.0")
+    monkeypatch.setenv(PID_FILE_ENV, str(pid_file))
+    plate = Box(40.0, 20.0, 5.0)
+
+    with pytest.raises(CompareTimeout) as excinfo:
+        bounded_solid_diff(plate, plate, align="as_posed")
+
+    refusal = excinfo.value
+    assert isinstance(refusal, CompareCutShort)
+    assert refusal.reason == "compare_timeout"
+    assert refusal.timeout_s == 3.0
+    document = refusal.to_json()
+    assert document["timeout_s"] == 3.0
+    assert "exit_code" not in document, "the ceiling fired — there is no exit code to report"
+    _assert_child_dead(pid_file)
+
+
+def test_a_predicate_whose_child_dies_is_unverifiable_and_diagnosable_by_reason() -> None:
+    """The check engine catches the shared carriage (``CompareCutShort``), so a
+    dead comparison lands as ``unverifiable`` exactly like a ceiling kill would
+    — never a pass, never a bare ``error`` — and the entry's own reason says
+    which one it was (J-build-state-4's check-engine half)."""
+    from collections.abc import Callable
+
+    from hephaestus.core.checks.engine import run_checks
+    from hephaestus.core.checks.facade import Measurement
+
+    def predicate(_measurement: object) -> bool:
+        raise CompareChildDied(
+            "solid diff subprocess died (exit code 3) before reporting",
+            exit_code=3,
+            partial=CHEAP_FACTS,
+            lost=(LOST_VOLUME, LOST_SURFACE),
+        )
+
+    results = run_checks(
+        {"diff_check": predicate},
+        measurement_factory=cast("Callable[[], Measurement]", lambda: object()),
+    )
+
+    result = results["diff_check"]
+    assert result.passed is False
+    measured = cast("dict[str, Any]", result.measured)
+    unverifiable = cast("dict[str, Any]", measured["unverifiable"])
+    assert unverifiable["reason"] == "compare_child_died"
+    assert unverifiable["exit_code"] == 3
 
 
 def test_a_silent_child_loses_every_half_by_name(

@@ -428,6 +428,42 @@ def test_the_verification_subprocess_is_dead_after_its_ceiling(
     assert not multiprocessing.active_children(), "a verification process outlived its ceiling"
 
 
+def _dying_verify_child(conn: Any, spec: Any) -> None:  # pragma: no cover - runs in the child
+    """Dies at spawn without ever answering: a kernel crash or an OOM kill."""
+    _ = (conn, spec)
+    os._exit(11)
+
+
+def test_a_dead_verification_subprocess_is_refused_by_its_own_name(
+    bench: tuple[ProjectLayout, OpStore], env: dict[str, str]
+) -> None:
+    """Clause 38's other exit: the pass DIED, and that is not a timeout.
+
+    ``SOLVER.md`` §10 splits the two facts because they have different
+    remedies — more time cures a slow pass and cures nothing about a crashed
+    one. The refusal carries the child's exit code, is not a verdict spelling,
+    and still carries the best iterate (§6.3), because a crash threw away the
+    re-measurement, not the evidence that preceded it.
+    """
+    del env
+    from hephaestus.core import placement as engine
+
+    layout, store = bench
+    original = engine._verify_child  # pyright: ignore[reportPrivateUsage]
+    engine._verify_child = _dying_verify_child  # pyright: ignore[reportPrivateUsage]
+    try:
+        with pytest.raises(SolveRunRefusal) as excinfo:
+            propose_placement(layout, store, placement_request(SEATED, tol=TOL))
+    finally:
+        engine._verify_child = original  # pyright: ignore[reportPrivateUsage]
+    assert excinfo.value.reason == "verification_process_died"
+    assert excinfo.value.reason in SOLVE_RUNTIME_REFUSALS
+    assert excinfo.value.reason not in TRANSFORM_SOLVE_VERDICTS
+    assert "11" in excinfo.value.message
+    assert excinfo.value.to_json()["best_iterate"], "a crash must not discard the best iterate"
+    assert not multiprocessing.active_children(), "a dead verification process was not reaped"
+
+
 def test_no_refusal_name_is_a_verdict_spelling() -> None:
     """Clause 38's last half, and §6.3's rule stated as an assertion.
 
