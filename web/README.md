@@ -13,19 +13,26 @@ are the server's; pixels, camera and hover state are the client's.
 ## Commands
 
 ```console
-$ pnpm --dir web install --frozen-lockfile
-$ pnpm --dir web build       # tsc --noEmit && vite build → web/dist
-$ pnpm --dir web typecheck
-$ pnpm --dir web lint
-$ pnpm --dir web test        # vitest: workspace state, URL, token handshake
-$ pnpm --dir web test:e2e    # Playwright — see e2e/README.md; build first
+$ cd web
+$ pnpm install --frozen-lockfile
+$ pnpm build       # tsc --noEmit && vite build → web/dist
+$ pnpm typecheck
+$ pnpm lint
+$ pnpm test        # vitest: workspace state, URL, token handshake
+$ pnpm test:e2e    # Playwright — see e2e/README.md; build first
 ```
+
+Run pnpm from **inside** the package directory, never with `--dir`: the flag moves
+the install but not the version resolution, because corepack picks the
+`packageManager` field by walking up from the current directory and there is
+deliberately no root manifest (`CONTRIBUTING.md`, "pnpm: the pin, and where its
+settings live"; [`../docs/install.md`](../docs/install.md)).
 
 To drive it against a live project:
 
 ```console
 $ cd <project> && heph serve --web            # prints http://127.0.0.1:8760/#t=<token>
-$ HEPH_WEB_API=http://127.0.0.1:8760 pnpm --dir web dev
+$ cd web && HEPH_WEB_API=http://127.0.0.1:8760 pnpm dev
 ```
 
 Vite's dev server is a development convenience proxying `/api` (including the
@@ -38,7 +45,7 @@ the built assets ship inside the wheel and `--web` serves them from
 | Path | What lives there |
 |---|---|
 | `src/copy.ts` | **Every** human-facing string, in one file, so clean-room hygiene is auditable in one place (§3) |
-| `src/tokens.css` | The design-token file; `*.module.css` beside each component (§3) |
+| `src/system/tokens.css` | The design-token file; `*.module.css` beside each component (§3) |
 | `src/state/workspace.ts` | §4.5's closed record, the **single pin authority**, and URL serialization |
 | `src/state/react.ts` | `useSyncExternalStore` binding + the URL sync |
 | `src/api/` | The `/api/v1` fetch path, the §2.4 refusal envelope, the wire types, TanStack Query wiring |
@@ -129,7 +136,7 @@ The stream component tests run against **recorded** engine output, not
 hand-written events, because what they assert is what the engine emits:
 
 ```console
-$ pnpm --dir agent build
+$ (cd agent && pnpm build)
 $ node web/test/fixtures/record-normalized-events.mjs
 ```
 

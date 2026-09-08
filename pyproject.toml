@@ -28,6 +28,13 @@ dev = [
     "hephaestus-bench",
     "pytest>=8.3",
     "pytest-cov>=6.0",
+    # J-mirrors-and-dx-14: a COARSE safety net only. The diagnosable bound
+    # is the per-test deadline the waiting tests carry themselves (they name
+    # the lock that leaked); this plugin exists so that a wait nobody bounded
+    # dies with a test name attached instead of as a job timeout. The method
+    # is thread-based (see [tool.pytest.ini_options]) so it never kills the
+    # process out from under the subprocess-heavy stage suites.
+    "pytest-timeout>=2.3",
     "hypothesis>=6.115",
     "jsonschema>=4.23",
     "ruff>=0.8",
@@ -70,8 +77,25 @@ target-version = "py311"
 # `parts` registry whose generators are part scripts against the injected
 # namespace, plus the recorded pre-item-19 `part.json` bytes — and it is
 # *frozen*, so a formatter touching it would move a Merkle root the gate pins.
+#
+# `*.md` is not evidence: recent ruff versions lint the Python code blocks
+# inside Markdown, and the documentation set is full of illustrative snippets
+# that are deliberately incomplete (undefined names, no imports, elided bodies).
+# Linting prose examples as if they were modules produces findings about the
+# example rather than about the code — measured with the entry removed:
+# 11 errors and 12 files the formatter would rewrite, every one of them inside
+# a documentation snippet.
+#
+# `bench` used to sit in this list with no reason beside it (J-mirrors-and-dx-27).
+# It is gone: the package is inside pyright's `include` below, so it was
+# type-checked and not linted, which is one tool's coverage widening in the same
+# commit that narrowed the other's. Lifting it surfaced five findings and three
+# files the formatter rewrote — an unsorted `__all__`, an unsorted import block
+# and two deliberate MINUS SIGNs (see `allowed-confusables` below) — all now
+# resolved, so the package lints clean like every other one.
+# tests/stage7h/test_tooling_config.py asserts that every string left here is
+# named in this comment block, so the next entry cannot arrive silent.
 extend-exclude = [
-    "bench",
     "spikes",
     "corpus",
     "registries",
@@ -83,6 +107,13 @@ extend-exclude = [
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+# U+2212 MINUS SIGN is used deliberately, not by accident: the leaderboard
+# page renders `seeded − prose` as arithmetic prose, and the generated page is
+# byte-compared by `heph bench leaderboard --check`, so "fixing" it to a hyphen
+# would move a committed artifact to satisfy a confusable-character rule aimed
+# at homoglyph attacks in identifiers. Declared here rather than suppressed at
+# each site, because a `# noqa` cannot be written inside a docstring.
+allowed-confusables = ["−"]
 
 [tool.pyright]
 include = ["opstore", "core", "server", "contract", "bench/src"]
@@ -125,11 +156,54 @@ reportUnknownVariableType = false
 reportUnknownArgumentType = false
 
 [tool.pytest.ini_options]
-testpaths = ["opstore/tests", "tests"]
-addopts = "-ra"
+# Every directory in the repository that holds tests (J-mirrors-and-dx-22), so a
+# bare `uv run pytest` is the whole suite rather than a subset that happens to
+# look green. `bench` is deliberately absent and stays absent until it has tests
+# — an omission named here rather than forgotten.
+# tests/stage7h/test_test_hygiene.py asserts that every directory holding
+# tests is inside this list or in that test's documented allowlist.
+testpaths = [
+    "opstore/tests",
+    "core/tests",
+    "server/tests",
+    "contract/tests",
+    "tests",
+]
+# The default marker expression is what makes the widened paths GREEN on a
+# developer machine: the pinned-image goldens are valid only for the renderer
+# baked into docker/ci/Dockerfile and fail by name anywhere else (that failure is
+# the point — see tests/render), and the Stage 7H wheel lanes cost minutes.
+# Override it with your own `-m` to run either; the CI lanes that own them do.
+# `-p ...hypothesis_profile` registers and LOADS the repository Hypothesis
+# profile (J-mirrors-and-dx-13), which sets `deadline=None` for every property
+# in the repository: the stock 200 ms per-example deadline measures the runner,
+# not the property, so it reds a loaded box for a reason unrelated to the code.
+# A `-p` plugin rather than a conftest because a conftest covers one directory
+# and the Hypothesis suites live under two of the five `testpaths`.
+addopts = "-ra -m \"not slow and not pinned_image\" -p hephaestus.testing.hypothesis_profile"
+# Coarse safety net only (J-mirrors-and-dx-14). A test that waits on another
+# thread or process bounds the wait ITSELF and fails by name; this ceiling is
+# what turns a wait nobody bounded into a failure with a test name attached
+# instead of a job timeout. `signal` (SIGALRM in the test's own thread) fails
+# the one test and lets the run continue to its summary; the `thread` method
+# dumps every stack and then `os._exit(1)`s the whole pytest process, which
+# would lose the summary and the coverage data of every test after the hang.
+# Generous on purpose: the longest legitimate single test in the tree is the
+# ~31 s G12B.22 kernel call.
+timeout = 900
+timeout_method = "signal"
 markers = [
     # Stage 7H packaging lanes: build every wheel and install into a fresh venv.
     # Minutes, not seconds — but they MUST run locally, so they are marked, not
     # skipped by default. Deselect with `-m "not slow"`.
     "slow: builds artifacts or provisions an environment (Stage 7H wheel lanes)",
+    # Renderer-pinned goldens (J-mirrors-and-dx-18). A golden is valid only for
+    # the (container image, renderer) pair it was baselined on, so these modules
+    # fail by NAME off the pinned image rather than skipping — a suite that
+    # quietly passed on the wrong rasterizer would be asserting nothing. The
+    # marker is the selector CI and the documented command both use: the stock
+    # lanes deselect it, the `render goldens (pinned image)` lane selects it, and
+    # tests/stage7h/test_test_hygiene.py asserts both halves, so a module can no
+    # longer fall out of a hand-maintained path list.
+    "pinned_image: valid only inside the pinned CI image (renderer-pinned goldens)",
 ]

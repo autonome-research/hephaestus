@@ -46,6 +46,12 @@ from hephaestus.testing.workspace_fixture import (
     stage4_goldens,
 )
 
+#: J-mirrors-and-dx-18: the SELECTOR for "valid only inside the pinned CI image".
+#: The stock CI lanes and the documented `uv run pytest` deselect this marker;
+#: the `render goldens (pinned image)` lane selects it. A marker cannot silently
+#: lose a module the way the `--ignore=` path list it replaced could.
+pytestmark = pytest.mark.pinned_image
+
 
 def test_the_section_plate_reproduces_the_committed_golden(workspace: Any) -> None:
     """§5.3: the gated section render is server pixels, matched against a golden.

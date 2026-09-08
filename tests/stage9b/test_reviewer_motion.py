@@ -49,6 +49,7 @@ from hephaestus.agent_bridge.review import (
     TerminalReport,
     TerminationReviewService,
 )
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.core.motion import MOTION_TIMEOUT_ENV
 from hephaestus.core.project_store.layout import load_project, open_store
 from hephaestus.core.project_store.store import ProjectStore
@@ -72,7 +73,7 @@ def make_mechanism_project(root: Path) -> Project:
         (root / "parts" / f"{name}.py").write_text(src, encoding="utf-8")
     layout = load_project(root)
     store = open_store(layout)
-    cad = CadOps(layout, store)
+    cad = CadOps(layout, store, backend=UnsafeLocalBackend())
     dispatcher = ToolDispatcher(ProjectStore(layout, store), cad=cad)
     seed_minimal_ledger(cad)
     return Project(root=root, layout=layout, store=store, cad=cad, dispatcher=dispatcher, _n=[0])

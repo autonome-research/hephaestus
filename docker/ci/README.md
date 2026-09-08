@@ -12,13 +12,39 @@ on any other (`repo_conventions.md` Tier 2 disposition 2, `INTERFACE.md` §14):
 |---|---|
 | `tests/render` | `render goldens (pinned image)` |
 | `tests/stage4/test_g4_section_golden.py` | `render goldens (pinned image)` |
-| `pnpm --dir web test:e2e` | `render goldens (pinned image)` |
+| `pnpm test:e2e` (from inside `web/`) | `render goldens (pinned image)` |
 
-The stock-runner jobs exclude all three **by name**. A developer host that
+The stock-runner jobs deselect the first two by **marker** (`pinned_image`, per
+`pyproject.toml`) rather than by a hand-maintained path list, so a module that
+grows a golden cannot fall out of the pinned lane in silence. A developer host that
 ships a different Mesa therefore *cannot* pass the first two, and that is the
 design — see `tests/stage4/test_g4_section_golden.py`'s module docstring and
 `web/e2e/README.md`. Reproduce a red locally by running it in this image, never
 by re-baselining on the host; a digest bump is a renderer re-baseline PR.
+
+## What else is baked, and which test consumes it
+
+Beyond the renderer, the sandbox and the browser, the image carries one tool
+that exists only for a test:
+
+| Baked | Version | Consumed by |
+|---|---|---|
+| Khronos `gltf_validator` | `2.0.0-dev.3.10` (`GLTF_VALIDATOR_VERSION` in the Dockerfile) | `server/tests/test_http_gltf.py`'s Khronos lane |
+
+`mission_plan.md` states glTF validation as a project claim, and that lane was
+the only place the claim was attempted — while the binary existed in no image,
+so it skipped on every machine and in every job (J-mirrors-and-dx-15). It is a
+*bonus* lane by design: `core/src/hephaestus/core/render/gltf.py`'s in-process
+structural validator asserts the invariants the gate names without the binary.
+Pinned rather than floating for the same reason the renderer is.
+
+**Arming it is a two-step landing.** Baking the binary changes the image digest,
+which is a re-baseline PR with its own rules. Until `ci.yml`'s digest names an
+image built from the current Dockerfile, the lane runs and *skips*. The PR that
+bumps the digest also sets `HEPHAESTUS_REQUIRE_GLTF_VALIDATOR: "1"` on the
+`render goldens (pinned image)` job, after which an absent binary fails **by
+name** instead of skipping — the same fail-rather-than-skip policy the renderer
+gate applies.
 
 ## The one hazard: the container writes into your worktree
 
@@ -64,7 +90,7 @@ could raise it, and inside this container neither fires:
 - **corepack resolves `packageManager` by walking up from the current
   directory**, not from `--dir`. The recipe runs `-w /w`, and the repository
   root deliberately has no `package.json` (there is no root pnpm workspace —
-  `.github/workflows/ci.yml` records why), so `pnpm --dir agent install` gives
+  `.github/workflows/ci.yml` records why), so an `agent/` install gives
   corepack nothing to resolve and it falls back to the activated version.
   Measured 2026-09-03: from a directory with no manifest `corepack pnpm
   --version` printed corepack's activated default; from a directory whose

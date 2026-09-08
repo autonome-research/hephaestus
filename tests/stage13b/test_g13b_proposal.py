@@ -153,12 +153,13 @@ def test_the_reviewer_still_blocks_on_a_constraint_a_proposal_would_fix(
     """
     from hephaestus.agent_bridge.cad_ops import CadOps
     from hephaestus.agent_bridge.review import assembly_review_findings, assembly_status
+    from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 
     layout, store = bench_copy
     record = propose_placement(layout, store, placement_request(SEATED, tol=TOL))
     assert record.verdict == "converged_at_tolerance"
 
-    cad = CadOps(layout, store)
+    cad = CadOps(layout, store, backend=UnsafeLocalBackend())
     status = assembly_status(cad)
     assert status is not None
     findings = assembly_review_findings(status)
@@ -185,10 +186,11 @@ def test_the_reviewer_context_carries_proposals_as_labeled_non_evidence(
     """
     from hephaestus.agent_bridge.cad_ops import CadOps
     from hephaestus.agent_bridge.review import normalize_findings, open_proposals
+    from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 
     layout, store = bench_copy
     record = propose_placement(layout, store, placement_request(SEATED, tol=TOL))
-    cad = CadOps(layout, store)
+    cad = CadOps(layout, store, backend=UnsafeLocalBackend())
     proposals = open_proposals(cad)
     assert len(proposals) == 1
     entry = proposals[0]
@@ -213,10 +215,13 @@ def test_the_reviewer_prompt_says_a_proposal_is_not_evidence(
     """Clause 42: the label reaches the model that has to honour it."""
     from hephaestus.agent_bridge.cad_ops import CadOps
     from hephaestus.agent_bridge.review import build_review_context
+    from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 
     layout, store = bench_copy
     propose_placement(layout, store, placement_request(SEATED, tol=TOL))
-    context = build_review_context(CadOps(layout, store), request="review this")
+    context = build_review_context(
+        CadOps(layout, store, backend=UnsafeLocalBackend()), request="review this"
+    )
     assert len(context.proposals) == 1
     prompt = context.prompt()
     assert "NOT EVIDENCE" in prompt
@@ -486,7 +491,7 @@ def test_a_concurrent_rebuild_underneath_a_solve_is_refused_by_name(
     original = engine._verify  # pyright: ignore[reportPrivateUsage]
     fired: list[int] = []
 
-    def republish_then_verify(spec: Any, *, timeout_s: float) -> Any:
+    def republish_then_verify(spec: Any, *, timeout_s: float, payload: Any = None) -> Any:
         if not fired:
             fired.append(1)
             script = layout.root / "parts" / "base.py"
@@ -497,7 +502,7 @@ def test_a_concurrent_rebuild_underneath_a_solve_is_refused_by_name(
                 encoding="utf-8",
             )
             build_part(Publisher(layout, store), layout, "base")
-        return original(spec, timeout_s=timeout_s)
+        return original(spec, timeout_s=timeout_s, payload=payload)
 
     monkeypatch.setattr(engine, "_verify", republish_then_verify)
     before = ProposalSet(layout, store).state().generation
@@ -566,6 +571,7 @@ _EXERCISED_HERE: frozenset[str] = frozenset(
         "tolerance_below_determinism_floor",
         "stale_proposal_inputs",
         "solver_timeout",
+        "verification_process_died",
         "iteration_ceiling",
         "non_rigid_iterate",
         "solver_residual_disagreement",
@@ -667,12 +673,13 @@ def test_an_operator_applies_a_proposal_through_the_ordinary_authoring_path(
     from hephaestus.agent_bridge.cad_ops import CadOps
     from hephaestus.agent_bridge.dispatch import Principal, ToolDispatcher
     from hephaestus.core.assembly import AssemblyEvaluator
+    from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
     from hephaestus.core.project_store.store import ProjectStore
     from hephaestus.testing.ledger import seed_minimal_ledger
     from hephaestus.testing.tools_fixture import Project
 
     layout, store = bench_copy
-    cad = CadOps(layout, store)
+    cad = CadOps(layout, store, backend=UnsafeLocalBackend())
     seed_minimal_ledger(cad)
     project = Project(
         root=layout.root,

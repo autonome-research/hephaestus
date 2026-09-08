@@ -318,6 +318,15 @@ def test_lane_b_covers_every_clause_of_its_gate_sentence(
     script = _script(_job(release, "lane-b"))
     assert "heph build" in script and "heph check" in script
     assert "tests/stage7h" in script  # integrity, addon audit, jobstore, agent
+    # The wheel lanes are the `slow`-marked tests. pyproject's default `-m`
+    # deselects `slow`, so every release step that names tests/stage7h must
+    # override the marker expression or it runs nothing it promises.
+    for line in script.splitlines():
+        if "pytest" in line and "tests/stage7h" in line:
+            assert "-m " in line and "not slow" not in line, (
+                "a release step inherits the `not slow` default and skips the wheel "
+                f"lanes: {line.strip()}"
+            )
     assert "tests/stage3" in script  # MCP smoke
     for suite in (
         "core/tests/test_sandbox_base.py",

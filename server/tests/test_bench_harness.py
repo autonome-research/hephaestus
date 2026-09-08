@@ -26,9 +26,6 @@ fake server.
 from __future__ import annotations
 
 import json
-import os
-import shutil
-import subprocess
 from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
@@ -49,7 +46,9 @@ from hephaestus.bench.harness import (
     validate_export_bytes,
 )
 from hephaestus.bench.scoring import RUNS_FILENAME, score_directory
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.testing.fake_openai import FakeOpenAI, RequestInfo, start_fake_openai
+from hephaestus.testing.sidecar import build_agent_dist
 
 SOLUTIONS = repo_root() / "corpus" / "solutions"
 
@@ -152,26 +151,23 @@ def test_validate_export_bytes_rejects_malformed_payloads() -> None:
 # the scripted end-to-end loop
 
 
-def _node_available() -> bool:
-    return bool(os.environ.get("HEPHAESTUS_NODE") or shutil.which("node"))
-
-
 @pytest.fixture(scope="session")
 def sidecar_dist() -> Path:
-    """Build the real sidecar once per session; skip cleanly when Node is absent."""
-    if not _node_available():
-        pytest.skip("node is not available; the bench loop needs the packaged sidecar")
-    pnpm = shutil.which("pnpm")
-    if pnpm is None:
-        pytest.skip("pnpm is not available; cannot build the sidecar")
-    agent_dir = repo_root() / "agent"
-    build = subprocess.run(
-        [pnpm, "--dir", str(agent_dir), "build"], capture_output=True, text=True, check=False
-    )
-    dist_main = agent_dir / "dist" / "main.js"
-    if build.returncode != 0 or not dist_main.exists():
-        pytest.fail(f"sidecar build failed:\n{build.stdout}\n{build.stderr}")
-    return dist_main
+    """The staged sidecar, built once per session through the ONE resolver.
+
+    ``hephaestus.testing.sidecar.build_agent_dist`` is the resolver every other
+    sidecar-backed suite uses (J-mirrors-and-dx-25): it finds pnpm the way
+    ``scripts/bootstrap.sh`` does, honours ``HEPHAESTUS_SKIP_SIDECAR_BUILD``
+    against a freshness-checked stage, and refuses by name under
+    ``HEPHAESTUS_REQUIRE_SIDECAR``. This fixture used to run ``pnpm --dir agent
+    build`` itself — the invocation no document teaches, because ``--dir``
+    bypasses the ``packageManager`` pin — and so was the one suite CI's guards
+    could not see.
+    """
+    built = build_agent_dist()
+    if built is None:
+        pytest.skip("no Node/pnpm toolchain; the bench loop needs the packaged sidecar")
+    return built[0]
 
 
 @pytest.fixture
@@ -195,6 +191,7 @@ def provider(fake_model: FakeOpenAI) -> ProviderConfig:
 def runtime_factory(sidecar_dist: Path) -> harness.RuntimeFactory:
     def factory(project_root: Path, config: ProviderConfig) -> BridgeRuntime:
         return BridgeRuntime(
+            backend=UnsafeLocalBackend(),
             project_root=project_root,
             providers=config.providers,
             dist_main=sidecar_dist,

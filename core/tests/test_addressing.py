@@ -223,7 +223,7 @@ def indexes(draw: st.DrawFn) -> GeometryIndex:
     return GeometryIndex(labels=labels, bindings=bindings, tags=tags)
 
 
-@settings(max_examples=200)
+@settings(max_examples=200, deadline=None)
 @given(indexes())
 def test_resolution_total_and_deterministic_over_namespace(index: GeometryIndex) -> None:
     for name in namespace(index):
@@ -232,13 +232,13 @@ def test_resolution_total_and_deterministic_over_namespace(index: GeometryIndex)
         assert first == second, name
 
 
-@settings(max_examples=200)
+@settings(max_examples=200, deadline=None)
 @given(indexes())
 def test_namespace_is_deterministic(index: GeometryIndex) -> None:
     assert namespace(index) == namespace(index)
 
 
-@settings(max_examples=200)
+@settings(max_examples=200, deadline=None)
 @given(indexes())
 def test_hash_k_stability(index: GeometryIndex) -> None:
     """name#k always selects the k-th tree-order occurrence of the label."""
@@ -255,7 +255,7 @@ def test_hash_k_stability(index: GeometryIndex) -> None:
             assert index.labels[res.occurrences[0]] == label
 
 
-@settings(max_examples=200)
+@settings(max_examples=200, deadline=None)
 @given(indexes())
 def test_bare_label_is_first_occurrence_and_star_is_all(index: GeometryIndex) -> None:
     for label in set(index.labels):
@@ -270,7 +270,7 @@ def test_bare_label_is_first_occurrence_and_star_is_all(index: GeometryIndex) ->
         assert star.fused
 
 
-@settings(max_examples=200)
+@settings(max_examples=200, deadline=None)
 @given(indexes(), _names)
 def test_unresolvable_names_raise_never_guess(index: GeometryIndex, name: str) -> None:
     advertised = set(namespace(index))

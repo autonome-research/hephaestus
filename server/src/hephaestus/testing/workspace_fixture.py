@@ -40,10 +40,12 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from hephaestus.agent_bridge.app import repo_root
 from hephaestus.agent_bridge.session_edges import SessionEdgeStore
+from hephaestus.core.cli_init import GITIGNORE
+from hephaestus.core.project_store.layout import STORE_DIRNAME
 from hephaestus.core.render.goldens import GoldenSpec
 from hephaestus.core.render.offscreen import DEFAULT_HEIGHT, DEFAULT_WIDTH
 
@@ -226,14 +228,68 @@ def materialize_workspace_fixture(
     source = fixture_source()
     if not source.is_dir():  # pragma: no cover - a broken checkout
         raise FileNotFoundError(f"fixture not found: {source}")
-    shutil.copytree(source, dest)
+    # The copy IGNORES the build store and the repository directory
+    # (J-http-limits-5). Without this the copy took whatever the developer's own
+    # checkout happened to hold under the (repository-wide gitignored, hence
+    # invisible to a status check) fixture directory — on the machine the audit
+    # ran on: a live serve token, signing keys, the state database, four blobs
+    # and two session transcripts — and the `git add -A` below then committed
+    # all of it. A live bearer written into a git object.
+    shutil.copytree(source, dest, ignore=shutil.ignore_patterns(*_NOT_FIXTURE))
+    # The scaffolder's own ignore file, written from the scaffolder's CONSTANT
+    # rather than restated here, so the two agree by construction. Before this
+    # the materialised fixture was the one project in the repository built by a
+    # second, divergent scaffolder — and the one project whose build store was
+    # under version control, which is a shape `heph init` does not produce.
+    (dest / ".gitignore").write_text(GITIGNORE, encoding="utf-8")
     record_requirements(dest)
     installed: tuple[str, ...] = ()
     if transcript:
         installed = install_transcript(dest)
     if git:
         _init_repository(dest)
+        _assert_no_tracked_build_store(dest)
     return Materialized(root=dest, sessions=installed, git=git)
+
+
+#: Names the copy never takes from the source tree. `.heph/` is the build store
+#: — gitignored repository-wide, so it is invisible to a status check and easy
+#: to miss; `.git/` would make the fixture a nested repository; the caches are
+#: noise. The fixture is sources plus content, and nothing else.
+_NOT_FIXTURE: Final[tuple[str, ...]] = (STORE_DIRNAME, ".git", "__pycache__", ".pytest_cache")
+
+
+def _assert_no_tracked_build_store(root: Path) -> None:
+    """Fail by name if the baseline commit tracks anything under the store.
+
+    Two of the steps above create the store BEFORE the commit — the requirements
+    replay opens it, and the transcript install writes into it — so ignoring it
+    on copy is only half the fix. This is the other half, and it is an assertion
+    rather than a filter on purpose: the module's standard is that the fixture
+    must not hold a shape the product does not produce, and it already applies
+    exactly this fail-by-name discipline to the transcript.
+    """
+    env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
+    proc = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    tracked = [name for name in proc.stdout.split("\0") if name]
+    inside = sorted(
+        name for name in tracked if name == STORE_DIRNAME or name.startswith(f"{STORE_DIRNAME}/")
+    )
+    if inside:
+        raise AssertionError(
+            f"the materialised fixture's baseline commit tracks {len(inside)} build-store "
+            f"path(s): {', '.join(inside[:5])}. The store is runtime state — a serve "
+            "token, signing keys and the state database live there — and a project "
+            "whose store is under version control is a shape `heph init` never "
+            "produces (J-http-limits-5)."
+        )
 
 
 def record_requirements(root: Path) -> int:
@@ -248,6 +304,7 @@ def record_requirements(root: Path) -> int:
     prompt in the middle of a browser gate would be a hang, not a finding.
     """
     from hephaestus.agent_bridge.cad_ops import CadOps
+    from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
     from hephaestus.core.project_store.layout import load_project, open_store
 
     manifest = root / "requirements.json"
@@ -260,7 +317,9 @@ def record_requirements(root: Path) -> int:
     layout = load_project(root)
     store = open_store(layout)
     try:
-        CadOps(layout, store).record_requirements(entries, op_id="workspace-fixture-requirements")
+        CadOps(layout, store, backend=UnsafeLocalBackend()).record_requirements(
+            entries, op_id="workspace-fixture-requirements"
+        )
     finally:
         store.close()
     return len(entries)

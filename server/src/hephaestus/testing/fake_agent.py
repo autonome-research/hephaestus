@@ -286,37 +286,48 @@ class FakeAgent:
         ``after`` is §2.8(5)'s tail read: it freezes a *new* mark at the current
         last entry and starts at the ordinal the token names, and ``end_cursor``
         is always present and never null — even on the last page and on an
-        empty session — so a client can always hand it back. An ``after`` at or
-        beyond the current end returns no events, ``done``, and the same
-        ``end_cursor`` it was given, which is what makes polling the tail cheap.
+        empty session — so a client can always hand it back. An ``after`` AT the
+        current end returns no events, ``done``, and the same ``end_cursor`` it
+        was given, which is what makes polling the tail cheap.
 
-        A token that does not decode is refused the way the **sidecar** refuses
-        it (§2.8/§2.4, amended 2026-09-04): a ``SupervisorError`` carrying the
-        JSON-RPC envelope the real bridge would carry, ``data.reason`` and all,
-        so ``http/errors.py`` classifies the double's answer through exactly the
-        branch it classifies the real one through. Raising an ``HttpRefusal``
-        here instead would have tested nothing — the mapping under test is the
-        one that reads the sidecar's envelope.
+        **Three** things are refused, all the way the **sidecar** refuses them
+        (§2.8/§2.4, amended 2026-09-04, and J-http-envelope-9): a token that
+        does not decode, a decodable mark that names no entry in a non-empty
+        log, and an offset STRICTLY beyond the snapshot that mark names. Each
+        raises a ``SupervisorError`` carrying the JSON-RPC envelope the real
+        bridge would carry, ``data.reason`` and all, so ``http/errors.py``
+        classifies the double's answer through exactly the branch it classifies
+        the real one through. Raising an ``HttpRefusal`` here instead would have
+        tested nothing — the mapping under test is the one that reads the
+        sidecar's envelope.
         """
         self.seen_cursors.append(cursor)
         events = self.history.get(session_id, [])
+
+        def refuse(message: str) -> SupervisorError:
+            """The sidecar's own ``invalid_cursor`` envelope, verbatim."""
+            return SupervisorError(
+                f"history.page failed: {message}",
+                error={
+                    "code": ErrorCode.INVALID_PARAMS,
+                    "message": message,
+                    "data": {"reason": "invalid_cursor", "session_id": session_id},
+                },
+            )
+
         token = after if after is not None else cursor
         if token is not None:
             try:
                 decode_cursor(token)
             except MalformedCursor as exc:
-                raise SupervisorError(
-                    f"history.page failed: {exc}",
-                    error={
-                        "code": ErrorCode.INVALID_PARAMS,
-                        "message": str(exc),
-                        "data": {"reason": "invalid_cursor", "session_id": session_id},
-                    },
-                ) from exc
+                raise refuse(str(exc)) from exc
         if after is not None:
             decoded = decode_cursor(after)
             offset = int(decoded["offset"])
-            if offset >= len(events):
+            if not events:
+                # The empty-log short-circuit, which precedes both refusals on
+                # the real side too: a session with no history has no mark to
+                # be wrong about, and a tail read of it echoes its own token.
                 return {
                     "events": [],
                     "user_prompts": [],
@@ -324,6 +335,8 @@ class FakeAgent:
                     "done": True,
                     "end_cursor": after,
                 }
+            # A tail read DISCARDS the token's frozen mark by design (see
+            # `history.ts`): the point of `after` is to see what was appended.
             hw = f"e{len(events) - 1}"
         elif not events:
             return {
@@ -338,7 +351,30 @@ class FakeAgent:
         else:
             decoded = decode_cursor(cursor)
             hw, offset = str(decoded["hw"]), int(decoded["offset"])
-        frozen = events[: int(str(hw).removeprefix("e")) + 1]
+
+        # J-http-envelope-9, mirrored from `agent/src/session/history.ts`. The
+        # double used to be LENIENT in exactly the two places the sidecar was:
+        # a mark naming no entry widened the frozen snapshot to the whole log,
+        # and an offset past the end sliced to an empty page with `done: true`.
+        # Composed, those two produced a confident wrong answer — a nonsense
+        # cursor over a 250-event session returned the same shape a genuinely
+        # exhausted, quiet session returns, so a client rendered an empty
+        # transcript as complete. The sidecar now refuses both through the same
+        # `invalid_cursor` path a token that fails to DECODE takes, and the
+        # double must too: a no-Node lane that keeps the old leniency would
+        # certify a client against behaviour the real bridge no longer has.
+        marks = {f"e{index}" for index in range(len(events))}
+        if hw not in marks:
+            raise refuse(f"history cursor names no entry: {hw}")
+        frozen = events[: int(hw.removeprefix("e")) + 1]
+        # STRICTLY beyond, not `>=`: an offset EQUAL to the snapshot's length is
+        # §2.8(5)'s legitimate "you are caught up", and refusing it would break
+        # every polling client.
+        if offset > len(frozen):
+            raise refuse(
+                f"history cursor offset {offset} lies beyond the snapshot it "
+                f"names ({len(frozen)} events)"
+            )
         page = frozen[offset : offset + HISTORY_PAGE_SIZE]
         next_offset = offset + len(page)
         done = next_offset >= len(frozen)
@@ -350,7 +386,12 @@ class FakeAgent:
             "user_prompts": [],
             "cursor": None if done else encode_cursor(hw, next_offset),
             "done": done,
-            "end_cursor": encode_cursor(hw, next_offset),
+            # An `after` that found nothing echoes the token it was given, so a
+            # polling client's end mark is byte-stable while the session is
+            # quiet (`history.ts` does the same).
+            "end_cursor": after
+            if not page and after is not None
+            else encode_cursor(hw, next_offset),
         }
 
     def seed_history(self, session_id: str, count: int) -> list[dict[str, Any]]:

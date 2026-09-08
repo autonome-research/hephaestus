@@ -1,0 +1,9 @@
+usage: heph export [-h] {list,unpin} ...
+
+positional arguments:
+  {list,unpin}
+    list        show every committed export and its pinned outputs
+    unpin       drop one exported blob's GC root (deletes nothing)
+
+options:
+  -h, --help    show this help message and exit

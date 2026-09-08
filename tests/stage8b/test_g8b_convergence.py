@@ -38,6 +38,7 @@ from _g8b import HOLE_MM3, PLATE_MM3, StepFixtures
 from hephaestus.agent_bridge.app import BridgeRuntime
 from hephaestus.bench import harness
 from hephaestus.bench.harness import ARCHIVE_EVENTS_FILENAME, BenchTask, ProviderConfig
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.core.project_store.layout import load_project, open_store
 from hephaestus.testing.fake_openai import FakeOpenAI, RequestInfo, start_fake_openai
 
@@ -141,7 +142,10 @@ def provider(fake_model: FakeOpenAI) -> ProviderConfig:
 def runtime_factory(sidecar_dist: Path) -> harness.RuntimeFactory:
     def factory(project_root: Path, config: ProviderConfig) -> BridgeRuntime:
         return BridgeRuntime(
-            project_root=project_root, providers=config.providers, dist_main=sidecar_dist
+            backend=UnsafeLocalBackend(),
+            project_root=project_root,
+            providers=config.providers,
+            dist_main=sidecar_dist,
         )
 
     return factory
@@ -366,7 +370,7 @@ def test_the_editing_loop_converges_on_a_seeded_target(
     try:
         from hephaestus.agent_bridge.cad_ops import CadOps
 
-        current = CadOps(layout, store).current_build("bracket")
+        current = CadOps(layout, store, backend=UnsafeLocalBackend()).current_build("bracket")
         assert current is not None
         imports = dict(current.input_hashes.imports)
     finally:

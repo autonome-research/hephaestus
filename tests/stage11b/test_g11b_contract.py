@@ -171,6 +171,7 @@ def bench(tmp_path: Path) -> Iterator[Any]:
     from hephaestus.agent_bridge.cad_ops import CadOps
     from hephaestus.agent_bridge.dispatch import ToolDispatcher
     from hephaestus.core.executor.sandbox.bwrap import BwrapBackend
+    from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
     from hephaestus.core.project_store.layout import load_project, open_store
     from hephaestus.core.project_store.store import ProjectStore
     from hephaestus.testing.tools_fixture import scaffold
@@ -182,7 +183,7 @@ def bench(tmp_path: Path) -> Iterator[Any]:
     store = OpStore.create(tmp_path / "store")
     dispatcher = ToolDispatcher(
         ProjectStore(layout, open_store(layout)),
-        cad=CadOps(layout, open_store(layout)),
+        cad=CadOps(layout, open_store(layout), backend=UnsafeLocalBackend()),
         registry=RegistryOps(
             RegistrySet({"parts": load_registry(parts)}),
             store,

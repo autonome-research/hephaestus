@@ -44,6 +44,7 @@ from _g8a import StepFixtures, png_bytes
 from hephaestus.agent_bridge.app import BridgeRuntime
 from hephaestus.bench import harness
 from hephaestus.bench.harness import ARCHIVE_EVENTS_FILENAME, BenchTask, ProviderConfig
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.core.project_store.layout import load_project, open_store
 from hephaestus.testing.fake_openai import FakeOpenAI, RequestInfo, start_fake_openai
 
@@ -194,7 +195,10 @@ def provider(fake_model: FakeOpenAI) -> ProviderConfig:
 def runtime_factory(sidecar_dist: Path) -> harness.RuntimeFactory:
     def factory(project_root: Path, config: ProviderConfig) -> BridgeRuntime:
         return BridgeRuntime(
-            project_root=project_root, providers=config.providers, dist_main=sidecar_dist
+            backend=UnsafeLocalBackend(),
+            project_root=project_root,
+            providers=config.providers,
+            dist_main=sidecar_dist,
         )
 
     return factory
@@ -375,8 +379,9 @@ def test_a_seeded_imports_task_runs_end_to_end(
     store = open_store(layout)
     try:
         from hephaestus.agent_bridge.cad_ops import CadOps
+        from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 
-        current = CadOps(layout, store).current_build("bracket")
+        current = CadOps(layout, store, backend=UnsafeLocalBackend()).current_build("bracket")
         assert current is not None
         assert list(current.input_hashes.imports) == ["vendor_plate.step"]
         assert current.metrics is not None
@@ -516,10 +521,11 @@ def test_a_seeded_references_task_runs_end_to_end(
     store = open_store(layout)
     try:
         from hephaestus.agent_bridge.cad_ops import CadOps
+        from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
         from hephaestus.core.lint import lint_requirements
         from hephaestus.core.project_store.references import ReferenceRegistry
 
-        cad = CadOps(layout, store)
+        cad = CadOps(layout, store, backend=UnsafeLocalBackend())
         entries = cad.ledger_state().entries
         assert [entry.id for entry in entries] == ["R1", "R2"]
         for entry in entries:

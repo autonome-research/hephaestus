@@ -43,6 +43,7 @@ from hephaestus.agent_bridge.delegation import (
     Delivery,
     Rejected,
 )
+from hephaestus.testing.delegation_gates import AllowAllGate
 from opstore.types import CRASH_EXIT_CODE, EnvCrashHook, OwnerId, TerminalState, current_owner
 
 from opstore import OpStore
@@ -92,7 +93,7 @@ def main() -> None:
         if point:
             os.environ["OPSTORE_CRASH_POINT"] = point
         factory = _ExitBeforeReserve if stage == "before_enqueue" else DelegationService
-        service = factory(store.admission, store.db)
+        service = factory(store.admission, store.db, gate=AllowAllGate())
         outcome = service.delegate(
             PARENT_RUN,
             PART,

@@ -12,6 +12,16 @@ alive). Grading then failed with ``part_busy`` until the retries ran out.
 
 These tests drive exactly that interleaving in-process and prove the
 project-config lock is immediately reacquirable afterwards.
+
+J-mirrors-and-dx-14: the two interleaving tests below are the tripwire for the
+lock-leak regression they were born from, so a *recurrence* has to fail loudly
+rather than hang. Before this fix each spun on ``done.is_set()`` with no
+deadline of its own and then called ``worker.join()`` with no timeout — doubly
+unbounded, so a leaked lock (the worker blocks forever inside
+``LockManager.acquire``'s own timeout-bounded wait, or, pre-fix, past it) turned
+the test into a silent job-timeout with no test name attached. Both loops now
+carry the repository's own deadline idiom (``server/tests/test_supervisor.py``)
+and fail by name — naming the still-alive worker thread — rather than hanging.
 """
 
 from __future__ import annotations
@@ -22,10 +32,59 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.core.project_store.locks import PROJECT_CONFIG_LOCK, LockManager, part_lock
 from hephaestus.testing.tools_fixture import Project, make_project
 
 from opstore import LeaseHeldError
+
+#: Generous bound for the spin-wait a cancel-racing test does before joining its
+#: worker thread. The interleaving itself is sub-second (300 lock cycles, or one
+#: ``build_part``); this is a regression tripwire, not a performance ceiling.
+_SPIN_DEADLINE_S = 20.0
+#: Bound for the final ``Thread.join()``. If the worker is still alive after the
+#: spin deadline fired, it is well past done and something is genuinely stuck —
+#: this catches that case by name instead of blocking the suite forever.
+_JOIN_DEADLINE_S = 10.0
+
+
+def _wait_bounded(
+    done: threading.Event,
+    worker: threading.Thread,
+    *,
+    label: str,
+    on_tick: Any = None,
+) -> None:
+    """Spin on ``done`` with a deadline, then join with a deadline, or fail by name.
+
+    ``on_tick``, when given, is called once per spin iteration (before the
+    sleep) — the interleaving tests need to keep issuing cancels while they
+    wait, and folding that into this helper keeps there being exactly one
+    bounded spin-then-join shape rather than two copies of it.
+
+    Replaces an unbounded ``while not done.is_set(): sleep(...)`` followed by an
+    unbounded ``worker.join()`` — the shape J-mirrors-and-dx-14 names as a
+    regression test that hangs instead of failing when the lock it guards
+    against leaks again.
+    """
+    spin_deadline = time.monotonic() + _SPIN_DEADLINE_S
+    while not done.is_set():
+        if time.monotonic() >= spin_deadline:
+            worker.join(timeout=1.0)
+            pytest.fail(
+                f"{label}: worker thread did not signal completion within "
+                f"{_SPIN_DEADLINE_S}s — the lock it drives is likely leaked "
+                f"(worker still alive: {worker.is_alive()})"
+            )
+        if on_tick is not None:
+            on_tick()
+        time.sleep(0.0005)  # yield so the worker thread makes progress
+    worker.join(timeout=_JOIN_DEADLINE_S)
+    if worker.is_alive():
+        pytest.fail(
+            f"{label}: worker thread signalled done but did not exit within "
+            f"{_JOIN_DEADLINE_S}s of join() — it is stuck past its own completion flag"
+        )
 
 
 def _assert_project_config_lock_reacquirable(project: Project) -> None:
@@ -62,10 +121,12 @@ def test_lock_cycles_survive_concurrent_admission_writes(tmp_path: Path) -> None
 
         worker = threading.Thread(target=lock_cycles)
         worker.start()
-        while not done.is_set():
-            store.admission.request_cancel("run-cancel")
-            time.sleep(0.0005)  # yield so the lock cycles make progress
-        worker.join()
+        _wait_bounded(
+            done,
+            worker,
+            label="test_lock_cycles_survive_concurrent_admission_writes",
+            on_tick=lambda: store.admission.request_cancel("run-cancel"),
+        )
         assert errors == []
         assert store.leases.holders(part_lock("widget")) == []
         _assert_project_config_lock_reacquirable(project)
@@ -100,10 +161,12 @@ def test_cancelled_run_admission_writes_mid_build_leave_lock_reacquirable(
 
         worker = threading.Thread(target=build)
         worker.start()
-        while not done.is_set():
-            store.admission.request_cancel("run-budget")
-            time.sleep(0.0005)  # yield so the build thread makes progress
-        worker.join()
+        _wait_bounded(
+            done,
+            worker,
+            label="test_cancelled_run_admission_writes_mid_build_leave_lock_reacquirable",
+            on_tick=lambda: store.admission.request_cancel("run-budget"),
+        )
         assert "error" not in outcome, f"build crashed: {outcome.get('error')!r}"
         assert outcome["build"]["status"] == "ok"
         _assert_project_config_lock_reacquirable(project)
@@ -161,6 +224,7 @@ def test_cancel_after_close_is_a_quiet_noop(tmp_path: Path) -> None:
     fake_main = tmp_path / "fake-sidecar.js"
     fake_main.write_text("// never spawned\n")
     runtime = BridgeRuntime(
+        backend=UnsafeLocalBackend(),
         project_root=project.root,
         dist_main=fake_main,
         providers=[

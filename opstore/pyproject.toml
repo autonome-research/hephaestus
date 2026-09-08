@@ -2,7 +2,13 @@
 name = "opstore"
 version = "0.1.0"
 description = "Generic durability substrate: WAL, idempotency, CAS blobs, leases, admission, reachability/GC over SQLite + filesystem"
-requires-python = ">=3.11"
+# Closed on both sides, exactly as the root and the five sibling manifests are
+# (J-mirrors-and-dx-35). This package is the oldest in the tree and predates the
+# decision to bound the upper end; the bound is about the CONSUMER's
+# environment, not about this package's (empty) dependency list, so declaring
+# no dependencies never made it exempt. PACKAGING.md states the rule and
+# tests/stage7h/test_version_coherence.py asserts it across every member.
+requires-python = ">=3.11,<3.15"
 license = "Apache-2.0"
 dependencies = []
 

@@ -335,10 +335,32 @@ run_step() {
 
 cd "$REPO_ROOT"
 
+# Record the resolution the test helpers must agree with
+# (`server/src/hephaestus/testing/sidecar.py`, J-mirrors-and-dx-25). Before
+# this, the script deliberately avoided requiring a `pnpm` on PATH and the
+# guards asked for exactly that, so the documented bootstrap produced a checkout
+# in which every sidecar-backed test skipped. The two now agree by
+# construction: this file IS the answer, and the helper reads it. Written under
+# `agent/build/` because that is gitignored build state, next to the bundle.
+mkdir -p "$REPO_ROOT/agent/build"
+{
+	printf '{\n  "command": ['
+	sep=''
+	for word in "${PNPM[@]}"; do
+		printf '%s"%s"' "$sep" "$word"
+		sep=', '
+	done
+	printf '],\n  "how": "%s"\n}\n' "$PNPM_HOW"
+} >"$REPO_ROOT/agent/build/bootstrap_pnpm.json"
+
 run_step "the Python workspace" . uv sync --dev
 run_step "the agent's Node dependencies" agent "${PNPM[@]}" install --frozen-lockfile
 run_step "the bundled sidecar" agent "${PNPM[@]}" run bundle
 run_step "staging the sidecar into hephaestus-server" . uv run python scripts/stage_sidecar.py
+# Records what the staged bundle was built from, so HEPHAESTUS_SKIP_SIDECAR_BUILD=1
+# can later refuse a stale stage instead of guessing (the record lives in the
+# gitignored agent/build/, outside the integrity-checked staged tree).
+run_step "recording the staged sidecar's source digest" . uv run python -m hephaestus.testing.sidecar
 
 if [ "$WITH_WEB" -eq 1 ]; then
 	run_step "the web client's dependencies" web "${PNPM[@]}" install --frozen-lockfile

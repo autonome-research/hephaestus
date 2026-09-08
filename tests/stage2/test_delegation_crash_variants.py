@@ -37,6 +37,7 @@ from hephaestus.agent_bridge.delegation import (
     Delivery,
     Rejected,
 )
+from hephaestus.testing.delegation_gates import AllowAllGate
 from opstore.types import CRASH_EXIT_CODE, TerminalState
 
 from opstore import OpStore
@@ -120,7 +121,7 @@ def test_delegation_crash_leaves_at_most_one_child_and_one_terminal(
     child = expected_ref("cr-")
     store = survivor(root)
     try:
-        service = DelegationService(store.admission, store.db)
+        service = DelegationService(store.admission, store.db, gate=AllowAllGate())
         # Exactly one delegation row, carrying the id derived from the invocation.
         assert delegation_rows(store) == 1
         row = service.get(ref)
@@ -155,7 +156,7 @@ def test_delegation_crash_before_enqueue_recovers_the_persisted_child_id(
     child = expected_ref("cr-")
     store = survivor(root)
     try:
-        service = DelegationService(store.admission, store.db)
+        service = DelegationService(store.admission, store.db, gate=AllowAllGate())
         # Nothing was reserved before the crash…
         assert store.admission.occupied_run_ids() == frozenset({PARENT_RUN})
         recovered = service.recover(expected_ref("dg-"))
@@ -180,7 +181,7 @@ def test_delegation_crash_after_admission_recovers_live_before_synthesizing(
     # A survivor that still sees the owner as live must NOT synthesize a terminal.
     store = survivor(root, liveness=FakeLiveness(default=True))
     try:
-        service = DelegationService(store.admission, store.db)
+        service = DelegationService(store.admission, store.db, gate=AllowAllGate())
         recovered = service.recover(ref)
         assert recovered.phase is DelegationPhase.ADMITTED
         assert recovered.terminal_state is None
@@ -191,7 +192,7 @@ def test_delegation_crash_after_admission_recovers_live_before_synthesizing(
     # Only once owner loss is *confirmed* does recovery synthesize interrupted.
     store = survivor(root)
     try:
-        service = DelegationService(store.admission, store.db)
+        service = DelegationService(store.admission, store.db, gate=AllowAllGate())
         recovered = service.recover(ref)
         assert recovered.terminal_state is TerminalState.INTERRUPTED
         assert child_terminals(store, child) == 1
@@ -211,7 +212,7 @@ def test_delegation_crash_after_dispatch_synthesizes_one_interrupted_terminal(
     ref, child = expected_ref("dg-"), expected_ref("cr-")
     store = survivor(root)
     try:
-        service = DelegationService(store.admission, store.db)
+        service = DelegationService(store.admission, store.db, gate=AllowAllGate())
         assert service.get(ref).phase is DelegationPhase.DISPATCHED
         recovered = service.recover(ref)
         assert recovered.terminal_state is TerminalState.INTERRUPTED
@@ -231,7 +232,7 @@ def test_delegation_crash_with_cancel_requested_recovers_only_to_cancelled(
     ref, child = expected_ref("dg-"), expected_ref("cr-")
     store = survivor(root)
     try:
-        service = DelegationService(store.admission, store.db)
+        service = DelegationService(store.admission, store.db, gate=AllowAllGate())
         # The coordinator asked for cancellation before the recovery pass ran.
         assert store.admission.request_cancel(child) is True
         recovered = service.recover(ref)
@@ -285,7 +286,7 @@ def test_delegation_crash_before_parent_response_resumes_the_parent_once(
     ref, child = expected_ref("dg-"), expected_ref("cr-")
     store = survivor(root)
     try:
-        service = DelegationService(store.admission, store.db)
+        service = DelegationService(store.admission, store.db, gate=AllowAllGate())
         # The parent is still durably suspended; the child terminal is durable.
         assert store.admission.get(PARENT_RUN).suspended is True
         assert service.get(ref).terminal_state is TerminalState.COMPLETED

@@ -42,5 +42,25 @@ RUN npm install -g @playwright/test@1.62.1 \
     && npx playwright install chromium \
     && chmod -R a+rX /opt/pw-browsers
 
+# The Khronos glTF validator, PINNED (J-mirrors-and-dx-15). `mission_plan.md`
+# states glTF validation as a project claim and
+# `server/tests/test_http_gltf.py::..._khronos_...` is the lane that attempts it;
+# before this the binary existed in no image, so the test skipped on every
+# machine and in every job and the claim had no lane at all. Pinned rather than
+# floating for the same reason the renderer is: a validator-adjacent gate that
+# drifts under a moving version is what this image exists to prevent.
+#
+# Installed as `gltf_validator`, which is the name the test's PATH probe uses
+# first. Once ci.yml's digest is bumped to an image built from this file, that
+# job also sets HEPHAESTUS_REQUIRE_GLTF_VALIDATOR=1 and the test fails by name
+# instead of skipping — the fail-rather-than-skip policy the renderer gate sets.
+ARG GLTF_VALIDATOR_VERSION=2.0.0-dev.3.10
+RUN curl -fsSL -o /tmp/gltf_validator.tar.xz \
+      "https://github.com/KhronosGroup/glTF-Validator/releases/download/${GLTF_VALIDATOR_VERSION}/gltf_validator-${GLTF_VALIDATOR_VERSION}-linux64.tar.xz" \
+    && tar -xJf /tmp/gltf_validator.tar.xz -C /usr/local/bin gltf_validator \
+    && rm -f /tmp/gltf_validator.tar.xz \
+    && chmod a+rx /usr/local/bin/gltf_validator \
+    && gltf_validator --version
+
 # Surfaceless EGL on llvmpipe — the spike-recorded configuration.
 ENV EGL_PLATFORM=surfaceless LIBGL_ALWAYS_SOFTWARE=1

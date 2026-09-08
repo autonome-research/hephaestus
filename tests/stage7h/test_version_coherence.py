@@ -42,6 +42,31 @@ def test_every_python_distribution_declares_the_release_version() -> None:
     assert not off, f"these distributions are not at {EXPECTED}: {off}"
 
 
+def test_every_workspace_member_declares_the_root_python_requirement() -> None:
+    """J-mirrors-and-dx-35: one Python range for the workspace, not six plus one.
+
+    ``PACKAGING.md`` states that a workspace member shares the root's
+    ``requires-python``. The value of asserting it is the *class*, not the
+    instance: ``opstore`` declared only a lower bound for months because it was
+    created before the upper bound was decided and nothing back-filled it, and a
+    resolver could have taken a consumer onto a Python the rest of the workspace
+    refuses. CI always resolves one pinned interpreter, so nothing else surfaces
+    this.
+    """
+    root = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+    expected = str(root["project"]["requires-python"])
+    off = {
+        directory: str(
+            tomllib.loads((REPO / directory / "pyproject.toml").read_text(encoding="utf-8"))[
+                "project"
+            ]["requires-python"]
+        )
+        for directory in DISTRIBUTIONS
+    }
+    wrong = {d: v for d, v in off.items() if v != expected}
+    assert not wrong, f"these members do not declare the root's {expected!r}: {wrong}"
+
+
 def test_the_compiled_sidecar_declares_the_release_version() -> None:
     """The npm package is private, but it stamps the manifest the wheel ships."""
     pkg = json.loads((REPO / "agent" / "package.json").read_text(encoding="utf-8"))

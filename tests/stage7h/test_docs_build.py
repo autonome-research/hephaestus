@@ -28,6 +28,7 @@ leaves a broken repository behind whenever the assertion fails.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -99,6 +100,101 @@ def test_the_docs_build_covers_the_deliverable_pages_and_the_normative_set() -> 
     # And the normative root documents `verification.md` requires it to cover.
     for doc in ("README.md", "CONTRIBUTING.md", "repo_conventions.md", "verification.md"):
         assert doc in checked, f"the docs build does not check {doc}"
+
+
+# --------------------------------------------------------------------------
+# J-mirrors-and-dx-33 — the checked set is 29 documents; it should be ~50
+
+
+def test_the_docs_build_covers_interface_md_and_the_package_readmes() -> None:
+    """J-mirrors-and-dx-33: the largest specification and every package README
+    are outside the hand-maintained `ROOT_DOCS` list and `docs/` glob, so a rot
+    inside them is invisible to the one job that claims to be "the docs build".
+
+    `INTERFACE.md` is the largest specification in the repository (§2.3's route
+    table is what `server/tests/test_http_boundary.py`'s
+    `test_the_unserved_spec_routes_are_a_named_disjoint_allowlist` needs this
+    widening for — see that test's docstring). The package READMEs are real,
+    tracked, linked-from-root documents (`README.md` and `CONTRIBUTING.md` both
+    point into them) that happen to sit one level below the hand-listed set.
+    """
+    proc = _run("docs_check.py", "--list")
+    assert proc.returncode == 0, proc.stderr
+    checked = {line.strip() for line in proc.stdout.splitlines() if line.strip()}
+
+    assert "INTERFACE.md" in checked, (
+        "the docs build does not check INTERFACE.md — the largest specification "
+        "in the repository rots invisibly, and server/tests/test_http_boundary.py "
+        "names this as its own prerequisite (J-mirrors-and-dx-33)"
+    )
+    for readme in (
+        "agent/README.md",
+        "web/README.md",
+        "web/e2e/README.md",
+        "core/README.md",
+        "server/README.md",
+        "contract/README.md",
+        "opstore/README.md",
+        "docker/ci/README.md",
+    ):
+        assert readme in checked, f"the docs build does not check {readme}"
+
+
+def test_a_package_relative_reference_is_checked_against_its_own_directory(
+    synthetic_repo: Path,
+) -> None:
+    """J-mirrors-and-dx-33's second, independent bug: even a checked document's
+    package-relative paths are invisible, because `_check_code_paths` only
+    resolves a token whose first segment is a real repository TOP-LEVEL entry
+    and silently skips everything else.
+
+    `web/README.md` cites `` `src/tokens.css` `` meaning, from its own
+    directory, `web/src/tokens.css` — which does not exist; the real file is
+    one directory deeper, `web/src/system/tokens.css`. `"src"` is not a
+    repository top-level entry, so today this reference is skipped rather than
+    resolved-and-flagged, regardless of whether `web/README.md` is in the
+    checked set at all. The fix tries the document's OWN directory first — the
+    same thing `_check_links` already does for relative links — before
+    concluding a package-relative-looking token is not a repository path.
+    """
+    # Pinned against a SYNTHETIC document rather than against the live page.
+    # The live `web/README.md` reference this test was written from has since
+    # been corrected to `src/system/tokens.css` (J-mirrors-and-dx-33 asks for
+    # both: the rule AND the five real references it finally makes visible), so
+    # asserting on the page would make this test evaporate the moment the defect
+    # it describes was fixed. The shape is preserved exactly: a package README,
+    # a first segment that is not a repository top-level entry, and a real file
+    # one directory deeper than the one named.
+    package = synthetic_repo / "web"
+    (package / "src" / "system").mkdir(parents=True)
+    (package / "src" / "system" / "tokens.css").write_text("", encoding="utf-8")
+    readme = package / "README.md"
+    readme.write_text("| `src/tokens.css` | the design tokens |\n", encoding="utf-8")
+
+    problems = docs_check.check([readme])
+    assert any("tokens.css" in problem for problem in problems), (
+        "docs_check.check() does not flag a dead `src/tokens.css` reference: a "
+        "package-relative path (first segment not a repository top-level entry) "
+        "must be tried against the document's own directory before being "
+        f"skipped. Reported problems: {problems}"
+    )
+
+    # The live page's own correctness is asserted by the whole-set run above
+    # (`test_the_docs_build_resolves_every_reference`); it cannot be checked
+    # here, because `synthetic_repo` moves the checker's repository root.
+
+
+def test_a_package_relative_path_that_resolves_against_its_own_directory_passes(
+    synthetic_repo: Path,
+) -> None:
+    """The positive half: once resolution tries the document's own directory,
+    a package-relative reference that genuinely exists must NOT be flagged."""
+    pkg = synthetic_repo / "core"
+    (pkg / "sub").mkdir(parents=True)
+    (pkg / "sub" / "real.py").write_text("x = 1\n", encoding="utf-8")
+    readme = pkg / "README.md"
+    readme.write_text("# core\n\nSee `sub/real.py` for the entry point.\n", encoding="utf-8")
+    assert docs_check.check([readme]) == []
 
 
 def test_every_governed_file_carries_the_apache_header() -> None:
@@ -239,3 +335,96 @@ def test_a_shebang_survives_the_applied_header(synthetic_repo: Path) -> None:
     text = tool.read_text(encoding="utf-8")
     assert text.startswith("#!/usr/bin/env python3\n")
     assert license_headers.has_header(text)
+
+
+# --------------------------------------------------------------------------
+# J-mirrors-and-dx-29 — the flag form of `pnpm --dir` teaches a broken command
+
+
+#: `CONTRIBUTING.md` and `docs/install.md` are the two documents that
+#: established the corepack analysis; they are exempt because they are the
+#: source of the reason, not a copy that needs to point back at it.
+_GOVERNED_DOCS: Final[tuple[str, ...]] = (
+    "agent/README.md",
+    "web/README.md",
+    "web/e2e/README.md",
+    "repo_conventions.md",
+)
+
+#: A `pnpm --dir <pkg> …` invocation run from outside that package's own
+#: directory silently drops the `packageManager` pin under corepack
+#: (`CONTRIBUTING.md`'s "pnpm: the pin, and where its settings live"). It is
+#: SAFE only immediately after an explicit `corepack prepare … --activate` (or
+#: inside a fenced block that documents that activation) — J-mirrors-and-dx-34
+#: names exactly this exemption for `ci.yml`.
+_DIR_FLAG_RE: Final[re.Pattern[str]] = re.compile(r"pnpm --dir\s")
+_ACTIVATION_HINT_RE: Final[re.Pattern[str]] = re.compile(
+    r"corepack prepare|activates the (repository )?pin|corepack note"
+)
+
+
+#: Documents that still teach the flag form, with the reason each is not fixed
+#: here. SELF-CLEARING: the test below asserts that every entry still HAS the
+#: defect, so the entry cannot outlive it — fixing the document turns this red
+#: and forces the entry out.
+_FLAG_FORM_PENDING: dict[str, str] = {
+    # A root specification. The audit calls `repo_conventions.md:167` the
+    # primary edit (a conventions line prescribing the broken form) and the
+    # exact replacement text is drafted in the L9 handoff for the single
+    # specification pass that owns this file (J-mirrors-and-dx-29).
+    "repo_conventions.md": "spec-owned; amendment drafted for the spec pass",
+}
+
+
+def test_a_pending_flag_form_document_still_has_the_defect() -> None:
+    """An exclusion may not outlive the thing it excuses."""
+    for relative in _FLAG_FORM_PENDING:
+        lines = (REPO / relative).read_text(encoding="utf-8").splitlines()
+        assert any(_DIR_FLAG_RE.search(line) for line in lines), (
+            f"{relative} no longer teaches the flag form — delete its entry from "
+            "_FLAG_FORM_PENDING so the document is checked like every other one"
+        )
+
+
+def test_no_governed_document_teaches_the_bare_pnpm_dir_flag_form() -> None:
+    """J-mirrors-and-dx-29: `CONTRIBUTING.md` and `docs/install.md` each spend a
+    paragraph establishing that `pnpm --dir <pkg> …` run from the clone root
+    resolves no `packageManager` field under corepack and silently uses
+    whatever is activated — which is why every documented step in those two
+    files is written as `cd agent && pnpm …` / `(cd web && pnpm …)`. Four other
+    governed documents were never updated to match, because nothing checked
+    them (J-mirrors-and-dx-33): `agent/README.md`, `web/README.md`,
+    `web/e2e/README.md`, and `repo_conventions.md:167` — the most
+    authoritative of the four, a *conventions* line prescribing the broken
+    form.
+
+    A document earns an exemption only by mentioning the corepack activation
+    near the flag (the way `ci.yml`'s corepack lane does) — mechanical,
+    cheap, and exactly what stops this class from recurring per the fix's own
+    words: "a console block in a governed document may not contain the flag
+    form unless the same block or its preceding lines mention the
+    activation".
+    """
+    offenders: dict[str, list[int]] = {}
+    for relative in _GOVERNED_DOCS:
+        if relative in _FLAG_FORM_PENDING:
+            continue
+        path = REPO / relative
+        lines = path.read_text(encoding="utf-8").splitlines()
+        bad_lines = []
+        for lineno, line in enumerate(lines, start=1):
+            if not _DIR_FLAG_RE.search(line):
+                continue
+            window = "\n".join(lines[max(0, lineno - 6) : lineno])
+            if _ACTIVATION_HINT_RE.search(window):
+                continue
+            bad_lines.append(lineno)
+        if bad_lines:
+            offenders[relative] = bad_lines
+    assert not offenders, (
+        "these documents teach `pnpm --dir <pkg> …` with no nearby corepack-"
+        f"activation note, which CONTRIBUTING.md's own analysis says will not "
+        f"carry the version pin: {offenders}. Rewrite to the from-inside form "
+        "(`cd agent && pnpm …`) with a pointer at the corepack note, the way "
+        "docs/install.md and CONTRIBUTING.md already do."
+    )
