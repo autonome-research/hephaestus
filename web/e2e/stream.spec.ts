@@ -72,12 +72,9 @@ async function openSession(page: Page, sessionId: string): Promise<void> {
 /**
  * Every event id the transcript has rendered, in document order.
  *
- * §7.2 (a) coalesces consecutive identical successful calls into one row, and
- * that row carries `data-event-id` (its first member) **and** `data-event-ids`
- * (every member, first included). The two are read together, deduplicated
- * per node, which is exactly the clause's own predicate: the multiset of ids in
- * `data-event-id` ∪ `data-event-ids` equals the multiset of event ids. A
- * coalescing that lost an id fails here rather than passing quietly.
+ * Approved conversation-first rendering gives every tool call its own row.
+ * The legacy plural attribute is still read so this identity assertion remains
+ * strict across any archived row shape: no layout grouping may lose an id.
  */
 async function renderedEventIds(page: Page): Promise<string[]> {
   return await page
@@ -95,13 +92,7 @@ async function renderedEventIds(page: Page): Promise<string[]> {
     );
 }
 
-/**
- * The chip rendering one tool call, coalesced or not.
- *
- * §7.2 (a): `data-tool-call-id` stays singular on a lone chip and becomes
- * `data-tool-call-ids` on a coalesced row, so a gate that addressed calls by the
- * singular attribute alone would stop seeing the repeated ones.
- */
+/** The chip rendering one tool call (legacy grouped attributes included). */
 function chipForCall(page: Page, callId: string) {
   return page
     .locator(`[data-tool-call-id="${callId}"], [data-tool-call-ids~="${callId}"]`)
@@ -283,20 +274,9 @@ test("every chip carries its required and referenced result fields (G4.D)", asyn
   for (const call of calls) {
     const callId = call.tool_call_id ?? "";
     const toolName = String((call.payload ?? {})["name"] ?? "");
-    // §7.2 C4/C5 (amended 2026-09-02): a call folded into a cycle group is
-    // addressed by its COMPACT LINE's `data-tool-call-ids`, while the shared
-    // contract — name, status, the byte-identical document's `data-field`
-    // nodes — rides the cycle's FIRST chip, rendered once. The contract is
-    // therefore asserted on that chip for folded members.
-    const folded = page.locator(`[data-cycle-line][data-tool-call-ids~="${callId}"]`);
-    const chip =
-      (await folded.count()) > 0
-        ? page
-            .locator(
-              `li[data-row="cycle"]:has([data-cycle-line][data-tool-call-ids~="${callId}"]) [data-tool-name]`,
-            )
-            .first()
-        : chipForCall(page, callId);
+    // Approved conversation-first rendering gives every call an independently
+    // expandable chip, so its schema contract is asserted on that call's chip.
+    const chip = chipForCall(page, callId);
     await expect(chip).toHaveAttribute("data-tool-name", toolName);
 
     const result = results.get(callId);
@@ -349,24 +329,24 @@ test("every chip carries its required and referenced result fields (G4.D)", asyn
 });
 
 // --------------------------------------------------------------------------
-// §7.2 (a)-(c), amended 2026-09-01 — the resting face, and repetition
+// Approved conversation-first semantics — one independently expandable tool
+// row per call. Repetition never hides narration or changes event identity.
 
-test("repeated identical calls coalesce, and the resting face drops the field count (§7.2)", async ({
+test("repeated calls remain individual collapsed tools and keep every identity (§7)", async ({
   page,
 }) => {
-  // The recorded turn scans the project check set 130 times, in runs broken up
-  // by the agent's own narration. That is the shape the amendment exists for,
-  // and the expectations here are derived from the archive rather than written
-  // down, so a re-recorded fixture cannot silently make this test vacuous.
   const rows = archived().filter((row) => row.session_id === ORCHESTRATOR);
-  const repeated = new Map<string, number>();
+  const callsByTool = new Map<string, ArchivedEvent[]>();
   for (const row of rows) {
     if (row.kind !== "tool_call") continue;
     const name = String((row.payload ?? {})["name"] ?? "");
-    repeated.set(name, (repeated.get(name) ?? 0) + 1);
+    callsByTool.set(name, [...(callsByTool.get(name) ?? []), row]);
   }
-  const [tool, calls] = [...repeated.entries()].sort((a, b) => b[1] - a[1])[0] ?? ["", 0];
-  expect(calls, "the fixture transcript no longer repeats any call").toBeGreaterThan(1);
+  const [tool, calls] = [...callsByTool.entries()].sort((a, b) => b[1].length - a[1].length)[0] ?? [
+    "",
+    [],
+  ];
+  expect(calls.length, "the fixture transcript no longer repeats any call").toBeGreaterThan(1);
 
   await openSession(page, ORCHESTRATOR);
   await expect(page.locator("[data-history-state]")).toHaveAttribute(
@@ -376,72 +356,35 @@ test("repeated identical calls coalesce, and the resting face drops the field co
   );
 
   const chips = page.locator(`[data-tool-name="${tool}"]`);
-  await expect(chips.first()).toBeVisible();
+  await expect(chips).toHaveCount(calls.length);
+  await expect(page.locator("[data-chip-repeat], [data-cycle-line]")).toHaveCount(0);
+
+  const callIds = calls.map((call) => call.tool_call_id ?? "");
   const drawn = await chips.evaluateAll((nodes) =>
     nodes.map((node) => ({
-      repeat: node.getAttribute("data-chip-repeat"),
-      events: (node.getAttribute("data-event-ids") ?? "").split(" ").filter((id) => id !== ""),
-      callIds: (node.getAttribute("data-tool-call-ids") ?? "").split(" ").filter((id) => id !== ""),
-      singleCall: node.getAttribute("data-tool-call-id"),
-      count: node.querySelector("header")?.textContent ?? "",
+      callId: node.getAttribute("data-tool-call-id"),
+      open: node.querySelector("[data-chip-detail]")?.hasAttribute("open") ?? false,
     })),
   );
-
-  // One row per RUN of identical calls, not one per call.
-  expect(drawn.length).toBeLessThan(calls);
-  let addressed = 0;
-  for (const chip of drawn) {
-    if (chip.repeat === null) {
-      // A run of one keeps the singular attribute and draws no count.
-      expect(chip.singleCall).toBeTruthy();
-      expect(chip.count).not.toContain("×");
-      addressed += 1;
-      continue;
-    }
-    // Nothing left the DOM: the count, the member event ids and the member
-    // tool-call ids all agree, and the count is drawn as `×N`.
-    expect(Number(chip.repeat)).toBeGreaterThan(1);
-    expect(chip.events).toHaveLength(Number(chip.repeat));
-    expect(chip.callIds).toHaveLength(Number(chip.repeat));
-    expect(chip.singleCall).toBeNull();
-    expect(chip.count).toContain(`×${chip.repeat}`);
-    addressed += chip.callIds.length;
+  expect(drawn.map((chip) => chip.callId)).toEqual(callIds);
+  expect(drawn.every((chip) => !chip.open), "a tool disclosure opened by default").toBe(true);
+  for (const callId of callIds) {
+    await expect(page.locator(`[data-tool-call-id="${callId}"]`)).toHaveCount(1);
   }
 
-  // §7.2 C4/C5 (amended 2026-09-02): the fixture's scan/narrate loop also
-  // folds into cycle groups — subsequent (chip, text) pairs render as compact
-  // lines, each carrying its pair's tool-call ids and event ids (call AND
-  // result per member), so no coalescing of either kind swallows a call.
-  const compact = await page
-    .locator(`li[data-row="cycle"]:has([data-tool-name="${tool}"]) [data-cycle-line]`)
-    .evaluateAll((nodes) =>
-      nodes.map((node) => ({
-        ordinal: node.getAttribute("data-cycle-line"),
-        events: (node.getAttribute("data-event-ids") ?? "").split(" ").filter((id) => id !== ""),
-        callIds: (node.getAttribute("data-tool-call-ids") ?? "")
-          .split(" ")
-          .filter((id) => id !== ""),
-        text: node.textContent ?? "",
-      })),
-    );
-  for (const line of compact) {
-    expect(line.callIds.length).toBeGreaterThan(0);
-    // One call and one result event per member: relocation, not elision.
-    expect(line.events).toHaveLength(line.callIds.length * 2);
-    expect(line.text).toContain(`×${line.ordinal ?? ""}`);
-    expect(line.text).toContain(tool);
-    addressed += line.callIds.length;
-  }
-  expect(addressed, "a coalesced row swallowed a call").toBe(calls);
-
-  // §7.2 (b): with every disclosure closed the field count is nowhere in the
-  // transcript; opening one renders it exactly once.
+  // Details remain mounted for identity/schema coverage but hidden until this
+  // call's own native disclosure opens. Opening one must not open its peers.
+  const first = chips.first();
+  await expect(first.locator("[data-field]").first()).toBeHidden();
   await expect(page.locator("[data-chip-detail-count]")).toHaveCount(0);
-  await page.locator("[data-chip-detail] > summary").first().click();
+  await first.locator("[data-chip-detail] > summary").click();
+  await expect(first.locator("[data-chip-detail]")).toHaveAttribute("open", "");
+  await expect(first.locator("[data-field]").first()).toBeVisible();
+  await expect(page.locator("[data-chip-detail][open]")).toHaveCount(1);
   await expect(page.locator("[data-chip-detail-count]")).toHaveCount(1);
 
-  // §7.2 (c): a successful call with a result draws no preamble note. The
-  // fixture's successful chips are the ones that would have stacked them.
+  // Successful tools stay quiet at rest; failure handling is covered by the
+  // schema/status test above and remains per-call rather than grouped.
   const notes = await chips.evaluateAll((nodes) =>
     nodes.map((node) => node.textContent ?? "").filter((text) => text.includes("No result for")),
   );
@@ -466,18 +409,19 @@ test("the quick-edit child threads under its parent in the tab list (G4.10)", as
   expect(child, "the fixture's quick-edit edge is missing").toBeDefined();
 
   await openSession(page, ORCHESTRATOR);
-  const tabs = page.locator("[data-session-tab]");
-  await expect(tabs.filter({ has: page.locator(":scope") })).not.toHaveCount(0);
-
+  // The compact header draws only the selected tab. The full server-shaped
+  // forest lives in the session dropdown, where depth/kind remain inspectable.
   const parentTab = page.locator(`[data-session-tab="${ORCHESTRATOR}"]`);
-  const childTab = page.locator(`[data-session-tab="${QUICK_EDIT}"]`);
   await expect(parentTab).toHaveAttribute("data-thread-depth", "0");
-  await expect(childTab).toHaveAttribute("data-thread-depth", String(child?.depth ?? -1));
-  await expect(childTab).toHaveAttribute("data-thread-kind", "quick_edit");
+  await page.locator("[data-session-switch]").click();
+  const childOption = page.locator(`[data-session-option="${QUICK_EDIT}"]`);
+  await expect(childOption).toHaveAttribute("data-thread-depth", String(child?.depth ?? -1));
+  await expect(childOption).toHaveAttribute("data-thread-kind", "quick_edit");
 
-  // The child's own transcript reopens under its own identities — a nested tab
-  // is a real session, not a label.
-  await childTab.click();
+  // The child's own transcript reopens under its own identities — a dropdown
+  // option addresses a real session, not merely a label.
+  await childOption.click();
+  await expect(page.locator(`[data-session-tab="${QUICK_EDIT}"]`)).toHaveCount(1);
   await expect(page.locator("[data-history-state]")).toHaveAttribute(
     "data-history-state",
     "complete",
@@ -492,14 +436,12 @@ test("the quick-edit child threads under its parent in the tab list (G4.10)", as
 });
 
 // --------------------------------------------------------------------------
-// §4.1(e), §7.1(a)(b), amended 2026-09-01 — the column names itself once
+// Approved compact session header: selected title at rest, full forest in a
+// dropdown, and diagnostics behind a secondary disclosure.
 
-test("the stream column says 'session' once above the transcript (§7.1, §4.1(e))", async ({
+test("the compact session header switches through the session dropdown (§7.1)", async ({
   page,
 }) => {
-  // §0.2b's measurement: above the first transcript event the column drew an
-  // `Agent` eyebrow, a `SESSIONS` heading, a session tab, and a
-  // `New session` / `Ask about tread` pair — four bands for one column.
   await openSession(page, ORCHESTRATOR);
   const column = page.locator("aside");
   await expect(page.locator("[data-session-tab]").first()).toBeVisible();
@@ -509,6 +451,36 @@ test("the stream column says 'session' once above the transcript (§7.1, §4.1(e
   await expect(column.getByRole("heading")).toHaveCount(0);
   await expect(column.getByText("Sessions", { exact: true })).toHaveCount(0);
   await expect(column.locator("[role='tablist']")).toHaveAttribute("aria-label", "Sessions");
+  await expect(page.locator("[data-session-tab]")).toHaveCount(1);
+  await expect(page.locator(`[data-session-tab="${ORCHESTRATOR}"]`)).toHaveCount(1);
+
+  // The full session forest is a dropdown, not a row of tabs. It retains every
+  // session's identity and thread metadata, and explicit selection closes the
+  // switcher and restores focus to its stable trigger.
+  const sessionSwitch = page.locator("[data-session-switch]");
+  await expect(sessionSwitch).toHaveAttribute("aria-expanded", "false");
+  await sessionSwitch.click();
+  const switcher = page.locator("[data-session-switch-open]");
+  await expect(switcher).toHaveCount(1);
+  const listing = await api<SessionsDocument>("/sessions");
+  await expect(switcher.locator("[data-session-option]")).toHaveCount(listing.sessions.length);
+  for (const row of listing.sessions) {
+    await expect(switcher.locator(`[data-session-option="${row.session_id}"]`)).toHaveCount(1);
+  }
+  const optionNames = await switcher
+    .locator("[data-session-option]")
+    .evaluateAll((nodes) =>
+      nodes.map((node) => node.getAttribute("aria-label") ?? node.textContent ?? ""),
+    );
+  for (const name of optionNames) {
+    expect(name).not.toBe("");
+    expect(name).not.toBe("New session");
+    expect(name).not.toBe("Start a session");
+    expect(name).not.toMatch(/^Ask about /);
+  }
+  await switcher.locator(`[data-session-option="${ORCHESTRATOR}"]`).click();
+  await expect(switcher).toHaveCount(0);
+  await expect(sessionSwitch).toBeFocused();
 
   // §7.1(b): one compact create in the strip, and neither wording drawn as a
   // visible button label while the strip is drawn. The menu is drawn only while
@@ -539,21 +511,6 @@ test("the stream column says 'session' once above the transcript (§7.1, §4.1(e
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
 
-  // §7.1 C6 (amended 2026-09-02), both sides: every rendered tab's accessible
-  // name is a noun phrase that is not string-equal to any create-control label.
-  const tabNames = await page
-    .locator("[data-session-tab]")
-    .evaluateAll((nodes) =>
-      nodes.map((node) => node.getAttribute("aria-label") ?? node.textContent ?? ""),
-    );
-  expect(tabNames.length).toBeGreaterThan(0);
-  for (const name of tabNames) {
-    expect(name).not.toBe("");
-    expect(name).not.toBe("New session");
-    expect(name).not.toBe("Start a session");
-    expect(name).not.toMatch(/^Ask about /);
-  }
-
   // §3.9 C29: the `+` is a quiet button with a worded accessible name, never a
   // bare accent glyph.
   await expect(create).toHaveAttribute("data-variant", "quiet");
@@ -575,34 +532,18 @@ test("the stream column says 'session' once above the transcript (§7.1, §4.1(e
   });
   expect(placement).toEqual({ last: true });
 
-  // C25's count: above the transcript scroll region the strip leads, and the
-  // only element that may follow it is the NAMED exception row — the one
-  // hosting the §7.4 badge / `[data-resync-count]` / §8 historyBar. In the
-  // steady state (stream `live`, no fault, no §8(a) condition) that row is not
-  // mounted and the strip is alone.
-  const chromeRows = await page.locator('[data-testid="stream-panel"]').evaluate((panel) => {
-    const main = panel.querySelector("[data-stream-main]");
-    const rows: string[] = [];
-    for (const child of panel.children) {
-      if (child === main) break;
-      if (child.getAttribute("data-session-strip") !== null) {
-        rows.push("strip");
-      } else if (
-        child.querySelector("[data-stream-state], [data-history-bar], [data-resync-count]") !==
-        null
-      ) {
-        rows.push("exception");
-      } else {
-        rows.push(child.tagName);
-      }
-    }
-    return rows;
-  });
-  expect(chromeRows[0]).toBe("strip");
-  expect(chromeRows.length).toBeLessThanOrEqual(2);
-  if (chromeRows.length === 2) expect(chromeRows[1]).toBe("exception");
-  // And the steady state proper is asserted where the fixture guarantees it:
-  // G4.8's live-socket test reads `[data-stream-state]` count 0.
+  // Successful connection/history details are optional diagnostics, collapsed
+  // behind one native disclosure instead of occupying a prominent status row.
+  const diagnostics = page.locator('[data-testid="stream-panel"] > details').first();
+  await expect(diagnostics).toHaveCount(1);
+  await expect(diagnostics).not.toHaveAttribute("open", "");
+  await expect(diagnostics.locator(":scope > summary")).toBeVisible();
+  await expect(
+    page.locator(
+      '[data-testid="stream-panel"] > [data-stream-state], [data-testid="stream-panel"] > [data-history-bar]',
+    ),
+  ).toHaveCount(0);
+  await expect(page.locator("[data-current-turn]")).toHaveCount(0);
 });
 
 // --------------------------------------------------------------------------
@@ -760,106 +701,75 @@ test("every descendant of the stream aside fits inside it, at two widths (J-web-
 });
 
 // --------------------------------------------------------------------------
-// B-9 — creating a session keeps every other session in the strip
-// (audit-2026-09-04-broken.md B-9). THE REGRESSION THIS GUARDS: before the fix,
-// the strip rendered only the selected session's own thread walk, so creating
-// a second ROOT (the only way to mint one from the browser) emptied the strip
-// down to that one new tab while `GET /sessions` kept listing every session.
+// B-9 — the compact selected title is singular, but the session dropdown must
+// retain every listed session after create and reload.
 
-test("creating a session keeps every other session in the strip, and the new one survives reload (B-9)", async ({
+test("creating a session keeps every session in the dropdown, and the new one survives reload (B-9)", async ({
   page,
 }, testInfo) => {
   await openSession(page, ORCHESTRATOR);
+  await page.locator("[data-session-switch]").click();
   const before = await page
-    .locator("[data-session-tab]")
-    .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-session-tab")));
+    .locator("[data-session-option]")
+    .evaluateAll((nodes) =>
+      nodes
+        .map((node) => node.getAttribute("data-session-option"))
+        .filter((id): id is string => id !== null),
+    );
   expect(before.length).toBeGreaterThan(0);
   const beforeSet = new Set(before);
+  await page.keyboard.press("Escape");
 
-  // §7.1(b): the create affordance is either a direct `[data-session-create]`
-  // button (no part selected) or a `+` that opens a menu naming it (a part is
-  // selected here, via `route`'s default). Handle both shapes.
   const menuButton = page.locator("[data-session-create-menu]");
-  if ((await menuButton.count()) > 0) {
-    await menuButton.click();
-  }
+  if ((await menuButton.count()) > 0) await menuButton.click();
   await page.locator("[data-session-create]").first().click();
 
-  // The strip must GROW, never shrink to one, and the panel settles once the
-  // new session's own tab is drawn (its create callback selects it).
+  // Creation selects the new session in the compact header; it does not add a
+  // second resting tab. Wait for that concrete result rather than a tab count.
   await expect
-    .poll(async () => await page.locator("[data-session-tab]").count(), {
+    .poll(async () => await page.locator("[data-session-tab]").getAttribute("data-session-tab"), {
       timeout: 30_000,
     })
-    .toBeGreaterThan(before.length);
+    .not.toBe(ORCHESTRATOR);
+  await expect(page.locator("[data-session-tab]")).toHaveCount(1);
+  const created = await page.locator("[data-session-tab]").getAttribute("data-session-tab");
+  expect(created, "the create action selected no new session").not.toBeNull();
+  expect(beforeSet.has(created ?? ""), "the selected session was not new").toBe(false);
 
-  const afterTabs = await page
-    .locator("[data-session-tab]")
-    .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-session-tab")));
-
-  // Every previously-shown session is STILL shown.
-  for (const id of before) {
-    expect(afterTabs, `session ${id ?? "?"} disappeared from the strip after create`).toContain(id);
-  }
-
-  // Every session the server now lists has a tab: membership is the listing,
-  // not the selected thread (§7.1, corrected).
   const listing = await api<SessionsDocument>("/sessions");
+  await page.locator("[data-session-switch]").click();
+  const options = page.locator("[data-session-option]");
+  await expect(options).toHaveCount(listing.sessions.length);
+  const after = await options.evaluateAll((nodes) =>
+    nodes.map((node) => node.getAttribute("data-session-option")),
+  );
+  for (const id of before) {
+    expect(after, `session ${id} disappeared from the dropdown after create`).toContain(id);
+  }
   for (const row of listing.sessions) {
-    expect(afterTabs, `listed session ${row.session_id} has no tab in the strip`).toContain(
+    expect(after, `listed session ${row.session_id} has no dropdown option`).toContain(
       row.session_id,
     );
   }
+  expect(after).toContain(created);
+  await page.keyboard.press("Escape");
 
-  const created = afterTabs.find((id) => id !== null && !beforeSet.has(id)) ?? null;
-  expect(created, "no new tab appeared after create").not.toBeNull();
-
-  // Reload with NO `s=` in the URL: §4.5 falls back to the first listed
-  // session, never the one just created, so the new session's tab must still
-  // be reachable in the strip rather than only by hand-editing the fragment.
   await page.reload();
-  await expect(page.locator("[data-session-tab]").first()).toBeVisible();
-  const reloadedTabs = await page
-    .locator("[data-session-tab]")
-    .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-session-tab")));
-  expect(reloadedTabs, `the created session ${created ?? "?"} is gone after reload`).toContain(
-    created,
-  );
+  await expect(page.locator("[data-session-switch]")).toBeVisible();
+  await page.locator("[data-session-switch]").click();
+  await expect(page.locator(`[data-session-option="${created ?? ""}"]`)).toHaveCount(1);
 
   await archive(page, testInfo, "b9-create-keeps-strip");
 });
 
 // --------------------------------------------------------------------------
-// J-web-stream-7 — the project observer re-creates its socket on every query
-// settle.
-//
-// §7A.11's specified steady state is TWO open sockets per page — the stream
-// column subscribes to the selected session, the project observer to every
-// enumerated session — and the defect was a THIRD socket opened and closed a
-// few milliseconds after load: invisible to a socket count taken once at rest,
-// which is why this counts every CONSTRUCTION across the load and one tab
-// switch rather than sampling the open set afterwards.
+// J-web-stream-7 — one project observer owns transport for every conversation.
+// Count every construction as well as the open set so a close/reopen duplicate
+// cannot hide behind an unchanged steady-state count.
 
-test("a load and one tab switch construct exactly two WebSockets (J-web-stream-7)", async ({
+test("a load and session-dropdown switch keep one project WebSocket (J-web-stream-7)", async ({
   page,
 }) => {
-  // Two counters, because "two sockets" is checked two ways:
-  //
-  // * `openCount` — sockets constructed and not yet closed. §7A.11's specified
-  //   STEADY STATE ("two sockets per page") is this number, and it must read 2
-  //   at rest after the load AND again at rest after the switch — the stream
-  //   column's own socket is *expected* to close-and-reopen on a session
-  //   change (it is keyed on the selected session by design), so the open
-  //   count is what stays invariant, not the identity of which sockets are up.
-  // * `totalConstructed` — every construction ever, which is what actually
-  //   catches the regression: the bug was an EXTRA close+open pair on the
-  //   project observer's own socket, which nets to zero change in `openCount`
-  //   (one closes, one opens) and would therefore be invisible to an
-  //   open-count check alone. A load constructs exactly 2 (one stream socket,
-  //   one observer); switching to a DIFFERENT session legitimately adds ONE
-  //   MORE (the stream column's own reconnect to the new session) for a total
-  //   of 3 — never 4, which is what an observer that also reconnected on the
-  //   switch would produce.
   await page.addInitScript(() => {
     const counters = { open: 0, total: 0 };
     (window as unknown as { __ws: typeof counters }).__ws = counters;
@@ -878,32 +788,33 @@ test("a load and one tab switch construct exactly two WebSockets (J-web-stream-7
   });
 
   await openSession(page, ORCHESTRATOR);
-  // Let the churn defect's own window pass: it opened a third socket and tore
-  // it down again within milliseconds, so both counters must settle rather
-  // than being read mid-churn.
+  // Do not sample before connection. `data-stream=live` is written from the
+  // socket status callback, so it is explicit evidence that construction and
+  // subscription completed before the counters are inspected.
+  await expect(page.locator('[data-testid="stream-panel"]')).toHaveAttribute(
+    "data-stream",
+    "live",
+    { timeout: 60_000 },
+  );
   await page.waitForTimeout(1_000);
   const afterLoad = await page.evaluate(
     () => (window as unknown as { __ws: { open: number; total: number } }).__ws,
   );
-  expect(afterLoad.open, "sockets open at rest after load").toBe(2);
-  expect(afterLoad.total, "sockets ever constructed by load").toBe(2);
+  expect(afterLoad.open, "project socket open after connection").toBe(1);
+  expect(afterLoad.total, "duplicate socket constructed during load").toBe(1);
 
-  // One tab switch, to a DIFFERENT session, with the observer's subscribed
-  // SET unchanged (both sessions were already listed): §7A.11 says the
-  // observer reconnects only when the content of that set changes, never on a
-  // tab switch — the second reconnect source the root cause names, separate
-  // from the stream column's own legitimate per-session resubscribe.
-  await page.locator(`[data-session-tab="${QUICK_EDIT}"]`).click();
-  await expect(page.locator('[data-testid="transcript"]')).toBeVisible();
+  // The observer already subscribes to the full listed set. Changing only the
+  // selected conversation through the dropdown must not reconnect it.
+  await page.locator("[data-session-switch]").click();
+  await page.locator(`[data-session-option="${QUICK_EDIT}"]`).click();
+  await expect(page.locator(`[data-session-tab="${QUICK_EDIT}"]`)).toHaveCount(1);
+  await expect(page.locator('[data-testid="stream-panel"]')).toHaveAttribute("data-stream", "live");
   await page.waitForTimeout(1_000);
   const afterSwitch = await page.evaluate(
     () => (window as unknown as { __ws: { open: number; total: number } }).__ws,
   );
-  expect(afterSwitch.open, "sockets open at rest after the switch — the steady state").toBe(2);
-  expect(
-    afterSwitch.total,
-    "sockets ever constructed by load + one tab switch — 2 plus the stream column's own expected reconnect, and no more",
-  ).toBe(3);
+  expect(afterSwitch.open, "project socket open after the switch").toBe(1);
+  expect(afterSwitch.total, "session selection constructed a duplicate socket").toBe(1);
 });
 
 // --------------------------------------------------------------------------
@@ -977,20 +888,18 @@ test("a session started by `heph agent` streams live into the panel (G4.8)", asy
     });
     await expect(page.locator("[data-terminal-backpressure]")).toHaveCount(0);
 
-    // J-web-stream-9: the id stays on the data attribute and the `title`, and
-    // is NEVER drawn as visible text — §7.1's 2026-09-03 house rule, applied
-    // here. The band's own attribute is the ground truth for what the raw
-    // identity looks like, so the negative reads directly against it rather
-    // than against a guessed shape.
+    // The successful outcome is concise at rest. Exact terminal provenance is
+    // retained in the attribute/title and in a collapsed diagnostic; DOM
+    // `textContent` includes that hidden JSON, so visible text is checked on
+    // the resting outcome span rather than by pretending hidden text is drawn.
     const terminalId = await terminal.getAttribute("data-terminal-id");
     expect(terminalId, "the band minted no data-terminal-id to check against").toBeTruthy();
-    const bandText = (await terminal.textContent()) ?? "";
-    if (terminalId !== null) {
-      expect(bandText, `the band's visible text contains its own id "${terminalId}"`).not.toContain(
-        terminalId,
-      );
-    }
+    const outcomeText = (await terminal.locator(":scope > span").first().innerText()) ?? "";
+    expect(outcomeText).not.toBe("");
+    expect(outcomeText).not.toContain(terminalId ?? "");
+    await expect(terminal.locator(":scope > details")).not.toHaveAttribute("open", "");
     expect(await terminal.getAttribute("title")).toContain(terminalId ?? "");
+    await expect(terminal.locator(":scope > details pre")).toContainText(terminalId ?? "");
 
     // §7.3 C1/C21 (amended 2026-09-02), the observer's negative halves: this
     // browser did not send the prompt, so it mints NO local-prompt echo — an

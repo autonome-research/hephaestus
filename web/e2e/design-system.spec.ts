@@ -776,12 +776,11 @@ test("accent ink/fill renders only on interactive elements or the link recipe (�
   expect(sweep.fieldInk).not.toBe(sweep.accentInk);
 });
 
-// §4.7 (C11), amended 2026-09-02 — a finished, successful tool card rests on
-// the seam border; only `running` / `error` / `unknown` detach. The archived
-// orchestrator transcript holds both sides of the rule: 100+ `ok` chips and
-// exactly one `error` chip.
+// Approved conversation-first tools remove the outer card border entirely.
+// Exceptional calls retain equivalent prominence through a status-coloured
+// leading rule; successful calls remain visually quiet.
 
-test("ok chips rest on --border and only the error chip detaches (§4.7 C11)", async ({
+test("ok tools have no outer border and only the error tool gets a prominent leading rule", async ({
   page,
 }) => {
   await open(page, route(PART, { s: "sess-workspace-orchestrator" }));
@@ -794,31 +793,50 @@ test("ok chips rest on --border and only the error chip detaches (§4.7 C11)", a
 
   const borders = await page.evaluate(() => {
     const probe = document.createElement("div");
-    probe.style.borderColor = "var(--border)";
+    probe.style.borderColor = "var(--status-fail-ink)";
     document.body.appendChild(probe);
-    const seam = getComputedStyle(probe).borderTopColor;
-    probe.style.borderColor = "var(--border-strong)";
-    const strong = getComputedStyle(probe).borderTopColor;
+    const fail = getComputedStyle(probe).borderLeftColor;
     probe.remove();
     const chips = [...document.querySelectorAll<HTMLElement>("article[data-tool-name]")].map(
-      (chip) => ({
-        status: chip.getAttribute("data-status"),
-        border: getComputedStyle(chip).borderTopColor,
-      }),
+      (chip) => {
+        const style = getComputedStyle(chip);
+        return {
+          status: chip.getAttribute("data-status"),
+          leftColor: style.borderLeftColor,
+          widths: [
+            style.borderTopWidth,
+            style.borderRightWidth,
+            style.borderBottomWidth,
+            style.borderLeftWidth,
+          ],
+        };
+      },
     );
-    return { seam, strong, chips };
+    return { fail, chips };
   });
 
-  expect(borders.seam).not.toBe(borders.strong);
-  const ok = borders.chips.filter((chip) => chip.status === "ok");
-  const loud = borders.chips.filter((chip) => chip.status !== "ok");
-  expect(ok.length).toBeGreaterThan(0);
-  expect(loud.length).toBeGreaterThan(0);
-  // In a transcript of ok chips, no chip's computed border equals
-  // --border-strong — and every non-ok chip's does, exactly.
-  for (const chip of ok) expect(chip.border, "an ok chip detached").toBe(borders.seam);
-  for (const chip of loud) {
-    expect(chip.border, `a ${String(chip.status)} chip rested on the seam`).toBe(borders.strong);
+  const quiet = borders.chips.filter((chip) => chip.status !== "error");
+  const errors = borders.chips.filter((chip) => chip.status === "error");
+  expect(quiet.length).toBeGreaterThan(0);
+  expect(errors.length).toBeGreaterThan(0);
+  for (const chip of quiet) {
+    expect(chip.widths, `a ${String(chip.status)} tool retained an outer card border`).toEqual([
+      "0px",
+      "0px",
+      "0px",
+      "0px",
+    ]);
+  }
+  for (const chip of errors) {
+    expect(chip.widths.slice(0, 3), "an error tool regained an outer card border").toEqual([
+      "0px",
+      "0px",
+      "0px",
+    ]);
+    expect(Number.parseFloat(chip.widths[3] ?? "0"), "an error tool has no leading rule").toBeGreaterThanOrEqual(2);
+    expect(chip.leftColor, "the error leading rule is not failure-prominent").toBe(
+      borders.fail,
+    );
   }
 });
 

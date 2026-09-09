@@ -26,7 +26,8 @@
 // states that cannot be answered — a reopened transcript, a question with no id,
 // an event with no session, and a question that admits no answer at all — each
 // render with their own named reason rather than as an inert control, and a
-// `404 unknown_question` renders `data-ask-state="abandoned"` in place.
+// `404 unknown_question` or terminal evidence for this question's own run
+// renders `data-ask-state="abandoned"` in place.
 //
 // THE SUBMITTED VALUE IS THE SERVER'S LABEL, and the widget cannot express any
 // other. Every control carries the option's **index**; `answerValue` turns an
@@ -98,19 +99,26 @@ export function AskUserWidget({
    * so the `title` a pointer sees and the `aria-describedby` a screen reader
    * hears are the same sentence the widget already prints in place.
    */
-  const offReason = !executionAllowed ? copy.composer.checking :
-    content.lostToRuntime && content.answered
-      ? copy.stream.ask.answeredRunLost
-      : content.lostToRuntime
-        ? copy.stream.ask.abandonedRuntime
-        : content.unavailable !== null
-          ? copy.stream.ask.unavailable[content.unavailable]
-          : content.state === "submitting"
-            ? copy.stream.ask.sending
-            : content.state === "abandoned"
-              ? copy.stream.ask.abandoned
-              : content.state === "failed"
-                ? copy.stream.ask.failed
+  // A settled question's own lifecycle outranks the global execution gate.
+  // In particular, a durable terminal removes active ownership (so
+  // `executionAllowed` is false) while also proving this question is closed.
+  // Calling that state "Checking execution" forever would hide the stronger
+  // fact the widget already renders. Unknown ownership still reaches the
+  // checking branch and remains unable to send.
+  const offReason = content.lostToRuntime && content.answered
+    ? copy.stream.ask.answeredRunLost
+    : content.lostToRuntime
+      ? copy.stream.ask.abandonedRuntime
+      : content.unavailable !== null
+        ? copy.stream.ask.unavailable[content.unavailable]
+        : content.state === "submitting"
+          ? copy.stream.ask.sending
+          : content.state === "abandoned"
+            ? copy.stream.ask.abandoned
+            : content.state === "failed"
+              ? copy.stream.ask.failed
+              : !executionAllowed
+                ? copy.composer.checking
                 : copy.stream.ask.answeredAlready;
   const sessionId = content.sessionId;
   const questionId = content.questionId;

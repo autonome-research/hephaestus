@@ -82,10 +82,10 @@ export type AskAffordance = (typeof ASK_AFFORDANCES)[number];
  * The widget's state, closed at six. Every value is a *rendered* state with its
  * own copy; none of them is a disabled control with no explanation.
  *
- * `abandoned` is §7A.7's first-class rendering of `404 unknown_question` —
- * "answered, abandoned, or never asked", which are one state to that route and
- * are therefore one state here. It is rendered **in place**, on the widget, not
- * in a toast.
+ * `abandoned` is §7A.7's first-class closed-question rendering. A `404
+ * unknown_question` cannot distinguish "answered, abandoned, or never asked";
+ * matching terminal evidence can say only that the question is no longer open.
+ * Both are therefore this one state, rendered **in place**, not in a toast.
  */
 export const ASK_STATES = [
   "answerable",
@@ -164,7 +164,15 @@ export interface AskRowLike {
   readonly status: ChipStatus;
 }
 
-/** How this session died, if it did. Derived, never a sixth event kind. */
+/**
+ * Terminal/runtime evidence for the question's own run.
+ *
+ * `runHasTerminal` may come from the live suffix or from the reconciled
+ * execution snapshot. The latter is the durable authority when cancellation
+ * releases a question before this observer receives another question frame.
+ * Neither source says who answered; it says only that the question can no
+ * longer be open.
+ */
 export interface AskRuntimeDeath {
   readonly fault: RuntimeFault | null;
   readonly runHasTerminal: boolean;
@@ -263,10 +271,17 @@ export function askContent(
       answeredBy: "other",
     };
   }
-  // Sidecar death never yields `terminal` (live-only; the run is gone) and
-  // never yields `404 unknown_question` until a click. Once the well knows
-  // the runtime is gone, pending widgets go `abandoned` without that click.
-  if (lostToRuntime) {
+  // Once the question's own run has terminal evidence it cannot still accept
+  // an answer. This must precede the execution gate in the component: after a
+  // cancellation the authoritative snapshot intentionally removes active run
+  // ownership, so requiring a click would leave the only controls disabled as
+  // "Checking execution" forever. An answer above still wins when one was
+  // recorded; terminal evidence alone never invents who answered.
+  //
+  // Sidecar death has the same closed-state consequence when no terminal can
+  // exist (live-only; the run is gone). Neither path sends an answer merely to
+  // discover that the question was released.
+  if (death?.runHasTerminal === true || lostToRuntime) {
     return {
       ...base,
       questionId,

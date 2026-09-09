@@ -164,12 +164,13 @@ test.describe("§7A.12 case 1 — the blank canvas reaches the workspace", () =>
     // §7A.5 (C1, amended 2026-09-02): the sent words appear the moment they
     // are sent. The local-prompt echo renders immediately on Send — the model
     // round-trip has not settled — carrying the sent text verbatim, C2's DOM
-    // contract, the visible-at-rest `unrecorded` marker, and NO event id.
+    // contract and local-echo state, and NO invented recorded event id. The
+    // conversation-first UX identifies the speaker without an `unrecorded` label.
     const echoRow = page.locator('[data-row="local-prompt"]');
     await expect(echoRow).toHaveCount(1);
     await expect(echoRow).toHaveAttribute("data-local-echo", "1");
     await expect(echoRow).toContainText("please make me a part");
-    await expect(echoRow).toContainText("unrecorded");
+    await expect(echoRow).toHaveAttribute("data-echo-state", "sent");
     expect(await echoRow.getAttribute("data-event-id")).toBeNull();
 
     // The turn's events reach the transcript.
