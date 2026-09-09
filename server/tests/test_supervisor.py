@@ -22,9 +22,30 @@ from hephaestus.agent_bridge.supervisor import (
     build_minimal_env,
     pid_alive,
 )
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 
 FAKE = Path(__file__).with_name("fake_sidecar.py")
 ORPHAN_PARENT = Path(__file__).with_name("orphan_parent.py")
+
+
+def _assert_stays(get: Any, expected: int, *, duration_s: float, label: str) -> None:
+    """Poll ``get()`` for ``duration_s`` and fail the instant it leaves ``expected``.
+
+    J-mirrors-and-dx-24: a negative assertion ("nothing more happens") is only
+    as strong as the wait behind it. A single ``time.sleep(0.5); assert x ==
+    expected`` samples once and would miss a respawn that lands at 0.6s on a
+    loaded runner — or simply not wait long enough to observe one at all. This
+    polls the *whole* window instead of sampling its end, so it catches a late
+    respawn the fixed sleep would have missed, and it fails immediately (naming
+    the unexpected value) rather than waiting out the full window on a value
+    that already diverged.
+    """
+    deadline = time.monotonic() + duration_s
+    while time.monotonic() < deadline:
+        got = get()
+        assert got == expected, f"{label}: expected {expected}, observed {got} before deadline"
+        time.sleep(0.02)
+
 
 #: The knobs the fake sidecar reads for the respawn regressions; they travel
 #: through the credential allowlist because the sidecar env is minimal by design.
@@ -290,8 +311,11 @@ def test_crash_loop_is_bounded_and_ends_durably_dead(tmp_path: Path) -> None:
             sup.call("echo", {"n": 1}, timeout=1)
         assert "3 attempts" in str(excinfo.value)
         # No thrash: the state stays dead, nothing spawns behind our back.
-        time.sleep(0.5)
-        assert sup.spawn_count == 4
+        # A bounded "stays false" poll (J-mirrors-and-dx-24), not a fixed sleep:
+        # it catches a *late* respawn instead of racing it.
+        _assert_stays(
+            lambda: sup.spawn_count, 4, duration_s=0.5, label="crash-loop must not thrash"
+        )
     finally:
         sup.close()
 
@@ -343,8 +367,10 @@ def test_close_never_respawns(tmp_path: Path) -> None:
     )
     sup.start()
     sup.close()
-    time.sleep(0.5)
-    assert sup.spawn_count == 1
+    # Bounded "stays false" poll (J-mirrors-and-dx-24): a deliberate close must
+    # not respawn even given the full window a fixed sleep would have sampled
+    # the end of.
+    _assert_stays(lambda: sup.spawn_count, 1, duration_s=0.5, label="close() must not respawn")
     assert sup.auto_respawns == 0
     assert len(_configure_log(spawns)) == 1
     assert not events, "close() is not a process-loss event"
@@ -504,6 +530,7 @@ def test_bridge_runtime_replays_its_own_configure_payload_on_every_child(
     monkeypatch.setenv("FAKE_SIDECAR_CONFIGURE_LOG", str(log))
     project = scaffold_project(tmp_path / "proj", name="respawn")
     runtime = BridgeRuntime(
+        backend=UnsafeLocalBackend(),
         project_root=project,
         providers=[{"id": "fake", "kind": "openai", "base_url": "http://127.0.0.1:9/v1"}],
         credentials={"FAKE_KEY": "secret-value"},

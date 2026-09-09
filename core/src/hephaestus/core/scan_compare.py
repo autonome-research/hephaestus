@@ -37,21 +37,22 @@ fit, and nothing here is a clinical claim).
 
 from __future__ import annotations
 
-import multiprocessing
 import os
 import tempfile
-import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Literal, cast
 
 from hephaestus.core.errors import AddressingError, ValidationError
+from hephaestus.core.executor.bounded_pass import run_bounded_pass
 from opstore.types import JSONValue
 
 if TYPE_CHECKING:
-    from multiprocessing.connection import Connection
-
+    # The pipe end, re-exported by the supervision helper: ``multiprocessing``
+    # is imported by that module and by no other engine module, which is what
+    # stops a sixth hand-copied loop (``core/tests/test_bounded_pass.py``).
+    from hephaestus.core.executor.bounded_pass import ChildConnection as Connection
     from hephaestus.core.project_store.layout import ProjectLayout
 
     from opstore import OpStore
@@ -304,7 +305,14 @@ def _distance_child(  # pragma: no cover - runs in the spawned child
     from hephaestus.core.executor.artifact_geometry import load_brep_shape
     from hephaestus.geom.compare import ScanAlignMode, ScanCompareError, scan_distance
     from hephaestus.geom.metrics import bbox_mm
+    from hephaestus.geom.step_io import quiet_messenger
 
+    # The kernel messenger, moved off the fd 1 this child INHERITED from the
+    # parent — where it is the ``--json`` document or the MCP JSON-RPC
+    # transport (J-cli-robustness-14). Done here, beside the import that
+    # binds OCP in this process, because a diagnostic written by the C++
+    # side passes through no Python stream and can be caught nowhere else.
+    quiet_messenger()
     blob = Path(blob_path).read_bytes()
     facts = Path(facts_path).read_text(encoding="utf-8")
 
@@ -372,12 +380,29 @@ def bounded_scan_distance(
         blob_path.write_bytes(blob)
         facts_path.write_text(facts, encoding="utf-8")
 
-        ctx = multiprocessing.get_context("spawn")
-        parent, child = ctx.Pipe(duplex=False)
-        proc = ctx.Process(
-            target=_distance_child,
-            args=(
-                child,
+        cheap: dict[str, JSONValue] | None = None
+        completed: dict[str, JSONValue] = {}
+
+        def _receive(kind: str, payload: Any) -> bool:
+            """Consume one message; True when it was terminal (full/refusal)."""
+            nonlocal cheap
+            if kind == "cheap":
+                cheap = cast("dict[str, JSONValue]", payload)
+                return False
+            if kind == "direction":
+                name, fields = cast("tuple[str, dict[str, JSONValue]]", payload)
+                completed[name] = cast("JSONValue", fields)
+                return False
+            return True
+
+        # The supervision itself is
+        # :mod:`hephaestus.core.executor.bounded_pass` — one loop for every
+        # bounded engine pass, so a fix to the poll/drain/kill invariant lands
+        # everywhere at once. This call site keeps only its protocol (above)
+        # and its refusal vocabulary (below).
+        pass_outcome = run_bounded_pass(
+            _distance_child,
+            (
                 str(brep_path),
                 str(blob_path),
                 str(facts_path),
@@ -387,68 +412,15 @@ def bounded_scan_distance(
                 scan_canonical_hash,
                 part_artifact_ref,
             ),
+            timeout_s=timeout_s,
+            on_message=_receive,
         )
-        proc.start()
-        child.close()
-
-        cheap: dict[str, JSONValue] | None = None
-        completed: dict[str, JSONValue] = {}
-        outcome: tuple[str, Any] | None = None
-        died = False
-        cut_short = f"did not finish within {timeout_s:g}s and was killed"
-        deadline = time.monotonic() + timeout_s
-
-        def _receive() -> bool:
-            """Consume one message; True when it was terminal (full/refusal)."""
-            nonlocal cheap, outcome
-            kind, payload = parent.recv()
-            if kind == "cheap":
-                cheap = cast("dict[str, JSONValue]", payload)
-                return False
-            if kind == "direction":
-                name, fields = cast("tuple[str, dict[str, JSONValue]]", payload)
-                completed[name] = cast("JSONValue", fields)
-                return False
-            outcome = (str(kind), payload)
-            return True
-
-        try:
-            while outcome is None and time.monotonic() < deadline:
-                try:
-                    if parent.poll(0.05):
-                        _receive()
-                    elif not proc.is_alive():
-                        # Death, not a deadline — drain what it sent first, so a
-                        # result that raced the exit is never misread as a crash.
-                        while parent.poll(0.2) and not _receive():
-                            pass
-                        died = outcome is None
-                        break
-                except EOFError:
-                    proc.join(5.0)
-                    died = True
-                    break
-            # The deadline fell: take what is already in the pipe before the
-            # kill. A direction that finished one millisecond before the ceiling
-            # is a measurement, and throwing it away because the clock ran out
-            # while it sat in a buffer would make the refusal poorer than the
-            # run actually was.
-            while outcome is None and parent.poll(0):
-                try:
-                    _receive()
-                except EOFError:
-                    break
-            # …and if that drain turned up the terminal message after all, the
-            # run did not die: recomputed rather than left standing, so "the
-            # subprocess died" can never be said about a run that answered.
-            died = died and outcome is None
-        finally:
-            if proc.is_alive():
-                proc.kill()
-            proc.join()
-            parent.close()
-        if died:
-            cut_short = f"subprocess died (exit code {proc.exitcode})"
+        outcome = pass_outcome.terminal
+        cut_short = (
+            f"subprocess died (exit code {pass_outcome.exit_code})"
+            if pass_outcome.died
+            else f"did not finish within {timeout_s:g}s and was killed"
+        )
 
     if outcome is not None:
         kind, payload = outcome

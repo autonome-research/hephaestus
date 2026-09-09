@@ -15,6 +15,7 @@ from pathlib import Path
 
 from hephaestus.agent_bridge.admission import bridge_store_config
 from hephaestus.agent_bridge.delegation import DelegationService, Delivery, Rejected
+from hephaestus.testing.delegation_gates import AllowAllGate
 from opstore.types import EnvCrashHook, SystemClock, TerminalState
 
 from opstore import OpStore
@@ -27,7 +28,7 @@ def main() -> None:
     store = OpStore.create(root, bridge_store_config(), crash_hook=EnvCrashHook())
     try:
         store.admission.admit("orch")
-        svc = DelegationService(store.admission, store.db, clock=SystemClock())
+        svc = DelegationService(store.admission, store.db, gate=AllowAllGate(), clock=SystemClock())
         out = svc.delegate(
             "orch", "partA", "build", delivery=Delivery.FOLLOW_UP, invocation=INVOCATION
         )

@@ -8,6 +8,7 @@ import {
 } from "../src/tools/proxy.js";
 import { makeInvocation } from "../src/tools/invocation.js";
 import { RpcError, ErrorCode } from "../src/rpc.js";
+import { LIMITS, TOOL_TIMEOUT_MS } from "../src/limits.js";
 import type { JsonValue } from "../src/framing.js";
 
 // --- fakes ------------------------------------------------------------------
@@ -15,12 +16,18 @@ import type { JsonValue } from "../src/framing.js";
 interface Recorded {
   method: string;
   params: { [k: string]: JsonValue };
+  // Captured whenever the proxy passes a third argument through to the
+  // bridge request function — see the J-http-limits-11 describe block below.
+  // `RpcRequest`'s declared arity does not (yet) include it; JS does not
+  // enforce call arity, so this simply reads `undefined` until the proxy is
+  // widened to pass one.
+  timeoutMs?: number | undefined;
 }
 
 function fakeBridge(responder: (method: string, params: { [k: string]: JsonValue }) => JsonValue) {
   const calls: Recorded[] = [];
-  const request: RpcRequest = async (method, params) => {
-    calls.push({ method, params });
+  const request: RpcRequest = async (method, params, timeoutMs?: number) => {
+    calls.push({ method, params, timeoutMs });
     return responder(method, params);
   };
   return { calls, request };
@@ -42,6 +49,9 @@ const CTX: ProxyContext = {
 function validResult(method: string, params: { [k: string]: JsonValue }): JsonValue {
   if (method === "py.delegate") {
     return { status: "queued", part_session_id: "s", child_run_id: "c", delegation_ref: "d" };
+  }
+  if (method === "py.ask_user") {
+    return { selection: "a" };
   }
   const tool = params.tool as string;
   switch (tool) {
@@ -397,5 +407,114 @@ describe("fail-closed result validation", () => {
     await expect(
       new ToolProxy(bridge.request).execute("measure", { kind: "bbox", a: "x" }, CTX),
     ).rejects.toBeInstanceOf(RpcError);
+  });
+});
+
+// --- J-http-limits-11: a synchronous delegation is issued with its own -----
+// --- deadline + the bridge grace, not the peer's ordinary tool deadline ----
+//
+// `RpcPeer`'s default deadline is the ordinary `tool_seconds` class
+// (J-http-limits-11's other half, `rpc.ts`). A `delegate_part_agent` call
+// carries `deadline_seconds` — up to 1200s — entirely inside its own request
+// PARAMS, so a peer using its ordinary default would time out the bridge
+// request itself, at the tool deadline, long before the delegation state
+// machine's own `deadline_seconds` (plus the documented `+ grace`) ever
+// elapses. The fix routes a per-call timeout through `buildRequest`'s return
+// and `RpcRequest`'s third argument (mirroring the third parameter
+// `RpcPeer.request` already has) so the delegate call's OWN bridge-level
+// deadline outlives the child's.
+describe("delegate_part_agent's own bridge deadline (J-http-limits-11)", () => {
+  it("uses deadline_seconds + the delegation grace when deadline_seconds is given", async () => {
+    const { request, calls } = proxyWithValidResults();
+    const proxy = new ToolProxy(request);
+    await proxy.execute(
+      "delegate_part_agent",
+      { part: "widget", prompt: "make it wider", deadline_seconds: 300 },
+      CTX,
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.method).toBe("py.delegate");
+    // 300s deadline + the delegation grace (schemas/bridge_limits.json
+    // timeouts.delegation.grace_seconds), in milliseconds — not the peer's
+    // ordinary tool_seconds default, which would time this call out long
+    // before a legitimately slow child ever gets there.
+    expect(calls[0]!.timeoutMs).toBe((300 + LIMITS.timeouts.delegation.grace_seconds) * 1000);
+  });
+
+  it("uses the declared default deadline + grace when deadline_seconds is omitted", async () => {
+    const { request, calls } = proxyWithValidResults();
+    const proxy = new ToolProxy(request);
+    await proxy.execute("delegate_part_agent", { part: "widget", prompt: "go" }, CTX);
+    expect(calls).toHaveLength(1);
+    const defaultS = LIMITS.timeouts.delegation.deadline_default_seconds;
+    expect(calls[0]!.timeoutMs).toBe((defaultS + LIMITS.timeouts.delegation.grace_seconds) * 1000);
+  });
+
+  it("never uses the bare peer default (tool_seconds) for a delegation call", async () => {
+    // A delegation's own deadline window (1s..1200s) is wider on both ends
+    // than the ordinary tool deadline; asserting they differ here catches a
+    // regression that silently drops the per-call override back to the
+    // peer's ordinary default.
+    const { request, calls } = proxyWithValidResults();
+    const proxy = new ToolProxy(request);
+    await proxy.execute("delegate_part_agent", { part: "widget", prompt: "go" }, CTX);
+    expect(calls[0]!.timeoutMs).not.toBe(TOOL_TIMEOUT_MS);
+  });
+});
+
+// --- J-http-limits-8/-11: a CAD-build tool is issued with the CAD deadline -
+describe("per-tool timeout class selection (J-http-limits-8/-11)", () => {
+  it("issues a CAD-build tool with the CAD deadline, not the ordinary one", async () => {
+    // `run_checks` runs the sandboxed CAD worker and can legitimately take
+    // between two and five minutes; the ordinary tool deadline (120s) would
+    // die on it long before a genuine build could ever finish.
+    const { request, calls } = proxyWithValidResults();
+    await new ToolProxy(request).execute("run_checks", { scope: "project" }, CTX);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.timeoutMs).toBe(LIMITS.timeouts.cad_build_seconds * 1000);
+    expect(calls[0]!.timeoutMs).not.toBe(TOOL_TIMEOUT_MS);
+  });
+
+  it.each([
+    ["compare_solids", { part: "widget", target: "part:other" }],
+    ["compare_to_scan", { part: "widget", scan: "scan:mesh.stl", units: "mm" }],
+    ["check_motion", {}],
+  ] as const)(
+    "issues %s on the long class: its Python ceiling is cad_build_seconds too",
+    async (toolName, args) => {
+      // The half of J-http-limits-8 that the first pass missed. These three do
+      // not enter `CadOps._run`, but each runs its kernel work in a killable
+      // subprocess under the SAME 300 seconds (`core/project_compare.py`
+      // COMPARE_TIMEOUT_S, `core/scan_compare.py` SCAN_TIMEOUT_S,
+      // `core/motion.py` MOTION_TIMEOUT_S). On the ordinary class a comparison
+      // that legitimately runs 150s is killed at the RPC layer while the
+      // Python child works on — the exact "layer above gives up before the
+      // layer below" defect the item names, and for `check_motion` it also
+      // makes the named `motion_timeout` refusal unreachable.
+      //
+      // Asserted on the ISSUED request, and the stub's generic reply is allowed
+      // to fail these tools' result schemas: the deadline is chosen and stamped
+      // on the outbound request before any result exists, so what comes back
+      // cannot change what is being pinned here.
+      const { request, calls } = proxyWithValidResults();
+      await new ToolProxy(request).execute(toolName, { ...args }, CTX).catch(() => undefined);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.timeoutMs).toBe(LIMITS.timeouts.cad_build_seconds * 1000);
+      expect(calls[0]!.timeoutMs).not.toBe(TOOL_TIMEOUT_MS);
+    },
+  );
+
+  it("issues an ordinary (non-CAD) tool with the plain tool_seconds deadline", async () => {
+    const { request, calls } = proxyWithValidResults();
+    await new ToolProxy(request).execute("measure", { kind: "bbox", a: "x" }, CTX);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.timeoutMs).toBe(TOOL_TIMEOUT_MS);
+  });
+
+  it("issues ask_user with NO timer (0) — Python owns the human-interaction deadline", async () => {
+    const { request, calls } = proxyWithValidResults();
+    await new ToolProxy(request).execute("ask_user", { question: "which?", options: ["a", "b"] }, CTX);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.timeoutMs).toBe(0);
   });
 });

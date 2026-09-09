@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from hephaestus.core.errors import AddressingError, ConflictError, ValidationError
-from hephaestus.core.project_store.layout import ProjectLayout
+from hephaestus.core.project_store.layout import PARTS_DIRNAME, ProjectLayout
 from hephaestus.core.project_store.locks import LockManager, part_lock
 from opstore.types import JSONValue, OwnerId
 
@@ -238,7 +238,16 @@ class ProjectStore:
         path = self.layout.part_path(part)
         if not path.is_file():
             raise AddressingError(
-                f"part {part!r} does not exist under {self.layout.parts_dir}",
+                # `PARTS_DIRNAME`, not the resolved `layout.parts_dir`: this is
+                # the ONE sentence every part verb's addressing refusal is read
+                # off (the tool surface, the HTTP envelope and the CLI all reach
+                # it), and interpolating the absolute path put the operator's
+                # own filesystem layout into a message the model receives
+                # verbatim, where it is not an address the caller can act on
+                # (ledger J-agent-results-11). `executor/imports.py`'s
+                # `{IMPORTS_DIRNAME}/` and `cad_ops/_checks.py`'s
+                # `{CHECKS_DIRNAME}/` are the settled precedent.
+                f"part {part!r} does not exist under {PARTS_DIRNAME}/",
                 selector=part,
                 candidates=self.list_parts(),
             )

@@ -193,6 +193,7 @@ def test_a_full_agent_session_invokes_no_global(
 import json
 from pathlib import Path
 from hephaestus.agent_bridge.app import BridgeRuntime
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.testing.fake_openai import start_fake_openai
 from hephaestus.testing.projects import scaffold_project
 from hephaestus.testing.stream_assertions import text
@@ -200,7 +201,9 @@ from hephaestus.testing.stream_assertions import text
 project = scaffold_project(Path({str(workdir)!r}), name="hostile",
                            globals_src="PARAMS = {{}}\\n")
 fake = start_fake_openai([text("answered under hostile PATH")])
-runtime = BridgeRuntime(project_root=project, providers=[fake.provider_spec()])
+runtime = BridgeRuntime(
+    backend=UnsafeLocalBackend(), project_root=project, providers=[fake.provider_spec()]
+)
 runtime.start()
 try:
     session = runtime.create_session("orchestrator", session_id="hostile")

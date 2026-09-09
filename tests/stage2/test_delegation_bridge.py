@@ -26,6 +26,7 @@ from _g2b import build_agent_dist, scaffold_project
 from hephaestus.agent_bridge.app import BridgeRuntime
 from hephaestus.agent_bridge.delegation import PROMPT_MAX_UTF8_BYTES
 from hephaestus.agent_bridge.supervisor import pid_alive
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.testing.fake_openai import FakeOpenAI, RequestInfo, start_fake_openai
 
 
@@ -51,6 +52,7 @@ class Harness:
         self.root = scaffold_project(root, name="delegation-bridge")
         self.fake: FakeOpenAI = start_fake_openai([])
         self.runtime = RecordingRuntime(
+            backend=UnsafeLocalBackend(),
             project_root=self.root,
             providers=[self.fake.provider_spec()],
             dist_main=dist_main,

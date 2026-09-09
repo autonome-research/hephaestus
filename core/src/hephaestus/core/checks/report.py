@@ -84,7 +84,20 @@ def project_check_report(
             snapshot_ref = snapshot.ref
 
         check_set = CheckSet(layout.checks_dir, store)
-        return check_set.run(sources, part=layout.manifest.name, project_snapshot_ref=snapshot_ref)
+        # Both branches of this function are project-scope in the subject
+        # sense — the run measures the project's whole check set over every
+        # part's current build — so the subject is declared as one
+        # (J-agent-results-9). It used to pass the PROJECT name as ``part``,
+        # which made ``heph check --json`` and ``GET /checks`` report
+        # ``{"scope": "part", "part": "<project>"}``: a part that does not
+        # exist, in the one field a reader uses to address one.
+        return check_set.run(
+            sources,
+            part=None,
+            scope="project",
+            project=layout.manifest.name,
+            project_snapshot_ref=snapshot_ref,
+        )
 
 
 def report_json(report: CheckReport) -> dict[str, JSONValue]:

@@ -57,6 +57,7 @@ from hephaestus.agent_bridge.review import (
     strip_agent_checks,
 )
 from hephaestus.contract import tools_decl
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.testing.fake_openai import FakeOpenAI, RequestInfo, start_fake_openai
 from hephaestus.testing.ledger import seed_minimal_ledger
 from hephaestus.testing.projects import scaffold_project
@@ -744,7 +745,10 @@ def runtime(tmp_path: Path, sidecar_dist: Path) -> Iterator[tuple[BridgeRuntime,
     )
     fake = start_fake_openai([])
     bridge = BridgeRuntime(
-        project_root=root, providers=[fake.provider_spec()], dist_main=sidecar_dist
+        backend=UnsafeLocalBackend(),
+        project_root=root,
+        providers=[fake.provider_spec()],
+        dist_main=sidecar_dist,
     )
     bridge.start()
     try:

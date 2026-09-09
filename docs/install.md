@@ -101,6 +101,27 @@ Bootstrap builds; it does not verify. It runs no tests and installs no browser,
 so Gate G4 — `pnpm test:e2e` from `web/` — still needs
 `pnpm exec playwright install chromium` there first.
 
+### What it does and does not put on your PATH
+
+It does **not** leave a `pnpm` on your PATH, deliberately: the pin does not
+travel that way (above), so the script resolves pnpm per run instead. It records
+the route it chose in `agent/build/bootstrap_pnpm.json`, and the test helpers
+read that record before doing their own resolution — so the guards and the
+script agree by construction rather than by two implementations of one
+preference order happening to match. Before that record existed, the guards
+asked `which pnpm`, found nothing on exactly the checkout this page tells you to
+create, and every sidecar-backed test **skipped**.
+
+To prove the bridge lanes are running rather than skipping, set the variable
+that turns such a skip into a failure — every CI job that installs Node does:
+
+```console
+$ HEPHAESTUS_REQUIRE_SIDECAR=1 uv run pytest tests/stage2 -q
+```
+
+Zero skips reading "node or pnpm unavailable" is the acceptance criterion for a
+bootstrapped checkout.
+
 ## Running `heph` from anywhere
 
 `uv run heph` resolves only from inside the clone; from outside it fails to
@@ -157,6 +178,23 @@ checkout serves its own `web/dist` whatever `--project` names.
   build` exits non-zero (`sandbox_unavailable`); it never silently downgrades.
   `heph build --unsafe-local-executor` is a local debug hatch with no OS
   sandbox. It is refused for registry content and under `heph serve`.
+
+  **This now covers `heph agent` and `heph serve --mcp` too, and that is a
+  compatibility break.** Until 0.1 those two ran *model-authored* part scripts
+  as ordinary child processes — no sandbox, no flag, and a warning naming a flag
+  the verb did not have. They take the build verb's posture now: probe first,
+  refuse `sandbox_unavailable` by name if the probe fails, and never degrade
+  quietly. On a machine with no working bubblewrap, `heph agent` that used to
+  start will now exit 2 until you either install bubblewrap or pass
+  `--unsafe-local-executor` deliberately. `heph serve --web` and `heph serve
+  --mcp` have always probed and have no such flag at all.
+- **Rendering** (`heph render`, the inspector's views, every tool that returns
+  an image, and the sidecar-backed suites that exercise them) — a headless EGL
+  with Mesa's software rasterizer; no GPU and no display. Debian/Ubuntu:
+  `libegl1 libgl1 libgl1-mesa-dri libglx-mesa0`. Arch: `mesa`. Fedora:
+  `mesa-libEGL mesa-libGL mesa-dri-drivers`. `scripts/bootstrap.sh --check`
+  warns when `libEGL.so.1` is not on the loader path; without it a render
+  fails with `Unable to load EGL library` rather than a named refusal.
 - **macOS** — no script execution in v0.1. `heph lint`, schema/contract reads,
   and `heph --version` work. A capability-tested OCI backend is post-v0.1.
 - **Agent sidecar** (`heph agent`, agent-backed serve) — Node ≥ 22.19 on
@@ -200,3 +238,23 @@ $ /abs/path/to/hephaestus/.venv/bin/heph build example
 
 `heph agent` needs the sidecar built and staged first — `scripts/bootstrap.sh`
 does both, or steps 2–4 above by hand.
+
+### An optional verb that is missing, and one that is broken
+
+Two different conditions look alike from a distance and `heph` tells them
+apart on purpose:
+
+- **Not installed.** The verb is simply absent from `heph --help`. `heph
+  agent` with no `hephaestus.agent_bridge` package, or `heph serve --mcp`
+  with no MCP extra, prints argparse's `invalid choice` and nothing else.
+- **Installed but broken.** The verb stays on `heph --help` and refuses by
+  name when invoked, naming the import that failed:
+
+  ```text
+  heph: the 'agent' verb is installed but could not load: No module named 'build123d' (missing module: build123d)
+  heph: hephaestus.agent_bridge.app is present and one of its imports is not; this is a broken installation, not an absent one (a package that is simply not installed leaves the verb off 'heph --help' entirely)
+  ```
+
+  The same two lines appear for `serve --mcp`, `serve --web` and `export
+  unpin`. The fix is to reinstall the environment (`uv sync` or
+  `scripts/bootstrap.sh`), not to look for a missing extra.

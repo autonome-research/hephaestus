@@ -27,7 +27,7 @@ from hephaestus.core.project_store.references import ReferenceEntry, ReferenceRe
 from hephaestus.core.registry import TEXT_MAX_BYTES, TEXT_MAX_LINES, json_bytes, wrap_reference
 from opstore.types import JSONValue
 
-from ..limits import ImageError, parse_image_header
+from ..limits import ImageError, LimitError, enforce_binary_budget, parse_image_header
 from ._base import CadOpError, CadOpsState
 
 __all__ = ["REFERENCE_WRAPPER_REGISTRY", "ReferenceOps"]
@@ -77,6 +77,10 @@ class ReferenceOps(CadOpsState):
             # the same gate every rendered image passes through.
             parse_image_header(data)
         except ImageError as exc:
+            raise CadOpError(exc.code, f"reference {entry.name!r}: {exc.message}") from exc
+        try:
+            enforce_binary_budget(len(data), field="images")  # J-http-limits-9
+        except LimitError as exc:
             raise CadOpError(exc.code, f"reference {entry.name!r}: {exc.message}") from exc
         return {
             "status": "ok",

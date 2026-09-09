@@ -5,18 +5,25 @@ SPDX-License-Identifier: Apache-2.0
 
 # `web/e2e` — the Gate G4 Playwright suite
 
-`pnpm --dir web test:e2e` is the literal Gate G4 command (`mission_plan.md`
+`pnpm test:e2e`, run from inside `web/`, is the literal Gate G4 command (`mission_plan.md`
 Stage 4). It runs Playwright against a **real** `heph serve --web` on the public
 clean-room fixture `corpus/public_fixtures/workspace/`.
 
-```
-pnpm --dir web install --frozen-lockfile
-pnpm --dir web exec playwright install chromium   # once per machine
-pnpm --dir web build                              # `serve --web` serves web/dist
-pnpm --dir web test:e2e
+```console
+$ cd web
+$ pnpm install --frozen-lockfile
+$ pnpm exec playwright install chromium   # once per machine
+$ pnpm build                              # `serve --web` serves web/dist
+$ pnpm test:e2e
 ```
 
-`pnpm --dir web build` is a real prerequisite, not a convenience: since
+Run pnpm from **inside** `web/`, never with `--dir`: the flag moves the install but
+not the version resolution, because corepack picks the `packageManager` field by
+walking up from the current directory and there is deliberately no root manifest
+(`CONTRIBUTING.md`, "pnpm: the pin, and where its settings live";
+[`../../docs/install.md`](../../docs/install.md)).
+
+`pnpm build` in `web/` is a real prerequisite, not a convenience: since
 `http/serve.py::with_bundle`, the serving process serves the built bundle at
 `/` and the API under `/api/`, so the browser loads the app from the same origin
 that answers its requests — the topology a wheel-installed operator gets. With
@@ -24,8 +31,10 @@ no `dist/`, `heph serve --web` says so on stderr and serves the API alone.
 
 ## Isolated chat integration checks (no provider or production server)
 
+From inside `web/` (with dependencies and Chromium installed as above):
+
 ```console
-pnpm --dir web exec playwright test -c playwright.synthetic.config.ts
+$ pnpm exec playwright test -c playwright.synthetic.config.ts
 ```
 
 This separate configuration starts its own loopback Vite source server on
@@ -123,9 +132,9 @@ the browser gate runs "inside the same pinned CI container image as
 `tests/render`" — and that image landed 2026-08-28 (`docker/ci/Dockerfile`,
 built and pushed by `ci-image.yml`, consumed by digest). So this suite is no
 longer deferred: `ci.yml`'s `render goldens (pinned image)` job runs
-`pnpm --dir web test:e2e` there, alongside `tests/render` and
-`tests/stage4/test_g4_section_golden.py`. The stock-runner jobs still exclude
-all three by name. Both G4.7 halves **fail by name** on an unmatched renderer
+the Gate G4 browser command there, alongside `tests/render` and
+`tests/stage4/test_g4_section_golden.py`. The stock-runner jobs deselect the
+two pytest modules by the `pinned_image` MARKER and never run the browser gate. Both G4.7 halves **fail by name** on an unmatched renderer
 rather than skipping, so the pin can never quietly become a pass.
 `docker/ci/README.md` has the recipe for running them locally in that image
 without the container writing build state into your worktree.

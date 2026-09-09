@@ -25,7 +25,8 @@ from typing import Any, cast
 from hephaestus.core.cli_errors import guard, project_root_or_refuse
 from hephaestus.core.project_compare import (
     ALIGN_MODES,
-    CompareTimeout,
+    CompareChildDied,
+    CompareCutShort,
     ProjectComparer,
     SolidComparison,
 )
@@ -102,14 +103,21 @@ def format_comparison(comparison: SolidComparison) -> str:
     return "\n".join(lines)
 
 
-def format_timeout(refusal: CompareTimeout) -> str:
-    """The ceiling kill for a human: the partial facts, then what was lost.
+def format_timeout(refusal: CompareCutShort) -> str:
+    """A cut-short comparison for a human: the partial facts, then what was lost.
 
     ``COMPARE.md`` §5: an operator gets the same signal the model gets — the
     cheap facts that arrived before the kill, and the names of the halves that
     did not — never a silently absent number.
+
+    The closing note is the one line that must differ between the two reasons.
+    A ceiling is fixed by allowing more time; a dead child is not, and printing
+    "raise HEPHAESTUS_COMPARE_TIMEOUT_S" over a crash sends the reader to a
+    setting that has nothing to do with it.
     """
-    lines = [f"comparison timed out: {refusal.message}", ""]
+    died = isinstance(refusal, CompareChildDied)
+    headline = "comparison subprocess died" if died else "comparison timed out"
+    lines = [f"{headline}: {refusal.message}", ""]
     partial = refusal.partial
     if partial is None:
         lines.append("partial facts: none arrived before the kill")
@@ -131,7 +139,12 @@ def format_timeout(refusal: CompareTimeout) -> str:
             ]
         )
     lines.append(f"lost: {', '.join(refusal.lost)}")
-    lines.append("note: raise HEPHAESTUS_COMPARE_TIMEOUT_S to allow more time (COMPARE.md §5)")
+    lines.append(
+        f"note: the diff subprocess exited with code {refusal.exit_code}; "
+        "no ceiling fired, so allowing more time will not help (COMPARE.md §5)"
+        if isinstance(refusal, CompareChildDied)
+        else "note: raise HEPHAESTUS_COMPARE_TIMEOUT_S to allow more time (COMPARE.md §5)"
+    )
     return "\n".join(lines)
 
 
@@ -145,9 +158,11 @@ def _cmd_diff(args: argparse.Namespace) -> int:
             cast("str", args.target),
             align=cast("str", args.align),
         )
-    except CompareTimeout as exc:
+    except CompareCutShort as exc:
         # COMPARE.md §5: the partial facts are the report; the exit code says
-        # the comparison did not complete.
+        # the comparison did not complete. Caught as the carriage, so the
+        # ceiling and the dead-child reasons both land here and neither can be
+        # missed by a catch that names only one of them.
         if bool(args.json):
             print(json.dumps(exc.to_json(), sort_keys=True))
         else:

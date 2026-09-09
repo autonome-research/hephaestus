@@ -49,6 +49,7 @@ from hephaestus.agent_bridge.dispatch import Principal, ToolDispatcher
 from hephaestus.agent_bridge.query_snapshot import SnapshotRequest, SnapshotResult, SnapshotUsage
 from hephaestus.agent_bridge.supervisor import pid_alive
 from hephaestus.core.executor.sandbox.base import ExecBackend
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.testing.doubles import FakeClock, FakeLiveness, owner
 from hephaestus.testing.fake_openai import FakeOpenAI, RequestInfo, TurnResolver, start_fake_openai
 from hephaestus.testing.fake_openai import _chunk as fake_openai_chunk
@@ -142,11 +143,12 @@ def scaffold_project(root: Path, *, name: str = "g2", seed_ledger: bool = True) 
 def _sandbox_backend() -> ExecBackend | None:
     """The probed bwrap backend registry generators run under, when the host has one.
 
-    ``heph agent`` injects no backend, so ``instance_store_part`` refuses there
-    with ``capability_not_available`` — the contract
-    ``core/registry/_ops.py`` states, and the honest answer until the sandbox
-    blocker named in audit-2026-09-04-broken.md is cleared. Supplying one here
-    is what lets the gate prove the generator path itself.
+    ``heph agent`` probes for this backend itself (J-agent-wiring-4) and
+    refuses ``sandbox_denied`` when the host has none; under the explicit
+    ``--unsafe-local-executor`` posture ``instance_store_part`` refuses with
+    ``capability_not_available`` — the contract ``core/registry/_ops.py``
+    states. Supplying the probed backend here is what lets the gate prove the
+    generator path itself.
     """
     from hephaestus.core.executor.sandbox.bwrap import BwrapBackend, find_bwrap
 
@@ -401,15 +403,16 @@ class G2Runtime(BridgeRuntime):
     * the two **live-sidecar** capabilities, scripted and handed over through
       the shipped :meth:`~hephaestus.agent_bridge.dispatch.ToolDispatcher.bind_runtime`
       seam rather than by rebuilding the dispatcher: a scripted vision child and
-      a scripted delegation coordinator. Production supplies neither yet — both
-      would have to call the sidecar from inside a ``py.*`` handler, which is
-      the reader-thread deadlock ``app.py`` documents — so scripting them is the
-      only way to drive the child-run clauses at all, and doing it through
-      ``bind_runtime`` means the *rest* of the surface is the shipped one.
+      a scripted delegation coordinator. Production now binds its own
+      (``py.*`` handlers run on a worker pool, J-agent-wiring-13, so a handler
+      may call back into the sidecar); scripting them here is what makes the
+      child-run clauses deterministic, and doing it through ``bind_runtime``
+      means the *rest* of the surface is the shipped one.
     * ``sandbox=True`` supplies the probed bwrap backend registry generators run
-      under. ``heph agent`` has none (``CadOpsState`` defaults to the unsafe
-      local backend), so ``instance_store_part`` refuses there by design; the
-      gate proves the generator path itself works when a secure backend exists.
+      under; otherwise the explicit unsafe local backend, named here because
+      ``BridgeRuntime`` has no default posture (J-agent-wiring-4). Under the
+      unsafe posture ``instance_store_part`` refuses by design; the gate proves
+      the generator path itself works when a secure backend exists.
     """
 
     def __init__(
@@ -426,7 +429,7 @@ class G2Runtime(BridgeRuntime):
             project_root=project_root,
             providers=providers,
             dist_main=dist_main,
-            backend=_sandbox_backend() if sandbox else None,
+            backend=_sandbox_backend() if sandbox else UnsafeLocalBackend(),
             **kwargs,
         )
         self.recorder = Recorder()

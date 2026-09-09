@@ -46,7 +46,7 @@ import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Final, cast
+from typing import TYPE_CHECKING, Any, Final, cast
 
 from hephaestus.core.cutfile import (
     BLANK_LAYER,
@@ -65,10 +65,17 @@ from hephaestus.core.cutfile import (
     ring_points,
     solid_marks,
 )
-from hephaestus.core.dfm.types import TopologyDescriptor
 from hephaestus.core.errors import ValidationError
 from hephaestus.geom.topology import planar_faces
 from opstore.types import JSONValue
+
+if TYPE_CHECKING:
+    # Annotation-only, and deferred for the reason ``hephaestus.core.cutfile``
+    # states at its own import of the same name: importing ``core.dfm.types``
+    # runs ``core.dfm``'s ``__init__``, which comes back into ``hephaestus.geom``.
+    # Geometry may name the descriptor type; it must not make the engine's DFM
+    # package a runtime dependency of the flat-pattern writer.
+    from hephaestus.core.dfm.types import TopologyDescriptor
 
 __all__ = [
     "BLANK_LAYER",

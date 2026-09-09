@@ -263,35 +263,136 @@ def write_provider_config(root: Path, spec: dict[str, Any]) -> None:
     path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
 
 
-def start_server(root: Path) -> subprocess.Popen[str]:
-    """The **real** ``heph serve --web``, on an ephemeral loopback port."""
-    port = free_port()
-    argv = [
-        sys.executable,
-        "-m",
-        "hephaestus.core.cli",
-        "serve",
-        "--web",
-        "--web-address",
-        f"127.0.0.1:{port}",
-    ]
-    log(f"starting {' '.join(argv)}")
-    return subprocess.Popen(
-        argv,
-        cwd=root,
-        stdout=subprocess.PIPE,
-        stderr=None,
-        text=True,
-        env={**os.environ, "PYTHONUNBUFFERED": "1"},
-    )
-
-
 def free_port() -> int:
+    """A free loopback port. Delegates to the ONE implementation.
+
+    Kept as a name on this module because ``providers_serve.py`` imports it from
+    here; the body is gone (J-mirrors-and-dx-21). A caller that starts a server
+    should prefer :func:`hephaestus.testing.ports.with_free_port`, which retries
+    past the window between this probe and the server's own bind.
+    """
+    from hephaestus.testing.ports import free_port as _free_port
+
+    return _free_port()
+
+
+#: How long the child gets to reach a *positive edge* — a listener on its port,
+#: or its own exit — before the harness gives up on it. Generous, because the
+#: edge is what decides, not this number: a `heph serve` that lost the port dies
+#: on its own (measured: exit 3 after ~3.7 s, since it opens the workspace and
+#: attaches the sidecar before uvicorn binds), so the deadline is only reached by
+#: a child that has wedged. It replaces a 1.0 s fixed sleep that was a NEGATIVE
+#: assertion — "still alive, therefore it bound" — and, at 1.0 s, was answered
+#: before the bind was even attempted: every real collision sailed past it, the
+#: doomed child printed its URL (the URL is printed BEFORE `uvicorn.run`), and
+#: the gate died three minutes later in `await_ready` with no retry. So the
+#: retry J-mirrors-and-dx-21 added here was inert. J-mirrors-and-dx-24 is the
+#: rule it broke: a negative assertion waits on a positive edge.
+_BIND_DEADLINE_S = STARTUP_TIMEOUT_S
+
+#: How often to ask. Short: this is a local connect() against a loopback port.
+_BIND_POLL_S = 0.05
+
+
+def start_server(root: Path) -> subprocess.Popen[str]:
+    """The **real** ``heph serve --web``, on an ephemeral loopback port.
+
+    Started through the shared *retrying* picker rather than a bare port number:
+    between probing a free port and ``heph serve``'s own bind, anything on the
+    machine can take it, and this fixture is the longest-lived of the four
+    callers and the one whose failure costs a whole browser gate.
+    """
+    import errno
+
+    from hephaestus.testing.ports import with_free_port
+
+    def spawn(port: int) -> subprocess.Popen[str]:
+        argv = [
+            sys.executable,
+            "-m",
+            "hephaestus.core.cli",
+            "serve",
+            "--web",
+            "--web-address",
+            f"127.0.0.1:{port}",
+        ]
+        log(f"starting {' '.join(argv)}")
+        if _port_is_taken(port):
+            # The window the picker cannot close: somebody bound this port
+            # between `free_port()`'s probe and here. Answer before paying for a
+            # process start.
+            raise OSError(errno.EADDRINUSE, f"127.0.0.1:{port} was taken before the spawn")
+        proc = subprocess.Popen(
+            argv,
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=None,
+            text=True,
+            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+        )
+        deadline = time.monotonic() + _BIND_DEADLINE_S
+        while time.monotonic() < deadline:
+            code = proc.poll()
+            if code is None:
+                if _port_is_taken(port):
+                    return proc  # the positive edge: something is listening
+                time.sleep(_BIND_POLL_S)
+                continue
+            # The child is dead. Drain and close its pipe before deciding
+            # anything: a discarded attempt that is never read leaks a
+            # descriptor, and its output — the only account of why it died —
+            # goes with it.
+            output = ""
+            if proc.stdout is not None:
+                output = proc.stdout.read()
+                proc.stdout.close()
+            for line in output.splitlines():
+                log(f"serve (exited {code}): {line}")
+            if _port_is_taken(port):
+                # Somebody else holds it. That is the one failure worth
+                # re-picking for, and it is asked as a QUESTION about the port
+                # rather than inferred from the exit status: `heph serve` exits
+                # non-zero for its own reasons too (an unreadable project, a
+                # missing bundle), and answering every early exit with
+                # EADDRINUSE made `with_free_port` retry a real refusal five
+                # times and then report it as "could not start on a free port" —
+                # one clear error turned into a misleading one, which is exactly
+                # what `_is_bind_collision` is documented to avoid.
+                raise OSError(
+                    errno.EADDRINUSE,
+                    f"heph serve exited {code} and 127.0.0.1:{port} is held by another process",
+                )
+            raise RuntimeError(
+                f"heph serve exited {code} before binding 127.0.0.1:{port}, and the port "
+                f"is free — so this is not the bind race. Its stdout was: "
+                f"{output.strip()!r} (its stderr went to this process's stderr, above)."
+            )
+        stop(proc)
+        raise RuntimeError(
+            f"heph serve neither bound 127.0.0.1:{port} nor exited within {_BIND_DEADLINE_S:.0f}s"
+        )
+
+    return with_free_port(spawn)
+
+
+def _port_is_taken(port: int) -> bool:
+    """Is anything holding the loopback port right now?
+
+    The precise question behind both "did somebody take it from us?" and "has
+    the child bound yet?". Asked by CONNECTING rather than by binding: a bind
+    probe would itself race the child for the port and could hand it the very
+    EADDRINUSE this helper exists to detect. And asked rather than parsed from
+    another process's diagnostics: the child's stderr is inherited so that an
+    operator sees it live, which is precisely why it is not available here as
+    evidence.
+    """
     import socket
 
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
+    with socket.socket() as probe:
+        probe.settimeout(0.2)
+        if probe.connect_ex(("127.0.0.1", port)) == 0:
+            return True
+    return False
 
 
 def read_entry(server: subprocess.Popen[str]) -> tuple[str, str]:

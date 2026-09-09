@@ -44,6 +44,7 @@ from _g11b import (
 from hephaestus.core.addressing import Resolution
 from hephaestus.core.assembly import PartGeometry, UnresolvableAnchorError
 from hephaestus.core.executor.sandbox.base import ExecBackend
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.core.registry import (
     INTERFACE_MARKER,
     INTERFACE_TOPOLOGY,
@@ -481,7 +482,6 @@ def _consumer_script(fragment: str) -> str:
 
 def _run_consumer(tmp_path: Path, script: str) -> Any:
     from hephaestus.core.executor.runner import BuildRequest, run_build
-    from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 
     _counter[0] += 1
     out = tmp_path / f"consumer-{_counter[0]}"

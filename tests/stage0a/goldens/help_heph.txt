@@ -1,0 +1,37 @@
+usage: heph [-h] [--version]
+            {build,check,lint,init,part,script,params,prompt,render,goldens,registry,reference,import,diff,scan,assembly,joints,motion,cam,solve,proposals,agent,export,bench,serve} ...
+
+Hephaestus CAD engine CLI (engine-first: no server)
+
+positional arguments:
+  {build,check,lint,init,part,script,params,prompt,render,goldens,registry,reference,import,diff,scan,assembly,joints,motion,cam,solve,proposals,agent,export,bench,serve}
+    build               build a part and publish the result
+    check               run the cross-part check set
+    lint                lint a part script (§9 + hc shadowing)
+    init                scaffold a new Hephaestus project directory
+    part                list, create, or show a part
+    script              read or write a part script
+    params              show PARAMS declarations and effective values
+    prompt              show or store the operator request text (not a hosted chat)
+    render              render a part's current build, or a posed scene, to PNG(s)
+    goldens             verify the golden corpus against its sidecars (--update regenerates it)
+    registry            inspect and pin content registries
+    reference           register operator-supplied reference documents and images
+    import              admit a STEP, mesh, or point cloud into imports/
+    diff                compare a part against another part or an import
+    scan                print the facts of a mesh or point cloud already under imports/ (admit
+                        with heph import add; no reconstruction)
+    assembly            show declared constraints and their latest residuals
+    joints              show declared joints and poses with their latest motion outcomes
+    motion              show declared motion checks, their latest sweep results, and couplings
+    cam                 2D CAM: laser-cut / waterjet toolpath and DXF
+    solve               propose values for declared free variables (writes nothing)
+    proposals           list recorded placement proposals and their staleness (writes nothing)
+    agent               interactive CAD agent session (requires Node and a provider config)
+    export              list exported files and release their GC roots
+    bench               Tier 3 golden-prompt benchmark (corpus tasks)
+    serve               serve the project over MCP or the web workspace
+
+options:
+  -h, --help            show this help message and exit
+  --version             print the installed Hephaestus version and exit

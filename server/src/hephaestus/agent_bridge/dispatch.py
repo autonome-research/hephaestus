@@ -65,7 +65,13 @@ from hephaestus.core.errors import (
     ValidationError,
 )
 from hephaestus.core.part_templates import BLANK_TEMPLATES
-from hephaestus.core.project_store.store import ProjectStore, WriteConflictError
+from hephaestus.core.project_store.layout import ProjectLayout
+from hephaestus.core.project_store.store import (
+    SNAPSHOT_ARTIFACT_KIND,
+    SNAPSHOT_REF_PREFIX,
+    ProjectStore,
+    WriteConflictError,
+)
 from hephaestus.core.registry import TEXT_MAX_LINES, RegistryError, RegistryOps
 from opstore.errors import BusyError, NotFoundError
 from opstore.types import TerminalState
@@ -78,6 +84,15 @@ from .cad_ops import (
     check_template,
     clarification_gate,
     inherit_run_request_text,
+)
+from .cad_ops._base import (
+    CHECK_SNAPSHOT_KIND,
+    attempted_snapshot,
+    conflict_payload,
+    near_misses,
+    numbered_source,
+    page_source,
+    paging_fields,
 )
 from .delegation import (
     DEADLINE_DEFAULT_S,
@@ -363,6 +378,20 @@ class _CadBundlePreparer:
         return RenderBundle(image_refs=tuple(refs), images=tuple(payloads))
 
 
+def _is_illegal_part_name(layout: ProjectLayout, name: str) -> bool:
+    """Is ``name`` outside the part-name grammar at all (not merely absent)?
+
+    Asks the layout rather than re-stating its regex: ``part_path`` is where the
+    grammar is defined, and a second copy here would be a second answer to
+    "what is a legal part name" the day the first one changes.
+    """
+    try:
+        layout.part_path(name)
+    except ValidationError:
+        return True
+    return False
+
+
 class ToolDispatcher:
     """Authz + idempotent core routing for one project's ``py.tool_dispatch``."""
 
@@ -478,11 +507,43 @@ class ToolDispatcher:
                 },
             ) from exc
         except AddressingError as exc:
+            # RC-4 / J-http-envelope-4: re-raise the code the ENGINE set. This
+            # handler used to rewrite every addressing miss — a bad part
+            # prefix, a bad anchor, a bad `focus` — into `invalid_part`,
+            # discarding `exc.code`, so `POST /parts/{part}/inspect` with a
+            # focus matching nothing answered "the part is invalid" about a
+            # part that is fine. `http/errors.py` keeps a row for the correct
+            # reason with a comment saying flattening it would make a clause
+            # untestable, and the flattening was happening one layer below
+            # where that comment is written. The candidates ride through
+            # unchanged, so a client that renders them is unaffected.
             raise DispatchError(
-                "invalid_part", exc.message, data={"candidates": list(exc.candidates)}
+                exc.code, exc.message, data={"candidates": list(exc.candidates)}
             ) from exc
         except IncoherentProjectSnapshotError as exc:
             raise DispatchError("incoherent_project_snapshot", exc.message) from exc
+        except ValidationError as exc:
+            # J-http-envelope-4's third clause, and the last hole in this
+            # handler. `ProjectLayout.part_path` refuses a name that is not a
+            # python identifier with a `ValidationError`, which nothing here
+            # caught — so `read_part(name="Not A Legal Name!!")` left the
+            # dispatcher as a raw engine exception, past every envelope the
+            # tool surface, MCP and HTTP share.
+            #
+            # INTERFACE.md §2.4's settled vocabulary decides the reason: a
+            # SYNTACTICALLY illegal part name is `invalid_part` (the name itself
+            # is the fault), a legal name the project lacks is an addressing
+            # miss, and a selector *inside* a part is `addressing_error`. The
+            # legality test is the layout's own — re-running it here rather than
+            # matching on the message keeps one definition of what a part name
+            # is. Every other contract failure that reaches this far is
+            # `invalid_params`, which is what `_inspect_part`'s local handler
+            # has always answered and is still a named refusal rather than a
+            # traceback.
+            name = arguments.get("name")
+            if isinstance(name, str) and _is_illegal_part_name(self._store.layout, name):
+                raise DispatchError("invalid_part", exc.message) from exc
+            raise DispatchError("invalid_params", exc.message) from exc
 
     # -- authorization -----------------------------------------------------
 
@@ -799,13 +860,17 @@ class ToolDispatcher:
         self, _p: Principal, cad: CadOps, arguments: dict[str, Any], _inv: Invocation
     ) -> dict[str, Any]:
         script, content_hash, snapshot_ref = cad.read_check(str(arguments["name"]))
+        page = page_source(
+            script,
+            offset_line=int(arguments.get("offset_line", 1)),
+            limit_lines=int(arguments.get("limit_lines", TEXT_MAX_LINES)),
+        )
         return {
-            "script": script,
-            "numbered_script": _numbered(script),
+            "script": page.body,
+            "numbered_script": numbered_source(page.body, start=page.first_line),
             "content_hash": content_hash,
             "snapshot_ref": snapshot_ref,
-            "truncated": False,
-            "oversized_line": False,
+            **paging_fields(page),
         }
 
     def _edit_project_check(
@@ -820,13 +885,27 @@ class ToolDispatcher:
             return {
                 "status": "conflict",
                 "kind": "stale_hash",
-                "current_hash": content_hash,
-                "current_script": script,
-                "current_truncated": False,
-                "current_oversized_line": False,
-                "current_snapshot_ref": snapshot_ref,
-                "base_snapshot_ref": f"artifact:part-snapshot:{expected_hash}",
-                "attempted_snapshot_ref": snapshot_ref,
+                # J-agent-results-S5: the base ref is reconstructed from the
+                # caller's expected hash and MUST carry the same kind the
+                # reader mints, or a client comparing its own reconstruction
+                # with the server's finds two different capabilities for one
+                # blob.
+                **conflict_payload(
+                    current_hash=content_hash,
+                    current_script=script,
+                    current_snapshot_ref=snapshot_ref,
+                    base_snapshot_ref=f"artifact:{CHECK_SNAPSHOT_KIND}:{expected_hash}",
+                    # The REJECTED contender, replayed against the caller's own
+                    # base — never the live snapshot, which is already reported
+                    # as `current_snapshot_ref` and is exactly the document the
+                    # caller did NOT write (ledger J-agent-results-2). Null
+                    # when that base was never registered here or `old_str`
+                    # does not match it once: there is no single candidate to
+                    # name, and the conflict says so rather than fabricating.
+                    attempted_snapshot_ref=cad.attempted_check_snapshot(
+                        expected_hash, old_str, new_str
+                    ),
+                ),
             }
         occurrences = script.count(old_str)
         if occurrences != 1:
@@ -834,6 +913,7 @@ class ToolDispatcher:
                 "status": "validation_error",
                 "kind": "contract",
                 "diagnostics": f"old_str occurs {occurrences} times in {name!r}; must be unique",
+                "candidates": near_misses(script, old_str),
             }
         candidate = script.replace(old_str, new_str, 1)
         kind = cad.validate_check_source(name, candidate)
@@ -866,6 +946,7 @@ class ToolDispatcher:
             part=part,
             artifact_ref=_opt_str(arguments, "artifact_ref"),
             project_snapshot_ref=_opt_str(arguments, "project_snapshot_ref"),
+            density=_opt_float(arguments, "density"),
         )
 
     def _compare_solids(
@@ -1468,17 +1549,34 @@ class ToolDispatcher:
 
     def _read_part(self, arguments: dict[str, Any], _inv: Invocation) -> dict[str, Any]:
         name = str(arguments["name"])
-        try:
-            snap = self._store.read_part(name)
-        except AddressingError as exc:
-            raise DispatchError("invalid_part", str(exc)) from exc
+        # No local AddressingError handler: the central one in `dispatch`
+        # re-raises the engine's own code AND its candidates, and the three
+        # local ones here dropped the candidates the same refusal carries on
+        # the build path (ledger J-agent-results-11 / RC-4).
+        snap = self._store.read_part(name)
+        page = page_source(
+            snap.content,
+            offset_line=int(arguments.get("offset_line", 1)),
+            limit_lines=int(arguments.get("limit_lines", TEXT_MAX_LINES)),
+        )
         result: dict[str, Any] = {
-            "script": snap.content,
+            "script": page.body,
+            "numbered_script": numbered_source(page.body, start=page.first_line),
             "content_hash": snap.content_hash,
             "snapshot_ref": snap.snapshot_ref,
-            "line_count": snap.content.count("\n") + (0 if snap.content.endswith("\n") else 1),
-            "truncated": False,
+            # A fact about the FILE, not about the page: `total_lines` says the
+            # same thing and `last_line` bounds the page.
+            "line_count": page.total_lines,
+            **paging_fields(page),
         }
+        declared = _declared_params(snap.content)
+        if declared is not None:
+            # The declared `params` member, from the 0.5 ms literal pass the
+            # params route's own tier 2 uses — never from the sandboxed probe,
+            # which would put a multi-second build inside a read
+            # (J-http-limits-3). Omitted, rather than guessed, when the
+            # declaration is not fully literal.
+            result["params"] = declared
         if self._cad is not None:
             result["part_param_state_hash"] = self._cad.param_state_hash("part", name)
             result["project_param_state_hash"] = self._cad.param_state_hash("project", None)
@@ -1513,22 +1611,50 @@ class ToolDispatcher:
         expected_hash = str(arguments["expected_hash"])
         old_str = str(arguments["old_str"])
         new_str = str(arguments["new_str"])
-        try:
-            snap = self._store.read_part(name)
-        except AddressingError as exc:
-            raise DispatchError("invalid_part", str(exc)) from exc
+        snap = self._store.read_part(name)
         if snap.content_hash != expected_hash:
             return {
                 "applied": False,
-                "conflict": {
-                    "current_hash": snap.content_hash,
-                    "current_script": snap.content,
-                    "current_snapshot_ref": snap.snapshot_ref,
-                },
+                # ONE conflict shape for both paths (J-agent-results-2): this
+                # pre-check used to build a three-field payload while the
+                # store's compare-and-set failure built the declared nine, so
+                # one tool answered a stale hash two ways.
+                "conflict": conflict_payload(
+                    current_hash=snap.content_hash,
+                    current_script=snap.content,
+                    current_snapshot_ref=snap.snapshot_ref,
+                    # `tool_schema.md`: the store materializes the exact
+                    # attempted candidate from the immutable snapshot
+                    # registered for `expected_hash` before returning a stale
+                    # conflict, so the caller can diff what it meant to write
+                    # against what is there. The pre-check used to return
+                    # neither ref while the compare-and-set path returned both.
+                    base_snapshot_ref=SNAPSHOT_REF_PREFIX + expected_hash,
+                    attempted_snapshot_ref=attempted_snapshot(
+                        self._store.store,
+                        expected_hash,
+                        old_str,
+                        new_str,
+                        kind=SNAPSHOT_ARTIFACT_KIND,
+                    ),
+                ),
             }
         occurrences = snap.content.count(old_str)
         if occurrences == 0:
-            return {"applied": False, "diff": "", "line": 0}
+            # J-agent-results-2: the zero case returned `{applied: false, diff:
+            # "", line: 0}` — indistinguishable from a no-op success, with no
+            # reason and nothing to act on, while the very next branch already
+            # refused an ambiguous match by name and the two sibling editors
+            # (written the next day) returned a discriminated validation error.
+            # Same vocabulary, same diagnostics shape, plus the candidates
+            # `tool_schema.md` has always promised.
+            return {
+                "applied": False,
+                "status": "validation_error",
+                "kind": "contract",
+                "diagnostics": (f"old_str occurs 0 times in {name!r}; must be unique"),
+                "candidates": near_misses(snap.content, old_str),
+            }
         if occurrences > 1:
             raise DispatchError(
                 "ambiguous_edit",
@@ -1542,10 +1668,7 @@ class ToolDispatcher:
         name = str(arguments["name"])
         expected_hash = str(arguments["expected_hash"])
         script = str(arguments["script"])
-        try:
-            self._store.read_part(name)  # ensure it exists / register drift base
-        except AddressingError as exc:
-            raise DispatchError("invalid_part", str(exc)) from exc
+        self._store.read_part(name)  # ensure it exists / register drift base
         return self._commit_write(name, script, expected_hash, inv)
 
     def _commit_write(
@@ -1562,13 +1685,13 @@ class ToolDispatcher:
         except WriteConflictError as exc:
             return {
                 "applied": False,
-                "conflict": {
-                    "current_hash": exc.live_hash,
-                    "current_script": exc.live_content,
-                    "current_snapshot_ref": exc.live_snapshot_ref,
-                    "base_snapshot_ref": exc.base_ref,
-                    "attempted_snapshot_ref": exc.attempted_ref,
-                },
+                "conflict": conflict_payload(
+                    current_hash=exc.live_hash,
+                    current_script=exc.live_content,
+                    current_snapshot_ref=exc.live_snapshot_ref,
+                    base_snapshot_ref=exc.base_ref,
+                    attempted_snapshot_ref=exc.attempted_ref,
+                ),
             }
         snap = outcome.snapshot
         result: dict[str, Any] = {
@@ -1581,19 +1704,25 @@ class ToolDispatcher:
             result.update(extra)
         return result
 
-    def _read_globals(self, _arguments: dict[str, Any], _inv: Invocation) -> dict[str, Any]:
+    def _read_globals(self, arguments: dict[str, Any], _inv: Invocation) -> dict[str, Any]:
         snap = self._store.read_globals()
         if snap is None:
             raise DispatchError(
                 "invalid_part", "project has no globals.py", code=ErrorCode.INVALID_PARAMS
             )
+        # The arguments used to arrive under an underscore — the proof they
+        # were discarded (ledger J-http-limits-3).
+        page = page_source(
+            snap.content,
+            offset_line=int(arguments.get("offset_line", 1)),
+            limit_lines=int(arguments.get("limit_lines", TEXT_MAX_LINES)),
+        )
         result: dict[str, Any] = {
-            "script": snap.content,
-            "numbered_script": _numbered(snap.content),
+            "script": page.body,
+            "numbered_script": numbered_source(page.body, start=page.first_line),
             "content_hash": snap.content_hash,
             "snapshot_ref": snap.snapshot_ref,
-            "truncated": False,
-            "oversized_line": False,
+            **paging_fields(page),
         }
         if self._cad is not None:
             result["project_param_state_hash"] = self._cad.param_state_hash("project", None)
@@ -1629,10 +1758,22 @@ def _opt_mapping(arguments: Mapping[str, Any], key: str) -> Mapping[str, Any] | 
     return cast("Mapping[str, Any]", value)
 
 
-def _numbered(script: str) -> str:
-    lines = script.splitlines()
-    width = len(str(max(len(lines), 1)))
-    return "\n".join(f"{i:>{width}}  {line}" for i, line in enumerate(lines, start=1))
+def _declared_params(script: str) -> dict[str, Any] | None:
+    """``read_part.params`` from the script's literals, or None if incomplete.
+
+    ``static_params`` returns the literal declaration and the set of names the
+    script declares; when they differ the declaration has a computed member no
+    literal pass can evaluate, and the honest answer is to omit the field
+    rather than report a partial declaration as the whole one. Tier 2 of
+    ``GET /parts/{part}/params`` makes exactly this call for exactly this
+    reason.
+    """
+    from hephaestus.core.params import params_declaration_json, static_params
+
+    literal, declared_names = static_params(script)
+    if set(literal) != set(declared_names):
+        return None
+    return dict(params_declaration_json(literal))
 
 
 def _unified_diff(old_str: str, new_str: str) -> str:

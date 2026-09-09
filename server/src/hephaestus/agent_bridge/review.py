@@ -122,8 +122,8 @@ from hephaestus.contract.tools_decl import REVIEWER_TOOLS
 from hephaestus.core.assembly import AssemblyStatus, ConstraintOutcome
 from hephaestus.core.motion import (
     JointOutcome,
+    MotionCutShort,
     MotionStatus,
-    MotionTimeout,
     PoseOutcome,
     SweepResult,
 )
@@ -960,11 +960,12 @@ def motion_check_results(
     """Evaluate every declared motion check now (``KINEMATICS.md`` §4).
 
     Each active check runs its own bounded grid, one at a time, so a single
-    check hitting the §4 wall-clock ceiling costs exactly that check: the
-    :class:`~hephaestus.core.motion.MotionTimeout` refusal is captured as its
-    JSON (check id, ceiling, partial per-sample facts) in the second tuple
-    rather than aborting the review, and every other check still gets its
-    result. A timeout is never dressed as a result record — a killed sweep
+    check cut short costs exactly that check: the
+    :class:`~hephaestus.core.motion.MotionCutShort` refusal — the ceiling's
+    ``motion_timeout`` and the dead child's ``motion_child_died`` alike — is
+    captured as its JSON (check id, reason, partial per-sample facts) in the
+    second tuple rather than aborting the review, and every other check still
+    gets its result. It is never dressed as a result record — a killed sweep
     decided nothing — but it blocks all the same
     (:func:`motion_review_findings`): an unchecked motion claim is not a
     passing one. Withdrawn entries are never evaluated, per the 8C rule.
@@ -979,7 +980,10 @@ def motion_check_results(
     for entry in evaluator.checks.state().active:
         try:
             results.extend(evaluator.evaluate([entry.id]))
-        except MotionTimeout as exc:
+        except MotionCutShort as exc:
+            # The carriage, not the reason: a ceiling kill and a dead child
+            # both cost exactly this check and both ride here as their own
+            # named JSON (``reason`` says which).
             timeouts.append(exc.to_json())
     return tuple(results), tuple(timeouts)
 
@@ -1511,13 +1515,21 @@ def motion_review_findings(
         check_id = timeout.get("id")
         evaluated = timeout.get("samples_evaluated")
         total = timeout.get("grid_total")
-        ceiling = timeout.get("timeout_s")
+        raw_reason = timeout.get("reason")
+        reason = raw_reason if isinstance(raw_reason, str) else "motion_timeout"
+        if reason == "motion_child_died":
+            # No ceiling fired, so none is quoted: naming one here would
+            # assert a bound that was never tested, and would send the
+            # reader after "raise the ceiling" for a crash.
+            cut_short = f"lost its sweep child (exit {timeout.get('exit_code')})"
+        else:
+            cut_short = f"hit the {timeout.get('timeout_s')}s sweep ceiling"
         findings.append(
             ReviewFinding(
-                id=str(check_id) if isinstance(check_id, str) else "*motion_timeout*",
+                id=str(check_id) if isinstance(check_id, str) else f"*{reason}*",
                 verdict="fail",
                 evidence=(
-                    f"motion check {check_id} hit the {ceiling}s sweep ceiling with "
+                    f"motion check {check_id} {cut_short} with "
                     f"{evaluated} of {total} samples evaluated (KINEMATICS.md §4): a killed "
                     "sweep decided nothing, and an unchecked motion claim is not a passing "
                     "one, so it blocks until it can be measured."

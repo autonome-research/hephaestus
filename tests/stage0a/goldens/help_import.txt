@@ -1,0 +1,9 @@
+usage: heph import [-h] {add,list} ...
+
+positional arguments:
+  {add,list}
+    add       copy a file into imports/ (and optionally seed a part script)
+    list      list admitted files under imports/
+
+options:
+  -h, --help  show this help message and exit

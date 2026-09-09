@@ -16,9 +16,13 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import jsonschema
 import pytest
 from hephaestus.agent_bridge.cad_ops import EXPORT_FORMATS, CadOps
 from hephaestus.agent_bridge.dispatch import DispatchError
+from hephaestus.contract import toolgen
+from hephaestus.contract.tools_decl import TOOLS_BY_NAME
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.core.project_store.publication import build_bundle_pointer
 from hephaestus.core.project_store.store import blob_hash_of_ref
 from hephaestus.testing.tools_fixture import (
@@ -28,6 +32,22 @@ from hephaestus.testing.tools_fixture import (
     make_project,
 )
 from opstore.errors import KeyPayloadMismatchError
+
+
+def assert_conforms(tool: str, result: dict[str, Any]) -> None:
+    """Validate a dispatched RESULT against the tool's own generated schema.
+
+    J-http-limits-3's Tests clause asks for exactly this: "a schema-conformance
+    test that every declared paging member is produced for a truncating input —
+    the gate that would have caught the original commit." A hand-picked
+    ``assert "next_offset_bytes" in out`` sweep can drift from the declaration
+    (a renamed or re-typed field goes unnoticed); validating against the SAME
+    schema ``contract/toolgen.py`` regenerates ``schemas/tools/*.schema.json``
+    from is the gate that cannot drift, since ``test_toolgen.py`` (this lane's
+    own file) fails closed the moment the two disagree.
+    """
+    schema = toolgen.schema_document(TOOLS_BY_NAME[tool])["result"]
+    jsonschema.validate(result, schema)
 
 
 @pytest.fixture
@@ -234,12 +254,350 @@ def test_build_part_same_invocation_different_source_mismatches(project: Project
 
 
 # ==========================================================================
+# read_part paging (J-http-limits-3)
+#
+# ``read_part`` / ``read_globals`` / ``read_project_check`` all declare
+# ``offset_line`` / ``limit_lines`` params and splice ``_PAGING_FIELDS``
+# (``truncated``, ``oversized_line``, ``oversized_line_offset_bytes``,
+# ``next_offset_bytes``) into their result, and every handler today ignores
+# the paging arguments and answers the whole document with a hardcoded
+# ``truncated: False`` — RC-9. ``server/src/hephaestus/agent_bridge/cad_ops/
+# _base.py`` already carries the shared pager (``page_source`` /
+# ``paging_fields``) the fix is meant to route every read handler through;
+# these tests exercise the OBSERVABLE promise (a script longer than the
+# requested window truncates, and its declared byte cursor continues
+# losslessly through the already-implemented ``read_artifact``) rather than
+# pinning dispatch.py's internal call shape.
+
+
+def _long_widget_script(lines: int) -> tuple[str, str]:
+    """A syntactically boring widget script with ``lines`` extra comment lines."""
+    padding = "\n".join(f"# padding line {i}" for i in range(lines))
+    return padding, padding
+
+
+class TestReadPartPaging:
+    def test_a_small_script_is_not_truncated(self, project: Project) -> None:
+        out = project.call("read_part", {"name": "widget"})
+        assert out["truncated"] is False
+        assert out["oversized_line"] is False
+
+    def test_a_limit_lines_below_the_script_length_truncates_with_a_cursor(
+        self, project: Project
+    ) -> None:
+        read = project.call("read_part", {"name": "widget"})
+        padding, _ = _long_widget_script(20)
+        project.call(
+            "edit_part",
+            {
+                "name": "widget",
+                "expected_hash": read["content_hash"],
+                "old_str": read["script"],
+                "new_str": read["script"] + "\n" + padding + "\n",
+            },
+        )
+        full = project.call("read_part", {"name": "widget"})
+        page = project.call("read_part", {"name": "widget", "limit_lines": 3})
+        assert page["truncated"] is True
+        assert page["script"] != full["script"]
+        assert page["script"].count("\n") <= 3 + 1  # a small, bounded slice
+        assert isinstance(page["next_offset_bytes"], int)
+        assert page["next_offset_bytes"] > 0
+        # J-http-limits-3's own gate: every declared paging member, for real.
+        assert_conforms("read_part", page)
+
+    def test_the_truncated_page_continues_losslessly_through_read_artifact(
+        self, project: Project
+    ) -> None:
+        """ "reading the artifact from that cursor continues exactly — no
+        overlap, no gap, byte-identical when concatenated" (the ledger's own
+        Tests clause): ``next_offset_bytes`` is documented
+        (``cad_ops/_base.py``'s ``SourcePage``) to feed straight into
+        ``read_artifact`` over the SAME ``snapshot_ref``.
+        """
+        read = project.call("read_part", {"name": "widget"})
+        padding, _ = _long_widget_script(20)
+        edited = project.call(
+            "edit_part",
+            {
+                "name": "widget",
+                "expected_hash": read["content_hash"],
+                "old_str": read["script"],
+                "new_str": read["script"] + "\n" + padding + "\n",
+            },
+        )
+        full = project.call("read_part", {"name": "widget"})
+        page = project.call("read_part", {"name": "widget", "limit_lines": 3})
+        assert page["truncated"] is True
+        rest = project.call(
+            "read_artifact",
+            {"ref": edited["snapshot_ref"], "offset_bytes": page["next_offset_bytes"]},
+        )
+        assert page["script"] + rest["content"] == full["script"]
+
+    def test_an_offset_past_the_end_returns_an_empty_page_not_the_whole_file(
+        self, project: Project
+    ) -> None:
+        out = project.call("read_part", {"name": "widget", "offset_line": 10_000})
+        assert out["script"] == ""
+        assert out["truncated"] is False
+
+    def test_a_single_oversized_line_reports_its_own_flag(self, project: Project) -> None:
+        read = project.call("read_part", {"name": "widget"})
+        original_lines = len(read["script"].splitlines())
+        huge_line = "# " + ("x" * 60_000)  # exceeds TEXT_MAX_BYTES (51200) alone
+        # ``read["script"]`` already ends in "\n"; appending the huge line
+        # directly (no extra separator) keeps line numbers exact rather than
+        # inserting a blank line ahead of it.
+        project.call(
+            "edit_part",
+            {
+                "name": "widget",
+                "expected_hash": read["content_hash"],
+                "old_str": read["script"],
+                "new_str": read["script"] + huge_line + "\n",
+            },
+        )
+        # Page STARTING AT the oversized line: paging from line 1 would fill the
+        # byte budget with the small preceding lines first and merely truncate,
+        # never reaching the giant line as "the line the page is at".
+        out = project.call("read_part", {"name": "widget", "offset_line": original_lines + 1})
+        assert out["oversized_line"] is True
+
+
+class TestReadGlobalsAndProjectCheckPaging:
+    """The same three assertions, for the two sibling read tools."""
+
+    def test_read_globals_truncates_and_flags_a_cursor(self, project: Project) -> None:
+        base = project.call("read_globals", {})
+        padding, _ = _long_widget_script(20)
+        project.call(
+            "edit_globals",
+            {
+                "expected_hash": base["content_hash"],
+                "old_str": base["script"],
+                "new_str": base["script"] + "\n" + padding + "\n",
+            },
+        )
+        page = project.call("read_globals", {"limit_lines": 3})
+        assert page["truncated"] is True
+        assert isinstance(page["next_offset_bytes"], int)
+        assert_conforms("read_globals", page)
+
+    def test_read_globals_offset_past_the_end_is_empty(self, project: Project) -> None:
+        out = project.call("read_globals", {"offset_line": 10_000})
+        assert out["script"] == ""
+        assert out["truncated"] is False
+
+    def test_read_project_check_truncates_and_flags_a_cursor(self, project: Project) -> None:
+        created = project.call("create_project_check", {"name": "long", "description": "x"})
+        padding, _ = _long_widget_script(20)
+        project.call(
+            "edit_project_check",
+            {
+                "name": "long",
+                "expected_hash": created["content_hash"],
+                "old_str": created["initial_script"],
+                "new_str": created["initial_script"] + "\n" + padding + "\n",
+            },
+        )
+        page = project.call("read_project_check", {"name": "long", "limit_lines": 3})
+        assert page["truncated"] is True
+        assert isinstance(page["next_offset_bytes"], int)
+        assert_conforms("read_project_check", page)
+
+    def test_read_project_check_offset_past_the_end_is_empty(self, project: Project) -> None:
+        project.call("create_project_check", {"name": "empty_page", "description": "x"})
+        out = project.call("read_project_check", {"name": "empty_page", "offset_line": 10_000})
+        assert out["script"] == ""
+        assert out["truncated"] is False
+
+
+# ==========================================================================
+# edit_part: a failed exact-match returns a NAMED refusal, not a blank success
+# (J-agent-results-2)
+
+
+class TestEditPartAbsentMatch:
+    def test_absent_old_str_is_a_named_validation_error_with_candidates(
+        self, project: Project
+    ) -> None:
+        """Today: ``{"applied": False, "diff": "", "line": 0}`` — indistinguishable
+        from a no-op success, no reason, no diagnostics, no candidates. The fix
+        gives ``edit_part`` its two siblings' discriminated refusal vocabulary
+        (``status: "validation_error"``) plus a bounded near-miss block.
+        """
+        read = project.call("read_part", {"name": "widget"})
+        result = project.call(
+            "edit_part",
+            {
+                "name": "widget",
+                "expected_hash": read["content_hash"],
+                "old_str": "this text does not occur in the widget script",
+                "new_str": "replacement",
+            },
+        )
+        assert result["applied"] is False
+        assert result["status"] == "validation_error"
+        assert result["kind"] == "contract"
+        assert "widget" in result["diagnostics"] or "0 times" in result["diagnostics"]
+        assert isinstance(result["candidates"], list)
+        assert len(result["candidates"]) <= 3
+        for candidate in result["candidates"]:
+            assert set(candidate) >= {"line", "text", "ratio"}
+        assert_conforms("edit_part", result)
+
+    def test_a_near_miss_of_the_real_content_is_returned(self, project: Project) -> None:
+        """A near-exact typo of real script content must surface a genuine
+        candidate pointing at the real line, not an empty list.
+        """
+        read = project.call("read_part", {"name": "widget"})
+        # A one-character corruption of a real line in tools_fixture's WIDGET_SRC.
+        typo = 'body.labl = "widget_body"'
+        assert typo not in read["script"]
+        result = project.call(
+            "edit_part",
+            {
+                "name": "widget",
+                "expected_hash": read["content_hash"],
+                "old_str": typo,
+                "new_str": "replacement",
+            },
+        )
+        assert result["candidates"], "expected at least one near miss for a one-character typo"
+        assert any("widget_body" in c["text"] for c in result["candidates"])
+
+    def test_edit_part_and_edit_project_check_absent_match_share_the_same_shape(
+        self, project: Project
+    ) -> None:
+        """Parity test (ledger J-agent-results-2): the two editors must not
+        diverge on the refusal shape for the identical failure mode.
+        """
+        read = project.call("read_part", {"name": "widget"})
+        part_result = project.call(
+            "edit_part",
+            {
+                "name": "widget",
+                "expected_hash": read["content_hash"],
+                "old_str": "nothing matches this in widget.py",
+                "new_str": "x",
+            },
+        )
+        created = project.call("create_project_check", {"name": "parity", "description": "x"})
+        check_result = project.call(
+            "edit_project_check",
+            {
+                "name": "parity",
+                "expected_hash": created["content_hash"],
+                "old_str": "nothing matches this in the check either",
+                "new_str": "x",
+            },
+        )
+        assert check_result["status"] == "validation_error"  # already true today
+        assert part_result["status"] == check_result["status"]
+        assert part_result["kind"] == check_result["kind"]
+        assert "candidates" in part_result and "candidates" in check_result
+
+
+class TestEditPartConflictFieldSet:
+    #: The declared 9-member conflict payload's ALWAYS-present members
+    #: (``contract/.../tools_decl.py``'s ``_CONFLICT_FIELDS``, minus
+    #: ``current_next_offset_bytes`` / ``current_oversized_line_offset_bytes``:
+    #: ``cad_ops/_base.py``'s ``paging_fields`` deliberately omits a cursor
+    #: that does not apply — "cursors omitted when absent" — rather than
+    #: emitting a null one, and the schema's own ``required`` list for the
+    #: conflict object is empty, confirming every member is optional).
+    _DECLARED_CONFLICT_FIELDS = frozenset(
+        {
+            "current_hash",
+            "current_script",
+            "current_truncated",
+            "current_oversized_line",
+            "current_snapshot_ref",
+            "base_snapshot_ref",
+            "attempted_snapshot_ref",
+        }
+    )
+
+    def test_stale_hash_conflict_carries_the_full_declared_field_set(
+        self, project: Project
+    ) -> None:
+        """Today's pre-check conflict carries exactly 3 of the declared 9
+        fields (no ``base_snapshot_ref``, ``attempted_snapshot_ref``, or any
+        of the paging fields) while the *same tool's* compare-and-set failure
+        (below) builds more of them — one tool, two conflict shapes, for the
+        one condition ``stale_hash``.
+        """
+        stale = project.call(
+            "edit_part",
+            {
+                "name": "widget",
+                "expected_hash": "sha256:" + "0" * 64,
+                "old_str": "does-not-matter",
+                "new_str": "x",
+            },
+        )
+        assert stale["applied"] is False
+        conflict = stale["conflict"]
+        missing = self._DECLARED_CONFLICT_FIELDS - set(conflict)
+        assert not missing, f"stale-hash conflict is missing declared fields: {sorted(missing)}"
+        # The unregistered ``expected_hash`` above never round-tripped through a
+        # real prior write, so the paging cursors that only apply to a genuine
+        # base/attempted pair are legitimately absent — the schema's own null
+        # path (the conflict object declares no ``required`` members at all).
+        assert_conforms("edit_part", stale)
+
+    def test_compare_and_set_conflict_carries_the_full_declared_field_set(
+        self, project: Project
+    ) -> None:
+        """The concurrent-write race, at the layer that actually detects it:
+        ``edit_part``'s own pre-check reads fresh on every call (there is no
+        way to land a write BETWEEN that read and its comparison inside one
+        synchronous call, so two sequential ``edit_part`` calls against a
+        stale hash both hit the pre-check, never the compare-and-set). The
+        store's real optimistic-CAS failure — what the *same* ``_commit_write``
+        helper's ``WriteConflictError`` branch builds the conflict from, shared
+        by ``edit_part`` and ``write_part`` alike — is reached by ``write_part``
+        directly, since it has no pre-check of its own: a stale ``expected_hash``
+        there goes straight to the store's real CAS and loses it for real.
+        """
+        first = project.call("read_part", {"name": "widget"})
+        project.call(
+            "write_part",
+            {
+                "name": "widget",
+                "expected_hash": first["content_hash"],
+                "script": first["script"] + "\n# first writer\n",
+            },
+            entry="racer-1",
+        )
+        conflict = project.call(
+            "write_part",
+            {
+                "name": "widget",
+                "expected_hash": first["content_hash"],  # now stale
+                "script": first["script"] + "\n# second writer\n",
+            },
+            entry="racer-2",
+        )
+        assert conflict["applied"] is False
+        missing = self._DECLARED_CONFLICT_FIELDS - set(conflict["conflict"])
+        assert not missing, (
+            f"compare-and-set conflict is missing declared fields: {sorted(missing)}"
+        )
+
+
+# ==========================================================================
 # measure
 
 
 @pytest.mark.parametrize(
     ("kind", "units"),
-    [("bbox", "mm"), ("volume", "mm^3"), ("mass", "g"), ("sealed", "bool"), ("genus", "count")],
+    # "mass" is deliberately excluded: J-agent-results-1 (test_cad_ops_measure.py)
+    # — "widget" declares no material, and a mass with no bound or explicit
+    # density must refuse by name (``mass_density_unbound``) rather than
+    # silently answer at the invented ``DEFAULT_DENSITY = 1.0``.
+    [("bbox", "mm"), ("volume", "mm^3"), ("sealed", "bool"), ("genus", "count")],
 )
 def test_measure_unary_kinds(built: Project, kind: str, units: str) -> None:
     out = built.call("measure", {"kind": kind, "a": "part", "part": "widget"})
@@ -291,9 +649,11 @@ def test_measure_incoherent_project_snapshot(project: Project) -> None:
 
 
 def test_measure_addressing_error_lists_candidates(built: Project) -> None:
+    # J-http-envelope-4 / RC-4: the central dispatcher re-raises the ENGINE's
+    # own AddressingError.code rather than rewriting it to "invalid_part".
     with pytest.raises(DispatchError) as ei:
         built.call("measure", {"kind": "bbox", "a": "no_such_tag", "part": "widget"})
-    assert ei.value.reason == "invalid_part"
+    assert ei.value.reason == "addressing_error"
 
 
 # ==========================================================================
@@ -310,6 +670,7 @@ def test_run_checks_part_reexecutes_and_never_becomes_current(project: Project) 
     assert project.cad.param_state_hash("part", "widget")  # store still readable
     current = project.call("measure", {"kind": "bbox", "a": "part", "part": "widget"})
     assert current["resolved_artifact_refs"] == [built["artifact_ref"]]
+    assert_conforms("run_checks", out)
 
 
 def test_run_checks_project_scope_reports_generation_provenance(project: Project) -> None:
@@ -322,6 +683,7 @@ def test_run_checks_project_scope_reports_generation_provenance(project: Project
     assert out["project_snapshot_ref"].startswith("artifact:project-snapshot:")
     assert out["file_hashes"].keys() == {"fit.py"}
     assert out["checks"]["fit:placeholder"]["pass"] is True
+    assert_conforms("run_checks", out)
 
 
 def test_run_checks_project_fails_closed_on_invalid_generation(project: Project) -> None:
@@ -332,12 +694,21 @@ def test_run_checks_project_fails_closed_on_invalid_generation(project: Project)
     assert out["status"] == "invalid_check_generation"
     assert out["diagnostics_ref"].startswith("artifact:check-diagnostics:")
     assert "checks" not in out  # never a partial normal report
+    # Regression pin. ``run_checks``'s declared ``oneOf`` (contract/tools_decl.py
+    # ``_run_checks``) requires EXACTLY one branch to match; its "ok" branch
+    # used to declare ``"status": _STR`` with no enum, so a real
+    # ``invalid_check_generation`` payload matched BOTH branches and
+    # ``jsonschema`` rejected the ambiguity. The "ok" branch now constrains
+    # ``status`` to an enum (the discriminator idiom ``read_artifact`` uses),
+    # and this assertion is what keeps it that way.
+    assert_conforms("run_checks", out)
 
 
 def test_run_checks_part_missing_part_errors(project: Project) -> None:
+    # J-http-envelope-4 / RC-4: the engine's own AddressingError.code.
     with pytest.raises(DispatchError) as ei:
         project.call("run_checks", {"name": "ghost"})
-    assert ei.value.reason == "invalid_part"
+    assert ei.value.reason == "addressing_error"
 
 
 # ==========================================================================
@@ -411,6 +782,8 @@ def test_read_artifact_text_paging_and_cursor_progress(built: Project) -> None:
     assert first["content"] + rest["content"] == snap["script"]
     assert rest["truncated"] is False
     assert rest["total_bytes"] == first["total_bytes"]
+    assert_conforms("read_artifact", first)
+    assert_conforms("read_artifact", rest)
 
 
 def test_read_artifact_rejects_a_mid_codepoint_offset(built: Project) -> None:
@@ -426,12 +799,21 @@ def test_read_artifact_rejects_a_mid_codepoint_offset(built: Project) -> None:
 
 
 def test_read_artifact_binary_returns_metadata_only(built: Project) -> None:
+    """J-agent-results-3: a binary artifact must discriminate, not return the
+    page-shaped success branch with empty content (see
+    ``test_cad_ops_artifacts.py`` for the full binary/undecodable coverage —
+    this pins the SAME contract reached through the tool dispatcher).
+    """
     measured = built.call("measure", {"kind": "bbox", "a": "part", "part": "widget"})
     out = built.call("read_artifact", {"ref": measured["resolved_artifact_refs"][0]})
-    assert out["content"] == ""
     assert out["mime_type"] == "application/octet-stream"
     assert out["total_bytes"] > 0
     assert out["truncated"] is False
+    assert out.get("status") == "binary_artifact", (
+        "a binary artifact must carry a discriminated status, not the empty "
+        f"page-shaped success branch (got: {out})"
+    )
+    assert_conforms("read_artifact", out)
 
 
 def test_read_artifact_unknown_ref(built: Project) -> None:
@@ -636,9 +1018,10 @@ def test_edit_project_check_stale_hash_conflict(project: Project) -> None:
 
 
 def test_read_project_check_missing(project: Project) -> None:
+    # J-http-envelope-4 / RC-4: the engine's own AddressingError.code.
     with pytest.raises(DispatchError) as ei:
         project.call("read_project_check", {"name": "ghost"})
-    assert ei.value.reason == "invalid_part"
+    assert ei.value.reason == "addressing_error"
 
 
 def test_list_project_checks_pages_a_frozen_index(project: Project) -> None:
@@ -826,9 +1209,10 @@ def test_export_refuses_a_stale_current_artifact(project: Project) -> None:
 
 
 def test_export_without_a_current_build(project: Project) -> None:
+    # J-http-envelope-4 / RC-4: the engine's own AddressingError.code.
     with pytest.raises(DispatchError) as ei:
         project.call("export_part", {"name": "widget", "format": "step"})
-    assert ei.value.reason == "invalid_part"
+    assert ei.value.reason == "addressing_error"
 
 
 def test_export_unpin_releases_the_gc_root(built: Project) -> None:
@@ -1093,7 +1477,7 @@ def test_cad_ops_param_state_hash_is_stable_for_an_unset_scope(tmp_path: Path) -
     layout = load_project(root)
     store = open_store(layout)
     try:
-        cad = CadOps(layout, store)
+        cad = CadOps(layout, store, backend=UnsafeLocalBackend())
         a = cad.param_state_hash("part", "widget")
         b = cad.param_state_hash("part", "bracket")
         assert a == b  # both empty documents hash identically
@@ -1229,7 +1613,8 @@ def test_measure_refusal_lists_the_namespace_and_never_a_rule_4_binding(
     """
     with pytest.raises(DispatchError) as ei:
         addressable.call("measure", {"kind": "bbox", "a": "bdy", "part": "plate"})
-    assert ei.value.reason == "invalid_part"
+    # J-http-envelope-4 / RC-4: the engine's own AddressingError.code.
+    assert ei.value.reason == "addressing_error"
     candidates = ei.value.data["candidates"]
     assert candidates == ["part", "top_face", "wb"]
     assert "body" not in candidates
@@ -1255,7 +1640,8 @@ def test_measure_cross_part_refusal_qualifies_every_candidate(addressable: Proje
     """
     with pytest.raises(DispatchError) as ei:
         addressable.call("measure", {"kind": "clearance", "a": "plate/bdy", "b": "pin/part"})
-    assert ei.value.reason == "invalid_part"
+    # J-http-envelope-4 / RC-4: the engine's own AddressingError.code.
+    assert ei.value.reason == "addressing_error"
     candidates = ei.value.data["candidates"]
     assert candidates, "a refusal with no alternatives at all is B-1's own symptom"
     assert all("/" in name for name in candidates), candidates
@@ -1320,3 +1706,201 @@ def test_project_checks_resolve_cross_part_labels_and_tags(addressable: Project)
     # whole part for every selector would pass "label" for the wrong reason.
     assert checks["cross:label"]["measured"] == [40.0, 20.0, 6.0]
     assert checks["cross:tag"]["measured"] == [40.0, 20.0, 0.0]
+
+
+# ==========================================================================
+# J-agent-results-8a: check_motion reports null for an unresolved part, not ""
+
+
+def test_check_motion_reports_null_not_empty_string_for_an_unresolved_part(
+    project: Project,
+) -> None:
+    """A joint anchoring a part with no current build cannot resolve that
+    part's geometry, and the store's own sentinel for "no artifact" is the
+    empty string (``core/motion.py``'s ``MotionStatus.artifact_refs``). To a
+    model that reads as "this part HAS an artifact, whose id happens to be
+    empty" rather than "this part contributed nothing" — while the real
+    reason is already elsewhere in the same payload, as that joint's own
+    unresolvable outcome.
+    """
+    project.build("widget")  # "bracket" is deliberately left unbuilt
+    project.call(
+        "declare_joint",
+        {
+            "id": "j-mount",
+            "kind": "fixed",
+            "parent": "widget",
+            "child": "bracket",
+            "provenance": {"assumed": True, "reason": "fixture mount"},
+        },
+    )
+    result = project.call("check_motion", {})
+    motion = result["motion"]
+    assert "bracket" in motion["artifact_refs"]
+    assert motion["artifact_refs"]["bracket"] is None, (
+        "an unresolved part's artifact ref must serialise as null, not the "
+        f"empty-string store sentinel (got: {motion['artifact_refs']!r})"
+    )
+    # The real reason lives in the joint's own outcome, unaffected by this fix.
+    joint_row = next(j for j in motion["joints"] if j["id"] == "j-mount")
+    assert joint_row["state"] == "unresolvable"
+
+
+# J-agent-results-8b (an unresolvable solve reported sentinel generations:
+# ``-1`` instead of null) is pinned in ``core/tests/test_placement.py``, not
+# here: driving a REAL ``verdict: "unresolvable"`` response through
+# ``solve_pose`` needs a project state that reliably resolves-then-fails
+# (every "a joint anchors an unbuilt part" attempt lands on the
+# ``invalid_solve_request`` refusal instead, which is a different, non-record
+# path), whereas the record constructors themselves are reachable directly.
+# Two tests live there: the pose-space constructor's record carries ``None``
+# for both generations and no ``-1`` anywhere in its CANONICAL form (the form
+# the §9 byte-identity claim hashes), and a structural guard that neither
+# generation is assigned ``-1`` anywhere in ``placement.py`` — which is what
+# covers the second, inline constructor in ``solve_placement``.
+#
+# The record's three reference sentinels (``proposal_ref`` / ``proposal_id`` /
+# ``solver_trace_ref``, still ``""``) are the half of 8b that is NOT done:
+# nulling them changes the tool result schema (``contract/tools_decl.py``
+# types them ``_STR``) and the proposal document reader, neither in the
+# engine lane's ownership. See the wave report.
+
+
+# ==========================================================================
+# J-agent-results-11: no addressing refusal names the operator's host path
+#
+# The ledger's Tests clause, verbatim: "no refusal message contains the
+# project root, asserted across five verbs". The candidates half of this item
+# is already covered (the central-handler tests above, and every
+# ``ei.value.reason == "addressing_error"`` pin); this is the OTHER half —
+# the message text itself — which the previous round's handoff notes flagged
+# as still leaking via ``core/project_store/store.py`` and
+# ``core/render/inspect.py``, neither owned by this lane.
+
+
+def test_no_addressing_refusal_names_the_operator_host_path(project: Project) -> None:
+    """Confirmed live (2026-09-07): every one of the five verbs below still
+    interpolates the RESOLVED absolute ``parts/`` directory into its refusal
+    message for an unknown part, e.g. ``"part 'ghost' does not exist under
+    /tmp/.../proj/parts"`` — even though the SAME refusal's structured
+    ``candidates`` are correctly populated for all five (RC-4's central
+    handler already fixed that half). The fix belongs to whoever owns
+    ``core/src/hephaestus/core/project_store/store.py`` and
+    ``core/src/hephaestus/core/render/inspect.py`` (interpolate the
+    ``PARTS_DIRNAME`` constant, as the sibling ``checks/`` refusal already
+    does — see this round's handoff notes for the exact spec amendment).
+    """
+    root_str = str(project.root)
+    calls: list[tuple[str, dict[str, Any]]] = [
+        ("read_part", {"name": "ghost"}),
+        (
+            "write_part",
+            {"name": "ghost", "expected_hash": "sha256:" + "0" * 64, "script": "x"},
+        ),
+        (
+            "edit_part",
+            {
+                "name": "ghost",
+                "expected_hash": "sha256:" + "0" * 64,
+                "old_str": "a",
+                "new_str": "b",
+            },
+        ),
+        ("build_part", {"name": "ghost"}),
+        ("inspect_part", {"name": "ghost"}),
+    ]
+    leaked: list[str] = []
+    for tool, args in calls:
+        with pytest.raises(DispatchError) as ei:
+            project.call(tool, args)
+        assert ei.value.reason == "addressing_error"
+        assert sorted(ei.value.data.get("candidates", [])) == ["bracket", "widget"], tool
+        if root_str in ei.value.message:
+            leaked.append(tool)
+    assert not leaked, (
+        f"{leaked} named the absolute project root in their refusal message "
+        f"(root={root_str!r}); a refusal must name project-relative locations "
+        "only (J-agent-results-11)"
+    )
+
+
+def test_a_syntactically_illegal_part_name_is_invalid_part(project: Project) -> None:
+    """J-http-envelope-4's third clause, and the last hole in the envelope.
+
+    INTERFACE.md §2.4's vocabulary splits three cases that used to be one:
+    a syntactically ILLEGAL name is ``invalid_part`` (the name itself is the
+    fault), a legal name the project lacks is an addressing miss with
+    candidates, and a selector inside a part is ``addressing_error``. The middle
+    case is pinned by the test above; this is the first.
+
+    It is asserted as a `DispatchError` rather than "the right reason" alone
+    because the defect was that it was NEITHER: ``read_part(name="Not A Legal
+    Name!!")`` propagated the engine's raw ``ValidationError`` straight out of
+    ``Dispatcher.dispatch``, past every envelope the tool surface, MCP and HTTP
+    share, so a model saw a transport failure where a correctable refusal
+    belonged. The central handler caught ``CadOpError``, ``RegistryError``,
+    ``AddressingError`` and ``IncoherentProjectSnapshotError`` and nothing else.
+    """
+    illegal = ["Not A Legal Name!!", "9lives", "with-dash", "", "a b"]
+    for name in illegal:
+        with pytest.raises(DispatchError) as ei:
+            project.call("read_part", {"name": name})
+        assert ei.value.reason == "invalid_part", name
+
+    # The neighbouring case must NOT move: a LEGAL name the project lacks is
+    # still an addressing miss with candidates, not "your name is malformed".
+    with pytest.raises(DispatchError) as ei:
+        project.call("read_part", {"name": "ghost"})
+    assert ei.value.reason == "addressing_error"
+    assert sorted(ei.value.data.get("candidates", [])) == ["bracket", "widget"]
+
+
+# ==========================================================================
+# J-agent-results-9 (CLI/HTTP half): the shared serializer ``heph check``
+# and ``GET /checks`` both call must ALSO report the scope discriminator, not
+# just the ``run_checks`` tool.
+#
+# ``core/src/hephaestus/core/checks/report.py``'s ``project_check_report`` /
+# ``report_json`` is the one named joint the CLI and the HTTP route both call
+# (its own docstring: "One serializer, two callers, no second
+# implementation"). The subject is now declared at the run — ``run_bundle``
+# and ``CheckSet.run`` take ``scope`` and ``project``, and both project-scope
+# callers pass ``part=None`` — so the tool path, the CLI and the HTTP route
+# get a correct record from the same engine. The post-hoc
+# ``replace(report, scope="project", …)`` that used to patch only the tool's
+# copy is deleted: a fix applied to the copy left the stored report and
+# ``heph check --json`` still saying the project's name was a part.
+
+
+def test_the_cli_http_shared_check_report_is_also_scope_aware(project: Project) -> None:
+    """The defect this pins, as it was (2026-09-07), through the exact function
+    ``heph check --json`` and ``GET /checks`` both call:
+
+        report = project_check_report(project.layout, project.store, project=True)
+        report_json(report) == {"scope": "part", "project": None,
+                                 "part": "tools", ...}
+
+    — ``scope: "part"`` (the DEFAULT, never set) and the PROJECT's own name in
+    the field named ``part``. The root cause was
+    ``core/src/hephaestus/core/checks/engine.py``'s ``run_bundle``
+    constructing ``CheckReport(part=part, ...)`` with no ``scope``/``project``
+    argument at all; it now takes both, and this shared serializer's caller
+    passes ``part=None, scope="project", project=<name>``. The assertion is
+    over the CLI/HTTP path deliberately — the tool path had been patched
+    after the fact, which is precisely how this path stayed wrong.
+    """
+    from hephaestus.core.checks.report import project_check_report, report_json
+
+    project.build("widget", "bracket")
+    report = project_check_report(project.layout, project.store, project=True)
+    doc = report_json(report)
+    assert doc["scope"] == "project", (
+        f"a project-scope ``heph check`` / GET /checks report must carry "
+        f"scope='project' (got {doc.get('scope')!r}); the tool-path fix in "
+        "cad_ops/_checks.py does not reach this shared serializer"
+    )
+    assert doc["part"] is None, (
+        f"a project-scope report's ``part`` must be null, not the project's "
+        f"own name (got {doc.get('part')!r})"
+    )
+    assert doc["project"] == project.layout.manifest.name

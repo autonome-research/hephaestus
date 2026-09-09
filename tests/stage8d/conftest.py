@@ -7,29 +7,26 @@ as the G8A/G8B suites do it. Everything else in this suite is pure and offline.
 
 from __future__ import annotations
 
-import os
-import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
+from hephaestus.testing.sidecar import build_agent_dist
 
 
 @pytest.fixture(scope="session")
 def sidecar_dist() -> Path:
-    """Build the packaged sidecar once; skip cleanly when Node is absent."""
-    from hephaestus.agent_bridge.app import repo_root
+    """The staged sidecar, built once per session through the ONE resolver.
 
-    if not (os.environ.get("HEPHAESTUS_NODE") or shutil.which("node")):
-        pytest.skip("node is not available; the run clause needs the packaged sidecar")
-    pnpm = shutil.which("pnpm")
-    if pnpm is None:
-        pytest.skip("pnpm is not available; cannot build the sidecar")
-    agent_dir = repo_root() / "agent"
-    build = subprocess.run(
-        [pnpm, "--dir", str(agent_dir), "build"], capture_output=True, text=True, check=False
-    )
-    dist_main = agent_dir / "dist" / "main.js"
-    if build.returncode != 0 or not dist_main.exists():
-        pytest.fail(f"sidecar build failed:\n{build.stdout}\n{build.stderr}")
-    return dist_main
+    ``hephaestus.testing.sidecar.build_agent_dist`` is the resolver every other
+    sidecar-backed suite uses (J-mirrors-and-dx-25): it finds pnpm the way
+    ``scripts/bootstrap.sh`` does, honours ``HEPHAESTUS_SKIP_SIDECAR_BUILD``
+    against a freshness-checked stage, and refuses by name under
+    ``HEPHAESTUS_REQUIRE_SIDECAR``. This fixture used to run ``pnpm --dir agent
+    build`` itself — an invocation no document teaches, because ``--dir``
+    bypasses the ``packageManager`` pin — and so was one CI's guards could not
+    see.
+    """
+    built = build_agent_dist()
+    if built is None:
+        pytest.skip("no Node/pnpm toolchain; this suite needs the packaged sidecar")
+    return built[0]

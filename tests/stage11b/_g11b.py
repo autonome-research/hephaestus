@@ -47,6 +47,7 @@ import pytest
 from hephaestus.agent_bridge.cad_ops import CadOps
 from hephaestus.agent_bridge.dispatch import Principal, ToolDispatcher
 from hephaestus.core.executor.sandbox.bwrap import find_bwrap
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.core.project_store.layout import load_project, open_store
 from hephaestus.core.project_store.store import ProjectStore
 from hephaestus.core.registry import (
@@ -341,7 +342,7 @@ def make_join_project(root: Path, parts: Mapping[str, str]) -> Project:
         (root / "parts" / f"{name}.py").write_text(script, encoding="utf-8")
     layout = load_project(root)
     store = open_store(layout)
-    cad = CadOps(layout, store)
+    cad = CadOps(layout, store, backend=UnsafeLocalBackend())
     dispatcher = ToolDispatcher(ProjectStore(layout, store), cad=cad)
     seed_minimal_ledger(cad)
     return Project(root=root, layout=layout, store=store, cad=cad, dispatcher=dispatcher, _n=[0])

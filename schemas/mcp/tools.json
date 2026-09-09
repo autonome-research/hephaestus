@@ -79,10 +79,19 @@
             "content_hash": {
               "type": "string"
             },
+            "first_line": {
+              "type": "integer"
+            },
+            "last_line": {
+              "type": "integer"
+            },
             "line_count": {
               "type": "integer"
             },
             "next_offset_bytes": {
+              "type": "integer"
+            },
+            "next_offset_line": {
               "type": "integer"
             },
             "numbered_script": {
@@ -108,6 +117,12 @@
             },
             "snapshot_ref": {
               "type": "string"
+            },
+            "total_bytes": {
+              "type": "integer"
+            },
+            "total_lines": {
+              "type": "integer"
             },
             "truncated": {
               "type": "boolean"
@@ -167,19 +182,66 @@
             "applied": {
               "type": "boolean"
             },
+            "candidates": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "line": {
+                    "type": "integer"
+                  },
+                  "ratio": {
+                    "type": "number"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "line",
+                  "text",
+                  "ratio"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
             "conflict": {
               "additionalProperties": true,
               "properties": {
                 "attempted_snapshot_ref": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "base_snapshot_ref": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "current_hash": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "current_next_offset_bytes": {
+                  "type": "integer"
+                },
+                "current_next_offset_line": {
                   "type": "integer"
                 },
                 "current_oversized_line": {
@@ -189,10 +251,24 @@
                   "type": "integer"
                 },
                 "current_script": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "current_snapshot_ref": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "current_truncated": {
                   "type": "boolean"
@@ -204,17 +280,26 @@
             "content_hash": {
               "type": "string"
             },
+            "diagnostics": {
+              "type": "string"
+            },
             "diff": {
               "type": "string"
             },
             "journal_ref": {
               "type": "string"
             },
+            "kind": {
+              "const": "contract"
+            },
             "line": {
               "type": "integer"
             },
             "snapshot_ref": {
               "type": "string"
+            },
+            "status": {
+              "const": "validation_error"
             }
           },
           "required": [
@@ -274,15 +359,39 @@
               "additionalProperties": true,
               "properties": {
                 "attempted_snapshot_ref": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "base_snapshot_ref": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "current_hash": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "current_next_offset_bytes": {
+                  "type": "integer"
+                },
+                "current_next_offset_line": {
                   "type": "integer"
                 },
                 "current_oversized_line": {
@@ -292,10 +401,24 @@
                   "type": "integer"
                 },
                 "current_script": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "current_snapshot_ref": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "current_truncated": {
                   "type": "boolean"
@@ -1236,7 +1359,16 @@
             "content_hash": {
               "type": "string"
             },
+            "first_line": {
+              "type": "integer"
+            },
+            "last_line": {
+              "type": "integer"
+            },
             "next_offset_bytes": {
+              "type": "integer"
+            },
+            "next_offset_line": {
               "type": "integer"
             },
             "numbered_script": {
@@ -1256,6 +1388,12 @@
             },
             "snapshot_ref": {
               "type": "string"
+            },
+            "total_bytes": {
+              "type": "integer"
+            },
+            "total_lines": {
+              "type": "integer"
             },
             "truncated": {
               "type": "boolean"
@@ -1332,6 +1470,29 @@
             {
               "additionalProperties": true,
               "properties": {
+                "candidates": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "line": {
+                        "type": "integer"
+                      },
+                      "ratio": {
+                        "type": "number"
+                      },
+                      "text": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "line",
+                      "text",
+                      "ratio"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
                 "diagnostics": {
                   "type": "string"
                 },
@@ -1362,15 +1523,39 @@
               "additionalProperties": true,
               "properties": {
                 "attempted_snapshot_ref": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "base_snapshot_ref": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "current_hash": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "current_next_offset_bytes": {
+                  "type": "integer"
+                },
+                "current_next_offset_line": {
                   "type": "integer"
                 },
                 "current_oversized_line": {
@@ -1380,10 +1565,24 @@
                   "type": "integer"
                 },
                 "current_script": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "current_snapshot_ref": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "current_truncated": {
                   "type": "boolean"
@@ -1611,7 +1810,16 @@
             "content_hash": {
               "type": "string"
             },
+            "first_line": {
+              "type": "integer"
+            },
+            "last_line": {
+              "type": "integer"
+            },
             "next_offset_bytes": {
+              "type": "integer"
+            },
+            "next_offset_line": {
               "type": "integer"
             },
             "numbered_script": {
@@ -1628,6 +1836,12 @@
             },
             "snapshot_ref": {
               "type": "string"
+            },
+            "total_bytes": {
+              "type": "integer"
+            },
+            "total_lines": {
+              "type": "integer"
             },
             "truncated": {
               "type": "boolean"
@@ -1710,6 +1924,29 @@
             {
               "additionalProperties": true,
               "properties": {
+                "candidates": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "line": {
+                        "type": "integer"
+                      },
+                      "ratio": {
+                        "type": "number"
+                      },
+                      "text": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "line",
+                      "text",
+                      "ratio"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
                 "diagnostics": {
                   "type": "string"
                 },
@@ -1736,15 +1973,39 @@
               "additionalProperties": true,
               "properties": {
                 "attempted_snapshot_ref": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "base_snapshot_ref": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "current_hash": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "current_next_offset_bytes": {
+                  "type": "integer"
+                },
+                "current_next_offset_line": {
                   "type": "integer"
                 },
                 "current_oversized_line": {
@@ -1754,10 +2015,24 @@
                   "type": "integer"
                 },
                 "current_script": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "current_snapshot_ref": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "current_truncated": {
                   "type": "boolean"
@@ -2170,6 +2445,11 @@
           "oneOf": [
             {
               "additionalProperties": true,
+              "not": {
+                "required": [
+                  "status"
+                ]
+              },
               "properties": {
                 "content": {
                   "type": "string"
@@ -2201,6 +2481,11 @@
             },
             {
               "additionalProperties": true,
+              "not": {
+                "required": [
+                  "status"
+                ]
+              },
               "properties": {
                 "error": {
                   "const": "invalid_utf8_offset"
@@ -2214,6 +2499,62 @@
               },
               "required": [
                 "error"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": true,
+              "properties": {
+                "consumed_by": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "mime_type": {
+                  "type": "string"
+                },
+                "status": {
+                  "const": "binary_artifact"
+                },
+                "total_bytes": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "status",
+                "kind",
+                "consumed_by",
+                "total_bytes"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": true,
+              "properties": {
+                "kind": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "mime_type": {
+                  "type": "string"
+                },
+                "status": {
+                  "const": "undecodable_artifact"
+                },
+                "total_bytes": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "status",
+                "kind",
+                "total_bytes"
               ],
               "type": "object"
             }
@@ -2263,7 +2604,81 @@
         "hephaestus.dev/result-schema": {
           "additionalProperties": true,
           "properties": {
-            "detail": {},
+            "detail": {
+              "additionalProperties": true,
+              "properties": {
+                "args": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "density": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "g_per_mm3": {
+                      "type": "number"
+                    },
+                    "material": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "density_kg_m3": {
+                          "type": "number"
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "registry": {
+                          "type": "string"
+                        },
+                        "registry_digest": {
+                          "type": "string"
+                        },
+                        "spec": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "density_kg_m3"
+                      ],
+                      "type": "object"
+                    },
+                    "part": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "enum": [
+                        "materials_registry",
+                        "explicit"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "part",
+                    "g_per_mm3",
+                    "source"
+                  ],
+                  "type": "object"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "measured": {},
+                "parts": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [],
+              "type": "object"
+            },
             "resolved_artifact_refs": {
               "items": {
                 "type": "string"
@@ -2338,6 +2753,27 @@
                 "project_snapshot_ref"
               ]
             }
+          },
+          {
+            "if": {
+              "not": {
+                "properties": {
+                  "kind": {
+                    "const": "mass"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              }
+            },
+            "then": {
+              "properties": {
+                "density": {
+                  "type": "null"
+                }
+              }
+            }
           }
         ],
         "properties": {
@@ -2359,6 +2795,18 @@
             "anyOf": [
               {
                 "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "density": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
               },
               {
                 "type": "null"
@@ -3007,7 +3455,45 @@
             {
               "additionalProperties": true,
               "properties": {
+                "artifact_ref": {
+                  "type": "string"
+                },
+                "checks": {
+                  "type": "object"
+                },
+                "part": {
+                  "anyOf": [
+                    {
+                      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "project": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "scope": {
+                  "enum": [
+                    "part",
+                    "project"
+                  ],
+                  "type": "string"
+                },
                 "status": {
+                  "enum": [
+                    "ok",
+                    "error"
+                  ],
                   "type": "string"
                 }
               },
@@ -6633,7 +7119,14 @@
                   "properties": {
                     "artifact_refs": {
                       "additionalProperties": {
-                        "type": "string"
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       },
                       "type": "object"
                     },
@@ -7290,7 +7783,14 @@
                   "properties": {
                     "artifact_refs": {
                       "additionalProperties": {
-                        "type": "string"
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       },
                       "type": "object"
                     },
@@ -7985,7 +8485,14 @@
                   "properties": {
                     "artifact_refs": {
                       "additionalProperties": {
-                        "type": "string"
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       },
                       "type": "object"
                     },
@@ -8403,7 +8910,14 @@
                   "properties": {
                     "artifact_refs": {
                       "additionalProperties": {
-                        "type": "string"
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       },
                       "type": "object"
                     },
@@ -8888,7 +9402,14 @@
                   "properties": {
                     "artifact_refs": {
                       "additionalProperties": {
-                        "type": "string"
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       },
                       "type": "object"
                     },
@@ -9406,7 +9927,14 @@
                   "properties": {
                     "artifact_refs": {
                       "additionalProperties": {
-                        "type": "string"
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       },
                       "type": "object"
                     },
@@ -11522,7 +12050,14 @@
               "properties": {
                 "artifact_refs": {
                   "additionalProperties": {
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "type": "object"
                 },
@@ -12174,7 +12709,14 @@
                   "properties": {
                     "artifact_refs": {
                       "additionalProperties": {
-                        "type": "string"
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       },
                       "type": "object"
                     },
@@ -12681,7 +13223,14 @@
                   "properties": {
                     "artifact_refs": {
                       "additionalProperties": {
-                        "type": "string"
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       },
                       "type": "object"
                     },
@@ -13239,7 +13788,14 @@
                   "properties": {
                     "artifact_refs": {
                       "additionalProperties": {
-                        "type": "string"
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       },
                       "type": "object"
                     },
@@ -14232,13 +14788,28 @@
             "content": {
               "type": "string"
             },
+            "first_line": {
+              "type": "integer"
+            },
+            "last_line": {
+              "type": "integer"
+            },
             "next_offset_bytes": {
+              "type": "integer"
+            },
+            "next_offset_line": {
               "type": "integer"
             },
             "oversized_line": {
               "type": "boolean"
             },
             "oversized_line_offset_bytes": {
+              "type": "integer"
+            },
+            "total_bytes": {
+              "type": "integer"
+            },
+            "total_lines": {
               "type": "integer"
             },
             "truncated": {
@@ -14410,8 +14981,14 @@
                 "content": {
                   "type": "string"
                 },
+                "first_line": {
+                  "type": "integer"
+                },
                 "kind": {
                   "const": "document"
+                },
+                "last_line": {
+                  "type": "integer"
                 },
                 "mime_type": {
                   "type": "string"
@@ -14420,6 +14997,9 @@
                   "type": "string"
                 },
                 "next_offset_bytes": {
+                  "type": "integer"
+                },
+                "next_offset_line": {
                   "type": "integer"
                 },
                 "offset_bytes": {
@@ -14441,6 +15021,9 @@
                   "const": "ok"
                 },
                 "total_bytes": {
+                  "type": "integer"
+                },
+                "total_lines": {
                   "type": "integer"
                 },
                 "truncated": {

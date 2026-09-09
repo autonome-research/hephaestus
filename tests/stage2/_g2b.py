@@ -17,6 +17,7 @@ from typing import Any, Final
 
 from hephaestus.agent_bridge.admission import bridge_store_config
 from hephaestus.agent_bridge.delegation import DelegationService
+from hephaestus.testing.delegation_gates import AllowAllGate
 from hephaestus.testing.doubles import FakeClock, FakeLiveness, owner
 from hephaestus.testing.projects import scaffold_project as _scaffold_project
 from hephaestus.testing.sidecar import (
@@ -80,7 +81,9 @@ def delegation_service(
     store: OpStore, clock: FakeClock | None = None, gate: Any = None
 ) -> DelegationService:
     """The real delegation state machine over ``store``."""
-    return DelegationService(store.admission, store.db, gate=gate, clock=clock)
+    return DelegationService(
+        store.admission, store.db, gate=AllowAllGate() if gate is None else gate, clock=clock
+    )
 
 
 # ---------------------------------------------------------------------------

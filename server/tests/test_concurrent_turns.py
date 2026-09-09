@@ -41,6 +41,7 @@ from typing import Any
 import pytest
 from hephaestus.agent_bridge.app import BridgeRuntime, PromptResult
 from hephaestus.agent_bridge.supervisor import pid_alive
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.testing.fake_openai import FakeOpenAI, RequestInfo, start_fake_openai
 from hephaestus.testing.projects import scaffold_project
 from hephaestus.testing.sidecar import build_agent_dist
@@ -82,6 +83,7 @@ class Harness:
         self.project_root = project_root
         self.fake: FakeOpenAI = start_fake_openai([])
         self.runtime = BridgeRuntime(
+            backend=UnsafeLocalBackend(),
             project_root=project_root,
             providers=[self.fake.provider_spec()],
             dist_main=dist_main,

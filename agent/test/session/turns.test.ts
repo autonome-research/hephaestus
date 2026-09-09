@@ -121,8 +121,8 @@ describe("distinct prompt entries (§2.8(2))", () => {
     // prompt lands, so both point at the same next-event ordinal. This is the
     // exact case the spec calls out: seq is explicitly not unique, and the old
     // `@prompt:<seq>` identity would have collided here.
-    expect(prompts[0].seq).toBe(prompts[1].seq);
-    expect(prompts[0].turn).not.toBe(prompts[1].turn);
+    expect(prompts[0]?.seq).toBe(prompts[1]?.seq);
+    expect(prompts[0]?.turn).not.toBe(prompts[1]?.turn);
 
     // The lone reply belongs to the most recent turn.
     const events = normalizeEntries(entries, "sess-consec");

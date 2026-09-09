@@ -422,6 +422,56 @@ class TestCheckReport:
             CheckReport.from_json(data)
 
 
+class TestCheckReportScope:
+    """J-agent-results-9: the record's subject is scope-aware, not part-shaped.
+
+    A project-scope check run today satisfies the mandatory ``part`` field by
+    passing the *project* name (``core/src/hephaestus/core/types.py:572-599``,
+    ``server/src/hephaestus/agent_bridge/cad_ops/_checks.py:266``,
+    ``core/src/hephaestus/core/checks/report.py:77``). The fix: a ``scope``
+    discriminator, a nullable ``part``, and the project name moved into its own
+    field — never masquerading as a part.
+    """
+
+    def _report(self, **overrides: Any) -> CheckReport:
+        kwargs: dict[str, Any] = dict(
+            part="cat_step_shelf",
+            check_set_generation=7,
+            check_bundle_ref="artifact:check-bundle:" + _H,
+            checks={},
+        )
+        kwargs.update(overrides)
+        return CheckReport(**kwargs)
+
+    def test_project_scope_report_has_null_part_and_names_the_project(self) -> None:
+        report = self._report(scope="project", part=None, project="cat_step")
+        data = report.to_json()
+        assert data["scope"] == "project"
+        assert data["part"] is None
+        assert data["project"] == "cat_step"
+
+    def test_part_scope_report_carries_both_the_part_and_the_project(self) -> None:
+        report = self._report(scope="part", part="shelf", project="cat_step")
+        data = report.to_json()
+        assert data["scope"] == "part"
+        assert data["part"] == "shelf"
+        assert data["project"] == "cat_step"
+
+    def test_a_document_with_no_scope_discriminator_loads_as_part_scope(self) -> None:
+        """A record written before this change has no ``scope`` key at all;
+        reading it must default to ``"part"`` rather than refuse, so every
+        stored report still loads.
+        """
+        data = self._report().to_json()
+        data.pop("scope", None)
+        loaded = CheckReport.from_json(data)
+        assert loaded.scope == "part"
+
+    def test_project_scope_round_trips(self) -> None:
+        report = self._report(scope="project", part=None, project="cat_step")
+        assert CheckReport.from_json(report.to_json()) == report
+
+
 class TestWarning:
     def test_optional_fields_omitted(self) -> None:
         warning = Warning(kind="lint", detail="params never read")

@@ -242,18 +242,54 @@ _PAGING_FIELDS: Final[dict[str, JsonSchema]] = {
     "oversized_line": _BOOL,
     "oversized_line_offset_bytes": _INT,
     "next_offset_bytes": _INT,
+    # The continuation cursor for a LINE-paged tool. `next_offset_bytes` is a
+    # cursor into the artifact behind `snapshot_ref` and cannot be fed back to
+    # `offset_line`, so a page that reported only the byte cursor left the model
+    # with no way to continue through the tool it was already using (ledger
+    # J-http-limits-3). Both are reported; both are absent at the end.
+    "next_offset_line": _INT,
+    # The window this page actually covers, 1-based and inclusive. An empty
+    # page (an offset past the end) reports `last_line = first_line - 1`.
+    "first_line": _INT,
+    "last_line": _INT,
+    # Facts about the FILE, not the page.
+    "total_lines": _INT,
+    "total_bytes": _INT,
 }
 
+#: Bounded, deterministic near misses for an exact-match edit that matched
+#: nothing. ``tool_schema.md`` has always promised an exact-match failure
+#: returns the closest candidates and no editor produced them (ledger
+#: J-agent-results-2), so the model's only recourse was to re-read and guess.
+#: Capped, cut off and ordered by constants, because the tool result feeds the
+#: bench and a non-deterministic list makes two identical runs differ.
+_NEAR_MISSES: Final[JsonSchema] = {
+    "type": "array",
+    "items": _obj({"line": _INT, "text": _STR, "ratio": _NUM}, ["line", "text", "ratio"]),
+}
+
+#: The five members a conflict states as "present, null when unknown". A store
+#: conflict can be raised without live content (the part vanished between the
+#: read and the write), and there is no single attempted candidate to name when
+#: the caller's base was never registered here. The document was declared
+#: string-typed while the code emitted those nulls, so the sidecar rejected the
+#: whole result as ``invalid_tool_result`` and the model got a protocol error
+#: instead of the conflict (ledger J-agent-results-2). Nullable, not optional:
+#: an absent key and a null one are different facts to a consumer that branches
+#: on ``"attempted_snapshot_ref" in conflict``.
+_NULLABLE_STR: Final[JsonSchema] = {"anyOf": [_STR, {"type": "null"}]}
+
 _CONFLICT_FIELDS: Final[dict[str, JsonSchema]] = {
-    "current_hash": _STR,
-    "current_script": _STR,
+    "current_hash": _NULLABLE_STR,
+    "current_script": _NULLABLE_STR,
     "current_truncated": _BOOL,
     "current_oversized_line": _BOOL,
     "current_oversized_line_offset_bytes": _INT,
     "current_next_offset_bytes": _INT,
-    "current_snapshot_ref": _STR,
-    "base_snapshot_ref": _STR,
-    "attempted_snapshot_ref": _STR,
+    "current_next_offset_line": _INT,
+    "current_snapshot_ref": _NULLABLE_STR,
+    "base_snapshot_ref": _NULLABLE_STR,
+    "attempted_snapshot_ref": _NULLABLE_STR,
 }
 
 
@@ -342,6 +378,16 @@ def _edit_part() -> ToolDecl:
                 "content_hash": _STR,
                 "snapshot_ref": _STR,
                 "journal_ref": _STR,
+                # An exact-match failure is a DISCRIMINATED refusal, in the same
+                # vocabulary the two sibling editors have used since the day
+                # after this tool shipped (ledger J-agent-results-2): it used to
+                # return `{applied: false, diff: "", line: 0}`, which is
+                # indistinguishable from a no-op success. `applied` is kept so
+                # every existing caller keeps working.
+                "status": {"const": "validation_error"},
+                "kind": {"const": "contract"},
+                "diagnostics": _STR,
+                "candidates": _NEAR_MISSES,
                 "conflict": _obj(_CONFLICT_FIELDS, [], additional=True),
             },
             ["applied"],
@@ -516,6 +562,7 @@ def _edit_globals() -> ToolDecl:
                     ),
                     "diagnostics": _STR,
                     "invalid_overrides": {"type": "array"},
+                    "candidates": _NEAR_MISSES,
                 },
                 ["status", "kind"],
             ),
@@ -660,6 +707,7 @@ def _edit_project_check() -> ToolDecl:
                     "status": {"const": "validation_error"},
                     "kind": _enum(["syntax", "contract", "sandbox", "evaluation"]),
                     "diagnostics": _STR,
+                    "candidates": _NEAR_MISSES,
                 },
                 ["status", "kind"],
             ),
@@ -790,6 +838,14 @@ def _query_snapshot() -> ToolDecl:
     )
 
 
+#: Excludes a discriminated (``status``-carrying) variant from a branch that
+#: has no ``status`` of its own, so a result schema's ``oneOf`` stays a real
+#: exclusive union. TypeBox carries ``not`` through as an annotation and
+#: ``Value.Check`` ignores it, which is harmless: the union it emits is the
+#: looser anyOf, and the canonical JSON Schema is the one that has to be exact.
+_NO_STATUS: Final[JsonSchema] = {"not": {"required": ["status"]}}
+
+
 def _read_artifact() -> ToolDecl:
     return ToolDecl(
         name="read_artifact",
@@ -808,6 +864,15 @@ def _read_artifact() -> ToolDecl:
             ["ref"],
         ),
         result=_result(
+            # The page branch, and ONLY the page branch: the non-text branches
+            # below keep the page-shaped members for one release (ledger
+            # J-agent-results-3) so a naive consumer does not crash, which made
+            # a binary result satisfy this branch too. `_result` publishes a
+            # `oneOf`, so two matching branches are a schema violation for every
+            # JSON-Schema client (MCP) while the generated TypeBox union — anyOf
+            # semantics — accepted it: one result, two generated artifacts
+            # disagreeing. Excluding the discriminator here is what makes the
+            # status "unambiguous" in the sense the fix asked for.
             _ok(
                 {
                     "content": _STR,
@@ -818,7 +883,8 @@ def _read_artifact() -> ToolDecl:
                     "truncated": _BOOL,
                 },
                 ["content", "mime_type", "offset_bytes", "total_bytes", "truncated"],
-            ),
+            )
+            | _NO_STATUS,
             _ok(
                 {
                     "error": {"const": "invalid_utf8_offset"},
@@ -826,6 +892,37 @@ def _read_artifact() -> ToolDecl:
                     "total_bytes": _INT,
                 },
                 ["error"],
+            )
+            | _NO_STATUS,
+            # Two branches the schema did not have, so the code took the only
+            # one it did: a page with empty content, an octet-stream mime, the
+            # real byte total and `truncated: false` — an assertion that a
+            # multi-kilobyte artifact had been read completely and was empty
+            # (ledger J-agent-results-3). They are separate branches because
+            # "this kind is binary by design" and "these bytes are not UTF-8"
+            # are different facts with different remedies.
+            _ok(
+                {
+                    "status": {"const": "binary_artifact"},
+                    "kind": _STR,
+                    "mime_type": _STR,
+                    "total_bytes": _INT,
+                    # The tool that DOES consume this kind, from the total map
+                    # beside the binary kind set — a routing answer, not prose.
+                    "consumed_by": _STR,
+                    "message": _STR,
+                },
+                ["status", "kind", "consumed_by", "total_bytes"],
+            ),
+            _ok(
+                {
+                    "status": {"const": "undecodable_artifact"},
+                    "kind": _STR,
+                    "mime_type": _STR,
+                    "total_bytes": _INT,
+                    "message": _STR,
+                },
+                ["status", "kind", "total_bytes"],
             ),
         ),
         profiles=("part", "orchestrator", "quick_edit", "reviewer"),
@@ -843,6 +940,12 @@ def _measure() -> ToolDecl:
             "else": {"properties": {"b": {"type": "null"}}},
         },
         {"not": {"required": ["artifact_ref", "project_snapshot_ref"]}},
+        # A density is meaningless for every other kind, so supplying one is a
+        # malformed request rather than an ignored argument.
+        {
+            "if": {"not": {"properties": {"kind": {"const": "mass"}}, "required": ["kind"]}},
+            "then": {"properties": {"density": {"type": "null"}}},
+        },
     ]
     return ToolDecl(
         name="measure",
@@ -864,6 +967,17 @@ def _measure() -> ToolDecl:
                 "a": _STR,
                 "b": {"anyOf": [_STR, {"type": "null"}], "default": None},
                 "part": {"anyOf": [_ident(), {"type": "null"}], "default": None},
+                # `kind="mass"` only: the density to use, in **grams per cubic
+                # millimetre** — the unit `geom/measure.py` needs to return
+                # grams from a mm^3 volume, and the unit `m.mass(selector,
+                # density=...)` takes inside a check (`PHYSICS.md` §1). Omitted,
+                # the part's `material_spec` is resolved through the pinned
+                # materials registry; if that resolves nothing the call refuses
+                # `mass_density_unbound` rather than assuming one.
+                "density": {
+                    "anyOf": [{"type": "number", "exclusiveMinimum": 0}, {"type": "null"}],
+                    "default": None,
+                },
                 "artifact_ref": {"anyOf": [_STR, {"type": "null"}], "default": None},
                 "project_snapshot_ref": {"anyOf": [_STR, {"type": "null"}], "default": None},
             },
@@ -874,7 +988,48 @@ def _measure() -> ToolDecl:
             {
                 "value": {},
                 "units": _STR,
-                "detail": {},
+                # Declared for the first time rather than left as a bare object:
+                # `density` below is a fact about the measurement and belongs
+                # beside the call it explains.
+                "detail": _obj(
+                    {
+                        "kind": _STR,
+                        "args": {"type": "array", "items": _STR},
+                        "measured": {},
+                        "parts": {"type": "array", "items": _STR},
+                        # `kind="mass"` only. A mass is a volume times a
+                        # density, and a reader that cannot see WHICH density
+                        # cannot tell a measurement from a placeholder — which
+                        # is what it was, a hardcoded 1.0 that made `mass`
+                        # return exactly `volume` with the units relabelled to
+                        # grams (ledger J-agent-results-1, PHYSICS.md §1). A
+                        # part with no resolvable material and no explicit
+                        # density refuses `mass_density_unbound` instead.
+                        "density": _obj(
+                            {
+                                "part": _STR,
+                                "g_per_mm3": _NUM,
+                                "source": _enum(["materials_registry", "explicit"]),
+                                "material": _obj(
+                                    {
+                                        "id": _STR,
+                                        "name": _STR,
+                                        "density_kg_m3": _NUM,
+                                        "registry": _STR,
+                                        "registry_digest": _STR,
+                                        "spec": _STR,
+                                    },
+                                    ["id", "density_kg_m3"],
+                                    additional=True,
+                                ),
+                            },
+                            ["part", "g_per_mm3", "source"],
+                            additional=True,
+                        ),
+                    },
+                    [],
+                    additional=True,
+                ),
                 "resolved_artifact_refs": {"type": "array", "items": _STR},
             },
             ["value", "units"],
@@ -1156,7 +1311,32 @@ def _run_checks() -> ToolDecl:
             extra={"allOf": conditional},
         ),
         result=_result(
-            _ok({"status": _STR}, ["status"]),
+            _ok(
+                {
+                    # `"ok"` or `"error"` for a run that HAPPENED — never the
+                    # refusal's own status. This was a bare string with only
+                    # `status` required, so an `invalid_check_generation`
+                    # document satisfied BOTH branches of the published
+                    # `oneOf` and a JSON-Schema client rejected the very
+                    # refusal the tool exists to fail closed with, while the
+                    # sidecar's looser union accepted it (the same split
+                    # `read_artifact` had, ledger J-agent-results-3).
+                    # `list_project_checks` pins its own branch with a const
+                    # for exactly this reason.
+                    "status": _enum(["ok", "error"]),
+                    # The report's subject, discriminated. A project-scope run
+                    # used to return the PROJECT name in the field named
+                    # `part` — a value that is not a part, and one that reading
+                    # refuses (ledger J-agent-results-9). `part` is now null in
+                    # project scope and `project` names the project in both.
+                    "scope": _enum(["part", "project"]),
+                    "part": {"anyOf": [_ident(), {"type": "null"}]},
+                    "project": {"anyOf": [_STR, {"type": "null"}]},
+                    "checks": _dict(),
+                    "artifact_ref": _STR,
+                },
+                ["status"],
+            ),
             _ok(
                 {
                     "status": {"const": "invalid_check_generation"},
@@ -2336,7 +2516,15 @@ _MOTION_STATUS: Final[JsonSchema] = _ok(
         "pose_generation": _INT,
         "joints": {"type": "array", "items": _JOINT_OUTCOME},
         "poses": {"type": "array", "items": _POSE_OUTCOME},
-        "artifact_refs": _dict(_STR),
+        # The reference each addressed part contributed at evaluation time,
+        # and **null** for a part whose geometry could not be loaded — whose
+        # reason appears in that part's own joint/pose outcome. The store keeps
+        # the empty string as its sentinel (its projection loader requires a
+        # string), but an empty-string *reference* in a model-facing document
+        # reads as "this part has an artifact" rather than "this part
+        # contributed nothing" (ledger J-agent-results-8a). Both encodings are
+        # accepted on read.
+        "artifact_refs": _dict({"anyOf": [_STR, {"type": "null"}]}),
         "stale": {"type": "array", "items": _STR},
         "counts": _dict(_dict(_INT)),
         "blocking": {"type": "array", "items": _STR},

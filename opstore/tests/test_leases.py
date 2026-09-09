@@ -362,7 +362,15 @@ def test_crash_after_acquire_leaves_reclaimable_lease(
     with Database.connect(store_root / "state.db") as db:
         orphan_rows = db.conn.execute("SELECT * FROM leases WHERE ref = 'artifact'").fetchall()
         assert len(orphan_rows) == 1  # the crashed process's lease survived durably
-        time.sleep(0.7)  # let the real-clock TTL elapse
+        # A POSITIVE wait, not a negative assertion (J-mirrors-and-dx-24): the
+        # lease's TTL is 0.5 s on the real clock and the assertions below are
+        # about what happens AFTER it has elapsed, so this waits for an event
+        # that is guaranteed to arrive rather than sampling the absence of one.
+        # The durable fix is injecting the clock into LeaseManager's expiry
+        # arithmetic; until then the honest statement of what this line is for
+        # is the fix, because lengthening it would make the test slower and no
+        # stronger.
+        time.sleep(0.7)
 
         class AlwaysAlive:
             def is_alive(self, owner: OwnerId) -> bool:

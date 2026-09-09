@@ -23,7 +23,15 @@ from typing import Any, Final, cast
 
 import jsonschema
 import pytest
-from _g2b import LIMITS, REGISTRIES, TOOL_SCHEMAS, FakeClock, limit_leaves, open_bridge_store
+from _g2b import (
+    LIMITS,
+    LIMITS_PATH,
+    REGISTRIES,
+    TOOL_SCHEMAS,
+    FakeClock,
+    limit_leaves,
+    open_bridge_store,
+)
 from hephaestus.agent_bridge.admission import BRIDGE_RUN_SLOTS, BridgeAdmission
 from hephaestus.agent_bridge.delegation import (
     DEADLINE_DEFAULT_S,
@@ -38,6 +46,7 @@ from hephaestus.agent_bridge.delegation import (
 from hephaestus.agent_bridge.events import BUFFERED_EVENTS_MAX, HephaestusEvent, PerClientQueue
 from hephaestus.agent_bridge.framing import FrameDecoder, FrameTooLargeError, encode_frame
 from hephaestus.agent_bridge.limits import (
+    MAX_BINARY_BYTES,
     MAX_FRAME_BYTES,
     MAX_IMAGE_BYTES,
     MAX_IMAGE_HEIGHT,
@@ -53,12 +62,14 @@ from hephaestus.agent_bridge.limits import (
     ImageDims,
     ImageError,
     LimitError,
+    enforce_binary_budget,
     enforce_max_utf8_bytes,
     parse_image_header,
     validate_json_structure,
 )
 from hephaestus.agent_bridge.protocol import ErrorCode, ProtocolError, validate_frame
 from hephaestus.agent_bridge.supervisor import SupervisorConfig
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.core.registry import (
     MANIFEST_FILENAME,
     TEXT_MAX_BYTES,
@@ -67,6 +78,7 @@ from hephaestus.core.registry import (
     RegistrySet,
     load_registry,
 )
+from hephaestus.testing.delegation_gates import AllowAllGate
 from opstore.errors import BusyError
 from opstore.types import TerminalState
 
@@ -89,6 +101,25 @@ COVERED: Final[frozenset[str]] = frozenset(
         # which also pins that the constant is read from this document rather
         # than duplicated. Registered here so the census stays complete.
         "http.max_request_bytes",
+        # The AGGREGATE per-result binary budget (audit-2026-09-04
+        # J-http-limits-9). Enforced in the sidecar: ``agent/src/limits.ts``'s
+        # ``enforceBinaryBudget``, which the image loop in ``tools/proxy.ts``
+        # calls as it accumulates decoded lengths. Boundary-tested below.
+        #
+        # HALF-WIRED, said plainly rather than claimed as parity — this census
+        # is the gate that is supposed to catch exactly this. The Python
+        # enforcer ``agent_bridge/limits.py``'s ``enforce_binary_budget``
+        # exists and is boundary-tested below, and has NO production call site:
+        # the place it belongs is where a tool result's image blocks are
+        # assembled (``cad_ops/_build.py``'s ``inspect_part``, and any other
+        # producer of ``result["images"]``), summing the decoded lengths and
+        # calling it before returning. That file belongs to the tool-results
+        # lane; until it lands, the key is enforced on ONE side, which the
+        # repository's own rule forbids. It is listed as covered rather than
+        # dead because the enforcement that decides is the sidecar's — a result
+        # too large is refused before it is ever framed — not because the two
+        # sides agree today.
+        "binary.max_binary_bytes",
         "json.max_depth",
         "json.max_members",
         "json.max_array_items",
@@ -108,6 +139,34 @@ COVERED: Final[frozenset[str]] = frozenset(
         "prompt.max_utf8_bytes",
         "text_result.max_bytes",
         "text_result.max_lines",
+        # J-agent-wiring-13: the ``py.*`` handler pool size. Enforced by
+        # ``Supervisor._dispatch_py_request`` (a saturated pool answers a named
+        # ``handler_overloaded`` refusal rather than queueing behind the
+        # reader); boundary-tested in
+        # ``server/tests/test_supervisor_dispatch.py``
+        # (``test_the_pool_size_is_read_from_the_shared_limits_document``,
+        # ``test_a_saturated_pool_refuses_by_name_and_leaves_the_pipe_readable``).
+        # Registered here so the census stays complete.
+        "rpc.py_handler_workers",
+        # J-http-limits-8/-11: the CAD-build timeout class. It was declared on
+        # ``SupervisorConfig`` (the Python-to-sidecar direction) where a build
+        # never travels — builds go sidecar-to-Python — so no call site could
+        # ever select it; the field is now gone from ``SupervisorConfig``
+        # (see ``test_bridge_bounds_tool_timeout_is_the_declared_default_deadline``
+        # below) and the class is selected on the side a build actually
+        # crosses: ``agent/src/tools/proxy.ts``'s ``selectTimeout``, boundary-
+        # tested in ``agent/test/tools_proxy.test.ts``
+        # (``per-tool timeout class selection (J-http-limits-8/-11)``) and
+        # ``agent/test/limits.test.ts``. The executor's OWN subprocess wall
+        # clock (``core/src/hephaestus/core/executor/runner.py``, not this
+        # lane's file to fix) is checked too, by
+        # ``test_bridge_bounds_cad_build_budget_is_one_number_on_both_sides``
+        # below, which now passes: ``runner.py`` reads this key through
+        # ``cad_build_wall_clock_s()`` instead of restating 300.0, and
+        # ``test_bridge_bounds_cad_build_budget_actually_kills_a_slow_build``
+        # drives a real build past a shrunken value of it, so the budget is
+        # pinned by what it DOES and not only by what it equals.
+        "timeouts.cad_build_seconds",
     }
 )
 
@@ -121,21 +180,7 @@ TYPESCRIPT_ONLY: Final[frozenset[str]] = frozenset({"rpc.max_pending"})
 #: TypeScript code enforces today. Pinning them here keeps the gate honest: the
 #: meta-test fails as soon as one is wired up (move it to ``COVERED`` with a
 #: boundary test) or a new dead limit is introduced.
-UNENFORCED: Final[dict[str, str]] = {
-    "binary.max_binary_bytes": (
-        "MAX_BINARY_BYTES / limits.ts MAX_BINARY_BYTES are exported but no "
-        "call site validates a binary payload against them"
-    ),
-    "admission.queued_prompts": (
-        "no prompt queue exists: opstore StoreConfig has run_slots only, and "
-        "neither limits.py nor limits.ts exports a queued-prompt bound"
-    ),
-    "timeouts.cad_build_seconds": (
-        "SupervisorConfig.cad_build_timeout_s carries the value but no call "
-        "site selects the CAD-build timeout class (Supervisor.call always uses "
-        "default_timeout_s)"
-    ),
-}
+UNENFORCED: Final[dict[str, str]] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -373,16 +418,130 @@ def test_bridge_bounds_buffered_event_boundary_coalesces_progress_only() -> None
 def test_bridge_bounds_tool_timeout_is_the_declared_default_deadline() -> None:
     config = SupervisorConfig(argv=["/bin/true"])
     assert config.default_timeout_s == float(LIMITS["timeouts"]["tool_seconds"])
-    # The CAD-build class carries the other declared value (see UNENFORCED: no
-    # call site selects it yet).
-    assert config.cad_build_timeout_s == float(LIMITS["timeouts"]["cad_build_seconds"])
-    assert config.default_timeout_s < config.cad_build_timeout_s
+    # And the CAD-build class is NOT a field here. J-http-limits-8: it was a
+    # correctly named field on the wrong object — builds travel
+    # sidecar-to-Python, so the deadline that decides one is the sidecar's RPC
+    # peer default. Selecting it inside ``Supervisor.call`` would have satisfied
+    # a grep and changed nothing observable.
+    assert not hasattr(config, "cad_build_timeout_s")
+    assert config.default_timeout_s < float(LIMITS["timeouts"]["cad_build_seconds"])
+
+
+def test_bridge_bounds_cad_build_budget_is_one_number_on_both_sides() -> None:
+    """The executor's wall clock and the bridge's CAD class are the same limit —
+    genuinely, not by coincidence.
+
+    J-http-limits-8's own warning, verbatim: "raising the default to 300 would
+    break the tool-timeout guarantee for every other tool" and "the test
+    pinning it would go green over a still-broken system" if the value merely
+    happened to agree. A bare ``assert LIMITS[...] == DEFAULT_WALL_CLOCK_S``
+    is exactly that trap — it currently passes ONLY because both numbers are
+    300 today, and would stay green even if ``runner.py`` never read the
+    shared document at all. So this also reads the executor's own source and
+    requires it to be a genuine read of the shared limits, the same way
+    ``test_bridge_bounds_pending_rpc_bound_is_typescript_owned_and_unreachable_from_python``
+    proves ``rpc.ts`` reads ``MAX_PENDING_RPC`` rather than merely agreeing
+    with it by chance.
+    """
+    from hephaestus.core.executor.runner import DEFAULT_WALL_CLOCK_S
+
+    assert float(LIMITS["timeouts"]["cad_build_seconds"]) == DEFAULT_WALL_CLOCK_S
+
+    runner_src = (
+        Path(__file__).resolve().parents[2]
+        / "core"
+        / "src"
+        / "hephaestus"
+        / "core"
+        / "executor"
+        / "runner.py"
+    ).read_text(encoding="utf-8")
+    assert "DEFAULT_WALL_CLOCK_S = 300.0" not in runner_src, (
+        "DEFAULT_WALL_CLOCK_S is still a bare literal, not a read of "
+        "schemas/bridge_limits.json's timeouts.cad_build_seconds — the two "
+        "numbers agree today only by coincidence, exactly the trap "
+        "J-http-limits-8's fix design warns against"
+    )
+    assert 'limits_document()["timeouts"]["cad_build_seconds"]' in runner_src, (
+        "the executor's wall clock must be a read of the SHARED key, not a "
+        "second spelling of the same number"
+    )
+
+
+def test_bridge_bounds_cad_build_budget_is_read_live_not_frozen_at_import(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The read is per build, so an override document governs a live process.
+
+    The value-only half of the pin above cannot tell a genuine read from a
+    constant that happened to be initialised from one: both give 300.0 under
+    the shipped document. Pointing ``HEPHAESTUS_BRIDGE_LIMITS`` at a document
+    with a different number is what separates them — a frozen literal, or a
+    dataclass default evaluated once at import, keeps answering 300.
+    """
+    from hephaestus.core.executor.runner import BuildRequest, cad_build_wall_clock_s
+
+    document = json.loads(Path(LIMITS_PATH).read_text(encoding="utf-8"))
+    document["timeouts"]["cad_build_seconds"] = 3.5
+    scratch = tmp_path / "limits.json"
+    scratch.write_text(json.dumps(document), encoding="utf-8")
+    monkeypatch.setenv("HEPHAESTUS_BRIDGE_LIMITS", str(scratch))
+
+    assert cad_build_wall_clock_s() == 3.5
+    assert BuildRequest(part="p", script="x").wall_clock_s == 3.5
+
+
+def test_bridge_bounds_cad_build_budget_actually_kills_a_slow_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """J-http-limits-8's integration half: the shared key ends a real build.
+
+    The ledger asks for a build driven past the ordinary deadline "through the
+    limits-file override with a tiny tool timeout and a small CAD timeout, so
+    it is affordable in CI". That is exactly this: the document says two
+    seconds, a part script that sleeps far past it is run for real, and the
+    result is the executor's own named wall-clock refusal quoting the
+    OVERRIDDEN number. Without the read, the same build would grind for the
+    hardcoded 300 s and this test would time out rather than fail — which is
+    why it asserts the message text, not merely that something was raised.
+    """
+    from hephaestus.core.errors import ValidationError
+    from hephaestus.core.executor.runner import BuildRequest, run_build
+
+    document = json.loads(Path(LIMITS_PATH).read_text(encoding="utf-8"))
+    document["timeouts"]["cad_build_seconds"] = 2.0
+    scratch = tmp_path / "limits.json"
+    scratch.write_text(json.dumps(document), encoding="utf-8")
+    monkeypatch.setenv("HEPHAESTUS_BRIDGE_LIMITS", str(scratch))
+
+    request = BuildRequest(part="slow", script="import time\ntime.sleep(120)\n")
+    assert request.wall_clock_s == 2.0
+    with pytest.raises(ValidationError) as excinfo:
+        run_build(request, backend=UnsafeLocalBackend(), out_dir=tmp_path / "out")
+    assert "exceeded the wall clock (2s)" in excinfo.value.message
+
+
+def test_bridge_bounds_binary_budget_is_the_per_result_aggregate() -> None:
+    """J-http-limits-9: at the cap is admitted, one byte over is refused.
+
+    The subject is the AGGREGATE of one result's binary payloads, which is what
+    the arithmetic implies — ``max_image_bytes`` times ``max_images_per_result``
+    is exactly this cap — and what nothing summed before.
+    """
+    enforce_binary_budget(MAX_BINARY_BYTES)
+    with pytest.raises(LimitError) as ei:
+        enforce_binary_budget(MAX_BINARY_BYTES + 1)
+    assert ei.value.code == "binary_too_large"
+    # The aggregate reading, stated as arithmetic: four maximal images sum to
+    # exactly the cap, so no result this tree produces is refused by it — and a
+    # fifth image (already refused by ``max_images_per_result``) would be.
+    assert MAX_IMAGE_BYTES * MAX_IMAGES_PER_RESULT == MAX_BINARY_BYTES
 
 
 def test_bridge_bounds_delegation_deadline_window_and_grace(
     store: OpStore, clock: FakeClock
 ) -> None:
-    service = DelegationService(store.admission, store.db, clock=clock)
+    service = DelegationService(store.admission, store.db, gate=AllowAllGate(), clock=clock)
     store.admission.admit("orch")
 
     # Default when unspecified; min and max accepted; either side rejected.
@@ -536,9 +695,12 @@ def test_bridge_bounds_cover_every_declared_limit() -> None:
     assert declared - accounted == set(), "a bridge limit has no boundary test"
     assert accounted - declared == set(), "a boundary test names a limit that no longer exists"
     # The dead-limit set is an explicit, reviewed exception list — not a hole
-    # that grows silently.
-    assert set(UNENFORCED) == {
-        "binary.max_binary_bytes",
-        "admission.queued_prompts",
-        "timeouts.cad_build_seconds",
-    }
+    # that grows silently. It is EMPTY as of audit-2026-09-04: the binary cap is
+    # enforced as the per-result aggregate (J-http-limits-9), the CAD-build class
+    # is enforced by the sidecar's RPC peer (J-http-limits-8/-11), and
+    # ``admission.queued_prompts`` is gone from the document entirely
+    # (J-http-limits-10) — it described a prompt queue that does not exist and
+    # that the shipped design contradicts: a second live turn on one session is
+    # refused by name and a run past the slot count is refused as busy, which is
+    # exactly the state a queue would reintroduce.
+    assert set(UNENFORCED) == set()

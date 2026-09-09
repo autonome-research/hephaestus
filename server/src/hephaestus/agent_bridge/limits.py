@@ -28,6 +28,7 @@ __all__ = [
     "ImageDims",
     "ImageError",
     "LimitError",
+    "enforce_binary_budget",
     "enforce_max_utf8_bytes",
     "limits_path",
     "parse_image_header",
@@ -181,6 +182,30 @@ def _utf8_len_strict(s: str) -> int:
                 f"unpaired UTF-16 surrogate U+{o:04X} is not a valid scalar",
             )
     return len(s.encode("utf-8"))
+
+
+def enforce_binary_budget(total_bytes: int, *, field: str = "result") -> None:
+    """Enforce the AGGREGATE binary budget of one tool result (J-http-limits-9).
+
+    ``binary.max_binary_bytes`` was exported on both sides of the bridge and
+    validated by nothing — a grep over the whole tree returned this export, the
+    TypeScript export, and the test that pinned it as dead. It has exactly one
+    defensible subject here: the only binary payloads that cross this bridge are
+    the base64 image blocks of a tool result, and ``max_image_bytes`` (8 MiB)
+    times ``max_images_per_result`` (4) is precisely this cap, so the intended
+    meaning is the per-result *aggregate*. Nothing summed them, so a result with
+    four maximal images passed four per-image checks and no aggregate one.
+
+    The mirror is ``agent/src/limits.ts``'s ``enforceBinaryBudget``, called from
+    the sidecar's image loop; this side is enforced where a result's image
+    blocks are assembled, because a limit enforced on one side of this bridge is
+    not enforced.
+    """
+    if total_bytes > MAX_BINARY_BYTES:
+        raise LimitError(
+            "binary_too_large",
+            f"{field} carries {total_bytes} binary bytes (max {MAX_BINARY_BYTES})",
+        )
 
 
 def enforce_max_utf8_bytes(value: str, max_bytes: int, *, field: str = "value") -> int:

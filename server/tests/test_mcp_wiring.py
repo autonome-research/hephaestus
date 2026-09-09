@@ -35,6 +35,7 @@ import pytest
 from hephaestus.agent_bridge import wiring
 from hephaestus.agent_bridge.dispatch import DispatchError, Principal, ToolDispatcher
 from hephaestus.contract.tools_decl import TOOLS_BY_NAME
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.mcp import app as mcp_app
 from hephaestus.mcp.app import HephaestusMCP, build_app
 from hephaestus.testing.ledger import seed_minimal_ledger
@@ -58,7 +59,9 @@ def project_root(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def runtime() -> Iterator[HephaestusMCP]:
-    _, rt = build_app()
+    # Injected on purpose: with nothing injected ``build_app()`` probes bwrap
+    # and refuses ``sandbox_denied`` on a host without it (J-agent-wiring-4).
+    _, rt = build_app(backend=UnsafeLocalBackend())
     try:
         yield rt
     finally:
@@ -189,7 +192,7 @@ def test_open_project_asks_for_the_shipped_wiring_with_delegation_off(
         return real(*args, **kwargs)
 
     monkeypatch.setattr(mcp_app, "build_dispatcher", spy)
-    _, rt = build_app()
+    _, rt = build_app(backend=UnsafeLocalBackend())
     try:
         _dispatcher(rt, project_root)
     finally:
@@ -201,8 +204,9 @@ def test_open_project_asks_for_the_shipped_wiring_with_delegation_off(
 
 def test_the_asymmetry_holds_under_serve_mode(project_root: Path) -> None:
     """``heph serve --mcp`` (``mcp/cli_serve.py``: ``build_app(serve_mode=True)``)
-    differs from ``heph mcp`` in exactly one thing — registry generators run under
-    a probed bwrap sandbox instead of the unsafe local backend. It gains no
+    differs from an embedded ``build_app()`` in exactly one thing — an injected
+    unsafe backend is refused up front instead of merely warned about; both
+    probe bwrap when nothing is injected (J-agent-wiring-4). It gains no
     sidecar by being served, so the two withheld capabilities are withheld there
     too. Pinned separately because "serve" is the mode an operator exposes to a
     client, and a future serve-only branch is where a silent divergence would go.

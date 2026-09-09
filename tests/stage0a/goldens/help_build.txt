@@ -1,0 +1,16 @@
+usage: heph build [-h] [--param NAME=VALUE] [--global-param NAME=VALUE] [--stale] [--json]
+                  [--unsafe-local-executor]
+                  [part]
+
+positional arguments:
+  part                  part name or path to parts/<name>.py
+
+options:
+  -h, --help            show this help message and exit
+  --param NAME=VALUE    transient part-parameter override (makes the build a preview)
+  --global-param NAME=VALUE
+                        transient project-parameter override (makes the build a preview)
+  --stale               rebuild every stale consumer part
+  --json                emit the exact BuildResult JSON
+  --unsafe-local-executor
+                        run the worker WITHOUT OS sandboxing (local debugging only)

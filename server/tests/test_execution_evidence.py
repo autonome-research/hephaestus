@@ -7,6 +7,7 @@ import pytest
 from hephaestus.agent_bridge.app import BridgeRuntime, _Run
 from hephaestus.agent_bridge.sessions import RunInFlightError
 from hephaestus.agent_bridge.supervisor import SupervisorError
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.testing.projects import scaffold_project
 from opstore.types import TerminalState
 
@@ -16,6 +17,7 @@ def runtime(tmp_path, monkeypatch):
     monkeypatch.setenv("HEPHAESTUS_NODE", sys.executable)
     runtime = BridgeRuntime(
         project_root=scaffold_project(tmp_path / "project", name="evidence"),
+        backend=UnsafeLocalBackend(),  # Explicit test-only executor; no default posture.
         providers=[{"id": "fake", "kind": "openai", "base_url": "http://127.0.0.1:9/v1"}],
         dist_main=Path(__file__).with_name("fake_sidecar.py"),
     )

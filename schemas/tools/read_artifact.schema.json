@@ -29,6 +29,11 @@
     "oneOf": [
       {
         "additionalProperties": true,
+        "not": {
+          "required": [
+            "status"
+          ]
+        },
         "properties": {
           "content": {
             "type": "string"
@@ -60,6 +65,11 @@
       },
       {
         "additionalProperties": true,
+        "not": {
+          "required": [
+            "status"
+          ]
+        },
         "properties": {
           "error": {
             "const": "invalid_utf8_offset"
@@ -73,6 +83,62 @@
         },
         "required": [
           "error"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": true,
+        "properties": {
+          "consumed_by": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "status": {
+            "const": "binary_artifact"
+          },
+          "total_bytes": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status",
+          "kind",
+          "consumed_by",
+          "total_bytes"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": true,
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "status": {
+            "const": "undecodable_artifact"
+          },
+          "total_bytes": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status",
+          "kind",
+          "total_bytes"
         ],
         "type": "object"
       }

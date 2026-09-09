@@ -39,6 +39,7 @@ from typing import Any
 import pytest
 from hephaestus.agent_bridge.app import BridgeRuntime, repo_root
 from hephaestus.agent_bridge.supervisor import build_minimal_env, pid_alive
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.testing.fake_openai import FakeOpenAI, RequestInfo, start_fake_openai
 from hephaestus.testing.projects import scaffold_project
 from hephaestus.testing.sidecar import build_agent_dist
@@ -96,6 +97,7 @@ class Harness:
         self.project_root = project_root
         self.fake: FakeOpenAI = start_fake_openai([])
         self.runtime = BridgeRuntime(
+            backend=UnsafeLocalBackend(),
             project_root=project_root,
             providers=[self.fake.provider_spec()],
             dist_main=dist_main,
@@ -319,6 +321,135 @@ def test_ask_user_suspension_and_answer(harness: Harness) -> None:
 
     streamed = "".join(payload_of(ev)["text"] for ev in events_of(result, "text_delta"))
     assert "using 6 mm plywood" in streamed
+
+
+def test_pending_question_on_one_session_does_not_stall_a_prompt_on_another(
+    harness: Harness,
+) -> None:
+    """audit-2026-09-04 J-agent-wiring-13: the one LIVE degradation the ledger
+    names — "the promise that a part session and the orchestrator may think at
+    the same time is defeated for the duration of any pending question".
+
+    ``py.ask_user``'s answerer (``BridgeRuntime._handle_ask_user``) blocks the
+    Python thread that runs it until a human (here, the scripted answerer)
+    responds — by design, the interaction has no client-side deadline. Before
+    J-agent-wiring-13, every ``py.*`` request, from EVERY session, was
+    dispatched inline on the supervisor's single frame-reading thread: while
+    that thread sat inside the blocked answerer for session A, no frame from
+    session B — including session B's own ``py.tool_dispatch`` — could be
+    decoded, so session B's turn hung until session A's question was answered
+    (or the call timed out). ``Supervisor.py_handler_workers`` (>1) fixes this
+    by dispatching each ``py.*`` request onto a bounded pool instead: one
+    worker parks inside session A's answerer while a different worker answers
+    session B's tool dispatch, and the frame reader itself is never blocked.
+
+    This drives two REAL orchestrator sessions over the real sidecar (not a
+    fake child, unlike ``test_supervisor_dispatch.py``'s structural proxy for
+    this same item) so the guarantee is pinned at the level the ledger states
+    it: a live question on one session, a prompt that actually completes on
+    another.
+    """
+    session_a = harness.runtime.create_session("orchestrator", session_id="e2e-pending-q-a")
+    session_b = harness.runtime.create_session("orchestrator", session_id="e2e-pending-q-b")
+
+    def resolver(info: RequestInfo) -> dict[str, Any]:
+        is_a = "SESSION-A" in info.body_text
+        is_b = "SESSION-B" in info.body_text
+        assert is_a != is_b, "resolver could not tell the two sessions' requests apart"
+        if is_a:
+            if not info.has_tool_result:
+                return tool_call(
+                    "ask_user",
+                    {"question": "which stock?", "options": ["a", "b"]},
+                    "a-ask",
+                )
+            return text("A_DONE")
+        if not info.has_tool_result:
+            return tool_call("read_globals", {}, "b-read")
+        return text("B_DONE")
+
+    # A shared cursor consumed by both sessions' requests in arrival order
+    # (fake_openai.py mirrors agent/src/session/runtime.ts's FakeModel this
+    # way) — plenty of turns so either session's ordering exhausts it late
+    # rather than falling through to the terminal-text fallback.
+    harness.fake.set_script([resolver] * 12)
+
+    question_reached = threading.Event()
+    release_answer = threading.Event()
+
+    def blocking_answerer(params: dict[str, Any]) -> Any:
+        # Marks the moment the worker pool slot is genuinely occupied and
+        # blocked — the pre-fix failure mode is exactly this thread being the
+        # ONE reader thread every other session's frames also depend on.
+        question_reached.set()
+        answered_in_time = release_answer.wait(timeout=30)
+        assert answered_in_time, "test harness never released the held answer"
+        return "6 mm plywood"
+
+    results: dict[str, Any] = {}
+    errors: list[BaseException] = []
+
+    def run_a() -> None:
+        try:
+            results["a"] = harness.runtime.prompt(
+                session_a,
+                "SESSION-A: ask about stock before continuing",
+                answerer=blocking_answerer,
+                timeout=60,
+            )
+        except BaseException as exc:  # surfaced on the test thread below
+            errors.append(exc)
+
+    thread_a = threading.Thread(target=run_a, name="session-a-prompt")
+    thread_a.start()
+    try:
+        assert question_reached.wait(timeout=20), (
+            "session A's ask_user never reached the answerer; nothing to hold open"
+        )
+
+        # THE PIN: with session A's answerer deliberately still blocked, session
+        # B's prompt — including its own py.tool_dispatch round trip — must
+        # still complete. A tight-ish timeout so a regression to inline,
+        # single-threaded py.* dispatch fails this test rather than merely
+        # slowing it: pre-fix, this call cannot succeed until session A's
+        # question is answered, which does not happen until after this
+        # assertion runs.
+        result_b = harness.runtime.prompt(
+            session_b, "SESSION-B: read the project globals", timeout=20
+        )
+        assert result_b.status == "completed"
+        assert_stream_shape(result_b)
+        b_calls = [payload_of(ev)["name"] for ev in events_of(result_b, "tool_call")]
+        assert b_calls == ["read_globals"]
+        # `status == "completed"` alone is not the pin: a degraded pool (too few
+        # workers, not the fully-inline pre-fix shape) answers session B's
+        # dispatch with a fast `handler_overloaded` refusal, and the model turn
+        # still finishes normally on THAT error text — a prompt that "completes"
+        # while quietly failing its own tool call. The tool result itself must
+        # have actually succeeded.
+        b_tool_results = events_of(result_b, "tool_result")
+        assert len(b_tool_results) == 1
+        b_result = payload_of(b_tool_results[0])
+        assert b_result.get("isError") is not True, (
+            f"session B's read_globals call did not actually succeed while "
+            f"session A's question was pending: {b_result!r}"
+        )
+        streamed_b = "".join(payload_of(ev)["text"] for ev in events_of(result_b, "text_delta"))
+        assert "B_DONE" in streamed_b
+    finally:
+        # Release session A regardless of what happened above, so a failed
+        # assertion cannot leave the answerer thread (and the worker pool
+        # slot it holds) parked past the end of the test.
+        release_answer.set()
+        thread_a.join(timeout=30)
+
+    assert not errors, f"session A's prompt raised: {errors!r}"
+    assert thread_a.is_alive() is False, "session A's prompt thread never finished"
+    result_a = results["a"]
+    assert result_a.status == "completed"
+    assert_stream_shape(result_a)
+    streamed_a = "".join(payload_of(ev)["text"] for ev in events_of(result_a, "text_delta"))
+    assert "A_DONE" in streamed_a
 
 
 # --------------------------------------------------------------------------
@@ -553,6 +684,7 @@ def test_declared_auth_source_is_linked_into_the_agent_dir(tmp_path: Path) -> No
     )
     project = e2e_project(tmp_path / "linked")
     runtime = BridgeRuntime(
+        backend=UnsafeLocalBackend(),
         project_root=project,
         providers=[{"id": "openai-codex", "kind": "pi_native", "models": [{"id": "gpt-5.6-sol"}]}],
         auth_source=source,

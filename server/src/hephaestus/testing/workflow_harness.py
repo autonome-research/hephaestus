@@ -14,6 +14,7 @@ makes a repair round observable.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -34,8 +35,10 @@ from hephaestus.agent_bridge.workflows import (
     WorkflowRunnerProcess,
     WorkflowService,
 )
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.core.project_store.layout import ProjectLayout, load_project, open_store
 from hephaestus.core.project_store.store import ProjectStore
+from hephaestus.testing.delegation_gates import AllowAllGate
 from opstore.types import TerminalState
 
 from opstore import OpStore
@@ -51,10 +54,58 @@ __all__ = [
     "RecordingBridge",
     "RunnerHarness",
     "Wiring",
+    "assert_slots_drain_to",
     "completing_prompter",
     "request_for",
     "scaffold_workflow_project",
 ]
+
+#: Bound on "the branch slots are back". Generous on purpose: every caller has
+#: already observed the run's durable terminal, so the releases are in flight
+#: and not pending work. A leak tripwire, not a performance ceiling.
+SLOT_DRAIN_DEADLINE_S = 30.0
+
+
+def assert_slots_drain_to(
+    admission: BridgeAdmission,
+    expected: int,
+    *,
+    holders: frozenset[str] = frozenset(),
+    label: str,
+) -> None:
+    """Bounded "drains to N", naming the runs that kept their slots.
+
+    audit-2026-09-04 J-mirrors-and-dx-24. Every caller used to SAMPLE
+    ``active_count()`` once, immediately after the run's terminal was observed.
+    Releasing a branch slot is not part of observing that terminal, so under
+    load the sample landed before the release and the assertion failed as
+    ``assert 1 == 0`` or ``assert 14 == 12`` — a coin flip naming neither which
+    runs were still holding nor whether they ever let go. A negative ("no slot
+    is leaked") has to wait on a positive edge; here the edge is occupancy
+    reaching its floor, which polling can see and one sample cannot.
+
+    Right in EITHER reading of a failure: if the slots genuinely leak this still
+    fails, after ``SLOT_DRAIN_DEADLINE_S`` and with the leaking run ids in the
+    message — a bug report rather than a retry.
+
+    ``holders`` is the set of run ids legitimately still holding a slot (an
+    empty set when the expectation is a fully drained store); it is used only to
+    make the failure message say which ids are the leak.
+    """
+    deadline = time.monotonic() + SLOT_DRAIN_DEADLINE_S
+    count = admission.active_count()
+    while count != expected:
+        if time.monotonic() >= deadline:
+            occupied = admission.occupancy()
+            raise AssertionError(
+                f"{label}: {count} admission slot(s) still occupied after "
+                f"{SLOT_DRAIN_DEADLINE_S}s, expected {expected}. Occupied: "
+                f"{sorted(occupied)}; expected only {sorted(holders)}; "
+                f"leaked: {sorted(occupied - holders)}"
+            )
+        time.sleep(0.01)
+        count = admission.active_count()
+
 
 ORCH = Principal(session_id="wf-orch", profile="orchestrator", part=None)
 
@@ -112,7 +163,7 @@ class Wiring:
         self.root = root
         self.layout: ProjectLayout = load_project(root)
         self.store: OpStore = open_store(self.layout)
-        self.cad = CadOps(self.layout, self.store)
+        self.cad = CadOps(self.layout, self.store, backend=UnsafeLocalBackend())
         self.jobs = JobStore(self.store.db)
         self.admission = BridgeAdmission(self.store.admission)
         # INTERFACE.md §2.8: the delegation WAL's PREPARED transition is one of
@@ -120,7 +171,9 @@ class Wiring:
         # store — a delegation exercised here threads the same way it will in a
         # served project.
         self.edges = SessionEdgeStore(self.store.db)
-        self.delegation = DelegationService(self.store.admission, self.store.db, edges=self.edges)
+        self.delegation = DelegationService(
+            self.store.admission, self.store.db, gate=AllowAllGate(), edges=self.edges
+        )
         self.prompts = PromptRegistry()
         self.dispatcher = ToolDispatcher(
             ProjectStore(self.layout, self.store),

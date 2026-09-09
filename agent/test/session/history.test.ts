@@ -9,6 +9,20 @@ import {
   HISTORY_PAGE_SIZE,
   MalformedCursorError,
 } from "../../src/session/history.js";
+import type { HistoryPageRequest } from "../../src/session/history.js";
+
+/** Continue from a cursor the caller has just proven is present.
+ *
+ * `HistoryPageRequest.cursor` is `?: string` under `exactOptionalPropertyTypes`,
+ * so `{ cursor: page.cursor ?? undefined }` does not type-check — and the
+ * coalescing form was silently weaker anyway: a null cursor would have
+ * requested a FIRST page and the assertion below would then have compared the
+ * wrong page. Failing by name here says which page had no cursor.
+ */
+function from(cursor: string | null): HistoryPageRequest {
+  if (cursor === null) throw new Error("expected a continuation cursor, got null");
+  return { cursor };
+}
 
 // Minimal structural builders for Pi session entries (test-boundary shapes).
 function assistantText(id: string, text: string): SessionEntry {
@@ -194,10 +208,10 @@ describe("cursor paging over a frozen high-water mark", () => {
 
     // Log grows by 3 entries before the next page is requested.
     const grown = [...initial, assistantText("e5", "t5"), assistantText("e6", "t6"), assistantText("e7", "t7")];
-    const p2 = pageHistory(grown, "r", { cursor: p1.cursor ?? undefined }, { pageSize: 2 });
+    const p2 = pageHistory(grown, "r", from(p1.cursor), { pageSize: 2 });
     expect(p2.events.map((e) => e.seq)).toEqual([2, 3]);
 
-    const p3 = pageHistory(grown, "r", { cursor: p2.cursor ?? undefined }, { pageSize: 2 });
+    const p3 = pageHistory(grown, "r", from(p2.cursor), { pageSize: 2 });
     expect(p3.events.map((e) => e.seq)).toEqual([4]);
     expect(p3.done).toBe(true);
     expect(p3.cursor).toBeNull();
@@ -213,7 +227,7 @@ describe("cursor paging over a frozen high-water mark", () => {
     const first = pageHistory(initial, "r", {}, { pageSize: 3 });
     const firstAgain = pageHistory(initial, "r", {}, { pageSize: 3 });
     expect(firstAgain).toEqual(first);
-    const cont = pageHistory(initial, "r", { cursor: first.cursor ?? undefined }, { pageSize: 3 });
+    const cont = pageHistory(initial, "r", from(first.cursor), { pageSize: 3 });
     expect(cont.events.map((e) => e.seq)).toEqual([3, 4]);
     expect(cont.done).toBe(true);
   });
@@ -283,5 +297,99 @@ describe("a malformed cursor is a named error (B-11a)", () => {
     // cursor this module minted still round-trips.
     const token = encodeCursor({ hw: "e4", offset: 2 });
     expect(decodeCursor(token)).toEqual({ hw: "e4", offset: 2 });
+  });
+});
+
+// --------------------------------------------------------------------------
+// J-http-envelope-9: a cursor naming an unknown mark reads as a complete,
+// empty history.
+//
+// `pageHistory` widened the frozen snapshot to the WHOLE log whenever the
+// cursor's `hw` named no entry ("should not happen for append-only logs"),
+// then a slice past the end silently produced an empty, `done: true` page —
+// the same shape a genuinely exhausted, quiet session returns. A client
+// walking history could not tell "you reached the end" from "your cursor is
+// nonsense over a 250-event session" and rendered the latter as the former.
+//
+// The fix must draw three distinct lines the code currently draws as one:
+//   1. a mark absent from a NON-EMPTY log is a malformed cursor (refused);
+//   2. an offset STRICTLY BEYOND the frozen snapshot's length is a client
+//      error (refused) — distinct from...
+//   3. ...an offset EQUAL to the snapshot's length, which is the legitimate
+//      "you are caught up" quiet-tail case and must stay a plain 200.
+// The empty-mark-over-an-empty-log case (the sidecar's own minted cursor for
+// a session with no history yet) must keep working throughout.
+describe("a cursor naming an unknown mark (J-http-envelope-9)", () => {
+  const entries = Array.from({ length: 5 }, (_, i) => assistantText(`e${i}`, `t${i}`));
+
+  it("is refused — not read as an exhausted walk — over a non-empty log", () => {
+    // `zzz` names no entry in `entries`: today this silently widens to the
+    // whole frozen log and returns an empty, done:true page instead of
+    // throwing. A client cannot distinguish that from a genuinely quiet tail.
+    const bogus = encodeCursor({ hw: "zzz", offset: 0 });
+    expect(() => pageHistory(entries, "r", { cursor: bogus })).toThrow(MalformedCursorError);
+  });
+
+  it("proves the events were there all along: an unqualified read still returns them", () => {
+    // Same log, no cursor: the full transcript comes back. This is the
+    // end-to-end half of the ledger's ask — the bogus mark was never a "the
+    // session is empty" situation, only a malformed request.
+    const bogus = encodeCursor({ hw: "zzz", offset: 0 });
+    expect(() => pageHistory(entries, "r", { cursor: bogus })).toThrow(MalformedCursorError);
+    const full = pageHistory(entries, "r");
+    expect(full.events).toHaveLength(5);
+    expect(full.done).toBe(true);
+  });
+
+  it("still works for the empty mark over a genuinely empty session", () => {
+    // The sidecar's own minted cursor for a brand-new session: hw="" over
+    // entries=[]. This must NOT be treated as "unknown mark" — there is no
+    // entry to have named, and the empty-history short-circuit already
+    // handles it correctly.
+    const emptyMark = encodeCursor({ hw: "", offset: 0 });
+    const page = pageHistory([], "r", { cursor: emptyMark });
+    expect(page).toEqual({
+      events: [],
+      userPrompts: [],
+      cursor: null,
+      done: true,
+      endCursor: expect.any(String),
+    });
+  });
+
+  it("an offset strictly beyond the frozen snapshot's length is refused", () => {
+    // "e4" is a real, current mark — the snapshot it names has exactly 5
+    // events (offsets 0..5 valid as page starts). offset=6 names a position
+    // past the end of a snapshot that unambiguously has an end.
+    const pastEnd = encodeCursor({ hw: "e4", offset: 6 });
+    expect(() => pageHistory(entries, "r", { cursor: pastEnd })).toThrow(MalformedCursorError);
+  });
+
+  it("an offset EQUAL to the frozen snapshot's length stays the legitimate done case", () => {
+    // The boundary the fix must not break: offset === length is "you are
+    // caught up", not an error — same contract as today, pinned so the
+    // strictly-greater fix does not overreach by one.
+    const atEnd = encodeCursor({ hw: "e4", offset: 5 });
+    const page = pageHistory(entries, "r", { cursor: atEnd });
+    expect(page).toEqual({
+      events: [],
+      userPrompts: [],
+      cursor: null,
+      done: true,
+      endCursor: expect.any(String),
+    });
+  });
+
+  it("the polling contract survives: a valid tail token at the exact end is byte-identical", () => {
+    // The explicit regression the ledger's fix must not break: a quiet
+    // session's poll returns the SAME end cursor back, unchanged.
+    const first = pageHistory(entries, "r", {}, { pageSize: 10 });
+    expect(first.done).toBe(true);
+    expect(first.endCursor).toEqual(expect.any(String));
+
+    const second = pageHistory(entries, "r", { after: first.endCursor });
+    expect(second.events).toEqual([]);
+    expect(second.done).toBe(true);
+    expect(second.endCursor).toBe(first.endCursor);
   });
 });

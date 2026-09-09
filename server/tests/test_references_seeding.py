@@ -16,6 +16,7 @@ from pathlib import Path
 from hephaestus.agent_bridge.cad_ops import CadOps
 from hephaestus.bench.harness._seed import seed_project, seed_references
 from hephaestus.bench.harness._tasks import BenchTask
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.core.project_store.layout import load_project, open_store
 
 
@@ -58,7 +59,7 @@ def test_a_seeded_fixture_round_trips_through_the_model_surface(tmp_path: Path) 
     layout = load_project(root)
     store = open_store(layout)
     try:
-        cad = CadOps(layout, store)
+        cad = CadOps(layout, store, backend=UnsafeLocalBackend())
         listing = cad.list_references()
         assert [entry["name"] for entry in listing] == ["drawing.png", "spec.md"]
 
@@ -84,7 +85,7 @@ def test_seeding_a_project_without_references_registers_nothing(tmp_path: Path) 
     layout = load_project(root)
     store = open_store(layout)
     try:
-        assert CadOps(layout, store).list_references() == []
+        assert CadOps(layout, store, backend=UnsafeLocalBackend()).list_references() == []
     finally:
         store.close()
 
@@ -98,7 +99,9 @@ def test_seed_references_is_idempotent(tmp_path: Path) -> None:
     layout = load_project(root)
     store = open_store(layout)
     try:
-        assert [e["name"] for e in CadOps(layout, store).list_references()] == [
+        assert [
+            e["name"] for e in CadOps(layout, store, backend=UnsafeLocalBackend()).list_references()
+        ] == [
             "drawing.png",
             "spec.md",
         ]

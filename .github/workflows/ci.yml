@@ -48,6 +48,48 @@ env:
   # "10" let the stock runners drift to 10.34.5 while the image stayed at
   # 10.18.3 — versions that disagree about ERR_PNPM_IGNORED_BUILDS being fatal
   # (run 33190937658). One version everywhere.
+  #
+  # The SOURCE of this string is `agent/package.json`'s `packageManager` field
+  # (and `web/package.json`'s, which must equal it): `docs/install.md` states
+  # that precedence and `scripts/bootstrap.sh` implements it by reading the
+  # manifest. A workflow `env:` value cannot reference a file, so the number is
+  # restated here — and
+  # tests/stage7h/test_tooling_config.py::test_the_pnpm_pin_agrees_everywhere
+  # asserts that both manifests and all three workflow variables carry the
+  # identical string, so a copy can no longer drift from its source
+  # (J-mirrors-and-dx-34).
+  #
+  # Derivation was CONSIDERED and declined — and the reason recorded here was
+  # previously WRONG, so it is restated with the measurement behind it. The
+  # ledger's second layer is a first step per job reading the pin into
+  # $GITHUB_ENV. That is MECHANICALLY POSSIBLE here: `actions/checkout` is step
+  # 0 in all eleven jobs that call `pnpm/action-setup` (ci.yml stage0b, stages,
+  # stages8, stages9, server, agent-node, web-node, stage7h; release.yml
+  # wheelhouse, lane-b; bench.yml corpus — enumerated 2026-09-07), so nothing
+  # would have to run before the checkout. The earlier claim that it would is
+  # simply false, and a decision resting on a false premise reads as settled
+  # when it is not.
+  #
+  # It is declined on three true grounds:
+  #   1. It buys nothing the enforcing test does not already buy. Drift is
+  #      what derivation prevents, and drift already cannot reach `main`.
+  #   2. A derived value is invisible where it matters most. This pin exists
+  #      because of run 33190937658, where two pnpm versions disagreed about
+  #      whether a build refusal is fatal; someone reading a failed run needs to
+  #      see which version it used in the workflow, not reconstruct it from
+  #      another file plus a shell expression.
+  #   3. It trades a LOUD failure for a QUIET one. A mismatched copy fails a
+  #      named test; a parse that silently disagrees with what
+  #      `pnpm/action-setup` would accept just installs a different pnpm.
+  # Note also that `pnpm/action-setup`'s own manifest-reading path is not
+  # available: it reads the packageManager field of the ROOT `package.json`, and
+  # this repository has none (the sidecar and the web app are separate packages,
+  # with no workspace root).
+  #
+  # What would REVERSE this: a fourth workflow, or a second pin, at which point
+  # the copies outnumber the readers they serve. The pinned CI image's older
+  # baked pnpm is the ONE deliberate divergence and is excluded there by name,
+  # with the reason quoted from docker/ci/README.md.
   PNPM_VERSION: "10.34.5"
 
 jobs:
@@ -60,15 +102,26 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --dev
+      # No path arguments on either tool, deliberately (J-mirrors-and-dx-26):
+      # `pyproject.toml` is the SOLE declaration of what is linted and what is
+      # type-checked, so the workflow cannot check a narrower set than the
+      # configuration claims. `uv run pyright opstore core server` used to spell
+      # three of the five directories `[tool.pyright] include` lists, and the two
+      # it dropped (contract, bench/src) were unenforced-clean for months.
+      # tests/stage7h/test_tooling_config.py
+      # ::test_the_lint_and_type_steps_take_no_path_arguments asserts both steps
+      # stay argument-free.
       - run: uv run ruff check .
       - run: uv run ruff format --check .
-      - run: uv run pyright opstore core server
+      - run: uv run pyright
 
   # ------------------------------------------------------------------ docs --
   # G7H: "headless docs build without warnings". The docs are Markdown, so the
   # build is the reference check — every link, repository path and section
   # reference resolves, or the job fails. There is no warning level on purpose.
-  # No Node and no system packages: the docs set must build on a bare checkout.
+  # No system packages: the docs set must build on a bare checkout. Node is
+  # installed only for the last step, `bootstrap.sh --check`, whose
+  # prerequisite table includes it.
   docs:
     name: docs + license headers
     runs-on: ubuntu-latest
@@ -76,6 +129,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
       - run: uv sync --dev
       - name: docs build (links, paths, section refs)
         run: uv run python scripts/docs_check.py
@@ -85,6 +141,13 @@ jobs:
       # and fails if the committed page disagrees with the committed artifacts.
       - name: leaderboard page is current
         run: uv run heph bench leaderboard --check
+      # J-mirrors-and-dx-32. The onboarding script is what five documents tell a
+      # new contributor to run first, and no job ran it. `--check` changes
+      # nothing and costs seconds, so a broken prerequisite table fails here on
+      # every change; the `bootstrap (bare checkout)` job below proves the six
+      # build steps, which is where the "fully built checkout" claim lives.
+      - name: the documented bootstrap's prerequisite table is intact
+        run: ./scripts/bootstrap.sh --check
 
   # ------------------------------------------------------------ opstore/0a --
   opstore:
@@ -98,6 +161,29 @@ jobs:
       - run: >
           uv run pytest opstore/tests tests/stage0a -q
           --cov=opstore/src/opstore --cov-fail-under=90
+
+  # ---------------------------------------------------------------- contract --
+  # J-mirrors-and-dx-30. The contract package became a package in the refactor
+  # that created it and no lane was added, so its two invariants ran NOWHERE in
+  # CI: the tool-surface size pin (adding a tool is a contract amendment, and
+  # the pin is what makes that cost visible) and the engine-to-contract import
+  # direction (an architecture boundary). The generator half is duplicated by
+  # the Stage 2 drift suite, which does run; these two are not.
+  #
+  # A lane of its own rather than a line on another job: 11 tests, ~3.5 s, no
+  # Node, no bubblewrap, no Mesa. tests/stage7h/test_test_hygiene.py
+  # ::test_every_test_directory_is_named_by_a_ci_job asserts that every
+  # directory holding tests is named by a CI job or documented, and
+  # ::test_every_test_directory_is_collected asserts `testpaths` reaches them.
+  contract:
+    name: contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --dev
+      - run: uv run pytest contract/tests -q
 
   # ------------------------------------------------------------- core engine --
   core:
@@ -124,6 +210,12 @@ jobs:
     name: stage0b adapter gate
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # J-mirrors-and-dx-25: this job installs Node and stages the sidecar, so a
+      # bridge test that reports "node or pnpm unavailable" here is a REGRESSION,
+      # not an environment fact. The variable turns that skip into a failure —
+      # the same fail-rather-than-skip policy the renderer gate applies.
+      HEPHAESTUS_REQUIRE_SIDECAR: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -149,6 +241,12 @@ jobs:
     name: stage gates 1-6
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      # J-mirrors-and-dx-25: this job installs Node and stages the sidecar, so a
+      # bridge test that reports "node or pnpm unavailable" here is a REGRESSION,
+      # not an environment fact. The variable turns that skip into a failure —
+      # the same fail-rather-than-skip policy the renderer gate applies.
+      HEPHAESTUS_REQUIRE_SIDECAR: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -166,12 +264,14 @@ jobs:
       - run: uv sync --dev
       - run: pnpm --dir agent install --frozen-lockfile
       - run: pnpm --dir agent build
-      # tests/render and tests/stage4's renderer-pinned module are deliberately
-      # absent — see the scope note at the top.
+      # The renderer-pinned module inside tests/stage4 is deselected by the
+      # `pinned_image` MARKER, which pyproject.toml's default `-m` expression
+      # applies (J-mirrors-and-dx-18). There is no `--ignore=` path list any
+      # more: a path list is a second, hand-maintained copy of "which tests are
+      # image-scoped", and it silently loses a module that grows a golden.
       - run: >
           uv run pytest
-          tests/stage1 tests/stage2 tests/stage2v tests/stage3 tests/stage4 tests/stage6
-          --ignore=tests/stage4/test_g4_section_golden.py -q
+          tests/stage1 tests/stage2 tests/stage2v tests/stage3 tests/stage4 tests/stage6 -q
 
   # ------------------------------------------------------- stage gates 8A-8D --
   # Gates G8A (ingest), G8B (solid comparison), G8C (assemblies/constraints),
@@ -182,6 +282,12 @@ jobs:
     name: stage gates 8A-8D
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      # J-mirrors-and-dx-25: this job installs Node and stages the sidecar, so a
+      # bridge test that reports "node or pnpm unavailable" here is a REGRESSION,
+      # not an environment fact. The variable turns that skip into a failure —
+      # the same fail-rather-than-skip policy the renderer gate applies.
+      HEPHAESTUS_REQUIRE_SIDECAR: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -213,6 +319,12 @@ jobs:
     name: stage gates 9A-9C
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      # J-mirrors-and-dx-25: this job installs Node and stages the sidecar, so a
+      # bridge test that reports "node or pnpm unavailable" here is a REGRESSION,
+      # not an environment fact. The variable turns that skip into a failure —
+      # the same fail-rather-than-skip policy the renderer gate applies.
+      HEPHAESTUS_REQUIRE_SIDECAR: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -406,7 +518,8 @@ jobs:
   # a re-baseline PR, not a silent regeneration.
   #
   # It IS in release.yml's prior-gate list, like every other ci.yml job. The
-  # earlier draft of this lane argued itself out of that list; tests/stage7h
+  # earlier draft of this lane argued itself out of that list;
+  # tests/stage7h/test_release_lanes.py
   # ::test_the_prior_gate_check_names_every_ci_job asserts set equality between
   # ci.yml's published check names and that list, and went red the moment this
   # job was added. Under mission rule 1 the resolution is a tightening, and the
@@ -475,6 +588,12 @@ jobs:
     name: server (shard ${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    env:
+      # J-mirrors-and-dx-25: this job installs Node and stages the sidecar, so a
+      # bridge test that reports "node or pnpm unavailable" here is a REGRESSION,
+      # not an environment fact. The variable turns that skip into a failure —
+      # the same fail-rather-than-skip policy the renderer gate applies.
+      HEPHAESTUS_REQUIRE_SIDECAR: "1"
     strategy:
       fail-fast: false
       matrix:
@@ -528,6 +647,11 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
       - run: pnpm --dir agent install --frozen-lockfile
+      # `typecheck` runs `agent/tsconfig.check.json`, NOT the build config: it
+      # covers `src/` and `test/` under the same strict options, while
+      # `tsconfig.json` keeps `rootDir: src` so `dist/` (the packaged sidecar's
+      # `exports` entry) is unchanged. Before J-mirrors-and-dx-28 this step
+      # checked the source only and the ten test files were checked by nothing.
       - run: pnpm --dir agent typecheck
       - run: pnpm --dir agent lint
       - run: pnpm --dir agent test
@@ -568,6 +692,9 @@ jobs:
     env:
       CI: "true"
       npm_config_store_dir: /tmp/pnpm-store
+      # J-mirrors-and-dx-25: see the note on the stage lanes. This job stages
+      # the sidecar, so a "node or pnpm unavailable" skip is a regression.
+      HEPHAESTUS_REQUIRE_SIDECAR: "1"
     steps:
       - uses: actions/checkout@v4
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -585,8 +712,21 @@ jobs:
       - run: uv run python scripts/stage_sidecar.py
       - run: pnpm --dir web install --frozen-lockfile
       - run: pnpm --dir web build
-      - run: uv run pytest tests/render -q
-      - run: uv run pytest tests/stage4/test_g4_section_golden.py -q
+      # `-m pinned_image` SELECTS what every stock lane deselects, so this lane
+      # cannot silently stop running a renderer-pinned module: a new one is
+      # collected here the moment it carries the marker, and
+      # tests/stage7h/test_test_hygiene.py asserts that every marked module is
+      # inside a path this lane names (J-mirrors-and-dx-18).
+      - run: uv run pytest tests/render -m pinned_image -q
+      - run: uv run pytest tests/stage4/test_g4_section_golden.py -m pinned_image -q
+      # The Khronos glTF validator bonus lane (J-mirrors-and-dx-15). It SKIPS
+      # until the image digest above is bumped to one built from the current
+      # docker/ci/Dockerfile, which bakes the pinned validator; the same PR that
+      # bumps the digest sets HEPHAESTUS_REQUIRE_GLTF_VALIDATOR=1 in this job's
+      # `env:` block, after which the test fails by name instead of skipping —
+      # the fail-rather-than-skip policy the renderer gate already applies.
+      # docker/ci/README.md records the binary, its pin and this consumer.
+      - run: uv run pytest server/tests/test_http_gltf.py -k khronos -q
       - run: pnpm --dir web test:e2e
 
   web-node:
@@ -607,6 +747,55 @@ jobs:
       - run: pnpm --dir web test
       - run: pnpm --dir web build
 
+  # --------------------------------------------------------- bootstrap path --
+  # J-mirrors-and-dx-32. Every other job does its OWN setup — `uv sync` plus a
+  # pnpm action — so nothing here ever walked the path a human walks, which is
+  # exactly the gap that produced J-mirrors-and-dx-25 (the documented bootstrap
+  # left no `pnpm` on PATH and every sidecar-backed test skipped in silence).
+  #
+  # Deliberately a BARE checkout: no setup-uv, no setup-node, no pnpm action
+  # before the script, because pre-installing the tooling would test a machine
+  # no contributor has. The prerequisites are installed the way docs/install.md
+  # tells a human to, and then the script does the rest.
+  #
+  # The assertion that matters is the last step, not the exit code of the
+  # script: with HEPHAESTUS_REQUIRE_SIDECAR set, a sidecar-backed suite must
+  # PASS rather than skip. That is the criterion J-mirrors-and-dx-25 needed and
+  # nothing had.
+  #
+  # The lane resolves packages outside the lockfiles (corepack fetches pnpm, the
+  # installer fetches uv), so the timeout is generous and the failure mode to
+  # expect is a network one.
+  bootstrap:
+    name: bootstrap (bare checkout)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      HEPHAESTUS_REQUIRE_SIDECAR: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: prerequisites, installed the way docs/install.md says
+        run: |
+          set -euo pipefail
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          sudo apt-get update -q
+          # bubblewrap for the sandbox; the Mesa/EGL set for the renderer, which
+          # docs/install.md's "Rendering" entry names. Both are prerequisites a
+          # human installs by hand, so they are installed here by hand too.
+          sudo apt-get install -y -q bubblewrap libegl1 libgl1 libgl1-mesa-dri libglx-mesa0
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: the documented first command
+        run: ./scripts/bootstrap.sh --no-web
+      # The claim under test: after the bootstrap, the bridge lanes RUN. A skip
+      # here is the J-mirrors-and-dx-25 regression and the require variable makes
+      # it a failure with the resolution the guard attempted attached.
+      - name: a sidecar-backed suite runs rather than skipping
+        run: uv run pytest tests/stage2 -q
+
   # ------------------------------------------------------------- stage 7H --
   # The fast half of the Stage 7H suite: sidecar resolution/integrity policy,
   # version coherence, the docs set, the leaderboard page, and the structural
@@ -621,6 +810,12 @@ jobs:
     name: stage7h packaging invariants
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # J-mirrors-and-dx-25: this job installs Node and stages the sidecar, so a
+      # bridge test that reports "node or pnpm unavailable" here is a REGRESSION,
+      # not an environment fact. The variable turns that skip into a failure —
+      # the same fail-rather-than-skip policy the renderer gate applies.
+      HEPHAESTUS_REQUIRE_SIDECAR: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -638,4 +833,7 @@ jobs:
         run: |
           pnpm --dir agent run bundle
           uv run python scripts/stage_sidecar.py
-      - run: uv run pytest tests/stage7h -q -m "not slow"
+      # The `slow` half is the release matrix's job; `pinned_image` is the
+      # golden lane's. Spelled in full because an explicit `-m` REPLACES
+      # pyproject.toml's default expression rather than adding to it.
+      - run: uv run pytest tests/stage7h -q -m "not slow and not pinned_image"

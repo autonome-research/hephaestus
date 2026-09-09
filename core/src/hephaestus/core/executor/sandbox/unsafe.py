@@ -1,4 +1,4 @@
-"""--unsafe-local-executor: a plain-subprocess ExecBackend for core debugging.
+"""The unsafe local executor: a plain-subprocess ExecBackend for core debugging.
 
 NOT a sandbox. Runs the worker as an ordinary child process with the parent's
 environment and filesystem view. Every execution prints an explicit warning
@@ -23,8 +23,16 @@ from hephaestus.core.executor.sandbox.base import (
     SandboxSpec,
 )
 
+#: Printed to stderr on EVERY execution under this backend. Deliberately names
+#: no CLI flag: `heph build`, `heph agent` and `heph mcp` each carry their own
+#: `--unsafe-local-executor` opt-in, `heph serve` refuses this backend outright,
+#: and a test or a library caller reaches it with no CLI in sight — so naming
+#: one verb's flag here was wrong for every caller but one (ledger
+#: J-agent-wiring-4, whose reported symptom was `heph agent` printing a warning
+#: about a flag that verb did not have). Each CLI names its own flag once, at
+#: selection; this line says what is true wherever it is printed.
 UNSAFE_WARNING = (
-    "WARNING: --unsafe-local-executor: running the build worker WITHOUT OS "
+    "WARNING: unsafe local executor: running the build worker WITHOUT OS "
     "sandboxing (no filesystem, network, or process isolation). Use only for "
     "local debugging of code you trust."
 )

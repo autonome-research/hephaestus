@@ -79,7 +79,7 @@ test("reconnect and missed terminal refresh zero-event outcomes without trusting
   await c.frame("text_delta", { text: "Live fixture suffix." }, 1);
   await expect(page.getByText("Live fixture suffix.")).toBeVisible();
   c.sessionsFail = true;
-  c.sockets.at(-1)!.close({ code: 4409, reason: "resync_required" });
+  await c.sockets.at(-1)!.close({ code: 4409, reason: "resync_required" });
   await expect(status(page)).toHaveAttribute("data-current-turn", "Checking");
   await expect(send(page)).toBeDisabled();
   await expect(page.locator("[data-resync]")).toBeVisible();

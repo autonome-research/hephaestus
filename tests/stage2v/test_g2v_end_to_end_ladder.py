@@ -63,6 +63,7 @@ from hephaestus.agent_bridge.review import (
     run_review_ladder,
 )
 from hephaestus.bench.harness import BENCH_ANSWER, bench_answerer, load_tasks
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.testing.fake_openai import FakeOpenAI, RequestInfo, start_fake_openai
 from hephaestus.testing.projects import scaffold_project
 from hephaestus.testing.sidecar import build_agent_dist
@@ -285,6 +286,7 @@ def harness(tmp_path: Path, sidecar_dist: Path) -> Iterator[Harness]:
     script = Script(steps=steps())
     fake = start_fake_openai([script] * 64)
     runtime = BridgeRuntime(
+        backend=UnsafeLocalBackend(),
         project_root=root,
         providers=[fake.provider_spec()],
         dist_main=sidecar_dist,

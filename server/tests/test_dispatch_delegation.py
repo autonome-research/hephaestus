@@ -22,6 +22,7 @@ from hephaestus.agent_bridge.delegation import (
 )
 from hephaestus.agent_bridge.dispatch import DispatchError, ToolDispatcher
 from hephaestus.core.project_store.store import ProjectStore
+from hephaestus.testing.delegation_gates import AllowAllGate
 from hephaestus.testing.doubles import FakeClock
 from hephaestus.testing.tools_fixture import ORCH, PART_WIDGET, Project, make_project
 from opstore.types import TerminalState
@@ -62,7 +63,12 @@ def _wire(
     gate: Any = None,
 ) -> DelegationService:
     """Attach a real delegation service (over the project's opstore) to dispatch."""
-    service = DelegationService(project.store.admission, project.store.db, gate=gate, clock=clock)
+    service = DelegationService(
+        project.store.admission,
+        project.store.db,
+        gate=AllowAllGate() if gate is None else gate,
+        clock=clock,
+    )
     project.dispatcher = ToolDispatcher(
         ProjectStore(project.layout, project.store),
         cad=project.cad,

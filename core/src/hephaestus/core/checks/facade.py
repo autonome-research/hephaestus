@@ -34,15 +34,16 @@ from __future__ import annotations
 import importlib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, cast, final, runtime_checkable
+from typing import Any, Final, Protocol, cast, final, runtime_checkable
 
 from hephaestus.core.addressing import GeometryIndex, Resolution, resolve_in_project
 from hephaestus.core.checks.approx import Triple
-from hephaestus.core.errors import ValidationError
+from hephaestus.core.errors import HephaestusError, ValidationError, ValidationKind
 from opstore.types import JSONValue
 
 __all__ = [
     "ALIGN_MODES",
+    "DENSITY_KGM3_TO_GMM3",
     "IMPORT_TARGET_PREFIX",
     "PART_TARGET_PREFIX",
     "SCAN_ALIGN_MODES",
@@ -52,6 +53,7 @@ __all__ = [
     "ImportResolver",
     "KernelOps",
     "MappedGeometry",
+    "MassDensityUnboundError",
     "Measurement",
     "MeasurementEntry",
     "PosedContextFactory",
@@ -110,8 +112,43 @@ ScanTargetResolver = Callable[
 #: (unknown id, withdrawn entry, motion timeout) is the predicate's outcome.
 SweepResolver = Callable[[str], Mapping[str, JSONValue]]
 
-#: Density used for ``m.mass`` when neither the call nor the part supplies one.
-DEFAULT_DENSITY = 1.0
+#: ``registry/_materials.py`` stores density in kilograms per cubic metre — the
+#: published, human-checkable number a datasheet quotes, and the *human*
+#: boundary this project deliberately keeps (``PHYSICS.md`` §1). The kernel's
+#: :func:`hephaestus.geom.measure.mass` is a unit-agnostic ``volume x density``
+#: multiply that yields grams only when the density is in grams per cubic
+#: *millimetre*. This is the conversion between the two, and ``PHYSICS.md`` §1
+#: names it as the single boundary where it may happen: a resolved materials
+#: record is converted here, on its way into a :class:`Measurement`, and
+#: nowhere else.
+#:
+#: 1 kg/m^3 = 1e3 g / 1e9 mm^3 = 1e-6 g/mm^3.
+DENSITY_KGM3_TO_GMM3: Final[float] = 1e-6
+
+
+class MassDensityUnboundError(HephaestusError):
+    """``m.mass`` was called with no explicit and no bound density (§6).
+
+    A mass is not a volume. The facade used to substitute ``DEFAULT_DENSITY =
+    1.0``, which made ``m.mass(sel)`` return exactly ``m.volume(sel)`` with the
+    units relabelled to grams — a placeholder no caller could detect, because
+    nothing in the result said a density had been assumed (ledger
+    J-agent-results-1; ``PHYSICS.md`` §1 prescribes this refusal by name and by
+    ``kind``). The bill of materials is the honest precedent: no material, no
+    mass.
+
+    ``part`` names the part whose density is unbound, so a caller can say which
+    ``part.material_spec`` to declare.
+    """
+
+    code = "mass_density_unbound"
+    #: ``PHYSICS.md`` §1: the refusal is a contract fault, like every other
+    #: "the script asked for something it did not supply the inputs for".
+    kind: ValidationKind = "contract"
+
+    def __init__(self, message: str, *, part: str) -> None:
+        super().__init__(message)
+        self.part = part
 
 
 @runtime_checkable
@@ -698,9 +735,29 @@ class Measurement:
         return value
 
     def mass(self, selector: str, density: float | None = None) -> float:
-        """Mass (g) at the explicit density, else the part's density, else 1.0 g/cm^3."""
+        """Mass (g) at the explicit density, else the part's bound density.
+
+        Densities are **grams per cubic millimetre**, the unit
+        :func:`hephaestus.geom.measure.mass` needs to return grams from a
+        millimetre-cubed volume; :data:`DENSITY_KGM3_TO_GMM3` is the one
+        boundary that converts a materials-registry record into it. The
+        docstring used to say ``g/cm^3`` — a third unit, and not what the
+        multiply computes (``PHYSICS.md`` §1).
+
+        Refuses :class:`MassDensityUnboundError` when neither density exists:
+        with no density there is no mass to report, only a volume wearing a
+        mass's units (ledger J-agent-results-1).
+        """
         part, shape = self._resolve(selector)
-        effective = density if density is not None else self._densities.get(part, DEFAULT_DENSITY)
+        effective = density if density is not None else self._densities.get(part)
+        if effective is None:
+            raise MassDensityUnboundError(
+                f"mass of {selector!r} needs a density: part {part!r} binds none and the call "
+                "supplied none. Declare part.material_spec = \"<a material this project's "
+                'registry carries>", or pass m.mass(selector, density=<g/mm^3>) — a mass '
+                "reported without a density is the volume relabelled, not a mass",
+                part=part,
+            )
         value = float(self._ops.mass(shape, float(effective)))
         self._record("mass", (selector,), value)
         return value

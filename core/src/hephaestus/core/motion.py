@@ -115,10 +115,8 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import json
-import multiprocessing
 import os
 import tempfile
-import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -132,6 +130,7 @@ from hephaestus.core.assembly import (
     UnresolvableReason,
 )
 from hephaestus.core.errors import AddressingError, ValidationError
+from hephaestus.core.executor.bounded_pass import run_bounded_pass
 from hephaestus.core.project_store.constraints import Anchor
 from hephaestus.core.project_store.kinematics import (
     CouplingEntry,
@@ -178,6 +177,8 @@ __all__ = [
     "SWEEP_VERDICTS",
     "BoundPoseError",
     "JointOutcome",
+    "MotionChildDied",
+    "MotionCutShort",
     "MotionEvaluator",
     "MotionOutcomeState",
     "MotionResolution",
@@ -365,8 +366,8 @@ class JointOutcome:
         return cls(
             id=str(data.get("id", "")),
             kind=str(data.get("kind", "")),
-            parent=_anchor_ref_from_json(data.get("parent")),
-            child=_anchor_ref_from_json(data.get("child")),
+            parent=AnchorRef.from_json(data.get("parent")),
+            child=AnchorRef.from_json(data.get("child")),
             state=state,
             reason=reason if reason in JOINT_UNRESOLVABLE_REASONS else None,
             detail=_opt_str(data.get("detail")),
@@ -428,21 +429,6 @@ class PoseOutcome:
 
 def _opt_str(value: JSONValue | None) -> str | None:
     return value if isinstance(value, str) else None
-
-
-def _anchor_ref_from_json(data: JSONValue | None) -> AnchorRef:
-    if not isinstance(data, dict):
-        return AnchorRef(anchor="", part="", selector="")
-    raw = cast("Mapping[str, JSONValue]", data)
-    rule = raw.get("rule")
-    ref = raw.get("artifact_ref")
-    return AnchorRef(
-        anchor=str(raw.get("anchor", "")),
-        part=str(raw.get("part", "")),
-        selector=str(raw.get("selector", "")),
-        rule=rule if isinstance(rule, str) else None,
-        artifact_ref=ref if isinstance(ref, str) else None,
-    )
 
 
 @dataclass(frozen=True)
@@ -543,6 +529,15 @@ class MotionStatus:
             for name, value in cast("Mapping[str, JSONValue]", refs_raw).items():
                 if isinstance(value, str):
                     refs[name] = value
+                elif value is None:
+                    # J-agent-results-8a, the READ half: the model-facing
+                    # document now writes null for a part that contributed no
+                    # artifact, and the store's own spelling for the same fact
+                    # is the empty string. Both encodings must load, or a
+                    # status round-tripped through this reader silently loses
+                    # the KEY — which reads as "that part was never mentioned"
+                    # rather than "that part resolved to nothing".
+                    refs[name] = ""
         stale_raw = data.get("stale", [])
         stale: tuple[str, ...] = ()
         if isinstance(stale_raw, list):
@@ -1565,8 +1560,8 @@ class SweepSample:
         return cls(values=values, measured=float(measured))
 
 
-class MotionTimeout(ValidationError):
-    """The sweep subprocess hit the wall-clock ceiling or died (§4).
+class MotionCutShort(ValidationError):
+    """A sweep produced no verdict — **the carriage, not the reason** (§4).
 
     Not an empty-handed refusal: ``partial`` CARRIES every per-sample fact the
     child streamed before the kill, and ``samples_evaluated`` /
@@ -1574,6 +1569,55 @@ class MotionTimeout(ValidationError):
     a hang and never a silent pass. Deliberately NOT a :data:`SWEEP_VERDICTS`
     member: a killed sweep decided nothing, and giving the kill a verdict
     spelling would let a timeout be read as an outcome.
+
+    Two things can cut a sweep short, and the remedy differs: the ceiling fired
+    (:class:`MotionTimeout` — allow more time, or coarsen the grid) or the child
+    died (:class:`MotionChildDied` — a crash, for which "raise the ceiling" is
+    the wrong advice). One reason for both told every consumer the wrong thing;
+    this base is what lets every catch stay written against the carriage while
+    ``reason`` discriminates. It is the
+    :class:`~hephaestus.core.project_compare.CompareCutShort` split, in the file
+    the conflation was copied into.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: str,
+        check_id: str,
+        grid_total: int,
+        partial: tuple[SweepSample, ...],
+    ) -> None:
+        super().__init__(message, kind="contract")
+        self.reason: str = reason
+        self.check_id = check_id
+        self.grid_total = grid_total
+        self.partial: tuple[SweepSample, ...] = partial
+
+    @property
+    def samples_evaluated(self) -> int:
+        return len(self.partial)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        """The refusal shape every surface carries (tool error data, CLI --json)."""
+        return {
+            "status": self.reason,
+            "reason": self.reason,
+            "id": self.check_id,
+            "message": self.message,
+            "samples_evaluated": self.samples_evaluated,
+            "grid_total": self.grid_total,
+            "partial": [sample.to_json() for sample in self.partial],
+        }
+
+
+class MotionTimeout(MotionCutShort):
+    """The sweep subprocess hit the wall-clock ceiling (§4).
+
+    ``timeout_s`` is the ceiling that actually fired. It is emitted only here:
+    a ceiling reported for a run that never reached it asserts a bound that was
+    never tested.
     """
 
     def __init__(
@@ -1585,29 +1629,49 @@ class MotionTimeout(ValidationError):
         grid_total: int,
         partial: tuple[SweepSample, ...],
     ) -> None:
-        super().__init__(message, kind="contract")
-        self.reason: str = "motion_timeout"
-        self.check_id = check_id
+        super().__init__(
+            message,
+            reason="motion_timeout",
+            check_id=check_id,
+            grid_total=grid_total,
+            partial=partial,
+        )
         self.timeout_s = timeout_s
-        self.grid_total = grid_total
-        self.partial: tuple[SweepSample, ...] = partial
-
-    @property
-    def samples_evaluated(self) -> int:
-        return len(self.partial)
 
     def to_json(self) -> dict[str, JSONValue]:
-        """The refusal shape every surface carries (tool error data, CLI --json)."""
-        return {
-            "status": "motion_timeout",
-            "reason": "motion_timeout",
-            "id": self.check_id,
-            "message": self.message,
-            "timeout_s": self.timeout_s,
-            "samples_evaluated": self.samples_evaluated,
-            "grid_total": self.grid_total,
-            "partial": [sample.to_json() for sample in self.partial],
-        }
+        out = super().to_json()
+        out["timeout_s"] = self.timeout_s
+        return out
+
+
+class MotionChildDied(MotionCutShort):
+    """The sweep subprocess died before the grid finished (§4).
+
+    Carries the child's ``exit_code`` and **no ceiling**, because none fired.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        check_id: str,
+        exit_code: int | None,
+        grid_total: int,
+        partial: tuple[SweepSample, ...],
+    ) -> None:
+        super().__init__(
+            message,
+            reason="motion_child_died",
+            check_id=check_id,
+            grid_total=grid_total,
+            partial=partial,
+        )
+        self.exit_code = exit_code
+
+    def to_json(self) -> dict[str, JSONValue]:
+        out = super().to_json()
+        out["exit_code"] = self.exit_code
+        return out
 
 
 @dataclass(frozen=True)
@@ -1699,7 +1763,7 @@ class SweepResult:
         anchors: dict[str, AnchorRef] = {}
         if isinstance(raw_anchors, dict):
             for name, value in cast("Mapping[str, JSONValue]", raw_anchors).items():
-                anchors[name] = _anchor_ref_from_json(value)
+                anchors[name] = AnchorRef.from_json(value)
         raw_worst = data.get("worst")
         worst = (
             SweepSample.from_json(cast("Mapping[str, JSONValue]", raw_worst))
@@ -1785,7 +1849,14 @@ def _sweep_child(conn: Any, spec: Mapping[str, Any]) -> None:  # pragma: no cove
         interference,
         transformed_shape,
     )
+    from hephaestus.geom.step_io import quiet_messenger
 
+    # The kernel messenger, moved off the fd 1 this child INHERITED from the
+    # parent — where it is the ``--json`` document or the MCP JSON-RPC
+    # transport (J-cli-robustness-14). Done here, beside the import that
+    # binds OCP in this process, because a diagnostic written by the C++
+    # side passes through no Python stream and can be caught nowhere else.
+    quiet_messenger()
     kind: str = spec["kind"]
     frames: Sequence[Any] = spec["frames"]
     axes: Sequence[tuple[str, Sequence[float]]] = spec["axes"]
@@ -1880,62 +1951,28 @@ def _bounded_sweep(
 
     Returns ``(samples, refusal)``: every per-sample fact that streamed in,
     and ``None`` on a completed grid or the child's named ``(reason,
-    detail)`` refusal. A ceiling kill or a child death raises
-    :class:`MotionTimeout` CARRYING the samples already evaluated — the
-    :func:`~hephaestus.core.project_compare.bounded_solid_diff` loop with the
-    bench's per-sample streaming in place of the cheap-facts-first split.
+    detail)`` refusal. A ceiling kill raises :class:`MotionTimeout` and a dead
+    child raises :class:`MotionChildDied`, both CARRYING the samples already
+    evaluated.
     """
-    ctx = multiprocessing.get_context("spawn")
-    parent, child = ctx.Pipe(duplex=False)
-    proc = ctx.Process(target=_sweep_child, args=(child, spec))
-    proc.start()
-    child.close()
-
     samples: list[SweepSample] = []
-    outcome: tuple[str, Any] | None = None
-    died = False
-    cut_short = f"did not finish within {timeout_s:g}s and was killed"
-    deadline = time.monotonic() + timeout_s
 
-    def _receive() -> bool:
+    def _receive(kind: str, payload: Any) -> bool:
         """Consume one message; True when it was terminal (done/refusal)."""
-        nonlocal outcome
-        kind, payload = parent.recv()
         if kind == "sample":
             values, measured = payload
             samples.append(
                 SweepSample(values=dict(cast("Mapping[str, float]", values)), measured=measured)
             )
             return False
-        outcome = (str(kind), payload)
         return True
 
-    try:
-        while outcome is None and time.monotonic() < deadline:
-            try:
-                if parent.poll(0.05):
-                    _receive()
-                elif not proc.is_alive():
-                    # Death, not a deadline — drain what it sent first, so a
-                    # result that raced the exit is never misread as a crash.
-                    while parent.poll(0.2) and not _receive():
-                        pass
-                    died = outcome is None
-                    break
-            except EOFError:
-                # The pipe closed before a terminal message: the child is
-                # crashing. Let it finish dying so the refusal carries its
-                # real exit code; a hang instead meets the kill in `finally`.
-                proc.join(5.0)
-                died = True
-                break
-    finally:
-        if proc.is_alive():
-            proc.kill()
-        proc.join()
-        parent.close()
-    if died:
-        cut_short = f"subprocess died (exit code {proc.exitcode})"
+    # The poll/drain/kill supervision is
+    # :mod:`hephaestus.core.executor.bounded_pass`, shared with every other
+    # bounded engine pass; this call site keeps only its protocol (above) and
+    # its refusal vocabulary (below).
+    pass_outcome = run_bounded_pass(_sweep_child, (spec,), timeout_s=timeout_s, on_message=_receive)
+    outcome = pass_outcome.terminal
 
     if outcome is not None:
         kind, payload = outcome
@@ -1943,10 +1980,24 @@ def _bounded_sweep(
             return tuple(samples), None
         reason, detail = cast("tuple[str, str]", payload)
         return tuple(samples), (reason, detail)
+    if pass_outcome.died:
+        # A crash is not a ceiling: the same split as
+        # ``project_compare.CompareChildDied``, here because this loop is the
+        # file the conflation was copied into and a fix to one alone would let
+        # the two vocabularies drift again.
+        raise MotionChildDied(
+            f"motion check {check_id}: sweep subprocess died (exit code "
+            f"{pass_outcome.exit_code}) before the grid finished (KINEMATICS.md §4); "
+            f"{len(samples)} of {grid_total} samples evaluated",
+            check_id=check_id,
+            exit_code=pass_outcome.exit_code,
+            grid_total=grid_total,
+            partial=tuple(samples),
+        )
     raise MotionTimeout(
-        f"motion check {check_id}: sweep {cut_short} (KINEMATICS.md §4, ceiling "
-        f"{timeout_s:g}s via {MOTION_TIMEOUT_ENV}); {len(samples)} of {grid_total} "
-        "samples evaluated",
+        f"motion check {check_id}: sweep did not finish within {timeout_s:g}s and was "
+        f"killed (KINEMATICS.md §4, ceiling {timeout_s:g}s via {MOTION_TIMEOUT_ENV}); "
+        f"{len(samples)} of {grid_total} samples evaluated",
         check_id=check_id,
         timeout_s=timeout_s,
         grid_total=grid_total,

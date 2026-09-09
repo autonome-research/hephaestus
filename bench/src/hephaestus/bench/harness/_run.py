@@ -196,13 +196,23 @@ RuntimeFactory = Callable[[Path, ProviderConfig], BridgeRuntime]
 
 
 def default_runtime_factory(project_root: Path, provider: ProviderConfig) -> BridgeRuntime:
-    """Production factory: the packaged sidecar over the configured providers."""
+    """Production factory: the packaged sidecar over the configured providers.
+
+    The executor posture is decided here the way every shipped verb decides it
+    (ledger J-agent-wiring-4): a probed bwrap backend, or ``sandbox_denied`` by
+    name. The bench runs model-authored part scripts, which is exactly the
+    input the sandbox exists for, so there is no unsafe opt-in on this path.
+    """
+    from hephaestus.core.cli import make_backend
+    from hephaestus.core.project_store.layout import load_project
+
     return BridgeRuntime(
         project_root=project_root,
         providers=provider.providers,
         credentials=dict(provider.credentials),
         credential_allowlist=provider.credential_allowlist,
         auth_source=provider.auth_source,
+        backend=make_backend(load_project(project_root), unsafe=False),
     )
 
 
@@ -363,6 +373,17 @@ COMPELLED_TOOLS: frozenset[str] = frozenset(
 #: ``compare_timeout:``
 #:     the bounded-diff ceiling kill (COMPARE.md §5) — the harness's wall clock,
 #:     not the model's geometry, ended the call.
+#: ``compare_child_died:`` / ``motion_child_died:``
+#:     the bounded-diff or sweep child died mid-call (COMPARE.md §5,
+#:     KINEMATICS.md §4). A crash is ours even more plainly than a ceiling is:
+#:     charging it would bill the model for our own subprocess dying. Before
+#:     the reason split (J-build-state-4) a dead compare child arrived under
+#:     the ``compare_timeout:`` prefix and was refunded; naming it honestly
+#:     would have silently started charging it, which is why both reasons are
+#:     listed here in the same change that split them.
+#:     (``motion_timeout:``, the §4 ceiling kill, is deliberately NOT here:
+#:     it was never refunded, and making it refundable would change what a
+#:     scored run costs — a grading decision, not a rename's consequence.)
 #: ``no response for py.tool_dispatch``
 #:     the sidecar's RPC deadline on a Python dispatch that never answered
 #:     (5/6 infra deaths in the 2026-07-29 sweep ended on exactly this, under
@@ -373,6 +394,8 @@ COMPELLED_TOOLS: frozenset[str] = frozenset(
 #:     the supervisor lost or replaced the child while the call was in flight.
 HARNESS_FAULTS: Final[tuple[tuple[str, str], ...]] = (
     ("compare_timeout:", "compare_timeout"),
+    ("compare_child_died:", "compare_child_died"),
+    ("motion_child_died:", "motion_child_died"),
     ("no response for py.tool_dispatch", "bridge_timeout"),
     ("pending request queue full", "bridge_backpressure"),
     ("sidecar restarted", "sidecar_restarted"),

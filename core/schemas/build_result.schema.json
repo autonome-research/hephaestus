@@ -202,6 +202,50 @@
       },
       "description": "\u00a75.2 manufacturing metadata as the worker evaluated it (runtime truth; empty for pre-2026-08-03 records)."
     },
+    "params_declaration": {
+      "type": "object",
+      "description": "The part's PARAMS declaration as the worker evaluated it, in the canonical form params_declaration_json emits (the same form input_hashes.part_params hashes). Absent from records written before audit-2026-09-04 J-cli-startup-7; a reader that needs the bounds without a rebuild reads it here.",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "default",
+          "min",
+          "max",
+          "type"
+        ],
+        "properties": {
+          "default": {
+            "type": "number"
+          },
+          "min": {
+            "type": "number"
+          },
+          "max": {
+            "type": "number"
+          },
+          "type": {
+            "enum": [
+              "int",
+              "float"
+            ]
+          },
+          "doc": {
+            "type": "string"
+          },
+          "step": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "check_names": {
+      "type": "array",
+      "description": "Every CHECKS name the worker registered, sorted. Not the same set as checks' keys: a declared check that failed to register leaves no result, so an empty checks map alone cannot distinguish \"declares none\" from \"declares some that did not run\" (audit-2026-09-04 J-cli-startup-9). Absent from records written before that fix; whether the KEY is present is what distinguishes \"declares none\" from \"this record does not say\".",
+      "items": {
+        "type": "string"
+      }
+    },
     "checkpoints": {
       "type": "array",
       "description": "Incremental-executor per-statement checkpoints (architecture \u00a73.1). Absent from records written before the HTTP Timeline projection.",

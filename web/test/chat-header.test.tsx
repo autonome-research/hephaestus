@@ -58,7 +58,7 @@ it("shows one selected human title and scope, with the whole session forest only
     expect(selected?.id).toBe("session-tab-session-1");
     const ids = [...host.querySelectorAll("[id]")].map((el) => el.id);
     expect(new Set(ids).size).toBe(ids.length);
-    act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    act(() => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
     expect(host.querySelector("[data-session-switch-open]")).toBeNull();
     expect(document.activeElement).toBe(switcher);
     expect(document.title).toContain("Make a cabinet");
@@ -67,7 +67,7 @@ it("shows one selected human title and scope, with the whole session forest only
     act(() => host.querySelector<HTMLButtonElement>("[data-session-tab]")?.click());
     expect(document.activeElement).toBe(host.querySelector('[data-session-option="session-1"]'));
     act(() => host.querySelector<HTMLButtonElement>('[data-session-option="session-2"]')?.click());
-    act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    act(() => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
     expect(document.activeElement).toBe(switcher);
   } finally {
     act(() => root.unmount());

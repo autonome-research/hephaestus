@@ -161,7 +161,8 @@ An interactive tool that can outlive its session is a harness defect, so:
   diff` compute the `SolidDiff` in a killable subprocess under a wall-clock
   ceiling (named constant, env-overridable — the local-floor pattern). The
   cheap facts (topology census, bboxes, volumes) are computed and streamed
-  FIRST; a ceiling kill returns a named `compare_timeout` refusal that
+  FIRST; a ceiling kill returns a named `compare_timeout` refusal (a child that
+  dies instead returns `compare_child_died`, carrying its exit code) that
   CARRIES the partial facts and says which halves (volume boolean, surface
   sampling) were lost. The model gets signal it can act on — never a dead
   session, never a silently coarse number.

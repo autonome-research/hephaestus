@@ -25,11 +25,11 @@
     "max_images_per_result": 4
   },
   "rpc": {
-    "max_pending": 64
+    "max_pending": 64,
+    "py_handler_workers": 32
   },
   "admission": {
-    "run_slots": 16,
-    "queued_prompts": 32
+    "run_slots": 16
   },
   "events": {
     "buffered_events": 1024

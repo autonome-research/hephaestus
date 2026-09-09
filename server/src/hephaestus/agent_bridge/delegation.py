@@ -27,7 +27,12 @@ literal is duplicated. NFC vs NFD prompts hash differently (exact code points).
 Pre-admission classification (part validity / scope / session availability) is a
 policy the session service owns; it is injected as :class:`DelegationGate` so the
 state machine stays decoupled and unit-testable. A gate rejection yields a
-``rejected`` outcome with **no** child run or ref.
+``rejected`` outcome with **no** child run or ref. The gate is **required** and
+has no permissive default (J-agent-wiring-6): a service constructed without one
+is a type error, and the allow-everything gate the tests need lives in
+``hephaestus.testing.delegation_gates`` so no production call site can reach for
+it by accident. ``wiring.build_dispatcher`` injects
+:class:`~hephaestus.agent_bridge.wiring.ProjectDelegationGate`.
 """
 
 from __future__ import annotations
@@ -145,13 +150,6 @@ class DelegationGate(Protocol):
     ) -> RejectionReason | None: ...
 
 
-class _AllowAllGate:
-    """Default gate that never rejects (tests inject their own)."""
-
-    def classify(self, parent_run_id: str, part: str, delivery: Delivery) -> RejectionReason | None:
-        return None
-
-
 @dataclass(frozen=True, slots=True)
 class DelegationRow:
     """Snapshot of one durable delegation row."""
@@ -225,7 +223,7 @@ class DelegationService:
         admission: AdmissionControl,
         db: Database,
         *,
-        gate: DelegationGate | None = None,
+        gate: DelegationGate,
         clock: Clock | None = None,
         edges: SessionEdgeStore | None = None,
     ) -> None:
@@ -240,9 +238,25 @@ class DelegationService:
         # Same connection the admission controller uses, so the delegation-row
         # projection commits atomically with the child terminal insertion.
         self._db = db
-        self._gate = gate or _AllowAllGate()
+        # J-agent-wiring-6: REQUIRED, with no permissive default. The service
+        # used to default to an allow-everything gate "because tests inject
+        # their own" — but no production call site injected one either, so the
+        # only gate ever in force was the one that admitted a delegation to a
+        # part that does not exist. Removing the default makes a gate-less
+        # service a *type* error, which stops the class of defect rather than
+        # this one instance of it; the permissive gate now lives in the testing
+        # package (``hephaestus.testing.delegation_gates.AllowAllGate``) where a
+        # production import of it is a layering violation a test can see.
+        self._gate = gate
         self._clock = clock or SystemClock()
-        self._db.conn.execute(_CREATE_TABLE)
+        # Under the transaction lock, like every other write here. A bare
+        # `conn.execute` is an UNCOORDINATED write on a connection threads
+        # share: with `isolation_level=None` it silently joins whatever
+        # `BEGIN IMMEDIATE` another thread has open, and is rolled back with it
+        # if that one fails. Harmless while `py.*` dispatch was serialized on
+        # the supervisor's reader thread; not harmless on a worker pool.
+        with self._db.transaction() as conn:
+            conn.execute(_CREATE_TABLE)
 
     # -- read ------------------------------------------------------------------
 
@@ -254,9 +268,22 @@ class DelegationService:
         return row
 
     def _fetch_ref(self, delegation_ref: str) -> DelegationRow | None:
-        raw = self._db.conn.execute(
-            f"SELECT * FROM {_TABLE} WHERE delegation_ref = ?", (delegation_ref,)
-        ).fetchone()
+        # `reading()`, not a bare `conn.execute`: threads share ONE connection
+        # and only `transaction()` serializes on its lock, so an unserialized
+        # SELECT can run while another thread holds `BEGIN IMMEDIATE` and read
+        # the pre-transaction state. That stopped being theoretical when `py.*`
+        # dispatch moved off the supervisor's single reader thread onto a
+        # bounded worker pool (J-agent-wiring-13): several `py.delegate`
+        # handlers now run concurrently over this table. The observed failure
+        # was a delegation that had just been created reading back as
+        # `not_found`, which aborts the dispatch AFTER the child run took its
+        # admission slot and BEFORE `resume_parent` acknowledges it — a
+        # permanently leaked slot, and eventually `no_run_slot` for every later
+        # delegation on that store.
+        with self._db.reading() as conn:
+            raw = conn.execute(
+                f"SELECT * FROM {_TABLE} WHERE delegation_ref = ?", (delegation_ref,)
+            ).fetchone()
         return None if raw is None else _to_row(raw)
 
     def get_by_invocation(self, invocation_key: str) -> DelegationRow | None:
@@ -264,9 +291,13 @@ class DelegationService:
         return self._fetch_invocation(invocation_key)
 
     def _fetch_invocation(self, invocation_key: str) -> DelegationRow | None:
-        raw = self._db.conn.execute(
-            f"SELECT * FROM {_TABLE} WHERE invocation_key = ?", (invocation_key,)
-        ).fetchone()
+        # Serialized for the same reason as `_fetch_ref`, and it matters more
+        # here: this read IS the idempotency check, so an interleaved miss
+        # admits a second child for an invocation that already has one.
+        with self._db.reading() as conn:
+            raw = conn.execute(
+                f"SELECT * FROM {_TABLE} WHERE invocation_key = ?", (invocation_key,)
+            ).fetchone()
         return None if raw is None else _to_row(raw)
 
     # -- delegate --------------------------------------------------------------

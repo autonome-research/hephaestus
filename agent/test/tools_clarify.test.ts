@@ -17,10 +17,19 @@ import { ToolProxy, type RpcRequest, type ProxyContext } from "../src/tools/prox
 import { makeInvocation } from "../src/tools/invocation.js";
 import type { JsonValue } from "../src/framing.js";
 
-const WALL_OPTIONS: JsonValue = [
-  { label: "inside the stated footprint", consequence: "40 mm overall, 34 mm internal" },
-  { label: "outside the stated footprint", consequence: "46 mm overall, 40 mm internal" },
-];
+// Named singly, then collected: indexing `WALL_OPTIONS` yields
+// `JsonValue | undefined` under `noUncheckedIndexedAccess`, and a test that
+// wants "the outside option" should say so rather than assert a subscript is
+// populated.
+const WALL_INSIDE: JsonValue = {
+  label: "inside the stated footprint",
+  consequence: "40 mm overall, 34 mm internal",
+};
+const WALL_OUTSIDE: JsonValue = {
+  label: "outside the stated footprint",
+  consequence: "46 mm overall, 40 mm internal",
+};
+const WALL_OPTIONS: JsonValue = [WALL_INSIDE, WALL_OUTSIDE];
 
 const CTX: ProxyContext = {
   sessionId: "sess-1",
@@ -56,13 +65,13 @@ describe("clarification question shape", () => {
   });
 
   it.each([
-    ["too few options", [WALL_OPTIONS[0]]],
+    ["too few options", [WALL_INSIDE]],
     [
       "too many options",
       [0, 1, 2, 3, 4].map((i) => ({ label: `option ${i}`, consequence: "moves 1 mm" })),
     ],
-    ["an empty consequence", [{ label: "inside", consequence: "" }, WALL_OPTIONS[1]]],
-    ["an empty label", [{ label: "", consequence: "40 mm overall" }, WALL_OPTIONS[1]]],
+    ["an empty consequence", [{ label: "inside", consequence: "" }, WALL_OUTSIDE]],
+    ["an empty label", [{ label: "", consequence: "40 mm overall" }, WALL_OUTSIDE]],
     ["a non-array options value", "inside or outside"],
   ])("refuses a clarification with %s", (_name, options) => {
     const refusal = clarificationRefusal({
@@ -88,10 +97,10 @@ describe("clarification question shape", () => {
   });
 
   it("reads either option form", () => {
-    expect(optionLabel(WALL_OPTIONS[1])).toBe("outside the stated footprint");
+    expect(optionLabel(WALL_OUTSIDE)).toBe("outside the stated footprint");
     expect(optionLabel("plain")).toBe("plain");
     expect(optionConsequence("plain")).toBeUndefined();
-    expect(optionConsequence(WALL_OPTIONS[0])).toBe("40 mm overall, 34 mm internal");
+    expect(optionConsequence(WALL_INSIDE)).toBe("40 mm overall, 34 mm internal");
   });
 
   it("names every problem at once", () => {
@@ -155,7 +164,7 @@ describe("the proxy enforces the shape before the bridge is called", () => {
       CTX,
     );
     expect(calls).toHaveLength(1);
-    expect(calls[0].method).toBe("py.ask_user");
-    expect(calls[0].params.requirement_ids).toEqual(["R9"]);
+    expect(calls[0]?.method).toBe("py.ask_user");
+    expect(calls[0]?.params.requirement_ids).toEqual(["R9"]);
   });
 });

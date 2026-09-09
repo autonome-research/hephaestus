@@ -33,13 +33,28 @@
       "content": {
         "type": "string"
       },
+      "first_line": {
+        "type": "integer"
+      },
+      "last_line": {
+        "type": "integer"
+      },
       "next_offset_bytes": {
+        "type": "integer"
+      },
+      "next_offset_line": {
         "type": "integer"
       },
       "oversized_line": {
         "type": "boolean"
       },
       "oversized_line_offset_bytes": {
+        "type": "integer"
+      },
+      "total_bytes": {
+        "type": "integer"
+      },
+      "total_lines": {
         "type": "integer"
       },
       "truncated": {

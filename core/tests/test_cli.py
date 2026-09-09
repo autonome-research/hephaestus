@@ -305,19 +305,8 @@ class TestOptionalVerbImportDiscrimination:
             parser.parse_args(["agent", "--session", "s1"])
         assert excinfo.value.code == 2
 
-    @pytest.mark.xfail(
-        reason=(
-            "J-cli-robustness-21 (the `_optional_verb` discriminator) is lane L2's "
-            "item: it rewrites the same six `try/except ImportError` blocks in "
-            "`build_parser` that L2's deferred-import work rewrites, and the "
-            "workflow plan puts both in one edit. The claim is pinned here so the "
-            "gap is a recorded expectation rather than an absence; non-strict, so "
-            "it turns green the moment L2 lands and needs no coordination."
-        ),
-        strict=False,
-    )
     def test_a_broken_transitive_dependency_registers_a_self_diagnosing_stub(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """``ImportError(name="some_third_party")`` at the same import site is a
         different fact: the package the user asked for exists and something
@@ -333,13 +322,37 @@ class TestOptionalVerbImportDiscrimination:
             ),
         )
         parser = build_parser()
+        # The stub accepts the invocation the operator was reproducing rather
+        # than answering a broken install with "unrecognized arguments".
         args = parser.parse_args(["agent", "--session", "s1"])
         assert args.command == "agent"
         code = args.func(args)
         assert code == 2
-        # A machine string is allowed here (the exception detail) but the verb
-        # name and the real module must both be legible, not swallowed.
-        # (the exact wording is the implementation's to choose)
+        # Self-diagnosing: the module that failed, the module that carries the
+        # verb, and — because this is the whole point of the discrimination —
+        # that the package IS installed. Diagnostics on stderr, never stdout.
+        err = capsys.readouterr().err
+        assert "some_third_party" in err
+        assert "hephaestus.agent_bridge.cli" in err
+        assert "not an absent one" in err
+
+    def test_the_broken_verb_still_appears_in_the_top_level_help(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The stub exists so ``heph --help`` stays honest: a verb that is
+        installed-but-broken must be *listed* (and say so), because vanishing
+        is indistinguishable from never having been installed."""
+        monkeypatch.setattr(
+            builtins,
+            "__import__",
+            self._patched_import(
+                "hephaestus.agent_bridge",
+                "some_third_party",
+                "No module named 'some_third_party'",
+            ),
+        )
+        help_text = build_parser().format_help()
+        assert "agent" in help_text
 
     def test_a_broken_http_cli_web_does_not_remove_mcp(
         self, monkeypatch: pytest.MonkeyPatch
@@ -357,3 +370,23 @@ class TestOptionalVerbImportDiscrimination:
         args = parser.parse_args(["serve", "--mcp"])
         assert args.command == "serve"
         assert getattr(args, "mcp", None) is True
+
+    def test_a_broken_http_cli_web_makes_web_refuse_by_name(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The other half of the same split: ``--web`` stays on ``heph serve
+        --help`` and refuses by name. Dropping the flag would report a broken
+        installation as a workspace that was never built."""
+        monkeypatch.setattr(
+            builtins,
+            "__import__",
+            self._patched_import(
+                "hephaestus.http", "unrelated_dep", "No module named 'unrelated_dep'"
+            ),
+        )
+        parser = build_parser()
+        args = parser.parse_args(["serve", "--web"])
+        assert args.func(args) == 2
+        err = capsys.readouterr().err
+        assert "unrelated_dep" in err
+        assert "hephaestus.http.cli_web" in err

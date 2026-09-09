@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.testing.workspace_fixture import (
     EVENT_ARCHIVE,
     EVENT_ARCHIVE_PROVENANCE,
@@ -64,6 +65,7 @@ class Sidecar:
 
         self.fake = start_fake_openai([])
         self.runtime = BridgeRuntime(
+            backend=UnsafeLocalBackend(),
             project_root=project_root,
             providers=[self.fake.provider_spec()],
             dist_main=dist_main,

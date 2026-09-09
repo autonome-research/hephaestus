@@ -35,6 +35,7 @@ from hephaestus.agent_bridge.cad_ops import (
 )
 from hephaestus.agent_bridge.dispatch import Principal
 from hephaestus.agent_bridge.sessions import RUN_IN_FLIGHT_SCOPES, RunInFlightError
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.testing.tools_fixture import Project, make_project
 
 #: The scripted python fake sidecar (``server/tests/fake_sidecar.py``): the
@@ -286,6 +287,7 @@ def test_a_second_turn_on_a_live_session_is_refused_run_in_flight(
     monkeypatch.setenv("HEPHAESTUS_NODE", sys.executable)
     project_root = scaffold_project(tmp_path / "proj", name="inflight")
     runtime = BridgeRuntime(
+        backend=UnsafeLocalBackend(),
         project_root=project_root,
         providers=[{"id": "fake", "kind": "openai", "base_url": "http://127.0.0.1:9/v1"}],
         dist_main=FAKE_SIDECAR,
@@ -346,6 +348,7 @@ def test_a_live_run_id_cannot_be_reused_for_a_second_turn(
     monkeypatch.setenv("HEPHAESTUS_NODE", sys.executable)
     project_root = scaffold_project(tmp_path / "proj", name="reuse")
     runtime = BridgeRuntime(
+        backend=UnsafeLocalBackend(),
         project_root=project_root,
         providers=[{"id": "fake", "kind": "openai", "base_url": "http://127.0.0.1:9/v1"}],
         dist_main=FAKE_SIDECAR,
@@ -397,6 +400,7 @@ def test_two_sessions_may_think_at_once(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.setenv("HEPHAESTUS_NODE", sys.executable)
     project_root = scaffold_project(tmp_path / "proj", name="concurrent")
     runtime = BridgeRuntime(
+        backend=UnsafeLocalBackend(),
         project_root=project_root,
         providers=[{"id": "fake", "kind": "openai", "base_url": "http://127.0.0.1:9/v1"}],
         dist_main=FAKE_SIDECAR,

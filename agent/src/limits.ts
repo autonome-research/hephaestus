@@ -34,8 +34,8 @@ export interface BridgeLimits {
     readonly max_total_pixels: number;
     readonly max_images_per_result: number;
   };
-  readonly rpc: { readonly max_pending: number };
-  readonly admission: { readonly run_slots: number; readonly queued_prompts: number };
+  readonly rpc: { readonly max_pending: number; readonly py_handler_workers: number };
+  readonly admission: { readonly run_slots: number };
   readonly events: { readonly buffered_events: number };
   readonly timeouts: {
     readonly tool_seconds: number;
@@ -101,6 +101,23 @@ export const MAX_IMAGES_PER_RESULT = LIMITS.image.max_images_per_result;
 export const MAX_PENDING_RPC = LIMITS.rpc.max_pending;
 export const PROMPT_MAX_UTF8_BYTES = LIMITS.prompt.max_utf8_bytes;
 export const BUFFERED_EVENTS_MAX = LIMITS.events.buffered_events;
+
+// The three outbound deadlines, in milliseconds (audit-2026-09-04
+// J-http-limits-11). The shared document states them in SECONDS, because that
+// is the unit every other consumer reads; the conversion happens here, once, so
+// no caller multiplies by a thousand of its own.
+//
+// TOOL_TIMEOUT_MS is the peer's default and the deadline of an ordinary tool
+// call. CAD_BUILD_TIMEOUT_MS is the class for the tools that run the sandboxed
+// worker; it was declared on the Python supervisor, where a build never travels
+// (a build goes sidecar->Python), so no call site could ever select it and the
+// 300 s three documents state as fact was unreachable — every tool died at the
+// peer's hardcoded 120 s. DELEGATION_GRACE_MS is the margin added to a
+// synchronous delegation's own deadline so the delegation's `timed_out`
+// terminal wins over a transport timeout instead of racing it.
+export const TOOL_TIMEOUT_MS = LIMITS.timeouts.tool_seconds * 1000;
+export const CAD_BUILD_TIMEOUT_MS = LIMITS.timeouts.cad_build_seconds * 1000;
+export const DELEGATION_GRACE_MS = LIMITS.timeouts.delegation.grace_seconds * 1000;
 
 export class LimitError extends Error {
   constructor(
@@ -194,6 +211,31 @@ export function utf8LenStrict(s: string): number {
     }
   }
   return Buffer.byteLength(s, "utf8");
+}
+
+/**
+ * Enforce the AGGREGATE binary budget of one tool result (J-http-limits-9).
+ *
+ * `binary.max_binary_bytes` was declared on both sides and validated by
+ * nothing: a grep for it returned the Python export, the TypeScript export and
+ * the test that pinned it as dead. It has one defensible subject on this
+ * bridge — the only binary payloads that cross it are the base64 image blocks
+ * of a tool result, and eight megabytes (`max_image_bytes`) times four
+ * (`max_images_per_result`) is exactly this cap, so the intended meaning is the
+ * per-result *aggregate*. Nothing summed them, so a result with four maximal
+ * images was bounded only by the per-image check passing four times, and any
+ * future non-image payload had no bound at all.
+ *
+ * Enforced on BOTH sides (`limits.py`'s `enforce_binary_budget`), because a
+ * limit enforced on one side of this bridge is not enforced.
+ */
+export function enforceBinaryBudget(totalBytes: number, field = "result"): void {
+  if (totalBytes > MAX_BINARY_BYTES) {
+    throw new LimitError(
+      "binary_too_large",
+      `${field} carries ${totalBytes} binary bytes (max ${MAX_BINARY_BYTES})`,
+    );
+  }
 }
 
 /** Enforce x-hephaestus-maxUtf8Bytes; return the exact UTF-8 byte length. */

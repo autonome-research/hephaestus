@@ -31,10 +31,19 @@
       "content_hash": {
         "type": "string"
       },
+      "first_line": {
+        "type": "integer"
+      },
+      "last_line": {
+        "type": "integer"
+      },
       "line_count": {
         "type": "integer"
       },
       "next_offset_bytes": {
+        "type": "integer"
+      },
+      "next_offset_line": {
         "type": "integer"
       },
       "numbered_script": {
@@ -60,6 +69,12 @@
       },
       "snapshot_ref": {
         "type": "string"
+      },
+      "total_bytes": {
+        "type": "integer"
+      },
+      "total_lines": {
+        "type": "integer"
       },
       "truncated": {
         "type": "boolean"

@@ -49,6 +49,7 @@ from hephaestus.agent_bridge.delegation import (
 )
 from hephaestus.agent_bridge.dispatch import DispatchError, ToolDispatcher
 from hephaestus.core.project_store.store import ProjectStore
+from hephaestus.testing.delegation_gates import AllowAllGate
 from hephaestus.testing.tools_fixture import Project, make_project
 from opstore.errors import BusyError
 from opstore.types import TerminalState
@@ -106,7 +107,12 @@ def wire(
     project: Project, *, clock: FakeClock, runner: Any = None, gate: Any = None
 ) -> DelegationService:
     """Attach a real delegation service (over the project's opstore) to dispatch."""
-    service = DelegationService(project.store.admission, project.store.db, gate=gate, clock=clock)
+    service = DelegationService(
+        project.store.admission,
+        project.store.db,
+        gate=AllowAllGate() if gate is None else gate,
+        clock=clock,
+    )
     project.dispatcher = ToolDispatcher(
         ProjectStore(project.layout, project.store),
         cad=project.cad,
@@ -282,7 +288,9 @@ def test_delegation_child_run_id_is_stable_across_replay_service_and_restart(
         assert project.store.admission.active_count() == 1
 
         # A *fresh* service over the same store replays the same row.
-        fresh = DelegationService(project.store.admission, project.store.db, clock=clock)
+        fresh = DelegationService(
+            project.store.admission, project.store.db, gate=AllowAllGate(), clock=clock
+        )
         row = fresh.get(str(first["delegation_ref"]))
         assert row.child_run_id == first["child_run_id"]
         ref, child = str(first["delegation_ref"]), str(first["child_run_id"])
@@ -292,7 +300,7 @@ def test_delegation_child_run_id_is_stable_across_replay_service_and_restart(
     # And so does a reopened store — the id is durable, not in-memory state.
     store = open_bridge_store(root / ".heph")
     try:
-        after = DelegationService(store.admission, store.db)
+        after = DelegationService(store.admission, store.db, gate=AllowAllGate())
         assert after.get(ref).child_run_id == child
         assert child in store.admission.occupied_run_ids()
     finally:

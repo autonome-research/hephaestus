@@ -32,7 +32,12 @@ the Pi bridge already uses:
   images are a *view* of immutable artifacts, never the record of them.
 * **Executor policy.** Under ``heph serve`` the unsafe local executor is refused
   (``unsafe_refused``) through :func:`hephaestus.core.executor.sandbox.probe.refuse_unsafe`;
-  serve builds only ever run on a probed secure backend.
+  serve builds only ever run on a probed secure backend. Since audit-2026-09-04
+  J-agent-wiring-4 that is the posture in **every** mode: with no backend
+  injected, :meth:`HephaestusMCP._backend_for` PROBES rather than falling back
+  to the unsafe local executor, so a host with no working bubblewrap refuses
+  ``sandbox_denied`` by name instead of quietly running model-authored scripts
+  unsandboxed. A caller that wants the unsafe backend injects it, in one word.
 """
 
 from __future__ import annotations
@@ -253,15 +258,27 @@ class HephaestusMCP:
         return Principal(session_id=f"mcp:{session_id}", profile=_MCP_PROFILE, part=None)
 
     def _backend_for(self, layout: ProjectLayout) -> ExecBackend:
+        """The executor posture for one bound project. Never an unsafe default.
+
+        Ledger J-agent-wiring-4. This used to hand back an
+        ``UnsafeLocalBackend()`` whenever ``serve_mode`` was off and nothing was
+        injected — the *silent* fallback the unsafe backend's own governing
+        clause ("Never a default") forbids, and the same shape that made
+        ``heph agent`` ship unsandboxed. Now the posture is decided the same way
+        for every mode: an injected backend is used (refused up front under
+        serve when it is unsafe), and otherwise the secure backend is PROBED.
+        A host with no working bubblewrap raises ``sandbox_denied`` here, which
+        the caller reports by name; nothing degrades quietly.
+
+        A caller that genuinely wants the unsafe backend — a test, or an
+        embedding host — injects it explicitly. ``heph serve --mcp`` carries no
+        such opt-in on purpose: it is the mode an operator exposes to a client.
+        """
         if self._backend is not None:
             if self.serve_mode and getattr(self._backend, "unsafe", False):
                 refuse_unsafe(registry_content=False, serve=True)
             return self._backend
-        if self.serve_mode:
-            return secure_backend(layout.store_root)
-        from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
-
-        return UnsafeLocalBackend()
+        return secure_backend(layout.store_root)
 
     def open_project(self, session_id: str, path: str | Path) -> _Project:
         """Bind ``path``'s project to this MCP session (opening it once per root)."""

@@ -100,4 +100,26 @@ export default tseslint.config(
     files: ["test/fixtures/**/*.mjs"],
     languageOptions: { globals: { process: "readonly", console: "readonly" } },
   },
+  {
+    // ---- TYPE-AWARE RULES (J-mirrors-and-dx-36) --------------------------
+    //
+    // Same decision as `agent/eslint.config.js`, same discipline: measure, then
+    // choose. Measured 2026-09-07 over `src/`, `test/` and `e2e/`: the three
+    // promise rules report ZERO findings and move the lane from 30.8 s to
+    // 57.6 s. The whole `recommendedTypeChecked` preset is deliberately NOT
+    // adopted — see the sibling file for the count that decided it.
+    //
+    // Unlike the sidecar, `tsconfig.json` here already covers source, tests and
+    // the browser specs (it emits nothing, so it has no build/check tension),
+    // which is why the scope is all three rather than the source alone.
+    files: ["src/**/*.{ts,tsx}", "test/**/*.{ts,tsx}", "e2e/**/*.ts"],
+    languageOptions: {
+      parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
+    },
+    rules: {
+      "@typescript-eslint/no-floating-promises": "error",
+      "@typescript-eslint/no-misused-promises": "error",
+      "@typescript-eslint/await-thenable": "error",
+    },
+  },
 );

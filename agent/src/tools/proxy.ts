@@ -24,8 +24,12 @@ import { Value } from "@sinclair/typebox/value";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import type { JsonValue } from "../framing.js";
 import {
+  CAD_BUILD_TIMEOUT_MS,
+  DELEGATION_GRACE_MS,
   LIMITS,
   MAX_IMAGES_PER_RESULT,
+  TOOL_TIMEOUT_MS,
+  enforceBinaryBudget,
   enforceMaxUtf8Bytes,
   parseImageHeader,
   LimitError,
@@ -34,11 +38,74 @@ import { TOOLS } from "./schema.gen.js";
 import { clarificationRefusal } from "./clarify.js";
 import type { TrustedInvocation } from "./invocation.js";
 
-/** Minimal bridge request surface (RpcPeer.request); rejects with RpcError. */
+/**
+ * Minimal bridge request surface (RpcPeer.request); rejects with RpcError.
+ *
+ * The third parameter is the per-call deadline in milliseconds, and it is the
+ * seam audit-2026-09-04 J-http-limits-11 found missing: `RpcPeer.request` has
+ * always taken one, but this type erased it, so the layer that KNOWS which tool
+ * is running structurally could not ask for a different deadline. Every tool
+ * therefore ran on the peer's default, which is why the 300-second CAD-build
+ * class three documents state as fact was unreachable.
+ */
 export type RpcRequest = (
   method: string,
   params: { [k: string]: JsonValue },
+  timeoutMs?: number,
 ) => Promise<JsonValue>;
+
+/**
+ * The tools whose Python handler carries an inner ceiling of
+ * `timeouts.cad_build_seconds`.
+ *
+ * THE PREDICATE IS THE DEADLINE'S, NOT THE EXECUTOR'S, and the difference
+ * matters: what J-http-limits-8 is about is a layer above giving up before the
+ * layer below, so what belongs in this class is every tool whose Python side
+ * may legitimately still be working after the ordinary 120-second deadline —
+ * not merely the ones that happen to enter `CadOps._run`. Naming it after the
+ * sandboxed executor (as this set did when it first landed) is a *different*
+ * predicate, and it silently left three tools with 300-second Python ceilings
+ * being killed at the RPC layer at 120.
+ *
+ * Members, each with the ceiling that puts it here:
+ *   - `build_part` (`cad_ops/_build.py`), `run_checks` (`_checks.py`) and
+ *     `set_params` (`_params.py`, which rebuilds to report effective
+ *     parameters) reach `CadOps._run`, whose wall clock is
+ *     `executor/runner.py`'s `DEFAULT_WALL_CLOCK_S`;
+ *   - `compare_solids` (`core/project_compare.py` `COMPARE_TIMEOUT_S`) and
+ *     `compare_to_scan` (`core/scan_compare.py` `SCAN_TIMEOUT_S`) run their
+ *     kernel work in a killable subprocess under that same 300;
+ *   - `check_motion` (`core/motion.py` `MOTION_TIMEOUT_S`) sweeps under it too,
+ *     and reports hitting it as the named `motion_timeout` refusal — a refusal
+ *     the model can only ever see if the RPC layer waits long enough for it.
+ *
+ * Deliberately NOT here, so the omission is a decision and not an oversight:
+ * `solve_pose` and `propose_placement` have no single wall clock to match —
+ * `core/placement.py` bounds them by iteration count, a 60-second per-iteration
+ * backstop and a 240-build budget, so a long solve can exceed *any* of these
+ * classes and putting it on the 300 would be picking a number rather than
+ * matching one. That is a real gap, recorded for the ledger rather than
+ * papered over here.
+ *
+ * WRITTEN HERE UNDER PROTEST, and recorded so the next reader does not mistake
+ * it for the intended shape. J-http-limits-11 asks for the timeout class to be
+ * *declared data* — a `timeout_class` field on the tool declaration
+ * (`contract/src/hephaestus/contract/tools_decl.py`) flowing through the
+ * existing generator into `schema.gen.ts`'s `ToolMeta` and the committed
+ * schemas — precisely so a closed set is never transcribed by hand. That
+ * declaration is owned by the tool-results lane and did not land in this pass;
+ * until it does this set is the one place the mapping exists, and
+ * `selectTimeout` below reads `meta.timeoutClass` first so the switch to
+ * declared data is a deletion rather than a rewrite.
+ */
+const CAD_BUILD_TOOLS: ReadonlySet<string> = new Set([
+  "build_part",
+  "run_checks",
+  "set_params",
+  "compare_solids",
+  "compare_to_scan",
+  "check_motion",
+]);
 
 /**
  * Per-call trusted context supplied by the session layer.
@@ -299,7 +366,8 @@ export class ToolProxy {
     // 4. Dispatch across the bridge.
     let result: JsonValue;
     try {
-      result = await this.request(...this.buildRequest(toolName, args, ctx));
+      const [method, params, timeoutMs] = this.buildRequest(toolName, args, ctx);
+      result = await this.request(method, params, timeoutMs);
     } catch (err) {
       return this.handleRpcError(toolName, err);
     }
@@ -323,11 +391,30 @@ export class ToolProxy {
     return this.render(toolName, result);
   }
 
+  /**
+   * The deadline this tool's dispatch is issued with (J-http-limits-8/-11).
+   *
+   * Three classes, and every one of them reads the shared limits document:
+   * the CAD-build class for a tool whose Python side may still be working
+   * after the ordinary deadline (see `CAD_BUILD_TOOLS` — the predicate is
+   * "its inner ceiling is `cad_build_seconds`", not "it enters the sandboxed
+   * executor"), the ordinary tool class for everything else, and — on
+   * `ask_user` alone — no timer at all, because the question stays open until
+   * a human answers and Python owns that interaction deadline.
+   */
+  private selectTimeout(toolName: string): number {
+    const declared = (TOOLS[toolName]?.meta as { timeoutClass?: string } | undefined)?.timeoutClass;
+    if (declared === "cad_build" || (declared === undefined && CAD_BUILD_TOOLS.has(toolName))) {
+      return CAD_BUILD_TIMEOUT_MS;
+    }
+    return TOOL_TIMEOUT_MS;
+  }
+
   private buildRequest(
     toolName: string,
     args: { [k: string]: JsonValue },
     ctx: ProxyContext,
-  ): [string, { [k: string]: JsonValue }] {
+  ): [string, { [k: string]: JsonValue }, number] {
     if (toolName === "delegate_part_agent") {
       const params: { [k: string]: JsonValue } = {
         parent_run_id: ctx.runId,
@@ -337,7 +424,23 @@ export class ToolProxy {
       };
       if (args.delivery !== undefined) params.delivery = args.delivery;
       if (args.deadline_seconds !== undefined) params.deadline_seconds = args.deadline_seconds;
-      return ["py.delegate", params];
+      // A synchronous delegation holds this request open for as long as the
+      // child runs, so its deadline is the CHILD's plus the documented grace
+      // (INTERFACE.md §2.6). Bounded by the peer default it was rejected here
+      // long before the child's own deadline could produce a `timed_out`
+      // terminal, which is the outcome the state machine is built to give.
+      // A `follow_up` delegation returns immediately and takes the ordinary
+      // class.
+      const deadlineSeconds =
+        typeof args.deadline_seconds === "number"
+          ? args.deadline_seconds
+          : LIMITS.timeouts.delegation.deadline_default_seconds;
+      const synchronous = args.delivery === undefined || args.delivery === "prompt";
+      return [
+        "py.delegate",
+        params,
+        synchronous ? deadlineSeconds * 1000 + DELEGATION_GRACE_MS : TOOL_TIMEOUT_MS,
+      ];
     }
     if (toolName === "ask_user") {
       // `run_id` is the INVOKING run's — `ctx` is per call — and it is load
@@ -356,7 +459,12 @@ export class ToolProxy {
       // The ledger ids travel with the question so the runtime — not the model —
       // records the answer against them (VALIDATION.md §3).
       if (args.requirement_ids !== undefined) params.requirement_ids = args.requirement_ids;
-      return ["py.ask_user", params];
+      // The third timeout class: NONE. A question is open until a human
+      // answers it, and Python owns that interaction deadline — a timer here
+      // would abandon a turn a person is still reading. `main.ts` re-states the
+      // zero on the request it actually issues for the `question`/`answer`
+      // bracket; this is the same decision at the layer that chooses classes.
+      return ["py.ask_user", params, 0];
     }
     return [
       "py.tool_dispatch",
@@ -367,6 +475,7 @@ export class ToolProxy {
         arguments: args,
         invocation: ctx.invocation as unknown as JsonValue,
       },
+      this.selectTimeout(toolName),
     ];
   }
 
@@ -443,6 +552,7 @@ export class ToolProxy {
     }
     const images: { type: "image"; data: string; mimeType: string }[] = [];
     const descriptors: JsonValue[] = [];
+    let totalBytes = 0;
     for (const entry of raw) {
       if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
         throw new ProxyResultError("invalid_image", `${toolName} image entry is not an object`);
@@ -465,6 +575,17 @@ export class ToolProxy {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         throw new ProxyResultError("invalid_image", `${toolName} image rejected: ${message}`);
+      }
+      // J-http-limits-9: the AGGREGATE binary budget, accumulated across the
+      // result's images. The per-image cap is checked inside
+      // `parseImageHeader`; nothing summed them, so four maximal images passed
+      // four per-image checks and no aggregate one.
+      totalBytes += buffer.length;
+      try {
+        enforceBinaryBudget(totalBytes, `${toolName} result`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new ProxyResultError("binary_too_large", message);
       }
       images.push({ type: "image", data, mimeType: mime });
       descriptors.push({

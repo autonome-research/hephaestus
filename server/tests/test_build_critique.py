@@ -24,6 +24,7 @@ from hephaestus.agent_bridge.cad_ops import (
     request_numbers,
 )
 from hephaestus.bench.harness import load_tasks
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.core.project_store.layout import load_project, open_store
 
 from opstore import OpStore
@@ -89,7 +90,7 @@ def _project(
         (root / "parts" / f"{name}.py").write_text(source, encoding="utf-8")
     layout = load_project(root)
     store = open_store(layout)
-    return CadOps(layout, store), store
+    return CadOps(layout, store, backend=UnsafeLocalBackend()), store
 
 
 @pytest.fixture

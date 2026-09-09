@@ -403,6 +403,49 @@ def test_a_glb_whose_bundle_no_longer_resolves_is_refused(tmp_path: Path) -> Non
     assert response.json()["reason"] == "stale_selection"
 
 
+#: Set by the `render goldens (pinned image)` CI job once the pinned image bakes
+#: the Khronos validator (see that job's comment in `.github/workflows/ci.yml`,
+#: J-mirrors-and-dx-15). Deliberately a SEPARATE variable from
+#: ``HEPHAESTUS_CI_IMAGE_DIGEST``: the digest bump and "the image now has the
+#: binary" are two different facts, and gating on the digest alone would fail
+#: this lane the instant the image is repinned for an unrelated reason, before
+#: the Dockerfile change that adds the binary has landed.
+_REQUIRE_VALIDATOR_ENV = "HEPHAESTUS_REQUIRE_GLTF_VALIDATOR"
+
+
+def test_the_khronos_validator_binary_is_present_when_required() -> None:
+    """J-mirrors-and-dx-15: this bonus lane may not silently skip once required.
+
+    The test right below is a deliberate bonus lane — its docstring says so, and
+    ``validate_gltf`` already asserts the structural invariants the gate names
+    without it — so skipping for an *absent* binary is correct on a developer
+    machine. What must not happen is the same skip firing once CI has declared
+    the binary should be there: that would make the plan's glTF-validation claim
+    permanently unattempted rather than merely optional. The fail-rather-than-
+    skip precedent is the renderer gate (``tests/render``): a mismatch there is
+    reported by name, never quietly passed over. This asserts the same
+    discipline for the validator binary, gated on the variable the `render
+    goldens (pinned image)` job's own comment names.
+    """
+    import os
+
+    if os.environ.get(_REQUIRE_VALIDATOR_ENV) != "1":
+        pytest.skip(
+            f"{_REQUIRE_VALIDATOR_ENV} is not set — the Khronos gltf-validator is "
+            "not required here (a developer machine, or a pinned image that has "
+            "not yet baked the binary)"
+        )
+    binary = shutil.which("gltf_validator") or shutil.which("gltf-validator")
+    assert binary is not None, (
+        f"{_REQUIRE_VALIDATOR_ENV}=1, but neither `gltf_validator` nor "
+        "`gltf-validator` is on PATH. The pinned image is supposed to bake this "
+        "binary (mission_plan.md's glTF-validation claim; docker/ci/README.md "
+        "should document it alongside every other baked tool) — install it into "
+        "docker/ci/Dockerfile rather than letting this lane skip, or unset "
+        f"{_REQUIRE_VALIDATOR_ENV} until it does."
+    )
+
+
 @pytest.mark.skipif(
     shutil.which("gltf_validator") is None and shutil.which("gltf-validator") is None,
     reason="the Khronos gltf-validator is a separate non-Python tool (Stage 1 precedent)",

@@ -14,11 +14,17 @@ actually read, so a caller can re-measure the identical geometry later.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, cast
 
 from hephaestus.core.addressing import PART_SELECTOR, namespace
-from hephaestus.core.checks.facade import GeometrySource, project_measurement
+from hephaestus.core.checks.facade import (
+    DENSITY_KGM3_TO_GMM3,
+    GeometrySource,
+    MassDensityUnboundError,
+    project_measurement,
+)
 from hephaestus.core.errors import AddressingError
 from hephaestus.core.executor.artifact_geometry import ArtifactGeometry
 from hephaestus.core.executor.published_geometry import (
@@ -26,9 +32,11 @@ from hephaestus.core.executor.published_geometry import (
     addressable_namespace,
 )
 from hephaestus.core.project_store.projections import SnapshotRejectedError
+from hephaestus.core.registry import Material
 from opstore.types import JSONValue
 
 from ._base import CadOpError, CadOpsState
+from ._dfm import script_metadata
 
 _MEASURE_UNITS: Final[dict[str, str]] = {
     "interference": "mm^3",
@@ -54,6 +62,47 @@ _CANDIDATE_LIMIT: Final[int] = 12
 _NEAR_MISS_CLAUSE: Final[str] = "; near misses: "
 
 
+@dataclass(frozen=True)
+class _MassDensity:
+    """One part's bound density, and the provenance that makes it checkable."""
+
+    part: str
+    spec: str = ""
+    material: Material | None = None
+    explicit: float | None = None
+
+    @property
+    def density_g_mm3(self) -> float:
+        """The density actually multiplied, in the facade's g/mm^3.
+
+        The registry stores kg/m^3 and :data:`DENSITY_KGM3_TO_GMM3` is the one
+        boundary that converts it (``PHYSICS.md`` §1); an explicit argument is
+        already in the facade's unit and is passed through untouched.
+        """
+        if self.explicit is not None:
+            return self.explicit
+        if self.material is None:  # pragma: no cover - one of the two is always set
+            raise CadOpError("mass_density_unbound", f"no density bound for part {self.part!r}")
+        return self.material.density * DENSITY_KGM3_TO_GMM3
+
+    def to_json(self) -> dict[str, JSONValue]:
+        payload: dict[str, JSONValue] = {
+            "part": self.part,
+            "g_per_mm3": self.density_g_mm3,
+            "source": "explicit" if self.explicit is not None else "materials_registry",
+        }
+        if self.material is not None:
+            payload["material"] = {
+                "id": self.material.id,
+                "name": self.material.name,
+                "density_kg_m3": self.material.density,
+                "registry": self.material.registry,
+                "registry_digest": self.material.digest,
+                "spec": self.spec,
+            }
+        return payload
+
+
 class MeasureOps(CadOpsState):
     """Resolve the geometry a measurement addresses and evaluate it."""
 
@@ -66,6 +115,7 @@ class MeasureOps(CadOpsState):
         part: str | None,
         artifact_ref: str | None,
         project_snapshot_ref: str | None,
+        density: float | None = None,
     ) -> dict[str, Any]:
         """The ``m`` facade as a tool: resolve geometry, measure, report refs."""
         if kind not in _MEASURE_UNITS:
@@ -94,7 +144,17 @@ class MeasureOps(CadOpsState):
                 scratch=Path(scratch),
             )
             _refuse_unrecorded_namespace(selectors, sources, current)
-            measurement = project_measurement(sources, current_part=current)
+            # ``PHYSICS.md`` §1 / ledger J-agent-results-1: bind every addressed
+            # part's registry density BEFORE measuring, converted at the one
+            # named boundary. Only ``mass`` consumes it, and only ``mass`` pays
+            # for it: opening and matching the materials registry for a bbox
+            # would be work no caller asked for.
+            bindings = self._mass_densities(sources, density) if kind == "mass" else {}
+            measurement = project_measurement(
+                sources,
+                current_part=current,
+                densities={name: binding.density_g_mm3 for name, binding in bindings.items()},
+            )
             value: JSONValue
             try:
                 if kind == "interference":
@@ -114,6 +174,20 @@ class MeasureOps(CadOpsState):
                     value = measurement.sealed(a)
                 else:
                     value = measurement.genus(a)
+            except MassDensityUnboundError as exc:
+                # The facade refuses by name; the tool surface speaks the same
+                # name, with the part and the registry's own vocabulary attached
+                # so the model can fix it in one step rather than guess.
+                spec = self._material_spec(exc.part)
+                raise CadOpError(
+                    exc.code,
+                    exc.message,
+                    data={
+                        "part": exc.part,
+                        "material_spec": spec,
+                        "known_materials": list(self.registries().materials.ids()),
+                    },
+                ) from exc
             except UnresolvableAnchorError as exc:
                 # The selector IS in the build's §7 namespace but the published
                 # artifact cannot supply that geometry (a tag placed outside
@@ -148,17 +222,76 @@ class MeasureOps(CadOpsState):
                     candidates=near or _namespace_candidates(sources, current, selectors),
                     reason=exc.reason,
                 ) from exc
+        detail: dict[str, Any] = {
+            "kind": kind,
+            "args": selectors,
+            "measured": measurement.measured_json(),
+            "parts": sorted(sources),
+        }
+        if kind == "mass":
+            # Structural disclosure, not prose, and beside the measurement it
+            # explains: the number is a product of a volume and a density, and
+            # a reader that cannot see WHICH density cannot tell a measurement
+            # from a placeholder (J-agent-results-1).
+            binding = bindings.get(_local_part(a, current)[0] or "")
+            if binding is not None:
+                detail["density"] = binding.to_json()
         return {
             "value": value,
             "units": _MEASURE_UNITS[kind],
-            "detail": {
-                "kind": kind,
-                "args": selectors,
-                "measured": measurement.measured_json(),
-                "parts": sorted(sources),
-            },
+            "detail": detail,
             "resolved_artifact_refs": refs,
         }
+
+    # -- density binding (``PHYSICS.md`` §1) --------------------------------
+
+    def _mass_densities(
+        self, sources: Mapping[str, GeometrySource], explicit: float | None
+    ) -> dict[str, _MassDensity]:
+        """Every addressed part's density in the facade's g/mm^3, with provenance.
+
+        An explicit ``density`` argument wins for every addressed part, exactly
+        as ``m.mass(selector, density=...)`` does inside a check. Otherwise a
+        part with no ``material_spec``, or one the pinned materials registry
+        does not carry, simply gets no binding: the facade then refuses
+        ``mass_density_unbound`` naming that part, which is a better answer
+        than a density guessed here. Registry resolution is the same one the
+        DFM and bill-of-materials paths use — the free-text spec matched
+        against the verified registry — so a part cannot have one density on a
+        drawing and another in a measurement.
+        """
+        if explicit is not None:
+            return {name: _MassDensity(part=name, explicit=explicit) for name in sources}
+        materials = self.registries().materials
+        bound: dict[str, _MassDensity] = {}
+        for name in sources:
+            spec = self._material_spec(name)
+            if not spec:
+                continue
+            material = materials.match(spec)
+            if material is None:
+                continue
+            bound[name] = _MassDensity(part=name, spec=spec, material=material)
+        return bound
+
+    def _material_spec(self, part: str) -> str:
+        """``part.material_spec`` as the build evaluated it, else as written.
+
+        The build record wins where there is one, on ``part_properties``'s
+        precedent: a computed ``part.material_spec`` is a declared one, and the
+        static parse recovers string literals only.
+        """
+        publisher = self._publisher()
+        result = publisher.current_result(part)
+        if result is not None:
+            recorded = result.metadata.get("material_spec", "")
+            if recorded:
+                return recorded
+        try:
+            snapshot = publisher.parts.read_part(part)
+        except AddressingError:  # pragma: no cover - the part was just measured
+            return ""
+        return script_metadata(snapshot.content).get("material_spec", "")
 
     def _measure_sources(
         self,

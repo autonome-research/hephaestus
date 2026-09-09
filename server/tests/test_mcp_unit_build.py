@@ -7,7 +7,6 @@ a real HTTP server, so they are the slow half of the MCP unit suite.
 from __future__ import annotations
 
 import asyncio
-import socket
 from collections.abc import Callable, Coroutine, Iterator
 from pathlib import Path
 from typing import Any, cast
@@ -15,8 +14,10 @@ from typing import Any, cast
 import pytest
 from fastmcp import Client
 from hephaestus.contract.tools_decl import MAX_IMAGES_PER_RESULT
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.mcp.app import HephaestusMCP, build_app
 from hephaestus.testing.ledger import MINIMAL_LEDGER_ENTRY
+from hephaestus.testing.ports import free_port
 from hephaestus.testing.tools_fixture import scaffold
 from mcp.types import ImageContent
 
@@ -28,7 +29,10 @@ def project_root(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def runtime() -> Iterator[HephaestusMCP]:
-    _, rt = build_app()
+    # The posture is injected: ``build_app()`` with nothing injected PROBES
+    # bwrap (J-agent-wiring-4) and refuses ``sandbox_denied`` on a host without
+    # it, and this file is about the build tools, not the sandbox.
+    _, rt = build_app(backend=UnsafeLocalBackend())
     try:
         yield rt
     finally:
@@ -104,12 +108,6 @@ def test_build_replay_returns_the_recorded_result(
     run(scenario)
 
 
-def _free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-
-
 def test_streamable_http_serves_the_same_app(runtime: HephaestusMCP, project_root: Path) -> None:
     """One app, two transports: the HTTP surface is the stdio surface.
 
@@ -118,7 +116,7 @@ def test_streamable_http_serves_the_same_app(runtime: HephaestusMCP, project_roo
     """
 
     async def scenario() -> None:
-        port = _free_port()
+        port = free_port()
         server = asyncio.create_task(
             runtime.app.run_async(transport="http", host="127.0.0.1", port=port, show_banner=False)
         )

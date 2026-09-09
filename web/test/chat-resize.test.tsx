@@ -165,7 +165,7 @@ describe("captured pointer and accessible keyboard separator", () => {
     if (reason === "viewport") act(() => shellStore.applyWidth(1400));
     else if (reason === "collapse") act(() => shellStore.setStreamOpen(false));
     else if (reason === "unmount") { act(() => root?.unmount()); root = null; }
-    else if (reason === "blur") act(() => window.dispatchEvent(new Event("blur")));
+    else if (reason === "blur") act(() => { window.dispatchEvent(new Event("blur")); });
     else pointer(el, reason, 470);
     expect(captured.size).toBe(0);
     pointer(el, "pointermove", 0);

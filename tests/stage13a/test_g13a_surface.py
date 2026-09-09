@@ -29,6 +29,7 @@ import pytest
 from _g13a import ARM_PARTS, CONSTRAINTS, JOINTS, make_project
 from hephaestus.agent_bridge.cad_ops import CadOps
 from hephaestus.agent_bridge.dispatch import DispatchError, Principal, ToolDispatcher
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.core.project_store.layout import load_project, open_store
 from hephaestus.core.project_store.store import ProjectStore
 from hephaestus.testing.tools_fixture import Project
@@ -62,7 +63,7 @@ def _make(root: Path) -> Project:
     make_project(root, ARM_PARTS)
     layout = load_project(root)
     store = open_store(layout)
-    cad = CadOps(layout, store)
+    cad = CadOps(layout, store, backend=UnsafeLocalBackend())
     dispatcher = ToolDispatcher(ProjectStore(layout, store), cad=cad)
     seed_minimal_ledger(cad)
     return Project(root=root, layout=layout, store=store, cad=cad, dispatcher=dispatcher, _n=[0])

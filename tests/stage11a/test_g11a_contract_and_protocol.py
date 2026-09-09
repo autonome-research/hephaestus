@@ -217,6 +217,7 @@ def dispatch_bench(tmp_path: Path) -> Iterator[Any]:
     """The real dispatcher over a registry set carrying one component record."""
     from hephaestus.agent_bridge.cad_ops import CadOps
     from hephaestus.agent_bridge.dispatch import ToolDispatcher
+    from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
     from hephaestus.core.project_store.layout import load_project, open_store
     from hephaestus.core.project_store.store import ProjectStore
     from hephaestus.testing.tools_fixture import scaffold
@@ -235,7 +236,7 @@ def dispatch_bench(tmp_path: Path) -> Iterator[Any]:
     registries = RegistrySet({"parts": load_registry(parts)})
     dispatcher = ToolDispatcher(
         ProjectStore(layout, store),
-        cad=CadOps(layout, store),
+        cad=CadOps(layout, store, backend=UnsafeLocalBackend()),
         registry=RegistryOps(registries, store),
     )
 

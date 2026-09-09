@@ -115,7 +115,21 @@ def _router(
                 file=sys.stderr,
             )
             return 2
-        from .serve import serve_web
+        try:
+            from .serve import serve_web
+        except ImportError as exc:
+            # Same seam as the MCP half: starlette and the workspace API are
+            # imported here rather than at registration (ledger
+            # J-cli-startup-4), so a broken install surfaces at invocation and
+            # must refuse by name instead of tracebacking
+            # (ledger J-cli-robustness-21).
+            from hephaestus.core.cli import broken_import_message
+
+            print(
+                broken_import_message("serve --web", "hephaestus.http.serve", exc),
+                file=sys.stderr,
+            )
+            return 2
 
         # `expanduser` here rather than in `serve_web`: it is a shell-shaped
         # courtesy owed to a string that came off a command line, and the

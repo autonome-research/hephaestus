@@ -15,6 +15,7 @@ from typing import Any
 from hephaestus.agent_bridge.cad_ops import CadOps
 from hephaestus.agent_bridge.dispatch import Principal, ToolDispatcher
 from hephaestus.agent_bridge.wiring import build_dispatcher
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.core.project_store.layout import ProjectLayout, load_project, open_store
 from hephaestus.core.project_store.store import ProjectStore
 
@@ -137,7 +138,7 @@ def make_project(
     scaffold(root, broken=broken)
     layout = load_project(root)
     store = open_store(layout)
-    cad = CadOps(layout, store)
+    cad = CadOps(layout, store, backend=UnsafeLocalBackend())
     dispatcher = ToolDispatcher(
         ProjectStore(layout, store),
         cad=cad,
@@ -174,7 +175,7 @@ def make_wired_project(
     scaffold(root, broken=broken)
     layout = load_project(root)
     store = open_store(layout)
-    cad = CadOps(layout, store)
+    cad = CadOps(layout, store, backend=UnsafeLocalBackend())
     dispatcher = build_dispatcher(
         layout, store, ProjectStore(layout, store), cad, delegation=delegation
     )

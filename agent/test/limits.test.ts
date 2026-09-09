@@ -5,11 +5,13 @@ import {
   ImageError,
   validateJsonStructure,
   enforceMaxUtf8Bytes,
+  enforceBinaryBudget,
   utf8LenStrict,
   parseImageHeader,
   MAX_JSON_DEPTH,
   MAX_JSON_ARRAY_ITEMS,
   PROMPT_MAX_UTF8_BYTES,
+  MAX_BINARY_BYTES,
 } from "../src/limits.js";
 
 // Extract the stable `.code` from a thrown LimitError/ImageError.
@@ -117,5 +119,36 @@ describe("parseImageHeader", () => {
     const oversize = Buffer.alloc(LIMITS.image.max_image_bytes + 1);
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(oversize, 0);
     expect(code(() => parseImageHeader(oversize))).toBe("image_too_large");
+  });
+});
+
+// J-http-limits-9: the aggregate binary budget of one tool result was
+// declared on both sides of the bridge and enforced by neither — a grep
+// found only the export and the dead-limit meta-test. Adopted meaning:
+// max_binary_bytes IS max_image_bytes * max_images_per_result, so it is the
+// per-RESULT aggregate across every image block, not a second per-image cap.
+describe("enforceBinaryBudget (J-http-limits-9)", () => {
+  it("is exactly the per-image budget times the per-result image count", () => {
+    // Not a coincidence: it is the arithmetic evidence the ledger's fix reads
+    // "aggregate" from in the first place.
+    expect(MAX_BINARY_BYTES).toBe(LIMITS.image.max_image_bytes * LIMITS.image.max_images_per_result);
+  });
+
+  it("admits exactly the cap and refuses one byte over", () => {
+    expect(() => enforceBinaryBudget(MAX_BINARY_BYTES)).not.toThrow();
+    expect(() => enforceBinaryBudget(MAX_BINARY_BYTES + 1)).toThrow(LimitError);
+    try {
+      enforceBinaryBudget(MAX_BINARY_BYTES + 1);
+    } catch (e) {
+      expect((e as LimitError).code).toBe("binary_too_large");
+    }
+  });
+
+  it("names the field in the refusal message", () => {
+    try {
+      enforceBinaryBudget(MAX_BINARY_BYTES + 1, "inspect_part result");
+    } catch (e) {
+      expect((e as LimitError).message).toContain("inspect_part result");
+    }
   });
 });

@@ -1,0 +1,25 @@
+{
+  // The CHECK configuration (J-mirrors-and-dx-28). `tsconfig.json` is the BUILD
+  // configuration: it emits `dist/` with `rootDir: "src"`, and the packaged
+  // sidecar's `exports` entry is `./dist/main.js`, so widening its `include` to
+  // the tests would either move the output to `dist/src/main.js` (TS6059 with
+  // the rootDir kept, a broken package entry without it) or emit compiled tests
+  // beside the shipped source. Splitting the two is what lets the type-check
+  // cover `test/` with the package's own strict options and leave the build
+  // output byte-identical.
+  //
+  // Everything strict is inherited, deliberately: a check configuration that
+  // relaxes an option checks a language the built code is not written in.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // The build's `rootDir` is `src`; the check spans `src` and `test`, so the
+    // common root is the package. Nothing is emitted, so this changes no path.
+    "rootDir": ".",
+    // `declaration`/`sourceMap` are emit-only settings; TypeScript refuses
+    // `declaration` under `noEmit` unless declarations are explicitly off.
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

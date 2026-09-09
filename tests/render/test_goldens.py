@@ -85,6 +85,13 @@ CASES: tuple[tuple[GoldenSpec, str], ...] = tuple(
 )
 
 
+#: J-mirrors-and-dx-18: the SELECTOR for "valid only inside the pinned CI image".
+#: The stock CI lanes and the documented `uv run pytest` deselect this marker;
+#: the `render goldens (pinned image)` lane selects it. A marker cannot silently
+#: lose a module the way the `--ignore=` path list it replaced could.
+pytestmark = pytest.mark.pinned_image
+
+
 def _case_id(case: tuple[GoldenSpec, str]) -> str:
     spec, view = case
     return f"{spec.name}-{view}"

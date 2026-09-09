@@ -247,7 +247,7 @@ def test_a_mesh_replaced_mid_build_loses_the_current_flip(
     assert project.cad.current_build("scanned") is None
     with pytest.raises(DispatchError) as excinfo:
         project.call("export_part", {"name": "scanned", "format": "step"})
-    assert excinfo.value.reason == "invalid_part"
+    assert excinfo.value.reason == "addressing_error"  # the engine's own reason (J-http-envelope-4)
 
 
 def test_a_retried_mesh_publication_replays_the_original_bytes(

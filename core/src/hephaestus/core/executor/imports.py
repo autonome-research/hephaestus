@@ -750,10 +750,16 @@ def stage_import(
 
 
 def _convert_step(data: bytes, *, path: str) -> bytes:
-    from hephaestus.geom.step_io import StepReadError, read_step_bytes, shape_to_brep
+    from hephaestus.geom.step_io import StepReadError, kernel_quiet, read_step_bytes, shape_to_brep
 
+    # ``stage_import`` runs in the HARNESS, not in the sandboxed worker whose
+    # streams are piped, so an OCCT diagnostic here lands on the CLI's own fd 1
+    # — the ``--json`` document, or the ``heph serve --mcp`` JSON-RPC transport.
+    # ``kernel_quiet`` is the descriptor-level guard that a C++ write to fd 1
+    # cannot get past (``docs/cli.md``: diagnostics go to stderr, always).
     try:
-        return shape_to_brep(read_step_bytes(data, source=path))
+        with kernel_quiet():
+            return shape_to_brep(read_step_bytes(data, source=path))
     except StepReadError as exc:
         raise ImportResolutionError(
             f"import {path!r} is not a readable STEP part: {exc.message}",
@@ -779,12 +785,16 @@ def _convert_mesh(
         facts_to_json,
         points_facts_to_json,
     )
+    from hephaestus.geom.step_io import kernel_quiet
 
     try:
-        if kind == "points":
-            cloud = canonicalize_points(path, data, units)
-            return cloud.blob, points_facts_to_json(cloud)
-        canonical = canonicalize_mesh(path, data, units)
+        # Same fd-1 guard as :func:`_convert_step`: mesh canonicalization binds
+        # the kernel in the harness process too.
+        with kernel_quiet():
+            if kind == "points":
+                cloud = canonicalize_points(path, data, units)
+                return cloud.blob, points_facts_to_json(cloud)
+            canonical = canonicalize_mesh(path, data, units)
     except MeshReadError as exc:
         raise ImportResolutionError(exc.message, reason=exc.reason, path=path) from exc
     return canonical.blob, facts_to_json(canonical)

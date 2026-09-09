@@ -105,19 +105,85 @@ Neither file is a multi-package workspace declaration: both omit `packages:` on
 purpose, for the reason `repo_conventions.md` gives for having no
 repository-root `pnpm-workspace.yaml` (it would hoist `agent/`'s lockfile).
 
-Default local checks (engine / CLI; no `web/` required). The root pytest
-configuration intentionally discovers the stage gates and `opstore/tests`; the
-second pytest command covers the package-local core, server, and contract suites:
+Default local checks (engine / CLI; no `web/` required):
 
 ```console
 $ uv run ruff check . && uv run ruff format --check .
-$ uv run pyright opstore core server
-$ uv run pytest -m "not slow"                # root stage gates + opstore tests
-$ uv run pytest core/tests server/tests contract/tests
+$ uv run pyright
+$ uv run pytest                               # every suite; HOURS (see below)
 $ (cd agent && pnpm typecheck && pnpm test)
-$ uv run python scripts/docs_check.py        # links, paths, and §refs
+$ uv run python scripts/docs_check.py         # links, paths, §refs, command forms
 $ uv run python scripts/license_headers.py --check
 ```
+
+There is **one** pytest command, and it is slow — that is the honest cost of its
+being true. `testpaths` names all five suite directories (`opstore/tests`,
+`core/tests`, `server/tests`, `contract/tests`, `tests/`), so a bare `pytest` is
+the whole suite rather than a subset that looks green. `bench` is deliberately
+absent until it has tests, and `tests/stage7h/test_test_hygiene.py` fails if any
+directory holding tests falls outside that list.
+
+**Budget it in hours, not minutes.** Around 6000 tests are selected by
+default, and a great many of them start a real subprocess — a `heph` verb, a
+Node sidecar, a `heph serve`, a kernel build. Measured 2026-09-07 on a 14-core
+Linux host with a staged sidecar: roughly **1000 tests in 90 minutes**, i.e. a
+full pass in the 5–7 hour range. That is a gate you run before a release or
+overnight, not an inner loop. For the inner loop, name the directory or the file
+you are working in (`uv run pytest server/tests -q`, `uv run pytest
+tests/stage7h -q`) — and note that the marker default (`-m "not slow and not
+pinned_image"`) still applies, so a narrowed run is narrowed the same way CI's
+stock lanes are. CI is not slower than this; it is *wider and parallel*, which
+is a different thing: each lane in `.github/workflows/ci.yml` runs one slice of
+the same suite.
+
+Neither linter nor type-checker takes a path: `pyproject.toml` is the only
+declaration of what they cover, and a workflow step that spells its own list is
+how the two drift.
+
+Two structural lanes are worth knowing by name, because both assert something no
+functional test can see. `tests/stage0a/test_cli_startup_budget.py` pins the CLI's
+import closure — registering a verb may not pull the CAD kernel, the mesh or
+raster stacks, the solver's numerics or the MCP and web servers, and the assertion
+is on module names in a subprocess, never on wall time, which measures the runner
+rather than the boundary (`docs/cli.md` states the same budget as a promise to the
+user). `tests/stage7h/` holds the configuration's own invariants: what is linted,
+what is type-checked, where the pnpm pin comes from, and which directories a bare
+`pytest` reaches.
+
+Two marker groups are deselected by default, and both run somewhere:
+
+| marker | what it is | where it runs |
+|---|---|---|
+| `slow` | Stage 7H wheel lanes: build every wheel, provision a venv | the release matrix, on the built artifact |
+| `pinned_image` | renderer-pinned goldens (`tests/render`, the G4.7 section golden) | the `render goldens (pinned image)` CI job |
+
+A `pinned_image` test fails **by name** off the pinned image rather than
+skipping — a golden is valid only for the (container image, renderer) pair it
+was baselined on, and a suite that quietly passed on the wrong rasterizer would
+be asserting nothing. To run them locally, use the image, not a bare selection:
+`docker/ci/README.md` has the recipe.
+
+```console
+$ uv run pytest -m pinned_image     # only inside the pinned CI image
+$ uv run pytest -m slow             # the wheel lanes; minutes
+```
+
+### Proving the sidecar lanes are actually running
+
+`scripts/bootstrap.sh` gets you a working checkout; what it does **not** do is
+put a `pnpm` on your PATH, because the pin does not travel that way (above). The
+test helpers resolve pnpm the same way the script does, so the bridge suites run
+after a documented bootstrap — but a skip is easy to miss in a green run. Set
+the variable that turns one into a failure:
+
+```console
+$ HEPHAESTUS_REQUIRE_SIDECAR=1 uv run pytest tests/stage2 -q
+```
+
+Every CI job that installs Node sets it. `HEPHAESTUS_SKIP_SIDECAR_BUILD=1`
+reuses the already-staged sidecar instead of re-bundling; it refuses when the
+staged tree was built from different sources, and names the one command that
+fixes it. `HEPHAESTUS_PNPM` overrides the resolution entirely.
 
 ### Optional: operator workspace (`heph serve --web`)
 
@@ -200,8 +266,29 @@ else relies on.
   in the PR. A test that fails because it is inconvenient gets neither.
 - **Quality bars** (`repo_conventions.md`): ruff + pyright strict everywhere the
   root config covers; 90% line coverage on `opstore/` and `core/`; eslint + tsc
-  strict for `agent/`. Property-based tests for kernel services; crash-injection
+  strict for `agent/`. The **lint tier** for both TypeScript packages is the
+  untyped recommended preset *plus* three type-aware rules —
+  `no-floating-promises`, `no-misused-promises`, `await-thenable` — chosen from
+  a recorded measurement rather than adopted wholesale; each config file
+  records the count and the wall time behind the choice. Property-based tests for kernel services; crash-injection
   tests for the durable store.
+- **A test that waits on another thread or process bounds the wait and fails by
+  name.** The global pytest timeout is a coarse net that keeps a job from dying
+  nameless; it is not the mechanism. A regression test that hangs when its
+  regression recurs is not a regression test.
+- **A negative assertion waits on a positive edge, not on a fixed sleep.** "It
+  did not respawn" asserted after `sleep(0.5)` is only as strong as the sleep,
+  and on a loaded runner the event it denies may simply not have arrived yet.
+- **A time-based assertion is either a derived ceiling with recorded provenance
+  or an explicitly labelled hang detector.** There is no third kind, and raising
+  a bare budget to silence a flake makes the assertion meaningless without
+  saying so.
+- **A per-test Hypothesis `settings` block never re-enables the wall-clock
+  deadline** (`deadline=None`). The deadline is per example and measures the
+  runner, not the property.
+- **Everything a tool excludes is excluded for one written reason.** The ruff
+  exclusion list, the docs checker's document set and its command-form
+  allowance each carry the reason beside the entry, and a test asserts it.
 - **No test may pass by resolving a global `pi` or `thread-phase`
   installation.** The packaged sidecar is the only sidecar.
 - **Public tool/event schemas are a contract.** Changing one requires an

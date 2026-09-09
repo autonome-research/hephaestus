@@ -16,7 +16,6 @@ nothing about ``serve.json``, the ``0600`` token file, or the bearer.
 from __future__ import annotations
 
 import json
-import socket
 import threading
 import time
 from pathlib import Path
@@ -34,6 +33,7 @@ from hephaestus.http.app import build_app
 from hephaestus.http.principal import mint_token
 from hephaestus.http.runtime import WorkspaceRuntime
 from hephaestus.testing.fake_agent import FakeAgent
+from hephaestus.testing.ports import free_port
 from hephaestus.testing.tools_fixture import scaffold as scaffold_tools_project
 
 
@@ -48,7 +48,7 @@ class _Server:
         self.runtime = WorkspaceRuntime.open(root, token=self.token, serve_mode=False)
         self.agent = FakeAgent(self.runtime.store.admission)
         self.runtime.attach_sessions(self.agent)
-        self.port = _free_port()
+        self.port = free_port()
         config = uvicorn.Config(
             build_app(self.runtime), host="127.0.0.1", port=self.port, log_level="error"
         )
@@ -73,12 +73,6 @@ class _Server:
         if self.runtime.sessions is not None:
             self.runtime.sessions.close()
         self.runtime.close()
-
-
-def _free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
 
 
 @pytest.fixture
@@ -214,7 +208,7 @@ def test_an_unreachable_owner_refuses_session_busy_rather_than_opening_a_bridge(
         json.dumps(
             {
                 "pid": os.getpid(),
-                "http": f"http://127.0.0.1:{_free_port()}",
+                "http": f"http://127.0.0.1:{free_port()}",
                 "started_at": time.time(),
                 "token_path": str(token_path),
                 "started_by": "test",

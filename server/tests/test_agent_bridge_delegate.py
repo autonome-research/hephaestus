@@ -37,6 +37,8 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
@@ -46,6 +48,7 @@ import pytest
 from hephaestus.agent_bridge.app import BridgeRuntime
 from hephaestus.agent_bridge.dispatch import DispatchError
 from hephaestus.agent_bridge.protocol import ErrorCode, ProtocolError
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.testing.tools_fixture import scaffold
 
 REPO = Path(__file__).resolve().parents[2]
@@ -67,9 +70,14 @@ class _StubbedSidecar:
     """Answers the one bridge call ``create_session`` makes, records the rest.
 
     Deliberately narrow: anything a ``py.delegate`` handler tried to ask the
-    child would raise here, which is the invariant ``app.py``'s ``_PY_HANDLER``
-    exists to protect (a ``py.*`` handler that calls ``Supervisor.call`` blocks
-    the only thread that could answer it).
+    child raises here, which keeps these cases honest about their reach. They
+    exercise the routing, the gate and the refusal shapes with no child session
+    in existence; the delegation that actually prompts a child over the bridge
+    is ``test_delegation_e2e.py``, against a real sidecar. (Before
+    J-agent-wiring-13 this narrowness was an *invariant* rather than a choice —
+    a ``py.*`` handler ran on the frame reader, so calling ``Supervisor.call``
+    from one blocked the only thread that could answer it. Handlers now run on
+    a bounded worker pool and may call back into the sidecar.)
     """
 
     def __init__(self) -> None:
@@ -93,6 +101,7 @@ def runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[BridgeR
     monkeypatch.setenv("HEPHAESTUS_NODE", sys.executable)
     root = scaffold(tmp_path / "proj")
     rt = BridgeRuntime(
+        backend=UnsafeLocalBackend(),
         project_root=root,
         providers=[],
         dist_main=tmp_path / "never-spawned-main.js",
@@ -266,28 +275,161 @@ def test_an_unknown_py_method_is_still_method_not_found(runtime: BridgeRuntime) 
     assert ei.value.code == ErrorCode.METHOD_NOT_FOUND
 
 
-# -- the reader-thread flag the wrapper owns -------------------------------
+# -- the ordering the handler pool introduced ------------------------------
 
 
-def test_the_py_handler_flag_is_cleared_even_when_the_handler_raises(
+def test_a_sequential_tool_dispatch_is_serialized_across_handler_workers(
+    runtime: BridgeRuntime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``py.*`` handlers now run concurrently, and sequential tools must not.
+
+    Before audit-2026-09-04 J-agent-wiring-13 the supervisor ran every ``py.*``
+    handler inline on its single reader thread, so two tool dispatches from one
+    sidecar were serial by construction and nothing had to say so. They run on a
+    bounded worker pool now — which is what lets a handler call back into the
+    child at all — and that makes two mutating dispatches genuinely concurrent
+    for the first time. The tools the contract declares ``sequential`` are the
+    ones that write through the project, and ``_handle_tool_dispatch`` holds one
+    per-runtime lock across them.
+
+    Pinned by observation, not by reading the lock: two threads enter a dispatch
+    that sleeps, and the recorded enter/exit order is asserted to be
+    non-overlapping for a sequential tool.
+    """
+    session_id = _orchestrator(runtime)
+    order: list[str] = []
+    lock = threading.Lock()
+
+    def slow_dispatch(_principal: Any, params: dict[str, Any]) -> Any:
+        tag = str(params["arguments"]["name"])
+        with lock:
+            order.append(f"enter:{tag}")
+        time.sleep(0.1)
+        with lock:
+            order.append(f"exit:{tag}")
+        return {"ok": True}
+
+    monkeypatch.setattr(runtime._dispatcher, "dispatch", slow_dispatch)  # pyright: ignore[reportPrivateUsage]
+
+    def call(tag: str) -> None:
+        runtime._on_py_request(  # pyright: ignore[reportPrivateUsage]
+            "py.tool_dispatch",
+            {
+                "session_id": session_id,
+                "run_id": "run-1",
+                "tool": "create_part",  # sequential per the tool contract
+                "arguments": {"name": tag},
+            },
+        )
+
+    threads = [threading.Thread(target=call, args=(tag,)) for tag in ("a", "b")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert len(order) == 4, order
+    # Whoever went first finished before the other started.
+    assert order[1].startswith("exit:"), order
+    assert order[0].split(":")[1] == order[1].split(":")[1], order
+
+
+def test_a_read_tool_dispatch_is_not_serialized(
+    runtime: BridgeRuntime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The lock is for writers only: two reads still overlap.
+
+    The whole point of moving dispatch off the reader thread is concurrency; a
+    lock taken for every tool would give it back. ``read_part`` is declared
+    non-sequential, so two of them are expected to be inside the dispatcher at
+    the same moment.
+    """
+    session_id = _orchestrator(runtime)
+    inside = threading.Semaphore(0)
+    both = threading.Event()
+    overlapped: list[bool] = []
+
+    def dispatch(_principal: Any, _params: dict[str, Any]) -> Any:
+        inside.release()
+        overlapped.append(both.wait(timeout=5))
+        return {"ok": True}
+
+    monkeypatch.setattr(runtime._dispatcher, "dispatch", dispatch)  # pyright: ignore[reportPrivateUsage]
+
+    def call() -> None:
+        runtime._on_py_request(  # pyright: ignore[reportPrivateUsage]
+            "py.tool_dispatch",
+            {
+                "session_id": session_id,
+                "run_id": "run-1",
+                "tool": "read_part",
+                "arguments": {"name": "widget"},
+            },
+        )
+
+    threads = [threading.Thread(target=call) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    assert inside.acquire(timeout=5)
+    assert inside.acquire(timeout=5), "the second read never entered: reads are serialized"
+    both.set()
+    for thread in threads:
+        thread.join(timeout=10)
+    assert overlapped == [True, True]
+
+
+# -- the prompt registry is not a leak -------------------------------------
+
+
+def _registry(rt: BridgeRuntime) -> dict[str, str]:
+    """The live prompt cache, read the only way a test can: by inspection."""
+    return rt._delegation_prompts._prompts  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_rejected_delegation_leaves_no_prompt_text_behind(
     runtime: BridgeRuntime,
 ) -> None:
-    """``_on_py_request`` marks the thread "servicing a sidecar request" for the
-    whole handler so nothing under it calls back into the child (``app.py``'s
-    single-reader invariant). A handler that raises must still clear it, or the
-    reader thread would refuse every later ``query_snapshot`` for the life of
-    the process — a leak no delegation test would otherwise notice.
+    """J-agent-wiring-6's registry is bounded by the dispatch, not by luck.
+
+    ``_handle_delegate`` registers the prompt before dispatching, because a
+    synchronous delegation runs its child *inside* the dispatch and the durable
+    row carries only the prompt's hash. The runner forgets what it consumed —
+    but a rejection reaches no runner, and the registry is an unbounded dict
+    holding model-authored text bounded only by ``PROMPT_MAX_UTF8_BYTES``. A
+    model looping on ``invalid_part`` would therefore grow this process without
+    limit, which is why the forget is in a ``finally`` on every exit.
     """
-    from hephaestus.agent_bridge import app as bridge_app
-
-    def flag() -> object:
-        return bridge_app._PY_HANDLER  # pyright: ignore[reportPrivateUsage]
-
-    with pytest.raises(ProtocolError):
-        runtime._on_py_request("py.nope", {})  # pyright: ignore[reportPrivateUsage]
-    assert getattr(flag(), "active", False) is False
-
     session_id = _orchestrator(runtime)
     runtime.admission.admit_run("run-1")
-    _delegate(runtime, part="widget", session_id=session_id)
-    assert getattr(flag(), "active", False) is False
+
+    result = _delegate(runtime, part="ghost", session_id=session_id, prompt="REJECTED-TEXT")
+
+    assert result["status"] == "rejected"
+    assert _registry(runtime) == {}, "prompt text survived a rejected delegation"
+
+
+def test_a_follow_up_delegation_leaves_no_prompt_text_behind(
+    runtime: BridgeRuntime,
+) -> None:
+    """The second exit that reaches no runner.
+
+    ``ToolDispatcher._delegate`` returns the queued row for a ``follow_up``
+    delivery without running anything, and nothing in this bridge ever runs a
+    queued row afterwards — so the text would sit in the cache for the life of
+    the process. A future coordinator that does run queued rows must re-derive
+    the prompt from its own record; this cache is only ever a hand-off across
+    one synchronous call.
+    """
+    session_id = _orchestrator(runtime)
+    runtime.admission.admit_run("run-1")
+
+    result = _delegate(
+        runtime,
+        part="widget",
+        session_id=session_id,
+        prompt="FOLLOWUP-TEXT",
+        delivery="follow_up",
+    )
+
+    assert result["status"] == "queued", result
+    assert _registry(runtime) == {}, "prompt text survived a follow_up delegation"

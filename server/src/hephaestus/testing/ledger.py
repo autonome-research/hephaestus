@@ -58,11 +58,12 @@ def seed_minimal_ledger_at(root: Path) -> None:
     server, a second dispatcher) finds the ledger already there.
     """
     from hephaestus.agent_bridge.cad_ops import CadOps
+    from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
     from hephaestus.core.project_store.layout import load_project, open_store
 
     layout = load_project(root)
     store = open_store(layout)
     try:
-        seed_minimal_ledger(CadOps(layout, store))
+        seed_minimal_ledger(CadOps(layout, store, backend=UnsafeLocalBackend()))
     finally:
         store.close()

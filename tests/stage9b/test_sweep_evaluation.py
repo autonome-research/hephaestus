@@ -55,6 +55,8 @@ from hephaestus.core.motion import (
     MOTION_TIMEOUT_ENV,
     MOTION_TIMEOUT_S,
     SWEEP_VERDICTS,
+    MotionChildDied,
+    MotionCutShort,
     MotionTimeout,
     SweepEvaluator,
     SweepResult,
@@ -527,25 +529,42 @@ class TestBoundedExecution:
         assert "2 of 3" in refusal.message
         _assert_child_dead(pid_file)
 
-    def test_a_child_death_is_the_same_named_refusal_with_the_facts_kept(
+    def test_a_child_death_is_its_own_named_refusal_with_the_facts_kept(
         self,
         evaluator: SweepEvaluator,
         checks: MotionCheckSet,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
+        """The other half of the split (J-build-state-4): a dead sweep child is
+        ``motion_child_died``, NOT the ceiling's ``motion_timeout``. It shares
+        the ``MotionCutShort`` carriage — so every catch written against the
+        carriage still holds it, with its partial per-sample facts — and it
+        quotes **no** ceiling, because none fired: telling the operator to
+        allow more time is the wrong remedy for a crash, and a bound the run
+        never approached is a claim that was never tested."""
         check_id = _timeout_probe_id(checks)
         pid_file = tmp_path / "child.pid"
         monkeypatch.setattr(motion_module, "_sweep_child", dying_child)
         monkeypatch.setenv(PID_FILE_ENV, str(pid_file))
 
-        with pytest.raises(MotionTimeout) as excinfo:
+        with pytest.raises(MotionChildDied) as excinfo:
             evaluator.evaluate([check_id], timeout_s=120.0)
 
         refusal = excinfo.value
+        assert isinstance(refusal, MotionCutShort)
+        assert not isinstance(refusal, MotionTimeout)
+        assert refusal.reason == "motion_child_died"
+        assert refusal.exit_code == 7
         assert "died" in refusal.message and "exit code 7" in refusal.message
         assert refusal.samples_evaluated == 2
         assert [(dict(s.values), s.measured) for s in refusal.partial] == STREAMED_SAMPLES
+        document = refusal.to_json()
+        assert document["status"] == "motion_child_died"
+        assert document["reason"] == "motion_child_died"
+        assert document["exit_code"] == 7
+        # No ceiling is quoted for a death — the ``compare_child_died`` rule.
+        assert "timeout_s" not in document
         _assert_child_dead(pid_file)
 
     def test_a_silent_child_carries_zero_samples_not_a_guess(

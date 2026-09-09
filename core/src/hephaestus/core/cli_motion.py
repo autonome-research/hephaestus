@@ -134,7 +134,7 @@ _NEVER_EVALUATED = "motion state never evaluated — run 'heph motion check'"
 def _cmd_check(args: argparse.Namespace) -> int:
     """Re-evaluate now against the parts' current builds, and project a full run."""
     from hephaestus.core.errors import AddressingError
-    from hephaestus.core.motion import MotionTimeout, check_motion_with_results
+    from hephaestus.core.motion import MotionCutShort, check_motion_with_results
 
     ids = cast("Sequence[str]", args.ids) or None
     root = project_root_or_refuse()
@@ -147,12 +147,16 @@ def _cmd_check(args: argparse.Namespace) -> int:
             raise CliUsageError(
                 f"{exc.message} (declared: {', '.join(exc.candidates) or 'none'})"
             ) from exc
-        except MotionTimeout as exc:
-            # §4: the ceiling kill is a named refusal carrying partial
-            # per-sample facts — printed, never dressed as a verdict.
+        except MotionCutShort as exc:
+            # §4: a sweep cut short is a named refusal carrying partial
+            # per-sample facts — printed, never dressed as a verdict. The
+            # catch is written against the CARRIAGE so both reasons land
+            # here; ``exc.reason`` (motion_timeout / motion_child_died) is
+            # what says which, since "raise the ceiling" is the wrong
+            # advice for a crash.
             if bool(args.json):
                 print(json.dumps(exc.to_json(), sort_keys=True))
-            print(f"heph: motion_timeout: {exc.message}", file=sys.stderr)
+            print(f"heph: {exc.reason}: {exc.message}", file=sys.stderr)
             return 1
         check_state = _check_state(layout, store)
     finally:

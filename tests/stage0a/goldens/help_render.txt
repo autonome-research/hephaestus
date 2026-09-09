@@ -1,0 +1,26 @@
+usage: heph render [-h] [--pose POSE_ID] [--views VIEW [VIEW ...]] [--channel {rgb,mask,section}]
+                   [--mask-mode {solid,selection}] [--section-plane PLANE] [--explode T]
+                   [--focus LABEL_OR_TAG] [--last-good] [--artifact-ref REF] [--out DIR] [--json]
+                   [part]
+
+positional arguments:
+  part                  part name to render (omit with --pose)
+
+options:
+  -h, --help            show this help message and exit
+  --pose POSE_ID        render the posed scene at a declared pose (mutually exclusive with a part)
+  --views VIEW [VIEW ...]
+                        named cameras or az<deg>_el<deg> (<=4)
+  --channel {rgb,mask,section}
+                        render channel
+  --mask-mode {solid,selection}
+                        mask ID domain (selection requires --channel mask)
+  --section-plane PLANE
+                        section plane [+-]AXIS@OFFSET, e.g. +Z@c or +Z@30 (requires --channel
+                        section)
+  --explode T           explode factor in [0, 1]
+  --focus LABEL_OR_TAG  center/zoom on a labeled solid or tag
+  --last-good           render the most recent failed build's last-good checkpoint
+  --artifact-ref REF    render an explicit immutable build/checkpoint artifact
+  --out DIR             output directory for PNGs
+  --json                emit the render metadata JSON

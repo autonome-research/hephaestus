@@ -41,6 +41,7 @@ from typing import Any, Final, cast
 import pytest
 from hephaestus.agent_bridge.cad_ops import CadOps
 from hephaestus.core.executor.sandbox.bwrap import find_bwrap
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.core.project_store.layout import ProjectLayout, load_project, open_store
 from hephaestus.core.project_store.references import ReferenceEntry, ReferenceRegistry
 from hephaestus.core.registry import MANIFEST_FILENAME, RegistryOps, RegistrySet, load_registry
@@ -299,7 +300,7 @@ def make_project(
         (root / "parts" / f"{name}.py").write_text(script, encoding="utf-8")
     layout = load_project(root)
     store = open_store(layout)
-    return ProjectFixture(root, layout, store, CadOps(layout, store))
+    return ProjectFixture(root, layout, store, CadOps(layout, store, backend=UnsafeLocalBackend()))
 
 
 def register_reference(

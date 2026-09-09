@@ -58,6 +58,29 @@
       {
         "additionalProperties": true,
         "properties": {
+          "candidates": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "line": {
+                  "type": "integer"
+                },
+                "ratio": {
+                  "type": "number"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "line",
+                "text",
+                "ratio"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
           "diagnostics": {
             "type": "string"
           },
@@ -84,15 +107,39 @@
         "additionalProperties": true,
         "properties": {
           "attempted_snapshot_ref": {
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "base_snapshot_ref": {
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "current_hash": {
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "current_next_offset_bytes": {
+            "type": "integer"
+          },
+          "current_next_offset_line": {
             "type": "integer"
           },
           "current_oversized_line": {
@@ -102,10 +149,24 @@
             "type": "integer"
           },
           "current_script": {
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "current_snapshot_ref": {
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "current_truncated": {
             "type": "boolean"

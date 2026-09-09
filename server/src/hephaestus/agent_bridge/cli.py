@@ -49,21 +49,31 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import FrameType
-from typing import Any, Protocol, TextIO, cast
+from typing import TYPE_CHECKING, Any, Protocol, TextIO, cast
 
 from hephaestus.core.cli_errors import (
     CliUsageError,
     dispatch,
     guard,
     project_root_or_refuse,
+    refuse,
 )
 from opstore.types import JSONValue
 
-from .app import AskUserAnswerer, AuthLinkError, BridgeRuntime, PromptResult
-from .cad_ops import option_display, option_label
-from .client_mode import ClientModeError, ServerAgentClient, attach_client
-from .sidecar import SidecarError
-from .supervisor import SupervisorError
+if TYPE_CHECKING:
+    # Registration is import (`hephaestus.core.cli.build_parser` imports this
+    # module to register `heph agent`), so a module-level import here is paid
+    # by every `heph` invocation, `heph --version` included. `.app` and
+    # `.cad_ops` between them pull the CAD-ops aggregate and with it build123d,
+    # OCP and scikit-learn: 1707 ms, the single most expensive line in the
+    # startup sweep (ledger J-cli-startup-1, root cause RC-2). Every one of
+    # these five names is used only in an annotation (which
+    # `from __future__ import annotations` never evaluates) or inside a
+    # function body, and `add_subparsers` uses none of them — so the help text
+    # is provably untouched and the cost moves to the verb that needs it.
+    from .app import AskUserAnswerer, PromptResult
+    from .client_mode import ServerAgentClient
+    from .supervisor import SupervisorError
 
 __all__ = [
     "PROVIDER_CONFIG_ENV",
@@ -300,6 +310,8 @@ def interactive_answerer(
     answer cannot drift again; :func:`option_display` is the one definition of
     what a human is *shown*, which is a different string on purpose.
     """
+    from .cad_ops import option_display, option_label
+
     out = console_out if console_out is not None else sys.stdout
     src = console_in if console_in is not None else sys.stdin
 
@@ -374,6 +386,27 @@ def _cmd_agent(args: argparse.Namespace) -> int:
     # Hephaestus project" (ledger J-cli-robustness-22).
     project_root = project_root_or_refuse(start)
 
+    # Deferred to the handler (ledger J-cli-startup-1) and placed *after* the
+    # project resolve on purpose: "not a Hephaestus project" is the answer for
+    # the commonest wrong invocation, and it should not first spend 1.7 s
+    # importing the bridge and the CAD stack to say so.
+    from hephaestus.core.cli import broken_import_message, make_backend
+    from hephaestus.core.errors import SandboxDeniedError
+    from hephaestus.core.project_store.layout import load_project
+
+    try:
+        from .app import AuthLinkError, BridgeRuntime
+        from .client_mode import ClientModeError, attach_client
+        from .sidecar import SidecarError
+        from .supervisor import SupervisorError
+    except ImportError as exc:
+        # The verb is only registered when this package is installed, so an
+        # ImportError here is a BROKEN installation, and it must be refused by
+        # name the way registration would have refused it, never as a
+        # traceback (ledger J-cli-robustness-21).
+        print(broken_import_message("agent", "hephaestus.agent_bridge.app", exc), file=sys.stderr)
+        return 2
+
     # INTERFACE.md §2.1: **no new flag**. If a live server already owns this
     # project's leases, this verb runs in CLIENT MODE against it rather than
     # opening a second in-process bridge — a second bridge would be two writers
@@ -399,6 +432,26 @@ def _cmd_agent(args: argparse.Namespace) -> int:
         )
         return 2
 
+    # The executor posture, decided HERE and injected, exactly as `heph build`
+    # decides it (ledger J-agent-wiring-4). `make_backend` is the one shared
+    # helper: with the flag it returns the warned unsafe backend, without it a
+    # probed bwrap backend or `sandbox_denied`. Deciding it here rather than
+    # inside `BridgeRuntime` is what makes the refusal an exit-2 sentence
+    # instead of a traceback out of the first build the model asks for.
+    try:
+        backend = make_backend(load_project(project_root), unsafe=bool(args.unsafe_local_executor))
+    except SandboxDeniedError as exc:
+        # The same spelling `heph build` gives this refusal: code and message,
+        # through the one refusal printer, never a bare message.
+        refuse(str(exc), code=exc.code)
+        print(
+            "heph: install bubblewrap (bwrap) to run the agent sandboxed, or pass "
+            "--unsafe-local-executor to run model-authored scripts WITHOUT OS "
+            "sandboxing (see docs/install.md)",
+            file=sys.stderr,
+        )
+        return 2
+
     profile = str(args.profile)
     session_name = cast("str | None", args.session)
     resume = bool(args.resume)
@@ -413,6 +466,7 @@ def _cmd_agent(args: argparse.Namespace) -> int:
             credential_allowlist=config.credential_allowlist,
             answerer=answerer,
             auth_source=config.auth_source,
+            backend=backend,
         )
     except AuthLinkError as exc:
         print(f"heph: {exc}", file=sys.stderr)
@@ -507,8 +561,15 @@ def _cmd_agent_client(
 
     No provider config is read: the owning server configured the sidecar when it
     started, and re-reading providers here would suggest this process could
-    change them, which it cannot.
+    change them, which it cannot. Nor is a backend selected: builds run in the
+    server's process, and ``heph serve`` refuses the unsafe local executor
+    outright — so ``--unsafe-local-executor`` is inert here, in the direction
+    that can only ever be safer than what was asked for (documented in
+    ``docs/cli.md``; unlike ``--session``/``--resume``, which are refused
+    because dropping them silently would misreport what the session IS).
     """
+    from .client_mode import ClientModeError
+
     console = AgentConsole(image_dir=project_root / IMAGE_DIR_RELPATH)
     answerer = interactive_answerer()
     exit_code = 0
@@ -577,6 +638,9 @@ def _run_turn(
     answerer: AskUserAnswerer | None = None,
 ) -> PromptResult | None:
     """Run one prompt with a SIGINT handler bound to *this* run's cancellation."""
+    from .client_mode import ClientModeError
+    from .supervisor import SupervisorError
+
     cancelled = threading.Event()
 
     def on_sigint(_signum: int, _frame: FrameType | None) -> None:
@@ -644,6 +708,18 @@ def add_subparsers(
     )
     agent.add_argument(
         "--providers", default=None, metavar="FILE", help="provider config JSON path"
+    )
+    # Ledger J-agent-wiring-4. `heph build` has carried this flag since Stage 0;
+    # `heph agent` — the one verb that runs MODEL-authored part scripts — ran
+    # unsandboxed with no flag at all, because `CadOpsState` defaulted to the
+    # unsafe local backend and this verb injected none. Same spelling, same
+    # meaning, same warning as `heph build`; absent it, the verb probes bwrap
+    # and refuses by name rather than degrading.
+    agent.add_argument(
+        "--unsafe-local-executor",
+        action="store_true",
+        dest="unsafe_local_executor",
+        help="run the build worker WITHOUT OS sandboxing (local debugging only)",
     )
     agent.set_defaults(func=guard(_cmd_agent))
 

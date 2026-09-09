@@ -104,6 +104,7 @@ def test_a_scripted_model_drives_a_session_through_the_packaged_sidecar(
 import json
 from pathlib import Path
 from hephaestus.agent_bridge.app import BridgeRuntime
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.testing.fake_openai import start_fake_openai
 from hephaestus.testing.projects import scaffold_project
 from hephaestus.testing.stream_assertions import text
@@ -111,7 +112,9 @@ from hephaestus.testing.stream_assertions import text
 project = scaffold_project(Path({str(workdir)!r}), name="lane_b",
                            globals_src="PARAMS = {{}}\\n")
 fake = start_fake_openai([text("the fake model answered")])
-runtime = BridgeRuntime(project_root=project, providers=[fake.provider_spec()])
+runtime = BridgeRuntime(
+    backend=UnsafeLocalBackend(), project_root=project, providers=[fake.provider_spec()]
+)
 runtime.start()
 try:
     session = runtime.create_session("orchestrator", session_id="lane-b")

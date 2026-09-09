@@ -37,6 +37,7 @@ from hephaestus.bench.harness import (
     BenchTask,
     ProviderConfig,
 )
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.testing.fake_openai import FakeOpenAI, RequestInfo, start_fake_openai
 from test_g8d_run import (
     EDITING_SRC,
@@ -93,7 +94,10 @@ def provider(fake_model: FakeOpenAI) -> ProviderConfig:
 def runtime_factory(sidecar_dist: Path) -> harness.RuntimeFactory:
     def factory(project_root: Path, config: ProviderConfig) -> BridgeRuntime:
         return BridgeRuntime(
-            project_root=project_root, providers=config.providers, dist_main=sidecar_dist
+            backend=UnsafeLocalBackend(),
+            project_root=project_root,
+            providers=config.providers,
+            dist_main=sidecar_dist,
         )
 
     return factory
@@ -315,7 +319,10 @@ def test_a_forced_restart_is_archived_with_its_reason_beside_the_run(
 
     def factory(project_root: Path, config: ProviderConfig) -> BridgeRuntime:
         return _RestartOnceRuntime(
-            project_root=project_root, providers=config.providers, dist_main=sidecar_dist
+            backend=UnsafeLocalBackend(),
+            project_root=project_root,
+            providers=config.providers,
+            dist_main=sidecar_dist,
         )
 
     def finish(info: RequestInfo) -> dict[str, Any]:

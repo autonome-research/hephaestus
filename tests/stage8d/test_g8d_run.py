@@ -40,6 +40,7 @@ from hephaestus.bench.cadgenbench import (
     step_validity,
 )
 from hephaestus.bench.harness import BenchTask, ProviderConfig
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.testing.fake_openai import FakeOpenAI, RequestInfo, start_fake_openai
 
 #: A scripted turn never needs the 1800 s default.
@@ -71,7 +72,10 @@ def provider(fake_model: FakeOpenAI) -> ProviderConfig:
 def runtime_factory(sidecar_dist: Path) -> harness.RuntimeFactory:
     def factory(project_root: Path, config: ProviderConfig) -> BridgeRuntime:
         return BridgeRuntime(
-            project_root=project_root, providers=config.providers, dist_main=sidecar_dist
+            backend=UnsafeLocalBackend(),
+            project_root=project_root,
+            providers=config.providers,
+            dist_main=sidecar_dist,
         )
 
     return factory
@@ -259,13 +263,14 @@ def test_both_converted_samples_run_and_produce_step_through_the_export_path(
     # The editing run really was an ingest: the graded build names the seeded
     # file among its input hashes (INGEST.md §1).
     from hephaestus.agent_bridge.cad_ops import CadOps
+    from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
     from hephaestus.core.project_store.layout import load_project, open_store
 
     project = Path(cast("str", editing.project_dir))
     layout = load_project(project)
     store = open_store(layout)
     try:
-        current = CadOps(layout, store).current_build(PART_NAME)
+        current = CadOps(layout, store, backend=UnsafeLocalBackend()).current_build(PART_NAME)
         assert current is not None
         assert list(current.input_hashes.imports) == ["input.step"]
     finally:

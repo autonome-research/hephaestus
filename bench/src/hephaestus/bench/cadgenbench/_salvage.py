@@ -255,9 +255,7 @@ def salvage_from_archive(
             continue
         target = directory / SUBMISSION_CANDIDATE
         entries.append(_salvage_one(sample_id, by_sample.get(sample_id, ()), target))
-    report = SalvageReport(
-        archive_dir=archive_dir, outputs_dir=outputs_dir, entries=tuple(entries)
-    )
+    report = SalvageReport(archive_dir=archive_dir, outputs_dir=outputs_dir, entries=tuple(entries))
     outputs_dir.mkdir(parents=True, exist_ok=True)
     (outputs_dir / SALVAGE_REPORT_FILENAME).write_text(
         json.dumps(report.to_json(), indent=2, sort_keys=True) + "\n", encoding="utf-8"

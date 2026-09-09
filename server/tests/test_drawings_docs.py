@@ -29,6 +29,7 @@ from xml.etree import ElementTree
 import pytest
 from hephaestus.agent_bridge.cad_ops import CadOpError, CadOps
 from hephaestus.agent_bridge.dispatch import DispatchError, Principal, ToolDispatcher
+from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.core.project_store.layout import ProjectLayout, load_project, open_store
 from hephaestus.core.project_store.store import ProjectStore
 from pypdf import PdfReader
@@ -88,7 +89,7 @@ class Project:
         self.root = root
         self.layout: ProjectLayout = load_project(root)
         self.store: OpStore = open_store(self.layout)
-        self.cad = CadOps(self.layout, self.store)
+        self.cad = CadOps(self.layout, self.store, backend=UnsafeLocalBackend())
         self.dispatcher = ToolDispatcher(ProjectStore(self.layout, self.store), cad=self.cad)
         assert self.cad.build_part("shelf", op_id="build-shelf")["status"] == "ok"
 
@@ -315,7 +316,7 @@ def test_drawing_refuses_a_part_with_no_current_build(project: Project) -> None:
         project.call(
             "generate_drawing", {"name": "bracket", "kind": "dimensioned"}, entry="drw-unbuilt"
         )
-    assert excinfo.value.reason == "invalid_part"
+    assert excinfo.value.reason == "addressing_error"
 
 
 # ==========================================================================
