@@ -409,6 +409,45 @@ def test_explicit_restart_clears_a_durable_respawn_failure(tmp_path: Path) -> No
         sup.close()
 
 
+# -- liveness: a zombie is dead (J-mirrors-and-dx-16) ---------------------
+
+
+def test_pid_alive_reports_an_unreaped_zombie_as_dead() -> None:
+    """The distinction the helper exists for, and which had no test at all.
+
+    An exited child stays addressable by ``kill(pid, 0)`` until its parent
+    reaps it, so a bare signal probe would call a dead sidecar alive and every
+    orphan assertion in this suite would pass vacuously.
+    """
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    try:
+        # Wait for exit WITHOUT reaping: os.waitpid would clear the zombie, and
+        # the zombie is the state under test.
+        deadline = time.monotonic() + 10
+        state = ""
+        while time.monotonic() < deadline:
+            with open(f"/proc/{proc.pid}/stat", encoding="utf-8") as handle:
+                state = handle.read().rpartition(")")[2].split()[0]
+            if state == "Z":
+                break
+            time.sleep(0.01)
+        assert state == "Z", f"the child never became a zombie (state {state!r})"
+        assert not pid_alive(proc.pid), "an unreaped zombie was reported alive"
+    finally:
+        proc.wait()
+    # …and once reaped the pid is simply gone.
+    assert not pid_alive(proc.pid)
+
+
+def test_pid_alive_reports_a_live_process_as_alive() -> None:
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        assert pid_alive(proc.pid)
+    finally:
+        proc.kill()
+        proc.wait()
+
+
 # -- watchdog: the clock stops while the CHILD is waiting on US -----------
 #
 # The bug this covers (2026-09-09, CI run 34327109619): `web/e2e/composer.spec`

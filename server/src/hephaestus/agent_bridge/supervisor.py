@@ -73,6 +73,7 @@ import contextlib
 import ctypes
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -84,6 +85,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from io import BufferedReader
+from pathlib import Path
 from typing import Any, cast
 
 from .framing import FrameDecoder, FrameTooLargeError, encode_frame
@@ -1147,9 +1149,50 @@ class Supervisor:
 
 
 def pid_alive(pid: int) -> bool:
-    """True if ``pid`` exists and is not a zombie (per ``ps``)."""
+    """True if ``pid`` exists and is not a zombie.
+
+    **A zombie counts as dead here, and that is the whole reason this is not a
+    bare signal probe.** The processes this predicate is asked about are the
+    supervisor's own children, and a child stays visible to ``kill(pid, 0)``
+    from the moment it exits until its parent reaps it — so a signal probe
+    would report an exited sidecar as alive and every orphan assertion in the
+    suite would pass vacuously. The state character is what tells the two
+    apart.
+
+    Read from the kernel's own process file rather than by forking a process
+    listing (ledger J-mirrors-and-dx-16): about thirty assertions across nine
+    suites call this, five of them inside polling loops, and each call used to
+    cost a fork and an undeclared dependency on an external tool being on
+    ``PATH``. ``/proc/<pid>/stat`` carries the same character on Linux, which
+    is the only platform the sandbox suites support; the fork stays behind an
+    availability check as the portable fallback, so a non-Linux host keeps the
+    behaviour it had.
+
+    The stat line's third whitespace-separated field is the state, but the
+    second is the executable name **in parentheses and unescaped**, so it may
+    itself contain spaces or parentheses. Parsing therefore starts after the
+    last ``)``, which is the one place a comm cannot hide.
+    """
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        return False  # no such process
+    except (PermissionError, NotADirectoryError, OSError):
+        raw = ""  # no procfs (or an unreadable one): fall back below
+    if raw:
+        _, _, after_comm = raw.rpartition(")")
+        fields = after_comm.split()
+        if fields:
+            return fields[0] != "Z"
+    listing = shutil.which("ps")
+    if listing is None:
+        # Neither procfs nor a listing tool: refusing to guess is the only
+        # honest answer, and a wrong "alive" would hide an orphan.
+        raise RuntimeError(
+            f"cannot determine whether pid {pid} is alive: no readable /proc and no 'ps' on PATH"
+        )
     r = subprocess.run(
-        ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False
+        [listing, "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False
     )
     if r.returncode != 0 or not r.stdout.strip():
         return False
