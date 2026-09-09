@@ -44,10 +44,9 @@
   display: flex;
   align-items: center;
   justify-content: flex-start;
+  flex-wrap: wrap;
   gap: var(--gap-inline);
   padding: var(--space-1) var(--space-3);
-  min-height: var(--target-min);
-  border-bottom: 1px solid var(--border);
 }
 
 .resyncCount {
@@ -57,25 +56,70 @@
 }
 
 .tabs {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
   flex: none;
-  padding: var(--space-2) var(--space-2) var(--space-2) 0;
+  padding: var(--space-1);
   border-bottom: 1px solid var(--border);
+}
+
+.selectedSession {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.selectedSession [role="tab"] {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  min-width: 0;
+}
+
+.selectedSession [role="tab"][aria-selected="true"] {
+  box-shadow: none;
+}
+
+.selectedSession [role="tab"] > span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sessionTabs {
   width: 100%;
+  min-width: 0;
+}
+
+.tabs .sessionMenu {
+  top: 100%;
+  right: var(--space-1);
+  width: min(400px, calc(100vw - 2 * var(--space-2)));
+  max-width: calc(100% - 2 * var(--space-1));
+  max-height: min(60vh, 480px);
+  overflow: auto;
+}
+
+.sessionMenu .tabMeta {
+  color: var(--ink-base);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  flex-shrink: 1;
 }
 
 /*
  * §7.1(b): the create is the strip's LAST ITEM, so it sits inside the tabs band
- * rather than in a band of its own with its own rule under it. `TabBar` stacks
- * the tabs vertically, so "last item" is the row under the last tab, indented
- * to the tabs' own text column so the `+` reads as part of the list.
+ * rather than in a band of its own. Switch, new and collapse share the selected
+ * title's row; the rest of the thread tree is in the switcher's bounded menu.
  */
 .tabsCreate {
   display: flex;
+  flex: none;
   align-items: center;
-  padding-left: var(--space-2);
+  margin-left: auto;
 }
 
 /*

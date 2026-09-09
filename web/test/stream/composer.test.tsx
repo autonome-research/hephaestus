@@ -54,6 +54,8 @@ import { workspaceStore } from "../../src/state/react";
 import { formatRef } from "../../src/system";
 import { sessionPromptStore } from "../../src/stream/sessionPrompts";
 import { copy } from "../../src/copy";
+import { conversationStore, currentTurn } from "../../src/stream/conversation";
+const IDLE_EXECUTION = { epoch: "test", version: 1, run_id: null, active_run_id: null, admission_available: true, terminal: null } as const;
 import { ATTACH_CAUSES, attachDetailAdds, type AttachCause } from "../../src/api/attach";
 
 // The one route the last block counts calls on. Everything else in the module is
@@ -134,6 +136,9 @@ function markup(
         agentUnavailable={false}
         liveRunId={null}
         streamLive={true}
+        currentTurn={{ status: props.liveRunId ? "Working" : null, reason: null,
+          runId: props.liveRunId ?? null, terminalRunId: null, canSend: !props.liveRunId,
+          canAnswer: !!props.liveRunId, stopRequested: false }}
         {...props}
       />
     </QueryClientProvider>,
@@ -467,12 +472,12 @@ describe("the DOM contract", () => {
     const host = document.createElement("div");
     host.innerHTML = html;
     const form = host.querySelector("[data-composer]");
-    expect([...(form?.children ?? [])].length).toBe(3);
+    expect([...(form?.children ?? [])].length).toBe(2);
     const cancel = form?.querySelector("[data-composer-cancel]");
     expect(cancel).not.toBeNull();
-    expect(host.querySelector("[data-composer-input-row]")?.contains(cancel ?? null)).toBe(false);
+    expect(host.querySelector("[data-composer-input-row]")?.contains(cancel ?? null)).toBe(true);
     const row = host.querySelector("[data-composer-input-row]");
-    expect(row?.querySelectorAll("button, [role='button']").length).toBe(1);
+    expect(row?.querySelectorAll("button, [role='button']").length).toBe(2);
   });
 
   it("puts no data-source on any context chip", () => {
@@ -524,7 +529,7 @@ describe("the DOM contract", () => {
     expect(html).toContain("data-composer-send");
     expect(html).toContain("data-context-disclose");
     expect(html).toContain("data-context-summary");
-    expect(html).toMatch(/<textarea[^>]*rows="1"/);
+    expect(html).toMatch(/<textarea[^>]*rows="2"/);
     expect(html).not.toMatch(/<textarea[^>]*rows="3"/);
     expect(html).not.toContain("data-context-chips");
     expect(html).not.toContain("data-context-add-view");
@@ -961,7 +966,7 @@ describe("the idle composer does not host DFM chrome", () => {
     expect(html).not.toContain("data-composer-dfm-absent");
     expect(html).not.toContain("data-dfm-auto-run-toggle");
     expect(html).not.toContain("data-dfm-run");
-    expect(html).toMatch(/<textarea[^>]*rows="1"/);
+    expect(html).toMatch(/<textarea[^>]*rows="2"/);
   });
 
   it("does not grow DFM chrome on the agent_unavailable refusal", () => {
@@ -1028,9 +1033,14 @@ afterEach(() => {
   vi.mocked(createSession).mockReset();
   workspaceStore.reset(DEFAULT_STATE);
   sessionPromptStore.reset();
+  conversationStore.reset();
 });
 
 function mount(props: Partial<React.ComponentProps<typeof Composer>> = {}): HTMLDivElement {
+  const sid = props.sessionId ?? "sess-1";
+  if (conversationStore.get(sid).execution === null) {
+    conversationStore.snapshot(sid, IDLE_EXECUTION, conversationStore.ticket());
+  }
   const element = document.createElement("div");
   document.body.appendChild(element);
   const root = createRoot(element);
@@ -1105,7 +1115,7 @@ async function refuseRunInFlight(
 ): Promise<HTMLDivElement> {
   vi.mocked(sendPrompt).mockRejectedValue(
     new WorkspaceError(409, "run_in_flight", "a run is already live", {
-      session_id: "sess-other",
+      session_id: props.liveRunId ? "sess-1" : "sess-other",
       run_id: "run-live",
     }),
   );
@@ -1114,11 +1124,89 @@ async function refuseRunInFlight(
   pressEnter(root);
   expect(vi.mocked(sendPrompt)).toHaveBeenCalledTimes(1);
   await act(async () => undefined);
-  expect(composer(root).getAttribute("data-disabled-reason")).toBe("run_in_flight");
+  expect(composer(root).getAttribute("data-disabled-reason")).toBe(props.liveRunId ? "run_in_flight" : "null");
   return root;
 }
 
 describe("the paths that bypass Send are gated where Send's gate is decided", () => {
+  it("guards Enter/form on an authoritative zero-frame run, while the draft stays editable", () => {
+    const root = mount();
+    act(() => conversationStore.snapshot("sess-1", { ...IDLE_EXECUTION, version: 2,
+      run_id: "observer-run", active_run_id: "observer-run", admission_available: false }, conversationStore.ticket()));
+    type(root, "my next draft");
+    pressEnter(root);
+    submitForm(root);
+    expect(sendPrompt).not.toHaveBeenCalled();
+    expect(input(root).disabled).toBe(false);
+    expect(input(root).value).toBe("my next draft");
+    expect(currentTurn(conversationStore.get("sess-1")).status).toBe("Working");
+    expect(composer(root).getAttribute("data-cancel-state")).toBe("available");
+  });
+
+  it("does not clear a draft revision edited during the blocking POST", async () => {
+    let settle!: (doc: PromptDocument) => void;
+    vi.mocked(sendPrompt).mockImplementation(() => new Promise(resolve => { settle = resolve; }));
+    const root = mount();
+    expect(input(root).rows).toBe(2);
+    type(root, "submitted words");
+    pressEnter(root);
+    expect(input(root).disabled).toBe(false);
+    type(root, "new draft");
+    expect(input(root).rows).toBe(2);
+    pressEnter(root);
+    expect(sendPrompt).toHaveBeenCalledTimes(1);
+    await act(async () => settle({ status: "ok", session_id: "sess-1", run_id: "run-1",
+      run_status: "completed", terminal: null, events: [], context: null }));
+    expect(input(root).value).toBe("new draft");
+    expect(currentTurn(conversationStore.get("sess-1")).status).toBe("Finished");
+  });
+
+  it("retains pending sends and per-session drafts through collapse and session switches", async () => {
+    let settle!: (doc: PromptDocument) => void;
+    vi.mocked(sendPrompt).mockImplementation(() => new Promise(resolve => { settle = resolve; }));
+    let root = mount();
+    type(root, "submitted words");
+    pressEnter(root);
+    type(root, "draft for first session");
+    act(() => unmount?.());
+    root.remove(); // collapsed panel
+    root = mount({ sessionId: "sess-2" });
+    type(root, "draft for second session");
+    await act(async () => settle({ status: "ok", session_id: "sess-1", run_id: "run-1",
+      run_status: "completed", terminal: null, events: [], context: null }));
+    expect(input(root).value).toBe("draft for second session");
+    act(() => unmount?.());
+    root.remove();
+    root = mount();
+    expect(input(root).value).toBe("draft for first session");
+    expect(currentTurn(conversationStore.get("sess-1")).status).toBe("Finished");
+    expect(sendPrompt).toHaveBeenCalledTimes(1);
+    expect(cancelRun).not.toHaveBeenCalled();
+  });
+
+  it("carries draft edits made during first-session creation into the created session", async () => {
+    let created!: (doc: Awaited<ReturnType<typeof createSession>>) => void;
+    vi.mocked(createSession).mockImplementation(() => new Promise(resolve => { created = resolve; }));
+    vi.mocked(sendPrompt).mockImplementation(() => new Promise(() => undefined));
+    const root = mount({ sessionId: null });
+    type(root, "first submission");
+    pressEnter(root);
+    type(root, "edited while creating");
+    await act(async () => created({ status: "ok", session_id: "sess-new", profile: "orchestrator", part: null, resumed: false }));
+    expect(sendPrompt).toHaveBeenCalledTimes(1);
+    expect(sendPrompt).toHaveBeenCalledWith("sess-new", "first submission", null);
+    expect(conversationStore.get("sess-new").draft.text).toBe("edited while creating");
+    expect(conversationStore.get("sess-new").attempt?.submitted.text).toBe("first submission");
+  });
+
+  it("a named race rejection leaves no normal transcript entry", async () => {
+    const root = await refuseRunInFlight({ onEcho: conversationStore.echo, onEchoRefused: conversationStore.rejectEcho });
+    expect(conversationStore.get("sess-1").live.entries).toEqual([]);
+    expect(input(root).value).toBe("Bump the kerf to 0.25 mm.");
+    expect(currentTurn(conversationStore.get("sess-1")).runId).toBeNull();
+    expect(root.querySelector("[data-composer-cancel]")).toBeNull();
+  });
+
   it("sends on Enter when nothing refuses it", async () => {
     const settled: PromptDocument = {
       status: "ok",
@@ -1134,8 +1222,8 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     type(root, "Bump the kerf to 0.25 mm.");
     pressEnter(root);
     expect(vi.mocked(sendPrompt)).toHaveBeenCalledTimes(1);
-    expect(sessionPromptStore.getSnapshot()["sess-1"]).toBe("Bump the kerf to 0.25 mm.");
     await act(async () => undefined);
+    expect(sessionPromptStore.getSnapshot()["sess-1"]).toBe("Bump the kerf to 0.25 mm.");
   });
 
   it("does NOT post a second prompt on Enter while a run is in flight", async () => {
@@ -1218,7 +1306,7 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     expect(report).toHaveBeenCalledWith("unreachable");
     expect(composer(root).getAttribute("data-send-state")).toBe("unknown");
     expect(root.querySelector("[data-composer-refused]")).toBeNull();
-    expect(root.querySelector("[data-send-unknown]")).toBeNull();
+    expect(root.querySelector("[data-send-unknown]")).not.toBeNull();
     expect(root.querySelector("[data-composer-retry]")).toBeNull();
     expect(root.textContent ?? "").not.toContain("HTTP 500");
     expect(root.textContent ?? "").not.toContain(copy.errors.title);
@@ -1235,7 +1323,8 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     await act(async () => undefined);
 
     expect(report).toHaveBeenCalledWith("process_down");
-    expect(composer(root).getAttribute("data-send-state")).toBe("ok");
+    expect(composer(root).getAttribute("data-send-state")).toBe("unknown");
+    expect(input(root).value).toBe("Bump the kerf to 0.25 mm.");
     expect(root.querySelector("[data-composer-refused]")).toBeNull();
     expect(root.textContent ?? "").not.toContain("sidecar restarted");
   });
@@ -1253,12 +1342,11 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     expect(composer(root).getAttribute("data-send-state")).toBe("unknown");
     expect(composer(root).getAttribute("data-disabled-reason")).toBe("null");
     const retry = root.querySelector<HTMLButtonElement>("[data-composer-retry]");
-    expect(retry).not.toBeNull();
-    act(() => {
-      retry?.click();
-    });
+    expect(retry).toBeNull();
+    pressEnter(root);
+    submitForm(root);
     await act(async () => undefined);
-    expect(vi.mocked(sendPrompt)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(sendPrompt)).toHaveBeenCalledTimes(1);
   });
 
   it("creates a part session on first send when none is selected", async () => {
@@ -1365,7 +1453,7 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
       retry?.click();
     });
     await act(async () => undefined);
-    expect(onEcho).toHaveBeenCalledTimes(2);
+    expect(onEcho).toHaveBeenCalledTimes(1);
   });
 
   it("marks the echo refused on a NAMED refusal, with the server's own reason (§7A.5)", async () => {
@@ -1590,8 +1678,16 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     expect(root.querySelector("[data-cancel-note]")).toBeNull();
   });
 
-  it("keeps Cancel available through a live turn (#45)", () => {
+  it("a stale live-frame id cannot make a finished/idle execution cancellable", () => {
+    const root = mount({ liveRunId: "run-old", streamLive: true });
+    expect(composer(root).getAttribute("data-cancel-state")).toBe("unavailable");
+    expect(root.querySelector("[data-composer-cancel]")).toBeNull();
+  });
+
+  it("keeps Cancel available through a live turn (#45)", async () => {
     const root = mount({ liveRunId: "run-live", streamLive: true });
+    act(() => conversationStore.snapshot("sess-1", { ...IDLE_EXECUTION, version: 2,
+      run_id: "run-live", active_run_id: "run-live", admission_available: false }, conversationStore.ticket()));
     expect(composer(root).getAttribute("data-cancel-state")).toBe("available");
     const cancelButton = root.querySelector<HTMLButtonElement>("[data-composer-cancel]");
     expect(cancelButton).not.toBeNull();
@@ -1601,5 +1697,24 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     expect(cancelButton?.hasAttribute("disabled")).toBe(false);
     // And the form no longer carries a reason it has no control for.
     expect(composer(root).hasAttribute("title")).toBe(false);
+
+    act(() => conversationStore.transport("sess-1", "reconnecting"));
+    expect(currentTurn(conversationStore.get("sess-1"))).toMatchObject({ status: "Checking", runId: "run-live" });
+    expect(composer(root).getAttribute("data-cancel-state")).toBe("available");
+    expect(cancelRun).not.toHaveBeenCalled(); // disconnect is not implicit Stop
+    vi.mocked(cancelRun).mockResolvedValue({ status: "ok", run_id: "run-live", session_id: "sess-1", abandoned_questions: 0 });
+    act(() => cancelButton?.click());
+    await act(async () => undefined);
+    expect(cancelRun).toHaveBeenCalledExactlyOnceWith("run-live");
+    expect(currentTurn(conversationStore.get("sess-1"))).toMatchObject({ status: "Checking", stopRequested: true });
+    expect(cancelButton?.getAttribute("aria-disabled")).toBe("true");
+    expect(cancelButton?.getAttribute("aria-describedby")).toBeTruthy();
+    act(() => cancelButton?.click());
+    expect(cancelRun).toHaveBeenCalledTimes(1);
+    act(() => conversationStore.snapshot("sess-1", { ...IDLE_EXECUTION, version: 3, run_id: "run-live",
+      terminal: { run_id: "run-live", terminal_id: "terminal-live", state: "cancelled" } }, conversationStore.ticket()));
+    expect(currentTurn(conversationStore.get("sess-1")).status).toBe("Stopped");
+    expect(root.querySelector("[data-composer-cancel]")).toBeNull();
+    expect(sendPrompt).not.toHaveBeenCalled();
   });
 });

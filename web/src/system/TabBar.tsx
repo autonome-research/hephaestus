@@ -48,6 +48,8 @@ export interface TabBarProps<Id extends string> {
   readonly tabs: readonly TabSpec<Id>[];
   readonly selected: Id;
   readonly onSelect: (id: Id) => void;
+  /** Explicit click/Enter/Space activation, not arrow/Home/End navigation. */
+  readonly onActivate?: ((id: Id) => void) | undefined;
   readonly label: string;
   readonly className?: string | undefined;
   /**
@@ -69,6 +71,7 @@ export function TabBar<Id extends string>({
   tabs,
   selected,
   onSelect,
+  onActivate,
   label,
   className,
   layout = "bar",
@@ -125,6 +128,7 @@ export function TabBar<Id extends string>({
           {...(tab.attrs ?? {})}
           onClick={() => {
             onSelect(tab.id);
+            onActivate?.(tab.id);
           }}
         >
           <span>{tab.label}</span>

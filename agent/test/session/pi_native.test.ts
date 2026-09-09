@@ -5,6 +5,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, realpathSync, lstatSync, readlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { credentialSourceState } from "../../src/session/credentials.js";
 import { createModelRuntime } from "../../src/session/runtime.js";
 
 const PROVIDER = "openai-codex";
@@ -52,6 +53,10 @@ describe("pi_native providers", () => {
     symlinkSync(source, link);
     expect(lstatSync(link).isSymbolicLink()).toBe(true);
     expect(realpathSync(readlinkSync(link))).toBe(realpathSync(source));
+    // Pi reports both own and linked auth.json records as "stored". The
+    // sidecar restores ownership from symlink metadata without reading it.
+    expect(credentialSourceState("stored", link)).toBe("linked");
+    expect(credentialSourceState("stored", source)).toBe("project");
 
     const { runtime } = await createModelRuntime(
       { providers: [{ id: PROVIDER, kind: "pi_native", models: [{ id: MODEL }] }] },
@@ -67,6 +72,40 @@ describe("pi_native providers", () => {
     });
     expect(runtime.isUsingOAuth(PROVIDER)).toBe(true);
     expect(runtime.getModel(PROVIDER, MODEL)?.id).toBe(MODEL);
+  }, 30000);
+
+  it("keeps a provider usable when a newer Pi cache declared one unknown model", async () => {
+    const root = scratch();
+    const source = writeSyntheticAuth(root);
+    const agentDir = path.join(root, "agent");
+    mkdirSync(agentDir);
+    symlinkSync(source, path.join(agentDir, "auth.json"));
+
+    const configured = await createModelRuntime(
+      {
+        providers: [
+          {
+            id: PROVIDER,
+            kind: "pi_native",
+            // gpt-6-astra was discovered from a newer Pi models-store than the
+            // packaged sidecar catalog. One stale-ahead id must not poison the
+            // known model or get silently deleted from the declaration.
+            models: [{ id: MODEL }, { id: "gpt-6-astra" }],
+          },
+        ],
+      },
+      { agentDir },
+    );
+
+    expect(configured.providers).toEqual([
+      {
+        id: PROVIDER,
+        available: true,
+        unavailable_models: [{ id: "gpt-6-astra", unavailable_reason: "model_unknown" }],
+      },
+    ]);
+    expect(configured.runtime.getModel(PROVIDER, MODEL)?.id).toBe(MODEL);
+    expect(configured.runtime.getModel(PROVIDER, "gpt-6-astra")).toBeUndefined();
   }, 30000);
 
   it("without a linked auth.json the built-in provider has no credential", async () => {

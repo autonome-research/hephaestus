@@ -16,14 +16,16 @@
 //    tightening — before §19.29 the CLI answered an object option with a Python
 //    dict repr and this surface answered with the label.
 // 3. **Every state is a rendered state.** `first answer wins` gives a loser
-//    `accepted:false`, a question that has gone gives `404 unknown_question`,
-//    and both are widget states with copy, not dead controls.
+//    `accepted:false`; a question that has gone is closed by matching terminal
+//    evidence or `404 unknown_question`. These are widget states with copy, not
+//    dead controls.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { AskUserWidget } from "../../src/components/stream/AskUserWidget";
+import { Transcript } from "../../src/components/stream/Transcript";
 import type { EventFrame } from "../../src/api/events";
 import type { AnswerDocument } from "../../src/api/sessions";
 import { copy } from "../../src/copy";
@@ -38,7 +40,8 @@ import {
   type AskChoice,
   type AskRowLike,
 } from "../../src/stream/ask";
-import { liveItem } from "../../src/stream/transcript";
+import type { CurrentTurn } from "../../src/stream/conversation";
+import { liveItem, type PanelRow } from "../../src/stream/transcript";
 import { repoRoot } from "./fixture";
 
 interface NamespaceCase {
@@ -232,12 +235,14 @@ describe("§7A.7 — first answer wins, and every outcome is a rendered state", 
     expect(ASK_STATES).toHaveLength(6);
   });
 
-  it("does not abandon a question whose run already produced a terminal", () => {
+  it("abandons an unanswered question once its run has terminal evidence", () => {
     const settled = askContent(row, ASK_POST_IDLE, {
-      fault: "process_down",
+      fault: null,
       runHasTerminal: true,
     });
-    expect(settled.state).toBe("answerable");
+    expect(settled.state).toBe("abandoned");
+    expect(settled.answered).toBe(false);
+    expect(settled.refusal).toBeNull();
     expect(settled.lostToRuntime).toBe(false);
   });
 
@@ -249,6 +254,16 @@ describe("§7A.7 — first answer wins, and every outcome is a rendered state", 
     expect(kept.state).toBe("answered");
     expect(kept.answered).toBe(true);
     expect(kept.lostToRuntime).toBe(true);
+    expect(kept.answeredBy).toBe("self");
+  });
+
+  it("keeps the recorded answer when its run subsequently becomes terminal", () => {
+    const kept = askContent(row, { phase: "settled", document: answerDocument() }, {
+      fault: null,
+      runHasTerminal: true,
+    });
+    expect(kept.state).toBe("answered");
+    expect(kept.answer).toBe("Go to 3 mm walls");
     expect(kept.answeredBy).toBe("self");
   });
 
@@ -325,10 +340,11 @@ describe("§7A.7 — a widget that cannot be answered says which kind of cannot"
 //
 // `renderToStaticMarkup` plus the environment's parser, as in
 // `components.test.tsx` — the assertions are the `data-*` attributes a
-// Playwright assertion reads, so no component harness is added for them. What a
-// static render cannot reach is the post's own outcome (`self`, `abandoned`),
-// because that state is owned by the widget and arrives from the route; §7A.12
-// case 5 asserts those in the browser, against a real answer.
+// Playwright assertion reads, so no component harness is added for them. A
+// static render cannot reach the post's own outcome (`self`, or a refused
+// answer); §7A.12 case 5 asserts those in the browser against a real route.
+// Terminal/runtime abandonment is a pure projection of the supplied run
+// evidence and is therefore covered here too.
 
 function render(
   row: AskRowLike,
@@ -424,5 +440,57 @@ describe("§7A.7 — the widget's controls, and the `disabled` that closed", () 
     expect(document_.textContent ?? "").not.toContain(copy.stream.ask.answeredAlready);
     const option = document_.querySelector("[data-ask-option]");
     expect(option?.getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("settles from the reconciled terminal while unknown ownership remains blocked", () => {
+    const ask = questionRow({
+      question: "Which?",
+      options: ["a"],
+      allow_free_text: false,
+    });
+    const row: PanelRow = { row: "ask", key: "ask:q-ask-0", ...ask };
+    const base: CurrentTurn = {
+      status: "Checking",
+      reason: null,
+      runId: null,
+      canSend: false,
+      canAnswer: false,
+      terminalRunId: null,
+      stopRequested: false,
+    };
+
+    // Before reconciliation there is no authority to answer or to call the
+    // question closed. It remains visibly answerable but its controls cannot
+    // post merely because an old question frame is still in the transcript.
+    const checking = new DOMParser().parseFromString(
+      `<body>${renderToStaticMarkup(<Transcript rows={[row]} currentTurn={base} />)}</body>`,
+      "text/html",
+    );
+    expect(checking.querySelector("[data-ask-state]")?.getAttribute("data-ask-state"))
+      .toBe("answerable");
+    expect(checking.querySelector("[data-ask-option]")?.getAttribute("aria-disabled"))
+      .toBe("true");
+    expect(checking.querySelector("[data-ask-option]")?.getAttribute("title"))
+      .toBe(copy.composer.checking);
+
+    // `CurrentTurn.terminalRunId` comes from GET /sessions' reconciled
+    // execution snapshot. It proves this exact run ended even if this observer
+    // did not receive a usable answer/terminal sequence on the socket.
+    const terminal = new DOMParser().parseFromString(
+      `<body>${renderToStaticMarkup(
+        <Transcript
+          rows={[row]}
+          currentTurn={{ ...base, status: "Stopped", terminalRunId: RUN }}
+        />,
+      )}</body>`,
+      "text/html",
+    );
+    expect(terminal.querySelector("[data-ask-state]")?.getAttribute("data-ask-state"))
+      .toBe("abandoned");
+    expect(terminal.querySelector("[data-ask-abandoned]")).not.toBeNull();
+    expect(terminal.querySelector("[data-ask-option]")?.getAttribute("aria-disabled"))
+      .toBe("true");
+    expect(terminal.querySelector("[data-ask-option]")?.getAttribute("title"))
+      .toBe(copy.stream.ask.abandoned);
   });
 });

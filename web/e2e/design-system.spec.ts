@@ -18,7 +18,8 @@
 //   2. the viewport canvas's centre pixel ≥ 4.5:1 against its corner pixel when
 //      geometry is loaded (§3.11.2's part-vs-ground floor);
 //   3. grid columns at 1440 / 1280 / **1279** / 1024 / 1023 matching §4.1's
-//      table, with `document.body.scrollWidth === clientWidth` at all five;
+//      table, with `document.body.scrollWidth === clientWidth` at all five, and
+//      the narrow Rail-hidden Stream opening to its full-width track;
 //   4. the inspector canvas height identical across all five inspector tabs.
 //
 // `not_run`'s distinctness lives in `test/system/badge.test.tsx`, which renders
@@ -369,6 +370,92 @@ test("the shell grid matches §4.1's table at five widths and never overflows", 
   }
 });
 
+test("the Rail-hidden Stream opens as a full peer column and recollapses at a narrow viewport", async ({
+  page,
+}) => {
+  await open(page, route(PART));
+  await page.setViewportSize({ width: 1000, height: 900 });
+
+  const body = page.locator("[data-band]");
+  await expect(body).toHaveAttribute("data-band", "narrow");
+  await expect(body).toHaveAttribute("data-rail", "hidden");
+  await expect(body).toHaveAttribute("data-stream", "collapsed");
+  await expect(body.locator(":scope > nav")).toHaveCount(1);
+  await expect(body.locator(":scope > nav")).toBeHidden();
+
+  const geometry = async (): Promise<{
+    readonly bodyWidth: number;
+    readonly stageWidth: number;
+    readonly streamWidth: number;
+    readonly streamRight: number;
+    readonly bodyRight: number;
+    readonly columns: number;
+    readonly panelWidth: number | null;
+    readonly overflow: boolean;
+  }> =>
+    await page.evaluate(() => {
+      const bodyElement = document.querySelector<HTMLElement>("[data-band]");
+      const stage = bodyElement?.querySelector<HTMLElement>(":scope > main") ?? null;
+      const stream = bodyElement?.querySelector<HTMLElement>(":scope > aside") ?? null;
+      const panel = document.querySelector<HTMLElement>('[data-testid="stream-panel"]');
+      if (bodyElement === null || stage === null || stream === null) {
+        throw new Error("shell body, Stage, or Stream is missing");
+      }
+      const bodyBox = bodyElement.getBoundingClientRect();
+      const streamBox = stream.getBoundingClientRect();
+      return {
+        bodyWidth: bodyBox.width,
+        stageWidth: stage.getBoundingClientRect().width,
+        streamWidth: streamBox.width,
+        streamRight: streamBox.right,
+        bodyRight: bodyBox.right,
+        columns: getComputedStyle(bodyElement).gridTemplateColumns.split(/\s+/).length,
+        panelWidth: panel?.getBoundingClientRect().width ?? null,
+        overflow: document.body.scrollWidth > document.body.clientWidth,
+      };
+    });
+
+  const collapsed = await geometry();
+  expect(collapsed.columns).toBe(2);
+  expect(collapsed.streamWidth).toBeCloseTo(44, 0);
+  expect(collapsed.stageWidth + collapsed.streamWidth).toBeCloseTo(collapsed.bodyWidth, 0);
+  expect(collapsed.streamRight).toBeCloseTo(collapsed.bodyRight, 0);
+  expect(collapsed.panelWidth).toBeNull();
+  expect(collapsed.overflow).toBe(false);
+
+  await page.locator("[data-stream-strip]").click();
+  await expect(body).toHaveAttribute("data-stream", "open");
+  await expect(body).toHaveAttribute("data-rail", "hidden");
+  await expect(page.locator('[data-testid="stream-panel"]')).toBeVisible();
+
+  const openGeometry = await geometry();
+  // `--stream-width` resolves to the clamp's 360px floor at a 1000px viewport.
+  // The broken rule left this at the 44px strip width even after React had set
+  // `data-stream="open"`, squeezing the mounted panel into a one-word ribbon.
+  expect(openGeometry.columns).toBe(2);
+  expect(openGeometry.streamWidth).toBeCloseTo(360, 0);
+  expect(openGeometry.stageWidth).toBeCloseTo(640, 0);
+  expect(openGeometry.stageWidth + openGeometry.streamWidth).toBeCloseTo(
+    openGeometry.bodyWidth,
+    0,
+  );
+  expect(openGeometry.streamRight).toBeCloseTo(openGeometry.bodyRight, 0);
+  expect(openGeometry.panelWidth).not.toBeNull();
+  expect(openGeometry.panelWidth ?? 0).toBeGreaterThanOrEqual(openGeometry.streamWidth - 1);
+  expect(openGeometry.overflow).toBe(false);
+
+  await page.locator("[data-stream-collapse]").click();
+  await expect(body).toHaveAttribute("data-stream", "collapsed");
+  await expect(body).toHaveAttribute("data-rail", "hidden");
+  await expect(page.locator("[data-stream-strip]")).toBeVisible();
+
+  const recollapsed = await geometry();
+  expect(recollapsed.streamWidth).toBeCloseTo(collapsed.streamWidth, 0);
+  expect(recollapsed.stageWidth).toBeCloseTo(collapsed.stageWidth, 0);
+  expect(recollapsed.panelWidth).toBeNull();
+  expect(recollapsed.overflow).toBe(false);
+});
+
 // ---------------------------------------------------------------------------
 // §4.1(d) and §4.1(f), amended 2026-09-01 — repairs (a) and (b)
 
@@ -689,12 +776,11 @@ test("accent ink/fill renders only on interactive elements or the link recipe (�
   expect(sweep.fieldInk).not.toBe(sweep.accentInk);
 });
 
-// §4.7 (C11), amended 2026-09-02 — a finished, successful tool card rests on
-// the seam border; only `running` / `error` / `unknown` detach. The archived
-// orchestrator transcript holds both sides of the rule: 100+ `ok` chips and
-// exactly one `error` chip.
+// Approved conversation-first tools remove the outer card border entirely.
+// Exceptional calls retain equivalent prominence through a status-coloured
+// leading rule; successful calls remain visually quiet.
 
-test("ok chips rest on --border and only the error chip detaches (§4.7 C11)", async ({
+test("ok tools have no outer border and only the error tool gets a prominent leading rule", async ({
   page,
 }) => {
   await open(page, route(PART, { s: "sess-workspace-orchestrator" }));
@@ -707,31 +793,50 @@ test("ok chips rest on --border and only the error chip detaches (§4.7 C11)", a
 
   const borders = await page.evaluate(() => {
     const probe = document.createElement("div");
-    probe.style.borderColor = "var(--border)";
+    probe.style.borderColor = "var(--status-fail-ink)";
     document.body.appendChild(probe);
-    const seam = getComputedStyle(probe).borderTopColor;
-    probe.style.borderColor = "var(--border-strong)";
-    const strong = getComputedStyle(probe).borderTopColor;
+    const fail = getComputedStyle(probe).borderLeftColor;
     probe.remove();
     const chips = [...document.querySelectorAll<HTMLElement>("article[data-tool-name]")].map(
-      (chip) => ({
-        status: chip.getAttribute("data-status"),
-        border: getComputedStyle(chip).borderTopColor,
-      }),
+      (chip) => {
+        const style = getComputedStyle(chip);
+        return {
+          status: chip.getAttribute("data-status"),
+          leftColor: style.borderLeftColor,
+          widths: [
+            style.borderTopWidth,
+            style.borderRightWidth,
+            style.borderBottomWidth,
+            style.borderLeftWidth,
+          ],
+        };
+      },
     );
-    return { seam, strong, chips };
+    return { fail, chips };
   });
 
-  expect(borders.seam).not.toBe(borders.strong);
-  const ok = borders.chips.filter((chip) => chip.status === "ok");
-  const loud = borders.chips.filter((chip) => chip.status !== "ok");
-  expect(ok.length).toBeGreaterThan(0);
-  expect(loud.length).toBeGreaterThan(0);
-  // In a transcript of ok chips, no chip's computed border equals
-  // --border-strong — and every non-ok chip's does, exactly.
-  for (const chip of ok) expect(chip.border, "an ok chip detached").toBe(borders.seam);
-  for (const chip of loud) {
-    expect(chip.border, `a ${String(chip.status)} chip rested on the seam`).toBe(borders.strong);
+  const quiet = borders.chips.filter((chip) => chip.status !== "error");
+  const errors = borders.chips.filter((chip) => chip.status === "error");
+  expect(quiet.length).toBeGreaterThan(0);
+  expect(errors.length).toBeGreaterThan(0);
+  for (const chip of quiet) {
+    expect(chip.widths, `a ${String(chip.status)} tool retained an outer card border`).toEqual([
+      "0px",
+      "0px",
+      "0px",
+      "0px",
+    ]);
+  }
+  for (const chip of errors) {
+    expect(chip.widths.slice(0, 3), "an error tool regained an outer card border").toEqual([
+      "0px",
+      "0px",
+      "0px",
+    ]);
+    expect(Number.parseFloat(chip.widths[3] ?? "0"), "an error tool has no leading rule").toBeGreaterThanOrEqual(2);
+    expect(chip.leftColor, "the error leading rule is not failure-prominent").toBe(
+      borders.fail,
+    );
   }
 });
 

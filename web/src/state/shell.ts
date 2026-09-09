@@ -60,6 +60,9 @@ export function bandFor(width: number): Band {
 
 export interface ShellState {
   readonly band: Band;
+  readonly viewportWidth: number;
+  /** Preferred expanded width; survives collapse and temporary viewport clamps, never serialized. */
+  readonly streamWidth: number | null;
   /** Whether the Stream renders its contents. `false` ⇒ the 44px strip. */
   readonly streamOpen: boolean;
   /** Whether the Rail is an overlay over the Stage rather than a column. */
@@ -72,6 +75,8 @@ export interface ShellState {
 
 export const DEFAULT_SHELL: ShellState = {
   band: "wide",
+  viewportWidth: 1440,
+  streamWidth: null,
   streamOpen: true,
   railOverlay: false,
   railOpen: true,
@@ -81,6 +86,20 @@ export const DEFAULT_SHELL: ShellState = {
 /** §4.1(c): the drawer's band. The token default is `clamp(200px, 32vh, 420px)`. */
 export const DRAWER_MIN = 200;
 export const DRAWER_MAX = 420;
+
+export const STREAM_MIN = 360;
+export const STREAM_MAX = 640;
+export const STAGE_MIN = 360;
+export const RAIL_WIDTH = 280;
+
+/** Current pixel budget. On exceptionally small screens, never overflow the document. */
+export function streamSizing(state: ShellState): { min: number; max: number; width: number } {
+  const usable = Math.max(0, state.viewportWidth - (state.railOverlay ? 0 : RAIL_WIDTH));
+  const min = Math.min(STREAM_MIN, usable);
+  const max = Math.max(min, Math.min(STREAM_MAX, usable - STAGE_MIN));
+  const preferred = state.streamWidth ?? Math.max(STREAM_MIN, Math.min(420, state.viewportWidth * 0.3));
+  return { min, max, width: Math.round(Math.max(min, Math.min(max, preferred))) };
+}
 
 type Listener = () => void;
 
@@ -111,16 +130,20 @@ export class ShellStore {
    * nothing else does; no CSS media query duplicates the decision.
    */
   applyWidth(width: number): void {
+    if (!Number.isFinite(width) || width < 0) return;
+    width = Math.floor(width);
     const band = bandFor(width);
     const previous = this.#state;
     if (band === previous.band) {
-      // Inside a band, a width change decides nothing. The operator's own
-      // collapse is the only thing that moves the column.
+      // Re-clamp even within a band without changing explicit open/closed state.
+      if (width !== previous.viewportWidth) this.#commit({ ...previous, viewportWidth: width });
       return;
     }
     this.#streamHeld = false;
     this.#commit({
+      ...previous,
       band,
+      viewportWidth: width,
       // §4.1: below 1280px the Stream collapses to a docked strip; below 1024px
       // the Rail collapses to an overlay, and an overlay opens closed.
       streamOpen: band === "wide",
@@ -141,6 +164,15 @@ export class ShellStore {
     this.#streamHeld = true;
     if (this.#state.streamOpen === open) return;
     this.#commit({ ...this.#state, streamOpen: open });
+  }
+
+  /** Explicit resizing stores the achievable width, not an offscreen drag overshoot. */
+  setStreamWidth(width: number | null): void {
+    if (width !== null && !Number.isFinite(width)) return;
+    const { min, max } = streamSizing(this.#state);
+    const next = width === null ? null : Math.round(Math.max(min, Math.min(max, width)));
+    if (next === this.#state.streamWidth) return;
+    this.#commit({ ...this.#state, streamWidth: next });
   }
 
   /** Whether the current stream state is the operator's rather than the band's. */

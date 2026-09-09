@@ -60,7 +60,19 @@ def _home_with_pi_auth(home: Path) -> Path:
         encoding="utf-8",
     )
     (agent / "models-store.json").write_text(
-        json.dumps({"openai-codex": {"models": [{"id": "gpt-5-codex"}, {"id": "gpt-5-mini"}]}}),
+        json.dumps(
+            {
+                "openai-codex": {
+                    "models": [
+                        {"id": "gpt-5-codex"},
+                        {"id": "gpt-5-mini"},
+                        # A newer operator Pi may cache a model that the
+                        # packaged sidecar's pinned catalog does not yet know.
+                        {"id": "gpt-6-astra"},
+                    ]
+                }
+            }
+        ),
         encoding="utf-8",
     )
     return agent / "auth.json"
@@ -141,7 +153,7 @@ def test_discovery_enumerates_the_three_kinds_it_is_approved_for(
     # superseded draft clause said the offer reads nothing; the ruling directs
     # the opposite and says why — "an offer that has read nothing cannot say
     # what provider or which models, and is not an offer".
-    assert pi["model_ids"] == ["gpt-5-codex", "gpt-5-mini"]
+    assert pi["model_ids"] == ["gpt-5-codex", "gpt-5-mini", "gpt-6-astra"]
     assert pi["source_path"].endswith(".pi/agent/auth.json")
     assert set(pi) == {"discovery_id", "kind", "provider_id", "model_ids", "source_path"}
 
@@ -209,6 +221,14 @@ def test_adoption_is_the_one_explicit_act_and_it_names_the_source(
     file = read_providers_file(discovering.root / ".heph" / "providers.json")
     assert [row["id"] for row in file.providers] == ["openai-codex"]
     assert file.providers[0]["kind"] == "pi_native"
+    # Adoption preserves the discovered declaration. Runtime verification owns
+    # catalog compatibility and reports unknown entries individually; deleting
+    # a newer id here would turn discovery into a lossy migration.
+    assert [model["id"] for model in file.providers[0]["models"]] == [
+        "gpt-5-codex",
+        "gpt-5-mini",
+        "gpt-6-astra",
+    ]
     assert [row["kind"] for row in file.adopted_sources] == ["pi_auth"]
     assert file.adopted_sources[0]["source_path"].endswith(".pi/agent/auth.json")
     # `auth_source` is written HERE and only here: the operator's request named

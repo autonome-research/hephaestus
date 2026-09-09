@@ -94,8 +94,7 @@ export function promptFailurePost(
   cause: unknown,
 ): "unknown" | "refused" | "idle" {
   const fault = runtimeFaultOf(cause);
-  if (fault === "unreachable") return "unknown";
-  if (fault !== null) return "idle";
+  if (fault !== null || (cause instanceof WorkspaceError && cause.reason === "transport_error")) return "unknown";
   if (cause instanceof WorkspaceError) return "refused";
   return "unknown";
 }

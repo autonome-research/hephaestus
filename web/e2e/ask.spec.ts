@@ -10,7 +10,7 @@
 //   * `data-answered-by="self"` on the widget that answered;
 //   * `data-answered-by="other"` on a second attached client;
 //   * a question that is no longer open renders `data-ask-state="abandoned"`
-//     **in place** — §7A.7's first-class rendering of `404 unknown_question`.
+//     **in place** — from its run's durable terminal, without an answer attempt.
 //
 // THE VALUE THAT REACHES THE RUN IS THE SERVER'S LABEL. The scripted question
 // offers `{label, consequence}` options, and the harness publishes the labels in
@@ -84,6 +84,9 @@ function startTurn(sessionId: string): Promise<PromptDocument> {
 async function openSession(page: Page, sessionId: string): Promise<void> {
   await open(page, route(PART, { s: sessionId }));
   await expect(page.locator('[data-testid="stream-panel"]')).toBeVisible();
+  // A mounted panel is not yet an attached observer. The external turn can
+  // raise its live-only question immediately, so wait for subscription ACK.
+  await expect(page.locator('[data-testid="stream-panel"]')).toHaveAttribute("data-stream", "live");
 }
 
 /** The widget for the suspended question, once the socket has carried it. */
@@ -219,14 +222,21 @@ test("a question whose run was cancelled renders as abandoned, in place (§7A.7)
     // fabricated selection; that is the question this widget is still showing.
     expect(cancelled.abandoned_questions).toBe(1);
 
-    // The controls are still live — nothing told this tab the question had gone,
-    // and §15.33 mints no event to tell it. The answer attempt is what learns it,
-    // and the widget renders the refusal where the question is.
-    await page.locator('[data-testid="transcript"] [data-ask-option]').first().click();
+    // Cancellation removes active ownership, so answer controls must not be
+    // re-enabled merely to probe the route. GET /sessions reconciles the run's
+    // durable terminal; that stronger evidence settles the still-rendered
+    // question in place even if this observer sampled before the final socket
+    // frames. No click — and therefore no answer POST — is needed.
+    await expect(page.locator('[data-current-turn="Stopped"]')).toBeVisible({
+      timeout: 60_000,
+    });
     await expect(ask).toHaveAttribute("data-ask-state", "abandoned", { timeout: 60_000 });
-    await expect(ask).toHaveAttribute("data-refusal-reason", "unknown_question");
     await expect(ask.locator("[data-ask-abandoned]")).toHaveCount(1);
+    await expect(ask).not.toHaveAttribute("data-refusal-reason", /.+/);
     await expect(ask).not.toHaveAttribute("data-answered-by", /self|other/);
+    const option = page.locator('[data-testid="transcript"] [data-ask-option]').first();
+    await expect(option).toHaveAttribute("aria-disabled", "true");
+    await expect(option).not.toHaveAttribute("title", "Checking execution before sending.");
 
     await archive(page, testInfo, "ask-abandoned");
   } finally {

@@ -175,6 +175,30 @@ describe("§4.1(a) — one breakpoint authority, and the band it got wrong", () 
     expect(shellStore.getSnapshot().railOpen).toBe(false);
   });
 
+  it("opens and recollapses the Stream while the narrow Rail stays hidden", () => {
+    shellStore.applyWidth(900);
+    expect(shellStore.getSnapshot()).toMatchObject({
+      band: "narrow",
+      railOverlay: true,
+      railOpen: false,
+      streamOpen: false,
+    });
+
+    shellStore.setStreamOpen(true);
+    expect(shellStore.getSnapshot()).toMatchObject({
+      railOverlay: true,
+      railOpen: false,
+      streamOpen: true,
+    });
+
+    shellStore.setStreamOpen(false);
+    expect(shellStore.getSnapshot()).toMatchObject({
+      railOverlay: true,
+      railOpen: false,
+      streamOpen: false,
+    });
+  });
+
   it("keeps an explicit collapse across a resize INSIDE a band", () => {
     // §4.1(a): "A user's explicit collapse survives a resize inside a band and
     // is re-evaluated on a band crossing."

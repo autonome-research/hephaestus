@@ -39,8 +39,24 @@ import type { HistoryEventFrame } from "./events";
 export const UNREADABLE_REASONS = ["unknown_session", "agent_unavailable"] as const;
 export type UnreadableReason = (typeof UNREADABLE_REASONS)[number];
 
+/** Admission/runtime evidence, independent of history and socket transport. */
+export interface ExecutionSnapshot {
+  readonly epoch: string;
+  readonly version: number;
+  readonly run_id: string | null;
+  readonly active_run_id: string | null;
+  readonly admission_available: boolean;
+  readonly terminal: {
+    readonly run_id: string;
+    readonly terminal_id: string;
+    readonly state: string;
+    readonly payload?: unknown;
+  } | null;
+}
+
 /** `agent_bridge/app.py::sessions` + the two fields `list_sessions` joins on. */
 export interface SessionRow {
+  readonly execution?: ExecutionSnapshot;
   readonly session_id: string;
   readonly profile: string;
   readonly part: string | null;
@@ -126,10 +142,10 @@ export interface ThreadDocument {
  * anywhere between there and here.
  */
 /** §2.8's closed `outcome.state` vocabulary for a non-`stop` turn. */
-export const TURN_OUTCOME_STATES = ["cancelled", "error", "interrupted"] as const;
+export const TURN_OUTCOME_STATES = ["completed", "cancelled", "error", "interrupted"] as const;
 export type TurnOutcomeState = (typeof TURN_OUTCOME_STATES)[number];
 
-/** §2.8(4): present for a turn that did not complete; absent means completed. */
+/** Explicit historical settlement evidence; absence means unknown, not completed. */
 export interface TurnOutcome {
   readonly state: TurnOutcomeState;
   readonly message?: string;
@@ -147,6 +163,7 @@ export interface TurnOutcome {
  * per-turn legacy fallback this client must not skip.
  */
 export interface HistoryUserPrompt {
+  readonly run_id?: string;
   /** THE IDENTITY when present (§2.8(2)). Absent from a pre-amendment sidecar. */
   readonly turn?: number;
   readonly seq: number;

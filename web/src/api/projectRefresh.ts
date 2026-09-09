@@ -23,7 +23,8 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { fetchSessions, fetchThread } from "./sessions";
+import { fetchThread } from "./sessions";
+import { conversationStore, readExecutionSessions } from "../stream/conversation";
 import { workspaceToken } from "./token";
 import { useWorkspace } from "../state/react";
 import { eventsUrl, StreamSocket } from "../stream/socket";
@@ -52,8 +53,10 @@ export function useProjectRefresh(): void {
   const selected = useWorkspace((s) => s.session);
   const sessions = useQuery({
     queryKey: ["sessions"],
-    queryFn: fetchSessions,
+    queryFn: readExecutionSessions,
     staleTime: SESSIONS_STALE_MS,
+    refetchInterval: () => conversationStore.needsRefresh() ? 2_000 : 5_000,
+    refetchOnWindowFocus: "always",
     retry: false,
   });
   const thread = useQuery({
@@ -67,8 +70,8 @@ export function useProjectRefresh(): void {
   const sessionIds = useMemo(() => {
     const listed = (sessions.data?.sessions ?? []).map((row) => row.session_id);
     const nodes = (thread.data?.nodes ?? []).map((node) => node.session_id);
-    return collectSessionIds(listed, nodes);
-  }, [sessions.data, thread.data]);
+    return collectSessionIds(listed, selected === null ? nodes : [...nodes, selected]);
+  }, [sessions.data, thread.data, selected]);
 
   /**
    * The subscribed set, as ONE stable value (§7A.11).
@@ -117,6 +120,11 @@ export function useProjectRefresh(): void {
         onFrame: (frame) => {
           const sid = frame.session_id;
           if (sid !== null && !subscribed.includes(sid)) return;
+          const priorRun = sid === null ? null : conversationStore.get(sid).live.runId;
+          conversationStore.frame(frame);
+          if (frame.kind !== "terminal" && priorRun !== frame.run_id) {
+            void client.invalidateQueries({ queryKey: ["sessions"] });
+          }
           if (frame.kind === "tool_result") {
             // A delegated child is minted before it writes. Refresh the
             // inventory so the next subscribe includes it — still a refetch
@@ -130,9 +138,16 @@ export function useProjectRefresh(): void {
           if (frame.kind !== "terminal") return;
           refreshAfterTurn(client, partRef.current);
         },
-        onStatus: () => undefined,
-        onResync: () => undefined,
+        onStatus: (status) => {
+          for (const sid of subscribed) conversationStore.transport(sid, status);
+          void client.invalidateQueries({ queryKey: ["sessions"] });
+        },
+        onResync: () => {
+          for (const sid of subscribed) conversationStore.gap(sid);
+          void client.invalidateQueries({ queryKey: ["sessions"] });
+        },
         cursor: () => null,
+        sessionCursor: (sid) => conversationStore.get(sid).live.cursor,
       },
     );
     socket.open(eventsUrl(window.location));

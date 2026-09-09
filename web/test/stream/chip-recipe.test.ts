@@ -32,22 +32,22 @@ function css(relative: string): string {
 
 const transcript = css("components/stream/Transcript.module.css");
 
-describe("§4.7 (C11) — a finished, successful tool card rests on the seam border", () => {
-  it("gives the resting .chip the seam token, not the detached one", () => {
+describe("compact tool rows reserve emphasis for failures", () => {
+  it("keeps routine calls borderless, not raised cards", () => {
     const block = /\.chip\s*\{([^}]*)\}/.exec(transcript);
-    expect(block?.[1]).toMatch(/border:\s*1px solid var\(--border\)/);
+    expect(block?.[1]).toMatch(/border:\s*0/);
     expect(block?.[1]).not.toMatch(/--border-strong/);
   });
 
-  it("detaches exactly running, error and unknown — the closed loud set", () => {
+  it("emphasizes failed tools without promoting missing results to activity", () => {
     const exception =
       /((?:\.chip\[data-status="[a-z]+"\],?\s*)+)\{([^}]*)\}/.exec(transcript);
     expect(exception).not.toBeNull();
     const statuses = [...(exception?.[1] ?? "").matchAll(/data-status="([a-z]+)"/g)]
       .map((m) => m[1])
       .sort();
-    expect(statuses).toEqual(["error", "running", "unknown"]);
-    expect(exception?.[2]).toMatch(/border-color:\s*var\(--border-strong\)/);
+    expect(statuses).toEqual(["error"]);
+    expect(exception?.[2]).toMatch(/border-inline-start:\s*2px solid var\(--status-fail-ink\)/);
   });
 
   it("never selects an ok chip for the strong border (the negative half)", () => {

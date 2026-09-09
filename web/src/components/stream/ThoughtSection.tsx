@@ -62,9 +62,7 @@ export function ThoughtSection({
     >
       <summary className={styles["thoughtSummary"]}>
         <span>{copy.stream.thought}</span>
-        {single ? null : (
-          <span className={styles["thoughtCount"]}>{copy.stream.thoughtParts(items.length)}</span>
-        )}
+
       </summary>
       <div className={styles["thoughtBody"]} {...(empty ? {} : { "data-markdown": "" })}>
         {single ? null : (

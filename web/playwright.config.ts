@@ -33,6 +33,9 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
+  // Synthetic tests own a separate Vite server/baseURL and intercepted API.
+  // Run them with playwright.synthetic.config.ts, never this real-server harness.
+  testIgnore: ["**/synthetic/**"],
   fullyParallel: false,
   workers: 1,
   forbidOnly: true,

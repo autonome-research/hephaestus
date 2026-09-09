@@ -18,8 +18,8 @@
 // changes `?s=` in the §4.5 route and nothing else — no lease is taken, no
 // session is created, and the CLI's hold on a session is untouched.
 //
-// The widget is `TabBar`: roving tabindex, arrows, Home/End, Tab leaves the
-// list. The transcript is the `tabpanel` this list controls (#68).
+// The selected human title stays in the header; the full server-shaped tree
+// lives in the compact switcher. Both reuse TabBar's keyboard navigation.
 //
 // The visible label is the first prompt this page sent, or (§7.1 C6, amended
 // 2026-09-02) a noun phrase composed from server facts only — never a
@@ -31,7 +31,7 @@
 // this strip is struck, so in the steady state this strip is the one row of
 // chrome above the transcript.
 
-import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { copy } from "../../copy";
 import type { ProfileCapability, SessionRow } from "../../api/sessions";
 import type { ThreadTab } from "../../stream/thread";
@@ -95,6 +95,13 @@ export function SessionTabs({
   create,
   collapse,
 }: SessionTabsProps): React.JSX.Element {
+  const [switchOpen, setSwitchOpen] = useState(false);
+  const stripRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (switchOpen) {
+      stripRef.current?.querySelector<HTMLElement>('[data-session-option][aria-selected="true"]')?.focus();
+    }
+  }, [switchOpen]);
   const byId = new Map(sessions.map((row) => [row.session_id, row]));
   const selectedId = selected ?? tabs[0]?.session_id ?? "";
   const firstPrompts = useSyncExternalStore(
@@ -115,62 +122,88 @@ export function SessionTabs({
     };
   }, [selectedLabel]);
 
+  const choices = tabs.map((tab) => {
+    const row = byId.get(tab.session_id);
+    const part = row?.part ?? originPart(tab.origin);
+    const firstPrompt = firstPrompts[tab.session_id] ?? null;
+    const label = labelFor(tab, row, firstPrompt);
+    const kind = sessionTabMeta(tab, row, firstPrompt);
+    // A prompt title must not erase the bound part. Fallback labels already name it.
+    const meta = part != null && firstPrompt !== null
+      ? [part, kind].filter(Boolean).join(" · ") : kind;
+    return {
+      id: tab.session_id,
+      label,
+      ariaLabel: meta === null ? label : `${label} — ${meta}`,
+      title: sessionTitleAttr(tab.session_id, tab.thread_state),
+      trailing: meta === null ? undefined : <span className={styles["tabMeta"]}>{meta}</span>,
+      style: { paddingLeft: `calc(var(--space-2) + ${String(tab.depth)} * var(--space-4))` },
+      attrs: {
+        "data-session-id": tab.session_id,
+        "data-thread-depth": tab.depth,
+        "data-thread-state": tab.thread_state,
+        ...(tab.kind === null ? {} : { "data-thread-kind": tab.kind }),
+        ...(part == null ? {} : { "data-part": part }),
+      },
+    };
+  });
+
   return (
-    <div className={styles["tabs"]} data-session-strip="">
-      {/* §7.1(a), amended 2026-09-01: THE HEADING DOES NOT RENDER, in any state.
-          It was an `<h2>` over a list whose `aria-label` is the same string —
-          the word "session" printed twice above a strip whose every row is one.
-          `copy.stream.sessionsHeading` survives as that label below, so the
-          landmark and the accessible name are unchanged; what is dropped is the
-          visible duplicate, which §3.13 does not count as removing a name. */}
-      {bounded ? <p className={styles["note"]}>{copy.stream.threadBounded}</p> : null}
+    <div ref={stripRef} className={styles["tabs"]} data-session-strip="">
       <TabBar
         attr="data-session-tab"
         panelId={panelId}
         layout="stack"
-        className={styles["sessionTabs"]}
+        className={styles["selectedSession"]}
         label={copy.stream.sessionsHeading}
         selected={selectedId}
-        onSelect={onSelect}
-        tabs={tabs.map((tab) => {
-          const row = byId.get(tab.session_id);
-          const part = row?.part ?? originPart(tab.origin);
-          const firstPrompt = firstPrompts[tab.session_id] ?? null;
-          const label = labelFor(tab, row, firstPrompt);
-          const meta = sessionTabMeta(tab, row, firstPrompt);
-          return {
-            id: tab.session_id,
-            label,
-            ariaLabel: label,
-            title: sessionTitleAttr(tab.session_id, tab.thread_state),
-            trailing:
-              meta === null ? undefined : <span className={styles["tabMeta"]}>{meta}</span>,
-            style: {
-              paddingLeft: `calc(var(--space-2) + ${String(tab.depth)} * var(--space-4))`,
-            },
-            attrs: {
-              "data-session-id": tab.session_id,
-              "data-thread-depth": tab.depth,
-              "data-thread-state": tab.thread_state,
-              ...(tab.kind === null ? {} : { "data-thread-kind": tab.kind }),
-              ...(part === null || part === undefined ? {} : { "data-part": part }),
-            },
-          };
-        })}
+        onSelect={() => {
+          // The title may be replaced on selection; restore focus to the stable switch control.
+          stripRef.current?.querySelector<HTMLElement>("[data-session-switch]")?.focus();
+          setSwitchOpen(true);
+        }}
+        tabs={choices.filter((choice) => choice.id === selectedId).map((choice) => ({
+          ...choice, style: { paddingLeft: "var(--space-2)" },
+        }))}
       />
-      {/* The strip's trailing row (§7.1(b), §4.1(h) C25): the `+`, then the
-          collapse chevron as the strip's LAST interactive element in every
-          state. Outside the `tablist`, because neither is a session and a
-          roving tabindex over the tabs must not walk onto them. */}
-      {(create === undefined || create === null) &&
-      (collapse === undefined || collapse === null) ? null : (
-        <div className={styles["tabsCreate"]}>
-          {create}
-          {collapse === undefined || collapse === null ? null : (
-            <div className={styles["tabsCollapse"]}>{collapse}</div>
-          )}
-        </div>
-      )}
+      <div className={styles["tabsCreate"]}>
+        {tabs.length > 0 ? (
+          <Button
+            variant="quiet"
+            icon="chevron-down"
+            iconLabel={copy.stream.switchSession}
+            expanded={switchOpen}
+            onClick={() => setSwitchOpen((open) => !open)}
+            data-session-switch=""
+          />
+        ) : null}
+        {create}
+        {collapse == null ? null : <div className={styles["tabsCollapse"]}>{collapse}</div>}
+      </div>
+      <Popover
+        open={switchOpen}
+        onClose={() => setSwitchOpen(false)}
+        label={copy.stream.switchSession}
+        className={styles["sessionMenu"]}
+        data-session-switch-open=""
+      >
+        {bounded ? <p className={styles["note"]}>{copy.stream.threadBounded}</p> : null}
+        <TabBar
+          attr="data-session-option"
+          layout="stack"
+          className={styles["sessionTabs"]}
+          label={copy.stream.sessionsHeading}
+          selected={selectedId}
+          onSelect={onSelect}
+          // Roving keyboard selection keeps the list available for subsequent
+          // arrows/Home/End. Only explicit click/Enter/Space dismisses it.
+          onActivate={() => setSwitchOpen(false)}
+          tabs={choices}
+        />
+        <Button variant="quiet" onClick={() => setSwitchOpen(false)}>
+          {copy.stream.switchDone}
+        </Button>
+      </Popover>
     </div>
   );
 }

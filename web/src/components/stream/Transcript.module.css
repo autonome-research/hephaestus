@@ -25,11 +25,17 @@
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: var(--gap-group);
+  gap: var(--space-2);
 }
 
 .row {
   min-width: 0;
+}
+
+.row[data-row="text"],
+.row[data-row="local-prompt"],
+.row[data-row="user-prompt"] {
+  margin-block: var(--space-2);
 }
 
 /* ---- text and reasoning -------------------------------------------- */
@@ -208,15 +214,12 @@
  * with no rule. A dashed hairline says aside; the solid bar says speaker.
  */
 .thought {
-  border-inline-start: 1px dashed var(--border-strong);
-  padding-inline-start: var(--space-3);
+  min-width: 0;
 }
 
 .thoughtSummary {
-  composes: eyebrow from "../../system/type.module.css";
-  display: flex;
-  align-items: center;
-  gap: var(--gap-inline);
+  composes: label from "../../system/type.module.css";
+  display: list-item;
   min-height: var(--target-min);
   cursor: pointer;
   color: var(--ink-muted);
@@ -255,27 +258,70 @@
    reports." */
 
 .chip {
-  /* §4.7 (C11), amended 2026-09-02: a finished, successful tool card rests on
-     the SEAM border. `--border-strong` on every chip made a transcript of
-     routine successes read as a wall of detached cards; detachment is now the
-     exception's signal, per §3.10's own split. */
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  background: var(--surface-raised);
-  padding: var(--space-3);
-  display: flex;
-  flex-direction: column;
-  gap: var(--gap-stack);
+  border: 0;
+  background: transparent;
+  padding: 0;
   min-width: 0;
 }
 
-/* §4.7 (C11): only a NON-TERMINAL or FAILED chip detaches. The status set here
-   is closed — `running | error | unknown` and nothing else draws
-   `--border-strong`; `ok` rests on the seam rule above. */
-.chip[data-status="running"],
-.chip[data-status="error"],
-.chip[data-status="unknown"] {
-  border-color: var(--border-strong);
+.chip[data-status="error"] {
+  border-inline-start: 2px solid var(--status-fail-ink);
+  padding-inline-start: var(--space-2);
+}
+
+.toolSummary {
+  composes: label from "../../system/type.module.css";
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--target-min);
+  padding-block: var(--space-1);
+  cursor: pointer;
+  list-style: none;
+  color: var(--ink-muted);
+}
+
+.toolSummary::-webkit-details-marker {
+  display: none;
+}
+
+.toolSummary::before {
+  content: "▸";
+  flex: none;
+}
+
+details[open] > .toolSummary::before {
+  content: "▾";
+}
+
+.toolBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) 0 var(--space-2) var(--space-3);
+  min-width: 0;
+}
+
+.toolFailure {
+  composes: label from "../../system/type.module.css";
+  margin: 0;
+  color: var(--status-fail-ink);
+}
+
+.provenance {
+  composes: label from "../../system/type.module.css";
+  color: var(--ink-muted);
+  min-width: 0;
+}
+
+.provenance > summary {
+  cursor: pointer;
+  min-height: var(--target-min);
+}
+
+.transcript summary:focus-visible {
+  outline: 2px solid var(--ink-strong);
+  outline-offset: 2px;
 }
 
 .chipHeader {
@@ -289,7 +335,8 @@
   composes: code from "../../system/type.module.css";
   flex: 1 1 auto;
   min-width: 0;
-  color: var(--ink-strong);
+  color: var(--ink-base);
+  overflow-wrap: anywhere;
 }
 
 /* §7.2 (a)'s repeat count. §3.8 gives a number the `.data` role — tabular
@@ -678,14 +725,11 @@ details[open] > .rawSummary::before {
 }
 
 .terminal {
+  composes: label from "../../system/type.module.css";
   display: flex;
   flex-direction: column;
-  gap: var(--gap-stack);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-card);
-  padding: var(--space-3);
-  background: var(--surface-raised);
-  color: var(--ink-base);
+  gap: var(--space-1);
+  color: var(--ink-muted);
 }
 
 .terminalTitle {
@@ -694,13 +738,13 @@ details[open] > .rawSummary::before {
 }
 
 .terminal[data-terminal-state="failed"] {
-  border-color: var(--status-fail-ink);
+  color: var(--status-fail-ink);
 }
 
 .terminal[data-terminal-state="cancelled"],
 .terminal[data-terminal-state="interrupted"],
 .terminal[data-terminal-state="timed_out"] {
-  border-color: var(--status-error-ink);
+  color: var(--status-error-ink);
 }
 
 /* §8(d), amended 2026-09-01: a named absence is "one short sentence in the
@@ -795,7 +839,7 @@ details[open] > .rawSummary::before {
  * have to learn.
  */
 .roleMarker {
-  composes: code from "../../system/type.module.css";
+  composes: label from "../../system/type.module.css";
   color: var(--ink-muted);
 }
 
@@ -943,12 +987,8 @@ details[open] > .envelopeSummary::before {
 .resync {
   composes: body from "../../system/type.module.css";
   margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--gap-stack);
-  border: 1px dashed var(--status-error-ink);
-  border-radius: var(--radius-card);
-  padding: var(--space-3);
+  border-inline-start: 2px solid var(--status-error-ink);
+  padding-inline-start: var(--space-2);
   color: var(--ink-base);
 }
 

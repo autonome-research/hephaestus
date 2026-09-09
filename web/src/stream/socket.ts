@@ -44,6 +44,7 @@ export interface StreamSocketHandlers {
   readonly onResync: () => void;
   /** The cursor to resume from, read at each (re)connect. */
   readonly cursor: () => LiveCursor | null;
+  readonly sessionCursor?: (sessionId: string) => LiveCursor | null;
 }
 
 export interface StreamSocketOptions {
@@ -128,13 +129,15 @@ export class StreamSocket {
     socket.onopen = (): void => {
       this.attempt = 0;
       socket.send(subscribeFrame(this.options.sessionIds ?? this.options.sessionId));
-      const cursor = this.handlers.cursor();
+      for (const sid of this.options.sessionIds ?? [this.options.sessionId]) {
+      const cursor = this.handlers.sessionCursor?.(sid) ?? (sid === this.options.sessionId ? this.handlers.cursor() : null);
       if (cursor !== null) {
         // A resume without a prior cursor would ask the server to replay the
         // whole buffer as though this panel had seen part of it. With one, the
         // server replays only what follows — and what it cannot, `live.ts`
         // labels.
-        socket.send(resumeFrameJson(this.options.sessionId, cursor));
+        socket.send(resumeFrameJson(sid, cursor));
+      }
       }
       this.handlers.onStatus("live");
     };

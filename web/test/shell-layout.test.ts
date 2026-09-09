@@ -63,6 +63,29 @@ describe("shell layout — usable at 1280px, not a 2400px desk", () => {
     expect(shell).not.toMatch(/@media[^{]*\{[^}]*grid-template-columns/);
   });
 
+  it("keeps the Stream's open/collapsed track independent when the Rail is hidden", () => {
+    const railHidden =
+      /\.body\[data-rail="overlay"\],\s*\.body\[data-rail="hidden"\]\s*\{([^}]*)\}/.exec(
+        shell,
+      )?.[1] ?? "";
+    const railHiddenCollapsed =
+      /\.body\[data-stream="collapsed"\]\[data-rail="overlay"\],\s*\.body\[data-stream="collapsed"\]\[data-rail="hidden"\]\s*\{([^}]*)\}/.exec(
+        shell,
+      )?.[1] ?? "";
+
+    // The narrow-viewport regression rendered StreamPanel after the state had
+    // opened it, but the later `[data-rail]` rule kept its track at 44px. Both
+    // attributes must participate: hidden Rail + open Stream gets the full
+    // column, while hidden Rail + collapsed Stream keeps only the control.
+    expect(railHidden).toMatch(
+      /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+var\(--stream-width\)/,
+    );
+    expect(railHidden).not.toContain("var(--stream-strip-width)");
+    expect(railHiddenCollapsed).toMatch(
+      /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+var\(--stream-strip-width\)/,
+    );
+  });
+
   it("shortens a full artifact ref to a chip that fits the 420px stream", () => {
     const ref =
       "artifact:build:sha256:83f4822a7943a7baf11b29d15c8af23c341fb4c0bfff352ac44a3f67d4bac82b";

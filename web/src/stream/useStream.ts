@@ -1,282 +1,91 @@
 // Copyright 2026 The Hephaestus Authors
 // SPDX-License-Identifier: Apache-2.0
-//
-// The React binding for one session's transcript: history's prefix, the live
-// socket's suffix, and the thread the tabs are drawn from (INTERFACE.md §7, §8).
-//
-// It contains no rules. Every decision — what a resync costs, where the seam
-// goes, which absences are named, how a chip's status is derived — is made by
-// the pure modules beside it and tested there. What lives here is the wiring
-// those modules cannot have: effects, aborts, and the socket's lifetime.
-//
-// ORDER MATTERS AND IS DELIBERATE. History loads first and renders
-// progressively; the socket attaches independently and appends. They are never
-// merged (§8) — `panelRows` puts a visible seam between them — and history is
-// never used to close a live gap (§2.7), which is why nothing here re-pages
-// history after a resync.
-//
-// EVERY PIECE OF STATE IS TAGGED WITH THE SESSION IT BELONGS TO. Switching tabs
-// must not show the previous session's transcript for even one frame, and the
-// obvious fix — resetting state at the top of the effect — is a synchronous
-// setState inside an effect, i.e. a cascading render. Tagging instead makes the
-// reset a *derivation*: state for another session simply is not this session's
-// state, and the empty values are module constants so the identity a `useMemo`
-// depends on does not change every render.
-
-import { useCallback, useEffect, useRef, useState } from "react";
+// Selected-session binding. The project observer owns transport and execution;
+// collapse/switch never discards drafts, attempts, event identities or gaps.
+import { useCallback, useEffect, useState } from "react";
 import { fetchHistoryPage, fetchThread, type ThreadDocument } from "../api/sessions";
-import { workspaceToken } from "../api/token";
-import { emptyHistory, loadHistory, type HistoryProgress } from "./history";
+import { loadHistory, type HistoryProgress } from "./history";
+import { conversationStore, currentTurn, useConversation, visiblePrompts, type CurrentTurn } from "./conversation";
 import { sessionPromptStore } from "./sessionPrompts";
-import {
-  appendEcho,
-  clearLiveRun,
-  disconnected,
-  emptyLive,
-  receive,
-  refuseEcho,
-  resync,
-  setStatus,
-  type LiveState,
-} from "./live";
-import { eventsUrl, StreamSocket } from "./socket";
 import { loadThreadTree, threadTabs, type ThreadTab } from "./thread";
 import { panelRows, type PanelRow, type StreamState } from "./transcript";
-
-/** One piece of state and the session it is about. */
-interface Tagged<T> {
-  readonly sid: string | null;
-  readonly value: T;
-}
-
-interface ThreadState {
-  readonly tabs: readonly ThreadTab[];
-  readonly document: ThreadDocument | null;
-  readonly bounded: boolean;
-}
-
-const NO_HISTORY: HistoryProgress = emptyHistory();
-const NO_THREAD: ThreadState = { tabs: [], document: null, bounded: false };
-const NO_STREAM: LiveState = emptyLive("historical");
-const CONNECTING: LiveState = emptyLive("reconnecting");
-const NO_TOKEN: LiveState = emptyLive("detached");
 
 export interface StreamView {
   readonly rows: readonly PanelRow[];
   readonly status: StreamState;
+  readonly currentTurn: CurrentTurn;
   readonly history: HistoryProgress;
   readonly tabs: readonly ThreadTab[];
   readonly threadState: ThreadDocument["thread_state"] | null;
   readonly threadBounded: boolean;
   readonly resyncs: number;
-  /** The run that is live *now* for this session — the composer's own (§7A.5). */
   readonly runId: string | null;
-  /** Forget `runId` on submit so Cancel cannot target a finished turn. */
   readonly clearRunId: () => void;
-  /**
-   * §7A.5 (C1): append the local-prompt echo on Send.
-   *
-   * Takes the TARGET session id explicitly rather than closing over this
-   * hook's own `sessionId` argument, because the create-then-send path
-   * (`Composer.tsx`) mints a brand-new session id and echoes into *that*
-   * session before this hook is ever re-rendered with it — a closure over
-   * the hook's `sessionId` would echo into `null` (or the previously
-   * selected session) and silently drop the words. Any caller may name any
-   * session; `useStream`'s own `sessionId` argument decides only which
-   * session's rows this particular hook instance RENDERS.
-   */
   readonly echo: (sessionId: string, text: string) => void;
-  /**
-   * §7A.5: mark the most recently sent echo for `sessionId` `refused`,
-   * carrying the server's own reason. See `live.ts::refuseEcho` — the
-   * `unknown` outcome (a lost POST) deliberately does not call this.
-   */
   readonly refuseEcho: (sessionId: string, reason: string) => void;
-  /**
-   * §7.4: did THIS mount's first live frame arrive with `seq > 0`? Feeds the
-   * transcript layer's mid-run-seam label — see `live.ts`'s `midRunAttach`
-   * doc for the full reasoning. `false` (renders the ordinary seam) until a
-   * live frame has actually arrived.
-   */
   readonly midRunAttach: boolean;
-  /** Live `terminal` frames seen; §7A.11's read-refresh trigger. */
   readonly terminals: number;
   readonly error: Error | null;
 }
-
-/**
- * The transcript for one session.
- *
- * `sessionId === null` yields an empty view with `historical` status: no socket
- * is opened and no request is issued, because a panel with no session selected
- * has nothing to be live about.
- */
+const NO_TABS: readonly ThreadTab[] = [];
 export function useStream(sessionId: string | null): StreamView {
-  const [history, setHistory] = useState<Tagged<HistoryProgress>>({
-    sid: null,
-    value: NO_HISTORY,
-  });
-  const [thread, setThread] = useState<Tagged<ThreadState>>({ sid: null, value: NO_THREAD });
-  const [live, setLive] = useState<Tagged<LiveState>>({ sid: null, value: NO_STREAM });
-  const [error, setError] = useState<Tagged<Error | null>>({ sid: null, value: null });
-
-  const token = workspaceToken();
-  const baseline = sessionId === null ? NO_STREAM : token === null ? NO_TOKEN : CONNECTING;
-
-  const shownHistory = history.sid === sessionId ? history.value : NO_HISTORY;
-  const shownThread = thread.sid === sessionId ? thread.value : NO_THREAD;
-  const shownLive = live.sid === sessionId ? live.value : baseline;
-  const shownError = error.sid === sessionId ? error.value : null;
-
-  // The socket reads the cursor at connect time, which can be several renders
-  // after the last one it saw. A ref is the only way to hand it "now" rather
-  // than the value captured when the effect ran; it is written in an effect
-  // because a ref written during render is a render with a side effect.
-  const cursorRef = useRef<LiveState["cursor"]>(null);
-  useEffect(() => {
-    cursorRef.current = shownLive.cursor;
-  }, [shownLive.cursor]);
-
-  // -- the historical prefix (§8) ----------------------------------------
+  const conversation = useConversation(sessionId);
+  const { history, live } = conversation;
+  const turn = currentTurn(conversation, sessionId !== null);
+  const [thread, setThread] = useState<{
+    sid: string; document: ThreadDocument; bounded: boolean; tabs: readonly ThreadTab[];
+  } | null>(null);
+  const [error, setError] = useState<{ sid: string; error: Error } | null>(null);
   useEffect(() => {
     if (sessionId === null) return;
     const signal = { aborted: false };
-    void loadHistory(
-      sessionId,
-      fetchHistoryPage,
-      (progress) => {
+    // Cached material belongs to this session for project lifetime.
+    if (conversationStore.get(sessionId).history.state === "loading") {
+      void loadHistory(sessionId, fetchHistoryPage, progress => {
         if (signal.aborted) return;
-        setHistory({ sid: sessionId, value: progress });
-        // First write wins: restore tab titles from the server, not the page
-        // store. §2.8(3)/§7A.4: `text` is the operator's own sentence and
-        // nothing else; a `null` (an unrecoverable legacy prompt) is never
-        // substituted with the envelope — the tab keeps §7.1's noun-phrase
-        // fallback name instead of titling itself with a heading the
-        // operator never wrote.
+        conversationStore.update(sessionId, c => ({ ...c, history: progress }));
         for (const prompt of progress.userPrompts) {
-          if (prompt.text === null) continue;
-          sessionPromptStore.remember(sessionId, prompt.text);
+          if (prompt.text !== null) sessionPromptStore.remember(sessionId, prompt.text);
         }
-      },
-      signal,
-    );
-    return () => {
-      // Abandoning a load matters: appending the previous session's pages to
-      // this session's transcript would join two transcripts, which is the same
-      // defect §8 forbids between two surfaces and for the same reason.
-      signal.aborted = true;
-    };
+      }, signal);
+    }
+    void loadThreadTree(sessionId, fetchThread).then(tree => {
+      if (!signal.aborted) setThread({ sid: sessionId, ...tree, tabs: threadTabs(tree.document) });
+    }).catch((cause: unknown) => {
+      if (!signal.aborted) setError({ sid: sessionId, error: cause instanceof Error ? cause : new Error(String(cause)) });
+    });
+    return () => { signal.aborted = true; };
   }, [sessionId]);
 
-  // -- the thread the tabs are drawn from (§7.1) -------------------------
+  // Refresh ONLY identifiable metadata. Never splice a historical event tail
+  // into live events or use it to heal a transport gap. Tail pages include
+  // outcome-only updates to older turns, even when no event was appended.
+  const terminalId = conversation.execution?.terminal?.terminal_id;
   useEffect(() => {
-    if (sessionId === null) return;
-    let active = true;
-    void loadThreadTree(sessionId, fetchThread)
-      .then((tree) => {
-        if (!active) return;
-        setThread({
-          sid: sessionId,
-          value: { tabs: threadTabs(tree.document), document: tree.document, bounded: tree.bounded },
-        });
-      })
-      .catch((cause: unknown) => {
-        if (!active) return;
-        // `GET …/thread` is not agent-gated (§2.8), so a refusal here is a real
-        // failure and is surfaced rather than rendered as "no thread".
-        setError({
-          sid: sessionId,
-          value: cause instanceof Error ? cause : new Error(String(cause)),
-        });
-      });
-    return () => {
-      active = false;
-    };
-  }, [sessionId]);
-
-  // -- the live suffix (§2.7) --------------------------------------------
-  useEffect(() => {
-    if (sessionId === null || token === null) return;
+    if (sessionId === null || terminalId === undefined || history.endCursor == null) return;
     let attached = true;
-    const update = (next: (state: LiveState) => LiveState): void => {
+    void fetchHistoryPage(sessionId, null, history.endCursor).then(page => {
       if (!attached) return;
-      setLive((prev) => ({
-        sid: sessionId,
-        value: next(prev.sid === sessionId ? prev.value : CONNECTING),
-      }));
-    };
-    const socket = new StreamSocket(
-      { sessionId, token },
-      {
-        onFrame: (frame) => {
-          // §2.7's envelope routes without inspecting payloads. A frame for
-          // another session is not this transcript's, and a frame whose
-          // `session_id` is null is unrouted — it is not attributed to whatever
-          // session this panel happens to be showing.
-          if (frame.session_id !== sessionId) return;
-          update((state) => receive(state, frame));
-        },
-        onStatus: (status) => {
-          update((state) =>
-            status === "live" ? setStatus(state, "live") : disconnected(state, status),
-          );
-        },
-        onResync: () => {
-          update((state) => resync(state));
-        },
-        cursor: () => cursorRef.current,
-      },
-    );
-    socket.open(eventsUrl(window.location));
-    return () => {
-      // Flag first: `close()` reports `detached`, and a state update after
-      // unmount is a warning at best and a leak at worst.
-      attached = false;
-      socket.close();
-    };
-  }, [sessionId, token]);
-
-  const clearRunId = useCallback(() => {
-    if (sessionId === null) return;
-    setLive((prev) => ({
-      sid: sessionId,
-      value: clearLiveRun(prev.sid === sessionId ? prev.value : CONNECTING),
-    }));
-  }, [sessionId]);
-
-  // Both callbacks below take the TARGET session id as an argument rather
-  // than reading this hook's own `sessionId` — see `StreamView.echo`'s doc.
-  // `setLive`'s updater compares `prev.sid` against THAT id, not against the
-  // hook's closed-over `sessionId`, which is what lets the create-then-send
-  // path echo into a session this particular hook render never saw.
-  const echo = useCallback((sid: string, text: string) => {
-    setLive((prev) => ({
-      sid,
-      value: appendEcho(prev.sid === sid ? prev.value : CONNECTING, text),
-    }));
-  }, []);
-
-  const refuseEchoCb = useCallback((sid: string, reason: string) => {
-    setLive((prev) => ({
-      sid,
-      value: refuseEcho(prev.sid === sid ? prev.value : CONNECTING, reason),
-    }));
-  }, []);
-
+      conversationStore.update(sessionId, c => ({ ...c, history: { ...c.history,
+        userPrompts: c.history.userPrompts.map(prompt => {
+          if (prompt.turn === undefined) return prompt;
+          return page.user_prompts?.find(update => update.turn === prompt.turn) ?? prompt;
+        }),
+      } }));
+    }).catch(() => { /* Retain the original frozen record, not invented outcomes. */ });
+    return () => { attached = false; };
+  }, [sessionId, terminalId, history.endCursor]);
+  const clearRunId = useCallback(() => undefined, []); // execution reads own identity
   return {
-    rows: panelRows(shownHistory.items, shownLive.entries, shownHistory.userPrompts, sessionId),
-    status: shownLive.status,
-    history: shownHistory,
-    tabs: shownThread.tabs,
-    threadState: shownThread.document?.thread_state ?? null,
-    threadBounded: shownThread.bounded,
-    resyncs: shownLive.resyncs,
-    runId: shownLive.runId,
-    clearRunId,
-    echo,
-    refuseEcho: refuseEchoCb,
-    midRunAttach: shownLive.midRunAttach,
-    terminals: shownLive.terminals,
-    error: shownError ?? shownHistory.error,
+    rows: panelRows(history.items, live.entries, visiblePrompts(conversation), sessionId),
+    status: sessionId === null ? "historical" : live.status,
+    currentTurn: turn, history,
+    tabs: thread?.sid === sessionId ? thread.tabs : NO_TABS,
+    threadState: thread?.sid === sessionId ? thread.document.thread_state : null,
+    threadBounded: thread?.sid === sessionId ? thread.bounded : false,
+    resyncs: live.resyncs, runId: turn.runId, clearRunId,
+    echo: conversationStore.echo, refuseEcho: conversationStore.rejectEcho,
+    midRunAttach: live.midRunAttach, terminals: live.terminals,
+    error: error?.sid === sessionId ? error.error : history.error,
   };
 }

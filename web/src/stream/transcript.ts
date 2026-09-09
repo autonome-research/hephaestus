@@ -727,7 +727,7 @@ export type { HistoryUserPrompt };
  * §2.8(2)'s outcome, re-exported from the wire types so a renderer importing
  * from the transcript model does not need two imports for one row.
  *
- * ABSENCE MEANS COMPLETED, NEVER UNKNOWN. Nothing here is ever derived: a short
+ * Absence means unknown/open, never completion. Nothing here is ever derived: a short
  * reply, a missing terminal, or a run that stopped sending is not evidence of
  * cancellation, and this module mints no outcome from any of them.
  */
@@ -741,6 +741,7 @@ export type { TurnOutcome, TurnOutcomeState };
  * runtime import from the API layer, which is what makes it pure.
  */
 const KNOWN_OUTCOME_STATES: Readonly<Record<TurnOutcomeState, true>> = {
+  completed: true,
   cancelled: true,
   error: true,
   interrupted: true,
@@ -763,7 +764,7 @@ const KNOWN_OUTCOME_STATES: Readonly<Record<TurnOutcomeState, true>> = {
  * - `text` — the operator's typed sentence and nothing else; `null` when the
  *   record cannot recover it. NOT recovered by stripping a heading (§2.8(3)).
  * - `envelope` — §7A.3's workspace-context block verbatim, when one was sent.
- * - `outcome` — absent for a completed turn.
+ * - `outcome` — absent when the outcome is unknown/open.
  */
 export interface RestoredPrompt {
   readonly turn?: number;
@@ -963,7 +964,7 @@ export type PanelRow =
    *
    * Carries NO `data-event-id` by design — it is a projection of the turn
    * record, not an event — which is why §7.3's skip list names it. It renders
-   * for no other turn: absence of `outcome` means the turn completed.
+   * only for explicit evidence: absence of `outcome` means unknown/open.
    */
   | {
       readonly row: "turn-outcome";
@@ -1350,6 +1351,29 @@ export function panelRows(
  * `data-runtime-fault` is set — derived from the fault + the rows, not a
  * sixth event kind (§15.10).
  */
+/**
+ * Unfold legacy layout groups before React reconciliation. Every call keeps its
+ * own event key, even when a streaming result changes repeat/cycle membership.
+ * This is not text deduplication: every narration and result remains in order.
+ */
+export function presentationRows(rows: readonly PanelRow[]): readonly PanelRow[] {
+  return rows.flatMap((row): readonly PanelRow[] => {
+    if (row.row === "cycle") {
+      return presentationRows(row.pairs.flatMap((pair) => [pair.chip, pair.text]));
+    }
+    if (row.row !== "chip" || row.repeat === undefined) return [row];
+    return row.repeat.map((member) => ({
+      row: "chip",
+      key: member.call.eventId,
+      toolName: row.toolName,
+      call: member.call,
+      result: member.result,
+      images: member.call.eventId === row.call.eventId ? row.images : [],
+      status: chipStatus(member.result),
+    }));
+  });
+}
+
 export function runsWithTerminal(rows: readonly PanelRow[]): ReadonlySet<string> {
   const ids = new Set<string>();
   for (const row of rows) {

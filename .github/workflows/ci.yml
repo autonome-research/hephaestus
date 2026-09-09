@@ -727,6 +727,10 @@ jobs:
       # the fail-rather-than-skip policy the renderer gate already applies.
       # docker/ci/README.md records the binary, its pin and this consumer.
       - run: uv run pytest server/tests/test_http_gltf.py -k khronos -q
+      # Own Vite server and synthetic API evidence; never the G4 fixture server.
+      - name: isolated chat browser checks
+        working-directory: web
+        run: pnpm exec playwright test -c playwright.synthetic.config.ts
       - run: pnpm --dir web test:e2e
 
   web-node:

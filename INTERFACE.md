@@ -1163,9 +1163,60 @@ suspended question would be a second session-ownership mechanism.
 
 ### 2.8 History, threading, and event identity
 
-`GET /sessions/{id}/history?cursor=` is a **passthrough** of
-`BridgeRuntime.history_page`. The opaque base64url cursor is forwarded and
-returned unmodified.
+**AMENDED — execution-evidence stabilization (approved chat integration).**
+This amendment supersedes the older absence-as-completion and assistant-first
+outcome rules below; their historical rationale is retained, not current authority.
+
+Session rows from `GET /sessions` add:
+
+```ts
+execution: {
+  epoch: string;
+  version: number;
+  run_id: string | null;
+  active_run_id: string | null;
+  admission_available: boolean;
+  terminal: {
+    run_id: string;
+    terminal_id: string;
+    state: "completed" | "cancelled" | "failed" | "interrupted";
+    payload: JSONValue;
+  } | null;
+}
+```
+
+`version` increases for each session-list snapshot and is comparable only within
+`epoch`. `run_id` names latest ownership known to this runtime, not a historical
+event identity; `active_run_id` is the authoritative Stop target. Admission and
+terminal settlement are separate facts: a stored winner may exist before the
+holder has released capacity. The durable first terminal wins over competing
+notifications, broadcasts, the blocking prompt result and linked history outcomes.
+Terminal events add nested `payload.payload`, carrying that winner's data.
+
+History `user_prompts[]` adds optional `run_id`; `outcome.state` adds explicit
+`"completed"` to `"cancelled" | "error" | "interrupted"` (`failed` maps to
+history `error`). **An omitted outcome means unknown/open, never success.** A
+run-linked settlement covers all prompts linked to that run, including agent
+retry prompts, never a later run. Explicit settlement beats intermediate
+assistant entries; only unlinked legacy turns may fall back to recognized
+`stop`, `aborted`, or `error` assistant reasons. `toolUse`, `length`, missing,
+and future unknown reasons establish neither completion nor interruption.
+
+Tail history reads repeat earlier prompt metadata even when no new event exists;
+merge refreshed metadata by `turn`, never by non-unique `seq`. A linked active
+prompt cannot be displayed as terminal because of stale historical metadata.
+History event identities, ordinals, page boundaries and opaque cursors do not
+change; refreshed history must not be spliced into live gaps.
+
+**Runtime limit:** latest session/run linkage is memory-scoped. A whole-server
+restart creates a new epoch and does not reconstruct latest ownership from
+history. Explicitly run-linked history still reconciles against durable terminals.
+Older servers omitting `execution` cannot authorize Send or Stop from historical
+or last-frame evidence; the client shows Checking rather than inventing activity.
+
+`GET /sessions/{id}/history?cursor=` forwards opaque cursors and event identities
+from `BridgeRuntime.history_page` unchanged; explicitly run-linked prompt outcomes
+are reconciled against durable terminal evidence.
 
 **TIGHTENING (binds G4.9).** The route exposes **no page-size parameter**.
 `HISTORY_PAGE_SIZE = 250` lives in `agent/src/session/history.ts`, and page 1
@@ -3251,6 +3302,49 @@ rule 1, so it lands here as coverage inside `pnpm test:e2e`:
 ---
 
 ## 7. The agent stream
+
+**AMENDED — approved integrated chat semantics.** This amendment supersedes
+older presentation requirements below for repeat/cycle coalescing, prominent
+recorded/live seams, refused-echo retention, and last-live-frame cancellation.
+Other prior amendments, including CAM/provider/sidebar work, remain intact.
+
+- Recorded and live messages form one continuous reading surface while retaining
+  their separate event identities. Each tool call has its own compact native
+  disclosure, collapsed by default, with expandable arguments and results;
+  expansion survives streaming result updates. Narration stays visible. Failure
+  labels, unanswered questions and known delivery gaps stay prominent; successful
+  outcome/provenance/connection details are secondary, optional diagnostics.
+  A failed session read does not erase already held transcript or gap evidence.
+- `CurrentTurn` is independent of transport/history: `Working` follows active
+  ownership, `Finished` an explicit completed winner, `Stopped` a confirmed
+  cancelled/failed/interrupted winner, and `Checking` unreconciled evidence.
+  Historical outcomes never describe current Stop availability. Missed terminal
+  frames are reconciled through session reads; old-epoch/version or pre-write
+  responses cannot override newer ownership. A pending send cannot inherit the
+  prior run's terminal, nor can a conflicting late POST replace a stored winner.
+- Send, Enter and form submission share one busy/admission guard. Drafts and
+  immutable submitted attempts are session-keyed for project lifetime, surviving
+  collapse, unmount and session switches. Drafts remain editable during a pending
+  POST; settlement clears only the submitted revision, not subsequent edits.
+  A named refusal retains the draft and reason, not a duplicate user-message
+  echo. Uncertain delivery never triggers automatic resend, queueing or cancel;
+  after reconciliation an operator may explicitly keep the draft for a new send.
+- Stop is explicit and targets only a known current `active_run_id`, including
+  authoritative ownership obtained before the first live frame or while the
+  socket is disconnected. A cancel acknowledgement means **Stop requested**, not
+  Stopped; only matching terminal evidence confirms Stopped. Questions are
+  answerable only for reconciled active ownership, never because old history
+  happens to contain an unanswered call.
+- The header shows one compact selected human title and scope, with switch,
+  new-session and collapse controls. Selecting a session closes its switcher and
+  restores focus. The composer stays compact and stable. The divider supports
+  pointer capture/cleanup plus ArrowLeft/ArrowRight, Home/End, visible focus and
+  ARIA width bounds/current value. Width preference stays outside URL state;
+  viewport/rail clamps preserve usable columns and the 44px collapsed control.
+
+Executable synthetic browser coverage is in `web/e2e/synthetic/`; it exercises
+real DOM interaction and isolated HTTP/WebSocket fixtures, not CSS source alone.
+It is not a substitute for the packaged-sidecar/public-fixture Gate G4 suite.
 
 ### 7.1 Session tabs and threading
 
@@ -7601,6 +7695,22 @@ strictly stronger than failing closed per runtime**, because the per-runtime
 version's practical effect is that operators delete providers from a config file
 to get unstuck.
 
+**AMENDED 2026-09-09 — catalogs from existing subscriptions may be newer.**
+Discovery can read model ids from a newer local Pi installation than the bundled
+agent. For a native provider with a credential and at least one recognized
+**declared** model, setup remains available and reports unknown declarations
+as `unavailable_models: [{id, unavailable_reason: "model_unknown"}]` on the
+configure result and provider projection. The unknown declarations stay in the
+configuration; neither their definitions nor code are imported from the other
+installation. No recognized declared model means the provider still refuses
+`model_unknown`. No credential or unknown provider still fails closed.
+Default selection uses the first recognized declared model, never an undeclared
+catalog entry or a replacement for an explicitly named unsupported model.
+The panel shows partial readiness at rest and names unsupported models in
+configuration, so partial setup is not silent substitution or a claim that all
+models verified. This changes the all-models-required setup rule, not the
+credential-write guard or the no-background-network rule.
+
 ### 23.8 Showing signed-in state without showing the secret
 
 `ProvidersPanel` renders one row per declared provider, on **two axes never
@@ -7683,6 +7793,26 @@ sign-in/rotate action's `data-variant` is not `primary`; fixture with no
 `providers.json` credentials (composer `agent_unavailable`) — it is; fixture
 with a configured provider whose health is `rejected` and the composer enabled
 — it is not.
+
+**AMENDED 2026-09-09 — existing-subscription recovery.** Runtime setup and
+credential health remain separate: setup `available: null` renders as not yet
+checked, never as verified; `available: false` renders its named reason and a
+remedy even on the compact face. A saved credential is not proof of a usable
+provider, so discovery remains reachable at rest when any configured provider
+has not passed setup. A model-catalog mismatch is a configuration problem, not
+an assertion that the subscription is invalid. Adoption moves focus to the
+agent only after the adopted provider's setup succeeds; otherwise it opens the
+configuration details and keeps the failure visible.
+
+A linked sign-in is a supported subscription path, not an instruction to
+replace a key. Its source is `linked`, not `project`; the panel names sharing
+and explains that disconnecting leaves the original app signed in. While the
+auth file is linked, the panel offers no sign-in, key-replacement or sign-out
+controls for **any** provider, matching §23.5's file-wide write guard. The
+explicit disconnect remains in configuration details. Subscription-only
+configurations with an empty environment allowlist omit that irrelevant table
+row; it is still shown for API-key providers or recorded variable names.
+No discovery, adoption, unlink or outbound credential check occurs on mount.
 
 ### 23.9 Sign-out and rotation
 

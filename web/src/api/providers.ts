@@ -104,6 +104,11 @@ export interface ProviderRow {
   /** §23.7's per-provider verification. `null` when no sidecar has answered. */
   readonly available: boolean | null;
   readonly unavailable_reason: string | null;
+  /** Declared models absent from the bundled catalog; never silently removed. */
+  readonly unavailable_models?: readonly {
+    readonly id: string;
+    readonly unavailable_reason: "model_unknown";
+  }[];
 }
 
 /** One recorded egress acknowledgement (§23.3). Permanent, and listed. */

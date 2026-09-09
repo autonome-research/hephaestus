@@ -449,6 +449,8 @@ describe("Fit / Cancel / disclose resting chrome and Button min-width (issues 67
           agentUnavailable={false}
           liveRunId="run-live"
           streamLive
+          currentTurn={{ status: "Working", runId: "run-live", reason: null,
+            canSend: false, canAnswer: true, terminalRunId: null, stopRequested: false }}
         />
       </QueryClientProvider>,
     );

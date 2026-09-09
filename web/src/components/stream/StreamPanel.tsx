@@ -65,7 +65,6 @@ import { processGone, runtimeFaultOf, type RuntimeFault } from "../../stream/run
 import { sessionCannotPrompt } from "../../stream/sessionPromptGate";
 import {
   createSession,
-  fetchSessions,
   type ProfileCapability,
   type SessionRow,
   type SessionsDocument,
@@ -78,6 +77,7 @@ import { shellStore } from "../../state/shell";
 import { sessionEmptyBody, sessionEmptyKind } from "../../stream/sessionEmpty";
 import { showsEmptyTranscript } from "../../stream/streamChrome";
 import { useStream } from "../../stream/useStream";
+import { readExecutionSessions } from "../../stream/conversation";
 import { useFollowScroll } from "../../stream/followScroll";
 import { sessionPromptStore } from "../../stream/sessionPrompts";
 import { titleForSession } from "../../stream/sessionTitle";
@@ -102,7 +102,7 @@ export function StreamPanel(): React.JSX.Element {
   const client = useQueryClient();
   const sessions = useQuery<SessionsDocument, Error>({
     queryKey: ["sessions"],
-    queryFn: fetchSessions,
+    queryFn: readExecutionSessions,
     staleTime: SESSIONS_STALE_MS,
     // A named refusal is the server's considered answer; retrying an
     // `agent_unavailable` produces the same refusal at the cost of load.
@@ -344,13 +344,23 @@ export function StreamPanel(): React.JSX.Element {
           saying nothing is wrong. With no session there is nothing to report at
           all. `StreamHeader` returns null when the row would be empty;
           `agent_unavailable` has no history to count. */}
+      {stream.currentTurn.status === null ? null : (
+        <p className={styles["note"]} role="status" aria-live="polite" data-current-turn={stream.currentTurn.status}>
+          <strong>{stream.currentTurn.status}</strong>
+          {stream.currentTurn.reason === null ? null : ` — ${stream.currentTurn.reason}`}
+          {stream.currentTurn.stopRequested ? ` — ${copy.composer.stopRequested}` : null}
+        </p>
+      )}
       {selected === null ? null : (
+        <details>
+        <summary>{copy.stream.connectionDetails}</summary>
         <StreamHeader
           status={stream.status}
-          fault={fault}
+          fault={null}
           history={unavailable ? null : stream.history}
           resyncs={stream.resyncs}
         />
+        </details>
       )}
 
       {/* §3.3's principle 5: "The agent is a peer surface, and its emptiness
@@ -376,14 +386,14 @@ export function StreamPanel(): React.JSX.Element {
             role="status"
             aria-live="polite"
           >
-            <span className={styles["faultTitle"]}>{copy.stream.runtimeFaultTitle}</span>
+            <span className={styles["faultTitle"]}>{copy.composer.checking}</span>
             {/* §7.4(d), amended 2026-09-01: the grade in one sentence, the
                 mechanism on `title`. The paragraph is not deleted — a reader
                 who wants to know what a restart did to the turn in flight asks
                 for it, and the band stops spending four lines saying it to a
                 reader who does not. */}
             <span title={copy.stream.runtimeFaultDetail[fault]}>
-              {copy.stream.runtimeFaultWhy[fault]}
+              {copy.stream.executionUnavailable}
             </span>
             <span className={styles["note"]} title={copy.stream.runtimeFaultNextDetail}>
               {copy.stream.runtimeFaultNext}
@@ -427,7 +437,9 @@ export function StreamPanel(): React.JSX.Element {
           </p>
         ) : null}
 
-        {selected !== null && !unavailable ? (
+        {/* A failed admission read blocks writes, not already held conversation
+            evidence; keep narration, questions and delivery gaps inspectable. */}
+        {selected !== null && (!unavailable || stream.rows.length > 0) ? (
           <>
             {/* The two history outcomes that are not a count. `failed` keeps its
                 sentence even beside the fault band: one says the recorded
@@ -467,7 +479,7 @@ export function StreamPanel(): React.JSX.Element {
                 data-transcript-scroll=""
                 data-overlay-scroll=""
               >
-                <Transcript rows={stream.rows} runtimeFault={fault} />
+                <Transcript rows={stream.rows} currentTurn={stream.currentTurn} />
               </div>
               {following ? null : (
                 <Button
@@ -492,6 +504,7 @@ export function StreamPanel(): React.JSX.Element {
       <Composer
         sessionId={selected}
         profile={activeProfile}
+        currentTurn={stream.currentTurn}
         attach={attach}
         agentUnavailable={unavailable}
         liveRunId={stream.runId}
