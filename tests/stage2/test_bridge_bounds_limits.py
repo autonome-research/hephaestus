@@ -59,6 +59,7 @@ from hephaestus.agent_bridge.limits import (
     MAX_STRING_BYTES,
     MAX_TOTAL_PIXELS,
     PROMPT_MAX_UTF8_BYTES,
+    TURN_SECONDS,
     ImageDims,
     ImageError,
     LimitError,
@@ -132,6 +133,11 @@ COVERED: Final[frozenset[str]] = frozenset(
         "admission.run_slots",
         "events.buffered_events",
         "timeouts.tool_seconds",
+        # 2026-09-09: a TURN's budget, distinct from a tool's. `BridgeRuntime.
+        # prompt` bounds its `session.prompt` call with it when the caller names
+        # none, which every HTTP prompt does. Enforced there and boundary-tested
+        # by `test_bridge_bounds_turn_budget_is_not_the_tool_budget` below.
+        "timeouts.turn_seconds",
         "timeouts.delegation.deadline_default_seconds",
         "timeouts.delegation.deadline_min_seconds",
         "timeouts.delegation.deadline_max_seconds",
@@ -413,6 +419,25 @@ def test_bridge_bounds_buffered_event_boundary_coalesces_progress_only() -> None
 
 # ---------------------------------------------------------------------------
 # timeouts + prompt
+
+
+def test_bridge_bounds_turn_budget_is_not_the_tool_budget() -> None:
+    """A turn is bounded as a turn, and the two numbers cannot silently merge.
+
+    `POST /sessions/{id}/prompt` names no timeout, so before this the turn
+    inherited `SupervisorConfig.default_timeout_s`, i.e. `tool_seconds`: a
+    120 s ceiling around a turn that runs a model round trip plus tools, one of
+    which the sidecar itself allows `cad_build_seconds`. The watchdog's answer
+    to an overdue call is to kill the whole sidecar, so the mismatch cost every
+    session in the process (CI run 34327109619, `web/e2e/composer.spec`).
+    """
+    assert float(LIMITS["timeouts"]["turn_seconds"]) == TURN_SECONDS
+    # A turn must outlast both the tool bound and the longest single tool the
+    # sidecar will wait for, or the bound is decorative.
+    assert float(LIMITS["timeouts"]["tool_seconds"]) < TURN_SECONDS
+    assert float(LIMITS["timeouts"]["cad_build_seconds"]) < TURN_SECONDS
+    # A delegated child turn IS a turn: one number, not two that drift.
+    assert float(LIMITS["timeouts"]["delegation"]["deadline_default_seconds"]) == TURN_SECONDS
 
 
 def test_bridge_bounds_tool_timeout_is_the_declared_default_deadline() -> None:

@@ -36,6 +36,7 @@
   },
   "timeouts": {
     "tool_seconds": 120,
+    "turn_seconds": 600,
     "cad_build_seconds": 300,
     "delegation": {
       "deadline_default_seconds": 600,

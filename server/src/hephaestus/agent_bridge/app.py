@@ -72,6 +72,7 @@ from .events import (
     ObserverClient,
     PerClientQueue,
 )
+from .limits import TURN_SECONDS
 from .protocol import ErrorCode, ProtocolError
 from .query_snapshot import (
     QuerySnapshotError,
@@ -1665,7 +1666,14 @@ class BridgeRuntime:
             # is safe for the same reason the read's is — the sidecar refused the
             # frame before running anything, so nothing is re-run.
             result = self._call_for_session(
-                "session.prompt", params, session_id=session_id, timeout=timeout
+                "session.prompt",
+                params,
+                session_id=session_id,
+                # A TURN's budget, never the supervisor's tool default: see
+                # ``limits.TURN_SECONDS``. A caller that names its own bound
+                # (the delegation runner bounds a child at the child's own
+                # deadline) still wins.
+                timeout=TURN_SECONDS if timeout is None else timeout,
             )
             status = str(result.get("status", "completed"))
         finally:

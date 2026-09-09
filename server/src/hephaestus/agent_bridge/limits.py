@@ -25,6 +25,7 @@ from hephaestus.core.limits import limits_path as core_limits_path
 
 __all__ = [
     "LIMITS",
+    "TURN_SECONDS",
     "ImageDims",
     "ImageError",
     "LimitError",
@@ -83,6 +84,20 @@ MAX_JSON_MEMBERS: Final[int] = int(_JSON["max_members"])
 MAX_JSON_ARRAY_ITEMS: Final[int] = int(_JSON["max_array_items"])
 MAX_STRING_BYTES: Final[int] = int(_JSON["max_string_bytes"])
 MAX_BINARY_BYTES: Final[int] = int(_BINARY["max_binary_bytes"])
+
+#: One model TURN's budget, in seconds — the bound on a ``session.prompt`` call.
+#:
+#: A turn is not a tool. ``timeouts.tool_seconds`` bounds ONE tool call, and a
+#: turn runs a model round trip plus however many tools the model asks for, one
+#: of which may be a build the sidecar itself allows ``cad_build_seconds``
+#: (300 s). Defaulting the turn call to the tool bound therefore placed a
+#: 120 s ceiling around a thing that legitimately takes longer, and the
+#: watchdog's remedy for an overdue call is to kill the whole sidecar — every
+#: session in the process — over latency that was never a fault. Set to the
+#: delegated child's own default (``delegation.deadline_default_seconds``)
+#: because a delegated child turn IS a turn: the two must not disagree about
+#: how long one is allowed to take.
+TURN_SECONDS: Final[float] = float(LIMITS["timeouts"]["turn_seconds"])
 MAX_IMAGE_BYTES: Final[int] = int(_IMAGE["max_image_bytes"])
 MAX_IMAGE_WIDTH: Final[int] = int(_IMAGE["max_width"])
 MAX_IMAGE_HEIGHT: Final[int] = int(_IMAGE["max_height"])
