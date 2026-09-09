@@ -783,7 +783,10 @@ jobs:
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           sudo apt-get update -q
-          sudo apt-get install -y -q bubblewrap
+          # bubblewrap for the sandbox; the Mesa/EGL set for the renderer, which
+          # docs/install.md's "Rendering" entry names. Both are prerequisites a
+          # human installs by hand, so they are installed here by hand too.
+          sudo apt-get install -y -q bubblewrap libegl1 libgl1 libgl1-mesa-dri libglx-mesa0
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: the documented first command
         run: ./scripts/bootstrap.sh --no-web

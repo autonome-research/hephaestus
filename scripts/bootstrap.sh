@@ -276,6 +276,14 @@ Linux)
 	else
 		warn "bubblewrap (bwrap) not found. The build below will still succeed, but \`heph build\` refuses to run part scripts without an OS sandbox (sandbox_unavailable) — see docs/install.md. Install your distribution's 'bubblewrap' package when you need script execution."
 	fi
+	# Rendering needs a headless EGL (Mesa's software rasterizer). Not needed to
+	# build, but `heph render`, the inspector's views and the sidecar-backed
+	# suites fail without it, so say so here rather than at the first render.
+	if ldconfig -p 2>/dev/null | grep -q 'libEGL\.so\.1'; then
+		say "    libEGL    found"
+	else
+		warn "libEGL.so.1 not found. Builds work, but \`heph render\` and every image-returning tool fail without a headless EGL — install your distribution's Mesa/EGL packages (docs/install.md, \"Rendering\")."
+	fi
 	;;
 *)
 	say "    bwrap     n/a — sandboxed part scripts are Linux-only (docs/install.md); everything this script builds works here"

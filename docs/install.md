@@ -188,6 +188,13 @@ checkout serves its own `web/dist` whatever `--project` names.
   start will now exit 2 until you either install bubblewrap or pass
   `--unsafe-local-executor` deliberately. `heph serve --web` and `heph serve
   --mcp` have always probed and have no such flag at all.
+- **Rendering** (`heph render`, the inspector's views, every tool that returns
+  an image, and the sidecar-backed suites that exercise them) — a headless EGL
+  with Mesa's software rasterizer; no GPU and no display. Debian/Ubuntu:
+  `libegl1 libgl1 libgl1-mesa-dri libglx-mesa0`. Arch: `mesa`. Fedora:
+  `mesa-libEGL mesa-libGL mesa-dri-drivers`. `scripts/bootstrap.sh --check`
+  warns when `libEGL.so.1` is not on the loader path; without it a render
+  fails with `Unable to load EGL library` rather than a named refusal.
 - **macOS** — no script execution in v0.1. `heph lint`, schema/contract reads,
   and `heph --version` work. A capability-tested OCI backend is post-v0.1.
 - **Agent sidecar** (`heph agent`, agent-backed serve) — Node ≥ 22.19 on
