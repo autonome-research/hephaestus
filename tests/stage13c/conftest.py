@@ -19,6 +19,7 @@ of what §7's independence means.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -30,6 +31,42 @@ if TYPE_CHECKING:
     from hephaestus.core.project_store.layout import ProjectLayout
 
     from opstore import OpStore
+
+
+#: The solve budget this suite runs under, in seconds. The engine's default
+#: wall-clock ceiling (``SOLVE_TIMEOUT_S``, 60 s) is a PRODUCTION bound and is
+#: exercised by name in Stage 13B; here it is not the subject, and it is the one
+#: number that makes these clauses depend on the machine rather than on the
+#: code. A two-``Param`` solve is tens of preview builds, and on a laptop on
+#: battery (CPU held near 1 GHz) the same solve that takes ~50 s on mains takes
+#: ~240 s and fails "the wall-clock ceiling fired after 2 iterations" on every
+#: commit. The suite therefore declares its own budget (J-mirrors-and-dx-23:
+#: a wall-clock budget a test depends on is stated, not inherited), generous
+#: enough that a genuinely hung solve still fails by name within the pytest
+#: timeout. An operator's explicit override in the environment wins.
+SOLVE_BUDGET_S = "600"
+
+
+@pytest.fixture(scope="session", autouse=True)
+def solve_budget() -> Iterator[None]:
+    """State the suite's solve ceiling for every in-process and child solve.
+
+    Set in the environment rather than passed per call because the
+    determinism clauses solve in fresh interpreters (``test_g13c_determinism``)
+    that must see the same ceiling as the session fixture — the environment is
+    what both read.
+    """
+    name = "HEPHAESTUS_SOLVE_TIMEOUT_S"
+    previous = os.environ.get(name)
+    if previous is None:
+        os.environ[name] = SOLVE_BUDGET_S
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = previous
 
 
 @pytest.fixture(scope="session")
