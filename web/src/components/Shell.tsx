@@ -28,12 +28,12 @@
 // focusing or activating the strip expands the column, "because a composer
 // cannot live in 44px" (§7A.1).
 
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
 import { useProjectRefresh } from "../api/projectRefresh";
 import { useProject } from "../api/queries";
 import { copy } from "../copy";
 import { useWorkspace } from "../state/react";
-import { shellStore } from "../state/shell";
+import { shellStore, streamSizing } from "../state/shell";
 import { Button, Icon, useBreakpoint } from "../system";
 import { bindOverlayScrollTree } from "../system/overlayScroll";
 import roles from "../system/type.module.css";
@@ -47,10 +47,76 @@ import { Stage } from "./stage/Stage";
 import { StreamPanel } from "./stream/StreamPanel";
 import styles from "./Shell.module.css";
 
+/** Captured pointer events stay local to the seam; no document drag listeners. */
+export function StreamResize({
+  sizing,
+  viewportWidth,
+}: {
+  readonly sizing: ReturnType<typeof streamSizing>;
+  readonly viewportWidth: number;
+}): React.JSX.Element {
+  const drag = useRef<{ element: HTMLDivElement; id: number; x: number; width: number } | null>(null);
+  const finish = useCallback(() => {
+    const active = drag.current;
+    drag.current = null;
+    if (active?.element.hasPointerCapture(active.id)) active.element.releasePointerCapture(active.id);
+  }, []);
+
+  // Also end capture on collapse/unmount, viewport changes, and window deactivation.
+  useLayoutEffect(() => finish, [finish, viewportWidth]);
+  useEffect(() => {
+    window.addEventListener("blur", finish);
+    return () => window.removeEventListener("blur", finish);
+  }, [finish]);
+
+  return (
+    <div
+      className={styles["streamResize"]}
+      role="separator"
+      aria-label={copy.stream.resize}
+      aria-orientation="vertical"
+      aria-controls="chat-column"
+      aria-valuemin={sizing.min}
+      aria-valuemax={sizing.max}
+      aria-valuenow={sizing.width}
+      aria-valuetext={copy.stream.width(sizing.width)}
+      tabIndex={0}
+      data-stream-resize=""
+      onPointerDown={(event) => {
+        if (!event.isPrimary || event.button !== 0 || drag.current !== null) return;
+        event.preventDefault();
+        event.currentTarget.focus();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        drag.current = { element: event.currentTarget, id: event.pointerId, x: event.clientX, width: sizing.width };
+      }}
+      onPointerMove={(event) => {
+        const active = drag.current;
+        if (active === null || active.id !== event.pointerId) return;
+        shellStore.setStreamWidth(active.width + active.x - event.clientX);
+      }}
+      onPointerUp={(event) => { if (drag.current?.id === event.pointerId) finish(); }}
+      onPointerCancel={(event) => { if (drag.current?.id === event.pointerId) finish(); }}
+      onLostPointerCapture={(event) => { if (drag.current?.id === event.pointerId) finish(); }}
+      onKeyDown={(event) => {
+        const step = event.shiftKey ? 40 : 10;
+        const next = event.key === "Home" ? sizing.min
+          : event.key === "End" ? sizing.max
+          : event.key === "ArrowLeft" ? sizing.width + step
+          : event.key === "ArrowRight" ? sizing.width - step : null;
+        if (next === null) return;
+        event.preventDefault();
+        finish();
+        shellStore.setStreamWidth(next);
+      }}
+    />
+  );
+}
+
 export function Shell(): React.JSX.Element {
   // §7A.11 lives at project lifetime, not Stream column mount (#92).
   useProjectRefresh();
   const shell = useBreakpoint();
+  const sizing = streamSizing(shell);
   // §4.1: when the pin is not the current build "the header is visibly marked
   // and every panel below inherits that marking".
   //
@@ -137,6 +203,7 @@ export function Shell(): React.JSX.Element {
       />
       <div
         className={styles["body"]}
+        style={{ "--stream-width": `${String(sizing.width)}px` } as CSSProperties}
         data-stream={shell.streamOpen ? "open" : "collapsed"}
         data-rail={shell.railOverlay ? (shell.railOpen ? "overlay" : "hidden") : "column"}
         data-band={shell.band}
@@ -185,14 +252,28 @@ export function Shell(): React.JSX.Element {
             running turn without leaving the page, so the panel is *on* the page
             rather than behind a settings route the empty state links to.
           */}
-          <ProvidersPanel />
+          <ProvidersPanel
+            onAttached={() => {
+              shellStore.setRailOpen(false);
+              shellStore.setStreamOpen(true);
+              // Let the newly expanded agent column mount before moving
+              // keyboard focus. Never create a session or send a turn here.
+              requestAnimationFrame(() => {
+                document.querySelector<HTMLElement>(
+                  '[data-composer-input]:not(:disabled), [data-create-profile="orchestrator"]:not(:disabled)',
+                )?.focus();
+              });
+            }}
+          />
         </nav>
 
         <main className={styles["stage"]}>
           <Stage />
         </main>
 
-        <aside className={styles["stream"]} aria-label={copy.stream.title}>
+        {shell.streamOpen ? <StreamResize sizing={sizing} viewportWidth={shell.viewportWidth} /> : null}
+
+        <aside className={styles["stream"]} id="chat-column" aria-label={copy.stream.title}>
           {shell.streamOpen ? (
             /* §4.1(h), amended 2026-09-02 (C25): the eyebrow band is struck AS
                A BAND. The collapse control renders as the trailing item of the

@@ -583,9 +583,9 @@ describe("composer chrome — talking surface, not a Plan/DFM toolbar", () => {
     expect(composer).toContain("promptRows");
   });
 
-  it("defaults the idle prompt to one row so Send stays on-screen", () => {
+  it("keeps a compact stable input height so editing does not move Send", () => {
     const composer = readFileSync(join(webSrc, "components/stream/Composer.tsx"), "utf8");
-    expect(composer).toMatch(/promptFocused \|\| text\.trim\(\) !== "" \? 3 : 1/);
+    expect(composer).toContain("const promptRows = 2;");
     expect(composer).toContain("data-composer-send");
     expect(composer).toContain("data-composer-cancel");
     expect(composer).toContain("data-context-disclose");

@@ -41,6 +41,7 @@
 // operator who wants §23.4's no-listener guarantee absolutely should use
 // `device_code`, which is why it is the default everywhere it exists.
 
+import { lstatSync } from "node:fs";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
 
@@ -248,6 +249,29 @@ export function healthOfError(error: string): Health {
   // nothing about the credential, so the axis keeps its previous answer rather
   // than inventing one.
   return observations.size === 0 ? "unused" : "accepted";
+}
+
+export type CredentialSourceState = "none" | "env" | "serve" | "project" | "linked";
+
+/** Map Pi's auth source onto §23.8's ownership axis. Reads metadata only. */
+export function credentialSourceState(
+  source: string | undefined,
+  authPath: string,
+): CredentialSourceState {
+  if (source === "stored") {
+    // Pi's "stored" means only "from auth.json". The symlink is the fact that
+    // distinguishes the operator's shared credential from an app-owned project
+    // credential, and checking it must never open or parse the target.
+    try {
+      if (lstatSync(authPath).isSymbolicLink()) return "linked";
+    } catch {
+      // A concurrently removed path is simply not linked at this observation.
+    }
+    return "project";
+  }
+  if (source === "runtime") return "serve";
+  if (source === "environment") return "env";
+  return "none";
 }
 
 /** Per-provider login flows. At most one at a time (§23.6). */

@@ -853,19 +853,41 @@ def providers_projection(
         source = str(auth.get("state", default_source))
         if source not in AUTH_SOURCES:  # pragma: no cover - the sidecar's vocabulary is closed too
             source = "none"
+        # Pi can identify that a credential came from its configured auth.json,
+        # but not who owns that path: both an app-owned file and our symlink are
+        # reported as "stored" (mapped to "project" by the sidecar). This layer
+        # owns the filesystem provenance, so it restores §23.8's distinction.
+        if linked and spec["kind"] == "pi_native" and source == "project":
+            source = "linked"
         health = str(auth.get("health", "unused"))
         if health not in AUTH_HEALTH:  # pragma: no cover
             health = "unused"
-        rows.append(
-            {
-                **spec,
-                "source": source,
-                "health": health,
-                "last_observed_at": auth.get("last_observed_at"),
-                "available": verify.get("available"),
-                "unavailable_reason": verify.get("unavailable_reason"),
-            }
-        )
+        unavailable_models: list[dict[str, str]] = []
+        raw_unavailable_models = verify.get("unavailable_models")
+        if isinstance(raw_unavailable_models, list):
+            for raw_model in cast("list[Any]", raw_unavailable_models):
+                if not isinstance(raw_model, dict):
+                    continue
+                model_status = _obj(raw_model)
+                model_id = model_status.get("id")
+                reason = model_status.get("unavailable_reason")
+                if isinstance(model_id, str) and model_id and reason == "model_unknown":
+                    # The bridge may grow diagnostic text later; the HTTP read
+                    # side projects only the declared id and closed reason.
+                    unavailable_models.append(
+                        {"id": model_id, "unavailable_reason": "model_unknown"}
+                    )
+        row: dict[str, Any] = {
+            **spec,
+            "source": source,
+            "health": health,
+            "last_observed_at": auth.get("last_observed_at"),
+            "available": verify.get("available"),
+            "unavailable_reason": verify.get("unavailable_reason"),
+        }
+        if unavailable_models:
+            row["unavailable_models"] = unavailable_models
+        rows.append(row)
     return {
         "status": "ok",
         "config_path": str(file.path),

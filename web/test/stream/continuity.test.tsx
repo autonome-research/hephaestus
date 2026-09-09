@@ -203,12 +203,17 @@ describe("(h) the seam names which boundary it is", () => {
     document.body.replaceChildren();
   });
 
-  it("renders the ordinary label at the end of a run this tab held from the start", () => {
+  it("keeps the delivery boundary inspectable without splitting the conversation", () => {
     const host = mountTranscript(seamRows("end"));
     const seam = host.querySelector("[data-seam]");
     expect(seam).not.toBeNull();
     expect(seam?.getAttribute("data-seam-kind")).toBe("end");
-    expect(seam?.textContent ?? "").toContain("End of the recorded transcript");
+    const details = seam?.querySelector("details");
+    expect(details).not.toBeNull();
+    expect(details?.open).toBe(false);
+    expect(details?.querySelector("summary")?.textContent).toBe(copy.stream.deliveryDetails);
+    expect(details?.textContent).toContain(copy.stream.seam);
+    expect(seam?.textContent).not.toContain("End of the recorded transcript");
   });
 
   it("renders a DIFFERENT label for a mid-run attach — never the end-of-transcript claim", () => {
@@ -231,7 +236,7 @@ describe("(h) the seam names which boundary it is", () => {
 // `live.test.ts`); this is the presentation half.
 // ---------------------------------------------------------------------------
 
-describe("(g) a refused echo is visibly marked, and never loses its text", () => {
+describe("(g) a refused attempt retains its reason without duplicating the editable draft", () => {
   afterEach(() => {
     document.body.replaceChildren();
   });
@@ -245,7 +250,7 @@ describe("(g) a refused echo is visibly marked, and never loses its text", () =>
     expect(row?.getAttribute("data-echo-state")).toBe("sent");
   });
 
-  it("marks a named refusal, keeps the sent words verbatim, and names the server's own reason", () => {
+  it("marks a named refusal without presenting rejected words as a user turn", () => {
     const host = mountTranscript([
       {
         row: "local-prompt",
@@ -259,8 +264,11 @@ describe("(g) a refused echo is visibly marked, and never loses its text", () =>
     expect(row).not.toBeNull();
     expect(row?.getAttribute("data-echo-state")).toBe("refused");
     expect(row?.getAttribute("data-refused-reason")).toBe("run_in_flight");
-    // C2's never-removed rule: the words are still there, verbatim.
-    expect(row?.textContent ?? "").toContain("add a 3mm fillet");
+    // Approved replacement for C2: draft retention belongs to the composer;
+    // a refused attempt must not repeat those words as a transcript message.
+    expect(row?.textContent ?? "").not.toContain("add a 3mm fillet");
+    expect(row?.querySelector("[data-markdown]")).toBeNull();
+    expect(row?.querySelector("[data-send-rejected]")?.textContent).toContain("run_in_flight");
     // No event id on a presentation row, refused or not.
     expect(row?.getAttribute("data-event-id")).toBeNull();
   });

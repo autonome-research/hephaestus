@@ -110,11 +110,11 @@ describe("how a failed prompt is graded so the 500 does not hide unknown (#52)",
     );
   });
 
-  it("does not paint a refused footer for a named liveness reason", () => {
+  it("keeps delivery unknown for liveness failures rather than claiming refusal or settlement", () => {
     expect(promptFailurePost(new WorkspaceError(503, "process_down", "sidecar restarted"))).toBe(
-      "idle",
+      "unknown",
     );
-    expect(promptFailurePost(new WorkspaceError(504, "timeout", "no response"))).toBe("idle");
+    expect(promptFailurePost(new WorkspaceError(504, "timeout", "no response"))).toBe("unknown");
   });
 
   it("keeps a named 4xx as refused, and a lost POST as unknown", () => {

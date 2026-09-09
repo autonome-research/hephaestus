@@ -23,6 +23,9 @@
   padding: var(--space-2) var(--space-3) var(--space-3);
   border-top: 1px solid var(--border);
   flex: 0 0 auto;
+  min-width: 0;
+  max-height: 45%;
+  overflow-y: auto;
 }
 
 /* ---- the resting context line (§7A.3(a), 2026-09-01) ---------------- */
@@ -137,7 +140,11 @@
   composes: body from "../../system/type.module.css";
   margin: 0;
   color: var(--ink-base);
+  overflow-wrap: anywhere;
 }
+
+.note p { margin: 0; }
+.grow textarea { max-height: 8rem; resize: vertical; }
 
 /*
  * §7A.8's composed refusal. `stretch` — NOT `flex-start` (J-web-stream-3).
@@ -202,6 +209,8 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  max-height: 12rem;
+  overflow: auto;
 }
 
 /*

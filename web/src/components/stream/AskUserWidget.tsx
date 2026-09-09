@@ -64,7 +64,9 @@ import styles from "./Transcript.module.css";
 export function AskUserWidget({
   row,
   death = null,
+  executionAllowed = true,
 }: {
+  readonly executionAllowed?: boolean;
   readonly row: AskRowLike;
   readonly death?: AskRuntimeDeath | null;
 }): React.JSX.Element | null {
@@ -85,7 +87,7 @@ export function AskUserWidget({
   // Two flags, because "the controls are here but busy" and "there are no
   // controls" are different states and rendering them the same way would make a
   // post in flight look like a question that cannot be answered.
-  const interactive = content.state === "answerable";
+  const interactive = content.state === "answerable" && executionAllowed;
   const composing = interactive || content.state === "submitting";
   /**
    * WHY A CONTROL IS OFF, in words (§4.7: "Disabled requires a `reason` prop…
@@ -96,7 +98,7 @@ export function AskUserWidget({
    * so the `title` a pointer sees and the `aria-describedby` a screen reader
    * hears are the same sentence the widget already prints in place.
    */
-  const offReason =
+  const offReason = !executionAllowed ? copy.composer.checking :
     content.lostToRuntime && content.answered
       ? copy.stream.ask.answeredRunLost
       : content.lostToRuntime
@@ -119,7 +121,7 @@ export function AskUserWidget({
     // `null` for a choice the question does not admit, and the two ids are what
     // the route is addressed by. A widget without them is already rendering
     // `unavailable` with the reason, so there is nothing to say here.
-    if (value === null || sessionId === null || questionId === null) return;
+    if (!interactive || value === null || sessionId === null || questionId === null) return;
     setPost({ phase: "sending" });
     void answerQuestion(sessionId, questionId, value).then(
       (document) => {

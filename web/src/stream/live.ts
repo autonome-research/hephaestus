@@ -202,7 +202,9 @@ export function receive(state: LiveState, frame: EventFrame): LiveState {
     // holds is only ever a run that is live *now*. Unlike `cursor`, which must
     // not carry a seq the browser rounded, this is an identity the composer
     // renders, never a value echoed back to the server.
-    runId: frame.kind === "terminal" ? null : frame.run_id,
+    runId: frame.kind === "terminal"
+      ? (state.runId === frame.run_id ? null : state.runId)
+      : frame.run_id,
     terminals: state.terminals + (frame.kind === "terminal" ? 1 : 0),
     resyncs: state.resyncs,
     seen: seen.length > LIVE_DEDUPE_WINDOW ? seen.slice(seen.length - LIVE_DEDUPE_WINDOW) : seen,
@@ -299,10 +301,10 @@ export function refuseEcho(state: LiveState, reason: string): LiveState {
   if (index === -1) return state;
   const entry = state.entries[index];
   if (entry === undefined || entry.entry !== "echo" || entry.state === "refused") return state;
-  const updated: EchoEntry = { ...entry, state: "refused", refusedReason: reason };
-  const entries = [...state.entries];
-  entries[index] = updated;
-  return { ...state, entries };
+  // Named rejection is not conversation. Submitted text/reason remain in
+  // the controller's delivery record and the editable draft, not a fake turn.
+  void reason;
+  return { ...state, entries: state.entries.filter((_, i) => i !== index) };
 }
 
 function lastEchoIndex(entries: readonly LiveEntry[]): number {

@@ -177,13 +177,7 @@ describe("a refused echo (§7A.5)", () => {
     state = appendEcho(state, "add a 3mm fillet");
     state = refuseEcho(state, "run_in_flight");
     const tail = state.entries[state.entries.length - 1];
-    expect(tail).toEqual({
-      entry: "echo",
-      key: "echo:0",
-      text: "add a 3mm fillet",
-      state: "refused",
-      refusedReason: "run_in_flight",
-    });
+    expect(tail).toBeUndefined();
   });
 
   it("is a no-op when there is no echo to mark", () => {
@@ -198,7 +192,7 @@ describe("a refused echo (§7A.5)", () => {
     state = refuseEcho(state, "agent_unavailable");
     const [first, second] = state.entries;
     expect(first?.entry === "echo" ? first.state : null).toBe("sent");
-    expect(second?.entry === "echo" ? second.state : null).toBe("refused");
+    expect(second).toBeUndefined();
   });
 
   it("does not overwrite the reason on a second report", () => {
@@ -207,7 +201,7 @@ describe("a refused echo (§7A.5)", () => {
     state = refuseEcho(state, "run_in_flight");
     state = refuseEcho(state, "agent_unavailable");
     const tail = state.entries[state.entries.length - 1];
-    expect(tail?.entry === "echo" ? tail.refusedReason : null).toBe("run_in_flight");
+    expect(tail).toBeUndefined();
   });
 });
 

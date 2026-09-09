@@ -929,9 +929,15 @@ export const copy = {
   },
 
   stream: {
+    connectionDetails: "Connection and history details",
+    executionUnavailable: "Execution could not be confirmed. No message will be resent.",
     title: "Agent",
     collapse: "Collapse the agent column",
     expand: "Expand the agent column",
+    resize: "Resize the agent column",
+    width: (pixels: number) => `${String(pixels)} pixels`,
+    switchSession: "Switch session",
+    switchDone: "Done",
 
     /** §7.4's closed vocabulary on the Stream header, each with its reason. */
     state: {
@@ -1094,7 +1100,10 @@ export const copy = {
       "The walk up this thread hit its depth bound before reaching a root, so the tabs above may not be the whole tree.",
 
     /** §8: history is the prefix, the live stream is the suffix, the join is seen. */
-    seam: "End of the recorded transcript — everything below arrived live.",
+    deliveryDetails: "Delivery details",
+    turnDetails: "Turn details",
+    runDetails: "Execution details",
+    seam: "Earlier messages came from history and subsequent messages arrived on this page; their event identities remain separate.",
     /**
      * §7.4, amended 2026-09-03: the seam over a run this tab did NOT hold from
      * its start.
@@ -1107,7 +1116,7 @@ export const copy = {
      * `seq > 0` proves frames went by unseen).
      */
     seamMidRun:
-      "Attached while this run was in progress; earlier output of this run is not shown.",
+      "Some earlier output is not shown; this page connected after the turn began.",
     /*
      * `historyLoading` is REMOVED (§8(b), amended 2026-09-01): "the loading
      * ellipsis is not an exception — a transcript that is still filling is
@@ -1157,10 +1166,10 @@ export const copy = {
      */
     localEcho: {
       /** The visible-at-rest marker word, C2's contract verbatim. */
-      marker: "unrecorded",
-      accessible: "Typed on this page; not a recorded event.",
-      title:
-        "This prompt was typed on this page and is not a recorded event: prompts are never part of the recorded transcript, so this row exists only in the tab that sent it and will not appear on reopen.",
+      marker: "You",
+      unknown: "Delivery unconfirmed",
+      accessible: "Message sent from this page.",
+      title: "Message sent from this page; history may later confirm it.",
       /**
        * §7A.5, amended 2026-09-03: the SECOND marker word, for an echo whose
        * POST the server refused by name.
@@ -1177,7 +1186,7 @@ export const copy = {
       refused: {
         /** The visible-at-rest marker word, in `.code` muted beside `marker`. */
         marker: "refused",
-        accessible: "The server refused this prompt; this turn did not start.",
+        accessible: "Message not sent. This attempt did not start a turn.",
         title:
           "The server refused this prompt by name, so the turn did not start and nothing ran. The words above were typed on this page, are kept verbatim, and are still sendable; the word beside this one is the server's own reason, rendered as it was received.",
       },
@@ -1190,15 +1199,15 @@ export const copy = {
        * rows carry no marker, because the model is this surface's default
        * voice. Not a possessive, not a name, not "you".
        */
-      marker: "operator",
-      accessible: "Operator prompt, recorded in this session's history.",
+      marker: "You",
+      accessible: "Your message.",
       /**
        * §2.8(3), amended 2026-09-03 — the ONE user-role turn the sidecar writes
        * itself: the continuation sentence of a transient retry. Same row shape,
        * a different speaker, named so a machine's sentence is never shown as
        * the operator's.
        */
-      markerAgent: "agent",
+      markerAgent: "Agent continuation",
       accessibleAgent:
         "Continuation prompt the agent runtime sent itself after a transient provider fault, not the operator's words.",
       /**
@@ -1219,7 +1228,7 @@ export const copy = {
        * who wants it.
        */
       envelope: {
-        label: "Workspace context this server sent",
+        label: "Attached workspace context",
         accessible:
           "Workspace context this server composed and sent with this turn, not the operator's own words.",
         title:
@@ -1236,9 +1245,10 @@ export const copy = {
      * recorded message is empty, absent, or unhelpful.
      */
     turnOutcome: {
-      cancelled: "This turn was cancelled before it finished.",
-      error: "This turn ended with an error.",
-      interrupted: "This turn was interrupted before it finished.",
+      completed: "This earlier turn finished.",
+      cancelled: "This earlier turn was cancelled.",
+      error: "This earlier turn ended with an error.",
+      interrupted: "This earlier turn was interrupted.",
     },
     runStart: {
       label: "run",
@@ -1258,13 +1268,11 @@ export const copy = {
      * not the fact the reader needs mid-transcript.
      */
     resync: {
-      title: "Stream break",
-      pending: "The stream was dropped and is reattaching; what was missed is not yet known.",
-      contiguous:
-        "The stream was dropped and resumed at the next event, so nothing between them was lost.",
-      gap: "The stream resumed past the last event this page saw; those events are gone and are not recovered from the recorded transcript.",
-      unknown:
-        "The stream reattached and nothing has arrived since, so whether anything was missed is not known.",
+      title: "Connection gap",
+      pending: "Reconnecting — some output may be missing.",
+      contiguous: "Connection restored — no output was missed at this break.",
+      gap: "Some output is missing here — not recovered.",
+      unknown: "Connection restored — whether output was missed is still unknown.",
       after: "Last event before the break",
     },
     /** The long form of each outcome, on the break's `title` (§7.4(d)). */
@@ -1281,11 +1289,13 @@ export const copy = {
     /** §7.2's chip. `unknown` is the section's own named fallback. */
     chip: {
       status: {
-        running: "running",
-        ok: "ok",
-        error: "error",
-        unknown: "unknown",
+        running: "No result",
+        ok: "Done",
+        error: "Failed",
+        unknown: "Unknown",
       },
+      unnamed: "Tool call",
+      failed: "Tool failed. Open the call for its result.",
       unknownWhy: "This transcript does not record whether the call failed.",
       runningWhy: "No result for this call is recorded here.",
       callMissing: "The call this result belongs to is not on this page.",
@@ -1348,8 +1358,16 @@ export const copy = {
       bytes: "Bytes",
     },
     terminal: {
-      title: "Run ended",
+      title: "Turn outcome",
       state: "Outcome",
+      unknown: "This turn’s outcome is unknown.",
+      outcomes: {
+        completed: "This turn finished.",
+        cancelled: "This turn was cancelled.",
+        failed: "This turn failed.",
+        interrupted: "This turn was interrupted.",
+        timed_out: "This turn timed out.",
+      },
       /**
        * §7.3, amended 2026-09-05: the terminal id's LABEL, spent on the band's
        * `title` and nowhere else.
@@ -1465,7 +1483,14 @@ export const copy = {
      * disclosure onto a second line under an idle composer. The word is the
      * control; every reason string below still says which run and why.
      */
-    cancel: "Cancel",
+    cancel: "Stop",
+    checking: "Checking execution before sending.",
+    stopRequested: "Stop requested; waiting for confirmation.",
+    stopUncertain: "Stop delivery uncertain — checking execution.",
+    deliveryUncertain: "Delivery uncertain — checking execution; nothing will be resent.",
+    deliveryDetails: "Delivery details",
+    keepDraft: "Keep draft for a new send",
+    notSent: (reason: string): string => `Not sent (${reason}). Draft kept.`,
     /**
      * The keyboard, which is how a conversation is actually held.
      *
@@ -1530,7 +1555,7 @@ export const copy = {
      * refusal clears itself when the run reports its terminal.
      */
     runInFlightCompose: "You can write the next message while this turn finishes.",
-    runInFlightHolder: (title: string): string => `The live run belongs to ${title}.`,
+    runInFlightHolder: (title: string): string => `Not sent — ${title} is busy. Draft kept.`,
 
     /** §7A.3's chip row: the references this turn will carry, each droppable. */
     contextHeading: "This message will carry",
@@ -1686,7 +1711,7 @@ export const copy = {
      */
     emptyBody:
       "This project has no provider configuration, so there is nothing to run a session against. " +
-      "Look for a sign-in this machine already has and adopt it, or write a configuration file and restart the server.",
+      "Use an existing subscription or sign-in from this machine below. No API key is needed for a Codex subscription.",
     configPath: "Configuration file",
     fileMode: "File mode",
     /** §23.2: a hand-authored file's mode is reported, never changed. */
@@ -1695,11 +1720,15 @@ export const copy = {
     allowlist: "Approved credential variables",
     /** §23.6: the one refusal without which this surface is an exfiltration path. */
     allowlistNote:
-      "Prepared outside the workspace and read-only here. Nothing in this page can add a name to this list.",
-    authSource: "Borrowed credential file",
+      "For environment-based API keys only; subscriptions do not need an entry. This list is prepared outside the workspace and is read-only here.",
+    authSource: "Shared sign-in file",
     authSourceLinked:
-      "This project's credential file is a link into the file above. Signing in would write into it, so sign-in and sign-out are refused until the link is removed.",
-    unlink: "Stop borrowing",
+      "Using your existing sign-in is normal: no API key or new login is needed. Manage this sign-in in the app that created it. Disconnecting here leaves that app signed in.",
+    linkedWriteNote: "Sign-in changes are disabled while this project shares a credential file. Manage the sign-in in its original app, or disconnect it under configuration first.",
+    unlink: "Disconnect shared sign-in",
+    codexSubscription: "Codex subscription",
+    subscriptionSignIn: "Sign in again",
+    models: "Configured models",
     egressHosts: "Acknowledged outbound hosts",
     egressNote:
       "Every turn against one of these hosts sends model geometry, script source and transcript to it. This list is kept on disk and printed when the server starts.",
@@ -1714,7 +1743,7 @@ export const copy = {
       env: "Environment variable",
       serve: "This server only",
       project: "Saved in this project",
-      linked: "Borrowed from a linked file",
+      linked: "Shared from an existing sign-in",
     },
     /** §23.8 axis 2 — does it work? Never collapsed into axis 1. */
     health: {
@@ -1729,11 +1758,18 @@ export const copy = {
     /** §23.8: "The panel renders 'accepted 14:32', never 'connected'." */
     healthNever: "Nothing has used this credential yet.",
     healthStale: "Last observed",
-    availability: "Verification",
-    available: "Verified at startup",
-    unavailable: "Not usable",
+    availability: "Runtime setup",
+    available: "Ready to use",
+    availabilityUnknown: "Not checked yet",
+    unavailable: "Setup needs attention",
     unavailableNote:
-      "This provider is declared but did not verify. It is never substituted by another and cannot run a turn.",
+      "This provider could not be set up. Check its configuration; no other provider will be used in its place.",
+    modelUnavailableNote:
+      "The configured models are not in this server's bundled catalog. Update the bundled agent or correct the configured models; replacing your sign-in will not fix this.",
+    partialAvailability: "Ready with model limitations",
+    partialAvailabilityNote:
+      "Some configured models are not supported by this bundled agent. Known models can still be used; unsupported models remain listed in configuration.",
+    modelUnsupported: "Not supported by this bundled agent",
 
     signIn: "Sign in",
     signOut: "Sign out",
@@ -1766,8 +1802,9 @@ export const copy = {
       /** §23.5: the four fields, and nothing derived from a secret. */
       sourcePath: "Found in",
       models: "Models",
+      subscriptionNote: "Uses the existing sign-in without copying it. No API key is needed. You can disconnect this project later without signing out the original app.",
       kind: {
-        pi_auth: "An existing sign-in",
+        pi_auth: "An existing subscription or sign-in",
         providers_json: "An existing provider configuration",
         local_endpoint: "A model server on this machine",
       },

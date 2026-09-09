@@ -22,6 +22,27 @@ pnpm --dir web test:e2e
 that answers its requests — the topology a wheel-installed operator gets. With
 no `dist/`, `heph serve --web` says so on stderr and serves the API alone.
 
+## Isolated chat integration checks (no provider or production server)
+
+```console
+pnpm --dir web exec playwright test -c playwright.synthetic.config.ts
+```
+
+This separate configuration starts its own loopback Vite source server on
+15273, refuses server reuse, intercepts all workspace HTTP/WebSocket traffic,
+and points the fallback API proxy at unusable port 9, never production 8760.
+It needs no web build, credentials, project writes or provider calls.
+`synthetic/execution.spec.ts` covers admission, drafts, refusal, reconnect,
+missed-terminal reconciliation, Stop and tool/question presentation;
+`synthetic/layout.spec.ts` measures pointer/keyboard interaction and overflow at
+843, 1000, 1024, 1279 and 1440px. Screenshots and failure traces go under
+`/tmp/hephaestus-integration-validation/browser/`.
+
+These tests use the actual browser application with synthetic API evidence;
+they do **not** validate packaged-sidecar/provider E2E or the CAD viewport.
+Run the real Gate G4 suite above separately on an owned public fixture after
+building and staging matching artifacts, never against a live user project.
+
 ## What stands the world up
 
 | File | What it does |

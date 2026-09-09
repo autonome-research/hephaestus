@@ -746,6 +746,28 @@ def test_the_status_axes_are_closed_and_never_collapsed(signed_in: Workspace) ->
     assert "connected" not in row
 
 
+def test_a_linked_pi_auth_record_is_not_mislabeled_as_project_owned(
+    signed_in: Workspace, tmp_path: Path
+) -> None:
+    """Pi calls every auth.json credential ``stored`` and cannot distinguish an
+    app-owned file from the symlink the server created. The HTTP projection owns
+    that filesystem fact and must preserve §23.8's ``linked`` source axis.
+    """
+    provider_id = "openai-codex"
+    response = _write_specs(
+        signed_in,
+        [{"id": provider_id, "kind": "pi_native", "models": [{"id": "gpt"}]}],
+    )
+    assert response.status_code == 200
+    agent = signed_in.agent
+    assert isinstance(agent, FakeAgent)
+    agent.credentials[provider_id] = {"key": "synthetic", "scope": "project"}
+    _link_auth(signed_in, tmp_path)
+
+    row = signed_in.get("/providers").json()["providers"][0]
+    assert row["source"] == "linked"
+
+
 def test_health_is_last_observed_and_arrives_only_from_a_turn(signed_in: Workspace) -> None:
     """§23.8's second axis, and §23.10's only notification.
 
@@ -884,6 +906,38 @@ def test_an_unavailable_provider_is_reported_and_never_substituted(
     assert rows["heph-fake"]["available"] is True
     assert rows["other"]["available"] is False
     assert rows["other"]["unavailable_reason"] == "provider_not_authenticated"
+
+
+def test_unknown_discovered_models_are_projected_without_poisoning_the_provider(
+    signed_in: Workspace,
+) -> None:
+    """A discovery cache may come from a newer Pi than the packaged sidecar.
+
+    The provider remains usable when at least one declared model resolves, while
+    the incompatible declaration stays visible by id and named reason. Foreign
+    diagnostic fields from the bridge are not copied onto the HTTP read side.
+    """
+    agent = signed_in.agent
+    assert isinstance(agent, FakeAgent)
+    agent.verified = [
+        {
+            "id": "heph-fake",
+            "available": True,
+            "unavailable_models": [
+                {
+                    "id": "gpt-6-astra",
+                    "unavailable_reason": "model_unknown",
+                    "message": "must not cross the read boundary",
+                }
+            ],
+        }
+    ]
+    row = signed_in.get("/providers").json()["providers"][0]
+    assert row["available"] is True
+    assert row["unavailable_reason"] is None
+    assert row["unavailable_models"] == [
+        {"id": "gpt-6-astra", "unavailable_reason": "model_unknown"}
+    ]
 
 
 def test_the_backend_protocol_is_what_the_bridge_implements() -> None:

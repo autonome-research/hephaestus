@@ -175,6 +175,7 @@ import { sessionPromptStore } from "../../stream/sessionPrompts";
 import { holderSessionTitle } from "../../stream/sessionTitle";
 import { promptFailurePost, runtimeFaultOf, type RuntimeFault } from "../../stream/runtimeFault";
 import type { ContextMember } from "../../api/sessions";
+import { conversationStore, currentTurn, useConversation, type CurrentTurn } from "../../stream/conversation";
 import styles from "./Composer.module.css";
 
 /** §7A.10's closed `data-composer-state` vocabulary. */
@@ -192,15 +193,16 @@ export type SendState = (typeof SEND_STATES)[number];
 export interface ComposerProps {
   /** The tab's session. `null` is `no_session` — the composer still renders. */
   readonly sessionId: string | null;
+  readonly currentTurn?: CurrentTurn;
   /** That session's profile, from `GET /sessions`. Rendered, never inferred. */
   readonly profile: string | null;
   /** The §7A.8 attach projection when the runtime is missing, else `null`. */
   readonly attach: AttachProjection | null;
   /** `true` when the session routes are refusing `agent_unavailable`. */
   readonly agentUnavailable: boolean;
-  /** The run of the last live frame for this session (§7A.5). */
+  /** Legacy transport hint for sending/running chrome; NOT a Stop authority. */
   readonly liveRunId: string | null;
-  /** Whether this tab's socket is `live` — cancel needs it (§7A.5). */
+  /** Legacy transport hint. A known authoritative run can be stopped offline. */
   readonly streamLive: boolean;
   /**
    * Live `terminal` frames seen for this session (§7A.11's counter, reused).
@@ -295,7 +297,6 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     attach,
     agentUnavailable,
     liveRunId,
-    streamLive,
     terminals,
     focusNonce,
   } = props;
@@ -308,21 +309,25 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   );
   const hiddenLabels = useMemo(() => labelsForPart(hidden, state.part), [hidden, state.part]);
 
-  const [text, setText] = useState("");
-  const [post, setPost] = useState<Post>({ phase: "idle" });
+  const conversation = useConversation(sessionId);
+  const turn = props.currentTurn ?? currentTurn(conversation, sessionId !== null);
+  const text = conversation.draft.text;
+  const setText = (value: string) => conversationStore.draft(sessionId, value);
+  const attempt = conversation.attempt;
+  const post: Post = attempt?.phase === "sending" ? { phase: "sending" }
+    : attempt?.phase === "unknown" ? { phase: "unknown" }
+    : attempt?.phase === "refused" ? {
+      phase: "refused", reason: attempt.reason ?? "", message: attempt.reason ?? "",
+      data: { session_id: attempt.holderSession, run_id: attempt.holderRun },
+    } : { phase: "idle" };
   const [dropped, setDropped] = useState<ReadonlySet<ContextMember>>(() => new Set());
   const [added, setAdded] = useState<ReadonlySet<ContextMember>>(() => new Set());
   const [disclosed, setDisclosed] = useState(false);
-  const [promptFocused, setPromptFocused] = useState(false);
   const [preview, setPreview] = useState<ContextDocument | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [cancelNote, setCancelNote] = useState<string | null>(null);
   const [attaching, setAttaching] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);
-  const liveRunIdRef = useRef(liveRunId);
-  useEffect(() => {
-    liveRunIdRef.current = liveRunId;
-  }, [liveRunId]);
   const [attachError, setAttachError] = useState<string | null>(null);
   const chips = useMemo(() => chipsFor(state, hiddenLabels), [state, hiddenLabels]);
   const envelope = useMemo(
@@ -346,7 +351,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   // not a prompt field. DFM lives on the inspector panel (§6.4): two
   // controls, never a composer Plan switch. Idle chrome here is context +
   // prompt + Send. Cancel mounts only while cancellable (§7A.6).
-  const promptRows = promptFocused || text.trim() !== "" ? 3 : 1;
+  const promptRows = 2;
 
   // §7A.3 (C22): ONE handler for both copies of the affordance. The line's
   // copy and the form's copy do exactly the same thing — un-drop and add the
@@ -386,12 +391,12 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     ? "agent_unavailable"
     : sessionId === null
       ? "no_session"
-      : refusedRunInFlight
+      : turn.runId !== null
         ? "run_in_flight"
         : null;
 
   const composerState: ComposerState =
-    disabledReason !== null
+    disabledReason !== null || (!turn.canSend && post.phase !== "sending")
       ? "disabled"
       : post.phase === "sending"
         ? liveRunId === null
@@ -420,13 +425,11 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   // partition and the dead end it removes.
   const composable = isComposable(disabledReason);
 
-  // §7A.5's named limit, rendered with its reason rather than as a dead button.
-  // Cancel is available iff the live id is known and the socket is `live` —
-  // not iff this tab's POST is in flight. Gating on `awaitingRun` kept Cancel
-  // dark through a turn that was already producing chips (#45) and, once
-  // `runId` stopped being cleared, offered it against the *previous* run (#99).
+  // Stop targets authoritative active ownership, including a refusal's holder.
+  // A disconnected observer can still explicitly stop that known run over HTTP;
+  // the last frame's id alone must never offer Stop against a finished run.
   const awaitingRun = post.phase === "sending" || refusedRunInFlight;
-  const cancel = cancelAvailability({ liveRunId, streamLive, awaitingRun });
+  const cancel = cancelAvailability({ liveRunId: turn.runId, streamLive: true, awaitingRun });
   const cancellable = cancel.available;
   // §7A.6's amendment: the reason is no longer a button's excuse — there is no
   // button to hang it on while the run is not cancellable. It stays readable,
@@ -436,17 +439,9 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   // A run ending is what makes a `run_in_flight` refusal stop being true, and
   // `terminal` is the frame that says a run ended (§7A.11's counter). Monotone,
   // so this fires once per completed run and not again on a re-render.
-  const seenTerminals = useRef(terminals ?? 0);
-  useEffect(() => {
-    const count = terminals ?? 0;
-    if (count === seenTerminals.current) return;
-    seenTerminals.current = count;
-    setPost((previous) =>
-      previous.phase === "refused" && previous.reason === "run_in_flight"
-        ? { phase: "idle" }
-        : previous,
-    );
-  }, [terminals]);
+  // A terminal count cannot release a refusal: it may belong to an older run.
+  // Admission availability is reconciled through the shared sessions read.
+  void terminals;
 
   // #61: after New session / Ask about <part>, the nonce ticks and focus
   // lands on the box that exists so the operator can talk.
@@ -507,35 +502,49 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   // told us is in flight. §7A.5's "the composer disables while any run is live"
   // is a statement about sending, and sending is what happens here.
   const sending = post.phase === "sending";
-  const sendAllowed = canSendTurn({ disabledReason, text, sending });
+  const sendAllowed = canSendTurn({ disabledReason, text, sending }) && turn.canSend;
 
   const submit = useCallback(() => {
     // THE GUARD IS THE SAME PREDICATE AS THE SEND BUTTON. Enter, click, and
     // the form's `onSubmit` all land here. A gate that lived only on the
     // button would be one the keyboard walks past; a gate that lived only
     // here would leave Send looking enabled while a click did nothing (#44).
-    if (!canSendTurn({ disabledReason, text, sending: post.phase === "sending" })) return;
+    if (!canSendTurn({ disabledReason, text, sending: post.phase === "sending" }) || !turn.canSend) return;
+    const submitted = conversationStore.begin(sessionId);
+    if (submitted === null) return;
+    let attemptSid = sessionId;
+    const setPost = (next: Post) => {
+      conversationStore.finish(attemptSid, submitted.id,
+        next.phase === "idle" ? "settled" : next.phase,
+        next.phase === "refused" ? {
+          ...(typeof next.data["session_id"] === "string" ? { holderSession: next.data["session_id"] } : {}),
+          ...(typeof next.data["run_id"] === "string" ? { holderRun: next.data["run_id"] } : {}),
+          // Closed refusal name is preserved rather than translated.
+          ...{ reason: next.reason },
+        } : {},
+      );
+    };
     // `no_session` is typable: Send creates the appropriate session (part if
     // one is selected, else a project/orchestrator session) and then posts.
     const opening = text;
     setCancelNote(null);
-    liveRunIdRef.current = null;
     props.onForgetLiveRun?.();
-    setPost({ phase: "sending" });
+    void client.invalidateQueries({ queryKey: ["sessions"] });
 
     const postPrompt = (sid: string): void => {
-      sessionPromptStore.remember(sid, opening);
       props.onEcho?.(sid, opening);
       void sendPrompt(sid, opening, envelope)
         .then((document) => {
           setPost({ phase: "idle" });
-          setText("");
+          conversationStore.response(sid, document);
+          sessionPromptStore.remember(sid, opening);
           props.onRuntimeFault?.(null);
           refreshAfterTurn(client, state.part);
           props.onTurnSettled?.();
-          void document;
+
         })
         .catch((cause: unknown) => {
+          void client.invalidateQueries({ queryKey: ["sessions"] });
           const fault = runtimeFaultOf(cause);
           if (fault !== null) props.onRuntimeFault?.(fault);
           const next = promptFailurePost(cause);
@@ -572,7 +581,13 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     const profile = state.part !== null ? "part" : "orchestrator";
     void createSession(profile, state.part)
       .then((created) => {
-        workspaceStore.update({ session: created.session_id });
+        attemptSid = created.session_id;
+        conversationStore.update(created.session_id, c => ({ ...c, attempt: submitted,
+          draft: conversationStore.get(null).draft, checking: true, barrier: conversationStore.ticket() }));
+        conversationStore.finish(null, submitted.id, "settled");
+        if (workspaceStore.getSnapshot().session === sessionId) {
+          workspaceStore.update({ session: created.session_id });
+        }
         void client.invalidateQueries({ queryKey: ["sessions"] });
         postPrompt(created.session_id);
       })
@@ -590,26 +605,27 @@ export function Composer(props: ComposerProps): React.JSX.Element {
         }
         setPost({ phase: "unknown" });
       });
-  }, [disabledReason, sessionId, text, post.phase, envelope, client, state.part, props]);
+  }, [disabledReason, sessionId, text, post.phase, envelope, client, state.part, props, turn.canSend]);
 
   const cancelTurn = useCallback(() => {
-    // Available iff the live id is known and the socket is live. A no-op
-    // cancel of a finished run must not print "Cancelled." while a new turn
-    // keeps running (#99) — so we refuse here, and we also refuse to claim
-    // success if the live id moved on before the response arrived.
-    if (liveRunId === null || !streamLive) return;
-    const target = liveRunId;
+    // An acknowledgement only records Stop requested for this same active run.
+    // It is never terminal evidence, and cannot mark a successor run stopped.
+    const target = turn.runId;
+    if (target === null) return;
     void cancelRun(target)
       .then((document) => {
-        if (liveRunIdRef.current !== target) return;
-        setCancelNote(copy.composer.cancelled(document.abandoned_questions));
+        if (sessionId === null || document.run_id !== target) return;
+        conversationStore.stop(sessionId, target);
+        setCancelNote(null);
+        void client.invalidateQueries({ queryKey: ["sessions"] });
       })
       .catch(() => {
         // A cancel that does not come back changes nothing this client can
         // report honestly; the run's own terminal is what settles it.
-        setCancelNote(null);
+        setCancelNote(copy.composer.stopUncertain);
+        void client.invalidateQueries({ queryKey: ["sessions"] });
       });
-  }, [liveRunId, streamLive]);
+  }, [turn.runId, sessionId, client]);
 
   const retryAttach = useCallback(() => {
     setAttaching(true);
@@ -637,7 +653,9 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   const sendReason =
     disabledReason !== null
       ? copy.composer.disabled[disabledReason]
-      : sending
+      : !turn.canSend
+        ? copy.composer.checking
+        : sending
         ? copy.composer.sending
         : copy.composer.placeholder;
   // §7A.8's cause, resolved ONCE. `null` covers "no projection" and "a cause
@@ -819,15 +837,9 @@ export function Composer(props: ComposerProps): React.JSX.Element {
           rows={promptRows}
           value={text}
           onChange={setText}
-          onFocus={() => {
-            setPromptFocused(true);
-          }}
-          onBlur={() => {
-            setPromptFocused(false);
-          }}
           onKeyDown={onPromptKey}
           placeholder={copy.composer.placeholder}
-          disabled={!composable || post.phase === "sending"}
+          disabled={!composable}
           inputRef={inputRef}
           className={styles["grow"]}
           data-composer-input=""
@@ -839,6 +851,12 @@ export function Composer(props: ComposerProps): React.JSX.Element {
             state in which Sign-in (§23.8, C9) takes `primary` instead. Every
             other disabled reason keeps Send primary: a disabled-with-reason
             primary is the operator's target for "why can't I send?". */}
+        {cancellable ? (
+          <Button variant="secondary" onClick={cancelTurn} data-composer-cancel=""
+            {...(turn.stopRequested ? { disabled: true as const, reason: copy.composer.stopRequested } : {})}>
+            {copy.composer.cancel}
+          </Button>
+        ) : null}
         <Button
           variant={signInPrimary(disabledReason) ? "secondary" : "primary"}
           type="button"
@@ -860,36 +878,27 @@ export function Composer(props: ComposerProps): React.JSX.Element {
       {/* §7A.10(b) / C15's negative half: Cancel's row is an EXCEPTION and
           mounts only while a run this tab can cancel is in flight — at rest no
           action row exists at all, empty or otherwise. */}
-      {cancellable ? (
-        <div className={styles["actions"]}>
-          <Button variant="secondary" onClick={cancelTurn} data-composer-cancel="">
-            {copy.composer.cancel}
-          </Button>
-        </div>
-      ) : null}
+
 
       {/* §7A.5: a lost POST leaves the text in the box and states that the turn
           may have started. The retry is the OPERATOR's, deliberately: an
           automatic one over an at-least-once route is a duplicate-turn
           generator with a spinner on it. */}
       {post.phase === "unknown" && post.runtimeFault !== true ? (
-        <div className={styles["note"]} data-send-unknown="">
-          <strong>{copy.composer.sendUnknownTitle}</strong>
-          <p>{copy.composer.sendUnknown}</p>
-          <Button variant="secondary" onClick={submit} data-composer-retry="">
-            {copy.composer.retry}
-          </Button>
-        </div>
+        <p className={styles["note"]} data-send-unknown="" role="status">
+          {copy.composer.deliveryUncertain}
+          {!conversation.checking && conversation.execution?.admission_available === true ? (
+            <Button variant="quiet" onClick={() => {
+              conversationStore.update(sessionId, c => ({ ...c, attempt: null }));
+            }}>{copy.composer.keepDraft}</Button>
+          ) : null}
+        </p>
       ) : null}
 
       {post.phase === "refused" ? (
-        <div className={styles["note"]} data-composer-refused={post.reason}>
-          <strong>{copy.errors.title}</strong>
-          <p>
-            {post.reason === "run_in_flight"
-              ? copy.composer.disabled.run_in_flight
-              : post.message}
-          </p>
+        <div className={styles["note"]} data-composer-refused={post.reason} role="status">
+          {post.reason !== "run_in_flight" || typeof post.data["session_id"] !== "string"
+            ? <span>{copy.composer.notSent(post.reason)}</span> : null}
           {/* §7A.5: the refusal NAMES which session holds the live run. The
               ids come from the server's own payload — a client that guessed
               would be naming a session it inferred was busy. */}
@@ -903,9 +912,11 @@ export function Composer(props: ComposerProps): React.JSX.Element {
               )}
             </p>
           ) : null}
-          {post.reason === "run_in_flight" ? (
-            <p>{copy.composer.runInFlightCompose}</p>
-          ) : null}
+          <details>
+            <summary>{copy.composer.deliveryDetails}</summary>
+            <p>{attempt?.submitted.text}</p>
+            <code>{post.reason} {attempt?.holderRun}</code>
+          </details>
         </div>
       ) : null}
 

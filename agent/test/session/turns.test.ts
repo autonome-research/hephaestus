@@ -240,7 +240,7 @@ describe("legacy fallback, per turn not per session (§2.8(3), item 6)", () => {
       { turn: 0, seq: 0, text: fused, envelope: null },
       { turn: 1, seq: 1, text: "second legacy prompt", envelope: null },
     ]);
-    // No outcome key on a completed legacy turn.
+    // No stop reason was recorded: missing evidence remains unknown.
     expect(prompts[0]).not.toHaveProperty("outcome");
     expect(prompts[1]).not.toHaveProperty("outcome");
 
@@ -261,7 +261,7 @@ describe("legacy fallback, per turn not per session (§2.8(3), item 6)", () => {
 });
 
 describe("outcome, from two sources (§2.8(4), notes item 8)", () => {
-  it("(f) a completed turn carries no outcome key", () => {
+  it("a legacy assistant without a stop reason carries no fabricated outcome", () => {
     const entries = [userMsg("u0", "go"), assistantText("a1", "done")];
     const prompts = extractUserPrompts(entries);
     expect(prompts[0]).not.toHaveProperty("outcome");
@@ -294,10 +294,64 @@ describe("outcome, from two sources (§2.8(4), notes item 8)", () => {
     expect(prompts[0]?.outcome).toEqual({ state: "error", message: "boom" });
   });
 
-  it("a normal stopReason ('stop') is a completed turn — outcome absent", () => {
+  it("a normal stopReason ('stop') is explicit legacy completion evidence", () => {
     const entries = [userMsg("u0", "try"), assistantWithStop("a1", "stop")];
     const prompts = extractUserPrompts(entries);
-    expect(prompts[0]).not.toHaveProperty("outcome");
+    expect(prompts[0]?.outcome).toEqual({ state: "completed" });
+  });
+});
+
+describe("authoritative settlement metadata", () => {
+  it.each(["stop", "aborted", "error", "toolUse"])("linked %s waits for run settlement", stop => {
+    const entries = [customEntry("m", "hephaestus.turn.v1", {
+      text: "go", run_id: "active-run",
+    }), userMsg("u", "go"), assistantWithStop("a", stop)];
+    expect(extractUserPrompts(entries)[0]?.outcome).toBeUndefined();
+  });
+
+  it("settles linked retry prompts, keeps the first winner, and never settles a later run", () => {
+    const entries = [
+      customEntry("m0", "hephaestus.turn.v1", { text: "go", run_id: "r0" }),
+      userMsg("u0", "go"), assistantWithStop("a0", "error"),
+      customEntry("m1", "hephaestus.turn.v1", { text: "retry", run_id: "r0", origin: "agent" }),
+      userMsg("u1", "retry"), assistantWithStop("a1", "stop"),
+      customEntry("m2", "hephaestus.turn.v1", { text: "next", run_id: "r1" }),
+      userMsg("u2", "next"),
+      customEntry("s0", "hephaestus.turn_outcome.v1", { run_id: "r0", state: "cancelled" }),
+      customEntry("s1", "hephaestus.turn_outcome.v1", { run_id: "r0", state: "completed" }),
+      customEntry("s2", "hephaestus.turn_outcome.v1", { run_id: "other", state: "error" }),
+    ];
+    const prompts = extractUserPrompts(entries);
+    expect(prompts.map(p => p.outcome)).toEqual([
+      { state: "cancelled" }, { state: "cancelled" }, undefined,
+    ]);
+    expect(prompts.map(p => p.turn)).toEqual([0, 1, 2]);
+    expect(prompts[1]?.origin).toBe("agent");
+  });
+
+  it("a zero-event prompt with no settlement stays unknown", () => {
+    expect(extractUserPrompts([userMsg("u", "go")])[0]?.outcome).toBeUndefined();
+  });
+
+  it.each(["toolUse", "length", "futureStopReason"])("%s is not terminal evidence", stop => {
+    expect(extractUserPrompts([userMsg("u", "go"), assistantWithStop("a", stop)])[0]?.outcome).toBeUndefined();
+  });
+  it("links a run explicitly and refreshes an older prompt with zero new events", () => {
+    const entries = [customEntry("m", "hephaestus.turn.v1", {
+      turn: 0, text: "go", envelope: null, run_id: "server-run",
+    }), userMsg("u", "go"), assistantWithStop("a", "toolUse")];
+    const first = pageHistory(entries, "session");
+    expect(first.userPrompts[0]?.run_id).toBe("server-run");
+    expect(first.userPrompts[0]?.outcome).toBeUndefined();
+    const settled = [...entries, customEntry("settled", "hephaestus.turn_outcome.v1", {
+      turn: 0, run_id: "server-run", state: "completed",
+    })];
+    const tail = pageHistory(settled, "session", { after: first.endCursor });
+    expect(tail.events).toEqual([]);
+    expect(tail.userPrompts[0]).toMatchObject({ turn: 0, run_id: "server-run", outcome: { state: "completed" } });
+    expect(normalizeEntries(settled, "session")).toEqual(normalizeEntries(entries, "session"));
+    // Original high-water evidence remains frozen, not rewritten in place.
+    expect(first.userPrompts[0]?.outcome).toBeUndefined();
   });
 });
 
@@ -325,7 +379,10 @@ describe("tail read (§2.8(5), notes item 9)", () => {
     };
     expect(tail.events.map((e) => e.seq)).toEqual([1]);
     expect(turnOf(tail.events[0])).toBe(1);
-    expect(tail.userPrompts).toEqual([{ turn: 1, seq: 1, text: "again", envelope: null }]);
+    expect(tail.userPrompts).toEqual([
+      { turn: 0, seq: 0, text: "hi", envelope: null },
+      { turn: 1, seq: 1, text: "again", envelope: null },
+    ]);
     expect(tail.done).toBe(true);
     expect(tail.endCursor).toBeTruthy();
 
@@ -421,8 +478,8 @@ describe("restart-stability of the turn record (item h)", () => {
     const after = pageHistory(resumed.session.sessionManager.getEntries(), "s-restart");
     expect(after).toEqual(before);
     expect(after.userPrompts).toEqual([
-      { turn: 0, seq: 0, text: "turn zero", envelope: null },
-      { turn: 1, seq: 1, text: "turn one", envelope: null },
+      { turn: 0, seq: 0, text: "turn zero", envelope: null, outcome: { state: "completed" } },
+      { turn: 1, seq: 1, text: "turn one", envelope: null, outcome: { state: "completed" } },
     ]);
   }, 30000);
 
@@ -508,9 +565,8 @@ describe("the marker is inert: appending one moves no event identity (§2.8(3), 
     expect(extractUserPrompts(marked).map((p) => p.seq)).toEqual(
       extractUserPrompts(bare).map((p) => p.seq),
     );
-    // Source (i) wins over the outcome marker: turn 1 HAS an assistant entry,
-    // so the marker cannot relabel a turn the model actually finished.
-    expect(extractUserPrompts(marked).some((p) => p.outcome !== undefined)).toBe(false);
+    // Explicit settlement wins over intermediate assistant messages.
+    expect(extractUserPrompts(marked).at(-1)?.outcome).toEqual({ state: "cancelled" });
   });
 
   it("the page's boundaries do not move either", () => {

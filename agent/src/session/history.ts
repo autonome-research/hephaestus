@@ -102,14 +102,13 @@ interface PiUserMessage {
 }
 type PiMessage = PiAssistantMessage | PiToolResultMessage | PiUserMessage;
 
-/** The closed set of non-completed turn states (INTERFACE.md §2.8(4)). */
-export type TurnOutcomeState = "cancelled" | "error" | "interrupted";
+/** Explicit settled turn states; omission of outcome means unknown/open. */
+export type TurnOutcomeState = "completed" | "cancelled" | "error" | "interrupted";
 
 /**
- * A recorded turn's outcome. **Absent means completed, never unknown** — that
- * is the whole reason §2.8(4) names two sources rather than one: a turn with an
- * assistant entry is read off the entry, a turn without one is read off the
- * marker, and a turn with neither really did complete.
+ * A recorded turn's explicit outcome. Run-linked turns wait for settlement;
+ * legacy turns can use a recognized assistant stop reason. Neither missing
+ * evidence nor an intermediate tool-use message proves completion/interruption.
  */
 export interface HistoryTurnOutcome {
   readonly state: TurnOutcomeState;
@@ -128,6 +127,7 @@ export interface HistoryTurnOutcome {
 export interface HistoryUserPrompt {
   readonly turn: number;
   readonly seq: number;
+  readonly run_id?: string;
   /** The operator's typed sentence and nothing else; null when unrecoverable. */
   readonly text: string | null;
   /** §7A.3's workspace-context block verbatim, when one was sent. */
@@ -259,19 +259,16 @@ function recoverIsError(message: PiToolResultMessage, text: string): boolean | n
  * The turn's outcome as recorded on its last assistant entry — §2.8(4)'s source
  * (i), and the branch that works for every session ALREADY ON DISK.
  *
- * `null` for `stopReason: "stop"` and for an entry that records no stop reason
- * at all: absence of an outcome means the turn completed, so guessing here would
- * label a completed turn. `aborted` is the operator's cancel; `error` is the
- * provider/stream failure Pi resolves rather than throws (see `retry.ts`);
- * `length`, `toolUse` and any stop reason a future Pi adds are `interrupted` —
- * the turn stopped without finishing, and the honest word for "we know it did
- * not complete and we do not know a better name" is the one §2.8(4) reserves.
+ * Only recognized terminal reasons supply legacy evidence. `toolUse`, `length`,
+ * missing and future stop reasons do not establish a run terminal. Modern
+ * run-linked turns instead use their explicit settlement marker.
  */
 function assistantOutcome(message: PiAssistantMessage): HistoryTurnOutcome | null {
   const stop = typeof message.stopReason === "string" ? message.stopReason : undefined;
-  if (stop === undefined || stop === "stop") return null;
-  const state: TurnOutcomeState =
-    stop === "aborted" ? "cancelled" : stop === "error" ? "error" : "interrupted";
+  if (stop === "stop") return { state: "completed" };
+  // A persisted tool-use message is an open loop, not a run terminal.
+  if (stop !== "aborted" && stop !== "error") return null;
+  const state: TurnOutcomeState = stop === "aborted" ? "cancelled" : "error";
   const detail =
     typeof message.errorMessage === "string" && message.errorMessage !== ""
       ? message.errorMessage
@@ -281,6 +278,7 @@ function assistantOutcome(message: PiAssistantMessage): HistoryTurnOutcome | nul
 
 /** The prompt-time marker's payload, read defensively (it is durable JSON). */
 interface TurnMarker {
+  readonly run_id?: string;
   readonly text: string | null;
   readonly envelope: string | null;
   readonly origin: "operator" | "agent";
@@ -288,7 +286,7 @@ interface TurnMarker {
 
 function readTurnMarker(data: unknown): TurnMarker | null {
   if (data === null || typeof data !== "object" || Array.isArray(data)) return null;
-  const record = data as { text?: unknown; envelope?: unknown; origin?: unknown };
+  const record = data as { text?: unknown; envelope?: unknown; origin?: unknown; run_id?: unknown };
   const text =
     typeof record.text === "string" && record.text.trim() !== "" ? record.text : null;
   const envelope =
@@ -296,14 +294,16 @@ function readTurnMarker(data: unknown): TurnMarker | null {
   // Absent means operator, so every marker written before `origin` existed keeps
   // its meaning; only the literal "agent" changes the attribution.
   const origin = record.origin === "agent" ? "agent" : "operator";
-  return { text, envelope, origin };
+  return { text, envelope, origin,
+    ...(typeof record.run_id === "string" ? { run_id: record.run_id } : {}),
+  };
 }
 
 function readOutcomeMarker(data: unknown): HistoryTurnOutcome | null {
   if (data === null || typeof data !== "object" || Array.isArray(data)) return null;
   const record = data as { state?: unknown; message?: unknown };
   const state = record.state;
-  if (state !== "cancelled" && state !== "error" && state !== "interrupted") return null;
+  if (state !== "completed" && state !== "cancelled" && state !== "error" && state !== "interrupted") return null;
   const detail =
     typeof record.message === "string" && record.message !== "" ? record.message : undefined;
   return detail !== undefined ? { state, message: detail } : { state };
@@ -324,14 +324,12 @@ function makeEvent(
 
 /** Mutable per-turn accumulator; frozen into a `HistoryUserPrompt` at the end. */
 interface TurnAccumulator {
+  readonly run_id?: string;
   readonly turn: number;
   readonly seq: number;
   readonly text: string | null;
   readonly envelope: string | null;
   readonly origin: "operator" | "agent";
-  /** Whether this turn recorded any assistant entry at all — the §2.8(4) switch
-   *  between outcome source (i) and source (ii). */
-  hasAssistant: boolean;
   /** The LAST assistant entry's outcome; later entries overwrite earlier ones. */
   assistantOutcome: HistoryTurnOutcome | null;
   markerOutcome: HistoryTurnOutcome | null;
@@ -384,12 +382,16 @@ function walkEntries(entries: readonly SessionEntry[], runId: string): Walk {
       if (entry.customType === TURN_MARKER_TYPE) {
         pendingMarker = readTurnMarker(entry.data);
       } else if (entry.customType === TURN_OUTCOME_MARKER_TYPE) {
-        // Appended after the run ends, so it describes the turn in progress —
-        // the positional count, not the marker's own informational `turn`.
+        // Modern settlement covers every prompt explicitly linked to this run
+        // (including agent retry prompts). Legacy markers bind positionally.
         const current = accumulators[accumulators.length - 1];
         const outcome = readOutcomeMarker(entry.data);
-        if (current !== undefined && outcome !== null && current.markerOutcome === null) {
-          current.markerOutcome = outcome;
+        const data = entry.data as { run_id?: unknown } | null;
+        const linkedRun = typeof data?.run_id === "string" ? data.run_id : null;
+        const targets = linkedRun === null ? (current === undefined ? [] : [current])
+          : accumulators.filter(acc => acc.run_id === linkedRun);
+        for (const target of targets) {
+          if (outcome !== null && target.markerOutcome === null) target.markerOutcome = outcome;
         }
       }
       continue;
@@ -433,7 +435,7 @@ function walkEntries(entries: readonly SessionEntry[], runId: string): Walk {
         text: marker !== null ? marker.text : userPromptText(message.content),
         envelope: marker !== null ? marker.envelope : null,
         origin: marker !== null ? marker.origin : "operator",
-        hasAssistant: false,
+        ...(marker?.run_id !== undefined ? { run_id: marker.run_id } : {}),
         assistantOutcome: null,
         markerOutcome: null,
       });
@@ -443,7 +445,6 @@ function walkEntries(entries: readonly SessionEntry[], runId: string): Walk {
     if (message.role === "assistant") {
       const current = accumulators[accumulators.length - 1];
       if (current !== undefined) {
-        current.hasAssistant = true;
         current.assistantOutcome = assistantOutcome(message);
       }
       for (const item of message.content) {
@@ -480,12 +481,12 @@ function walkEntries(entries: readonly SessionEntry[], runId: string): Walk {
   }
 
   const prompts: HistoryUserPrompt[] = accumulators.map((acc) => {
-    // §2.8(4)'s two sources, in order. A turn WITH an assistant entry is read
-    // off that entry and the marker is ignored, which is what keeps `absent`
-    // meaning *completed*: a cancel that raced a finished turn cannot relabel a
-    // turn the model actually finished.
-    const outcome = acc.hasAssistant ? acc.assistantOutcome : acc.markerOutcome;
-    const base = { turn: acc.turn, seq: acc.seq, text: acc.text, envelope: acc.envelope };
+    // Explicit settlement wins over intermediate assistant messages. Only
+    // unlinked legacy turns may fall back to the last assistant's evidence.
+    const outcome = acc.markerOutcome ?? (acc.run_id === undefined ? acc.assistantOutcome : null);
+    const base = { turn: acc.turn, seq: acc.seq, text: acc.text, envelope: acc.envelope,
+      ...(acc.run_id !== undefined ? { run_id: acc.run_id } : {}),
+    };
     const attributed = acc.origin === "agent" ? { ...base, origin: "agent" as const } : base;
     return outcome !== null ? { ...attributed, outcome } : attributed;
   });
@@ -631,8 +632,9 @@ export interface HistoryPageRequest {
 export interface HistoryPage {
   readonly events: HistoryEvent[];
   /**
-   * Operator prompts belonging to this page, keyed to the next event `seq`.
-   * Additive: omitted by older clients, never shifts event identities.
+   * Prompt metadata, keyed by stable `turn` identity. Tail reads also repeat
+   * earlier prompts so outcome-only settlement can refresh without new events.
+   * This metadata never shifts event identities.
    */
   readonly userPrompts: HistoryUserPrompt[];
   /** Opaque continuation token, or null when the frozen snapshot is exhausted. */
@@ -717,7 +719,7 @@ export function pageHistory(
   const nextOffset = offset + page.length;
   const done = nextOffset >= all.length;
   const userPrompts = prompts.filter(
-    (prompt) => prompt.seq >= offset && (prompt.seq < nextOffset || done),
+    (prompt) => (request.after !== undefined || prompt.seq >= offset) && (prompt.seq < nextOffset || done),
   );
   return {
     events: page,

@@ -99,9 +99,16 @@
 
 /* §4.1: "below 1024px the Rail collapses to an overlay." Both rail states below
    1024px drop the rail's column entirely; the overlay is positioned over the
-   stage rather than beside it. */
+   stage rather than beside it. The Stream remains independently controlled:
+   opening its strip must allocate the full peer column rather than rendering
+   StreamPanel inside the strip-width track. */
 .body[data-rail="overlay"],
 .body[data-rail="hidden"] {
+  grid-template-columns: minmax(0, 1fr) var(--stream-width);
+}
+
+.body[data-stream="collapsed"][data-rail="overlay"],
+.body[data-stream="collapsed"][data-rail="hidden"] {
   grid-template-columns: minmax(0, 1fr) var(--stream-strip-width);
 }
 
@@ -161,6 +168,30 @@
   grid-template-rows: minmax(0, 1fr);
   border-left: 1px solid var(--border);
   background: var(--surface-panel);
+}
+
+/* Hit target straddles the existing seam without taking another grid track. */
+.streamResize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: max(0px, calc(var(--stream-width) - 4px));
+  width: 8px;
+  z-index: 5;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.streamResize:hover,
+.streamResize:active {
+  background: var(--border-strong);
+}
+
+.streamResize:focus-visible {
+  background: var(--accent);
+  outline: 2px solid var(--ink-strong);
+  outline-offset: -2px;
 }
 
 /* ---- the rail overlay (§4.1(b)) ----------------------------------------- */

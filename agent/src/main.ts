@@ -22,6 +22,7 @@
 // through runtime.configure.
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import path from "node:path";
 import process from "node:process";
 import { FrameDecoder, encodeFrame, FrameTooLargeError } from "./framing.js";
 import type { JsonValue } from "./framing.js";
@@ -36,6 +37,7 @@ import {
 import {
   CredentialError,
   LoginFlows,
+  credentialSourceState,
   lastObserved,
   observeTurn,
   reduceLoginError,
@@ -353,6 +355,24 @@ function requireRuntime(): ModelRuntime {
  * when nothing verified, which is a configured-but-unusable runtime rather than
  * an unconfigured one — `requireService` tells those apart.
  */
+function wireAvailability(entry: ProviderAvailability): { [k: string]: JsonValue } {
+  const out: { [k: string]: JsonValue } = {
+    id: entry.id,
+    available: entry.available,
+  };
+  if (entry.unavailable_reason !== undefined) {
+    out.unavailable_reason = entry.unavailable_reason;
+  }
+  if (entry.unavailable_models !== undefined) {
+    // Field-by-field, like wireFlow: only model id + the closed reason cross.
+    out.unavailable_models = entry.unavailable_models.map((model) => ({
+      id: model.id,
+      unavailable_reason: model.unavailable_reason,
+    }));
+  }
+  return out;
+}
+
 function firstAvailableModel(
   rt: ModelRuntime,
   config: RuntimeConfig,
@@ -397,13 +417,7 @@ peer.on("runtime.configure", async (params) => {
   log(`configured runtime: ${usable}/${config.providers.length} provider(s) verified`);
   return {
     ok: true,
-    providers: availability.map((entry) => ({
-      id: entry.id,
-      available: entry.available,
-      ...(entry.unavailable_reason !== undefined
-        ? { unavailable_reason: entry.unavailable_reason }
-        : {}),
-    })),
+    providers: availability.map(wireAvailability),
   };
 });
 
@@ -458,13 +472,7 @@ peer.on("providers.list", () => {
       name: provider.name ?? provider.id,
       models: rt.getModels(provider.id).map((model) => model.id),
     })),
-    verified: availability.map((entry) => ({
-      id: entry.id,
-      available: entry.available,
-      ...(entry.unavailable_reason !== undefined
-        ? { unavailable_reason: entry.unavailable_reason }
-        : {}),
-    })),
+    verified: availability.map(wireAvailability),
   };
 });
 
@@ -490,7 +498,7 @@ peer.on("credentials.status", async (params) => {
     provider_id: providerId,
     // Axis 1 (§23.8): `stored` is Pi's app-owned auth.json; `runtime` is this
     // process's heap; `environment` is an allowlisted variable.
-    state: sourceOf(status.source),
+    state: credentialSourceState(status.source, path.join(agentDir, "auth.json")),
     // The credential's TYPE, which is all Pi's own read side exposes
     // (`CredentialInfo`, never `Credential`) and all §23.8 asks for. There is
     // deliberately no `configured` boolean on this wire: a registered provider
@@ -514,7 +522,10 @@ peer.on("credentials.set_key", async (params) => {
   // the response rather than discovered three weeks later." Read from the AUTH
   // STATUS rather than from `listCredentials`, which cannot tell a runtime key
   // from a stored one — the whole point of the field is which scope moved.
-  const replaced = sourceOf(rt.getProviderAuthStatus(providerId).source);
+  const replaced = credentialSourceState(
+    rt.getProviderAuthStatus(providerId).source,
+    path.join(agentDir, "auth.json"),
+  );
   try {
     if (scope === "project") {
       // Pi's AuthStorage: 0600 under a proper-lockfile cross-process lock.
@@ -590,14 +601,6 @@ peer.on("login.cancel", async (params) => {
   const flow = await logins.cancel(providerId);
   return { ok: true, flow: flow === undefined ? null : wireFlow(flow) };
 });
-
-/** Pi's `AuthStatus.source` mapped onto §23.8's closed axis-1 vocabulary. */
-function sourceOf(source: string | undefined): string {
-  if (source === "stored") return "project";
-  if (source === "runtime") return "serve";
-  if (source === "environment") return "env";
-  return "none";
-}
 
 peer.on("session.create", async (params) => {
   const svc = requireService();
@@ -722,6 +725,7 @@ peer.on("session.prompt", async (params) => {
     recordedTurn = nextTurnOrdinal(manager.getEntries());
     manager.appendCustomEntry(TURN_MARKER_TYPE, {
       turn: recordedTurn,
+      run_id: runId,
       text: promptText,
       envelope: contextBlock ?? null,
     });
@@ -801,6 +805,7 @@ peer.on("session.prompt", async (params) => {
               const manager = managed.session.sessionManager;
               manager.appendCustomEntry(TURN_MARKER_TYPE, {
                 turn: nextTurnOrdinal(manager.getEntries()),
+                run_id: runId,
                 text,
                 envelope: contextBlock ?? null,
                 origin: "agent",
@@ -859,19 +864,16 @@ peer.on("session.prompt", async (params) => {
     observeTurn(managed.model.provider, state === "completed" ? undefined : errorMessage);
   }
 
-  // §2.8(4) source (ii) — the turn that ended with NO assistant entry at all:
-  // cancelled before the model answered, or failed before the first token.
-  // Source (i) (the last assistant entry's stopReason) covers every other case
-  // and covers every session already on disk, so this marker exists only to
-  // close the one hole the persisted messages cannot: a turn with nothing to
-  // read it off. `history.ts` prefers (i) whenever an assistant entry exists,
-  // so writing this on every non-completed run cannot relabel a turn the model
-  // actually finished.
-  if (state !== "completed" && recordedTurn !== null) {
+  // Record explicit settlement for every run, including zero-event runs.
+  // Intermediate assistant stop reasons are not run terminals. The bridge
+  // overlays its durable terminal winner when process loss or a conflict made
+  // this sidecar's local outcome stale.
+  if (recordedTurn !== null) {
     try {
       managed.session.sessionManager.appendCustomEntry(TURN_OUTCOME_MARKER_TYPE, {
         turn: recordedTurn,
-        state: state === "cancelled" ? "cancelled" : "error",
+        run_id: runId,
+        state: state === "completed" ? "completed" : state === "cancelled" ? "cancelled" : "error",
         ...(errorMessage !== undefined ? { message: errorMessage } : {}),
       });
     } catch (err) {
@@ -964,8 +966,8 @@ function wireUserPrompt(prompt: HistoryUserPrompt): { [k: string]: JsonValue } {
   };
   // ABSENT means the operator; only the sidecar's own retry sentence is marked.
   if (prompt.origin === "agent") wire.origin = "agent";
-  // ABSENT means completed. `outcome: null` would say "unknown", which is a
-  // different claim and not one this record can make.
+  // Omitted outcome means no terminal evidence; completion is explicit.
+  if (prompt.run_id !== undefined) wire.run_id = prompt.run_id;
   if (prompt.outcome !== undefined) {
     wire.outcome =
       prompt.outcome.message !== undefined

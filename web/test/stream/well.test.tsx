@@ -200,7 +200,7 @@ describe("the well spends its height on the transcript", () => {
   it("renders no header row at all with no session selected", () => {
     // An `historical` pill over an empty well is a state to resolve, and an
     // empty bordered strip is furniture; the empty well's content is an action.
-    expect(panel).toMatch(/\{selected === null \? null : \(\s*<StreamHeader/);
+    expect(panel).toMatch(/\{selected === null \? null : \(\s*<details>\s*<summary>\{copy\.stream\.connectionDetails\}<\/summary>\s*<StreamHeader/);
   });
 
   it("still keeps the composer as the panel's last child", () => {
@@ -385,18 +385,21 @@ describe("the composer is usable, and says how it is used", () => {
     expect(composer).toMatch(/\{cancellable \? \(/);
     expect(composer).toContain('data-cancel-state={cancellable ? "available" : "unavailable"}');
     expect(composer).toMatch(/cancelWhy !== null \? \{ title: cancelWhy \}/);
-    expect(composer).not.toMatch(/data-composer-cancel[\s\S]{0,120}disabled: true as const/);
+    // Only an acknowledged Stop request dims the known-run control, with a reason.
+    expect(composer).toMatch(/turn\.stopRequested \? \{ disabled: true as const, reason: copy\.composer\.stopRequested \}/);
   });
 
   it("makes a run_in_flight refusal cancellable and typable, so it has an exit", () => {
     expect(composer).toContain("cancelAvailability");
     expect(composer).toContain("isComposable(disabledReason)");
-    // And it expires on the frame that says the run ended.
-    expect(composer).toMatch(/seenTerminals\.current = count/);
+    // The shared selector reconciles admission; an unrelated terminal count cannot release it.
+    expect(composer).toContain("currentTurn(conversation, sessionId !== null)");
+    expect(composer).toContain("liveRunId: turn.runId");
+    expect(composer).not.toMatch(/seenTerminals\.current = count/);
   });
 
-  it("keeps the idle composer one row, and the hint out of it", () => {
-    expect(composer).toMatch(/promptRows = promptFocused \|\| text\.trim\(\) !== "" \? 3 : 1/);
+  it("keeps a stable compact composer, and the hint out of it", () => {
+    expect(composer).toContain("const promptRows = 2;");
     // AMENDED 2026-09-02 (§0.2c, C15): the meta line that used to carry the
     // hint is struck outright — the keyboard binding lives on Send's `title`
     // and no `data-composer-hint` row mounts in any state.
@@ -495,9 +498,11 @@ describe("session tabs reuse TabBar keyboard (#62)", () => {
     unmount = () => {
       root.unmount();
     };
-    const list = host.querySelector("[role='tablist']");
+    const switcher = host.querySelector<HTMLButtonElement>("[data-session-switch]");
+    act(() => { switcher?.focus(); switcher?.click(); });
+    const list = host.querySelector("[data-session-switch-open] [role='tablist']");
     expect(list).not.toBeNull();
-    const buttons = [...host.querySelectorAll<HTMLButtonElement>("[data-session-tab]")];
+    const buttons = [...host.querySelectorAll<HTMLButtonElement>("[data-session-option]")];
     expect(buttons.map((node) => node.tabIndex)).toEqual([0, -1, -1]);
     act(() => {
       list?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
@@ -510,6 +515,9 @@ describe("session tabs reuse TabBar keyboard (#62)", () => {
     });
     expect(seen).toEqual(["sess-child", "sess-other", "sess-kerf"]);
     expect(host.querySelector("ul[role='tablist']")).toBeNull();
+    act(() => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+    expect(host.querySelector("[data-session-switch-open]")).toBeNull();
+    expect(document.activeElement).toBe(switcher);
   });
 });
 

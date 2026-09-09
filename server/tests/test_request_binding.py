@@ -298,6 +298,10 @@ def test_a_second_turn_on_a_live_session_is_refused_run_in_flight(
         def second_turn(_event: dict[str, Any]) -> None:
             if refused:
                 return
+            execution = runtime.sessions()[0]["execution"]
+            assert execution["active_run_id"] == "run-a"
+            assert execution["admission_available"] is False
+            assert execution["terminal"] is None
             try:
                 runtime.prompt(session_id, REQUEST_B, run_id="run-b")
             except RunInFlightError as exc:
@@ -305,6 +309,10 @@ def test_a_second_turn_on_a_live_session_is_refused_run_in_flight(
 
         first = runtime.prompt(session_id, REQUEST_A, run_id="run-a", on_event=second_turn)
         assert first.status == "completed"
+        settled = runtime.sessions()[0]["execution"]
+        assert settled["active_run_id"] is None
+        assert settled["admission_available"] is True
+        assert settled["terminal"]["state"] == "completed"
 
         assert refused, "a second turn on a live session was admitted"
         exc = refused[0]
@@ -413,6 +421,15 @@ def test_two_sessions_may_think_at_once(tmp_path: Path, monkeypatch: pytest.Monk
         for t in threads:
             t.start()
         assert held.in_flight.wait(timeout=30), "neither turn reached the sidecar"
+        # Zero events have been emitted. Ownership must still be visible.
+        executions = {row["session_id"]: row["execution"] for row in runtime.sessions()}
+        assert executions[orchestrator]["active_run_id"] == "run-orch"
+        assert executions[part]["active_run_id"] == "run-part"
+        assert executions[part]["terminal"] is None
+        assert executions[orchestrator]["admission_available"] is False
+        next_read = runtime.sessions()[0]["execution"]
+        assert next_read["version"] > executions[orchestrator]["version"]
+        assert next_read["epoch"] == executions[orchestrator]["epoch"]
         # Both are mid-turn, and each reads its OWN request while they overlap.
         assert run_request_text("run-orch") == REQUEST_A
         assert run_request_text("run-part") == REQUEST_B

@@ -19,7 +19,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readToolResult } from "../../src/api/events";
 import type { SessionsDocument } from "../../src/api/sessions";
 import { SessionTabs } from "../../src/components/stream/SessionTabs";
@@ -256,7 +256,7 @@ describe("the ask_user widget (§7.3)", () => {
 });
 
 describe("the transcript's honesty rows (§8, §7.4)", () => {
-  it("puts a visible seam between the surfaces and draws no absence hedge", () => {
+  it("keeps source provenance inspectable without an absence hedge", () => {
     const document_ = renderRows(panelRows(historyItems, liveEntries));
     expect(document_.querySelectorAll("[data-absence]")).toHaveLength(0);
     expect(document_.body.textContent ?? "").not.toContain(
@@ -276,7 +276,7 @@ describe("the transcript's honesty rows (§8, §7.4)", () => {
     const document_ = renderRows(rows);
     const marker = document_.querySelector("[data-resync]");
     expect(marker?.getAttribute("data-resync")).toBe("gap");
-    expect(marker?.textContent ?? "").toContain("are not recovered from the recorded transcript");
+    expect(marker?.textContent ?? "").toContain(copy.stream.resync.gap);
     expect(marker?.textContent ?? "").toContain(`${fixture.run_id}#6`);
   });
 
@@ -311,7 +311,7 @@ describe("the transcript's honesty rows (§8, §7.4)", () => {
     const marker = renderRows(rows).querySelector("[data-resync]");
     // §7.4(c): nothing here permits a silent gap. The drawn line still says
     // the events are not recovered; the two-namespace reason is the title.
-    expect(marker?.textContent ?? "").toContain("are not recovered");
+    expect(marker?.textContent ?? "").toContain(copy.stream.resync.gap);
     expect(marker?.getAttribute("title")).toBe(copy.stream.resyncDetail.gap);
   });
 
@@ -358,8 +358,10 @@ describe("the transcript's honesty rows (§8, §7.4)", () => {
     expect(band?.getAttribute("title") ?? "").toContain(terminalId);
     // The negative half: no visible text node the band renders looks like the
     // id — a `namespace:rest` machine-identifier shape.
-    expect(band?.textContent ?? "").not.toContain(terminalId);
-    expect(band?.textContent ?? "").not.toMatch(/\bterminal:[\w-]+/);
+    const face = band?.cloneNode(true) as Element;
+    face.querySelectorAll("details").forEach((node) => node.remove());
+    expect(face.textContent ?? "").not.toContain(terminalId);
+    expect(face.textContent ?? "").not.toMatch(/\bterminal:[\w-]+/);
   });
 
   it("never renders a terminal/backpressure-prefixed machine identifier as visible text, across the whole recorded transcript", () => {
@@ -371,7 +373,9 @@ describe("the transcript's honesty rows (§8, §7.4)", () => {
     for (const band of bands) {
       const id = band.getAttribute("data-terminal-id");
       if (id === null) continue;
-      expect(band.textContent ?? "").not.toContain(id);
+      const face = band.cloneNode(true) as Element;
+      face.querySelectorAll("details").forEach((node) => node.remove());
+      expect(face.textContent ?? "").not.toContain(id);
     }
   });
 
@@ -416,8 +420,12 @@ describe("the session tabs (§7.1, G4.10)", () => {
     { session_id: "d", parent_session_id: null, kind: null, depth: 0, thread_state: "unlinked", origin: {} },
   ];
 
-  const document_ = parse(
-    renderToStaticMarkup(
+  let document_: Document;
+  beforeEach(() => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    act(() => root.render(
       <SessionTabs
         tabs={tabs}
         sessions={[
@@ -427,11 +435,15 @@ describe("the session tabs (§7.1, G4.10)", () => {
         onSelect={() => undefined}
         bounded={false}
       />,
-    ),
-  );
+    ));
+    act(() => host.querySelector<HTMLButtonElement>("[data-session-switch]")?.click());
+    document_ = parse(host.querySelector("[data-session-switch-open]")?.outerHTML ?? "");
+    act(() => root.unmount());
+    host.remove();
+  });
 
   it("renders the three levels with the server's depths", () => {
-    const rendered = [...document_.querySelectorAll("[data-session-tab]")];
+    const rendered = [...document_.querySelectorAll("[data-session-option]")];
     expect(rendered.map((node) => node.getAttribute("data-thread-depth"))).toEqual([
       "0",
       "1",
@@ -441,7 +453,7 @@ describe("the session tabs (§7.1, G4.10)", () => {
   });
 
   it("marks the quick-edit and delegation edges by kind", () => {
-    const kinds = [...document_.querySelectorAll("[data-session-tab]")].map((node) =>
+    const kinds = [...document_.querySelectorAll("[data-session-option]")].map((node) =>
       node.getAttribute("data-thread-kind"),
     );
     expect(kinds).toEqual([null, "delegation", "quick_edit", null]);
@@ -450,12 +462,12 @@ describe("the session tabs (§7.1, G4.10)", () => {
   it("states an unrecoverable parent rather than implying a root", () => {
     const unlinked = [...document_.querySelectorAll('[data-thread-state="unlinked"]')];
     expect(unlinked).toHaveLength(1);
-    expect(unlinked[0]?.getAttribute("data-session-tab")).toBe("d");
+    expect(unlinked[0]?.getAttribute("data-session-option")).toBe("d");
     expect(unlinked[0]?.getAttribute("title") ?? "").toContain("cannot be recovered");
   });
 
   it("labels a quick-edit tab from its edge origin", () => {
-    const quick = document_.querySelector('[data-session-tab="c"]');
+    const quick = document_.querySelector('[data-session-option="c"]');
     expect(quick?.getAttribute("data-part")).toBe("bracket");
   });
 });
@@ -478,24 +490,20 @@ describe("the presentation rows' DOM contract (§7.3 C2/C21, amended 2026-09-02)
     expect(echo?.textContent ?? "").toContain("chamfer the lid, 0.5 mm");
   });
 
-  it("marks the echo unrecorded on its visible face, not on title alone", () => {
-    const document_ = renderRows(liveRowsOf(withEcho));
-    const echo = document_.querySelector('[data-row="local-prompt"]');
-    // The visible-at-rest marker word, C2 verbatim.
-    expect(echo?.textContent ?? "").toContain(copy.stream.localEcho.marker);
-    // The accessible not-a-recorded-event equivalent, in the DOM as text.
-    expect(echo?.textContent ?? "").toContain(copy.stream.localEcho.accessible);
-    // `title` carries only the long form — and it is non-empty.
-    expect(echo?.querySelector("[title]")?.getAttribute("title")).toBe(copy.stream.localEcho.title);
+  it("uses the same human speaker marker for a local and restored message", () => {
+    const echo = renderRows(liveRowsOf(withEcho)).querySelector('[data-row="local-prompt"]');
+    expect(echo?.textContent).toContain(copy.stream.userPrompt.marker);
+    expect(echo?.textContent).not.toMatch(/operator|unrecorded/);
   });
 
-  it("renders the run-start boundary as a rule line carrying only the run id", () => {
+  it("keeps the execution identity behind a closed disclosure", () => {
     const document_ = renderRows(liveRowsOf(withEcho));
     const boundary = document_.querySelector('[data-row="run-start"]');
     expect(boundary).not.toBeNull();
     expect(boundary?.getAttribute("data-run-id")).toBe(fixture.run_id);
     expect(boundary?.textContent ?? "").toContain(fixture.run_id);
-    expect(boundary?.textContent ?? "").toContain(copy.stream.runStart.accessible);
+    expect(boundary?.querySelector("details")?.hasAttribute("open")).toBe(false);
+    expect(boundary?.querySelector("summary")?.textContent).toBe(copy.stream.runDetails);
   });
 
   it("gives neither presentation row an event id, and loses no real id to them", () => {
@@ -607,8 +615,8 @@ describe("the restored operator row's role affordance (§7.3(a))", () => {
     const leaves = [...(promptLi?.querySelectorAll("*") ?? [])].filter(
       (node) => node.children.length === 0 && !/visuallyHidden/i.test(node.getAttribute("class") ?? ""),
     );
-    const marker = leaves.map((node) => node.textContent?.trim()).find((text) => text === "operator");
-    expect(marker, promptLi?.outerHTML ?? "(no user-prompt row rendered)").toBe("operator");
+    const marker = leaves.map((node) => node.textContent?.trim()).find((text) => text === copy.stream.userPrompt.marker);
+    expect(marker, promptLi?.outerHTML ?? "(no user-prompt row rendered)").toBe(copy.stream.userPrompt.marker);
     // Control: the agent's own row carries no such word (§7.3(a): "a marker on
     // every row is a marker on none").
     expect(textLi?.textContent ?? "").not.toMatch(/\boperator\b/);
@@ -787,6 +795,8 @@ describe("StreamPanel — the strip's membership is the listing, not one thread 
     return {
       rows: [],
       status: "historical",
+      currentTurn: { status: null, reason: null, runId: null, terminalRunId: null,
+        canSend: true, canAnswer: false, stopRequested: false },
       history: emptyHistory(),
       tabs: [],
       threadState: null,
@@ -847,8 +857,10 @@ describe("StreamPanel — the strip's membership is the listing, not one thread 
 
     const { host, root } = mount({ status: "ok", sessions: rows, profiles: [] }, selected);
     try {
-      const tabs = [...host.querySelectorAll("[data-session-tab]")];
-      expect(tabs.map((t) => t.getAttribute("data-session-tab")).sort()).toEqual(
+      expect(host.querySelectorAll("[data-session-tab]")).toHaveLength(1);
+      act(() => host.querySelector<HTMLButtonElement>("[data-session-switch]")?.click());
+      const tabs = [...host.querySelectorAll("[data-session-option]")];
+      expect(tabs.map((t) => t.getAttribute("data-session-option")).sort()).toEqual(
         ["sess-o", "sess-p", selected].sort(),
       );
       expect(tabs.map((t) => t.getAttribute("data-session-id"))).toContain(selected);

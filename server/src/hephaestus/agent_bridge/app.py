@@ -583,6 +583,9 @@ class BridgeRuntime:
         self._readopted: dict[str, int] = {}
         self._readopt_locks: dict[str, threading.Lock] = {}
         self._runs: dict[str, _Run] = {}
+        self._latest_runs: dict[str, str] = {}
+        self._execution_epoch = str(uuid.uuid4())
+        self._execution_version = 0
         # INTERFACE.md §2.7: the live wire frame carries exactly one envelope
         # field beyond the Python-side shape — ``session_id`` — so a
         # multi-session panel can route without inspecting payloads. The pump's
@@ -1268,6 +1271,27 @@ class BridgeRuntime:
         with self._lock:
             principals = list(self._principals.values())
             unreadable = dict(self._unreadable)
+            self._execution_version += 1
+            execution = {}
+            capacity = self._admission.capacity()
+            for p in principals:
+                run_id = self._latest_runs.get(p.session_id)
+                terminal = self._admission.get_terminal(run_id) if run_id else None
+                holding = next((r.run_id for r in self._runs.values()
+                                if r.session_id == p.session_id), None)
+                execution[p.session_id] = {
+                    "epoch": self._execution_epoch,
+                    "version": self._execution_version,
+                    "run_id": run_id,
+                    "active_run_id": holding if terminal is None else None,
+                    "admission_available": holding is None and capacity > 0,
+                    "terminal": None if terminal is None else {
+                        "run_id": terminal.run_id,
+                        "terminal_id": terminal.terminal_id,
+                        "state": str(terminal.state),
+                        "payload": terminal.data,
+                    },
+                }
         # §2.3 (amended 2026-09-03): each row says whether it is known to be
         # unreadable. ``readable: true`` means NOT KNOWN TO BE UNREADABLE —
         # stated that way because it is what the field can support. THE LISTING
@@ -1282,6 +1306,7 @@ class BridgeRuntime:
                 "part": p.part,
                 "readable": p.session_id not in unreadable,
                 "unreadable_reason": unreadable.get(p.session_id),
+                "execution": execution[p.session_id],
             }
             for p in principals
         ]
@@ -1362,6 +1387,17 @@ class BridgeRuntime:
             with self._lock:
                 self._answerers.pop(run_id, None)
                 self._runs.pop(run_id, None)
+        # The durable terminal also wins over the blocking RPC response (for
+        # example, backpressure may have failed a run before a late success).
+        winner = self._admission.get_terminal(run_id)
+        if winner is not None:
+            status = str(winner.state)
+            run.terminal = {
+                "run_id": run_id,
+                "terminal_id": winner.terminal_id,
+                "state": status,
+                "payload": winner.data,
+            }
         return PromptResult(
             run_id=run_id,
             status=status,
@@ -1403,6 +1439,7 @@ class BridgeRuntime:
                 if other.session_id == run.session_id:
                     raise RunInFlightError(other.session_id, other.run_id, scope="session")
             self._runs[run.run_id] = run
+            self._latest_runs[run.session_id] = run.run_id
             self._bind_run_session(run.run_id, run.session_id)
             if answerer is not None:
                 self._answerers[run.run_id] = answerer
@@ -1431,10 +1468,9 @@ class BridgeRuntime:
     ) -> dict[str, Any]:
         """Fetch one normalized, high-water-frozen page of a session's history.
 
-        A **passthrough** in both directions (§2.8): the opaque token is
-        forwarded and returned unmodified and is never decoded on this side, and
-        every key the sidecar answers with — including the ``user_prompts`` and
-        ``end_cursor`` the 2026-09-03 amendment adds — flows through untouched.
+        Opaque tokens and event identities pass through unmodified. Explicitly
+        run-linked outcomes are reconciled with durable admission evidence;
+        all other sidecar metadata flows through untouched.
 
         ``after`` is §2.8(5)'s tail read: freeze a new mark now and start at the
         ordinal the token names, so a client that already holds a walked prefix
@@ -1448,7 +1484,27 @@ class BridgeRuntime:
             params["cursor"] = cursor
         if after is not None:
             params["after"] = after
-        return self._call_for_session("history.page", params, session_id=session_id)
+        page = self._call_for_session("history.page", params, session_id=session_id)
+        # Outcome metadata can change without any event ordinal changing. The
+        # sidecar carries explicit linkage; never infer it from text or tools.
+        for prompt in page.get("user_prompts", []):
+            rid = prompt.get("run_id")
+            if not isinstance(rid, str):
+                continue
+            terminal = self._admission.get_terminal(rid)
+            if terminal is not None:
+                state = str(terminal.state)
+                outcome = {"state": "error" if state == "failed" else state}
+                if isinstance(terminal.data, dict):
+                    reason = terminal.data.get("error") or terminal.data.get("reason")
+                    if isinstance(reason, str):
+                        outcome["message"] = reason
+                prompt["outcome"] = outcome
+            else:
+                with self._lock:
+                    if rid in self._runs:
+                        prompt.pop("outcome", None)
+        return page
 
     # -- py.* request handling (sidecar -> python) -------------------------
 
@@ -1591,7 +1647,11 @@ class BridgeRuntime:
         with self._lock:
             run = self._runs.get(run_id)
             if run is not None:
-                run.terminal = dict(params)
+                winner = self._admission.get_terminal(run_id)
+                run.terminal = dict(params) if winner is None else {
+                    "run_id": run_id, "terminal_id": winner.terminal_id,
+                    "state": str(winner.state), "payload": winner.data,
+                }
 
     def _ack_terminal(self, run_id: str, terminal_id: str) -> None:
         """Pump callback: the terminal is durable — name it back to the sidecar."""

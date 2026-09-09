@@ -18,7 +18,8 @@
 //   2. the viewport canvas's centre pixel ≥ 4.5:1 against its corner pixel when
 //      geometry is loaded (§3.11.2's part-vs-ground floor);
 //   3. grid columns at 1440 / 1280 / **1279** / 1024 / 1023 matching §4.1's
-//      table, with `document.body.scrollWidth === clientWidth` at all five;
+//      table, with `document.body.scrollWidth === clientWidth` at all five, and
+//      the narrow Rail-hidden Stream opening to its full-width track;
 //   4. the inspector canvas height identical across all five inspector tabs.
 //
 // `not_run`'s distinctness lives in `test/system/badge.test.tsx`, which renders
@@ -367,6 +368,92 @@ test("the shell grid matches §4.1's table at five widths and never overflows", 
   for (const width of WIDTHS) {
     expect(measured[width]?.overflow, `body overflows at ${String(width)}px`).toBe(false);
   }
+});
+
+test("the Rail-hidden Stream opens as a full peer column and recollapses at a narrow viewport", async ({
+  page,
+}) => {
+  await open(page, route(PART));
+  await page.setViewportSize({ width: 1000, height: 900 });
+
+  const body = page.locator("[data-band]");
+  await expect(body).toHaveAttribute("data-band", "narrow");
+  await expect(body).toHaveAttribute("data-rail", "hidden");
+  await expect(body).toHaveAttribute("data-stream", "collapsed");
+  await expect(body.locator(":scope > nav")).toHaveCount(1);
+  await expect(body.locator(":scope > nav")).toBeHidden();
+
+  const geometry = async (): Promise<{
+    readonly bodyWidth: number;
+    readonly stageWidth: number;
+    readonly streamWidth: number;
+    readonly streamRight: number;
+    readonly bodyRight: number;
+    readonly columns: number;
+    readonly panelWidth: number | null;
+    readonly overflow: boolean;
+  }> =>
+    await page.evaluate(() => {
+      const bodyElement = document.querySelector<HTMLElement>("[data-band]");
+      const stage = bodyElement?.querySelector<HTMLElement>(":scope > main") ?? null;
+      const stream = bodyElement?.querySelector<HTMLElement>(":scope > aside") ?? null;
+      const panel = document.querySelector<HTMLElement>('[data-testid="stream-panel"]');
+      if (bodyElement === null || stage === null || stream === null) {
+        throw new Error("shell body, Stage, or Stream is missing");
+      }
+      const bodyBox = bodyElement.getBoundingClientRect();
+      const streamBox = stream.getBoundingClientRect();
+      return {
+        bodyWidth: bodyBox.width,
+        stageWidth: stage.getBoundingClientRect().width,
+        streamWidth: streamBox.width,
+        streamRight: streamBox.right,
+        bodyRight: bodyBox.right,
+        columns: getComputedStyle(bodyElement).gridTemplateColumns.split(/\s+/).length,
+        panelWidth: panel?.getBoundingClientRect().width ?? null,
+        overflow: document.body.scrollWidth > document.body.clientWidth,
+      };
+    });
+
+  const collapsed = await geometry();
+  expect(collapsed.columns).toBe(2);
+  expect(collapsed.streamWidth).toBeCloseTo(44, 0);
+  expect(collapsed.stageWidth + collapsed.streamWidth).toBeCloseTo(collapsed.bodyWidth, 0);
+  expect(collapsed.streamRight).toBeCloseTo(collapsed.bodyRight, 0);
+  expect(collapsed.panelWidth).toBeNull();
+  expect(collapsed.overflow).toBe(false);
+
+  await page.locator("[data-stream-strip]").click();
+  await expect(body).toHaveAttribute("data-stream", "open");
+  await expect(body).toHaveAttribute("data-rail", "hidden");
+  await expect(page.locator('[data-testid="stream-panel"]')).toBeVisible();
+
+  const openGeometry = await geometry();
+  // `--stream-width` resolves to the clamp's 360px floor at a 1000px viewport.
+  // The broken rule left this at the 44px strip width even after React had set
+  // `data-stream="open"`, squeezing the mounted panel into a one-word ribbon.
+  expect(openGeometry.columns).toBe(2);
+  expect(openGeometry.streamWidth).toBeCloseTo(360, 0);
+  expect(openGeometry.stageWidth).toBeCloseTo(640, 0);
+  expect(openGeometry.stageWidth + openGeometry.streamWidth).toBeCloseTo(
+    openGeometry.bodyWidth,
+    0,
+  );
+  expect(openGeometry.streamRight).toBeCloseTo(openGeometry.bodyRight, 0);
+  expect(openGeometry.panelWidth).not.toBeNull();
+  expect(openGeometry.panelWidth ?? 0).toBeGreaterThanOrEqual(openGeometry.streamWidth - 1);
+  expect(openGeometry.overflow).toBe(false);
+
+  await page.locator("[data-stream-collapse]").click();
+  await expect(body).toHaveAttribute("data-stream", "collapsed");
+  await expect(body).toHaveAttribute("data-rail", "hidden");
+  await expect(page.locator("[data-stream-strip]")).toBeVisible();
+
+  const recollapsed = await geometry();
+  expect(recollapsed.streamWidth).toBeCloseTo(collapsed.streamWidth, 0);
+  expect(recollapsed.stageWidth).toBeCloseTo(collapsed.stageWidth, 0);
+  expect(recollapsed.panelWidth).toBeNull();
+  expect(recollapsed.overflow).toBe(false);
 });
 
 // ---------------------------------------------------------------------------

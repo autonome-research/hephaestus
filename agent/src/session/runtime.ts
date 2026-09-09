@@ -126,11 +126,22 @@ export interface RuntimeConfig {
  * provider is declared but cannot serve a turn; it is **never** substituted,
  * never falls back to an ambient login, and never silently replaced.
  */
+export interface UnavailableProviderModel {
+  readonly id: string;
+  readonly unavailable_reason: "model_unknown";
+}
+
 export interface ProviderAvailability {
   readonly id: string;
   readonly available: boolean;
   readonly unavailable_reason?: RuntimeConfigErrorCode;
   readonly message?: string;
+  /**
+   * Declared models this packaged Pi catalog cannot resolve. They remain in the
+   * operator's config, but are ineligible for selection. Reporting them keeps
+   * partial usability from becoming a silent fallback.
+   */
+  readonly unavailable_models?: readonly UnavailableProviderModel[];
 }
 
 /** What `createModelRuntime` now returns: the runtime and what verified. */
@@ -181,8 +192,13 @@ export async function createModelRuntime(
 ): Promise<ConfiguredRuntime> {
   const runtime = await ModelRuntime.create({
     authPath: path.join(paths.agentDir, "auth.json"),
+    // Keep model definitions versioned with the integrity-checked sidecar. The
+    // discovery offer may have read model ids from another (newer) Pi's cache,
+    // but importing that cache's definitions would bypass this package boundary
+    // and can pair new metadata with old transports. Unknown discovered ids are
+    // therefore retained and reported per model below, not loaded as code/data
+    // for this runtime and not allowed to poison known declared models.
     modelsPath: null,
-    modelsStorePath: path.join(paths.agentDir, "models-store.json"),
     allowModelNetwork: false,
   });
   const credentials = config.credentials ?? {};
@@ -193,8 +209,12 @@ export async function createModelRuntime(
       if (provider.kind === "pi_native") {
         // No registerProvider: the provider *is* Pi's built-in one, and its
         // credential comes from authPath (auth.json under the agent dir).
-        verifyPiNativeProvider(runtime, provider);
-        availability.push({ id: provider.id, available: true });
+        const unavailableModels = verifyPiNativeProvider(runtime, provider);
+        availability.push({
+          id: provider.id,
+          available: true,
+          ...(unavailableModels.length > 0 ? { unavailable_models: unavailableModels } : {}),
+        });
         continue;
       }
       let apiKey = runtimeKeys[provider.id] ?? "app-managed-no-network";
@@ -234,11 +254,18 @@ export async function createModelRuntime(
 }
 
 /**
- * Check that a pi_native provider is real, authenticated, and declares models
- * Pi knows — before any session is created, so failures name the cause instead
- * of surfacing as an opaque 401 mid-run.
+ * Check that a pi_native provider is real and authenticated, then classify its
+ * declared models against this packaged Pi catalog.
+ *
+ * Discovery deliberately reads the operator Pi's non-secret models-store, which
+ * can be newer than this integrity-checked sidecar. Unknown ids are returned as
+ * model-level failures when at least one declaration resolves; only a provider
+ * with no usable declared model fails as a whole. The config is never mutated.
  */
-function verifyPiNativeProvider(runtime: ModelRuntime, provider: PiNativeProviderSpec): void {
+function verifyPiNativeProvider(
+  runtime: ModelRuntime,
+  provider: PiNativeProviderSpec,
+): UnavailableProviderModel[] {
   if (runtime.getProvider(provider.id) === undefined) {
     const known = runtime
       .getProviders()
@@ -262,20 +289,29 @@ function verifyPiNativeProvider(runtime: ModelRuntime, provider: PiNativeProvide
         `Pi auth.json into the agent dir, or log in for this provider.`,
     );
   }
-  for (const model of provider.models) {
-    if (runtime.getModel(provider.id, model.id) === undefined) {
-      const available = runtime
-        .getModels(provider.id)
-        .map((m) => m.id)
-        .join(", ");
-      throw new RuntimeConfigError(
-        "model_unknown",
-        provider.id,
-        `pi_native provider '${provider.id}' does not offer model '${model.id}' ` +
-          `(available: ${available})`,
-      );
-    }
+  const unavailableModels = provider.models
+    .filter((model) => runtime.getModel(provider.id, model.id) === undefined)
+    .map((model) => ({
+      id: model.id,
+      unavailable_reason: "model_unknown" as const,
+    }));
+  const hasUsableDeclaredModel = provider.models.some(
+    (model) => runtime.getModel(provider.id, model.id) !== undefined,
+  );
+  if (!hasUsableDeclaredModel) {
+    const declared = provider.models.map((model) => model.id).join(", ") || "(none)";
+    const available = runtime
+      .getModels(provider.id)
+      .map((m) => m.id)
+      .join(", ");
+    throw new RuntimeConfigError(
+      "model_unknown",
+      provider.id,
+      `pi_native provider '${provider.id}' offers none of its declared models ` +
+        `(${declared}; available: ${available})`,
+    );
   }
+  return unavailableModels;
 }
 
 function registerProvider(runtime: ModelRuntime, provider: KeyedProviderSpec, apiKey: string): void {

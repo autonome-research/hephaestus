@@ -73,6 +73,7 @@ import { keys, useProviders } from "../api/queries";
 import {
   adopt,
   discover,
+  loadProviders,
   signOut,
   unlinkAuthSource,
   type DiscoveryOffer,
@@ -128,6 +129,45 @@ export function availabilityChip(available: boolean | null): ChipStatus {
 export function healthObserved(row: ProviderRow, now: Date = new Date()): string | null {
   if (row.last_observed_at === null) return null;
   return `${copy.providers.healthStale} ${formatObservedAt(row.last_observed_at, now)}`;
+}
+
+export function availabilityText(available: boolean | null): string {
+  if (available === null) return copy.providers.availabilityUnknown;
+  return available ? copy.providers.available : copy.providers.unavailable;
+}
+
+function providerName(row: ProviderRow): string {
+  return row.kind === "pi_native" && row.id === "openai-codex"
+    ? copy.providers.codexSubscription
+    : row.name;
+}
+
+function Availability(props: { readonly row: ProviderRow }): React.JSX.Element {
+  const { row } = props;
+  const reasons = copy.providers.refusal as Readonly<Record<string, string>>;
+  const partial = row.available === true && (row.unavailable_models?.length ?? 0) > 0;
+  return (
+    <div data-provider-readiness={partial ? "partial" : row.available === null ? "unknown" : String(row.available)}>
+      <StatusBadge status={partial ? "unknown" : availabilityChip(row.available)}>
+        {partial ? copy.providers.partialAvailability : availabilityText(row.available)}
+      </StatusBadge>
+      {partial ? <PanelNote>{copy.providers.partialAvailabilityNote}</PanelNote> : null}
+      {row.available !== false ? null : (
+        <>
+          <PanelNote>
+            {row.unavailable_reason === "model_unknown"
+              ? copy.providers.modelUnavailableNote
+              : reasons[row.unavailable_reason ?? ""] ?? copy.providers.unavailableNote}
+          </PanelNote>
+          {row.unavailable_reason === null ? null : (
+            <Chip tone="code" data-provider-unavailable-reason={row.unavailable_reason}>
+              {row.unavailable_reason}
+            </Chip>
+          )}
+        </>
+      )}
+    </div>
+  );
 }
 
 export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
@@ -271,7 +311,7 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
                     ? { note: copy.providers.fileModeOpen }
                     : {}),
                 },
-                {
+                ...(document_.credential_allowlist.length > 0 || rows.some((row) => row.kind !== "pi_native") ? [{
                   key: "allowlist",
                   label: copy.providers.allowlist,
                   value:
@@ -287,7 +327,7 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
                       </>
                     ),
                   note: copy.providers.allowlistNote,
-                },
+                }] : []),
               ]}
             />
 
@@ -299,10 +339,11 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
                     <PanelNote>{copy.providers.authSourceLinked}</PanelNote>
                     <Button
                       variant="secondary"
+                      {...(busy ? { disabled: true, reason: copy.providers.dialog.waiting } : {})}
                       onClick={() => {
                         act(async () => {
                           await unlinkAuthSource();
-                          await reload();
+                          afterCredentialChange();
                         });
                       }}
                       data-auth-unlink
@@ -354,6 +395,7 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
                 row={row}
                 busy={busy}
                 compact={!detailsOpen}
+                authLinked={document_.auth_source_linked}
                 // §23.8 (C9) / §4.7 (C8): while the composer is
                 // `agent_unavailable`, exactly ONE sign-in action takes
                 // `primary` — the first row still without a credential, else
@@ -427,7 +469,7 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
           offers={offers}
           busy={busy}
           compact={!detailsOpen}
-          signedIn={rows.some((row) => row.source !== "none")}
+          signedIn={rows.some((row) => row.source !== "none") && rows.every((row) => row.available === true)}
           onDiscover={() => {
             // THE ONLY call site. Never on mount, never on a timer, never as a
             // side effect of another action (§15.41, §23.5).
@@ -439,7 +481,15 @@ export function ProvidersPanel(props: ProvidersPanelProps): React.JSX.Element {
             act(async () => {
               await adopt(offer.discovery_id);
               setOffers(null);
-              afterCredentialChange();
+              await client.invalidateQueries();
+              const updated = await client.fetchQuery({ queryKey: keys.providers(), queryFn: loadProviders });
+              // A successful config write is not proof that the chosen
+              // provider is usable. Keep its remedy in view if setup failed.
+              if (updated.providers.some((row) => row.id === offer.provider_id && row.available === true)) {
+                onAttached?.();
+              } else {
+                setDetailsOpen(true);
+              }
             });
           }}
         />
@@ -481,6 +531,8 @@ interface ProviderRowViewProps {
   readonly row: ProviderRow;
   readonly busy: boolean;
   readonly compact: boolean;
+  /** The shared auth file blocks ALL credential writes, not just native rows. */
+  readonly authLinked: boolean;
   /**
    * §23.8 (C9): `primary` ONLY while the composer's current
    * `data-disabled-reason` is `agent_unavailable`, and then on at most one
@@ -493,19 +545,24 @@ interface ProviderRowViewProps {
 }
 
 function ProviderRowView(props: ProviderRowViewProps): React.JSX.Element {
-  const { row, busy, compact, signInVariant, onOpenDetails, onSignIn, onSignOut } = props;
+  const { row, busy, compact, authLinked, signInVariant, onOpenDetails, onSignIn, onSignOut } = props;
   const signedIn = row.source !== "none";
-  const actions = (
+  const actions = authLinked ? (
+    <PanelNote data-provider-write-blocked="">{copy.providers.linkedWriteNote}</PanelNote>
+  ) : (
     <div className={styles["actions"]}>
       {/* C9: sign-in/rotate is `secondary` in every state — all credentials
           rejected included, where the health axis carries the bad news — and
           `primary` only under the composer's own `agent_unavailable`. */}
       <Button
         variant={signInVariant}
+        {...(busy ? { disabled: true, reason: copy.providers.dialog.waiting } : {})}
         onClick={onSignIn}
         data-provider-signin={row.id}
       >
-        {signedIn ? copy.providers.rotate : copy.providers.signIn}
+        {signedIn
+          ? row.kind === "pi_native" ? copy.providers.subscriptionSignIn : copy.providers.rotate
+          : copy.providers.signIn}
       </Button>
       {signedIn ? (
         busy ? (
@@ -536,14 +593,15 @@ function ProviderRowView(props: ProviderRowViewProps): React.JSX.Element {
             data-provider-chip={row.id}
             title={copy.providers.detailsShow}
           >
-            {row.id}
+            {providerName(row)}
           </Button>
         ) : (
           <>
-            <Chip tone="code">{row.id}</Chip>
+            <Chip tone="code">{providerName(row)}</Chip>
             {actions}
           </>
         )}
+        {row.available === true && (row.unavailable_models?.length ?? 0) === 0 ? null : <Availability row={row} />}
       </div>
     );
   }
@@ -555,6 +613,7 @@ function ProviderRowView(props: ProviderRowViewProps): React.JSX.Element {
       data-provider-health={row.health}
       data-provider-available={row.available === null ? "unknown" : String(row.available)}
     >
+      <Chip tone="code">{providerName(row)}</Chip>
       <DataTable
         rows={[
           {
@@ -588,12 +647,21 @@ function ProviderRowView(props: ProviderRowViewProps): React.JSX.Element {
           {
             key: "availability",
             label: copy.providers.availability,
-            value: (
-              <StatusBadge status={availabilityChip(row.available)}>
-                {row.available === false ? copy.providers.unavailable : copy.providers.available}
-              </StatusBadge>
-            ),
-            ...(row.available === false ? { note: copy.providers.unavailableNote } : {}),
+            value: <Availability row={row} />,
+          },
+          {
+            key: "models",
+            label: copy.providers.models,
+            value: row.models.map((model) => (
+              <div key={model.id}>
+                <Fact mono source="providers.models.id" value={model.id} />
+                {row.unavailable_models?.some((unavailable) => unavailable.id === model.id) ? (
+                  <PanelNote data-provider-model-unavailable={model.id}>
+                    {copy.providers.modelUnsupported}
+                  </PanelNote>
+                ) : null}
+              </div>
+            )),
           },
           ...(row.credential === undefined
             ? []
@@ -698,6 +766,9 @@ function DiscoverySection(props: DiscoverySectionProps): React.JSX.Element | nul
                 },
               ]}
             />
+            {offer.kind === "pi_auth" ? (
+              <PanelNote>{copy.providers.discover.subscriptionNote}</PanelNote>
+            ) : null}
             {/* Unmistakably an act: nothing adopts on render, on hover, or on
                 selection (§23.14 item 19). §4.7 (C8): `secondary` — adopting
                 is not the shell's one primary, which is Send (or, under
@@ -705,6 +776,7 @@ function DiscoverySection(props: DiscoverySectionProps): React.JSX.Element | nul
             <div className={styles["actions"]}>
               <Button
                 variant="secondary"
+                {...(busy ? { disabled: true, reason: copy.providers.dialog.waiting } : {})}
                 onClick={() => {
                   onAdopt(offer);
                 }}
