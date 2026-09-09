@@ -294,11 +294,35 @@ sixth hand-copied supervision loop outside the engine tree, with no death
 drain, that the structural guard cannot see; (3) the stage-13B `bench` fixture
 is a session project that proposals recorded through it pollute for later
 `bench_copy` counts — CI's alphabetical order hides it, a reordered run does
-not; (4) some sidecar-backed test leaves an empty `auth.json` inside the checkout's `agent` directory (mode
-0600, `{}`) in the source tree — a Pi agent directory resolving to the
-checkout's `agent/` rather than a temporary one; it is untracked and harmless
-but is a hygiene leak to find. L8 (J-mirrors-and-dx-1..10) remains deferred by
+not; (4) FIXED 2026-09-09 — the sidecar's own vitest suite left an empty
+`auth.json` (mode 0600, `{}`) in this package, because `agent/src/main.ts`
+reads `HEPHAESTUS_AGENT_DIR` at module load and falls back to `process.cwd()`,
+which under vitest is the checkout; Pi then writes its placeholder there on
+first run. `agent/test/setup.ts` now gives every test process a temporary agent
+dir before any test imports `main.ts`, and `agent/test/agent_dir.test.ts` pins
+the invariant against the ENV rather than the file, so it holds for a test
+nobody has written yet. L8 (J-mirrors-and-dx-1..10) remains deferred by
 decision.
+
+**2026-09-09, and one defect the audit missed.** J-mirrors-and-dx-16 (the
+liveness helper forking a process per poll) is fixed: it reads
+`/proc/<pid>/stat` with the process listing kept behind an availability check
+as the portable fallback, and a zombie-is-dead test exists for the first time.
+Residual (2) above (`_bounded_floor`) is still open. The audit did not find the
+defect underneath them: `POST /sessions/{id}/prompt` named no timeout, so a
+whole TURN inherited `SupervisorConfig.default_timeout_s`, which is
+`timeouts.tool_seconds` — a TOOL bound around a turn that runs a model round
+trip plus every tool the model asks for, one of which the sidecar itself allows
+`cad_build_seconds`. The watchdog's remedy for an overdue call is to kill the
+entire sidecar, so a turn slower than 120 s destroyed every session in the
+process. It surfaced as two flaky browser tests (CI run 34327109619) and would
+have surfaced in production as a killed session on any slow model reply. Fixed
+in two halves, both with regression tests: a turn is bounded by a new
+`timeouts.turn_seconds` (600 s, the delegated child's own default, because a
+delegated child turn IS a turn), and the watchdog now credits a pending call's
+deadline with the time the child spent blocked on a `py.*` request this
+supervisor had not answered yet — a child waiting on us is not unresponsive,
+and the credit is the union of those intervals, never their sum.
 
 **CORRECTION (2026-09-07), the L2/L6 constructor overlap.** The line above named
 `core/src/hephaestus/core/types.py` as the only reason L6 runs after L2. It is

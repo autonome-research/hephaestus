@@ -24,5 +24,9 @@ export default defineConfig({
   test: {
     include: ["test/**/*.test.ts"],
     environment: "node",
+    // Runs before any test module is imported, which is what makes it able to
+    // set `HEPHAESTUS_AGENT_DIR`: `src/main.ts` reads it at module load and
+    // otherwise falls back to `process.cwd()` — this package's own directory.
+    setupFiles: ["./test/setup.ts"],
   },
 });
