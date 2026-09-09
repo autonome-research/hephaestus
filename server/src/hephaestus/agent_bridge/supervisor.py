@@ -270,6 +270,9 @@ class _Call:
     id: int
     method: str
     deadline: float
+    #: :meth:`Supervisor._child_wait_credit` at the moment this call was sent.
+    #: The call's effective deadline is ``deadline + (credit_now - credit_at_send)``.
+    credit_at_send: float = 0.0
     done: threading.Event = field(default_factory=threading.Event)
     result: Any | None = None
     error: dict[str, Any] | None = None
@@ -318,6 +321,13 @@ class Supervisor:
         self._handler_pool: ThreadPoolExecutor | None = None
         self._hlock = threading.Lock()
         self._handler_inflight = 0
+        #: Wall-clock seconds the CHILD spent blocked on a ``py.*`` request this
+        #: supervisor had not answered yet — the UNION of those intervals, not
+        #: their sum, so concurrent handlers cannot buy more credit than the
+        #: child actually waited. A pending call's deadline is credited with the
+        #: growth of this number: see :meth:`_child_wait_credit`.
+        self._handler_busy_total = 0.0
+        self._handler_busy_since: float | None = None
         #: Requests refused because every worker was busy (regression evidence).
         self.handler_overloads = 0
         self._closing = threading.Event()
@@ -596,6 +606,7 @@ class Supervisor:
                 id=self._next_id,
                 method=method,
                 deadline=time.monotonic() + deadline_s,
+                credit_at_send=self._child_wait_credit(),
             )
             self._pending[call.id] = call
         frame = make_request(call.id, method, params or {})
@@ -611,7 +622,22 @@ class Supervisor:
         # issued *from* the watchdog thread, i.e. the spawn hook's replayed
         # `runtime.configure`. Without it a child that accepts the frame and
         # never answers would wedge the watchdog forever.
-        if not call.done.wait(self._hard_wait_s(deadline_s)):
+        # Polled rather than one long wait because the bound MOVES: every second
+        # the child spends blocked on one of our own `py.*` handlers is credited
+        # back, so this backstop can only fire once the child has had its full
+        # deadline of time in which it was free to answer.
+        while True:
+            margin = self._hard_wait_s(deadline_s) - deadline_s
+            remaining = (
+                self._effective_deadline(call, self._child_wait_credit())
+                + margin
+                - time.monotonic()
+            )
+            if remaining <= 0:
+                break
+            if call.done.wait(min(remaining, 0.25)):
+                break
+        if not call.done.is_set():
             with self._plock:
                 self._pending.pop(call.id, None)
             raise SupervisorError(f"{method} timed out after {deadline_s}s with no response")
@@ -818,12 +844,16 @@ class Supervisor:
                 )
                 return
             self._handler_inflight += 1
+        # The child is blocked on this request from here until we answer it, and
+        # a pending call's deadline is credited with that time.
+        self._note_handler_started()
         try:
             pool.submit(self._run_py_handler, msg_id, method, params, counted=True)
         except RuntimeError:
             # The pool was shut down between the read above and this submit.
             with self._hlock:
                 self._handler_inflight -= 1
+            self._note_handler_finished()
             self._safe_send(
                 make_error(msg_id, ErrorCode.PROCESS_DOWN, "supervisor is shutting down")
             )
@@ -864,6 +894,7 @@ class Supervisor:
             if counted:
                 with self._hlock:
                     self._handler_inflight -= 1
+                self._note_handler_finished()
 
     def _safe_send(self, frame: dict[str, Any]) -> None:
         with contextlib.suppress(FrameTooLargeError, BrokenPipeError, OSError):
@@ -1045,6 +1076,37 @@ class Supervisor:
 
     # -- watchdog ----------------------------------------------------------
 
+    def _note_handler_started(self) -> None:
+        """A ``py.*`` request is now in flight: the child is waiting on us."""
+        with self._hlock:
+            if self._handler_busy_since is None:
+                self._handler_busy_since = time.monotonic()
+
+    def _note_handler_finished(self) -> None:
+        """One fewer ``py.*`` request in flight; close the interval at zero.
+
+        Closed on the transition to zero rather than per handler because the
+        child waits ONCE for a batch it issued in parallel. Summing per handler
+        would let a wedge be paid for with concurrency.
+        """
+        with self._hlock:
+            if self._handler_inflight <= 0 and self._handler_busy_since is not None:
+                self._handler_busy_total += time.monotonic() - self._handler_busy_since
+                self._handler_busy_since = None
+
+    def _child_wait_credit(self) -> float:
+        """Seconds the child has spent waiting on this supervisor, so far."""
+        with self._hlock:
+            total = self._handler_busy_total
+            since = self._handler_busy_since
+        if since is not None:
+            total += time.monotonic() - since
+        return total
+
+    def _effective_deadline(self, call: _Call, credit: float) -> float:
+        """``call``'s deadline, moved out by the time WE made the child wait."""
+        return call.deadline + max(0.0, credit - call.credit_at_send)
+
     def _watchdog_loop(self) -> None:
         while not self._closing.is_set():
             time.sleep(self.config.watchdog_interval_s)
@@ -1063,9 +1125,12 @@ class Supervisor:
                 continue
             now = time.monotonic()
             overdue = False
+            # Read once, outside the lock, so every pending call is judged
+            # against the same credit reading.
+            credit = self._child_wait_credit()
             with self._plock:
                 for call in self._pending.values():
-                    if now > call.deadline + self.config.watchdog_grace_s:
+                    if now > self._effective_deadline(call, credit) + self.config.watchdog_grace_s:
                         overdue = True
                         break
             if overdue:

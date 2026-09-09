@@ -409,6 +409,88 @@ def test_explicit_restart_clears_a_durable_respawn_failure(tmp_path: Path) -> No
         sup.close()
 
 
+# -- watchdog: the clock stops while the CHILD is waiting on US -----------
+#
+# The bug this covers (2026-09-09, CI run 34327109619): `web/e2e/composer.spec`
+# case 1 timed out waiting for a part its own turn had created, and case 2 then
+# failed `session.create` with `process_down: sidecar restarted`. Neither is a
+# UI defect. `POST /sessions/{id}/prompt` calls `BridgeRuntime.prompt` with no
+# timeout, so `session.prompt` inherits `default_timeout_s`, which IS
+# `timeouts.tool_seconds` — a TOOL bound placed around a whole TURN. A turn runs
+# many tools, and the sidecar allows one build `timeouts.cad_build_seconds`
+# (300 s) on its own side, so any turn whose build outran 120 s left a pending
+# call past its deadline and the watchdog killed the entire sidecar — every
+# session in the process with it — while the child was doing exactly what it was
+# asked to do.
+#
+# The watchdog's subject is an *unresponsive* process. A child blocked on a
+# `py.*` request THIS supervisor has not answered yet is not unresponsive: we
+# are the slow party, and killing it destroys work over our own latency. So the
+# deadline of a pending call is credited with the time the child spent waiting
+# on us. When no handler is in flight the credit stops growing and the watchdog
+# fires exactly as it always did — which the test below this one still proves.
+
+
+def test_a_call_is_not_overdue_while_the_child_waits_on_our_handler() -> None:
+    """A slow ``py.*`` handler must not cost the sidecar its life."""
+    events: list[ProcessLossEvent] = []
+
+    def handler(method: str, params: dict[str, object]) -> dict[str, object]:
+        # Longer than deadline + grace: before the fix the watchdog fired here.
+        time.sleep(1.2)
+        return {"ok": True}
+
+    sup = Supervisor(
+        SupervisorConfig(
+            argv=_argv(),
+            default_timeout_s=0.3,
+            watchdog_grace_s=0.2,
+            watchdog_interval_s=0.05,
+        ),
+        py_handler=handler,
+        recovery_hook=events.append,
+    )
+    sup.start()
+    first_pid = sup.child_pid
+    try:
+        result = sup.call("ask_py", {"tool": "read_part"})
+        assert result["py"]["result"] == {"ok": True}
+        assert not [e for e in events if e.reason == "watchdog"], (
+            "the watchdog killed a child that was waiting on this supervisor"
+        )
+        assert sup.child_pid == first_pid, "the sidecar was restarted underneath a live call"
+    finally:
+        sup.close()
+
+
+def test_the_credit_is_the_union_of_handler_time_not_its_sum() -> None:
+    """Concurrent handlers make the child wait once, not once per handler.
+
+    Summing would let two 1 s handlers buy 2 s of deadline for a child that
+    waited 1 s — a wedge could then be paid for with parallelism.
+    """
+
+    def _unused_handler(method: str, params: dict[str, object]) -> dict[str, object]:
+        del method, params
+        return {"ok": True}  # never called: this clause drives the counters directly
+
+    sup = Supervisor(SupervisorConfig(argv=_argv()), py_handler=_unused_handler)
+    started = time.monotonic()
+    sup._note_handler_started()  # pyright: ignore[reportPrivateUsage]
+    sup._note_handler_started()  # pyright: ignore[reportPrivateUsage]
+    time.sleep(0.2)
+    sup._note_handler_finished()  # pyright: ignore[reportPrivateUsage]
+    credit_with_one_left = sup._child_wait_credit()  # pyright: ignore[reportPrivateUsage]
+    sup._note_handler_finished()  # pyright: ignore[reportPrivateUsage]
+    credit = sup._child_wait_credit()  # pyright: ignore[reportPrivateUsage]
+    elapsed = time.monotonic() - started
+    assert 0.2 <= credit <= elapsed + 0.05, (credit, elapsed)
+    assert credit_with_one_left <= credit
+    # Idle time after the last handler finished is not credited.
+    time.sleep(0.1)
+    assert sup._child_wait_credit() == credit  # pyright: ignore[reportPrivateUsage]
+
+
 # -- watchdog: unresponsive process -> kill + restart ----------------------
 
 
