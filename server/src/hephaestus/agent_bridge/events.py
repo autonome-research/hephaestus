@@ -420,8 +420,11 @@ class EventPump:
             run_id=run_id,
             seq=2**62,  # terminals sort last
             kind="terminal",
-            payload={"state": str(record.state), "terminal_id": record.terminal_id,
-                     "payload": record.data},
+            payload={
+                "state": str(record.state),
+                "terminal_id": record.terminal_id,
+                "payload": record.data,
+            },
         )
         dropped: list[ObserverClient] = []
         with self._lock:

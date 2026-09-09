@@ -1554,15 +1554,18 @@ class BridgeRuntime:
             for p in principals:
                 run_id = self._latest_runs.get(p.session_id)
                 terminal = self._admission.get_terminal(run_id) if run_id else None
-                holding = next((r.run_id for r in self._runs.values()
-                                if r.session_id == p.session_id), None)
+                holding = next(
+                    (r.run_id for r in self._runs.values() if r.session_id == p.session_id), None
+                )
                 execution[p.session_id] = {
                     "epoch": self._execution_epoch,
                     "version": self._execution_version,
                     "run_id": run_id,
                     "active_run_id": holding if terminal is None else None,
                     "admission_available": holding is None and capacity > 0,
-                    "terminal": None if terminal is None else {
+                    "terminal": None
+                    if terminal is None
+                    else {
                         "run_id": terminal.run_id,
                         "terminal_id": terminal.terminal_id,
                         "state": str(terminal.state),
@@ -1978,10 +1981,16 @@ class BridgeRuntime:
             run = self._runs.get(run_id)
             if run is not None:
                 winner = self._admission.get_terminal(run_id)
-                run.terminal = dict(params) if winner is None else {
-                    "run_id": run_id, "terminal_id": winner.terminal_id,
-                    "state": str(winner.state), "payload": winner.data,
-                }
+                run.terminal = (
+                    dict(params)
+                    if winner is None
+                    else {
+                        "run_id": run_id,
+                        "terminal_id": winner.terminal_id,
+                        "state": str(winner.state),
+                        "payload": winner.data,
+                    }
+                )
 
     def _ack_terminal(self, run_id: str, terminal_id: str) -> None:
         """Pump callback: the terminal is durable — name it back to the sidecar."""
