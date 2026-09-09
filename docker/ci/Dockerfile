@@ -60,7 +60,11 @@ RUN curl -fsSL -o /tmp/gltf_validator.tar.xz \
     && tar -xJf /tmp/gltf_validator.tar.xz -C /usr/local/bin gltf_validator \
     && rm -f /tmp/gltf_validator.tar.xz \
     && chmod a+rx /usr/local/bin/gltf_validator \
-    && gltf_validator --version
+    && gltf_validator 2>&1 | grep -q "version ${GLTF_VALIDATOR_VERSION}"
+# The smoke check above: the validator has no --version flag (its -h is
+# --threads); with no arguments it prints "glTF 2.0 Validator, version X"
+# and exits 255, so the proof that the binary runs AND is the pinned build is
+# that banner on the pipe.
 
 # Surfaceless EGL on llvmpipe — the spike-recorded configuration.
 ENV EGL_PLATFORM=surfaceless LIBGL_ALWAYS_SOFTWARE=1
