@@ -28,6 +28,40 @@ export function readingPosition(session: string): ReadingPosition {
   }
   return position;
 }
+
+/** What a scroll event means for the follow state. */
+export type FollowMove = "follow" | "unfollow" | "repin" | "hold";
+
+/**
+ * Read one scroll event: did the OPERATOR leave the newest row?
+ *
+ * A scroll event is not evidence of a scroll. A transcript settles after its
+ * first paint — an image decodes, a font swaps, a markdown block reflows — and
+ * the growth alone moves the viewport's relation to the end; Chrome's scroll
+ * anchoring then fires `scroll` with nobody touching the wheel. Reading that as
+ * "the operator scrolled up" detached a followed transcript from its own
+ * output, which is the opposite of the behaviour this module exists for, and it
+ * happened exactly when output was arriving fastest.
+ *
+ * So the signal is the viewport MOVING UP (`scrollTop` decreasing), not the
+ * distance from the end. Content that grew under a pinned viewport leaves
+ * `scrollTop` where it was and is re-pinned; the operator dragging upward
+ * lowers it and detaches. `previousTop` is the last position this hook saw,
+ * not the last one it set, so a nudge inside the slack still counts as the
+ * operator's.
+ */
+export function readFollowMove(
+  previousTop: number,
+  following: boolean,
+  el: ScrollMetrics,
+  threshold = FOLLOW_BOTTOM_PX,
+): FollowMove {
+  const away = scrolledAwayFromBottom(el, threshold);
+  if (!away) return following ? "hold" : "follow";
+  if (!following) return "hold";
+  return el.scrollTop < previousTop ? "unfollow" : "repin";
+}
+
 export function pinToLatest(el: { scrollTop: number; scrollHeight: number }): void {
   el.scrollTop = el.scrollHeight;
 }
@@ -59,11 +93,21 @@ export function bindReadingPosition(
     expectedTop = el.scrollTop;
   };
   const onScroll = (): void => {
-    // Browser-generated events from restoration must not detach following or
-    // replace an anchor while its history is still loading.
-    if (Math.abs(el.scrollTop - expectedTop) < 1) return;
+    const move = readFollowMove(expectedTop, position.following, el);
+    // Browser-generated events from exact restoration must not detach following
+    // or replace an anchor while its history is still loading. Paint-only growth
+    // can leave the same top newly away from the end, so its repin still runs.
+    if (Math.abs(el.scrollTop - expectedTop) < 1 && move !== "repin") return;
+    if (move === "repin") {
+      // Paint-only growth and browser anchoring are not operator intent. Keep a
+      // followed transcript at its real end, even when no row was added.
+      pinToLatest(el);
+      expectedTop = el.scrollTop;
+      return;
+    }
     expectedTop = el.scrollTop;
-    position.following = !scrolledAwayFromBottom(el);
+    if (move === "follow") position.following = true;
+    else if (move === "unfollow") position.following = false;
     capture();
     changed(position.following);
   };

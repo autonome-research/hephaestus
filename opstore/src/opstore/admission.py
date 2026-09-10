@@ -201,7 +201,8 @@ class AdmissionControl:
 
     def get(self, run_id: str) -> AdmissionRow:
         """Current admission row, or ``NotFoundError``."""
-        raw = self._fetch_admission(self._db.conn, run_id)
+        with self._db.reading() as conn:
+            raw = self._fetch_admission(conn, run_id)
         if raw is None:
             raise NotFoundError(f"run {run_id} has no admission row")
         return _to_admission(raw)

@@ -42,10 +42,18 @@ from opstore import OpStore
 
 SRC: Final[Path] = Path(__file__).resolve().parents[1] / "src" / "opstore"
 
-#: A read issued straight on the shared connection object. Anything matching
-#: this outside :meth:`Database.transaction` / :meth:`Database.reading` is a
+#: The shared connection object, reached by name. Anything matching this
+#: outside :meth:`Database.transaction` / :meth:`Database.reading` is a
 #: statement stepped with no in-process serialization at all.
-_BARE_READ: Final[re.Pattern[str]] = re.compile(r"(?:self\._db|self)\.conn\.execute\(")
+#:
+#: The mention is what is matched, NOT ``.conn.execute(`` — that spelling let
+#: the connection be handed to a helper and stepped there, which is exactly
+#: how four reads in ``admission.py`` (``self._fetch_terminal(self._db.conn,
+#: …)``, ``_count(self._db.conn, …)``) sat unguarded through this check. One of
+#: them crashed a `GET /parts/{part}/exports` and made the workflow repair-cap
+#: gate flaky: ``InterfaceError: bad parameter or other API misuse``, raised on
+#: a thread that had nothing to do with the code that caused it.
+_BARE_READ: Final[re.Pattern[str]] = re.compile(r"(?:self\._db|self)\.conn\b")
 
 #: ``db.py`` owns the connection: its ``BEGIN``/``COMMIT``/``ROLLBACK`` and the
 #: connect-time ``PRAGMA``s are the only statements that legitimately address

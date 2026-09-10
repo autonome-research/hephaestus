@@ -100,31 +100,46 @@ def _sql_text(node: ast.expr, constants: dict[str, str]) -> str:
 _CONSTRUCTION_DDL: Final[tuple[str, ...]] = ("CREATE ", "ALTER ", "PRAGMA ")
 
 
+def _construction_ddl_lines(tree: ast.Module, constants: dict[str, str]) -> set[int]:
+    """Lines where the raw connection is used ONLY for schema bootstrap."""
+    licensed: set[int] = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        if node.func.attr != "execute" or not node.args:
+            continue
+        conn = node.func.value
+        if not (isinstance(conn, ast.Attribute) and conn.attr == "conn"):
+            continue
+        if _sql_text(node.args[0], constants).lstrip().upper().startswith(_CONSTRUCTION_DDL):
+            licensed.add(conn.lineno)
+    return licensed
+
+
 def _bare_statements(root: Path) -> list[str]:
-    """``<expr>.db.conn.execute(…)`` call sites that are not construction DDL."""
+    """Mentions of ``<expr>.db.conn`` that are not construction DDL.
+
+    The MENTION is reported, not ``.conn.execute(``: handing the raw connection
+    to a helper steps the statement just the same, and that is how four reads
+    inside `opstore`'s own `admission.py` sat unguarded through its check for
+    as long as the check existed — one of them crashed a
+    `GET /parts/{part}/exports`.
+    """
     offenders: list[str] = []
     for rel in _ROOTS:
         for path in sorted((root / rel).rglob("*.py")):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             constants = _module_constants(tree)
+            licensed = _construction_ddl_lines(tree, constants)
             for node in ast.walk(tree):
-                if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
-                    continue
-                if node.func.attr != "execute" or not node.args:
-                    continue
-                conn = node.func.value
-                if not (isinstance(conn, ast.Attribute) and conn.attr == "conn"):
-                    continue
-                owner = conn.value
                 # `store.db.conn` and `self._db.conn` are the same object by two
-                # names; `opstore`'s own check matches both for the same reason.
+                # names; both are the raw connection however it is then used.
+                if not (isinstance(node, ast.Attribute) and node.attr == "conn"):
+                    continue
+                owner = node.value
                 if not (isinstance(owner, ast.Attribute) and owner.attr in {"db", "_db"}):
                     continue
-                sql = _sql_text(node.args[0], constants).lstrip().upper()
-                if not sql.startswith(_CONSTRUCTION_DDL):
-                    # Unreadable SQL (built in a variable) lands here too, and
-                    # deliberately: a scan that cannot tell what a statement is
-                    # must not license it.
+                if node.lineno not in licensed:
                     offenders.append(f"{path.relative_to(root)}:{node.lineno}")
     return offenders
 
