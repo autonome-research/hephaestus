@@ -111,6 +111,7 @@ _configured = [False]
 #: The last ``runtime.configure`` payload, so a handler can answer out of the
 #: provider config the way the real sidecar answers out of its registry.
 _last_configure: dict[str, object] = {}
+_model_states: dict[str, dict[str, object]] = {}
 
 
 def _oauth_echo_body(provider_id: str) -> str:
@@ -288,7 +289,38 @@ def _handle(msg: dict[str, object]) -> None:
     }:
         _respond(req_id, {"ok": True, "provider_id": params.get("provider_id"), "state": "none"})
     elif method == "session.create":
-        _respond(req_id, {"session_id": f"sess-{req_id}"})
+        sid = f"sess-{req_id}"
+        choice = params.get("model", {"provider_id": "fake", "model_id": "m"})
+        ref = cast("dict[str, object]", choice)
+        state: dict[str, object] = {
+            "revision": {"epoch": f"fake-child-{os.getpid()}", "version": 0},
+            "current": {
+                "provider_id": ref["provider_id"],
+                "model_id": ref["model_id"],
+                "name": "Fake",
+                "input": ["text"],
+            },
+            "selected": choice,
+            "pending_selection": None,
+            "state": "ready",
+            "reason": None,
+        }
+        _model_states[sid] = state
+        # Keep the legacy minimal envelope for protocol-only callers. HTTP
+        # callers explicitly select and receive the complete model projection.
+        result: dict[str, object] = {"session_id": sid}
+        if "model" in params:
+            result["model_state"] = state
+        _respond(req_id, result)
+    elif method == "session.model.get":
+        _respond(
+            req_id,
+            {
+                "status": "ok",
+                "session_id": params["session_id"],
+                "model_state": _model_states[str(params["session_id"])],
+            },
+        )
     elif method == "session.prompt":
         run_id = str(params.get("run_id", f"run-{req_id}"))
         _notify("event", {"run_id": run_id, "seq": 1, "kind": "audit", "payload": {"m": "start"}})

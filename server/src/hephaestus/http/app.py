@@ -52,6 +52,7 @@ from hephaestus.agent_bridge.limits import (
     enforce_max_utf8_bytes,
     validate_json_structure,
 )
+from hephaestus.agent_bridge.model_selection import expected_revision, model_ref
 from hephaestus.agent_bridge.project_projections import (
     list_parts_projection,
     open_project_projection,
@@ -154,10 +155,12 @@ API_PREFIX: Final[str] = WORKSPACE_API_PREFIX
 #: export mutations pass a tool's own argument document through, validated
 #: against the canonical schema, and a second gate here would be a second table.
 _PREVIEW_MEMBERS: Final[frozenset[str]] = frozenset({"context"})
-_PROMPT_MEMBERS: Final[frozenset[str]] = frozenset({"text", "run_id", "context", "include_events"})
+_PROMPT_MEMBERS: Final[frozenset[str]] = frozenset(
+    {"text", "run_id", "context", "include_events", "expected_model_revision"}
+)
 _ANSWER_MEMBERS: Final[frozenset[str]] = frozenset({"question_id", "answer"})
 _SESSION_CREATE_MEMBERS: Final[frozenset[str]] = frozenset(
-    {"profile", "part", "session_id", "resume"}
+    {"profile", "part", "session_id", "resume", "model"}
 )
 
 #: The ceiling on a request body, applied before the body is buffered (§2.4,
@@ -264,6 +267,9 @@ ROUTE_TABLE: Final[tuple[tuple[str, str], ...]] = (
     ("GET", "/providers"),
     ("PUT", "/providers/specs"),
     ("GET", "/providers/catalog"),
+    ("GET", "/providers/models"),
+    ("GET", "/sessions/{id}/model"),
+    ("PUT", "/sessions/{id}/model"),
     ("GET", "/providers/{id}/auth/status"),
     ("POST", "/providers/{id}/auth/key"),
     ("POST", "/providers/{id}/auth/begin"),
@@ -1693,6 +1699,31 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
             )
         return sessions
 
+    async def get_provider_models(_: Request) -> Response:
+        providers.loopback_or_refuse(runtime.bind_host)
+        return JSONResponse(await asyncio.to_thread(sessions_or_refuse().backend.provider_models))
+
+    async def get_session_model(request: Request) -> Response:
+        return JSONResponse(
+            await asyncio.to_thread(sessions_or_refuse().backend.session_model, _session(request))
+        )
+
+    async def put_session_model(request: Request) -> Response:
+        body = await _json_body(request)
+        _closed_body(
+            body, frozenset({"model", "expected_model_revision"}), what="the model-selection body"
+        )
+        expected = expected_revision(body)
+        choice = model_ref(body.get("model"))
+        return JSONResponse(
+            await asyncio.to_thread(
+                sessions_or_refuse().backend.select_session_model,
+                _session(request),
+                choice,
+                expected,
+            )
+        )
+
     async def get_sessions(_: Request) -> Response:
         return JSONResponse(sessions_or_refuse().list_sessions())
 
@@ -1767,7 +1798,16 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         # bridge, so this route forwards rather than invents.
         named_raw = body.get("session_id")
         named = None if named_raw is None else str(named_raw)
-        resume = bool(body.get("resume", False))
+        resume = body.get("resume", False)
+        if type(resume) is not bool:
+            raise HttpRefusal(400, "invalid_params", "resume must be a boolean")
+        if resume and "model" in body:
+            raise HttpRefusal(
+                400, "invalid_params", "resume restores a selection; it cannot choose one"
+            )
+        if not resume and "model" not in body:
+            raise HttpRefusal(400, "invalid_params", "fresh creation requires an explicit model")
+        choice = None if resume else model_ref(body.get("model"))
         if resume and named is None:
             raise HttpRefusal(
                 400,
@@ -1777,7 +1817,9 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
             )
         return JSONResponse(
             await asyncio.to_thread(
-                lambda: sessions.create(str(profile), part=part, session_id=named, resume=resume)
+                lambda: sessions.create(
+                    str(profile), part=part, session_id=named, resume=resume, model=choice
+                )
             )
         )
 
@@ -1826,6 +1868,7 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         # compared nothing — so a client that misspelt `context` got a model turn
         # with no workspace context and nothing said about it.
         _closed_body(body, _PROMPT_MEMBERS, what="the prompt body")
+        expected = expected_revision(body)
         text = body.get("text")
         if not isinstance(text, str) or not text:
             raise HttpRefusal(400, "invalid_params", "text is required and must be a string")
@@ -1880,6 +1923,7 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
                         run_id=run_id,
                         context=block,
                         include_events=include_events,
+                        expected_model_revision=expected,
                     ),
                     # The block ACTUALLY SENT, echoed — §7A.3 makes
                     # `/context/preview` advisory precisely because this is the
@@ -2012,6 +2056,9 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
         ("GET", "/providers"): get_providers,
         ("PUT", "/providers/specs"): put_providers_specs,
         ("GET", "/providers/catalog"): get_providers_catalog,
+        ("GET", "/providers/models"): get_provider_models,
+        ("GET", "/sessions/{id}/model"): get_session_model,
+        ("PUT", "/sessions/{id}/model"): put_session_model,
         ("GET", "/providers/{id}/auth/status"): get_provider_auth_status,
         ("POST", "/providers/{id}/auth/key"): post_provider_auth_key,
         ("POST", "/providers/{id}/auth/begin"): post_provider_auth_begin,

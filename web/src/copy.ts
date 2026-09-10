@@ -19,6 +19,31 @@
 //   reads as a pass, and a blank field never stands in for "not known".
 
 export const copy = {
+  models: {
+    label: "Session model", choose: "Choose model", search: "Search provider or model",
+    proposed: "Proposed default", choice: "New-session choice", current: "Current model",
+    saved: "Saved selection (not active)", none: "Selection required",
+    text: "Text only", images: "Text + images", unknownCapability: "Capability unknown",
+    details: "Full model identity", checking: "Checking session model…",
+    changing: "Changing model — Send is blocked until confirmed.",
+    busy: "Model selection is disabled until the current turn and cleanup finish.",
+    uncertain: "Model selection is uncertain. Choose explicitly to reconcile before sending.",
+    readFailed: "Could not confirm the session model. Send is blocked; check again.",
+    catalogFailed: "Could not load configured models.", catalogLoading: "Loading configured models…", unavailable: "Unavailable",
+    noMatches: "No matching configured models.", done: "Done", retry: "Check again",
+    local: "Available means locally configured, not a live provider test.",
+    lost: "Model change was not confirmed. Checking state; the write will not be retried.",
+    changed: "The session model changed. Review it before sending again.",
+    create: "Create session", createTitle: "Choose a model for the new session",
+    reasons: {
+      model_unknown: "Not supported by the configured runtime",
+      provider_unknown: "Provider is not configured in the runtime",
+      model_not_configured: "Not declared for this project",
+      model_unavailable: "Not currently eligible in the configured runtime",
+      selection_required: "Choose a model before sending",
+      model_selection_uncertain: "Choose explicitly to reconcile the previous change",
+    } as Readonly<Record<string, string>>,
+  },
   app: {
     /** The product name. Used in the document title and the header. */
     name: "Hephaestus",

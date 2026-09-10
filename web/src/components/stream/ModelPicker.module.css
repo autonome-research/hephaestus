@@ -1,0 +1,20 @@
+/* Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0 */
+.control { min-width: 0; flex: 1 1 16rem; }
+.button { max-width: 100%; width: 100%; }
+.button > span { display: flex; align-items: center; gap: var(--space-2); min-width: 0; width: 100%; }
+.identity { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.badge { flex-shrink: 0; white-space: nowrap; padding: var(--space-1); background: var(--surface-control); border-radius: var(--radius-control); }
+.details { composes: label from "../../system/type.module.css"; margin-top: var(--space-1); overflow-wrap: anywhere; }
+.details summary { cursor: pointer; min-height: 24px; }
+.details p { margin: var(--space-1) 0; }
+.note { composes: label from "../../system/type.module.css"; margin: var(--space-1) 0; overflow-wrap: anywhere; }
+.picker { width: min(36rem, calc(100vw - 2 * var(--pad-overlay))); box-sizing: border-box; }
+.search { composes: body from "../../system/type.module.css"; padding: var(--space-2); color: var(--ink-base); background: var(--surface-control); border: 1px solid var(--border-control); border-radius: var(--radius-control); width: 100%; box-sizing: border-box; }
+.options { overflow-y: auto; min-height: 0; }
+.provider { composes: label from "../../system/type.module.css"; margin: var(--space-2) 0; overflow-wrap: anywhere; }
+.option { composes: body from "../../system/type.module.css"; display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2); overflow-wrap: anywhere; cursor: pointer; }
+.option[data-highlighted="true"] { outline: 2px solid var(--border-control); outline-offset: -2px; }
+.option[aria-selected="true"] { background: var(--surface-control); }
+.option[aria-disabled="true"] { cursor: not-allowed; }
+.srOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

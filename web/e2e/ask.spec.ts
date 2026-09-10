@@ -39,6 +39,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { archive } from "./harness/archive";
 import { api, open, route, world } from "./harness/world";
 
+import { modelRevision, proposedModel } from "./helpers/models";
 const PART = "tread";
 
 interface SessionDocument {
@@ -61,7 +62,7 @@ async function createSession(): Promise<string> {
   const created = await api<SessionDocument>("/sessions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ profile: "orchestrator" }),
+    body: JSON.stringify({ profile: "orchestrator", model: await proposedModel() }),
   });
   return created.session_id;
 }
@@ -73,11 +74,11 @@ async function createSession(): Promise<string> {
  * cannot finish until somebody answers the question it raises. The promise is
  * returned so the test can settle it at the end rather than leave it dangling.
  */
-function startTurn(sessionId: string): Promise<PromptDocument> {
+async function startTurn(sessionId: string): Promise<PromptDocument> {
   return api<PromptDocument>(`/sessions/${encodeURIComponent(sessionId)}/prompt`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text: `${world().ask.sentinel}: which wall thickness?` }),
+    body: JSON.stringify({ text: `${world().ask.sentinel}: which wall thickness?`, expected_model_revision: await modelRevision(sessionId) }),
   });
 }
 

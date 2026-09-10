@@ -55,6 +55,13 @@
   color: var(--status-error-ink);
 }
 
+.modelCreate {
+  flex: 0 0 auto;
+  padding: var(--space-2) var(--space-3);
+  max-height: 40%;
+  overflow-y: auto;
+}
+
 .tabs {
   position: relative;
   display: flex;

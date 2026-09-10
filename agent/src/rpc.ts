@@ -30,6 +30,9 @@ export const ErrorCode = {
 // Requests the sidecar SERVES (supervisor -> sidecar).
 export const SIDECAR_REQUEST_METHODS: ReadonlySet<string> = new Set([
   "session.create",
+  "session.model.get",
+  "session.model.set",
+  "providers.models",
   "session.prompt",
   "session.cancel",
   "session.compact",

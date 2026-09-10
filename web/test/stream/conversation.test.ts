@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { createConversationStore, currentTurn } from "../../src/stream/conversation";
+import { createConversationStore as emptyStore, currentTurn } from "../../src/stream/conversation";
 import type { ExecutionSnapshot, PromptDocument } from "../../src/api/sessions";
 
+import { modelState } from "../fixtures/models";
+function createConversationStore() {
+  const store = emptyStore();
+  store.modelSnapshot("a", modelState, undefined, store.ticket());
+  return store;
+}
 const idle: ExecutionSnapshot = { epoch: "server-1", version: 1, run_id: null,
   active_run_id: null, admission_available: true, terminal: null };
 function active(run = "run-a", version = 2): ExecutionSnapshot {
@@ -40,6 +46,8 @@ describe("project conversation evidence", () => {
     store.transport("a", "live");
     expect(currentTurn(store.get("a")).status).toBe("Checking");
     store.snapshot("a", ended(), store.ticket());
+    expect(currentTurn(store.get("a")).canSend).toBe(false); // reconnect also needs model evidence
+    store.modelSnapshot("a", modelState, ended(), store.ticket());
     expect(currentTurn(store.get("a"))).toMatchObject({ status: "Finished", runId: null, canSend: true });
   });
   it.each(["cancelled", "failed", "interrupted"])("requires real %s terminal evidence", state => {
@@ -106,6 +114,7 @@ describe("project conversation evidence", () => {
   });
   it("same-session refusal enables Stop and expires without a terminal frame", () => {
     const store = createConversationStore();
+    store.snapshot("a", idle, store.ticket());
     const send = store.begin("a")!;
     store.finish("a", send.id, "refused", { reason: "run_in_flight", holderSession: "a", holderRun: "run-a" });
     expect(currentTurn(store.get("a"))).toMatchObject({ status: "Working", runId: "run-a" });
@@ -114,6 +123,7 @@ describe("project conversation evidence", () => {
   });
   it("draft revisions survive edits, switching and late responses", () => {
     const store = createConversationStore();
+    store.snapshot("a", idle, store.ticket());
     store.draft("a", "send this");
     const send = store.begin("a")!;
     expect(store.begin("a")).toBeNull();
@@ -122,6 +132,7 @@ describe("project conversation evidence", () => {
     store.finish("a", send.id, "settled");
     expect(store.get("a").draft.text).toBe("send this");
     expect(store.get("b").draft.text).toBe("unrelated draft");
+    store.snapshot("a", idle, store.ticket());
     const next = store.begin("a")!;
     store.finish("a", send.id, "settled"); // stale completion cannot settle next
     expect(store.get("a").attempt?.id).toBe(next.id);
@@ -131,6 +142,7 @@ describe("project conversation evidence", () => {
   });
   it("lost POST keeps immutable submission and draft, never retries", () => {
     const store = createConversationStore();
+    store.snapshot("a", idle, store.ticket());
     store.draft("a", "uncertain");
     const send = store.begin("a")!;
     store.finish("a", send.id, "unknown");

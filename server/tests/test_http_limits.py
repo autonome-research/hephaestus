@@ -121,11 +121,18 @@ def test_a_prompt_text_at_the_cap_succeeds_and_one_byte_over_is_refused(
         session = agent.create_session("orchestrator")
 
         at_cap = "a" * PROMPT_MAX_UTF8_BYTES
-        ok = web.post(f"/sessions/{session}/prompt", json={"text": at_cap})
+        expected = agent.session_model(session)["model_state"]["revision"]
+        ok = web.post(
+            f"/sessions/{session}/prompt",
+            json={"text": at_cap, "expected_model_revision": expected},
+        )
         assert ok.status_code == 200, ok.text
 
         over_cap = "a" * (PROMPT_MAX_UTF8_BYTES + 1)
-        refused = web.post(f"/sessions/{session}/prompt", json={"text": over_cap})
+        refused = web.post(
+            f"/sessions/{session}/prompt",
+            json={"text": over_cap, "expected_model_revision": expected},
+        )
     assert refused.status_code == 400, refused.text
     body = refused.json()
     assert body["reason"] == "prompt_too_large"
@@ -154,9 +161,16 @@ def test_the_prompt_cap_is_measured_in_utf8_bytes_not_characters(tmp_path: Path)
         agent = web.agent
         assert agent is not None
         session = agent.create_session("orchestrator")
-        ok = web.post(f"/sessions/{session}/prompt", json={"text": at_cap})
+        expected = agent.session_model(session)["model_state"]["revision"]
+        ok = web.post(
+            f"/sessions/{session}/prompt",
+            json={"text": at_cap, "expected_model_revision": expected},
+        )
         assert ok.status_code == 200, ok.text
-        over = web.post(f"/sessions/{session}/prompt", json={"text": at_cap + astral})
+        over = web.post(
+            f"/sessions/{session}/prompt",
+            json={"text": at_cap + astral, "expected_model_revision": expected},
+        )
 
     assert over.status_code == 400, over.text
     assert over.json()["reason"] == "prompt_too_large"
@@ -398,7 +412,14 @@ def test_the_prompt_response_carries_a_bounded_tail_with_a_truncation_flag(
                 a.emit(run, i, "text_delta", payload={"text": "x"})
 
         agent.on_prompt = script
-        response = web.post(f"/sessions/{session}/prompt", json={"text": "go", "run_id": run_id})
+        response = web.post(
+            f"/sessions/{session}/prompt",
+            json={
+                "text": "go",
+                "run_id": run_id,
+                "expected_model_revision": agent.session_model(session)["model_state"]["revision"],
+            },
+        )
 
     assert response.status_code == 200, response.text
     body = response.json()
@@ -420,7 +441,12 @@ def test_include_events_false_returns_an_empty_list_with_status_intact(
         assert agent is not None
         session = agent.create_session("orchestrator")
         response = web.post(
-            f"/sessions/{session}/prompt", json={"text": "go", "include_events": False}
+            f"/sessions/{session}/prompt",
+            json={
+                "text": "go",
+                "include_events": False,
+                "expected_model_revision": agent.session_model(session)["model_state"]["revision"],
+            },
         )
     assert response.status_code == 200, response.text
     body = response.json()
@@ -538,7 +564,13 @@ def test_the_response_reports_the_drops_the_backend_s_bound_made(
             )
 
         monkeypatch.setattr(agent, "prompt", bounded)
-        response = web.post(f"/sessions/{session}/prompt", json={"text": "go"})
+        response = web.post(
+            f"/sessions/{session}/prompt",
+            json={
+                "text": "go",
+                "expected_model_revision": agent.session_model(session)["model_state"]["revision"],
+            },
+        )
 
     assert response.status_code == 200, response.text
     body = response.json()

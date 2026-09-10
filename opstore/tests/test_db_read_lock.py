@@ -28,7 +28,10 @@ concurrency.
 from __future__ import annotations
 
 import re
+import sqlite3
 import threading
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Final
 
@@ -153,6 +156,50 @@ def test_a_read_and_a_write_thread_do_not_misuse_the_connection(tmp_path: Path) 
         assert failures == [], repr(failures[0]) if failures else ""
     finally:
         store.close()
+
+
+@pytest.mark.parametrize(
+    "method", ["get_terminal", "active_count", "pending_resume_count", "available_slots"]
+)
+def test_execution_poll_reads_hold_the_connection_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, method: str
+) -> None:
+    """SQL tracing sees through helpers the bare-conn regex cannot see.
+
+    The packaged model-picker/reload test exposed get_terminal's helper issuing
+    SELECT during another thread's write, failing history with InterfaceError.
+    Assert lock ownership at the actual SQL boundary, without a probabilistic race.
+    """
+    with OpStore.create(tmp_path / "st") as store:
+        reading = store.db.reading
+        depth = 0
+        observed: list[int] = []
+
+        @contextmanager
+        def tracked_reading() -> Generator[sqlite3.Connection]:
+            nonlocal depth
+            with reading() as conn:
+                depth += 1
+                try:
+                    yield conn
+                finally:
+                    depth -= 1
+
+        monkeypatch.setattr(store.db, "reading", tracked_reading)
+        store.db.conn.set_trace_callback(
+            lambda sql: (
+                observed.append(depth) if sql.lstrip().upper().startswith("SELECT") else None
+            )
+        )
+        try:
+            if method == "get_terminal":
+                assert store.admission.get_terminal("missing") is None
+            else:
+                getattr(store.admission, method)()
+        finally:
+            store.db.conn.set_trace_callback(None)
+        assert observed, "the exercised read must issue SQL"
+        assert all(held > 0 for held in observed), "every SELECT must hold Database.reading()"
 
 
 @pytest.mark.parametrize("method", ["has", "size", "retention_class"])

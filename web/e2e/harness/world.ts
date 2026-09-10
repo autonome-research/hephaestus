@@ -33,6 +33,8 @@ export interface World {
   /** The committed transcript's sessions, reopened before the browser starts. */
   readonly sessions: readonly string[];
   readonly model_base_url: string;
+  /** Sanitized request identities recorded by the disposable provider itself. */
+  readonly model_observations: string;
   readonly pid: number;
   /**
    * §7A.7's scripted question: the sentinel a prompt carries to provoke an

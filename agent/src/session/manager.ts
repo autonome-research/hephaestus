@@ -28,6 +28,8 @@ import { existsSync } from "node:fs";
 import { profileDefinition, sessionDirFor, type SessionProfile } from "./profiles.js";
 import { hephaestusInlineExtension } from "./extension.js";
 import type { PiModel } from "./runtime.js";
+import { RpcError } from "../rpc.js";
+import { loadSelection, saveSelection, modelError, modelRef, resolvedModel, sameModel, type ModelRef, type ModelRevision, type ModelResolver, type SessionModelState } from "./model-selection.js";
 
 /**
  * A resume naming a session this project holds no persisted transcript for.
@@ -61,6 +63,7 @@ export interface SessionCreateRequest {
   readonly sessionId?: string;
   readonly part?: string;
   readonly resume?: boolean;
+  readonly model?: ModelRef;
 }
 
 export interface ManagedSession {
@@ -70,8 +73,10 @@ export interface ManagedSession {
   readonly session: AgentSession;
   /** Persistence dir, or undefined for in-memory (query_snapshot). */
   readonly sessionDir: string | undefined;
-  /** The resolved model driving this session (its `input` fixes image capability). */
-  readonly model: PiModel;
+  liveSession: AgentSession | undefined;
+  readonly piSessionManager: PiSessionManager;
+  readonly build: Omit<SessionBuildSpec, "model">;
+  modelState: SessionModelState;
 }
 
 /** Everything the Pi wiring needs to build one AgentSession. */
@@ -98,7 +103,9 @@ export type SessionFactory = (spec: SessionBuildSpec) => Promise<AgentSession>;
 export interface SessionServiceDeps {
   readonly runtime: ModelRuntime;
   readonly agentDir: string;
+  /** Compatibility default only for internal, non-HTTP creation. */
   readonly model: PiModel | ((profile: SessionProfile) => PiModel);
+  readonly resolver?: ModelResolver;
   readonly customTools?: readonly ToolDefinition[];
   readonly settings?: (profile: SessionProfile) => SettingsManager | undefined;
   /** Override the Pi wiring (defaults to `defaultSessionFactory`). */
@@ -165,6 +172,7 @@ export async function defaultSessionFactory(spec: SessionBuildSpec): Promise<Age
 export class SessionService {
   private readonly sessions = new Map<string, ManagedSession>();
   private readonly runs = new Map<string, RunEntry>();
+  private readonly operations = new Set<string>();
   private readonly factory: SessionFactory;
 
   constructor(private readonly deps: SessionServiceDeps) {
@@ -174,17 +182,52 @@ export class SessionService {
   /** Create (or resume, when request.resume) a managed session. */
   async create(request: SessionCreateRequest): Promise<ManagedSession> {
     const id = request.sessionId ?? randomUUID();
+    if (!id || id === "." || id === ".." || /[/\\\\\0]/u.test(id)) throw modelError("invalid_params");
+    if (this.operations.has(id)) throw modelError("model_change_in_progress");
     if (this.sessions.has(id)) {
       throw new Error(`session '${id}' already exists`);
     }
+    if (request.resume && request.model !== undefined) throw modelError("invalid_params");
+    this.operations.add(id);
+    try {
+      return await this.createReserved(request, id);
+    } finally {
+      this.operations.delete(id);
+    }
+  }
+
+  private async createReserved(request: SessionCreateRequest, id: string): Promise<ManagedSession> {
     const definition = profileDefinition(request.profile, request.part !== undefined ? { part: request.part } : {});
     const persist = definition.persist;
     const sessionDir = persist ? sessionDirFor(request.projectRoot, id) : undefined;
     const resume = request.resume ?? false;
     const piSessionManager = this.buildPiSessionManager(request.projectRoot, sessionDir, persist, resume);
-    const model = typeof this.deps.model === "function" ? this.deps.model(request.profile) : this.deps.model;
-
-    const spec: SessionBuildSpec = {
+    let selected: ModelRef | null = request.model ?? null;
+    let pending: ModelRef | null = null;
+    let reason: string | null = null;
+    if (resume) {
+      try {
+        const record = loadSelection(sessionDir);
+        const legacy = piSessionManager.buildSessionContext().model;
+        selected = record ? record.selected : legacy ? { provider_id: legacy.provider, model_id: legacy.modelId } : null;
+        pending = record?.pending_selection ?? null;
+        if (pending) reason = "model_selection_uncertain";
+      } catch { reason = "model_selection_uncertain"; }
+    }
+    let model: PiModel | undefined;
+    if (!reason) {
+      if (resume && !selected) reason = "selection_required";
+      else {
+        try {
+          model = selected ? this.resolve(selected) : typeof this.deps.model === "function" ? this.deps.model(request.profile) : this.deps.model;
+          selected ??= modelRef(model);
+        } catch (err) {
+          if (!resume) throw err;
+          reason = err instanceof Error ? err.message.replaceAll(" ", "_") : "model_unavailable";
+        }
+      }
+    }
+    const spec: Omit<SessionBuildSpec, "model"> = {
       profile: request.profile,
       sessionId: id,
       part: request.part,
@@ -197,18 +240,31 @@ export class SessionService {
       piSessionManager,
       customTools: this.deps.customTools ?? [],
       settings: this.deps.settings?.(request.profile),
-      model,
       agentDir: this.deps.agentDir,
       runtime: this.deps.runtime,
     };
-    const session = await this.factory(spec);
+    const session = model ? await this.factory({ ...spec, model }) : undefined;
+    if (session && (!session.model || !sameModel(modelRef(session.model), selected))) {
+      session.dispose();
+      throw modelError("model_selection_failed");
+    }
+    if (session) {
+      try { saveSelection(sessionDir, { schema_version: 1, selected, pending_selection: null }); }
+      catch { session.dispose(); throw modelError("model_selection_failed"); }
+    }
     const managed: ManagedSession = {
       id,
       profile: request.profile,
       part: request.part,
-      session,
+      get session() {
+        if (!this.liveSession) throw modelError(this.modelState.reason ?? "selection_required");
+        return this.liveSession;
+      },
+      liveSession: session,
       sessionDir,
-      model,
+      piSessionManager,
+      build: spec,
+      modelState: { revision: { epoch: randomUUID(), version: 0 }, current: session?.model ? resolvedModel(session.model) : null, selected, pending_selection: pending, state: reason === "model_selection_uncertain" ? "uncertain" : reason ? "unavailable" : "ready", reason },
     };
     this.sessions.set(id, managed);
     return managed;
@@ -268,6 +324,80 @@ export class SessionService {
       : PiSessionManager.create(projectRoot, sessionDir);
   }
 
+  private resolve(ref: ModelRef): PiModel {
+    if (this.deps.resolver) return this.deps.resolver.resolve(ref);
+    const model = this.deps.runtime.getModel(ref.provider_id, ref.model_id);
+    if (!model) throw modelError("model_unknown");
+    if (!this.deps.runtime.hasConfiguredAuth(ref.provider_id)) throw modelError("model_unavailable", { unavailable_reason: "provider_not_authenticated" });
+    return model;
+  }
+
+  /** Called after locally settled credential changes, never by a GET. */
+  refreshEligibility(): void {
+    for (const managed of this.sessions.values()) {
+      if (this.operations.has(managed.id) || !managed.liveSession?.model || managed.modelState.state === "uncertain") continue;
+      let reason: string | null = null;
+      try { this.resolve(modelRef(managed.liveSession.model)); }
+      catch { reason = "model_unavailable"; }
+      const state = reason ? "unavailable" : "ready";
+      if (managed.modelState.state !== state || managed.modelState.reason !== reason) managed.modelState = { ...managed.modelState, state, reason, revision: { ...managed.modelState.revision, version: managed.modelState.revision.version + 1 } };
+    }
+  }
+
+  modelState(id: string): SessionModelState {
+    const managed = this.sessions.get(id);
+    if (!managed) throw modelError("unknown_session", { session_id: id });
+    const current = managed.liveSession?.model;
+    return { ...managed.modelState, revision: { ...managed.modelState.revision }, current: current ? resolvedModel(current) : null };
+  }
+
+  private checkIdle(id: string): ManagedSession {
+    const managed = this.sessions.get(id);
+    if (!managed) throw modelError("unknown_session", { session_id: id });
+    if (this.operations.has(id)) throw modelError("model_change_in_progress", { session_id: id, model_state: this.modelState(id) });
+    const run = [...this.runs.entries()].find(([, r]) => r.sessionId === id);
+    const session = managed.liveSession;
+    if (run || (session && (!session.isIdle || session.isCompacting || session.isRetrying || session.pendingMessageCount > 0))) throw modelError("run_in_flight", { session_id: id, run_id: run?.[0] ?? null, scope: "session" });
+    return managed;
+  }
+
+  private checkRevision(id: string, expected: ModelRevision): void {
+    const revision = this.modelState(id).revision;
+    if (expected.epoch !== revision.epoch || expected.version !== revision.version) throw modelError("model_changed", { session_id: id, model_state: this.modelState(id) });
+  }
+
+  async selectModel(id: string, ref: ModelRef, expected: ModelRevision): Promise<SessionModelState> {
+    const managed = this.checkIdle(id);
+    this.checkRevision(id, expected);
+    const model = this.resolve(ref);
+    this.operations.add(id); // Synchronous: before any SDK await, never timeout-raced.
+    const previous = managed.modelState;
+    let intentAttempted = false;
+    try {
+      intentAttempted = true;
+      saveSelection(managed.sessionDir, { schema_version: 1, selected: previous.selected, pending_selection: ref });
+      managed.modelState = { ...previous, revision: { ...previous.revision, version: previous.revision.version + 1 }, state: "changing", reason: null, pending_selection: ref };
+      if (managed.liveSession) await managed.liveSession.setModel(model);
+      else managed.liveSession = await this.factory({ ...managed.build, model });
+      if (!managed.liveSession.model || !sameModel(modelRef(managed.liveSession.model), ref)) throw modelError("model_selection_failed");
+      // Auth/catalog could have changed during Pi's uncancellable await.
+      this.resolve(ref);
+      saveSelection(managed.sessionDir, { schema_version: 1, selected: ref, pending_selection: null });
+      managed.modelState = { ...managed.modelState, revision: { ...previous.revision, version: previous.revision.version + 2 }, selected: ref, pending_selection: null, state: "ready", reason: null };
+      return this.modelState(id);
+    } catch {
+      if (intentAttempted) managed.modelState = { ...managed.modelState, revision: { ...previous.revision, version: previous.revision.version + 2 }, pending_selection: ref, state: "uncertain", reason: "model_selection_uncertain" };
+      throw modelError("model_selection_failed", { session_id: id, model_state: this.modelState(id) });
+    } finally { this.operations.delete(id); }
+  }
+
+  async compact(id: string, instructions: string): Promise<{ summary: string }> {
+    const managed = this.checkIdle(id);
+    this.operations.add(id);
+    try { return await managed.session.compact(instructions); }
+    finally { this.operations.delete(id); }
+  }
+
   get(id: string): ManagedSession | undefined {
     return this.sessions.get(id);
   }
@@ -281,9 +411,17 @@ export class SessionService {
    * The controller's signal is the one a tool proxy forwards to Python so that
    * cancelling this run kills only this run's tool children.
    */
-  beginRun(sessionId: string, runId: string): AbortController {
-    if (!this.sessions.has(sessionId)) {
-      throw new Error(`cannot begin run for unknown session '${sessionId}'`);
+  beginRun(sessionId: string, runId: string, expected?: ModelRevision): AbortController {
+    const managed = this.checkIdle(sessionId);
+    if (expected) this.checkRevision(sessionId, expected);
+    if (managed.modelState.state !== "ready") throw modelError(managed.modelState.reason ?? "selection_required", { session_id: sessionId, model_state: this.modelState(sessionId) });
+    const live = managed.liveSession?.model;
+    if (!live) throw modelError("selection_required");
+    try { this.resolve(modelRef(live)); }
+    catch (err) {
+      this.refreshEligibility();
+      const extra = err instanceof RpcError ? err.data as Record<string, import("../framing.js").JsonValue> : {};
+      throw modelError("model_unavailable", { ...extra, session_id: sessionId, model_state: this.modelState(sessionId), reason: "model_unavailable" });
     }
     if (this.runs.has(runId)) {
       throw new Error(`run '${runId}' already active`);
@@ -304,7 +442,7 @@ export class SessionService {
     run.controller.abort();
     const managed = this.sessions.get(run.sessionId);
     if (managed !== undefined) {
-      await managed.session.abort();
+      await managed.liveSession?.abort();
     }
   }
 
@@ -322,8 +460,9 @@ export class SessionService {
         this.runs.delete(runId);
       }
     }
-    await managed.session.abort();
-    managed.session.dispose();
+    if (this.operations.has(id)) throw modelError("model_change_in_progress");
+    await managed.liveSession?.abort();
+    managed.liveSession?.dispose();
     this.sessions.delete(id);
   }
 

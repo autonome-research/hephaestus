@@ -29,8 +29,14 @@ import {
   type PromptDocument,
   type ThreadDocument,
 } from "../../src/api/sessions";
+import type * as ProvidersModule from "../../src/api/providers";
 import type * as SessionsModule from "../../src/api/sessions";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { conversationStore } from "../../src/stream/conversation";
+import { modelDoc, createdModelState, models, idleExecution } from "../fixtures/models";
+vi.mock("../../src/api/providers", async importOriginal => ({
+  ...await importOriginal<typeof ProvidersModule>(), loadModels: vi.fn(async () => models),
+}));
 
 // This file's own stub of `api/sessions` — separate from `composer.test.tsx`'s,
 // vitest module mocks are per test FILE. Needed only by the harness describe
@@ -43,6 +49,7 @@ vi.mock("../../src/api/sessions", async (importOriginal) => {
     sendPrompt: vi.fn(),
     fetchHistoryPage: vi.fn(),
     fetchThread: vi.fn(),
+    fetchSessionModel: vi.fn(async (sid: string) => modelDoc(sid, createdModelState)),
   };
 });
 
@@ -320,8 +327,10 @@ describe("(f) the composer's own first turn echoes into the session it just crea
       session_id: "sess-new",
       profile: "orchestrator",
       part: null,
-      resumed: false,
+      resumed: false, model_state: createdModelState, execution: idleExecution,
     };
+    conversationStore.reset();
+    conversationStore.catalog(models);
     vi.mocked(createSession).mockResolvedValue(created);
     // Left unresolved: nothing about the echo depends on the turn settling,
     // and settling it would only add noise to this assertion.

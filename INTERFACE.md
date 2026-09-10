@@ -591,8 +591,9 @@ side effect on a live run.
 
 | Route | Is | Why no key, and what stands in for one |
 |---|---|---|
-| `POST /sessions` | `session.create` (profile from a closed set), body `{profile, part?, session_id?, resume?}` — **documented 2026-09-04, having shipped undocumented** | Creates a session; a duplicate is an extra *idle* session, not a lost or doubled write. At-least-once is the stated consequence: a retried create may leave an orphan session, which `GET /sessions` lists and the operator closes. **`resume: true` for an id with no persisted session directory is `404 unknown_session` (§2.4), not a fresh session minted under that name** — the runtime that owns the session directories is the one layer that can answer the question, and it refuses there. `resumed` in the response is a *fact about the transcript*, never an echo of the request flag. |
-| `POST /sessions/{id}/prompt` | `prompt`, body `{text, context?}` (§7A.3) | A prompt is not idempotent in any useful sense — the same words twice are two turns, and pretending otherwise would let a replay swallow a deliberate re-ask. At-least-once, stated. The optional `context` member changes nothing about the key policy: it carries references, never facts (§7A.3). |
+| `POST /sessions` | `session.create` (profile from a closed set), body `{profile, part?, session_id?, resume?, model?}` — **amended 2026-09-10, #120:** fresh creation **requires** `model: {provider_id, model_id}`; resume forbids it (§7A.10(d)). Returns existing fields plus `model_state` and `execution` | Creates a session; a duplicate is an extra *idle* session, not a lost or doubled write. At-least-once is the stated consequence: a retried create may leave an orphan session, which `GET /sessions` lists and the operator closes. **`resume: true` for an id with no persisted session directory is `404 unknown_session` (§2.4), not a fresh session minted under that name** — the runtime that owns the session directories is the one layer that can answer the question, and it refuses there. `resumed` in the response is a *fact about the transcript*, never an echo of the request flag. |
+| `POST /sessions/{id}/prompt` | `session.prompt`, body `{text, expected_model_revision, context?, run_id?, include_events?}` (§7A.3, §7A.10(d)); revision is required, not a model choice | A prompt is not idempotent in any useful sense — the same words twice are two turns, and pretending otherwise would let a replay swallow a deliberate re-ask. At-least-once, stated. The optional `context` member changes nothing about the key policy: it carries references, never facts (§7A.3). |
+| `PUT /sessions/{id}/model` | `session.model.set`, body `{model, expected_model_revision}`; returns `{status:"ok", session_id, model_state, execution}` (§7A.10(d)) | Keyless session control; a supplied key is ignored. One explicit write, never automatically retried or replayed; reconcile a lost response by reading. |
 | `POST /sessions/{id}/answer` | `session.answer` for a pending `ask_user` | Governed by **question-id idempotency**, not by the header ladder: idempotent on the question id, first answer wins (§2.7). That is a stronger and already-existing guarantee; a second mechanism over it would be the duplication mission rule 6 forbids. |
 | `POST /runs/{run_id}/cancel` | `cancel` — cancellation targets a **run**, so the route does | Idempotent **by construction**: `app.py::cancel` is a quiet no-op after close and a repeated `request_cancel` on an already-cancelled run changes nothing. A key would record a replay of a no-op. |
 | `POST /parts/{part}/quick_edit` | `spawn_quick_edit` (§12.5) | Spawns a child session. Same shape as `POST /sessions`: at-least-once, a duplicate is an extra child tab, and the durable edge (§2.8) makes the duplicate visible rather than silent. |
@@ -672,7 +673,9 @@ the sidecar, read again, and the row is `readable: true` with
 | `GET /parts/{part}/exports` | committed `tp_exports` projection: rows with paths, blobs, sizes, source ref, `extra` | §22.7 |
 | `GET /exports/{export_blob}/bytes` | the file, as an `attachment`, addressed by the blob a **`COMMITTED`** row names | §22.3 |
 | `GET /providers` | specs, availability, auth state, egress acknowledgements, `auth_source`, file mode — **no credential material** | §23.8 |
-| `GET /providers/catalog` | Pi's built-in catalog, live over the bridge | §23.1 |
+| `GET /providers/catalog` | Existing `providers.list` sign-in projection: provider identities and model-ID arrays, **not** the active session model | §23.1 |
+| `GET /providers/models` | `providers.models`: declared options joined to the configured runtime's resolved names/capabilities, plus explicit proposed default | §7A.10(d) |
+| `GET /sessions/{id}/model` | `session.model.get`: `{status:"ok", session_id, model_state, execution}`; live identity or honest blocked persisted selection | §7A.10(d) |
 | `GET /providers/{id}/auth/status` | `{state, type?, expires_at?, health, last_observed_at, flow?}` — metadata only | §23.8 |
 | `POST /providers/discover` **Stage 10C** | the discovery **offer**: `[{kind, provider_id, model_ids[], source_path}]` — never a secret, never a masked tail, and it runs **only** on this explicit request | §23.5 |
 
@@ -725,6 +728,9 @@ are enforced rather than asserted here.
 Structured taxonomies survive the wire. The body is always
 `{"status":"error", "reason": <machine reason>, "message": <human>, …data}`;
 HTTP status is a coarse envelope over the reason and never replaces it.
+**AMENDED 2026-09-10 (#120):** the model refusals below and §7A.10(d)'s
+state/persistence contract are part of this closed mapping; their sanitized
+`model_state` and `execution` extras remain top-level.
 
 | Engine condition | HTTP | Body |
 |---|---|---|
@@ -737,6 +743,12 @@ HTTP status is a coarse envelope over the reason and never replaces it.
 | `unknown_tool`, unknown artifact | 404 | reason verbatim |
 | `StaleSelectionError` | 409 | `stale_selection` + `reason ∈ {rgb_ref, wrong_mode, mismatched, expired, malformed}` |
 | `session_busy`, `part_busy`, `key_expired`, `key_timestamp_skew`, `key_payload_mismatch` | 409 | full refusal payload verbatim |
+| missing prompt/select model revision | 428 | `model_revision_required` |
+| unknown provider / model | 404 | `provider_unknown` / `model_unknown` |
+| undeclared or ineligible model | 409 | `model_not_configured` / `model_unavailable` (plus `unavailable_reason`) |
+| missing, stale, changing or uncertain selection | 409 | `selection_required`, `model_changed`, `model_change_in_progress`, `model_selection_uncertain` |
+| session admission/selection conflict | 409 | `run_in_flight` + holding session/run and `scope` |
+| failed model application or persistence | 500 | `model_selection_failed` + sanitized state when known |
 | snapshot ref past retention | 410 | `snapshot_expired` |
 | admission full (17th run) | 429 | `busy` |
 | **sidecar does not know a session the runtime lists, after one re-adoption attempt (§2.8); or `POST /sessions` names an id with `resume: true` and no persisted session directory exists for it** | **404** | **`unknown_session`** + `{session_id}` |
@@ -4242,8 +4254,13 @@ explicit:
 
 | Affordance | Body | Profile | Bound part |
 |---|---|---|---|
-| STREAM empty state / "New session" | `{profile: "orchestrator"}` | `orchestrator` | none |
-| A part row's context action, or "Ask about `<part>`" | `{profile: "part", part: "<part>"}` | `part` | that part |
+| STREAM empty state / "New session" | `{profile: "orchestrator", model: {provider_id, model_id}}` | `orchestrator` | none |
+| A part row's context action, or "Ask about `<part>`" | `{profile: "part", part: "<part>", model: {provider_id, model_id}}` | `part` | that part |
+
+**AMENDED 2026-09-10 (#120):** these affordances first expose the explicit
+proposed model/capability and local choice (§7A.10(d)); confirmation creates.
+The existing explicit first-Send path submits the same reviewed pair. Merely
+opening the picker or changing a pre-creation choice creates no session.
 
 **The blank canvas is the orchestrator profile with no part**, and that is not a
 workaround: `dispatch.py`:412-413 exempts an orchestrator principal from
@@ -4990,15 +5007,188 @@ row. It renders as a **compact, quiet toggle attached to the summary line of
 The `POST /context/preview` behaviour above is entirely unchanged; only its
 entry point moves.
 
-**(d) The model chip does not rest.** ~~`[data-composer-model]` /
-`[data-composer-provider]` keep their attributes and their `<Fact>` attribution
-— `providers.models.id` is a server fact and §4.6 governs it — but the chip
-renders as **quiet inline text**~~ *(STRUCK 2026-09-03, #114: the idle
-composer mounts no model/effort vocabulary. Model identity lives on the rail's
-Model providers section. Do not invent a picker; do not put model on
-`POST /sessions/{id}/prompt`.)* The projection helpers in
-`stream/composerChrome.ts` remain: identifiers still come from `GET /providers`,
-never house names. They are not drawn at rest.
+**(d) Actual model visibility and explicit selection — NORMATIVE, 2026-09-10,
+#120.** This clause **replaces** the 2026-09-03 prohibition on a resting model
+control/picker. #114 correctly retired a nonfunctional, first-declaration chip;
+that historical rationale remains, but is not a prohibition on a **wired**
+selector. No decorative `[data-composer-model]` revival, thinking/effort control,
+or implicit model swap is authorized. Issues #121–124 are outside this increment.
+
+**Identity and capabilities.** The authority for `current` is **live
+`AgentSession.model`**, never the first provider declaration or a cached
+creation-time model. At admitted turn start the sidecar captures this live model
+and uses that same model for image capability and provider-health attribution.
+Provider/model identity is **two separate strings**, never parsed from a
+slash-joined display label. A model absent from the latest catalog stays named
+as current; the UI must not relabel it as another option.
+
+One compact, conspicuous `[data-model-button]` immediately above the composer,
+integrated with its context area where space permits, names the actual model ID
+and **Text only / Text + images** (or **Capability unknown**). Its
+`[data-model-control]` offers keyboard/touch-accessible full provider/model
+identity disclosure, not merely a `title`. At narrow widths the capability
+badge remains visible. The searchable picker groups by provider, matches
+provider/model IDs and names, and retains disabled options with readable
+reasons. Labelled dialog/combobox/listbox semantics, selected state, arrow
+navigation without mutation, Enter confirmation, Escape dismissal and focus
+restoration are required. While busy, identity remains readable and selection
+is disabled with a reason.
+
+**Wire documents (all named fields required; absences are `null`).**
+
+```typescript
+type ModelRef = { provider_id: string; model_id: string };
+type ModelRevision = { epoch: string; version: number };
+type ResolvedModel = ModelRef & { name: string; input: ("text" | "image")[] };
+type ModelOption = ModelRef & {
+  name: string; input: ("text" | "image")[] | null;
+  available: boolean; unavailable_reason: string | null;
+};
+type ModelsDocument = {
+  status: "ok";
+  providers: { provider_id: string; name: string; models: ModelOption[] }[];
+  proposed_default: ResolvedModel | null;
+  default_policy: "first_available_declared";
+};
+type SessionModelState = {
+  revision: ModelRevision;
+  current: ResolvedModel | null;
+  selected: ModelRef | null;
+  pending_selection: ModelRef | null;
+  state: "ready" | "changing" | "unavailable" | "uncertain";
+  reason: string | null;
+};
+type SessionModelDocument = {
+  status: "ok"; session_id: string;
+  model_state: SessionModelState; execution: ExecutionSnapshot;
+};
+```
+
+`ExecutionSnapshot` retains §2.3's execution fields, including its own
+epoch/version and terminal evidence. `admission_available` is additionally
+false while model selection is reserved, changing, unavailable or uncertain.
+`selected` means last committed choice, **not** current; `pending_selection`
+means unresolved intent. The model revision epoch is fresh per sidecar/session
+incarnation; version is a nonnegative safe integer (0 through 2^53−1, **not a
+boolean**, fractional number or string). Bump version on each model-state
+transition, including changing/uncertain; GET itself does not bump it. An
+A→B→A change never revives an old revision.
+
+**Routes and callers.** Paths are relative to `/api/v1`, bearer-authenticated.
+
+- `GET /providers/models` → `providers.models` returns `ModelsDocument`, with
+  the same route-level loopback guard as other `/providers/**` reads. It joins
+  **project declarations** to the configured `ModelRuntime`. Resolved name and
+  input come from `runtime.getModel`; unresolved declarations stay disabled,
+  with `input: null` and a reason such as `model_unknown`. Provider failures
+  disable, not delete, options. Eligibility is locally revalidated on
+  create/select/prompt; it is **not** proof of a live provider probe. No
+  discovery, network catalog refresh, ambient model imports, external definition
+  loading or credential mutation is caused by a picker read. Existing
+  `GET /providers` and `GET /providers/catalog` sign-in surfaces stay compatible.
+- `GET /sessions/{id}/model` → `session.model.get` describes the live session
+  or its blocked persisted selection in `SessionModelDocument`. A successful
+  description of an unavailable/uncertain session is still `status: "ok"`.
+  `GET /sessions` retains its existing **no-probe listing** behavior.
+- `PUT /sessions/{id}/model` → `session.model.set` accepts **only**
+  `{model: ModelRef, expected_model_revision: ModelRevision}` and returns
+  `SessionModelDocument` after verified application and durable commit. It is
+  keyless session control: no replay and no automatic write retry, even on
+  timeout; a supplied `Idempotency-Key` is ignored as for other session controls.
+- Fresh `POST /sessions` **requires** an explicit `model: ModelRef`. Its
+  existing response fields gain `model_state` and `execution`. The shared
+  ordered resolver proposes `first_available_declared`; the UI displays
+  **Proposed default: provider/model · Text only** (or **Text + images**) and
+  submits that exact pair on explicit creation or explicit first Send. A
+  pre-creation choice is local UI state and creates nothing. A now-ineligible
+  proposal is refused, never replaced by the next option. Existing-session
+  choices do not alter this proposal. `resume: true` requires `session_id` and
+  **forbids** a simultaneous model argument: resume restores; PUT selects.
+- `POST /sessions/{id}/prompt` requires `expected_model_revision` from the
+  reviewed state. This is a concurrency precondition, **not** model selection;
+  `model` and effort fields remain forbidden. CLI **client mode** follows the
+  same HTTP requirements: prints/submits the proposal, retains the revision,
+  and reconciles a conflict for a later explicit action without resending.
+  Compatibility defaults/omitted revisions are confined to private non-HTTP
+  callers, which still pass through the same admission/eligibility guard.
+
+**Serialization and refusals.** Python atomically reserves each session under
+its admission lock, without holding the global lock across RPC/turns. Selection,
+prompt admission, explicit compaction and re-adoption coordinate there or at
+the sidecar's synchronous per-session reservation before any SDK await. The
+sidecar repeats the busy/revision/ready guard before SDK mutation, prompt
+markers or provider work, checking registered runs and actual Pi idle state
+(including compaction/retry/pending messages), not merely `isStreaming`.
+Admitted turns include awaiting-answer, cancellation cleanup and post-turn
+compaction. Conflicts are **immediately refused**, never queued; other sessions
+remain usable. If prompt wins, selection gets `run_in_flight`; if selection
+wins, Send gets `model_change_in_progress` or the completed-change refusal
+`model_changed`. Two selectors follow the same in-progress/stale distinction.
+Preflight refusals release bookkeeping without inventing transcript turns or
+terminals. No stale Send is automatically resubmitted.
+
+The §2.4 envelope is unchanged: `{status:"error", reason, message, ...extras}`.
+`session_id`, sanitized `model_state`, `execution`, and `unavailable_reason`
+when applicable are **top-level**, never nested under `error` or `data`.
+
+| HTTP status | Model-selection reasons |
+|---|---|
+| 400 | `invalid_params`: malformed or unknown fields; missing fresh model |
+| 428 | `model_revision_required`: missing prompt/select precondition |
+| 404 | `unknown_session`, `provider_unknown`, `model_unknown` |
+| 409 | `model_not_configured`, `model_unavailable` (with `unavailable_reason`), `selection_required`, `model_changed`, `model_change_in_progress`, `model_selection_uncertain` |
+| 409 | Existing `run_in_flight`, preserving holding session/run and `scope` |
+| 500 | `model_selection_failed`: sanitized SDK/application/persistence failure |
+| 503 / 504 | Existing `agent_unavailable` / `timeout` |
+
+**Persistence, loss and re-adoption.** Each persistent session owns a private,
+atomically replaced `<sessionDir>/model-selection.json` at mode `0600`:
+
+```json
+{"schema_version":1,"selected":{"provider_id":"p","model_id":"m"},"pending_selection":null}
+```
+
+`selected` may be null when no committed identity is recoverable. Under the
+reservation, durably write pending intent retaining the previous selection,
+await `AgentSession.setModel`, verify **live** identity, then atomically commit
+selected and clear pending. Per-session in-memory settings prevent changes to
+project/global defaults. Pi may clamp effective thinking; no effort control or
+unchanged-thinking guarantee follows. Pi defers fresh JSONL persistence until
+an assistant message exists, so this private record also makes pre-first-turn
+selection durable. There is **no SDK rollback guarantee**: partial mutation or
+persistence failure reports the live identity honestly, retains uncertainty,
+blocks Send and requires explicit selection to reconcile.
+
+Load metadata before resume; only legacy sessions without it recover the
+recorded pair from public `SessionManager.buildSessionContext().model`. Resolve
+and explicitly supply that exact pair to SDK creation, never a startup default
+or SDK fallback. Pending/corrupt metadata is uncertain, not permission to apply
+either choice. No identity means `selection_required`; an unavailable saved
+choice retains a transcript/session-manager handle with `current: null`, not
+a fallback agent. History remains readable. Explicit PUT can adopt that same
+transcript under the same application session ID using a supported replacement.
+An already-live selection changes **in place**, without disposing/recreating
+its agent or replacing transcript/drafts.
+
+Pi's `setModel` is uncancellable: an HTTP timeout cannot release its sidecar
+reservation while the mutation may still settle. Reads report changing until
+actual settlement; transport loss must not be claimed unchanged. Reconcile by
+GET, never replay a model write or timed-out prompt. The existing once-per-child
+re-adoption applies only to definitive unknown-session recovery and preserves
+model refusal reasons. The browser synchronously reserves model writes in the
+shared conversation store, blocking Send (including Enter/form submission) and
+other selections. Model updates preserve session-keyed drafts, attempts,
+transcript, history cursors and scroll; they never settle a send attempt as a
+model operation. Stale-read barriers plus epoch/version comparison reject late
+responses. Refresh the selected model on session selection, picker opening,
+focus/reconnect and turn settlement; poll the visible session even while idle
+for other-client changes. Lost-response/conflict reconciliation preserves the
+draft and requires another explicit Send.
+
+Shared credential linking remains unchanged (§23): selection does not copy,
+rotate, unlink or otherwise mutate credentials. Existing `inspect_part`
+`image_model_required` capability refusals remain; choosing an image-capable
+model does not retry the tool or send a continuation.
 
 **(e) Dead surface, repair (c) — remove or wire, and this document chooses.**
 Three groups, each with a stated disposition, because an exported symbol nothing
@@ -5008,14 +5198,11 @@ imports is a claim the codebase makes and cannot support:
    `isEffortLevel`, `modelKey`, `parseModelKey`. The effort vocabulary is
    **removed**: no clause of §7A specifies a thinking-level control, and a
    closed vocabulary with no surface is a spec claim by implication. `modelKey`
-   / `parseModelKey` are **removed unless the model selector wires them in the
-   same change** — the selector's option identity is `providerId/modelId`
-   either way, and if it is wired it is wired through these functions rather
-   than through a second inline spelling of the same join. **AMENDED 2026-09-03
-   (#114):** the idle composer no longer imports or mounts this module — the
-   resting chip is gone. The remaining projection helpers (`modelsFrom`,
-   `defaultModel`, `showModelChrome`) stay as the GET /providers decision
-   module and are imported from tests. **Testable, split by export kind:**
+   / `parseModelKey` remain **removed** under the 2026-09-10 contract: identity
+   is two strings, not a reversible slash join. **AMENDED 2026-09-10 (#120):**
+   `modelsFrom`, `defaultModel`, and `showModelChrome` first-declaration helpers
+   are retired. The module instead supports the wired selector's resolved
+   identity, capability, filtering and unavailable-reason projections. **Testable, split by export kind:**
    every **value** export of `composerChrome.ts` has at least one importer
    under `web/src` or `web/test`; every **type** export appears in the
    signature of at least one value this module exports. Composer source does
@@ -5041,9 +5228,10 @@ one button, and the build still stacked them four high: context line, input,
 a meta line for the model chip, an action row for Send. Normative — the resting
 composer is **exactly two rows below the context line's top edge**:
 
-1. **The context row** is §7A.3(a)'s summary line. ~~The model id renders
-   inline at its right end~~ *(STRUCK 2026-09-03, #114 — see clause (d). The
-   idle line answers "what will be sent"; "to what" lives on the rail.)*
+1. **The context row** is §7A.3(a)'s summary line. **AMENDED 2026-09-10,
+   #120:** the wired model control in clause (d) immediately precedes the
+   composer, integrated with its context area where space permits. This
+   supersedes #114's exclusion of "to what" from the composer area.
 2. **The input row** holds the textarea with **`[data-composer-send]`
    right-aligned on the same row**, at the input's trailing edge — not in a row
    of its own. Clause (a)'s one-resting-button rule is unchanged in substance,
@@ -5052,8 +5240,10 @@ composer is **exactly two rows below the context line's top edge**:
    states where that button sits.
 
 **The negative half:** in the resting state no third row mounts — no meta line,
-no empty action row, **no model chip** — and the composer's rendered height is
-the context row plus the input row and nothing else. Exceptional states may
+no empty action row, **no decorative model chip** — the composer **form**
+remains context row plus input row. **AMENDED 2026-09-10, #120:** clause (d)'s
+wired model control immediately above the form is explicitly allowed and is
+not counted as a third form row. Exceptional states may
 add their rows as specified (Cancel while running, §7A.6; the disabled reason;
 C1's `data-send-state="unknown"` note), because they are exceptions and stay
 loud. **Testable:** in the resting state the composer form's directly rendered
@@ -7559,6 +7749,7 @@ refusal a future configuration change could quietly contradict is worse than no
 refusal, because a reader stops looking.
 
 **Reads (no key):** `GET /providers`, `GET /providers/catalog`,
+`GET /providers/models` (§7A.10(d), added 2026-09-10),
 `GET /providers/{id}/auth/status` — **metadata only** (§23.8).
 
 **Config mutation — key required:** `PUT /providers/specs` (§2.3's first table),
@@ -7704,8 +7895,10 @@ configure result and provider projection. The unknown declarations stay in the
 configuration; neither their definitions nor code are imported from the other
 installation. No recognized declared model means the provider still refuses
 `model_unknown`. No credential or unknown provider still fails closed.
-Default selection uses the first recognized declared model, never an undeclared
-catalog entry or a replacement for an explicitly named unsupported model.
+**AMENDED 2026-09-10 (#120):** the fresh-session **proposed** default uses
+the first eligible recognized declared model, never an undeclared catalog
+entry. Creation submits an explicit pair; neither it nor resume substitutes a
+replacement for an unsupported choice (§7A.10(d)).
 The panel shows partial readiness at rest and names unsupported models in
 configuration, so partial setup is not silent substitution or a claim that all
 models verified. This changes the all-models-required setup rule, not the

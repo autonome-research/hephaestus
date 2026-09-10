@@ -34,7 +34,6 @@ import {
   createModelRuntime,
   type ProviderAvailability,
   type RuntimeConfig,
-  type PiModel,
 } from "./session/runtime.js";
 import {
   CredentialError,
@@ -46,6 +45,7 @@ import {
   type FlowProjection,
 } from "./session/credentials.js";
 import { SessionService, UnknownSessionError, type ManagedSession } from "./session/manager.js";
+import { ModelResolver, readModelRef, readRevision, modelError } from "./session/model-selection.js";
 import type { SessionProfile } from "./session/profiles.js";
 import {
   MalformedCursorError,
@@ -334,6 +334,7 @@ const customTools = buildAllTools({ proxy, resolveContext });
 // ── runtime + session service (built at runtime.configure) ───────────────────
 let runtime: ModelRuntime | undefined;
 let service: SessionService | undefined;
+let modelResolver: ModelResolver | undefined;
 let availability: readonly ProviderAvailability[] = [];
 const logins = new LoginFlows();
 const agentDir = process.env.HEPHAESTUS_AGENT_DIR ?? process.cwd();
@@ -427,22 +428,6 @@ function wireAvailability(entry: ProviderAvailability): { [k: string]: JsonValue
   return out;
 }
 
-function firstAvailableModel(
-  rt: ModelRuntime,
-  config: RuntimeConfig,
-  verified: readonly ProviderAvailability[],
-): PiModel | undefined {
-  const usable = new Set(verified.filter((e) => e.available).map((e) => e.id));
-  for (const provider of config.providers) {
-    if (!usable.has(provider.id)) continue;
-    for (const model of provider.models) {
-      const resolved = rt.getModel(provider.id, model.id);
-      if (resolved) return resolved;
-    }
-  }
-  return undefined;
-}
-
 /** Read `runtime.configure`'s payload, including §23.2's `serve`-scoped keys. */
 function readRuntimeConfig(params: { [k: string]: JsonValue }): RuntimeConfig {
   const base = params as unknown as RuntimeConfig;
@@ -460,13 +445,13 @@ on("runtime.configure", async (params) => {
   const configured = await createModelRuntime(config, { agentDir });
   runtime = configured.runtime;
   availability = configured.providers;
-  const model = firstAvailableModel(runtime, config, availability);
+  const resolver = new ModelResolver(runtime, config.providers, availability);
+  modelResolver = resolver;
   // A runtime with NO usable provider still comes up. That is §23.7's whole
   // point: the sidecar has to exist for the credential routes to relay to, and
   // a serve that refuses to start because a provider is unauthenticated is a
   // serve in which the login that would fix it is unreachable.
-  service =
-    model === undefined ? undefined : new SessionService({ runtime, agentDir, model, customTools });
+  service = new SessionService({ runtime, agentDir, resolver, model: () => resolver.defaultModel(), customTools });
   const usable = availability.filter((entry) => entry.available).length;
   log(`configured runtime: ${usable}/${config.providers.length} provider(s) verified`);
   return {
@@ -517,6 +502,21 @@ function credentialFailure(err: unknown, providerId: string): RpcError {
     provider_id: providerId,
   });
 }
+
+on("providers.models", () => {
+  requireRuntime();
+  if (!modelResolver) throw runtimeUnavailable();
+  return modelResolver.document();
+});
+
+on("session.model.get", (params) => ({ status: "ok", session_id: String(params.session_id), model_state: requireService().modelState(String(params.session_id)) }));
+on("session.model.set", async (params) => {
+  if (Object.keys(params).some(k => !["session_id", "model", "expected_model_revision"].includes(k))) throw modelError("invalid_params");
+  const expected = readRevision(params.expected_model_revision);
+  const ref = readModelRef(params.model);
+  const sessionId = String(params.session_id);
+  return { status: "ok", session_id: sessionId, model_state: await requireService().selectModel(sessionId, ref, expected) };
+});
 
 on("providers.list", () => {
   const rt = requireRuntime();
@@ -596,6 +596,7 @@ on("credentials.set_key", async (params) => {
   // §23.9: rotation has no verb — rotating is signing in over an existing one,
   // and the response names the state it replaced so a rotation that landed in a
   // different scope than intended is visible now rather than in three weeks.
+  service?.refreshEligibility();
   return { ok: true, provider_id: providerId, scope, replaced };
 });
 
@@ -615,6 +616,7 @@ on("credentials.signout", async (params) => {
   }
   await logins.cancel(providerId);
   // The provider SPEC is untouched (§23.9): the row stays, in state `none`.
+  service?.refreshEligibility();
   return { ok: true, provider_id: providerId, state: "none" };
 });
 
@@ -638,13 +640,16 @@ on("login.begin", async (params) => {
 on("login.status", (params) => {
   const providerId = String(params.provider_id);
   const flow = logins.status(providerId);
+  service?.refreshEligibility();
   return flow === undefined ? { ok: true, flow: null } : { ok: true, flow: wireFlow(flow) };
 });
 
 on("login.complete", async (params) => {
   const providerId = String(params.provider_id);
   try {
-    return { ok: true, ...wireFlow(await logins.complete(providerId, String(params.input ?? ""))) };
+    const flow = await logins.complete(providerId, String(params.input ?? ""));
+    service?.refreshEligibility();
+    return { ok: true, ...wireFlow(flow) };
   } catch (err) {
     throw credentialFailure(err, providerId);
   }
@@ -666,6 +671,7 @@ on("session.create", async (params) => {
     ...(params.session_id !== undefined ? { sessionId: String(params.session_id) } : {}),
     ...(params.part !== undefined && params.part !== null ? { part: String(params.part) } : {}),
     ...(params.resume === true ? { resume: true } : {}),
+    ...(params.model !== undefined ? { model: readModelRef(params.model) } : {}),
   };
   if (request.resume === true && request.sessionId === undefined) {
     throw new RpcError(ErrorCode.INVALID_PARAMS, "resume requires session_id", {
@@ -708,7 +714,7 @@ on("session.create", async (params) => {
     }
     throw err;
   }
-  return { session_id: managed.id, profile: managed.profile, part: managed.part ?? null };
+  return { session_id: managed.id, profile: managed.profile, part: managed.part ?? null, model_state: svc.modelState(managed.id) };
 });
 
 /**
@@ -755,7 +761,10 @@ on("session.prompt", async (params) => {
     throw new RpcError(ErrorCode.INVALID_PARAMS, `unknown session '${sessionId}'`);
   }
 
-  const controller = svc.beginRun(sessionId, runId);
+  // Omission is confined to private/internal RPC callers; HTTP always supplies it.
+  const controller = svc.beginRun(sessionId, runId, params.expected_model_revision === undefined ? undefined : readRevision(params.expected_model_revision));
+  const admittedModel = managed.session.model;
+  if (!admittedModel) { svc.endRun(runId); throw modelError("selection_required"); }
 
   // INTERFACE.md §2.8(3) — RECORD THE TURN AT PROMPT TIME.
   //
@@ -817,7 +826,7 @@ on("session.prompt", async (params) => {
     runId,
     tracker: new InvocationTracker(),
     nextSeq: next,
-    imagesSupported: managed.model.input.includes("image"),
+    imagesSupported: admittedModel.input.includes("image"),
     ordinal: 0,
   };
   activeRuns.set(runId, run);
@@ -915,7 +924,7 @@ on("session.prompt", async (params) => {
     // and failed on auth flips that provider's health to `rejected`; one that
     // completed flips it to `accepted`. Nothing else in this process writes it,
     // which is what makes "there is no background probe" true.
-    observeTurn(managed.model.provider, state === "completed" ? undefined : errorMessage);
+    observeTurn(admittedModel.provider, state === "completed" ? undefined : errorMessage);
   }
 
   // Record explicit settlement for every run, including zero-event runs.
@@ -1006,7 +1015,7 @@ on("session.compact", async (params) => {
     throw new RpcError(ErrorCode.INVALID_PARAMS, `unknown session '${sessionId}'`);
   }
   const instructions = formatPinnedSummary(pinnedSummary(managed));
-  const result = await managed.session.compact(instructions);
+  const result = await svc.compact(sessionId, instructions);
   return { summary: result.summary ?? "" };
 });
 
@@ -1038,7 +1047,7 @@ on("history.page", (params) => {
   if (managed === undefined) {
     throw new RpcError(ErrorCode.INVALID_PARAMS, `unknown session '${sessionId}'`);
   }
-  const entries = managed.session.sessionManager.getEntries();
+  const entries = managed.piSessionManager.getEntries();
   const cursor = params.cursor === undefined || params.cursor === null ? undefined : String(params.cursor);
   const after = params.after === undefined || params.after === null ? undefined : String(params.after);
   // §2.8(5): the two forms are mutually exclusive and the ambiguity is REFUSED

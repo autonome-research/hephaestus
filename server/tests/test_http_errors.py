@@ -620,7 +620,10 @@ def test_the_sidecar_failed_refusal_never_carries_the_provider_config_path(
         assert agent is not None
         monkeypatch.setattr(agent, "create_session", _boom)
 
-        response = web.post("/sessions", json={"profile": "orchestrator"})
+        response = web.post(
+            "/sessions",
+            json={"profile": "orchestrator", "model": {"provider_id": "fake", "model_id": "text"}},
+        )
 
     assert response.status_code == 503
     body = response.json()

@@ -1,8 +1,14 @@
 // Copyright 2026 The Hephaestus Authors
 // SPDX-License-Identifier: Apache-2.0
-// Project-lifetime, session-keyed evidence. No writes/retries/scheduler here.
+// Project-lifetime, session-keyed evidence and explicit model reservation.
+// No automatic writes, retries, or scheduler.
 import { useSyncExternalStore } from "react";
-import { fetchSessions, type ExecutionSnapshot, type PromptDocument } from "../api/sessions";
+import { fetchSessions, fetchSessionModel, selectSessionModel, isSessionModelState, isExecutionSnapshot,
+  type SessionModelState, type ExecutionSnapshot, type PromptDocument } from "../api/sessions";
+import { WorkspaceError } from "../api/client";
+import type { ModelRef, ModelsDocument, ModelOption, ModelRevision } from "../api/providers";
+import { sameModel } from "./composerChrome";
+import { copy } from "../copy";
 import type { EventFrame } from "../api/events";
 import { emptyHistory, type HistoryProgress } from "./history";
 import { appendEcho, emptyLive, receive, refuseEcho, disconnected, resync, type LiveState } from "./live";
@@ -18,6 +24,15 @@ export interface SendAttempt {
 }
 export interface Conversation {
   readonly draft: Draft;
+  readonly model: SessionModelState | null;
+  readonly modelChecking: boolean;
+  readonly modelPending: boolean;
+  readonly modelError: string | null;
+  readonly modelBarrier: number;
+  /** Only used on the null-session record. Existing choices never update it. */
+  readonly proposal: ModelOption | null;
+  readonly proposalInitialized: boolean;
+  readonly proposalIsDefault: boolean;
   readonly attempt: SendAttempt | null;
   readonly execution: ExecutionSnapshot | null;
   readonly checking: boolean;
@@ -40,6 +55,8 @@ const EMPTY: Conversation = {
   draft: { text: "", revision: 0 }, attempt: null, execution: null,
   checking: true, stopRequested: null, history: emptyHistory(),
   live: emptyLive("reconnecting"), barrier: 0,
+  model: null, modelChecking: true, modelPending: false, modelError: null, modelBarrier: 0,
+  proposal: null, proposalInitialized: false, proposalIsDefault: true,
 };
 function terminalReason(payload: unknown): string | null {
   if (payload === null || typeof payload !== "object") return null;
@@ -65,7 +82,10 @@ export function currentTurn(c: Conversation, selected = true): CurrentTurn {
   const blocked = c.attempt?.phase === "sending" || c.attempt?.phase === "unknown";
   return {
     status, reason, runId: active,
-    canSend: !blocked && (!selected || (!uncertain && e?.admission_available === true)),
+    canSend: !blocked && !c.modelPending && (selected
+      ? !c.modelChecking && c.model?.state === "ready" && c.model.current !== null
+        && !uncertain && e?.admission_available === true
+      : c.proposal?.available === true),
     canAnswer: !uncertain && active !== null,
     terminalRunId: terminal?.run_id === e?.run_id ? terminal?.run_id ?? null : null,
     stopRequested: active !== null && c.stopRequested === active,
@@ -102,10 +122,42 @@ export function createConversationStore() {
     },
     begin(sid: string | null): SendAttempt | null {
       const c = get(sid);
-      if (c.attempt?.phase === "sending" || c.attempt?.phase === "unknown") return null;
+      if (!currentTurn(c, sid !== null).canSend) return null;
       const attempt: SendAttempt = { id: ++attemptId, submitted: c.draft, phase: "sending" };
       update(sid, c => ({ ...c, attempt, checking: true, barrier: ++clock, stopRequested: null }));
       return attempt;
+    },
+    catalog(document: ModelsDocument) {
+      update(null, c => {
+        // Freeze the exact initial proposal; a refreshed catalog never substitutes another pair.
+        const choice = c.proposalInitialized ? c.proposal : document.proposed_default;
+        const option = document.providers.flatMap(p => p.models).find(m => sameModel(m, choice));
+        return { ...c, proposalInitialized: true, proposal: choice === null ? null
+          : option ?? { ...choice, name: choice.name,
+            input: null, available: false, unavailable_reason: "model_not_configured" } };
+      });
+    },
+    propose(model: ModelOption) {
+      if (!model.available || get(null).modelPending || get(null).attempt?.phase === "sending") return;
+      update(null, c => ({ ...c, proposal: model, proposalInitialized: true, proposalIsDefault: false }));
+    },
+    beginModel(sid: string): ModelRevision | null {
+      const c = get(sid);
+      if (!canSelectModel(c) || c.model === null) return null;
+      const revision = c.model.revision;
+      update(sid, c => ({ ...c, modelPending: true, modelError: null, modelBarrier: ++clock, barrier: clock }));
+      return revision;
+    },
+    modelSnapshot(sid: string, model: SessionModelState, execution: ExecutionSnapshot | undefined, ticket: number) {
+      update(sid, c => {
+        if (ticket < c.modelBarrier || ticket < c.barrier) return c;
+        const prior = c.model?.revision;
+        if (prior?.epoch === model.revision.epoch && prior.version > model.revision.version) return c;
+        const e = c.execution;
+        const acceptExecution = execution !== undefined && !(e?.epoch === execution.epoch && e.version > execution.version);
+        return { ...c, model, modelChecking: false, modelBarrier: ticket,
+          ...(acceptExecution ? { execution, checking: false, barrier: ticket } : {}) };
+      });
     },
     echo(sid: string, text: string) { update(sid, c => ({ ...c, live: appendEcho(c.live, text) })); },
     rejectEcho(sid: string, reason: string) { update(sid, c => ({ ...c, live: refuseEcho(c.live, reason) })); },
@@ -168,7 +220,7 @@ export function createConversationStore() {
       });
     },
     transport(sid: string, status: LiveState["status"]) {
-      update(sid, c => ({ ...c, live: disconnected(c.live, status), checking: true, barrier: ++clock }));
+      update(sid, c => ({ ...c, live: disconnected(c.live, status), checking: true, modelChecking: true, barrier: ++clock }));
     },
     gap(sid: string) { update(sid, c => ({ ...c, live: resync(c.live), checking: true })); },
     stop(sid: string, runId: string) {
@@ -177,7 +229,58 @@ export function createConversationStore() {
     needsRefresh() { return [...records.values()].some(c => c.checking || c.execution?.active_run_id || c.attempt?.phase === "sending" || c.attempt?.phase === "unknown"); },
   };
 }
+export function canSelectModel(c: Conversation): boolean {
+  return !c.modelPending && !c.modelChecking && !c.checking && c.model !== null
+    && c.model.state !== "changing" && c.execution !== null && c.execution.active_run_id === null
+    && currentTurn(c).status !== "Checking"
+    && (c.execution.admission_available || c.model.state === "unavailable" || c.model.state === "uncertain")
+    && c.attempt?.phase !== "sending" && c.attempt?.phase !== "unknown";
+}
 export const conversationStore = createConversationStore();
+
+/** Selected-session read only; listing remains a no-probe projection. */
+export async function readSessionModel(sid: string, checking = false): Promise<void> {
+  const ticket = conversationStore.ticket();
+  if (checking) conversationStore.update(sid, c => ({ ...c, modelChecking: true, modelBarrier: ticket }));
+  try {
+    const doc = await fetchSessionModel(sid);
+    conversationStore.modelSnapshot(sid, doc.model_state, doc.execution, ticket);
+    conversationStore.update(sid, c => c.modelBarrier !== ticket
+      || !(c.modelError === copy.models.readFailed || (c.modelError === copy.models.lost && c.model?.state === "ready"))
+      ? c : { ...c, modelError: null });
+  } catch {
+    conversationStore.update(sid, c => ticket < Math.max(c.barrier, c.modelBarrier) ? c
+      : { ...c, modelChecking: true, modelError: copy.models.readFailed, modelBarrier: ticket });
+  }
+}
+/** Error extras are top-level on the wire (WorkspaceError.data preserves them). */
+export function modelRefusal(sid: string, cause: unknown): void {
+  if (!(cause instanceof WorkspaceError) || cause.data["session_id"] !== sid) return;
+  const model = cause.data["model_state"];
+  const execution = cause.data["execution"];
+  if (isSessionModelState(model)) conversationStore.modelSnapshot(sid, model,
+    isExecutionSnapshot(execution) ? execution : undefined, conversationStore.ticket());
+}
+export async function changeSessionModel(sid: string, model: ModelRef): Promise<void> {
+  // Synchronous reservation before the first await, shared with Enter/form sends.
+  const revision = conversationStore.beginModel(sid);
+  if (revision === null) return;
+  try {
+    const doc = await selectSessionModel(sid, { model: { provider_id: model.provider_id, model_id: model.model_id },
+      expected_model_revision: revision });
+    // A GET begun during the write cannot subsequently undo its response.
+    conversationStore.modelSnapshot(sid, doc.model_state, doc.execution, conversationStore.ticket());
+    conversationStore.update(sid, c => ({ ...c, modelPending: false }));
+  } catch (cause) {
+    conversationStore.update(sid, c => ({ ...c, modelPending: false, modelChecking: true,
+      modelBarrier: conversationStore.ticket(), modelError: cause instanceof WorkspaceError && !["timeout", "agent_unavailable", "transport_error"].includes(cause.reason)
+        ? cause.reason === "model_changed" ? copy.models.changed : `${copy.models.unavailable}: ${cause.reason}`
+        : copy.models.lost }));
+    modelRefusal(sid, cause);
+    // Never replay a write after transport loss or a conflict.
+    await readSessionModel(sid);
+  }
+}
 export function useConversation(sid: string | null): Conversation {
   return useSyncExternalStore(conversationStore.subscribe, () => conversationStore.get(sid), () => EMPTY);
 }

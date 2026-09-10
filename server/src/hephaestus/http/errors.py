@@ -40,6 +40,7 @@ from typing import Any, Final, cast
 from hephaestus.agent_bridge.app import AgentUnavailableError, UnknownSessionError
 from hephaestus.agent_bridge.dispatch import DispatchError
 from hephaestus.agent_bridge.limits import LimitError
+from hephaestus.agent_bridge.model_selection import MODEL_STATUSES, ModelSelectionError
 from hephaestus.agent_bridge.protocol import ErrorCode, ProtocolError
 from hephaestus.agent_bridge.sessions import (
     RunInFlightError,
@@ -96,6 +97,7 @@ CAPABILITY_REASONS: Final[frozenset[str]] = frozenset(
 #: family rules in :func:`status_for_reason`, which are stated there rather than
 #: hidden as a bare ``.get(..., 400)``.
 REASON_STATUS: Final[dict[str, int]] = {
+    **MODEL_STATUSES,
     # 400 — invalid input and every idempotency-key fault (§2.5's ladder).
     "invalid_params": 400,
     "invalid_part": 400,
@@ -465,6 +467,7 @@ _ROUTER_REASONS: Final[dict[int, str]] = {404: "unknown_route", 405: "method_not
 #:   own sentence, because the sentence is the whole diagnosis.
 SIDECAR_REFUSALS: Final[frozenset[str]] = frozenset(
     {
+        *MODEL_STATUSES,
         "agent_unavailable",
         "ambiguous_run",
         "invalid_cursor",
@@ -904,6 +907,8 @@ def refusal_for(exc: BaseException, *, secrets: Sequence[str] = ()) -> HttpRefus
     """
     if isinstance(exc, HttpRefusal):
         return exc
+    if isinstance(exc, ModelSelectionError):
+        return HttpRefusal(status_for_reason(exc.reason), exc.reason, str(exc), data=exc.data)
     if isinstance(exc, SupervisorError):
         # §2.4, amended 2026-09-03: the two named rows a session route reaches
         # when a call for a session the runtime lists fails at the bridge.

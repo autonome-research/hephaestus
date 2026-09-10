@@ -510,7 +510,11 @@ async function runArc(page: Page, serve: Serve): Promise<void> {
   // the input to enable was waiting for a selection nothing had made — that,
   // not a timing budget, is why this failed only in the full suite where the
   // page had not been navigated with an `s` query (CI run 33234619571).
-  const created = (await call("POST", "/sessions", { profile: "orchestrator" })).json;
+  const modelProposal = (await call("GET", "/providers/models")).json["proposed_default"];
+  expect(modelProposal).not.toBeNull();
+  const proposed = modelProposal as { provider_id: string; model_id: string };
+  const created = (await call("POST", "/sessions", { profile: "orchestrator",
+    model: { provider_id: proposed.provider_id, model_id: proposed.model_id } })).json;
   const sessionId = String(created["session_id"] ?? "");
   expect(sessionId).not.toBe("");
   // The token is claimed on the first load and moved to sessionStorage, so the

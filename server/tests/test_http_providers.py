@@ -869,7 +869,8 @@ def test_every_providers_route_refuses_off_loopback(tmp_path: Path) -> None:
             for method, template in ROUTE_TABLE
             if template.startswith("/providers")
         ]
-        assert len(provider_rows) == 13
+        assert len(provider_rows) == 14
+        assert ("GET", "/providers/models") in provider_rows
         for method, template in provider_rows:
             # EVERY row, attach included. Item 7 landed `/providers/attach`
             # without the precondition and recorded its absence as item 2's

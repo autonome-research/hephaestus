@@ -208,7 +208,10 @@ class AdmissionControl:
 
     def get_terminal(self, run_id: str) -> TerminalRecord | None:
         """The run's terminal record, or None if no terminal was inserted."""
-        raw = self._fetch_terminal(self._db.conn, run_id)
+        # History and model/execution polling share this connection with the
+        # terminal writer. A helper call must not bypass Database's read lock.
+        with self._db.reading() as conn:
+            raw = self._fetch_terminal(conn, run_id)
         return None if raw is None else _to_terminal(raw)
 
     def occupied_run_ids(self) -> frozenset[str]:
@@ -219,16 +222,19 @@ class AdmissionControl:
 
     def active_count(self) -> int:
         """Number of occupied slots (terminal-unacked included, SUSPENDED_WAIT excluded)."""
-        return _count(self._db.conn, _ACTIVE_COUNT_SQL)
+        with self._db.reading() as conn:
+            return _count(conn, _ACTIVE_COUNT_SQL)
 
     def pending_resume_count(self) -> int:
         """Queued resume requests that reserve a slot ahead of new admissions."""
-        return _count(self._db.conn, _PENDING_RESUME_SQL)
+        with self._db.reading() as conn:
+            return _count(conn, _PENDING_RESUME_SQL)
 
     def available_slots(self) -> int:
         """Slots a NEW admission could take right now (resume reservations excluded)."""
-        free = self._config.run_slots - self.active_count() - self.pending_resume_count()
-        return max(0, free)
+        with self._db.reading():
+            free = self._config.run_slots - self.active_count() - self.pending_resume_count()
+            return max(0, free)
 
     def admit(
         self,

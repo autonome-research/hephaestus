@@ -77,7 +77,8 @@ import { shellStore } from "../../state/shell";
 import { sessionEmptyBody, sessionEmptyKind } from "../../stream/sessionEmpty";
 import { showsEmptyTranscript } from "../../stream/streamChrome";
 import { useStream } from "../../stream/useStream";
-import { readExecutionSessions } from "../../stream/conversation";
+import { conversationStore, readExecutionSessions, useConversation } from "../../stream/conversation";
+import { ModelPicker } from "./ModelPicker";
 import { useFollowScroll } from "../../stream/followScroll";
 import { sessionPromptStore } from "../../stream/sessionPrompts";
 import { titleForSession } from "../../stream/sessionTitle";
@@ -114,6 +115,8 @@ export function StreamPanel(): React.JSX.Element {
   const profiles = useMemo(() => sessions.data?.profiles ?? EMPTY_PROFILES, [sessions.data]);
   const stream = useStream(selected);
   const [creating, setCreating] = useState(false);
+  const [createTarget, setCreateTarget] = useState<{ profile: "orchestrator" | "part"; part: string | null } | null>(null);
+  const proposal = useConversation(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [focusNonce, setFocusNonce] = useState(0);
 
@@ -229,13 +232,22 @@ export function StreamPanel(): React.JSX.Element {
   // keystroke, never as recovery from a failed prompt. At-least-once is the
   // stated consequence and the UI carries it: a duplicate create is an extra
   // *idle* session, and there is no route that closes one, so none is offered.
-  const create = useCallback(
-    (profile: "orchestrator" | "part", boundPart: string | null) => {
+  const create = useCallback((profile: "orchestrator" | "part", boundPart: string | null) => {
+    setCreateTarget({ profile, part: boundPart });
+    setCreateError(null);
+  }, []);
+  const confirmCreate = useCallback(() => {
+      const c = conversationStore.get(null);
+      if (createTarget === null || c.modelPending || c.attempt?.phase === "sending" || c.proposal?.available !== true) return;
+      conversationStore.update(null, c => ({ ...c, modelPending: true }));
       setCreating(true);
       setCreateError(null);
-      void createSession(profile, boundPart)
+      const targetSession = workspaceStore.getSnapshot().session;
+      void createSession(createTarget.profile, createTarget.part, c.proposal)
         .then((document) => {
-          workspaceStore.update({ session: document.session_id });
+          conversationStore.modelSnapshot(document.session_id, document.model_state, document.execution, conversationStore.ticket());
+          if (workspaceStore.getSnapshot().session === targetSession) workspaceStore.update({ session: document.session_id });
+          setCreateTarget(null);
           void client.invalidateQueries({ queryKey: ["sessions"] });
           // §7A.2 / #61: the create exists so the operator can talk. Focus
           // the box after the session is addressed; do not wait for a click.
@@ -246,9 +258,10 @@ export function StreamPanel(): React.JSX.Element {
         })
         .finally(() => {
           setCreating(false);
+          conversationStore.update(null, c => ({ ...c, modelPending: false }));
         });
     },
-    [client],
+    [client, createTarget],
   );
 
   // The worded pair, kept for the two surfaces §7.1(b)(1) leaves it on: the
@@ -501,6 +514,15 @@ export function StreamPanel(): React.JSX.Element {
           session tab, and it renders in every state — including
           `agent_unavailable`, because that is exactly where its reason is
           needed. `no_session` stays typable: the first Send creates then posts. */}
+      {createTarget !== null ? <section className={styles["modelCreate"]} aria-label={copy.models.createTitle}>
+        <p>{copy.models.createTitle}</p>
+        <ModelPicker sessionId={null} />
+        <Button variant="secondary" onClick={confirmCreate}
+          {...(creating || proposal.proposal?.available !== true ? { disabled: true as const, reason: creating ? copy.composer.sending : copy.models.none } : {})}>
+          {copy.models.create}
+        </Button>
+        <Button variant="quiet" onClick={() => setCreateTarget(null)}>{copy.models.done}</Button>
+      </section> : null}
       <Composer
         sessionId={selected}
         profile={activeProfile}

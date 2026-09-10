@@ -286,13 +286,20 @@ def test_the_block_travels_beside_the_text_and_never_inside_it(app: Workspace) -
     _built(app)
     agent = app.agent
     assert agent is not None
-    created = cast("dict[str, Any]", app.post("/sessions", json={"profile": "orchestrator"}).json())
+    created = cast(
+        "dict[str, Any]",
+        app.post(
+            "/sessions",
+            json={"profile": "orchestrator", "model": {"provider_id": "fake", "model_id": "text"}},
+        ).json(),
+    )
     session_id = str(created["session_id"])
 
     response = app.post(
         f"/sessions/{session_id}/prompt",
         json={
             "text": NUMBERLESS_REQUEST,
+            "expected_model_revision": created["model_state"]["revision"],
             "context": {"part": "widget", "inspector_tab": "checks"},
         },
     )
@@ -310,9 +317,18 @@ def test_a_prompt_with_no_context_sends_none(app: Workspace) -> None:
     """The wire is byte-identical to a pre-§19.22 turn when there is no block."""
     agent = app.agent
     assert agent is not None
-    created = cast("dict[str, Any]", app.post("/sessions", json={"profile": "orchestrator"}).json())
+    created = cast(
+        "dict[str, Any]",
+        app.post(
+            "/sessions",
+            json={"profile": "orchestrator", "model": {"provider_id": "fake", "model_id": "text"}},
+        ).json(),
+    )
     session_id = str(created["session_id"])
-    response = app.post(f"/sessions/{session_id}/prompt", json={"text": "hello"})
+    response = app.post(
+        f"/sessions/{session_id}/prompt",
+        json={"text": "hello", "expected_model_revision": created["model_state"]["revision"]},
+    )
     assert response.status_code == 200, response.text
     assert agent.prompts[-1] == ("hello", None)
     assert cast("dict[str, Any]", response.json())["context"] is None
@@ -523,10 +539,18 @@ def test_a_view_outside_the_closed_set_is_refused_on_the_prompt_route_too(
     the fix — a client that cannot reach the model through the preview route
     must not reach it through the route that actually starts a run.
     """
-    session_id = app.post("/sessions", json={"profile": "orchestrator"}).json()["session_id"]
+    created = app.post(
+        "/sessions",
+        json={"profile": "orchestrator", "model": {"provider_id": "fake", "model_id": "text"}},
+    ).json()
+    session_id = created["session_id"]
     response = app.post(
         f"/sessions/{session_id}/prompt",
-        json={"text": "hello", "context": {"view": "not-a-view"}},
+        json={
+            "text": "hello",
+            "context": {"view": "not-a-view"},
+            "expected_model_revision": created["model_state"]["revision"],
+        },
     )
     assert response.status_code == 400, response.text
     assert response.json()["reason"] == "invalid_params"

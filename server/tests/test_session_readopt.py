@@ -142,6 +142,7 @@ class ReadoptHarness:
         self.app = build_app(self.runtime)
         self.client: httpx.Client = TestClient(self.app, raise_server_exceptions=False)
         self.child_pids: list[int] = [self.bridge.child_pid]
+        self.model_revisions: dict[str, dict[str, Any]] = {}
 
     # -- HTTP, mirroring hephaestus.testing.workspace.Workspace.request -----
 
@@ -158,9 +159,21 @@ class ReadoptHarness:
 
     def create_and_prompt(self, reply: str) -> str:
         """A session with one real, persisted turn — through the real routes."""
-        session_id = self.post("/sessions", json={"profile": "orchestrator"}).json()["session_id"]
+        proposed = self.get("/providers/models").json()["proposed_default"]
+        created = self.post(
+            "/sessions",
+            json={
+                "profile": "orchestrator",
+                "model": {"provider_id": proposed["provider_id"], "model_id": proposed["model_id"]},
+            },
+        ).json()
+        session_id = created["session_id"]
+        self.model_revisions[session_id] = created["model_state"]["revision"]
         self.fake.set_script([text(reply)])
-        prompted = self.post(f"/sessions/{session_id}/prompt", json={"text": "hello"})
+        prompted = self.post(
+            f"/sessions/{session_id}/prompt",
+            json={"text": "hello", "expected_model_revision": self.model_revisions[session_id]},
+        )
         assert prompted.status_code == 200, prompted.text
         return str(session_id)
 
@@ -306,8 +319,8 @@ def test_history_survives_a_kill_via_silent_readoption(harness: ReadoptHarness) 
 # (b) the same for POST prompt
 
 
-def test_a_second_prompt_survives_a_kill_via_silent_readoption(harness: ReadoptHarness) -> None:
-    """§2.8(6) reaches ``session.prompt`` too, not only the read side.
+def test_a_second_prompt_requires_review_of_the_new_incarnation(harness: ReadoptHarness) -> None:
+    """#120: re-adoption preserves history, but a stale send is never resubmitted.
 
     Mirrors ``test_e2e_fake_model.py``'s ``test_kill9_restart_and_session_resume``
     (a second prompt completing after the kill) but through the real HTTP route
@@ -318,7 +331,20 @@ def test_a_second_prompt_survives_a_kill_via_silent_readoption(harness: ReadoptH
     harness.kill_and_wait_for_respawn()
 
     harness.fake.set_script([text("still here after the respawn")])
-    second = harness.post(f"/sessions/{session_id}/prompt", json={"text": "are you alive?"})
+    stale = harness.post(
+        f"/sessions/{session_id}/prompt",
+        json={
+            "text": "are you alive?",
+            "expected_model_revision": harness.model_revisions[session_id],
+        },
+    )
+    assert stale.status_code == 409, stale.text
+    assert stale.json()["reason"] == "model_changed"
+    reviewed = harness.get(f"/sessions/{session_id}/model").json()["model_state"]["revision"]
+    second = harness.post(
+        f"/sessions/{session_id}/prompt",
+        json={"text": "are you alive?", "expected_model_revision": reviewed},
+    )
 
     assert second.status_code == 200, second.text
     body = second.json()
@@ -396,7 +422,13 @@ def test_when_resume_itself_fails_a_prompt_is_also_refused_by_name(
     monkeypatch.setattr(harness.bridge, "resume_session", _resume_fails)
 
     harness.fake.set_script([text("should never be reached")])
-    prompted = harness.post(f"/sessions/{session_id}/prompt", json={"text": "hello again"})
+    prompted = harness.post(
+        f"/sessions/{session_id}/prompt",
+        json={
+            "text": "hello again",
+            "expected_model_revision": harness.model_revisions[session_id],
+        },
+    )
 
     assert prompted.status_code == 404, prompted.text
     assert prompted.json()["reason"] == "unknown_session"

@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { fetchHistoryPage, fetchThread, type ThreadDocument } from "../api/sessions";
 import { loadHistory, type HistoryProgress } from "./history";
-import { conversationStore, currentTurn, useConversation, visiblePrompts, type CurrentTurn } from "./conversation";
+import { conversationStore, currentTurn, readSessionModel, useConversation, visiblePrompts, type CurrentTurn } from "./conversation";
 import { sessionPromptStore } from "./sessionPrompts";
 import { loadThreadTree, threadTabs, type ThreadTab } from "./thread";
 import { panelRows, type PanelRow, type StreamState } from "./transcript";
@@ -61,6 +61,24 @@ export function useStream(sessionId: string | null): StreamView {
   // into live events or use it to heal a transport gap. Tail pages include
   // outcome-only updates to older turns, even when no event was appended.
   const terminalId = conversation.execution?.terminal?.terminal_id;
+  useEffect(() => {
+    if (sessionId === null) return;
+    const refresh = () => { void readSessionModel(sessionId, true); };
+    refresh();
+    // Idle polling is intentional: other clients can select without sending an event.
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== "hidden") void readSessionModel(sessionId);
+    }, 5_000);
+    window.addEventListener("focus", refresh);
+    window.addEventListener("online", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("online", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [sessionId, terminalId, live.status]);
   useEffect(() => {
     if (sessionId === null || terminalId === undefined || history.endCursor == null) return;
     let attached = true;

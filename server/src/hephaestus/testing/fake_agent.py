@@ -23,15 +23,27 @@ forward it **unmodified** and to expose no page-size parameter (§2.8).
 from __future__ import annotations
 
 import base64
+import copy
 import itertools
 import json
 import threading
+import uuid
 from collections.abc import Callable
 from typing import Any, Final
 
 from hephaestus.agent_bridge.app import PromptResult, UnknownSessionError
 from hephaestus.agent_bridge.events import EventPump, HephaestusEvent, ObserverClient
+from hephaestus.agent_bridge.model_selection import (
+    ModelRef,
+    ModelRevision,
+    ModelsDocument,
+    ModelSelectionError,
+    SessionModelDocument,
+    SessionModelState,
+    require_ready,
+)
 from hephaestus.agent_bridge.protocol import ErrorCode
+from hephaestus.agent_bridge.sessions import RunInFlightError
 from hephaestus.agent_bridge.supervisor import SupervisorError
 from opstore.admission import AdmissionControl
 from opstore.errors import NotFoundError
@@ -143,6 +155,42 @@ class FakeAgent:
         #: test standing in for a turn that actually reached the provider.
         self.observed: dict[str, dict[str, Any]] = {}
         self._credential_failure: tuple[str, int] | None = None
+        self._model_states: dict[str, SessionModelState] = {}
+        self._active_models: dict[str, str] = {}
+        self.model_options: ModelsDocument = {
+            "status": "ok",
+            "default_policy": "first_available_declared",
+            "proposed_default": {
+                "provider_id": "fake",
+                "model_id": "text",
+                "name": "Text fake",
+                "input": ["text"],
+            },
+            "providers": [
+                {
+                    "provider_id": "fake",
+                    "name": "Fake",
+                    "models": [
+                        {
+                            "provider_id": "fake",
+                            "model_id": "text",
+                            "name": "Text fake",
+                            "input": ["text"],
+                            "available": True,
+                            "unavailable_reason": None,
+                        },
+                        {
+                            "provider_id": "fake",
+                            "model_id": "vision",
+                            "name": "Vision fake",
+                            "input": ["text", "image"],
+                            "available": True,
+                            "unavailable_reason": None,
+                        },
+                    ],
+                }
+            ],
+        }
 
     # -- sessions ----------------------------------------------------------
 
@@ -153,6 +201,7 @@ class FakeAgent:
         part: str | None = None,
         session_id: str | None = None,
         resume: bool = False,
+        model: ModelRef | None = None,
     ) -> str:
         """Open a session, refusing a ``resume`` there is nothing to resume.
 
@@ -173,8 +222,87 @@ class FakeAgent:
             sid = session_id or f"sess-{next(self._session_seq)}"
             if resume and sid not in self._sessions and sid not in self.history:
                 raise UnknownSessionError(f"unknown session '{sid}'", session_id=sid)
+            if resume and model is not None:
+                raise ModelSelectionError("invalid_params")
+            if not resume or sid not in self._model_states:
+                current = self._resolve_model(model or {"provider_id": "fake", "model_id": "text"})
+                self._model_states[sid] = {
+                    "revision": {"epoch": str(uuid.uuid4()), "version": 0},
+                    "current": current,
+                    "selected": {
+                        "provider_id": current["provider_id"],
+                        "model_id": current["model_id"],
+                    },
+                    "pending_selection": None,
+                    "state": "ready",
+                    "reason": None,
+                }
             self._sessions[sid] = {"session_id": sid, "profile": profile, "part": part}
             return sid
+
+    def provider_models(self) -> ModelsDocument:
+        return copy.deepcopy(self.model_options)
+
+    def _resolve_model(self, ref: ModelRef) -> Any:
+        provider = next(
+            (p for p in self.model_options["providers"] if p["provider_id"] == ref["provider_id"]),
+            None,
+        )
+        if provider is None:
+            raise ModelSelectionError("provider_unknown")
+        option = next((m for m in provider["models"] if m["model_id"] == ref["model_id"]), None)
+        if option is None:
+            raise ModelSelectionError("model_unknown")
+        if not option["available"]:
+            raise ModelSelectionError(
+                "model_unavailable", data={"unavailable_reason": option["unavailable_reason"]}
+            )
+        return {
+            "provider_id": option["provider_id"],
+            "model_id": option["model_id"],
+            "name": option["name"],
+            "input": option["input"],
+        }
+
+    def session_model(self, session_id: str) -> SessionModelDocument:
+        with self._lock:
+            if session_id not in self._model_states:
+                raise UnknownSessionError(f"unknown session '{session_id}'", session_id=session_id)
+            state = copy.deepcopy(self._model_states[session_id])
+            active = self._active_models.get(session_id)
+            return {
+                "status": "ok",
+                "session_id": session_id,
+                "model_state": state,
+                "execution": {
+                    "epoch": "fake-execution",
+                    "version": state["revision"]["version"],
+                    "run_id": active,
+                    "active_run_id": active,
+                    "admission_available": active is None and state["state"] == "ready",
+                    "terminal": None,
+                },
+            }
+
+    def select_session_model(
+        self, session_id: str, model: ModelRef, expected: ModelRevision
+    ) -> SessionModelDocument:
+        with self._lock:
+            state = self.session_model(session_id)["model_state"]
+            active = self._active_models.get(session_id)
+            if active:
+                raise RunInFlightError(session_id, active, scope="session")
+            try:
+                require_ready(state, expected)
+            except ModelSelectionError as exc:
+                raise ModelSelectionError(
+                    exc.reason, data=dict(self.session_model(session_id))
+                ) from exc
+            current = self._resolve_model(model)
+            state["current"], state["selected"] = current, model
+            state["revision"]["version"] += 2
+            self._model_states[session_id] = state
+            return self.session_model(session_id)
 
     def sessions(self) -> list[dict[str, Any]]:
         with self._lock:
@@ -199,14 +327,29 @@ class FakeAgent:
         answerer: Callable[[dict[str, Any]], Any] | None = None,
         on_event: Callable[[dict[str, Any]], None] | None = None,
         timeout: float | None = None,
+        expected_model_revision: ModelRevision | None = None,
     ) -> PromptResult:
         run = run_id or self.new_run_id()
         with self._lock:
+            state = self.session_model(session_id)["model_state"]
+            try:
+                require_ready(state, expected_model_revision)
+            except ModelSelectionError as exc:
+                raise ModelSelectionError(
+                    exc.reason, data=dict(self.session_model(session_id))
+                ) from exc
+            if session_id in self._active_models:
+                raise RunInFlightError(session_id, self._active_models[session_id], scope="session")
+            self._active_models[session_id] = run
             self._run_sessions[run] = session_id
             self.prompts.append((text, context))
-        script = self.on_prompt
-        if script is not None:
-            script(self, session_id, run, text, answerer)
+        try:
+            script = self.on_prompt
+            if script is not None:
+                script(self, session_id, run, text, answerer)
+        finally:
+            with self._lock:
+                self._active_models.pop(session_id, None)
         with self._lock:
             events = list(self._run_events.get(run, []))
         return PromptResult(run_id=run, status="completed", events=events, terminal=None)

@@ -33,6 +33,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { expect, test, type Page } from "@playwright/test";
 import { api, open, route, world } from "./harness/world";
 
+import { proposedModel } from "./helpers/models";
 const PART = "tread";
 
 interface SessionDocument {
@@ -89,7 +90,7 @@ test.describe("§7A.12 case 1 — the blank canvas reaches the workspace", () =>
     const created = await api<SessionDocument>("/sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ profile: "orchestrator" }),
+      body: JSON.stringify({ profile: "orchestrator", model: await proposedModel() }),
     });
     // §7A.2: the blank canvas IS the orchestrator profile with no part.
     // `dispatch.py` exempts an orchestrator principal from object scope, and a
@@ -224,7 +225,7 @@ test.describe("§7A.12 case 2 — the context envelope", () => {
     const created = await api<SessionDocument>("/sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ profile: "orchestrator" }),
+      body: JSON.stringify({ profile: "orchestrator", model: await proposedModel() }),
     });
     await openSession(page, created.session_id);
     const composer = page.locator(`[data-composer][data-session-id="${created.session_id}"]`);
@@ -316,7 +317,7 @@ test.describe("§7A.12 case 2 — the context envelope", () => {
     const created = await api<SessionDocument>("/sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ profile: "orchestrator" }),
+      body: JSON.stringify({ profile: "orchestrator", model: await proposedModel() }),
     });
     await openSession(page, created.session_id);
     const composer = page.locator(`[data-composer][data-session-id="${created.session_id}"]`);
@@ -486,7 +487,7 @@ test.describe("§7A.12 case 7 — POST /sessions validation", () => {
     // §7A.2's TIGHTENING. A bare create would produce that profile's
     // restrictions and NONE of its context — a scope the operator can feel but
     // cannot see — so the refusal names `POST /parts/{part}/quick_edit`.
-    const refused = await refusal("/sessions", { profile: "quick_edit", part: PART });
+    const refused = await refusal("/sessions", { profile: "quick_edit", part: PART, model: await proposedModel() });
     expect(refused.status).toBe(400);
     expect(refused.body.reason).toBe("invalid_params");
     expect(refused.body.message).toContain("quick_edit");
@@ -495,7 +496,7 @@ test.describe("§7A.12 case 7 — POST /sessions validation", () => {
   test("a part session with no part is refused", async () => {
     // Unvalidated, this produced a part-profile session bound to nothing, whose
     // every object-scoped call fails `scope_denied` against a `None` binding.
-    const refused = await refusal("/sessions", { profile: "part" });
+    const refused = await refusal("/sessions", { profile: "part", model: await proposedModel() });
     expect(refused.status).toBe(400);
     expect(refused.body.reason).toBe("invalid_params");
   });

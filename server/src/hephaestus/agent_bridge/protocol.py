@@ -60,6 +60,9 @@ class ErrorCode:
 SIDECAR_REQUEST_METHODS: Final[frozenset[str]] = frozenset(
     {
         "session.create",
+        "session.model.get",
+        "session.model.set",
+        "providers.models",
         "session.prompt",
         "session.cancel",
         "session.compact",

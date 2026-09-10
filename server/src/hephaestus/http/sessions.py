@@ -37,6 +37,12 @@ from typing import Any, Final, Protocol
 
 from hephaestus.agent_bridge.app import PromptResult
 from hephaestus.agent_bridge.events import BUFFERED_EVENTS_MAX, HephaestusEvent, ObserverClient
+from hephaestus.agent_bridge.model_selection import (
+    ModelRef,
+    ModelRevision,
+    ModelsDocument,
+    SessionModelDocument,
+)
 from hephaestus.agent_bridge.session_edges import (
     THREAD_LINKED,
     THREAD_UNLINKED,
@@ -128,7 +134,16 @@ class SessionBackend(Protocol):
         part: str | None = ...,
         session_id: str | None = ...,
         resume: bool = ...,
+        model: ModelRef | None = ...,
     ) -> str: ...
+
+    def provider_models(self) -> ModelsDocument: ...
+
+    def session_model(self, session_id: str) -> SessionModelDocument: ...
+
+    def select_session_model(
+        self, session_id: str, model: ModelRef, expected: ModelRevision
+    ) -> SessionModelDocument: ...
 
     def new_run_id(self) -> str: ...
 
@@ -142,6 +157,7 @@ class SessionBackend(Protocol):
         answerer: Callable[[dict[str, Any]], Any] | None = ...,
         on_event: Callable[[dict[str, Any]], None] | None = ...,
         timeout: float | None = ...,
+        expected_model_revision: ModelRevision | None = ...,
     ) -> PromptResult: ...
 
     def cancel(self, run_id: str) -> None: ...
@@ -634,6 +650,7 @@ class WorkspaceSessions:
         part: str | None = None,
         session_id: str | None = None,
         resume: bool = False,
+        model: ModelRef | None = None,
     ) -> dict[str, Any]:
         """``session.create``, optionally naming or **resuming** a session.
 
@@ -668,9 +685,12 @@ class WorkspaceSessions:
         answer that could disagree with the first.
         """
         opened = self.backend.create_session(
-            profile, part=part, session_id=session_id, resume=resume
+            profile, part=part, session_id=session_id, resume=resume, model=model
         )
+        document = self.backend.session_model(opened)
         return {
+            "model_state": document["model_state"],
+            "execution": document["execution"],
             "status": "ok",
             "session_id": opened,
             "profile": profile,
@@ -733,6 +753,7 @@ class WorkspaceSessions:
         run_id: str | None = None,
         context: str | None = None,
         include_events: bool = True,
+        expected_model_revision: ModelRevision | None = None,
     ) -> dict[str, Any]:
         """One prompt turn, blocking, projected onto the wire.
 
@@ -777,6 +798,7 @@ class WorkspaceSessions:
             run_id=run,
             context=context,
             answerer=self.questions.answerer(session_id),
+            expected_model_revision=expected_model_revision,
         )
         # What the turn EMITTED, not what survived: the backend's own buffer is
         # bounded by the same key (J-http-limits-4's memory half), so
