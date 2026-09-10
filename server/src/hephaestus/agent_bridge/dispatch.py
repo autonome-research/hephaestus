@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import json
 import re
 from collections.abc import Mapping
@@ -1539,7 +1540,28 @@ class ToolDispatcher:
                     error="no delegation runner configured",
                 )
             else:
-                runner.run(service, row)
+                try:
+                    runner.run(service, row)
+                except Exception as exc:
+                    # The coordinator died with the child ADMITTED. The
+                    # acknowledgement lives on the success path below, so
+                    # without this the child holds its admission slot for the
+                    # life of the process — a store that admits sixteen runs
+                    # silently loses one per failed branch (the leak
+                    # `test_workflow_fanout_collapses_to_the_live_admission_
+                    # capacity` catches under load). An exception is not a
+                    # licence to strand a run: finalize by name, release the
+                    # slot, then let the failure through unchanged.
+                    with contextlib.suppress(Exception):
+                        current = service.recover(row.delegation_ref)
+                        if current.phase is not DelegationPhase.TERMINAL:
+                            service.ingest_terminal(
+                                row.delegation_ref,
+                                TerminalState.INTERRUPTED,
+                                error=f"{type(exc).__name__}: {exc}",
+                            )
+                        service.resume_parent(row.delegation_ref)
+                    raise
                 row = service.get(row.delegation_ref)
         if row.phase is DelegationPhase.TERMINAL:
             row = service.resume_parent(row.delegation_ref)

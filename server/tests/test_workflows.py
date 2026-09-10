@@ -548,6 +548,58 @@ def agent_dist() -> Path:
     return built[1]
 
 
+def test_a_branch_slot_orphaned_by_a_dead_process_is_released_at_the_terminal(
+    tmp_path: Path, agent_dist: Path
+) -> None:
+    """A branch its dispatching process never settled must not hold a slot forever.
+
+    `WorkflowBridge._delegate` settles a branch in a ``finally``, in the process
+    that dispatched it. A process that dies mid-branch never reaches that line
+    and the durable admission row outlives it, so the replaying process used to
+    finish the workflow and release only the workflow's own slot — a store that
+    admits sixteen runs losing one per crashed branch, permanently. Observed as
+    ``'…:bracket:0'`` still occupied after a workflow completed.
+
+    The orphan is simulated rather than produced by a real crash because the
+    crash's timing is exactly what makes the leak rare: what has to be true is
+    that the workflow's TERMINAL releases a branch nothing else will.
+    """
+    root = scaffold_workflow_project(tmp_path / "proj")
+    harness = RunnerHarness(root, agent_dist, completing_prompter())
+    harness.wiring.build("bracket", "shelf")
+    try:
+        run = harness.service.launch(
+            request_for(root, parts=[("bracket", "PART: build", "REPAIR")])
+        )
+        assert run.status == "completed", run.summary
+        # The branch a dead process would have left behind, named the way
+        # `_delegate` names one, admitted after the workflow's own terminal.
+        orphan = f"{run.run_id}:ghost:0"
+        harness.wiring.admission.admit_run(orphan)
+        assert orphan in harness.wiring.admission.occupancy()
+
+        harness.service.launch(
+            request_for(root, parts=[("bracket", "PART: build again", "REPAIR")])
+        )
+        # The orphan belongs to the FIRST run, so a second workflow must not
+        # touch it: the sweep is scoped to the terminal's own run id.
+        assert orphan in harness.wiring.admission.occupancy()
+
+        # Finishing the run the orphan belongs to is what releases it. Called
+        # directly because the public path already ran: what is under test is
+        # the sweep the terminal performs, not how the terminal is reached.
+        harness.service._finish(  # pyright: ignore[reportPrivateUsage]
+            run.run_id, TerminalState.COMPLETED, {"status": "completed"}
+        )
+        assert_slots_drain_to(
+            harness.wiring.admission,
+            0,
+            label="a branch orphaned by a dead process must not outlive its workflow",
+        )
+    finally:
+        harness.close()
+
+
 def test_workflow_runs_to_a_durable_terminal_and_replays_after_both_processes_die(
     tmp_path: Path, agent_dist: Path
 ) -> None:

@@ -45,6 +45,23 @@ class CompletingRunner:
         )
 
 
+class RaisingRunner:
+    """A coordinator whose execution fails after the child was admitted.
+
+    The shape that leaks: `runner.run` raising leaves the delegation
+    non-terminal and its child holding an admission slot, because the
+    acknowledgement lives on the success path.
+    """
+
+    def __init__(self) -> None:
+        self.seen: list[str] = []
+
+    def run(self, service: DelegationService, row: DelegationRow) -> None:
+        self.seen.append(row.child_run_id)
+        service.dispatch(row.delegation_ref)
+        raise RuntimeError("coordinator died mid-branch")
+
+
 class RejectGate:
     """A pre-admission gate that always rejects with one fixed reason."""
 
@@ -277,3 +294,46 @@ def test_delegation_stays_orchestrator_only(project: Project, clock: FakeClock) 
         assert ei.value.reason == "scope_denied", tool
     # ...and the orchestrator principal is the one that may use them.
     assert ORCH.is_orchestrator
+
+
+# -- a coordinator that dies must not keep the child's slot --------------------
+
+
+def test_a_failing_runner_releases_the_child_slot_and_leaves_one_terminal(
+    project: Project, clock: FakeClock
+) -> None:
+    """The admission-slot leak this repository has been carrying.
+
+    `tests/stage2/test_workflow_gate.py::test_workflow_fanout_collapses_to_the_live_admission_capacity`
+    fails intermittently under CI load with one `cr-…` run still occupying a
+    slot after its workflow completed (audit ledger, open-after-review
+    register). The acknowledgement lives only on the success path — the
+    dispatcher acks by calling `resume_parent` AFTER `runner.run` returns — so
+    any exception out of the coordinator strands the child's slot for the life
+    of the process, and a store that admits sixteen runs loses one for good.
+
+    Both halves are asserted, because releasing the slot without writing a
+    terminal would trade a leak for a run nothing can account for.
+    """
+    runner = RaisingRunner()
+    _wire(project, clock=clock, runner=runner)
+    # Prompt delivery suspends the parent, so the parent must be a live run.
+    project.store.admission.admit("run-1")
+    before = project.store.admission.active_count()
+
+    with pytest.raises(RuntimeError, match="coordinator died mid-branch"):
+        project.call(
+            "delegate_part_agent",
+            {"part": "widget", "prompt": "widen it", "delivery": "prompt"},
+            entry="boom",
+        )
+
+    assert runner.seen, "the runner never ran; this clause would prove nothing"
+    child = runner.seen[0]
+    occupied = project.store.admission.occupied_run_ids()
+    assert child not in occupied, (
+        f"the failed coordinator kept {child}'s admission slot: {sorted(occupied)}"
+    )
+    assert project.store.admission.active_count() == before
+    terminal = project.store.admission.get_terminal(child)
+    assert terminal is not None, "the child was released with no durable terminal"

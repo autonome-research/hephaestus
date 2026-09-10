@@ -308,7 +308,18 @@ decision.
 liveness helper forking a process per poll) is fixed: it reads
 `/proc/<pid>/stat` with the process listing kept behind an availability check
 as the portable fallback, and a zombie-is-dead test exists for the first time.
-Residual (2) above (`_bounded_floor`) is still open. The audit did not find the
+Residual (2) above (`_bounded_floor`) is still open. Two more closed the same
+day, both surfaced by CI run 34418449613 rather than by the audit: the
+admission-slot leak recorded in this register is fixed — the acknowledgement
+lived only on the dispatcher's success path, so a coordinator that raised left
+its child ADMITTED forever, and the failure path now finalizes the delegation
+`interrupted` and resumes the parent before re-raising — and a class of bare
+SQLite reads on the shared connection is gone. The latter answered `GET
+/parts/{part}/exports` with a 500 (`InterfaceError: bad parameter or other API
+misuse`): `opstore` enforces "no read without `reading()`" for its own package
+only, and fifteen bare statements had accumulated across six consumer modules,
+each one a concurrent write away from the same crash. A structural test now
+extends that guarantee to the consumer packages. The audit did not find the
 defect underneath them: `POST /sessions/{id}/prompt` named no timeout, so a
 whole TURN inherited `SupervisorConfig.default_timeout_s`, which is
 `timeouts.tool_seconds` — a TOOL bound around a turn that runs a model round

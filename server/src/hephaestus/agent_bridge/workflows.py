@@ -44,6 +44,7 @@ The constants below are the Python mirror; changing either side is a wire break.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import socket
 import threading
@@ -811,6 +812,38 @@ class WorkflowService:
             self._admission.acknowledge(run_id, terminal_id)
         except (NotFoundError, ValueError):
             return
+        finally:
+            self._settle_orphan_branches(run_id)
+
+    def _settle_orphan_branches(self, run_id: str) -> None:
+        """Release branch slots this workflow's own terminal has outlived.
+
+        A branch is normally settled by the ``finally`` in
+        :meth:`WorkflowBridge._delegate`, in the process that dispatched it. A
+        process that DIES mid-branch never reaches that line, and the durable
+        admission row survives it: the replaying process then finishes the
+        workflow and releases only the workflow's own slot, so a store that
+        admits sixteen runs loses one per crashed branch, permanently.
+
+        Safe to force here and nowhere earlier: the workflow's terminal means
+        the runner returned, and no branch of it can still be executing on its
+        behalf. Branch ids are ``<run_id>:<part>:<round>`` by construction
+        (``WorkflowBridge._delegate``'s ``parent_run_id``), which is what makes
+        "belongs to this workflow" a fact rather than a guess.
+        """
+        prefix = f"{run_id}:"
+        for branch in sorted(self._admission.occupancy()):
+            if not branch.startswith(prefix):
+                continue
+            with contextlib.suppress(NotFoundError, ValueError):
+                if self._admission.get_terminal(branch) is None:
+                    self._admission.ingest_terminal(
+                        branch,
+                        f"workflow-branch:{branch}",
+                        TerminalState.INTERRUPTED,
+                        {"reason": "branch_outlived_its_workflow"},
+                    )
+                self._admission.acknowledge(branch, f"workflow-branch:{branch}")
 
     def cancel(self, job_id: str, *, reason: str = "cancelled") -> bool:
         """Ask the runner to cancel a job cooperatively (idempotent)."""
