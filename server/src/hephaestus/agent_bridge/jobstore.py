@@ -124,10 +124,11 @@ class JobStore:
 
     def get(self, namespace: str, key: str) -> JSONValue | None:
         """The stored value, or ``None`` if absent."""
-        row = self._db.conn.execute(
-            f"SELECT value FROM {_KV_TABLE} WHERE namespace = ? AND key = ?",
-            (namespace, key),
-        ).fetchone()
+        with self._db.reading() as conn:
+            row = conn.execute(
+                f"SELECT value FROM {_KV_TABLE} WHERE namespace = ? AND key = ?",
+                (namespace, key),
+            ).fetchone()
         return None if row is None else _loads(str(row["value"]))
 
     def list(
@@ -143,7 +144,8 @@ class JobStore:
         if limit is not None:
             sql += " LIMIT ?"
             params.append(int(limit))
-        rows = self._db.conn.execute(sql, tuple(params)).fetchall()
+        with self._db.reading() as conn:
+            rows = conn.execute(sql, tuple(params)).fetchall()
         return [
             KvRecord(
                 namespace=str(r["namespace"]),
@@ -204,10 +206,11 @@ class JobStore:
 
     def get_checkpoint(self, job_id: str, checkpoint_key: str) -> CheckpointRecord | None:
         """The stored checkpoint for ``(job_id, checkpoint_key)``, if any."""
-        row = self._db.conn.execute(
-            f"SELECT * FROM {_CHECKPOINT_TABLE} WHERE job_id = ? AND checkpoint_key = ?",
-            (job_id, checkpoint_key),
-        ).fetchone()
+        with self._db.reading() as conn:
+            row = conn.execute(
+                f"SELECT * FROM {_CHECKPOINT_TABLE} WHERE job_id = ? AND checkpoint_key = ?",
+                (job_id, checkpoint_key),
+            ).fetchone()
         if row is None:
             return None
         return CheckpointRecord(
@@ -222,10 +225,11 @@ class JobStore:
 
     def list_checkpoints(self, job_id: str) -> list[CheckpointRecord]:
         """All checkpoints for a job, ordered by ``checkpoint_key``."""
-        rows = self._db.conn.execute(
-            f"SELECT * FROM {_CHECKPOINT_TABLE} WHERE job_id = ? ORDER BY checkpoint_key",
-            (job_id,),
-        ).fetchall()
+        with self._db.reading() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM {_CHECKPOINT_TABLE} WHERE job_id = ? ORDER BY checkpoint_key",
+                (job_id,),
+            ).fetchall()
         return [
             CheckpointRecord(
                 job_id=str(r["job_id"]),

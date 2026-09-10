@@ -31,6 +31,7 @@ ever been exported" is an answer — the empty history — not an error.
 from __future__ import annotations
 
 import json
+import sqlite3
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -81,10 +82,11 @@ def has_exports_table(store: OpStore) -> bool:
     export-history read take a write on ``state.db`` for a project that has never
     exported.
     """
-    row = store.db.conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-        (EXPORTS_TABLE,),
-    ).fetchone()
+    with store.db.reading() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (EXPORTS_TABLE,),
+        ).fetchone()
     return row is not None
 
 
@@ -178,8 +180,19 @@ def export_records(
     (``architecture.md`` §4.4). Insertion order is the true order of a
     single-writer WAL.
     """
-    if not has_exports_table(store):
-        return ()
+    # ONE ``reading()`` around the existence probe and the SELECT: two would be
+    # two snapshots, and a concurrent writer could create the table between
+    # them. ``reading()`` is re-entrant, so the probe's own guard nests here.
+    with store.db.reading() as conn:
+        if not has_exports_table(store):
+            return ()
+        return _select_records(conn, part=part, state=state)
+
+
+def _select_records(
+    conn: sqlite3.Connection, *, part: str | None, state: str | None
+) -> tuple[ExportRecord, ...]:
+    """The rows themselves, under a read guard the caller already holds."""
     clauses: list[str] = []
     params: list[str] = []
     if part is not None:
@@ -191,7 +204,7 @@ def export_records(
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     rows = cast(
         "Sequence[Mapping[str, Any]]",
-        store.db.conn.execute(
+        conn.execute(
             f"SELECT * FROM {EXPORTS_TABLE}{where} ORDER BY rowid", tuple(params)
         ).fetchall(),
     )

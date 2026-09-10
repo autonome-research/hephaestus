@@ -633,10 +633,11 @@ class CheckSet:
 
     def _recover_check_ops(self) -> None:
         """Resolve every PREPARED check WAL row before exposing generation/files."""
-        rows = self._store.db.conn.execute(
-            "SELECT op_key, target_path FROM operations WHERE state = 'PREPARED' "
-            "ORDER BY created_at, op_key"
-        ).fetchall()
+        with self._store.db.reading() as conn:
+            rows = conn.execute(
+                "SELECT op_key, target_path FROM operations WHERE state = 'PREPARED' "
+                "ORDER BY created_at, op_key"
+            ).fetchall()
         checks_root = str(self.checks_dir.resolve())
         for row in rows:
             target = row["target_path"]

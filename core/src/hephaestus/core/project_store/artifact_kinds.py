@@ -123,13 +123,17 @@ def recorded_kinds(store: OpStore, blob_hash: str) -> frozenset[str]:
     ``OperationalError``, because "no publication has ever recorded a kind" is a
     state this module has an answer for — the empty set — and not an error.
     """
-    exists = store.db.conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-        (ARTIFACT_KINDS_TABLE,),
-    ).fetchone()
-    if exists is None:
-        return frozenset()
-    rows = store.db.conn.execute(
-        f"SELECT kind FROM {ARTIFACT_KINDS_TABLE} WHERE blob_hash = ?", (blob_hash,)
-    ).fetchall()
+    # One guard around both statements: the probe and the SELECT are one
+    # question, and a writer creating the table between them would make the
+    # answer a lie by omission.
+    with store.db.reading() as conn:
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (ARTIFACT_KINDS_TABLE,),
+        ).fetchone()
+        if exists is None:
+            return frozenset()
+        rows = conn.execute(
+            f"SELECT kind FROM {ARTIFACT_KINDS_TABLE} WHERE blob_hash = ?", (blob_hash,)
+        ).fetchall()
     return frozenset(str(row["kind"]) for row in rows)

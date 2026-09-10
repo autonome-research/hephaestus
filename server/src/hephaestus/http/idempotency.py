@@ -420,9 +420,10 @@ class RestLedger:
             self._store.opkeys.begin(_RAW_ID_PREFIX + op_id, digest, ts=_uuid7_timestamp(key))
         except OpStoreError as exc:
             raise RestKeyError(exc.code, exc.message, key=key) from exc
-        row = self._store.db.conn.execute(
-            f"SELECT response FROM {_TABLE} WHERE op_id = ?", (op_id,)
-        ).fetchone()
+        with self._store.db.reading() as conn:
+            row = conn.execute(
+                f"SELECT response FROM {_TABLE} WHERE op_id = ?", (op_id,)
+            ).fetchone()
         if row is None:
             return None
         return Replayed(op_id=op_id, response=json.loads(str(row["response"])))

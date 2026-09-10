@@ -1152,9 +1152,10 @@ class ExportOps(FrozenMetadataOps):
             raise CadOpError(exc.reason, exc.message, data=exc.data) from exc
 
     def _export_row(self, op_id: str) -> Mapping[str, Any] | None:
-        raw = self._store.db.conn.execute(
-            f"SELECT * FROM {_EXPORTS_TABLE} WHERE op_id = ?", (op_id,)
-        ).fetchone()
+        with self._store.db.reading() as conn:
+            raw = conn.execute(
+                f"SELECT * FROM {_EXPORTS_TABLE} WHERE op_id = ?", (op_id,)
+            ).fetchone()
         return None if raw is None else cast("Mapping[str, Any]", raw)
 
     def _replay_export(self, row: Mapping[str, Any]) -> dict[str, Any]:

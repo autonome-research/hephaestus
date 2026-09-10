@@ -177,18 +177,20 @@ class SessionEdgeStore:
 
     def get(self, child_session_id: str) -> SessionEdge | None:
         """The edge naming ``child_session_id``'s parent, if one was recorded."""
-        row = self._db.conn.execute(
-            f"SELECT * FROM {_TABLE} WHERE child_session_id = ?", (child_session_id,)
-        ).fetchone()
+        with self._db.reading() as conn:
+            row = conn.execute(
+                f"SELECT * FROM {_TABLE} WHERE child_session_id = ?", (child_session_id,)
+            ).fetchone()
         return None if row is None else _edge(row)
 
     def children(self, parent_session_id: str) -> list[SessionEdge]:
         """Direct children of ``parent_session_id``, oldest first."""
-        rows = self._db.conn.execute(
-            f"SELECT * FROM {_TABLE} WHERE parent_session_id = ? "
-            "ORDER BY created_at, child_session_id",
-            (parent_session_id,),
-        ).fetchall()
+        with self._db.reading() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM {_TABLE} WHERE parent_session_id = ? "
+                "ORDER BY created_at, child_session_id",
+                (parent_session_id,),
+            ).fetchall()
         return [_edge(row) for row in rows]
 
     def thread(self, session_id: str) -> list[ThreadNode]:
@@ -242,7 +244,8 @@ class SessionEdgeStore:
         return nodes
 
     def __iter__(self) -> Iterator[SessionEdge]:
-        rows = self._db.conn.execute(f"SELECT * FROM {_TABLE} ORDER BY created_at").fetchall()
+        with self._db.reading() as conn:
+            rows = conn.execute(f"SELECT * FROM {_TABLE} ORDER BY created_at").fetchall()
         return iter([_edge(row) for row in rows])
 
 

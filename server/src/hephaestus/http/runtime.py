@@ -547,9 +547,10 @@ class WorkspaceRuntime:
             )
 
     def last_dfm(self, part: str) -> dict[str, Any] | None:
-        row = self.store.db.conn.execute(
-            f"SELECT payload FROM {_DFM_TABLE} WHERE part = ?", (part,)
-        ).fetchone()
+        with self.store.db.reading() as conn:
+            row = conn.execute(
+                f"SELECT payload FROM {_DFM_TABLE} WHERE part = ?", (part,)
+            ).fetchone()
         if row is None:
             return None
         loaded: Any = json.loads(str(row["payload"]))
