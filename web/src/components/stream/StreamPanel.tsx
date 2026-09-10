@@ -361,7 +361,11 @@ export function StreamPanel(): React.JSX.Element {
         <p className={styles["note"]} role="status" aria-live="polite" data-current-turn={stream.currentTurn.status}>
           <strong>{stream.currentTurn.status}</strong>
           {stream.currentTurn.reason === null ? null : ` — ${stream.currentTurn.reason}`}
-          {stream.currentTurn.stopRequested ? ` — ${copy.composer.stopRequested}` : null}
+          {stream.currentTurn.questionId ? <Button variant="quiet" onClick={() => {
+            const question = scrollRef.current?.querySelector<HTMLElement>(`[data-question-id="${CSS.escape(stream.currentTurn.questionId!)}"]`);
+            question?.scrollIntoView({ block: "nearest" });
+            question?.focus();
+          }}>{copy.stream.ask.goToQuestion}</Button> : null}
         </p>
       )}
       {selected === null ? null : (

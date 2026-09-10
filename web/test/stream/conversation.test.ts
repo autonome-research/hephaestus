@@ -18,6 +18,57 @@ function ended(run = "run-a", state = "completed", version = 3): ExecutionSnapsh
     terminal: { run_id: run, terminal_id: `terminal:${run}`, state, payload: { reason: "process lost" } } };
 }
 describe("project conversation evidence", () => {
+  it("owns context preferences per session including the no-session draft, without changing admission or attempts", () => {
+    const store = createConversationStore();
+    store.snapshot("a", idle, store.ticket());
+    store.draft("a", "reviewed draft");
+    const before = store.get("a");
+    store.toggleContext("a", "view");
+    store.toggleContext("a", "selection");
+    expect(store.get("a").contextDropped).toEqual(new Set(["view", "selection"]));
+    expect(before.contextDropped).toEqual(new Set()); // immutable snapshot
+    expect(currentTurn(store.get("a"))).toEqual(currentTurn(before));
+    expect(store.get("a").draft).toBe(before.draft);
+    expect(store.get("a").attempt).toBeNull();
+    for (const sid of ["b", null]) expect(store.get(sid).contextDropped.size).toBe(0);
+    store.toggleContext("b", "part");
+    store.toggleContext(null, "stage_tab");
+    store.addCurrentView("a", false);
+    expect(store.get("a").contextDropped).toEqual(new Set(["selection"]));
+    expect(store.get("a").contextAdded).toEqual(new Set(["view"]));
+    store.addCurrentView("a", true);
+    expect(store.get("a").contextDropped.size).toBe(0);
+    expect(store.get("a").contextAdded).toEqual(new Set(["view", "selection"]));
+    expect(store.get("b").contextDropped).toEqual(new Set(["part"]));
+    expect(store.get(null).contextDropped).toEqual(new Set(["stage_tab"]));
+    expect(store.get("b").contextAdded.size).toBe(0);
+    store.toggleContext("a", "view");
+    store.toggleContext("a", "view");
+    expect(store.get("a").contextDropped.size).toBe(0);
+    store.reset();
+    for (const sid of ["a", "b", null]) {
+      expect(store.get(sid).contextDropped.size).toBe(0);
+      expect(store.get(sid).contextAdded.size).toBe(0);
+    }
+  });
+  it("keeps submitted context immutable while next-message preferences change and reads settle", () => {
+    const store = createConversationStore();
+    store.snapshot("a", idle, store.ticket());
+    store.draft("a", "submitted");
+    store.toggleContext("a", "view");
+    const envelope = { part: "tread", stage_tab: "viewport" } as const;
+    const attempt = store.begin("a", envelope)!;
+    store.addCurrentView("a", true);
+    store.toggleContext("a", "part");
+    store.draft("a", "newer draft");
+    store.modelSnapshot("a", modelState, ended(), store.ticket());
+    store.finish("a", attempt.id, "settled");
+    expect(store.get("a").attempt?.context).toEqual(envelope);
+    expect(attempt.context).toEqual(envelope);
+    expect(store.get("a").contextDropped).toEqual(new Set(["part"]));
+    expect(store.get("a").contextAdded).toEqual(new Set(["view", "selection"]));
+    expect(store.get("a").draft.text).toBe("newer draft");
+  });
   it("attaches before any frame; stale interrupted history is not current execution", () => {
     const store = createConversationStore();
     expect(currentTurn(store.get("a")).status).toBe("Checking");
@@ -48,15 +99,15 @@ describe("project conversation evidence", () => {
     store.snapshot("a", ended(), store.ticket());
     expect(currentTurn(store.get("a")).canSend).toBe(false); // reconnect also needs model evidence
     store.modelSnapshot("a", modelState, ended(), store.ticket());
-    expect(currentTurn(store.get("a"))).toMatchObject({ status: "Finished", runId: null, canSend: true });
+    expect(currentTurn(store.get("a"))).toMatchObject({ status: "Completed", runId: null, canSend: true });
   });
   it.each(["cancelled", "failed", "interrupted"])("requires real %s terminal evidence", state => {
     const store = createConversationStore();
     store.snapshot("a", active(), store.ticket());
     store.stop("a", "run-a");
-    expect(currentTurn(store.get("a"))).toMatchObject({ status: "Working", stopRequested: true });
+    expect(currentTurn(store.get("a"))).toMatchObject({ status: "Stop requested", stopRequested: true });
     store.snapshot("a", ended("run-a", state), store.ticket());
-    expect(currentTurn(store.get("a"))).toMatchObject({ status: "Stopped", reason: "process lost", runId: null });
+    expect(currentTurn(store.get("a"))).toMatchObject({ status: ({ cancelled: "Cancelled", failed: "Request failed", interrupted: "Interrupted" })[state as "cancelled" | "failed" | "interrupted"], reason: "process lost", runId: null });
   });
   it("late terminal/POST for A and out-of-order reads cannot terminate B", () => {
     const store = createConversationStore();
@@ -72,8 +123,10 @@ describe("project conversation evidence", () => {
     store.snapshot("a", ended(), store.ticket());
     store.draft("a", "next turn");
     store.begin("a");
+    expect(currentTurn(store.get("a"))).toMatchObject({ status: "Sending request", canSend: false });
     store.snapshot("a", ended(), store.ticket()); // admission read wins the race to POST
     expect(currentTurn(store.get("a"))).toMatchObject({ status: "Checking", canSend: false });
+    expect(currentTurn(store.get("a")).reason).toContain("whether the request started");
     store.snapshot("a", active("run-b", 4), store.ticket());
     expect(currentTurn(store.get("a"))).toMatchObject({ status: "Working", runId: "run-b" });
   });
@@ -81,7 +134,7 @@ describe("project conversation evidence", () => {
     const store = createConversationStore();
     store.snapshot("a", ended("run-a", "interrupted"), store.ticket());
     store.response("a", { run_id: "run-a", run_status: "completed", terminal: null } as PromptDocument);
-    expect(currentTurn(store.get("a"))).toMatchObject({ status: "Stopped", reason: "process lost" });
+    expect(currentTurn(store.get("a"))).toMatchObject({ status: "Interrupted", reason: "process lost" });
   });
   it("failed/missing session reconciliation blocks stale admission without inventing a terminal", () => {
     const store = createConversationStore();

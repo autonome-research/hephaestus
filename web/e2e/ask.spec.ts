@@ -8,7 +8,7 @@
 // acceptance evidence the plan names for that item:
 //
 //   * `data-answered-by="self"` on the widget that answered;
-//   * `data-answered-by="other"` on a second attached client;
+//   * neutral recorded answer on a second attached client without a POST receipt;
 //   * a question that is no longer open renders `data-ask-state="abandoned"`
 //     **in place** — from its run's durable terminal, without an answer attempt.
 //
@@ -144,11 +144,11 @@ test("a browser answers a suspended ask_user; a second client sees who won (§7A
       timeout: 60_000,
     });
     await expect(widget(answering)).toHaveAttribute("data-ask-state", "answered");
-    // The second client learns it from the run's `answer` event, and reports the
-    // only thing it can honestly report about who acted.
-    await expect(widget(observing)).toHaveAttribute("data-answered-by", "other", {
+    // The answer event carries the selection, not the actor's identity.
+    await expect(widget(observing)).toHaveAttribute("data-ask-state", "answered", {
       timeout: 60_000,
     });
+    await expect(widget(observing)).not.toHaveAttribute("data-answered-by", /self|other/);
 
     // Both render the SAME recorded selection, and it is the option's `label` —
     // not a rendered string, not a serialized option object.
@@ -228,7 +228,7 @@ test("a question whose run was cancelled renders as abandoned, in place (§7A.7)
     // durable terminal; that stronger evidence settles the still-rendered
     // question in place even if this observer sampled before the final socket
     // frames. No click — and therefore no answer POST — is needed.
-    await expect(page.locator('[data-current-turn="Stopped"]')).toBeVisible({
+    await expect(page.locator('[data-current-turn="Cancelled"]')).toBeVisible({
       timeout: 60_000,
     });
     await expect(ask).toHaveAttribute("data-ask-state", "abandoned", { timeout: 60_000 });

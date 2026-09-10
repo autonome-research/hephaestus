@@ -4,6 +4,7 @@
 import { DisclosureOwner, PersistentDetails, useDisclosure } from "../../stream/disclosure";
 
 import { readAudit, readTerminal } from "../../api/events";
+import { readableReason, sanitizeDiagnostic, outcomeLabel } from "../../stream/outcome";
 import { copy } from "../../copy";
 import { Markdown } from "../../stream/markdown";
 import type { CurrentTurn } from "../../stream/conversation";
@@ -82,6 +83,7 @@ function Row({ row, runtimeFault, terminals, currentTurn }: {
       return (
         <AskUserWidget
           row={row}
+          taskStatus={currentTurn?.status === "Checking" ? copy.composer.checking : currentTurn?.status ?? null}
           executionAllowed={currentTurn === undefined || (currentTurn.canAnswer && currentTurn.runId === runId)}
           death={{
             fault: runtimeFault,
@@ -169,15 +171,20 @@ function Row({ row, runtimeFault, terminals, currentTurn }: {
       );
     case "turn-outcome": {
       const content = <>
-        <span>{copy.stream.turnOutcome[row.outcome.state]}</span>
-        {row.outcome.message ? <span className={styles["turnOutcomeMessage"]}>{row.outcome.message}</span> : null}
+        <span>{outcomeLabel(row.outcome.state)}</span>
+        {row.outcome.message ? <span className={styles["turnOutcomeMessage"]}>{readableReason(row.outcome.message)}</span> : null}
       </>;
       return row.outcome.state === "completed" ? (
-        <details className={styles["provenance"]}>
+        <PersistentDetails className={styles["provenance"]}>
           <summary>{copy.stream.turnDetails}</summary>
           <p className={styles["note"]}>{content}</p>
-        </details>
-      ) : <p className={styles["turnOutcome"]}>{content}</p>;
+        </PersistentDetails>
+      ) : <div className={styles["turnOutcome"]}>{content}
+        {row.outcome.state === "error" || row.outcome.state === "interrupted" ? <p>{copy.composer.recoveryNext}</p> : null}
+        <PersistentDetails className={styles["provenance"]}><summary>{copy.stream.ask.details}</summary>
+          <pre className={styles["raw"]}>{sanitizeDiagnostic(row.outcome)}</pre>
+        </PersistentDetails>
+      </div>;
     }
     case "run-start":
       return (
@@ -222,9 +229,7 @@ function TerminalBand({ item, currentTurn }: {
 }): React.JSX.Element {
   const payload = readTerminal(item.payload);
   const state = payload?.state ?? null;
-  const known = state !== null && Object.hasOwn(copy.stream.terminal.outcomes, state)
-    ? copy.stream.terminal.outcomes[state as keyof typeof copy.stream.terminal.outcomes]
-    : copy.stream.terminal.unknown;
+  const known = state === null ? copy.stream.terminal.unknown : outcomeLabel(state);
   return (
     <div className={styles["terminal"]} data-event-id={item.eventId} data-surface={item.surface}
       data-terminal-state={state ?? "unknown"}
@@ -234,11 +239,14 @@ function TerminalBand({ item, currentTurn }: {
       title={payload?.terminalId == null ? copy.stream.terminal.title
         : `${copy.stream.terminal.title}. ${copy.stream.terminal.identity}: ${payload.terminalId}`}>
       <span>{known}</span>
+      {state === "failed" || state === "interrupted" ? <>
+        <p>{readableReason(item.payload)}</p><p>{copy.composer.recoveryNext}</p>
+      </> : null}
       {payload?.backpressure === true ? <span className={styles["note"]}>{copy.stream.terminal.backpressure}</span> : null}
-      <details className={styles["provenance"]}>
-        <summary>{copy.stream.turnDetails}</summary>
-        <pre className={styles["raw"]}>{JSON.stringify(item.payload, null, 2)}</pre>
-      </details>
+      <PersistentDetails className={styles["provenance"]}>
+        <summary>{copy.stream.ask.details}</summary>
+        <pre className={styles["raw"]}>{sanitizeDiagnostic(item.payload)}</pre>
+      </PersistentDetails>
     </div>
   );
 }

@@ -118,6 +118,20 @@ describe("model wire and shared state", () => {
     const host = mount(); expect(host.textContent).toContain("Saved selection (not active): local/fake/spark");
     expect(host.textContent).toContain("Capability unknown"); expect(host.textContent).toContain("model_unknown");
   });
+  it("does not confuse unavailable-model repair with unresolved execution ownership", () => {
+    const unavailable = { ...modelState, current: null, state: "unavailable" as const, reason: "model_unknown" };
+    const store = createConversationStore();
+    const execution = { ...idleExecution, run_id: "unresolved", admission_available: false };
+    store.modelSnapshot("a", unavailable, execution, store.ticket());
+    expect(canSelectModel(store.get("a"))).toBe(false);
+    store.modelSnapshot("a", unavailable, { ...execution, version: 2,
+      terminal: { run_id: "other", terminal_id: "t", state: "completed", payload: {} } }, store.ticket());
+    expect(canSelectModel(store.get("a"))).toBe(false);
+    store.modelSnapshot("a", unavailable, { ...execution, version: 3,
+      terminal: { run_id: "unresolved", terminal_id: "t2", state: "completed", payload: {} } }, store.ticket());
+    expect(canSelectModel(store.get("a"))).toBe(true);
+    expect(currentTurn(store.get("a")).canSend).toBe(false);
+  });
   it("reads after lost mutation once, keeps changing/uncertain blocked, never retries the write", async () => {
     ready(); conversationStore.draft("a", "still here");
     vi.mocked(selectSessionModel).mockRejectedValue(new Error("lost response"));

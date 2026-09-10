@@ -23,10 +23,10 @@ test("zero-frame ownership guards every send path, drafts survive switch/collaps
   await expect(input(page)).toHaveValue("Editable next draft");
   await stop(page).click();
   await expect(status(page)).toContainText("Stop requested");
-  await expect(status(page)).toHaveAttribute("data-current-turn", "Working");
+  await expect(status(page)).toHaveAttribute("data-current-turn", "Stop requested");
   expect(c.mutations.map(x => x.path)).toEqual([`/runs/${RUN}/cancel`]);
   c.execution = execution(RUN, "cancelled");
-  await expect(status(page)).toHaveAttribute("data-current-turn", "Stopped");
+  await expect(status(page)).toHaveAttribute("data-current-turn", "Cancelled");
   await expect(stop(page)).toHaveCount(0);
   await expect(send(page)).toBeEnabled();
   await page.screenshot({ path: info.outputPath("terminal-confirmed-stop.png") });
@@ -35,10 +35,10 @@ test("zero-frame ownership guards every send path, drafts survive switch/collaps
 
 test("pending POST keeps revisions editable and late responses cannot replace the durable terminal", async ({ page }) => {
   const c = await setup(page, execution(OLD, "completed"));
-  await expect(status(page)).toHaveAttribute("data-current-turn", "Finished");
+  await expect(status(page)).toHaveAttribute("data-current-turn", "Completed");
   await input(page).fill("Synthetic sent request");
   await send(page).click();
-  await expect(status(page)).not.toHaveAttribute("data-current-turn", "Finished");
+  await expect(status(page)).not.toHaveAttribute("data-current-turn", "Completed");
   await input(page).fill("Newer revision while POST waits");
   await input(page).press("Enter");
   await expect(send(page)).toBeDisabled();
@@ -48,7 +48,7 @@ test("pending POST keeps revisions editable and late responses cannot replace th
   await c.frame("terminal", { state: "cancelled", terminal_id: `terminal-${RUN}`, payload: { reason: "fixture outcome" } }, 0);
   await expect.poll(() => c.tailReads).toBeGreaterThan(0);
   await c.release(); // deliberately conflicting completed POST
-  await expect(status(page)).toHaveAttribute("data-current-turn", "Stopped");
+  await expect(status(page)).toHaveAttribute("data-current-turn", "Cancelled");
   await expect(input(page)).toHaveValue("Newer revision while POST waits");
   expect(c.mutations.filter(x => x.path.endsWith("/prompt"))).toHaveLength(1);
   expect(c.mutations.some(x => x.path.endsWith("/cancel"))).toBe(false);
@@ -89,7 +89,7 @@ test("reconnect and missed terminal refresh zero-event outcomes without trusting
   c.execution = execution(RUN, "cancelled");
   c.prompts = [{ turn: 0, seq: 0, run_id: RUN, text: "Recorded fixture request", outcome: { state: "cancelled" } }];
   c.sessionsFail = false;
-  await expect(status(page)).toHaveAttribute("data-current-turn", "Stopped");
+  await expect(status(page)).toHaveAttribute("data-current-turn", "Cancelled");
   await expect(page.locator('[data-outcome-state="cancelled"]')).toHaveCount(1);
   expect(c.tailReads).toBeGreaterThan(0);
   await expect(stop(page)).toHaveCount(0);
@@ -116,6 +116,10 @@ test("lost POST is not resent, queued or cancelled after terminal reconciliation
   await expect(status(page)).toHaveAttribute("data-current-turn", "Checking");
   await input(page).press("Enter");
   await expect(send(page)).toBeDisabled();
+  await expect(input(page)).toHaveValue("");
+  await page.locator('[data-submitted-attempt] summary').click();
+  await expect(page.locator('[data-submitted-attempt]')).toContainText("Unknown delivery synthetic draft");
+  await page.getByRole("button", { name: "Keep draft for a new send" }).click();
   await expect(input(page)).toHaveValue("Unknown delivery synthetic draft");
   expect(c.mutations).toHaveLength(1);
   expect(c.faults).toEqual([]);

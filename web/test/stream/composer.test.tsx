@@ -485,12 +485,15 @@ describe("the DOM contract", () => {
     const host = document.createElement("div");
     host.innerHTML = html;
     const form = host.querySelector("[data-composer]");
-    expect([...(form?.children ?? [])].length).toBe(2);
+    expect([...(form?.children ?? [])].length).toBe(4);
     const cancel = form?.querySelector("[data-composer-cancel]");
     expect(cancel).not.toBeNull();
-    expect(host.querySelector("[data-composer-input-row]")?.contains(cancel ?? null)).toBe(true);
+    expect(host.querySelector("[data-task-action]")?.contains(cancel ?? null)).toBe(true);
+    expect(host.querySelector("[data-task-action]")?.textContent).toContain("Working");
+    expect(host.querySelector("[data-next-draft]")?.textContent).toContain("Not sent or queued");
     const row = host.querySelector("[data-composer-input-row]");
-    expect(row?.querySelectorAll("button, [role='button']").length).toBe(2);
+    expect(row?.contains(cancel ?? null)).toBe(false);
+    expect(row?.querySelectorAll("button, [role='button']").length).toBe(1);
   });
 
   it("puts no data-source on any context chip", () => {
@@ -1166,7 +1169,7 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     await act(async () => settle({ status: "ok", session_id: "sess-1", run_id: "run-1",
       run_status: "completed", terminal: null, events: [], context: null }));
     expect(input(root).value).toBe("new draft");
-    expect(currentTurn(conversationStore.get("sess-1")).status).toBe("Finished");
+    expect(currentTurn(conversationStore.get("sess-1")).status).toBe("Completed");
   });
 
   it("retains pending sends and per-session drafts through collapse and session switches", async () => {
@@ -1187,7 +1190,7 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     root.remove();
     root = mount();
     expect(input(root).value).toBe("draft for first session");
-    expect(currentTurn(conversationStore.get("sess-1")).status).toBe("Finished");
+    expect(currentTurn(conversationStore.get("sess-1")).status).toBe("Completed");
     expect(sendPrompt).toHaveBeenCalledTimes(1);
     expect(cancelRun).not.toHaveBeenCalled();
   });
@@ -1204,7 +1207,9 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     expect(sendPrompt).toHaveBeenCalledTimes(1);
     expect(sendPrompt).toHaveBeenCalledWith("sess-new", "first submission", null, modelState.revision);
     expect(conversationStore.get("sess-new").draft.text).toBe("edited while creating");
-    expect(conversationStore.get("sess-new").attempt?.submitted.text).toBe("first submission");
+    expect(conversationStore.get("sess-new").attempt).toMatchObject({
+      submitted: { text: "first submission" }, sessionId: "sess-new", modelRevision: createdModelState.revision,
+    });
   });
 
   it("a named race rejection leaves no normal transcript entry", async () => {
@@ -1332,7 +1337,9 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
 
     expect(report).toHaveBeenCalledWith("process_down");
     expect(composer(root).getAttribute("data-send-state")).toBe("unknown");
-    expect(input(root).value).toBe("Bump the kerf to 0.25 mm.");
+    expect(input(root).value).toBe("");
+    expect(root.querySelector("[data-submitted-attempt]")?.textContent).toContain("Bump the kerf to 0.25 mm.");
+    expect(conversationStore.get("sess-1").attempt?.submitted.text).toBe("Bump the kerf to 0.25 mm.");
     expect(root.querySelector("[data-composer-refused]")).toBeNull();
     expect(root.textContent ?? "").not.toContain("sidecar restarted");
   });
@@ -1722,7 +1729,7 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     expect(cancelRun).toHaveBeenCalledTimes(1);
     act(() => conversationStore.snapshot("sess-1", { ...IDLE_EXECUTION, version: 3, run_id: "run-live",
       terminal: { run_id: "run-live", terminal_id: "terminal-live", state: "cancelled" } }, conversationStore.ticket()));
-    expect(currentTurn(conversationStore.get("sess-1")).status).toBe("Stopped");
+    expect(currentTurn(conversationStore.get("sess-1")).status).toBe("Cancelled");
     expect(root.querySelector("[data-composer-cancel]")).toBeNull();
     expect(sendPrompt).not.toHaveBeenCalled();
   });

@@ -703,6 +703,8 @@ details[open] > .rawSummary::before {
 }
 
 .askAnswer {
+  composes: body from "../../system/type.module.css";
+  overflow-wrap: anywhere;
   margin-top: var(--space-2);
   display: flex;
   flex-direction: column;
@@ -948,10 +950,9 @@ details[open] > .envelopeSummary::before {
   color: var(--ink-muted);
 }
 
-/* The record's own wording, VERBATIM and BESIDE the house sentence — never in
-   place of it, because the recorded message may be empty or unhelpful. */
+/* Readable cause first; the full recorded envelope remains in Details. */
 .turnOutcomeMessage {
-  composes: code from "../../system/type.module.css";
+  composes: body from "../../system/type.module.css";
   min-width: 0;
   color: var(--ink-base);
   overflow-wrap: anywhere;

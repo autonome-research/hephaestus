@@ -317,7 +317,10 @@ export function Composer(props: ComposerProps): React.JSX.Element {
 
   const conversation = useConversation(sessionId);
   const turn = props.currentTurn ?? currentTurn(conversation, sessionId !== null);
-  const text = conversation.draft.text;
+  // Keep the immutable submitted revision recoverable, but never present it as
+  // an editable/queued next message while the blocking POST is unresolved.
+  const text = (conversation.attempt?.phase === "sending" || conversation.attempt?.phase === "unknown")
+    && conversation.draft.revision === conversation.attempt.submitted.revision ? "" : conversation.draft.text;
   const setText = (value: string) => conversationStore.draft(sessionId, value);
   const attempt = conversation.attempt;
   const post: Post = attempt?.phase === "sending" ? { phase: "sending" }
@@ -515,7 +518,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     const revision = conversation.model?.revision;
     const choice = conversationStore.get(null).proposal;
     if (sessionId !== null ? revision === undefined : choice?.available !== true) return;
-    const submitted = conversationStore.begin(sessionId);
+    const submitted = conversationStore.begin(sessionId, envelope ?? undefined, revision);
     if (submitted === null) return;
     let attemptSid = sessionId;
     const setPost = (next: Post) => {
@@ -589,8 +592,13 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     void createSession(profile, state.part, choice)
       .then((created) => {
         attemptSid = created.session_id;
-        conversationStore.update(created.session_id, c => ({ ...c, attempt: submitted,
-          draft: conversationStore.get(null).draft, checking: true, barrier: conversationStore.ticket() }));
+        conversationStore.update(created.session_id, c => ({ ...c,
+          attempt: { ...submitted, sessionId: created.session_id, modelRevision: created.model_state.revision,
+            baselineRunId: created.execution?.run_id ?? null },
+          draft: conversationStore.get(null).draft,
+          contextDropped: conversationStore.get(null).contextDropped,
+          contextAdded: conversationStore.get(null).contextAdded,
+          checking: true, barrier: conversationStore.ticket() }));
         conversationStore.finish(null, submitted.id, "settled");
         if (workspaceStore.getSnapshot().session === sessionId) {
           workspaceStore.update({ session: created.session_id });
@@ -624,7 +632,10 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     // An acknowledgement only records Stop requested for this same active run.
     // It is never terminal evidence, and cannot mark a successor run stopped.
     const target = turn.runId;
-    if (target === null) return;
+    if (target === null || sessionId === null) return;
+    const latest = currentTurn(conversationStore.get(sessionId));
+    if (latest.runId !== target || latest.stopRequested) return;
+    conversationStore.stop(sessionId, target);
     void cancelRun(target)
       .then((document) => {
         if (sessionId === null || document.run_id !== target) return;
@@ -664,7 +675,10 @@ export function Composer(props: ComposerProps): React.JSX.Element {
 
   const sendDisabled = !sendAllowed;
   const sendReason =
-    disabledReason !== null
+    turn.status !== null && !turn.canSend && !agentUnavailable
+      && (turn.runId !== null || sending || post.phase === "unknown")
+      ? `${turn.status}. ${copy.composer.nextDraftHint}`
+    : disabledReason !== null
       ? copy.composer.disabled[disabledReason]
       : conversation.modelPending || conversation.model?.state === "changing"
         ? copy.models.changing
@@ -811,6 +825,19 @@ export function Composer(props: ComposerProps): React.JSX.Element {
           affordance, so the chip form and the composed preview open together.
           C22 mounts the Add-current-view control here exactly while the gap
           it closes is visible. Issue 120 integrates the model control here. */}
+      {turn.runId !== null ? <div className={styles["note"]} data-task-action="">
+        <span>{turn.status}</span>{" "}
+        {cancellable ? (
+          <Button variant="secondary" onClick={cancelTurn} data-composer-cancel=""
+            {...(turn.stopRequested ? { disabled: true as const, reason: copy.composer.stopRequested } : {})}>
+            {copy.composer.cancel}
+          </Button>
+        ) : null}
+      </div> : null}
+      {(attempt?.phase === "sending" || attempt?.phase === "unknown") && turn.runId === null ?
+        <details data-submitted-attempt=""><summary>{copy.composer.submittedAttempt}</summary>
+          <p>{attempt.submitted.text}</p>
+        </details> : null}
       <div className={styles["contextRow"]}>
       <ModelPicker key={sessionId ?? "new"} sessionId={sessionId} />
       <ContextSummaryLine
@@ -849,9 +876,12 @@ export function Composer(props: ComposerProps): React.JSX.Element {
           this row holds exactly one element with a button role, and it is the
           Send button below. The keyboard hint lives on Send's `title` — the
           meta line that used to carry it no longer mounts. */}
+      {!turn.canSend && !agentUnavailable ? <p className={styles["note"]} data-next-draft="">
+        {copy.composer.nextDraft} · {copy.composer.nextDraftHint}
+      </p> : null}
       <div className={styles["inputRow"]} data-composer-input-row="">
         <TextInput
-          label={copy.composer.label}
+          label={turn.canSend ? copy.composer.label : copy.composer.nextDraft}
           hideLabel
           multiline
           rows={promptRows}
@@ -871,12 +901,6 @@ export function Composer(props: ComposerProps): React.JSX.Element {
             state in which Sign-in (§23.8, C9) takes `primary` instead. Every
             other disabled reason keeps Send primary: a disabled-with-reason
             primary is the operator's target for "why can't I send?". */}
-        {cancellable ? (
-          <Button variant="secondary" onClick={cancelTurn} data-composer-cancel=""
-            {...(turn.stopRequested ? { disabled: true as const, reason: copy.composer.stopRequested } : {})}>
-            {copy.composer.cancel}
-          </Button>
-        ) : null}
         <Button
           variant={signInPrimary(disabledReason) ? "secondary" : "primary"}
           type="button"
@@ -891,7 +915,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
               }
             : {})}
         >
-          {post.phase === "sending" ? copy.composer.sending : copy.composer.send}
+          {copy.composer.send}
         </Button>
       </div>
 
@@ -906,7 +930,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
           generator with a spinner on it. */}
       {post.phase === "unknown" && post.runtimeFault !== true ? (
         <p className={styles["note"]} data-send-unknown="" role="status">
-          {copy.composer.deliveryUncertain}
+          {turn.runId !== null || turn.terminalRunId !== null ? copy.composer.receiptUncertain : copy.composer.deliveryUncertain}
           {!conversation.checking && conversation.execution?.admission_available === true ? (
             <Button variant="quiet" onClick={() => {
               conversationStore.update(sessionId, c => ({ ...c, attempt: null }));

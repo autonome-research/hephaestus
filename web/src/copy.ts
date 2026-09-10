@@ -1412,10 +1412,11 @@ export const copy = {
       options: "Options",
       noOptions: "This question recorded no options.",
       consequenceMissing: "No consequence was recorded for this option.",
-      answeredSelf: "Answered from this page.",
-      answeredOther: "Answered from another client first.",
-      answer: "Answer",
-      pending: "Waiting for an answer.",
+      answer: "Answer recorded:",
+      answerInDetails: "See the recorded selection in Details.",
+      details: "Details",
+      goToQuestion: "Go to question",
+      pending: "Waiting for your answer",
       /** §7.3: a reopened widget is rebuilt from the call and result, not the events. */
       fromToolResult:
         "Rebuilt from the recorded ask_user call and its result. The live question and answer events are not part of a reopened transcript.",
@@ -1425,7 +1426,8 @@ export const copy = {
       freeTextPlaceholder: "Your answer",
       submit: "Send answer",
       submitMulti: "Send selected answers",
-      sending: "Sending your answer…",
+      sending: "Recording answer",
+      checking: "Checking whether the answer was recorded. Nothing will be sent again.",
       multiHint: "Choose every option that applies, then send.",
       /**
        * §4.7's disabled-reason rule, for the three states that turn a control
@@ -1441,7 +1443,7 @@ export const copy = {
        * fact the server did not give us.
        */
       abandoned:
-        "This question is no longer open. It was answered elsewhere, abandoned with its run, or never reached this server.",
+        "This question is no longer open. No answer is available in the held evidence.",
       /**
        * `data-runtime-fault` is set and this run never produced a `terminal`.
        * Same `abandoned` state — no sixth §7.4 / §7A.7 value — said in words
@@ -1464,7 +1466,7 @@ export const copy = {
        */
       unavailable: {
         reopened:
-          "This is a reopened transcript. The run that asked has ended, so there is no question left to answer.",
+          "The recorded call has no live question address. An answer cannot be submitted from this record; this does not establish that the run ended.",
         no_question_id:
           "This question carries no question id, so no client can address an answer to it. It was raised by a sidecar older than the id.",
         no_session:
@@ -1496,7 +1498,12 @@ export const copy = {
     label: "Message the agent",
     placeholder: "Ask the agent about this, or tell it what to change.",
     send: "Send",
-    sending: "Sending…",
+    sending: "Sending request",
+    submittedAttempt: "Submitted attempt (not queued)",
+    nextDraft: "Draft for next message",
+    nextDraftHint: "Not sent or queued.",
+    receiptUncertain: "Execution evidence is available but the request receipt is missing; nothing will be resent.",
+    recoveryNext: "Review the result before writing a new request.",
     /**
      * "Cancel the run" wrapped the actions row at 420px, pushing §7A.3's
      * disclosure onto a second line under an idle composer. The word is the
@@ -1525,7 +1532,7 @@ export const copy = {
      * but Enter must not look bound. A silent `submit()` return is the same
      * class of lie as a Send that looks enabled and does nothing (#44).
      */
-    sendHintBusy: "A turn is running; wait for it to finish, or Cancel.",
+    sendHintBusy: "Draft only, not sent or queued — wait for the current task, or use Stop.",
 
     /**
      * §7A.5's TIGHTENING: the composer never retries a prompt automatically.
@@ -1560,7 +1567,7 @@ export const copy = {
       agent_unavailable:
         "This server has no agent runtime attached, so there is nobody to send this to.",
       run_in_flight:
-        "A turn is already running. Wait for it to finish, or cancel it, before starting another.",
+        "A task is active. This draft is not sent or queued. Wait for it to finish, or use Stop.",
       no_session: "No session is selected, so this message has nowhere to go.",
     },
     /**

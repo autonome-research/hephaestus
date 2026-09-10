@@ -232,7 +232,7 @@ describe("§7A.7 — first answer wins, and every outcome is a rendered state", 
     expect(dead.lostToRuntime).toBe(true);
     expect(dead.answered).toBe(false);
     expect(ASK_STATES).toContain(dead.state);
-    expect(ASK_STATES).toHaveLength(6);
+    expect(ASK_STATES).toHaveLength(7);
   });
 
   it("abandons an unanswered question once its run has terminal evidence", () => {
@@ -295,7 +295,7 @@ describe("§7A.7 — first answer wins, and every outcome is a rendered state", 
     };
     const overtaken = askContent(answered, { phase: "sending" });
     expect(overtaken.state).toBe("answered");
-    expect(overtaken.answeredBy).toBe("other");
+    expect(overtaken.answeredBy).toBeNull();
   });
 });
 
@@ -480,7 +480,7 @@ describe("§7A.7 — the widget's controls, and the `disabled` that closed", () 
       `<body>${renderToStaticMarkup(
         <Transcript
           rows={[row]}
-          currentTurn={{ ...base, status: "Stopped", terminalRunId: RUN }}
+          currentTurn={{ ...base, status: "Cancelled", terminalRunId: RUN }}
         />,
       )}</body>`,
       "text/html",

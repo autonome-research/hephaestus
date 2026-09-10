@@ -1168,8 +1168,9 @@ lossy-but-labelled channel.
 **`ask_user` with two clients attached.** The question broadcasts to every
 attached client. `POST /sessions/{id}/answer` is idempotent on the question id
 and **the first answer wins**: the run resumes, every client receives the
-`answer` event, and each widget disables itself with
-`data-answered-by="self"|"other"`. Both the CLI's numbered prompt and the web
+`answer` event, and each widget disables its answer controls. A retained POST
+receipt may set `data-answered-by="self"|"other"`; an event/record without actor
+source omits attribution and displays a neutral recorded answer. Both the CLI's numbered prompt and the web
 widget may answer; neither is privileged. Inventing a web-side lock over a
 suspended question would be a second session-ownership mechanism.
 
@@ -3342,9 +3343,28 @@ Other prior amendments, including CAM/provider/sidebar work, remain intact.
   labels, unanswered questions and known delivery gaps stay prominent; successful
   outcome/provenance/connection details are secondary, optional diagnostics.
   A failed session read does not erase already held transcript or gap evidence.
-- `CurrentTurn` is independent of transport/history: `Working` follows active
-  ownership, `Finished` an explicit completed winner, `Stopped` a confirmed
-  cancelled/failed/interrupted winner, and `Checking` unreconciled evidence.
+  First entry follows latest content. Return restores a valid per-session content
+  anchor and following flag, not another session's pixel offset. While detached,
+  dynamic text/result/image growth, disclosure expansion and viewport resizing
+  preserve the reading anchor; while following, they reach actual latest content
+  even with unchanged row count. Latest is explicit and never deletes narration,
+  individual calls or retained gaps. Loading, true empty and failed history are
+  explicit visible states, never stale blank overflow.
+- `CurrentTurn` is the one operator-state projection over existing execution,
+  model, run, question/answer and terminal evidence, reusable without mounting
+  the conversation (including a hidden-conversation control). It does not create
+  execution authority. `Working` means reconciled active ownership; an addressable
+  unanswered question on that run means `Waiting for your answer`, with Go to
+  question. A locally submitted unresolved answer means `Recording answer`.
+  An unconfirmed explicit prompt means `Sending request`; uncertain ownership,
+  model admission or answer delivery means `Checking`, with the known reason.
+  `Completed`, `Cancelled`, `Request failed` and `Interrupted` are distinct
+  matching terminal winners. An accepted active question is never labelled
+  Sending or No result merely because the prompt POST has not returned.
+  Failure reason is readable primary prose, followed by review-before-new-request
+  guidance; sanitized technical envelopes belong in Details. Neither failure
+  nor interruption establishes that no design changed. No automatic retry is
+  offered or implied.
   Historical outcomes never describe current Stop availability. Missed terminal
   frames are reconciled through session reads; old-epoch/version or pre-write
   responses cannot override newer ownership. A pending send cannot inherit the
@@ -3352,16 +3372,28 @@ Other prior amendments, including CAM/provider/sidebar work, remain intact.
 - Send, Enter and form submission share one busy/admission guard. Drafts and
   immutable submitted attempts are session-keyed for project lifetime, surviving
   collapse, unmount and session switches. Drafts remain editable during a pending
-  POST; settlement clears only the submitted revision, not subsequent edits.
+  POST in a separately labelled **Draft for next message — Not sent or queued**
+  field. The immutable submitted attempt retains text, session, model revision
+  and context references; it is not an indefinitely Sending textarea. Settlement
+  clears only the submitted revision, not subsequent edits. A later terminal
+  for the accepted attempt may update task copy before the blocking POST returns,
+  without releasing the outstanding-attempt admission guard.
   A named refusal retains the draft and reason, not a duplicate user-message
   echo. Uncertain delivery never triggers automatic resend, queueing or cancel;
   after reconciliation an operator may explicitly keep the draft for a new send.
 - Stop is explicit and targets only a known current `active_run_id`, including
   authoritative ownership obtained before the first live frame or while the
-  socket is disconnected. A cancel acknowledgement means **Stop requested**, not
-  Stopped; only matching terminal evidence confirms Stopped. Questions are
-  answerable only for reconciled active ownership, never because old history
-  happens to contain an unanswered call.
+  socket is disconnected. The single live Stop control sits beside task status
+  and remains discoverable during a question. An explicit request (including a
+  pending HTTP response or acknowledgement) means **Stop requested**, never
+  Cancelled; only matching terminal evidence confirms the outcome. Lost Stop
+  delivery is stated as uncertain, with read reconciliation and no automatic
+  cancellation. Questions are answerable only for reconciled active ownership
+  and their own live question address, never because old history happens to
+  contain an unanswered call. Answer reservations/receipts are session/question
+  keyed for project lifetime; remount cannot enable a duplicate answer or imply
+  that another client won. Recorded selections read as **Answer recorded:** and
+  readable labels/free text, not serialized JSON. Unknown actor source is neutral.
 - The header shows one compact selected human title and scope, with switch,
   new-session and collapse controls. Selecting a session closes its switcher and
   restores focus. The composer stays compact and stable. The divider supports
@@ -3508,12 +3540,12 @@ because it constrains component design directly.
 ```
 
 - `data-tool-name` — the canonical tool name from `tool_call.name`.
-- `data-status` — closed set **`running | ok | error`**, derived only from
-  normalized events: a `tool_call` with no matching `tool_result` is `running`;
-  a `tool_result` with `isError` true is `error`, false is `ok`. There is no
-  fourth value — a cancelled run's orphan chips stay `running` until the
-  `terminal` event marks the *run*, because cancellation is a property of the
-  run, not of a chip.
+- `data-status` — closed set **`running | ok | error | unknown`**, from normalized
+  tool evidence: `isError` true is `error`, false is `ok`, and unrecoverable
+  result status is `unknown`. A call without a result retains the `running`
+  hook but displays **No result**, not an assertion that a historical call is
+  still running. A tool's status is not the run's status; cancellation and Stop
+  permission come only from reconciled execution evidence.
 - `data-field` — **one node per schema-required output field or reference that
   is present in the fixture's event payload**, under the predicate below.
 
@@ -3532,12 +3564,9 @@ own closing rule. Therefore:
 > archive is baselined, so the archive records the corrected shape and is not
 > re-baselined a stage later.
 
-**Fallback if the signal proves unrecoverable from Pi entries:** the closed set
-gains a fourth, **visible** value `unknown`, rendered with explanatory copy
-("this transcript does not record whether the call failed"), used only for
-historical chips. That is strictly worse than fixing the normalizer and is
-recorded as the fallback rather than the plan — but defaulting a failed call to
-`ok` is not an option in either branch.
+**If result evidence is unrecoverable:** render **visible** `unknown` with its
+missing-evidence explanation. Live calls may also lack a result; neither
+missing evidence nor an absent `isError` may default a failed call to `ok`.
 
 **TIGHTENING (binds G4.D) — the completeness predicate, over the parsed result
 document.** Two defects had to be fixed together here, so the predicate is
@@ -3864,10 +3893,8 @@ unchanged — see §8's C3.
 **(C2 — member one: the local prompt echo.** DOM: `data-row="local-prompt"`,
 `data-local-echo="1"`.) On Send, the originating tab appends one presentation
 row carrying the **sent text verbatim**, at the live suffix's tail, with the
-category's visible-at-rest marker (`unrecorded`, `.code` muted) and its
-accessible equivalent stating it was **typed on this page and is not a
-recorded event** — a `title` carries the long form, per the category rule
-above, never the only copy.
+visible **You** role marker. Uncertain delivery adds its visible explanation;
+a routine accepted echo does not repeat an unrecorded/transport badge.
 §7A.5's amendment states when it is minted and what it marks; the rules here
 state what it is. **The negative halves:** it renders only in the tab that sent
 the prompt (an observer tab has no local text to echo, and echoing another
@@ -3875,9 +3902,9 @@ tab's would require inventing it); it is never re-rendered from history on
 reopen — AMENDED 2026-09-03: a reopen restores recorded operator turns from
 history's additive `user_prompts` as `[data-row="user-prompt"]` rows with a
 historical identity, not as this presentation echo, and it does not mint the
-old user-prompt absence notice; and a failed POST does not remove the echo,
-because the text was typed whether or not the turn started
-(`data-send-state="unknown"` renders beside it, §7A.5).
+old user-prompt absence notice. A lost POST retains the unconfirmed attempt;
+a named admission refusal removes the unaccepted echo but preserves recoverable
+text and the refusal reason (§7A.5). Neither path duplicates an accepted prompt.
 
 **(C21 — member two: the run-start boundary.** DOM: `data-row="run-start"`,
 `data-run-id="run-…"`.) The transcript mints a boundary row **when a live
@@ -4060,15 +4087,15 @@ either satisfies this clause, and neither may be a blank.*
 `user_prompts[].outcome` is present, one `[data-row="turn-outcome"]` row renders
 **directly under that turn's prompt row**, carrying
 `data-outcome-state="cancelled" | "error" | "interrupted"`, the state as a word,
-and `message` when the record has one. It renders for no other turn: absence of
-`outcome` means the turn completed (§2.8(4)), and a label on every turn would
-spend a row saying nothing, which is what §0.2b struck the `live` badge for.
+and the readable cause when recorded. An explicit `completed` outcome may
+render in collapsed Turn details. An absent outcome creates no outcome row and
+never grants current execution/admission authority; an unanswered recorded
+question alone cannot establish completion.
 
-*Copy: `copy.stream.turnOutcome` keyed by the three states, one sentence each per
-§7.4(d), with the recorded `message` rendered **verbatim beside** the sentence
-and never substituted for it — the record's message is the sidecar's or the
-model's wording and may be empty, absent, or unhelpful, and the house sentence
-is what guarantees the row says something. The row's `key` is
+*Copy: **Cancelled**, **Request failed**, or **Interrupted**, with the readable
+recorded cause and review-before-new-request guidance. Sanitized technical
+outcome/message evidence remains in Details, not raw JSON as primary prose.
+No error wording establishes that nothing changed. The row's `key` is
 `turn-outcome:<turn>`, so it is stable across re-renders for the same reason the
 prompt row's is. Position is normative: **directly under that turn's prompt
 row**, above that turn's replies — the outcome is a fact about the whole turn,
@@ -4616,27 +4643,25 @@ a heading the operator never wrote.
 is ignored (§2.3). The composer cashes that out rather than routing around it.
 
 **TIGHTENING (binds §2.3's prompt row).** The composer **never retries a prompt
-automatically.** A failed or lost POST leaves the operator's text in the box,
-marks the turn `data-send-state="unknown"`, and states that the turn may have
-started and that the stream is the authority. An auto-retry over an at-least-once
+automatically.** A lost POST retains the immutable attempt and newer editable
+next draft separately, marks `data-send-state="unknown"`, and states what is
+unknown. Reconciled execution/terminal evidence may establish what ran despite
+an absent POST receipt; the UI must not deny that stronger evidence. An auto-retry over an at-least-once
 route is a duplicate-turn generator with a spinner on it.
 
-**The run id comes from the stream, not from the response.**
-`WorkspaceSessions.run_prompt` blocks for the whole turn, so the response arrives
-*after* the run is over and cannot be the source of a mid-run cancel target. The
-composer learns its run id from the first `/events` frame whose envelope
-`session_id` matches the tab — precisely the field §2.7 added the envelope for.
+**The Stop target comes from reconciled active execution ownership.**
+`WorkspaceSessions.run_prompt` blocks for the whole turn; its response cannot be
+used as a mid-run cancel target. Session execution reads can establish active
+ownership before any event. A last-frame ID alone is not Stop authority.
 
 *Rejected: the client mints the run id.* The route accepts one, but
 `BridgeRuntime.new_run_id` owns that namespace, and a second minter in it is the
 duplication mission rule 6 forbids, with a collision producing
 `run '<id>' already active` as its symptom.
 
-**Named limit:** between submit and the first event carrying the run id, **cancel
-is unavailable**. The composer renders `data-cancel-state="unavailable"` with
-its reason ("no run id yet") rather than a dead button, and the same state when
-the socket is not `live` (§7.4), because a tab with no stream has no way to learn
-the id. The window is one model round-trip.
+**Named limit:** Stop is unavailable until authoritative active ownership is
+known. `data-cancel-state="unavailable"` retains its reason; socket connectivity
+alone neither grants nor removes the ability to stop a known active run.
 
 **TIGHTENING + NEW WORK (§19.27) — one live run per runtime.** `manager.ts`
 guards run-id uniqueness only; nothing refuses a second prompt on a session that
@@ -4674,9 +4699,8 @@ round-trip the operator's own words existed nowhere on screen. Normative:
    the operator's own words rather than by a spinner; the echo then **licenses**
    the first frame's C21 run-start row, which lands directly after it — C21's
    base case: with no previous rendered live row to compare against, the echo
-   is the held fact that permits the boundary. The named limit above (cancel
-   unavailable until the first frame) is unchanged — the echo marks the turn,
-   it does not stand in for the run id.
+   is the held fact that permits the boundary. The echo is not Stop authority;
+   only reconciled active ownership can supply that target.
 3. **The negative halves are C2's,** restated where they bind the send path: a
    lost POST leaves the echo standing with `data-send-state="unknown"` rendered
    beside it (the words were sent into uncertainty, and hiding them would
@@ -4689,55 +4713,23 @@ containing the prompt text renders before any frame arrives; reopen the session
 history as `[data-row="user-prompt"]` when `user_prompts` is present, and
 the well does not draw the old user-prompt absence notice.
 
-**AMENDED 2026-09-03 — a refused prompt's echo is marked refused, not left
-standing as if it were a turn.** The echo is appended *before* the POST, and
-every failure branch touches only the post phase — so a prompt the server
-refused by name leaves a permanent, unmarked operator row in the transcript that
-looks exactly like a turn that ran, and that a reload silently deletes. The local
-gate cannot prevent it: `run_in_flight` is refused per **runtime** across all
-clients (§7A.5's TIGHTENING), so a tab can be refused for a run it never saw
-start. C2's rule that the echo is never removed is **correct and unchanged** —
-the words were typed, and un-saying them would be a worse lie than showing them —
-so the fix is a mark, not a deletion.
+**Refused admission and uncertain delivery stay distinct.** A named admission
+refusal (for example `409 run_in_flight`) removes the unaccepted local echo,
+retains the submitted text/revision and readable refusal reason, and does not
+invent a recorded turn. Newer draft edits survive. It does not replay the text,
+queue it, or permit Send before execution/model admission is reconciled.
 
-Normative: on a **named refusal** to `POST /sessions/{id}/prompt` (§2.4's body:
-`run_in_flight`, `unknown_session`, `agent_unavailable`, `busy`, any other), the
-echo row keeps its text verbatim and gains, at rest and on its visible face:
+A lost POST is not a named refusal: retain the immutable attempt and any
+unconfirmed echo with `data-send-state="unknown"`, reconcile by reads, and never
+resend automatically. Stronger accepted/terminal evidence may resolve what ran;
+keep exactly one accepted request echo/record and retain labelled delivery gaps.
+No uncertain outcome establishes that no design changed.
 
-* `data-echo-state="refused"` and `data-refused-reason="<the server's reason>"`,
-  the reason string never rewritten and never collapsed into a neighbour;
-* a **second visible marker word** beside C2's `unrecorded` — the refusal word
-  and the server's reason in `.code`, on the presentation-row marker precedent —
-  with an accessible equivalent stating that the turn **did not start**, and the
-  long form on `title`.
-
-*Copy: `copy.stream.localEcho.refused` as `{marker, accessible, title}`, beside
-the `{marker, accessible, title}` the `localEcho` key already carries for C2. The
-server's reason is **rendered, never translated** — it is drawn as the reason
-string the server sent, next to the house marker word, because the client has no
-table of reasons and inventing one would be a second vocabulary drifting behind
-§2.4's. A reason the client has never heard of therefore still renders,
-correctly, as itself. `data-echo-state` defaults to `"sent"` on every echo row so
-the attribute is unconditionally present, on §7A.10's precedent for
-`data-send-state`.*
-
-**`refused` and `unknown` are different facts and stay two words.** `unknown` is
-§7A.5's lost POST: the turn *may* have started and the stream is the authority.
-`refused` is a server answer: the turn definitively did not start, and the text
-in the box is still sendable. A row that spelled them the same would tell an
-operator to go looking in the stream for a turn that never existed. The echo
-row's own vocabulary is therefore closed at three —
-`data-echo-state="sent" | "unknown" | "refused"` — and the composer form's
-`data-send-state` (§7A.10, closed at `ok | unknown`) is **untouched**: the form
-reports this tab's last send attempt, the row reports the fate of one echoed
-prompt, and the two are not the same subject.
-
-**Testable:** a POST refused `409 run_in_flight` leaves exactly one
-`[data-row="local-prompt"]` carrying the sent text, with
-`data-echo-state="refused"`, `data-refused-reason="run_in_flight"`, and the
-refusal word present as rendered text at rest (not on `title` alone, not by
-colour alone); the row still carries no `data-event-id`; and a reload renders no
-such row, because a refused turn was never recorded.
+**Testable:** a named `run_in_flight` refusal leaves zero unaccepted local-prompt
+rows, retains the original text and reason without erasing a newer draft, and
+issues no second prompt or cancellation. Lost delivery preserves the attempt,
+blocks duplicate Send/Enter/form submission, and cannot create a duplicate
+accepted prompt after history/live reconciliation.
 
 ### 7A.6 Cancellation, and what a `4409` does to a run this tab started
 
@@ -4755,15 +4747,12 @@ live-only and never appears in a history page (§7.3), so a tab that resyncs
 across the end of its own run could lose the event that says the run ended. It
 does not need it.
 
-**TIGHTENING (binds §2.3's prompt row, §7.4).** The composer's turn-completion
-state comes from the **prompt response**, not from the `terminal` event.
-`run_prompt` already returns `{run_status, terminal, events[]}` for exactly this
-reason — "the socket is the live surface; this list is what a client with no
-socket renders instead, so a run is never invisible". The stream is the live
-rendering; the response is the authority for *this turn is over*. Observers that
-did not issue the prompt still depend on `terminal` and still get §7.4's
-labelled `resyncing` break. Only the originating tab gets the stronger
-guarantee, and it gets it from a field that already exists.
+**Turn completion (binds §2.3 and §7.4).** Reconciled stored terminal evidence
+has precedence over a competing late prompt response. The response's existing
+`{run_status, terminal, events[]}` can settle its own run when no stored winner
+is known; it cannot terminate a successor run. Both originating and observing
+pages reconcile execution reads after missed terminal frames. Retained delivery
+gaps remain labelled independently of confirmed execution outcome.
 
 **Cancel with a question pending.** `cancel_run` calls
 `questions.abandon_run(run_id)`, so every suspended question on that run is
@@ -4771,8 +4760,8 @@ released and the tool call fails `AskAbandoned` rather than receiving a
 fabricated selection. The cancelling client learns from `abandoned_questions` in
 the cancel response. **Named wart:** there is no `question_abandoned` event, and
 minting one would extend the vocabulary (§15.10). An *observer* tab's widget
-therefore stays interactive until it either sees the run's `terminal` or attempts
-an answer and receives `404 unknown_question`; on that 404 it disables with
+closes on a matching reconciled terminal or live terminal evidence, or on an
+answer refusal `404 unknown_question`; on that 404 it disables with
 `data-ask-state="abandoned"` and the stated reason. This is a real gap, bounded
 by the `terminal` band in the common case, and it is written down rather than
 closed with a new event kind.
@@ -4826,19 +4815,25 @@ The CLI's `str(o)` stringification is **NEW WORK (§19.29)**: a Python repr
 crossing into a model-visible selection is a defect independent of this section,
 named because the web widget must not be built to match it.
 
-**Live only, and the reopened widget stays disabled — correctly.** §7.3's
-reopened widget is rebuilt from the `ask_user` call and its result and marked
-`data-widget-source="tool_result"`. There is no pending question; the run is
-over; its disabled state is right and keeps its stated reason. What changes is
-only the live branch. **`data-answered-by` becomes honest:** `ask.ts`:23-30
-reserves `"self"` and records that this build can only ever report `"other"`.
-With the post wired, `answered_by` comes from the route's `accepted` flag — the
-winner renders `"self"`, every other client `"other"`, and the recorded selection
-is the winner's, returned unchanged so both clients agree on what the run was
-told. No web-side lock is invented over the suspended question; that would be a
-second session-ownership mechanism (§2.7). `404 unknown_question` is a
-first-class rendered state — "answered, abandoned, or never asked" — on the
-widget, in place, not in a toast.
+**Answer address and recorded evidence are distinct.** A reopened widget is
+rebuilt from the `ask_user` call/result and marked
+`data-widget-source="tool_result"`. Without a retained live question address it
+cannot post an answer; this absence does **not** establish that its run ended.
+Only matching terminal/runtime evidence closes the run's unanswered question.
+A retained live address still requires reconciled ownership of that same run.
+Options and their consequences stay inline; the question's primary state never
+uses a tool-result No result badge. Recording answer suppresses duplicate actions
+and Waiting copy. Unknown answer delivery reconciles by reads, never by re-answer.
+
+The route's explicit `answered_by` receipt can be retained as `data-answered-by`;
+absent receipt/source evidence must omit attribution, not infer `other` from
+component lifetime. Primary display is neutral **Answer recorded:** followed by
+readable option labels, multiple labels or free text. Unknown structured values
+remain inspectable in Details, alongside the recorded technical result and its
+original event identity. Accepted answers survive navigation/remount and later
+terminal/runtime evidence. `404 unknown_question` is an in-place closed-question
+state, not proof that someone else answered. First-answer-wins remains server
+owned; the local reservation only prevents duplicate explicit submission.
 
 ### 7A.8 No agent runtime: `agent_unavailable` stays, and gains a cause
 
@@ -5284,8 +5279,8 @@ transcript full of successful tool calls and a rail that still says the project
 has no parts.
 
 **DECISION, normative as the write path is.** On a `terminal` frame for a run on
-this project — and on the prompt response, which §7A.6 already makes the
-authority for turn completion — the client invalidates
+this project — and on the prompt response, subject to §7A.6's matching-run
+terminal precedence — the client invalidates
 `keys.project`, `keys.parts`, `keys.build(part)`, `keys.script(part)`,
 `keys.params(part)`, `keys.properties(part)`, `keys.checks(part)`,
 `keys.dfm(part)` and `keys.gitStatus()`.
@@ -5347,9 +5342,10 @@ fixture **separate** from G4.8's:
    on the ops layer, not the DOM);
 4. **concurrent purity** — two prompts on two sessions; each critique sees its
    own request (pytest; §7A.4);
-5. `ask_user` answered from the browser: `data-answered-by="self"` on the
-   answering widget, `"other"` on a second attached client, `accepted:false` for
-   the loser;
+5. `ask_user` answered from the browser: `data-answered-by="self"` from the
+   answering widget's retained receipt, neutral readable recorded answer on an
+   observer without actor evidence, `accepted:false`/`"other"` only from an actual
+   losing submission receipt; remount never manufactures that receipt;
 6. `agent_unavailable`: serve with no `providers.json`; the composer renders
    disabled with `data-disabled-reason="agent_unavailable"` and the named
    `cause`;
@@ -6562,8 +6558,8 @@ four amendments.** Each names its stage. **Updated 2026-08-28: the
     record made readable:** the operator row's role marker, the envelope
     disclosure, the `turn-outcome` row, and the session tab label and
     `document.title` following `user_prompts[].text` rather than the envelope
-    (§7A.4). **Two honesty fixes the same code touches:** the refused echo's
-    `data-echo-state="refused"` mark, and `copy.stream.seamMidRun` for a tab
+    (§7A.4). **Two honesty fixes the same code touches:** retained refused text
+    and reason without an unaccepted user echo (§7A.5), and `copy.stream.seamMidRun` for a tab
     that attached with a run already running. **And one sequencing rule, because
     losing it would ship a partial fix that looks complete:** segmentation may
     start before item 43 lands and must not *merge* before it — the fallback is

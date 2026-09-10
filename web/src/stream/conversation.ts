@@ -10,6 +10,10 @@ import type { ModelRef, ModelsDocument, ModelOption, ModelRevision } from "../ap
 import { sameModel } from "./composerChrome";
 import { copy } from "../copy";
 import type { EventFrame } from "../api/events";
+import { askContent, ASK_POST_IDLE, type AskPost, type AskRowLike } from "./ask";
+import { panelRows } from "./transcript";
+import { outcomeLabel, readableReason } from "./outcome";
+import type { ContextEnvelope, ContextMember } from "../api/sessions";
 import { emptyHistory, type HistoryProgress } from "./history";
 import { appendEcho, emptyLive, receive, refuseEcho, disconnected, resync, type LiveState } from "./live";
 
@@ -21,9 +25,17 @@ export interface SendAttempt {
   readonly reason?: string;
   readonly holderSession?: string;
   readonly holderRun?: string;
+  readonly baselineRunId?: string | null;
+  readonly sessionId?: string | null;
+  readonly modelRevision?: ModelRevision;
+  readonly context?: ContextEnvelope;
 }
 export interface Conversation {
   readonly draft: Draft;
+  /** Next-message preferences belong to the session, not panel visibility. */
+  readonly contextDropped: ReadonlySet<ContextMember>;
+  readonly contextAdded: ReadonlySet<ContextMember>;
+  readonly answers: Readonly<Record<string, AskPost>>;
   readonly model: SessionModelState | null;
   readonly modelChecking: boolean;
   readonly modelPending: boolean;
@@ -43,7 +55,8 @@ export interface Conversation {
   readonly barrier: number;
 }
 export interface CurrentTurn {
-  readonly status: "Working" | "Finished" | "Stopped" | "Checking" | null;
+  readonly status: "Working" | "Completed" | "Cancelled" | "Request failed" | "Interrupted" | "Checking" | "Waiting for your answer" | "Recording answer" | "Sending request" | "Stop requested" | null;
+  readonly questionId?: string | null;
   readonly reason: string | null;
   readonly runId: string | null;
   readonly canSend: boolean;
@@ -52,17 +65,21 @@ export interface CurrentTurn {
   readonly stopRequested: boolean;
 }
 const EMPTY: Conversation = {
-  draft: { text: "", revision: 0 }, attempt: null, execution: null,
+  draft: { text: "", revision: 0 }, contextDropped: new Set(), contextAdded: new Set(),
+  answers: {}, attempt: null, execution: null,
   checking: true, stopRequested: null, history: emptyHistory(),
   live: emptyLive("reconnecting"), barrier: 0,
   model: null, modelChecking: true, modelPending: false, modelError: null, modelBarrier: 0,
   proposal: null, proposalInitialized: false, proposalIsDefault: true,
 };
-function terminalReason(payload: unknown): string | null {
-  if (payload === null || typeof payload !== "object") return null;
-  const value = payload as Record<string, unknown>;
-  const reason = value["error"] ?? value["reason"];
-  return typeof reason === "string" ? reason : null;
+/** Historical event IDs stay in their namespace; only the prompt's explicit
+ * turn→run binding may relate a recorded question to execution ownership. */
+export function questionRunId(c: Conversation, row: AskRowLike): string | null {
+  const anchor = row.question ?? row.call ?? row.answer;
+  if (!anchor) return null;
+  return anchor.surface === "historical" && anchor.turn !== null
+    ? c.history.userPrompts.find(prompt => prompt.turn === anchor.turn)?.run_id ?? null
+    : anchor.runId;
 }
 export function currentTurn(c: Conversation, selected = true): CurrentTurn {
   const e = c.execution;
@@ -71,22 +88,45 @@ export function currentTurn(c: Conversation, selected = true): CurrentTurn {
   const uncertain = c.checking || e === null || c.attempt?.phase === "unknown";
   let status: CurrentTurn["status"] = null;
   let reason: string | null = null;
-  if (selected && uncertain) status = "Checking";
-  else if (active !== null) status = "Working";
-  else if (c.attempt?.phase === "sending") status = "Checking";
-  else if (terminal && terminal.run_id === e?.run_id) {
-    status = terminal.state === "completed" ? "Finished"
-      : ["cancelled", "failed", "interrupted"].includes(terminal.state) ? "Stopped" : "Checking";
-    reason = terminalReason(terminal.payload) ?? (status === "Stopped" ? terminal.state : null);
+  const pending = c.attempt?.phase === "sending";
+  const newTerminal = terminal && terminal.run_id === e?.run_id
+    && (!pending || terminal.run_id !== c.attempt?.baselineRunId);
+  if (selected && uncertain) status = pending && active === null ? "Sending request" : "Checking";
+  else if (active !== null) status = c.stopRequested === active ? "Stop requested" : "Working";
+  else if (newTerminal) {
+    status = outcomeLabel(terminal.state) as CurrentTurn["status"];
+    reason = readableReason(terminal.payload);
+  } else if (pending) {
+    status = "Checking";
+    reason = "Checking whether the request started. Nothing will be sent again.";
   } else if (e?.run_id) status = "Checking";
+  else if (selected && (c.modelChecking || c.model?.state !== "ready")) {
+    status = "Checking";
+    reason = c.modelError ?? copy.models.checking;
+  }
+  let questionId: string | null = null;
+  if (active !== null && !uncertain && c.stopRequested !== active) {
+    for (const row of panelRows(c.history.items, c.live.entries, visiblePrompts(c))) {
+      if (row.row !== "ask" || questionRunId(c, row) !== active) continue;
+      const initial = askContent(row);
+      const content = askContent(row, initial.questionId === null ? ASK_POST_IDLE : c.answers[initial.questionId]);
+      if (content.state === "submitting" || content.state === "answerable") {
+        questionId = content.questionId;
+        status = content.state === "submitting" ? "Recording answer" : "Waiting for your answer";
+      } else if (!content.answered && content.state !== "abandoned") {
+        status = "Checking";
+        reason = content.refusal ? "Checking whether the answer was recorded; nothing will be sent again." : "The live question could not be recovered. You can stop the known run.";
+      }
+    }
+  }
   const blocked = c.attempt?.phase === "sending" || c.attempt?.phase === "unknown";
   return {
-    status, reason, runId: active,
+    status, reason, questionId, runId: active,
     canSend: !blocked && !c.modelPending && (selected
       ? !c.modelChecking && c.model?.state === "ready" && c.model.current !== null
         && !uncertain && e?.admission_available === true
       : c.proposal?.available === true),
-    canAnswer: !uncertain && active !== null,
+    canAnswer: !uncertain && active !== null && c.stopRequested !== active,
     terminalRunId: terminal?.run_id === e?.run_id ? terminal?.run_id ?? null : null,
     stopRequested: active !== null && c.stopRequested === active,
   };
@@ -120,10 +160,45 @@ export function createConversationStore() {
     draft(sid: string | null, text: string) {
       update(sid, c => ({ ...c, draft: { text, revision: c.draft.revision + 1 } }));
     },
-    begin(sid: string | null): SendAttempt | null {
+    toggleContext(sid: string | null, member: ContextMember) {
+      update(sid, c => {
+        const contextDropped = new Set(c.contextDropped);
+        if (!contextDropped.delete(member)) contextDropped.add(member);
+        return { ...c, contextDropped };
+      });
+    },
+    addCurrentView(sid: string | null, hasSelection: boolean) {
+      update(sid, c => {
+        const contextDropped = new Set(c.contextDropped);
+        const contextAdded = new Set(c.contextAdded);
+        for (const member of hasSelection ? ["view", "selection"] as const : ["view"] as const) {
+          contextDropped.delete(member);
+          contextAdded.add(member);
+        }
+        return { ...c, contextDropped, contextAdded };
+      });
+    },
+    beginAnswer(sid: string, row: AskRowLike): boolean {
+      const c = get(sid);
+      const content = askContent(row);
+      const id = content.questionId;
+      const turn = currentTurn(c);
+      if (id === null || content.sessionId !== sid || !turn.canAnswer
+        || turn.questionId !== id || turn.status !== "Waiting for your answer"
+        || turn.runId !== (row.question ?? row.call)?.runId
+        || askContent(row, c.answers[id]).state !== "answerable") return false;
+      update(sid, c => ({ ...c, answers: { ...c.answers, [id]: { phase: "sending" } } }));
+      return true;
+    },
+    answer(sid: string, id: string, post: AskPost) {
+      update(sid, c => ({ ...c, answers: { ...c.answers, [id]: post } }));
+    },
+    begin(sid: string | null, context?: ContextEnvelope, reviewedModelRevision?: ModelRevision): SendAttempt | null {
       const c = get(sid);
       if (!currentTurn(c, sid !== null).canSend) return null;
-      const attempt: SendAttempt = { id: ++attemptId, submitted: c.draft, phase: "sending" };
+      const attempt: SendAttempt = { id: ++attemptId, submitted: c.draft, phase: "sending",
+        baselineRunId: c.execution?.run_id ?? null, sessionId: sid,
+        ...(reviewedModelRevision ? { modelRevision: reviewedModelRevision } : c.model ? { modelRevision: c.model.revision } : {}), ...(context ? { context } : {}) };
       update(sid, c => ({ ...c, attempt, checking: true, barrier: ++clock, stopRequested: null }));
       return attempt;
     },
@@ -232,7 +307,9 @@ export function createConversationStore() {
 export function canSelectModel(c: Conversation): boolean {
   return !c.modelPending && !c.modelChecking && !c.checking && c.model !== null
     && c.model.state !== "changing" && c.execution !== null && c.execution.active_run_id === null
-    && currentTurn(c).status !== "Checking"
+    // Model unavailability is repairable, not execution uncertainty. Preserve
+    // the unresolved-run gate without feeding model-only Checking back into it.
+    && (c.execution.run_id === null || c.execution.terminal?.run_id === c.execution.run_id)
     && (c.execution.admission_available || c.model.state === "unavailable" || c.model.state === "uncertain")
     && c.attempt?.phase !== "sending" && c.attempt?.phase !== "unknown";
 }
