@@ -68,6 +68,8 @@ export function Popover(props: PopoverProps): React.JSX.Element | null {
     if (!open) return;
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === "Escape") {
+        // A nested model picker closes itself, not its native creation dialog.
+        event.preventDefault();
         event.stopPropagation();
         close();
         return;

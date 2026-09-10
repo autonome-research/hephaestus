@@ -65,7 +65,6 @@ import { refreshAfterTurn } from "../../api/refresh";
 import { processGone, runtimeFaultOf, type RuntimeFault } from "../../stream/runtimeFault";
 import { sessionCannotPrompt } from "../../stream/sessionPromptGate";
 import {
-  createSession,
   type ProfileCapability,
   type SessionRow,
   type SessionsDocument,
@@ -78,8 +77,8 @@ import { shellStore } from "../../state/shell";
 import { sessionEmptyBody, sessionEmptyKind } from "../../stream/sessionEmpty";
 import { showsEmptyTranscript } from "../../stream/streamChrome";
 import { useStream } from "../../stream/useStream";
-import { conversationStore, readExecutionSessions, useConversation } from "../../stream/conversation";
-import { ModelPicker } from "./ModelPicker";
+import { readExecutionSessions } from "../../stream/conversation";
+import { NewConversationDialog } from "./NewConversationDialog";
 import { useFollowScroll } from "../../stream/followScroll";
 import { sessionPromptStore } from "../../stream/sessionPrompts";
 import { titleForSession } from "../../stream/sessionTitle";
@@ -115,10 +114,8 @@ export function StreamPanel(): React.JSX.Element {
   const rows = useMemo(() => sessions.data?.sessions ?? EMPTY_SESSIONS, [sessions.data]);
   const profiles = useMemo(() => sessions.data?.profiles ?? EMPTY_PROFILES, [sessions.data]);
   const stream = useStream(selected);
-  const [creating, setCreating] = useState(false);
-  const [createTarget, setCreateTarget] = useState<{ profile: "orchestrator" | "part"; part: string | null } | null>(null);
-  const proposal = useConversation(null);
-  const [createError, setCreateError] = useState<string | null>(null);
+  const [createTarget, setCreateTarget] = useState<{ profile: "orchestrator" | "part"; part: string | null; opener: HTMLElement | null } | null>(null);
+  const creating = createTarget !== null;
   const [focusNonce, setFocusNonce] = useState(0);
 
   // §4.5 addresses a session as `?s=`. With none in the URL, the first session
@@ -234,36 +231,11 @@ export function StreamPanel(): React.JSX.Element {
   // stated consequence and the UI carries it: a duplicate create is an extra
   // *idle* session, and there is no route that closes one, so none is offered.
   const create = useCallback((profile: "orchestrator" | "part", boundPart: string | null) => {
-    setCreateTarget({ profile, part: boundPart });
-    setCreateError(null);
+    const active = document.activeElement;
+    const opener = active instanceof HTMLElement && !active.closest("[data-session-create-open]")
+      ? active : document.querySelector<HTMLElement>("[data-session-create-menu]");
+    setCreateTarget({ profile, part: boundPart, opener });
   }, []);
-  const confirmCreate = useCallback(() => {
-      const c = conversationStore.get(null);
-      if (createTarget === null || c.modelPending || c.attempt?.phase === "sending" || c.proposal?.available !== true) return;
-      conversationStore.update(null, c => ({ ...c, modelPending: true }));
-      setCreating(true);
-      setCreateError(null);
-      const targetSession = workspaceStore.getSnapshot().session;
-      void createSession(createTarget.profile, createTarget.part, c.proposal)
-        .then((document) => {
-          conversationStore.modelSnapshot(document.session_id, document.model_state, document.execution, conversationStore.ticket());
-          if (workspaceStore.getSnapshot().session === targetSession) workspaceStore.update({ session: document.session_id });
-          setCreateTarget(null);
-          void client.invalidateQueries({ queryKey: ["sessions"] });
-          // §7A.2 / #61: the create exists so the operator can talk. Focus
-          // the box after the session is addressed; do not wait for a click.
-          setFocusNonce((n) => n + 1);
-        })
-        .catch((cause: unknown) => {
-          setCreateError(cause instanceof Error ? cause.message : copy.errors.title);
-        })
-        .finally(() => {
-          setCreating(false);
-          conversationStore.update(null, c => ({ ...c, modelPending: false }));
-        });
-    },
-    [client, createTarget],
-  );
 
   // The worded pair, kept for the two surfaces §7.1(b)(1) leaves it on: the
   // empty-list invitation (§7A.2 — "there is no strip to hang an icon on") and
@@ -450,12 +422,6 @@ export function StreamPanel(): React.JSX.Element {
           )
         ) : null}
 
-        {createError !== null ? (
-          <p className={styles["note"]} data-create-error="">
-            {createError}
-          </p>
-        ) : null}
-
         {/* A failed admission read blocks writes, not already held conversation
             evidence; keep narration, questions and delivery gaps inspectable. */}
         {selected !== null && (!unavailable || stream.rows.length > 0) ? (
@@ -526,18 +492,13 @@ export function StreamPanel(): React.JSX.Element {
           session tab, and it renders in every state — including
           `agent_unavailable`, because that is exactly where its reason is
           needed. `no_session` stays typable: the first Send creates then posts. */}
-      {createTarget !== null ? <section className={styles["modelCreate"]} aria-label={copy.models.createTitle}>
-        <p>{copy.models.createTitle}</p>
-        <ModelPicker sessionId={null} />
-        <Button variant="secondary" onClick={confirmCreate}
-          {...(creating || proposal.proposal?.available !== true ? { disabled: true as const, reason: creating ? copy.composer.sending : copy.models.none } : {})}>
-          {copy.models.create}
-        </Button>
-        <Button variant="quiet" onClick={() => setCreateTarget(null)}>{copy.models.done}</Button>
-      </section> : null}
+      {createTarget !== null ? <NewConversationDialog {...createTarget} profiles={profiles}
+        onCancel={() => setCreateTarget(null)}
+        onCreated={() => { setCreateTarget(null); setFocusNonce(n => n + 1); }} /> : null}
       <Composer
         sessionId={selected}
         profile={activeProfile}
+        scopePart={rows.find(row => row.session_id === selected)?.part ?? null}
         currentTurn={stream.currentTurn}
         attach={attach}
         agentUnavailable={unavailable}

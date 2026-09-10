@@ -34,7 +34,8 @@ export const copy = {
     local: "Available means locally configured, not a live provider test.",
     lost: "Model change was not confirmed. Checking state; the write will not be retried.",
     changed: "The session model changed. Review it before sending again.",
-    create: "Create session", createTitle: "Choose a model for the new session",
+    currentLabel: "Model for this conversation", newLabel: "Model for this new conversation",
+    create: "Create conversation", createTitle: "New conversation", cancel: "Cancel", creating: "Creating conversation…",
     reasons: {
       model_unknown: "Not supported by the configured runtime",
       provider_unknown: "Provider is not configured in the runtime",
@@ -964,7 +965,7 @@ export const copy = {
     answerNeeded: "Answer needed",
     resize: "Resize the agent column",
     width: (pixels: number) => `${String(pixels)} pixels`,
-    switchSession: "Switch session",
+    switchSession: "Switch conversation",
     switchDone: "Done",
 
     /** §7.4's closed vocabulary on the Stream header, each with its reason. */
@@ -1078,7 +1079,7 @@ export const copy = {
      * control therefore has two entries. Icon-only controls carry their label
      * as `aria-label` (§3.12), so this is the name the control is announced by.
      */
-    createMenu: "Start a session",
+    createMenu: "New conversation",
 
     /** §7.1's tab list; the profile and edge words are the server's own. */
     profile: {
@@ -1593,7 +1594,10 @@ export const copy = {
      * that follow are the closed §4.5 tokens and echoed identifiers the
      * envelope carries, and a longer preamble would be words about words.
      */
-    contextSummary: "Context:",
+    contextSummary: "Next message includes:",
+    scopeMismatch: (scope: string, viewed: string, included: boolean): string =>
+      `Conversation scoped to ${scope}; ${included ? `next message includes the viewed ${viewed}` : `viewing ${viewed} (part reference excluded)`}.`,
+    viewScope: (part: string): string => `View ${part}`,
     /** The blank canvas, in one word. The long form is `contextNone`. */
     contextEmpty: "none",
     /** §7A.3(a)'s `+N`: a count of the client's own envelope members. */
@@ -1666,7 +1670,7 @@ export const copy = {
      * before it is used — "a user who does not know their session cannot
      * delegate reads `scope_denied` as a broken product".
      */
-    createOrchestrator: "New session",
+    createOrchestrator: "New conversation",
     createPart: (part: string): string => `Ask about ${part}`,
     createTitle: "No session yet",
     /**

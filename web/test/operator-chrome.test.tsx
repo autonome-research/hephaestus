@@ -757,6 +757,13 @@ describe("header — one row of facts on the artifact axis", () => {
 describe("the composer's refusal stretches to fit its column (J-web-stream-3)", () => {
   const composer = css("components/stream/Composer.module.css");
 
+  it("keeps the expanded preview nonzero while the bounded composer scrolls", () => {
+    expect(composer).toMatch(/\.composer\s*\{[^}]*overflow-y:\s*auto/);
+    expect(composer).toMatch(/\.disclosure\s*\{[^}]*flex-shrink:\s*0/);
+    expect(composer).toMatch(/\.disclosure\s*\{[^}]*max-height:\s*12rem/);
+    expect(composer).toMatch(/\.disclosure\s*\{[^}]*overflow:\s*auto/);
+  });
+
   it("stretches the refusal's children instead of sizing each to its own max-content", () => {
     expect(composer).toMatch(/\.refusal\s*\{[^}]*align-items:\s*stretch;?[^}]*\}/);
     expect(composer).not.toMatch(/\.refusal\s*\{[^}]*align-items:\s*flex-start/);

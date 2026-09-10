@@ -9,7 +9,17 @@ import { filterModels, modelCapability, modelIdentity, modelUnavailableReason, s
 import { canSelectModel, changeSessionModel, conversationStore, readSessionModel, useConversation } from "../../stream/conversation";
 import styles from "./ModelPicker.module.css";
 
-export function ModelPicker({ sessionId }: { readonly sessionId: string | null }): React.JSX.Element {
+export interface CreationModelChoice {
+  readonly choice: ModelOption | null;
+  readonly isDefault: boolean;
+  readonly busy: boolean;
+  readonly onChoose: (option: ModelOption) => void;
+}
+
+export function ModelPicker({ sessionId, creation }: {
+  readonly sessionId: string | null;
+  readonly creation?: CreationModelChoice;
+}): React.JSX.Element {
   const c = useConversation(sessionId);
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -19,24 +29,26 @@ export function ModelPicker({ sessionId }: { readonly sessionId: string | null }
   const catalog = useQuery({ queryKey: ["provider-models"], retry: false, staleTime: 5_000,
     queryFn: async () => {
       const doc = await loadModels();
-      conversationStore.catalog(doc);
+      if (creation === undefined) conversationStore.catalog(doc);
       return doc;
     },
   });
-  const model = sessionId === null ? c.proposal : c.model?.current ?? c.model?.selected ?? null;
-  const input = sessionId === null ? c.proposal?.input : c.model?.current?.input;
+  const model = creation ? creation.choice : sessionId === null ? c.proposal : c.model?.current ?? c.model?.selected ?? null;
+  const input = creation ? creation.choice?.input : sessionId === null ? c.proposal?.input : c.model?.current?.input;
   const capability = modelCapability(input);
-  const prefix = sessionId === null ? c.proposalIsDefault ? copy.models.proposed : copy.models.choice
+  const prefix = sessionId === null ? (creation?.isDefault ?? c.proposalIsDefault) ? copy.models.proposed : copy.models.choice
     : c.model?.current ? copy.models.current : copy.models.saved;
-  const busy = sessionId === null ? c.modelPending || c.attempt?.phase === "sending" : !canSelectModel(c);
-  const reason = c.modelPending || c.model?.state === "changing" ? copy.models.changing
+  const label = sessionId === null ? copy.models.newLabel : copy.models.currentLabel;
+  const busy = creation ? creation.busy : sessionId === null ? c.modelPending || c.attempt?.phase === "sending" : !canSelectModel(c);
+  const reason = creation?.busy ? copy.models.creating : c.modelPending || c.model?.state === "changing" ? copy.models.changing
     : c.checking || c.modelChecking ? copy.models.checking : copy.models.busy;
   const groups = filterModels(catalog.data ?? null, search);
   const options = groups.flatMap(p => p.models);
   const activeIndex = Math.min(active, Math.max(0, options.length - 1));
   const choose = (option: ModelOption) => {
     if (!option.available || busy) return;
-    if (sessionId === null) conversationStore.propose(option);
+    if (creation) creation.onChoose(option);
+    else if (sessionId === null) conversationStore.propose(option);
     else void changeSessionModel(sessionId, option);
     setOpen(false);
   };
@@ -46,10 +58,11 @@ export function ModelPicker({ sessionId }: { readonly sessionId: string | null }
     if (sessionId !== null) void readSessionModel(sessionId, true);
   };
   return <div className={styles["control"]} data-model-control="">
+    <p className={styles["note"]}>{label}</p>
     <Button variant="secondary" onClick={show} className={styles["button"]}
       expanded={open} data-model-button="" {...(busy ? { disabled: true as const, reason } : {})}>
-      <span className={styles["srOnly"]}>{prefix}: {model === null ? copy.models.none : modelIdentity(model)} · {capability}. {copy.models.choose}</span>
-      <span aria-hidden="true" className={styles["identity"]}>{sessionId === null ? `${prefix}: ` : ""}{model === null ? copy.models.none : sessionId === null ? modelIdentity(model) : model.model_id}</span>
+      <span className={styles["srOnly"]}>{label}. {prefix}: {model === null ? copy.models.none : modelIdentity(model)} · {capability}. {copy.models.choose}</span>
+      <span aria-hidden="true" className={styles["identity"]}>{sessionId === null ? `${prefix}: ` : ""}{model === null ? copy.models.none : "name" in model && typeof model.name === "string" ? model.name : model.model_id}</span>
       <span aria-hidden="true" className={styles["badge"]}>{capability}</span>
     </Button>
     <details className={styles["details"]}>
@@ -59,8 +72,8 @@ export function ModelPicker({ sessionId }: { readonly sessionId: string | null }
     </details>
     {sessionId !== null && busy ? <p className={styles["note"]}>{reason}</p> : null}
     {sessionId !== null && c.model?.state === "uncertain" ? <p role="status">{copy.models.uncertain}</p> : null}
-    {(sessionId === null && c.proposal?.available === false) || (sessionId !== null && c.model?.reason) ?
-      <p role="status">{modelUnavailableReason((sessionId === null ? c.proposal?.unavailable_reason : c.model?.reason) ?? null)}</p> : null}
+    {(sessionId === null && model && "available" in model && !model.available) || (sessionId !== null && c.model?.reason) ?
+      <p role="status">{modelUnavailableReason((sessionId === null ? creation ? creation.choice?.unavailable_reason : c.proposal?.unavailable_reason : c.model?.reason) ?? null)}</p> : null}
     {sessionId !== null && c.modelError ? <p role="status">{c.modelError}</p> : null}
     {sessionId !== null && c.modelChecking ? <Button variant="quiet" onClick={() => { void readSessionModel(sessionId, true); }}>{copy.models.retry}</Button> : null}
     <Popover open={open} onClose={() => setOpen(false)} label={copy.models.choose} variant="dialog" className={styles["picker"]}>

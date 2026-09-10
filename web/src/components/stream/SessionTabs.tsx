@@ -150,6 +150,7 @@ export function SessionTabs({
 
   return (
     <div ref={stripRef} className={styles["tabs"]} data-session-strip="">
+      <div className={styles["selectedSession"]}>
       <TabBar
         attr="data-session-tab"
         panelId={panelId}
@@ -166,6 +167,13 @@ export function SessionTabs({
           ...choice, style: { paddingLeft: "var(--space-2)" },
         }))}
       />
+      <p className={styles["scope"]} data-conversation-scope="">
+        {selectedTab ? (byId.get(selectedId)?.part ?? originPart(selectedTab.origin)) != null
+          ? `Part: ${byId.get(selectedId)?.part ?? originPart(selectedTab.origin)}`
+          : byId.get(selectedId)?.profile === "orchestrator" ? "Project scope" : "Scope unavailable"
+          : "No conversation selected"}
+      </p>
+      </div>
       <div className={styles["tabsCreate"]}>
         {tabs.length > 0 ? (
           <Button

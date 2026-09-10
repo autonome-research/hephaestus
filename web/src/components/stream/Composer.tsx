@@ -202,6 +202,7 @@ export interface ComposerProps {
   readonly currentTurn?: CurrentTurn;
   /** That session's profile, from `GET /sessions`. Rendered, never inferred. */
   readonly profile: string | null;
+  readonly scopePart?: string | null;
   /** The §7A.8 attach projection when the runtime is missing, else `null`. */
   readonly attach: AttachProjection | null;
   /** `true` when the session routes are refusing `agent_unavailable`. */
@@ -329,8 +330,8 @@ export function Composer(props: ComposerProps): React.JSX.Element {
       phase: "refused", reason: attempt.reason ?? "", message: attempt.reason ?? "",
       data: { session_id: attempt.holderSession, run_id: attempt.holderRun },
     } : { phase: "idle" };
-  const [dropped, setDropped] = useState<ReadonlySet<ContextMember>>(() => new Set());
-  const [added, setAdded] = useState<ReadonlySet<ContextMember>>(() => new Set());
+  const dropped = conversation.contextDropped;
+  const added = conversation.contextAdded;
   const [disclosed, setDisclosed] = useState(false);
   const [preview, setPreview] = useState<ContextDocument | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -361,19 +362,8 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   // while it is already open, and the line's copy closing the gap is what
   // unmounts it, not a disclosure it never asked for.
   const addCurrentView = useCallback(() => {
-    setDropped((previous) => {
-      const next = new Set(previous);
-      next.delete("view");
-      if (state.selection !== null) next.delete("selection");
-      return next;
-    });
-    setAdded((previous) => {
-      const next = new Set(previous);
-      next.add("view");
-      if (state.selection !== null) next.add("selection");
-      return next;
-    });
-  }, [state.selection]);
+    conversationStore.addCurrentView(sessionId, state.selection !== null);
+  }, [sessionId, state.selection]);
 
   // §7A.3 (C22): the resting line's copy renders exactly while the gap it
   // closes is visible. The predicate (and its three negative halves) is
@@ -484,12 +474,8 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   }, [disclosed, envelope]);
 
   const toggleChip = useCallback((key: ContextMember) => {
-    setDropped((previous) => {
-      const next = new Set(previous);
-      if (!next.delete(key)) next.add(key);
-      return next;
-    });
-  }, []);
+    conversationStore.toggleContext(sessionId, key);
+  }, [sessionId]);
 
   // -- the turn -----------------------------------------------------------
 
@@ -840,6 +826,13 @@ export function Composer(props: ComposerProps): React.JSX.Element {
         </details> : null}
       <div className={styles["contextRow"]}>
       <ModelPicker key={sessionId ?? "new"} sessionId={sessionId} />
+      {props.scopePart && state.part && props.scopePart !== state.part ?
+        <p className={styles["note"]} data-context-mismatch="">
+          {copy.composer.scopeMismatch(props.scopePart, state.part, summary.keys.includes("part"))}{" "}
+          <Button variant="quiet" onClick={() => workspaceStore.update({ part: props.scopePart!, selection: null, measure: null })} data-view-scope="">
+            {copy.composer.viewScope(props.scopePart)}
+          </Button>
+        </p> : null}
       <ContextSummaryLine
         summary={summary}
         disclosed={disclosed}

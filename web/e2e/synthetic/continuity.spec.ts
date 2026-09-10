@@ -16,6 +16,41 @@ async function atLatest(page: Page) {
   await expect.poll(async () => { const m = await metrics(page); return Math.abs(m.height - m.client - m.top); }).toBeLessThanOrEqual(1);
 }
 
+test("large minimum-thumb ranges shrink to short/new and return without decorative overflow", async ({ page }, info) => {
+  const c = await setup(page);
+  c.events[0]!.payload.text = Array.from({ length: 12000 }, (_, i) => `Recorded paragraph ${i}.`).join("\n\n");
+  await page.route(`**/sessions/${OTHER}/history*`, route => route.fulfill({ json: {
+    status: "ok", session_id: OTHER, events: [{ run_id: OTHER, seq: 0, kind: "text_delta", payload: { text: "Short recorded reply." } }],
+    user_prompts: [], cursor: null, done: true, end_cursor: "short-tail",
+  } }));
+  await page.reload();
+  await expect(page.locator("[data-history-state]")).toHaveAttribute("data-history-state", "complete");
+  await atLatest(page);
+  const long = await metrics(page);
+  await info.attach("large-range-metrics", { body: JSON.stringify(long), contentType: "application/json" });
+  expect(long.height).toBeGreaterThan(long.client * long.client / 2);
+  // Repeated Latest/scroll synchronizations cannot grow real bounds.
+  for (let i = 0; i < 3; i++) {
+    await scroll(page).evaluate(el => { el.scrollTop -= 500; });
+    await page.locator("[data-jump-latest]").click(); await atLatest(page);
+    expect((await metrics(page)).height).toBe(long.height);
+  }
+  await select(page, OTHER);
+  await expect(page.getByText("Short recorded reply.")).toBeVisible();
+  expect((await metrics(page)).top).toBe(0);
+  expect((await metrics(page)).height).toBe((await metrics(page)).client);
+  await info.attach("short-range-metrics", { body: JSON.stringify(await metrics(page)), contentType: "application/json" });
+  await page.locator("[data-session-create-menu]").click();
+  await page.locator("[data-session-create]").click();
+  await page.getByRole("button", { name: "Create conversation", exact: true }).click();
+  await expect(page.locator("[data-transcript-empty]")).toBeVisible();
+  expect((await metrics(page)).top).toBe(0);
+  await select(page, SID); await atLatest(page);
+  expect((await metrics(page)).height).toBe(long.height);
+  expect(c.mutations.map(m => m.path)).toEqual(["/sessions"]);
+  expect(c.faults).toEqual([]);
+});
+
 test("same-row live text/result growth follows or preserves anchor, including resize/remount", async ({ page }) => {
   const c = await setup(page, execution(RUN));
   await c.frame("text_delta", { text: "Live opening.\n\n" }, 0);

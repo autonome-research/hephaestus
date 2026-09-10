@@ -68,6 +68,9 @@ export async function setup(page: Page, initial = execution()) {
     const path = url.pathname.replace("/api/v1", "");
     if (request.method() !== "GET") {
       control.mutations.push({ path, body: request.postDataJSON() as unknown });
+      if (path === "/context/preview") {
+        await route.fulfill({ json: { status: "ok", block: "Synthetic advisory context preview", truncated: false, sources: [] } }); return;
+      }
       if (path === "/sessions") {
         const body = request.postDataJSON() as { profile: "orchestrator" | "part"; part?: string; model: { provider_id: string; model_id: string } };
         const choice = models.providers.flatMap(p => p.models).find(m => m.provider_id === body.model.provider_id && m.model_id === body.model.model_id);
@@ -123,7 +126,9 @@ export async function setup(page: Page, initial = execution()) {
     if (path === "/sessions") {
       control.sessionReads++;
       if (control.sessionsFail) { await route.fulfill({ status: 503, json: { status: "error", reason: "agent_unavailable", message: "Synthetic read failure" } }); return; }
-      const rows = [SID, OTHER, ...(control.created ? [control.created.session_id] : [])].map(session_id => ({ session_id, profile: "orchestrator", part: null,
+      const rows = [SID, OTHER, ...(control.created ? [control.created.session_id] : [])].map(session_id => ({ session_id,
+        profile: session_id === control.created?.session_id ? control.created.profile : "orchestrator",
+        part: session_id === control.created?.session_id ? control.created.part : null,
         parent_session_id: null, thread_state: "unlinked", readable: true, unreadable_reason: null,
         execution: session_id === SID ? { ...control.execution, version: control.stale ? 0 : ++version } : { ...execution(), version: ++version } }));
       await route.fulfill({ json: { status: "ok", sessions: rows,

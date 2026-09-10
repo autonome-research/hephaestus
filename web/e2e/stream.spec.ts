@@ -474,7 +474,7 @@ test("the compact session header switches through the session dropdown (§7.1)",
     );
   for (const name of optionNames) {
     expect(name).not.toBe("");
-    expect(name).not.toBe("New session");
+    expect(name).not.toBe("New conversation");
     expect(name).not.toBe("Start a session");
     expect(name).not.toMatch(/^Ask about /);
   }
@@ -506,7 +506,7 @@ test("the compact session header switches through the session dropdown (§7.1)",
   await expect(menu).toHaveCount(1);
   await expect(menu.locator("[data-session-create]")).toHaveCount(1);
   await expect(menu.locator("[data-session-ask]")).toHaveCount(1);
-  await expect(menu.getByText("New session", { exact: true })).toHaveCount(1);
+  await expect(menu.getByText("New conversation", { exact: true })).toHaveCount(1);
   await expect(menu.getByText(`Ask about ${PART}`, { exact: true })).toHaveCount(1);
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
@@ -613,10 +613,10 @@ test("the composer still sits at the column's bottom edge for an EMPTY session (
   const menuButton = page.locator("[data-session-create-menu]");
   if ((await menuButton.count()) > 0) await menuButton.click();
   await page.locator("[data-session-create]").first().click();
-  const creation = page.getByRole("region", { name: "Choose a model for the new session" });
+  const creation = page.getByRole("dialog", { name: "New conversation · Project", exact: true });
   await expect(creation).toContainText("Proposed default");
-  await expect(creation.getByRole("button", { name: "Create session", exact: true })).toBeEnabled();
-  await creation.getByRole("button", { name: "Create session", exact: true }).click();
+  await expect(creation.getByRole("button", { name: "Create conversation", exact: true })).toBeEnabled();
+  await creation.getByRole("button", { name: "Create conversation", exact: true }).click();
   await expect
     .poll(async () => await page.locator("[data-session-tab][aria-selected='true']").count())
     .toBe(1);
@@ -727,10 +727,10 @@ test("creating a session keeps every session in the dropdown, and the new one su
   const menuButton = page.locator("[data-session-create-menu]");
   if ((await menuButton.count()) > 0) await menuButton.click();
   await page.locator("[data-session-create]").first().click();
-  const creation = page.getByRole("region", { name: "Choose a model for the new session" });
+  const creation = page.getByRole("dialog", { name: "New conversation · Project", exact: true });
   await expect(creation).toContainText("Proposed default");
-  await expect(creation.getByRole("button", { name: "Create session", exact: true })).toBeEnabled();
-  await creation.getByRole("button", { name: "Create session", exact: true }).click();
+  await expect(creation.getByRole("button", { name: "Create conversation", exact: true })).toBeEnabled();
+  await creation.getByRole("button", { name: "Create conversation", exact: true }).click();
 
   // Creation selects the new session in the compact header; it does not add a
   // second resting tab. Wait for that concrete result rather than a tab count.

@@ -59,12 +59,12 @@ test("explicit creation shows and submits the proposal, without changing the exi
   await input(page).fill("Existing session draft");
   await page.locator("[data-session-create-menu]").click();
   await page.locator("[data-session-create]").click();
-  const creation = page.getByRole("region", { name: "Choose a model for the new session" });
+  const creation = page.getByRole("dialog", { name: "New conversation · Project", exact: true });
   await expect(creation).toContainText("Proposed default: local/fake/vision/image");
   await expect(creation).toContainText("Text + images");
   expect(c.mutations).toEqual([]);
-  await expect(creation.getByRole("button", { name: "Create session", exact: true })).toBeEnabled();
-  await creation.getByRole("button", { name: "Create session", exact: true }).click();
+  await expect(creation.getByRole("button", { name: "Create conversation", exact: true })).toBeEnabled();
+  await creation.getByRole("button", { name: "Create conversation", exact: true }).click();
   await expect(page.locator("[data-composer]")).toHaveAttribute("data-session-id", "synthetic-created");
   expect(c.mutations).toEqual([{ path: "/sessions", body: { profile: "orchestrator", model: { provider_id: vision.provider_id, model_id: vision.model_id } } }]);
   expect(c.model.current).toEqual(spark);

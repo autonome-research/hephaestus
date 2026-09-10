@@ -2450,30 +2450,22 @@ clamp's maximum. **Testable:** at 1280px window width the expanded stream track
 measures 384px (30vw); at ≥1400px it measures 420px; at every expanded width it
 is ≥360px, and the body never scrolls horizontally.
 
-**(h) C25 — the stream has exactly one header row, and the chevron joins it.**
-Amendment (e) left the collapse affordance a **band of its own** — one control
-tall, above the session strip. That band is now **struck as a band**: the
-`streamHeader` element does not render, and `[data-stream-collapse]` renders as
-the **trailing item of the session tab strip**, after the §7.1(b) `+` control,
-keeping its hook, its `iconLabel` accessible name, and the `aside`'s
-`aria-label` exactly as (e) specified. **Normative both ways, scoped to the
-steady state:** with the Stream expanded, **in the steady state** — stream
-`live`, no runtime fault, no §8(a) historyBar condition — exactly **one** row
-of chrome renders above the transcript: the session tab strip (tabs, `+`,
-chevron); no element above the transcript matches the former `streamHeader`;
-with the Stream collapsed, the 44px strip is unchanged from (f). **The
-exceptional elements keep their loudness and gain a named home:** the §7.4(a)
-stream-state badge with its `[data-resync-count]` readout, and the §8(a)
-`historyBar`, mount as an **exception row directly below the tab strip and
-above the transcript scroll region** — one shared row when both mount, badge
-leading — exactly and only in the states those clauses already name. This is
-the C15 pattern: the steady state is counted, the exceptions are exceptions
-by name and stay loud; nothing in this clause re-scopes when §7.4 or §8
-mounts anything. **Testable:** in the steady state, count the Stream column's
-children above the transcript scroll region — one; inducing `resyncing` or a
-failed history read adds exactly one exception row below the tab strip;
-`[data-stream-collapse]` is a descendant of the tab strip and is its last
-interactive element in every state.
+**(h) C25 — one conversation identity header, without a separate title band.**
+The `streamHeader` element does not render. `[data-stream-collapse]` is the
+last interactive item of the compact session strip, after Switch/New, with its
+accessible Hide conversation name. Human title and full scope may use two
+compact lines inside that header. Below it, §7's one task projection shows
+known current state and Go to question when addressable. It is independent of
+connection health: a live socket does not suppress Waiting, failure or Checking.
+The one live Stop control stays next to task state in the composer.
+
+Connection/history diagnostics remain secondary in their named disclosure;
+known delivery gaps and failed/loading history remain visible alongside retained
+content. No duplicate Agent eyebrow band or transport badge substitutes for
+operator state. Hidden conversation uses (f)'s horizontal return.
+**Testable:** Hide remains the strip's last interactive item; current task state
+and actionable question use the same evidence; history failure preserves held
+rows and gaps rather than replacing them with diagnostics.
 
 **(i) C26 — Export and BOM are icon+word at full width, icon-only under
 pressure.** At viewport widths **≥1280px** `[data-chrome-export]` and
@@ -3435,8 +3427,9 @@ one — while `GET /sessions` returned three rows, because the panel drew the
 selected thread and fell back to the listing only when the walk returned
 nothing, which a route that always answers with at least one node never does.
 
-Attachment is explicit: opening a part shows its session if one exists; the
-"attach" affordance lists live sessions. **A browser tab is a client, never a
+Conversation selection is explicit: opening a part changes workspace inspection,
+not the selected conversation, model or draft. The switcher lists live sessions;
+the header keeps the selected human title and full scope on a compact second line. **A browser tab is a client, never a
 lease holder.** While the CLI holds a persistent session's lease, the browser
 reads and can prompt *through the owning server* (§2.1), which is the only
 reason both surfaces can drive one session at all.
@@ -3453,7 +3446,7 @@ no visible text node inside the Stream column renders `copy.stream.sessionsHeadi
 `[role=tablist]`/the sessions list still exposes it as an accessible name.
 
 **(b) The create affordances merge into the strip as ONE compact `+` action.**
-`StreamPanel.tsx`:404's `createAction` pair (`New session` / `Ask about <part>`)
+The `createAction` pair (`New conversation` / `Ask about <part>`)
 renders as **a single icon-only `+` control that is the last item of the session
 tab strip**, not as a band below it. **Normative, and each half is testable:**
 
@@ -3463,17 +3456,20 @@ tab strip**, not as a band below it. **Normative, and each half is testable:**
    and renders **in no other state**. The empty-list invitation (§7A.2) is
    unchanged and is the one place a full-width worded create control still
    renders, because there is no strip to hang an icon on.
-2. **No wording appears twice.** `New session` and `Ask about <part>` do not
+2. **No wording appears twice.** `New conversation` and `Ask about <part>` do not
    render as visible button labels anywhere the tab strip is drawn. They become
    the two entries of the `+` control's menu, and the menu is drawn **only while
    open**. When a part is selected the menu has both entries; with no part
    selected it has one, and the `+` activates it directly rather than opening a
-   one-item menu.
+   one-item menu. The trailing control's menu opens inward below its anchor;
+   both complete scope labels and keyboard focus targets remain within the
+   viewport at 1440, 1024 and 843px. Long names wrap inside the bounded menu.
 3. The existing test hooks are **unmoved**: `[data-session-create]` and
    `[data-session-ask]` still address the two actions, wherever they live. A
    lane that renames them has changed a contract this clause did not open.
-4. `data-create-error` is unchanged and still renders as a note; a create
-   failure is an exception and stays loud.
+4. These actions open §7A.2's named creation dialog, not an inline second
+   model/composer target. `data-create-error` remains a readable error inside
+   that dialog; a create failure never triggers automatic retry.
 
 **(c) Dead surface, repair (c) — the one-character filename confusion.**
 `stream/sessionPrompt.ts` (the gate, `sessionCannotPrompt`) and
@@ -3500,7 +3496,7 @@ thing. Normative:
    derives nothing** (§1); `hh:mm` formatting is presentation in `format.ts`.
 2. **No rendered tab's accessible name is string-equal to any create-control
    label** — not `copy.stream.createOrchestrator`, not `copy.stream.createPart`
-   (nor their `New session` / `Ask about <part>` menu forms, §7.1(b)) — in any
+   (nor their `New conversation` / `Ask about <part>` menu forms, §7.1(b)) — in any
    state. A tab that names itself after a verb phrase for creating sessions
    fails this clause; this is the testable, run over every tab the fixture can
    produce.
@@ -4288,18 +4284,30 @@ existing session without a write. Focus alone on Open preserves hidden intent.
 The operator ask has two halves — "about the displayed material" and "about a
 blank canvas" — and they are the same route with a different `part`.
 
-**DECISION.** `POST /sessions` is reachable from exactly two affordances, both
-explicit:
+**DECISION.** The two creation entry points open the bounded flow below;
+only its explicit Create confirms `POST /sessions`. The separate first-Send
+path described below remains explicit as well:
 
 | Affordance | Body | Profile | Bound part |
 |---|---|---|---|
-| STREAM empty state / "New session" | `{profile: "orchestrator", model: {provider_id, model_id}}` | `orchestrator` | none |
+| STREAM empty state / "New conversation" | `{profile: "orchestrator", model: {provider_id, model_id}}` | `orchestrator` | none |
 | A part row's context action, or "Ask about `<part>`" | `{profile: "part", part: "<part>", model: {provider_id, model_id}}` | `part` | that part |
 
-**AMENDED 2026-09-10 (#120):** these affordances first expose the explicit
-proposed model/capability and local choice (§7A.10(d)); confirmation creates.
-The existing explicit first-Send path submits the same reviewed pair. Merely
-opening the picker or changing a pre-creation choice creates no session.
+**Bound creation.** These affordances open one named accessible modal dialog
+or sheet: **New conversation · Project** or **New conversation · part**.
+It contains the existing scope choice, **Model for this new conversation**,
+explicit server-proposed default and capabilities, accessible provider/model
+identity, unavailable explanation, **Cancel** and **Create conversation**.
+The proposal is dialog-local and distinct from the current session model and
+no-session draft. Old controls are inert; keyboard focus stays inside, Escape
+cancels (or closes only the nested picker), and Cancel restores opener focus,
+original session/model/draft without a write. While a creation request is
+pending, duplicate Create and cancellation are disabled. Create makes exactly
+one idle session with the reviewed pair, reconciles actual model, selects it,
+and focuses its empty composer; it never posts a prompt or copies an old draft.
+An absent/default-unknown proposal requires a deliberate available choice; a
+refresh never silently substitutes a model. The existing separate explicit
+first-Send path remains unchanged. Opening/choosing alone creates nothing.
 
 **The blank canvas is the orchestrator profile with no part**, and that is not a
 workaround: `dispatch.py`:412-413 exempts an orchestrator principal from
@@ -4362,8 +4370,8 @@ is to **type English at an orchestrator agent, which calls `create_part`**.
 There is no part-creation route, no button, and none is added: §15.9 forbids the
 workspace inventing model tools and a part is authored source, not a form. What
 this section owes the operator is therefore not a button but an **entry point**:
-the parts-empty state is an `EmptyState` (§4.7) whose action creates an
-orchestrator session and focuses the composer, with copy naming `create_part` as
+the parts-empty state is an `EmptyState` (§4.7) whose action opens the bounded
+orchestrator creation flow, with copy naming `create_part` as
 the mechanism. **A blank canvas the operator has to guess is filled by talking
 is the same defect as a composer that is not there.** Project creation is
 further out of reach and is refused by name (§15.30): `heph serve` opens an
@@ -4467,14 +4475,29 @@ re-shape a single member of `context`. It changes **only** how the composer
 draws the envelope it is about to send.
 
 **(a) One summary line at rest.** Above the composer input the resting state
-renders **exactly one** line: the word `Context:` followed by the envelope's
+renders one compact, wrapping line: **Next message includes:** followed by the envelope's
 present members in the fixed order `part`, `artifact_ref` (abbreviated by
 `formatOid`/`formatRef`, §4.1(a)), `stage_tab`/`inspector_tab` as one
 `stage/inspector` pair, `view`, then a `+N` count for any remaining members —
-for example `Context: tread · build f908224c · viewport/results · iso`. Values
+for example `Next message includes: tread · build f908224c · viewport/results · iso [Preview]`. Values
 are the same closed tokens and echoed identifiers the envelope carries; the line
 **re-words nothing and computes nothing** (§1), and a member absent from the
-envelope is absent from the line.
+envelope is absent from the line. Conversation scope is a separate server fact,
+not a claim about these references. When a tread-scoped conversation views riser,
+both scope and **next message includes the viewed riser** are readable before
+Send at wide and narrow widths. An excluded part reference is stated as excluded,
+not claimed as included. **View tread** is explicitly labelled workspace navigation
+only; **Preview** retains exclusions and advisory send-time recomposition.
+Exclusions and explicit Add current view preferences are project-page-lifetime,
+keyed by session (including the no-session draft), not by Composer mount. Hide,
+Open, keyboard reveal and width changes cannot reset them; switching sessions
+must neither copy preferences into the destination nor erase the source's choices.
+First-send creation carries the no-session draft's preferences into its created
+conversation; independent dialog creation starts with its own defaults. No
+modal, automatic navigation or context rewrite is required to keep riser context.
+Part-profile tool restrictions and server-resolved per-turn context remain
+unchanged; subsequent part/model choices cannot alter a submitted attempt's
+frozen references/model revision or the context recorded on its turn.
 
 **(b) The chip form is the disclosure.** Activating the summary line expands the
 **editable** chip form — the `<ul data-context-chips>` of §7A.10, with its
@@ -4486,7 +4509,11 @@ envelope.
 currently pushes `stage_tab`, `inspector_tab` and `view` unconditionally, so
 three rows are always mounted. **Normative: `ul[data-context-chips]` does not
 mount while the disclosure is collapsed**, and the composer's resting height is
-one line of context regardless of how many members the envelope carries.
+a compact wrapping context line, plus the explicit scope-mismatch notice when
+needed; never a one-word column or clipped Send control. The bounded composer
+scrolls expanded regions; its independently scrollable preview must not
+flex-shrink to zero height or make Add current view unreachable behind the
+input/form. Keyboard and ordinary pointer activation remain usable.
 `chipsFor` still enumerates every member — the chips are complete when shown;
 what changes is when the list mounts.
 
@@ -5030,8 +5057,10 @@ slash-joined display label. A model absent from the latest catalog stays named
 as current; the UI must not relabel it as another option.
 
 One compact, conspicuous `[data-model-button]` immediately above the composer,
-integrated with its context area where space permits, names the actual model ID
-and **Text only / Text + images** (or **Capability unknown**). Its
+integrated with its context area where space permits, is labelled **Model for
+this conversation**, names the actual readable display name (ID if unavailable)
+and **Text only / Text + images** (or **Capability unknown**). There is one
+current-model actionable target, inert during §7A.2's creation dialog. Its
 `[data-model-control]` offers keyboard/touch-accessible full provider/model
 identity disclosure, not merely a `title`. At narrow widths the capability
 badge remains visible. The searchable picker groups by provider, matches
@@ -5233,12 +5262,12 @@ amendment shortens the resting path only.
 The 2026-09-01 amendment took the composer to one summary line, an input, and
 one button, and the build still stacked them four high: context line, input,
 a meta line for the model chip, an action row for Send. Normative — the resting
-composer is **exactly two rows below the context line's top edge**:
+composer has **two direct regions**, whose content may wrap:
 
-1. **The context row** is §7A.3(a)'s summary line. **AMENDED 2026-09-10,
-   #120:** the wired model control in clause (d) immediately precedes the
-   composer, integrated with its context area where space permits. This
-   supersedes #114's exclusion of "to what" from the composer area.
+1. **The context region** contains the actual model control in clause (d),
+   followed by §7A.3(a)'s compact wrapping Next message includes line and, when
+   needed, the visible scope mismatch. These are one context region, not a
+   promise of one physical text line.
 2. **The input row** holds the textarea with **`[data-composer-send]`
    right-aligned on the same row**, at the input's trailing edge — not in a row
    of its own. Clause (a)'s one-resting-button rule is unchanged in substance,
@@ -5246,16 +5275,14 @@ composer is **exactly two rows below the context line's top edge**:
    row — the action row it queried no longer mounts at rest; this clause
    states where that button sits.
 
-**The negative half:** in the resting state no third row mounts — no meta line,
-no empty action row, **no decorative model chip** — the composer **form**
-remains context row plus input row. **AMENDED 2026-09-10, #120:** clause (d)'s
-wired model control immediately above the form is explicitly allowed and is
-not counted as a third form row. Exceptional states may
-add their rows as specified (Cancel while running, §7A.6; the disabled reason;
-C1's `data-send-state="unknown"` note), because they are exceptions and stay
-loud. **Testable:** in the resting state the composer form's directly rendered
-rows number two; Send's box lies within the input row's box;
-`[data-composer-model]` is not in the form.
+**The negative half:** no decorative model chip, empty action row or redundant
+keyboard-hint band mounts at rest. The form contains context region plus input
+row. Active/uncertain tasks add the named task/Stop row, separate unqueued next
+draft label, and retained-attempt/delivery reasons specified in §7A.5–6.
+Expanded Preview is independently scrollable and Send remains reachable at843.
+**Testable:** an admissible resting form has two direct regions; its actual
+model is inside the context region; Send's box lies inside the input row;
+`[data-composer-model]` is absent.
 
 **AMENDED 2026-09-03 — the textarea stays typable.** `data-disabled-reason`
 may still be `no_session` when no tab is selected, and Send stays
