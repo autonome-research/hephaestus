@@ -282,7 +282,7 @@ export function StreamPanel(): React.JSX.Element {
         document.querySelector<HTMLElement>("[data-stream-strip]")?.focus();
       }}
       data-stream-collapse=""
-    />
+    ><span aria-hidden="true">{copy.stream.hideAction}</span><span className={styles["srOnly"]}>{copy.stream.collapse}</span></Button>
   );
 
   return (

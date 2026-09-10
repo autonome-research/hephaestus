@@ -975,6 +975,9 @@ export const copy = {
     resize: "Resize the agent column",
     width: (pixels: number) => `${String(pixels)} pixels`,
     switchSession: "Switch conversation",
+    switchAction: "Switch",
+    newAction: "New",
+    hideAction: "Hide",
     switchDone: "Done",
 
     /** §7.4's closed vocabulary on the Stream header, each with its reason. */

@@ -39,6 +39,8 @@
 
 /* §3.13.4: skip past the rail and overlay chrome to the canvas and composer.
    Hidden until focused so they do not add a row to the 44px header. */
+.srOnly { composes: srOnly from "./stream/ModelPicker.module.css"; }
+
 .skip {
   position: absolute;
   z-index: 40;

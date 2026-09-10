@@ -206,7 +206,7 @@ export function Shell(): React.JSX.Element {
               aria-expanded={railOverlayOpen}
               aria-controls="parts-navigation"
               data-rail-toggle=""
-            />
+            ><span aria-hidden="true">{copy.rail.partsHeading}</span><span className={styles["srOnly"]}>{shell.railOpen ? copy.rail.close : copy.rail.open}</span></Button>
           ) : undefined
         }
       />

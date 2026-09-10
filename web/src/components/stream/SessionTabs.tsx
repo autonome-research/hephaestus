@@ -183,7 +183,7 @@ export function SessionTabs({
             expanded={switchOpen}
             onClick={() => setSwitchOpen((open) => !open)}
             data-session-switch=""
-          />
+          ><span aria-hidden="true">{copy.stream.switchAction}</span><span className={styles["srOnly"]}>{copy.stream.switchSession}</span></Button>
         ) : null}
         {create}
         {collapse == null ? null : <div className={styles["tabsCollapse"]}>{collapse}</div>}
@@ -288,7 +288,7 @@ export function SessionCreateAction({
         data-session-create=""
         data-create-profile="orchestrator"
         {...disablement}
-      />
+      ><span aria-hidden="true">{copy.stream.newAction}</span><span className={styles["srOnly"]}>{copy.composer.createOrchestrator}</span></Button>
     );
   }
 
@@ -305,7 +305,7 @@ export function SessionCreateAction({
         }}
         data-session-create-menu=""
         {...disablement}
-      />
+      ><span aria-hidden="true">{copy.stream.newAction}</span><span className={styles["srOnly"]}>{copy.stream.createMenu}</span></Button>
       <Popover
         open={open}
         onClose={() => {

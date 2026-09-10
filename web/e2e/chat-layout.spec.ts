@@ -112,7 +112,13 @@ test("selected title stays compact while switcher exposes the session tree", asy
   await expect(strip.locator("[data-session-tab]")).toHaveCount(1);
   await expect(page.locator("[data-session-option]")).toHaveCount(0);
   const height = (await strip.boundingBox())!.height;
-  expect(height).toBeLessThanOrEqual(64);
+  expect(height).toBeLessThanOrEqual(96); // title/scope plus readable action row
+  const titleBox = (await strip.locator("[data-session-tab]").boundingBox())!;
+  for (const [selector, label] of [["[data-session-switch]", "Switch"], ["[data-session-create-menu]", "New"], ["[data-stream-collapse]", "Hide"]]) {
+    const action = strip.locator(selector!);
+    await expect(action.locator('span[aria-hidden="true"]')).toHaveText(label!);
+    expect((await action.boundingBox())!.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
+  }
   await page.locator("[data-session-switch]").focus();
   await page.locator("[data-session-switch]").press("Enter");
   await expect(page.locator("[data-session-switch-open]")).toBeVisible();

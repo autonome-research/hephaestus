@@ -22,7 +22,18 @@ for (const width of [843, 1000, 1024, 1279, 1440]) {
     await budget(page, width);
     const header = page.locator("[data-session-strip]");
     const height = (await header.boundingBox())!.height;
-    expect(height).toBeLessThanOrEqual(64);
+    // Title/scope and readable actions now have separate lines, not icon-only
+    // targets sharing a truncated title. Preserve a bounded header budget.
+    expect(height).toBeLessThanOrEqual(96);
+    const title = (await header.locator("[data-session-tab]").boundingBox())!;
+    for (const [selector, label] of [["[data-session-switch]", "Switch"], ["[data-session-create-menu]", "New"], ["[data-stream-collapse]", "Hide"]]) {
+      const action = header.locator(selector!);
+      await expect(action.locator('span[aria-hidden="true"]')).toHaveText(label!);
+      const box = (await action.boundingBox())!;
+      expect(box.y).toBeGreaterThanOrEqual(title.y + title.height);
+      expect(box.y + box.height).toBeLessThanOrEqual((await header.boundingBox())!.y + height);
+      expect(box.height).toBeGreaterThanOrEqual(24);
+    }
     await expect(header.locator("[data-session-tab]")).toHaveCount(1);
     await page.locator("[data-session-switch]").press("Enter");
     await expect(page.locator("[data-session-option]")).toHaveCount(2);

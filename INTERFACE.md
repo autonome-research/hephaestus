@@ -2129,8 +2129,8 @@ which case the control carries `aria-label` from `copy.ts`.
 
 **SPEC EDIT 2026-09-01 (§0.2b, §7.1(b)) — the eighteenth id becomes nineteen.**
 `plus` is added to the action group, as the single-path `M8 3 L8 13 M3 8 L13 8`,
-because §7.1(b)'s amended create affordance is "a single icon-only `+` control"
-and no id in the closed 18 draws a plus. Recorded here rather than minted in a
+for §7.1(b)'s single creation control (now labelled New beside the plus);
+no id in the former closed 18 drew a plus. Recorded here rather than minted in a
 component, which is exactly the edit this section requires; the count above is
 the number a test asserts, so the two cannot drift.
 
@@ -3463,10 +3463,13 @@ unchanged; `copy.stream.sessionsHeading` survives as that label only. **Testable
 no visible text node inside the Stream column renders `copy.stream.sessionsHeading`;
 `[role=tablist]`/the sessions list still exposes it as an accessible name.
 
-**(b) The create affordances merge into the strip as ONE compact `+` action.**
-The `createAction` pair (`New conversation` / `Ask about <part>`)
-renders as **a single icon-only `+` control that is the last item of the session
-tab strip**, not as a band below it. **Normative, and each half is testable:**
+**(b) The create affordances merge into ONE compact New action.**
+The selected title/scope has its own line above a compact **Switch / New / Hide**
+action row. Icons accompany visible labels; accessible names remain Switch
+conversation, New conversation and Hide conversation. Narrow rail navigation
+likewise shows **Parts** beside its icon. No control depends on icon interpretation.
+The `createAction` pair (`New conversation` / `Ask about <part>`) is one New
+control in the strip, before Hide. **Normative, and each half is testable:**
 
 1. The `+` control renders **whenever the panel can create a session** — which
    is the condition the shipped pair already renders under (no runtime fault,
@@ -3474,9 +3477,9 @@ tab strip**, not as a band below it. **Normative, and each half is testable:**
    and renders **in no other state**. The empty-list invitation (§7A.2) is
    unchanged and is the one place a full-width worded create control still
    renders, because there is no strip to hang an icon on.
-2. **No wording appears twice.** `New conversation` and `Ask about <part>` do not
-   render as visible button labels anywhere the tab strip is drawn. They become
-   the two entries of the `+` control's menu, and the menu is drawn **only while
+2. **One creation entry point.** The compact label is New; `New conversation`
+   and `Ask about <part>` are its scope choices, not competing creation controls.
+   They are the two entries of New's menu, and the menu is drawn **only while
    open**. When a part is selected the menu has both entries; with no part
    selected it has one, and the `+` activates it directly rather than opening a
    one-item menu. The trailing control's menu opens inward below its anchor;
@@ -4119,12 +4122,11 @@ turn, and a seam with no live row under it yet, render `copy.stream.seam` and
 `data-seam-kind="end"`; exactly one `[data-seam]` element renders in every
 case.
 
-**AMENDED 2026-09-02 (§0.2c, C20) — the Latest pill lives in the gutter, off
-the cards.** `[data-jump-latest]` floated over the transcript's content column
-and landed on top of tool cards. Normative: the pill anchors **in the
-transcript's scroll-gutter edge** — the strip the scrollbar owns, at the
-column's trailing edge — with a stated clearance: its bounding box intersects
-**no** chip, text row, or presentation row at any scroll position. Its mount
+**Latest navigation (§0.2c, C20) — horizontal, outside transcript content.**
+`[data-jump-latest]` occupies a small trailing-aligned horizontal navigation row
+that is a sibling of the transcript scroller, never an overlay or scroll child.
+It contributes nothing to the transcript's scroll range. Its bounding box
+intersects **no visible** chip, text row, or presentation row at any scroll position. Its mount
 condition is unchanged (it renders only while the view is not following the
 latest row, and never while followed — the §0.2b discipline already applied to
 it). **Testable:** with the transcript scrolled up over a chip-dense fixture,
