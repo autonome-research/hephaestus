@@ -117,13 +117,20 @@ _LATE_EXPORT_COLUMNS: Final[tuple[str, ...]] = ("outputs", "extra")
 
 
 def ensure_exports_table(store: OpStore) -> None:
-    """Create (or forward-migrate) the export write-ahead table."""
-    conn = store.db.conn
-    conn.execute(_CREATE_EXPORTS_TABLE)
-    present = {str(row[1]) for row in conn.execute(f"PRAGMA table_info({_EXPORTS_TABLE})")}
-    for column in _LATE_EXPORT_COLUMNS:
-        if column not in present:
-            conn.execute(f"ALTER TABLE {_EXPORTS_TABLE} ADD COLUMN {column} TEXT")
+    """Create (or forward-migrate) the export write-ahead table.
+
+    Under ``transaction()`` rather than on the bare connection: this is the one
+    place the export WAL's SHAPE changes, the probe between the create and the
+    ALTERs is a read that another thread's open transaction would otherwise
+    make raise ``InterfaceError``, and two processes reaching the migration at
+    once must not interleave a create with an add-column.
+    """
+    with store.db.transaction() as conn:
+        conn.execute(_CREATE_EXPORTS_TABLE)
+        present = {str(row[1]) for row in conn.execute(f"PRAGMA table_info({_EXPORTS_TABLE})")}
+        for column in _LATE_EXPORT_COLUMNS:
+            if column not in present:
+                conn.execute(f"ALTER TABLE {_EXPORTS_TABLE} ADD COLUMN {column} TEXT")
 
 
 @dataclass(frozen=True)
