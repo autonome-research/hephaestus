@@ -25,15 +25,11 @@
 // not from a web-side lock over the suspended question, because inventing one
 // would be a second session-ownership mechanism.
 //
-// ON `accepted:false`. The plan lists it with the two `data-answered-by` values.
-// It is asserted where it is deterministic — `web/test/stream/ask.test.tsx`
-// renders the loser's document — because the server pops a question the instant
-// the winner's answer releases the suspended run, so a second client that posts
-// after that (which is what a real second client does) receives
-// `404 unknown_question` rather than `accepted:false`. That refusal is asserted
-// below, on the route and in the DOM; the two-microsecond window in which the
-// route answers `accepted:false` instead is not something a browser can be
-// aimed at, and a test that tried would be a coin toss.
+// ON `accepted:false`: bounded settled records retain the winner after the
+// waiter exits, so a same-session late contender deterministically receives
+// the exact winning selection. Foreign/unknown/closed-unanswered addresses
+// refuse without disclosing a selection. Real reload recovery is covered by
+// recovery.spec.ts; these two clients attach before the live question.
 
 import { expect, test, type Page } from "@playwright/test";
 import { archive } from "./harness/archive";

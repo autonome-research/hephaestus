@@ -4,14 +4,14 @@
 // No automatic writes, retries, or scheduler.
 import { useSyncExternalStore } from "react";
 import { fetchSessions, fetchSessionModel, selectSessionModel, isSessionModelState, isExecutionSnapshot,
-  type SessionModelState, type ExecutionSnapshot, type PromptDocument } from "../api/sessions";
+  type SessionModelState, type ExecutionSnapshot, type PromptDocument, type LiveQuestions, type LiveQuestion } from "../api/sessions";
 import { WorkspaceError } from "../api/client";
 import type { ModelRef, ModelsDocument, ModelOption, ModelRevision } from "../api/providers";
 import { sameModel } from "./composerChrome";
 import { copy } from "../copy";
 import type { EventFrame } from "../api/events";
 import { askContent, ASK_POST_IDLE, type AskPost, type AskRowLike } from "./ask";
-import { panelRows } from "./transcript";
+import { panelRows, type PanelRow } from "./transcript";
 import { outcomeLabel, readableReason } from "./outcome";
 import type { ContextEnvelope, ContextMember } from "../api/sessions";
 import { emptyHistory, type HistoryProgress } from "./history";
@@ -36,6 +36,10 @@ export interface Conversation {
   readonly contextDropped: ReadonlySet<ContextMember>;
   readonly contextAdded: ReadonlySet<ContextMember>;
   readonly answers: Readonly<Record<string, AskPost>>;
+  readonly recovered: readonly (LiveQuestion & { readonly epoch: string })[];
+  readonly liveQuestions: (LiveQuestions & { readonly epoch: string }) | null;
+  readonly recoveryChecking: boolean;
+  readonly closedRuns: ReadonlySet<string>;
   readonly model: SessionModelState | null;
   readonly modelChecking: boolean;
   readonly modelPending: boolean;
@@ -66,7 +70,8 @@ export interface CurrentTurn {
 }
 const EMPTY: Conversation = {
   draft: { text: "", revision: 0 }, contextDropped: new Set(), contextAdded: new Set(),
-  answers: {}, attempt: null, execution: null,
+  answers: {}, recovered: [], liveQuestions: null, recoveryChecking: false, closedRuns: new Set(),
+  attempt: null, execution: null,
   checking: true, stopRequested: null, history: emptyHistory(),
   live: emptyLive("reconnecting"), barrier: 0,
   model: null, modelChecking: true, modelPending: false, modelError: null, modelBarrier: 0,
@@ -75,11 +80,35 @@ const EMPTY: Conversation = {
 /** Historical event IDs stay in their namespace; only the prompt's explicit
  * turn→run binding may relate a recorded question to execution ownership. */
 export function questionRunId(c: Conversation, row: AskRowLike): string | null {
+  if (row.recovery) return row.recovery.run_id;
   const anchor = row.question ?? row.call ?? row.answer;
   if (!anchor) return null;
   return anchor.surface === "historical" && anchor.turn !== null
     ? c.history.userPrompts.find(prompt => prompt.turn === anchor.turn)?.run_id ?? null
     : anchor.runId;
+}
+/** Keep archived rows unchanged. Only an explicit live question ID joins a
+ * recovery read to a live row; text/tool resemblance never joins history. */
+export function conversationRows(c: Conversation, sid?: string | null): readonly PanelRow[] {
+  const rows = [...panelRows(c.history.items, c.live.entries, visiblePrompts(c), sid)];
+  for (const recovery of c.recovered) {
+    const index = rows.findIndex(row => recovery.epoch === c.execution?.epoch && row.row === "ask" && askContent(row).questionId === recovery.question_id
+      && questionRunId(c, row) === recovery.run_id && (!row.recovery || row.recovery.epoch === recovery.epoch));
+    const existing = rows[index];
+    if (existing?.row === "ask") {
+      if (existing.question === null) rows[index] = { ...existing, source: "live_state", recovery };
+    } else rows.push({ row: "ask", key: `recovery:${recovery.epoch}:${recovery.run_id}:${recovery.question_id}`,
+      source: "live_state", recovery, question: null, call: null, result: null, answer: null, status: "running" });
+  }
+  return rows;
+}
+function pendingAtRead(c: Conversation, row: AskRowLike): boolean {
+  if (c.recoveryChecking || (row.recovery && row.recovery.epoch !== c.execution?.epoch)) return false;
+  const q = askContent(row);
+  if (c.closedRuns.has(questionRunId(c, row) ?? "")) return false;
+  if (c.liveQuestions === null) return row.source !== "live_state";
+  return c.liveQuestions.epoch === c.execution?.epoch && c.liveQuestions.unavailable_reason === null
+    && c.liveQuestions.pending.some(p => p.question_id === q.questionId && p.run_id === questionRunId(c, row));
 }
 export function currentTurn(c: Conversation, selected = true): CurrentTurn {
   const e = c.execution;
@@ -91,7 +120,10 @@ export function currentTurn(c: Conversation, selected = true): CurrentTurn {
   const pending = c.attempt?.phase === "sending";
   const newTerminal = terminal && terminal.run_id === e?.run_id
     && (!pending || terminal.run_id !== c.attempt?.baselineRunId);
-  if (selected && uncertain) status = pending && active === null ? "Sending request" : "Checking";
+  if (selected && uncertain) {
+    status = pending && active === null ? "Sending request" : "Checking";
+    if (c.recoveryChecking && c.recovered.some(q => q.run_id === active)) reason = copy.stream.ask.recoveryChecking;
+  }
   else if (active !== null) status = c.stopRequested === active ? "Stop requested" : "Working";
   else if (newTerminal) {
     status = outcomeLabel(terminal.state) as CurrentTurn["status"];
@@ -106,16 +138,19 @@ export function currentTurn(c: Conversation, selected = true): CurrentTurn {
   }
   let questionId: string | null = null;
   if (active !== null && !uncertain && c.stopRequested !== active) {
-    for (const row of panelRows(c.history.items, c.live.entries, visiblePrompts(c))) {
+    for (const row of conversationRows(c)) {
       if (row.row !== "ask" || questionRunId(c, row) !== active) continue;
       const initial = askContent(row);
       const content = askContent(row, initial.questionId === null ? ASK_POST_IDLE : c.answers[initial.questionId]);
-      if (content.state === "submitting" || content.state === "answerable") {
+      if (content.state === "submitting" || (content.state === "answerable" && pendingAtRead(c, row))) {
         questionId = content.questionId;
         status = content.state === "submitting" ? "Recording answer" : "Waiting for your answer";
-      } else if (!content.answered && content.state !== "abandoned") {
+      } else if (!content.answered && content.state !== "abandoned"
+        && !(row.source === "tool_result" && c.recovered.some(q => q.run_id === active))) {
         status = "Checking";
-        reason = content.refusal ? "Checking whether the answer was recorded; nothing will be sent again." : "The live question could not be recovered. You can stop the known run.";
+        reason = content.refusal ? "Checking whether the answer was recorded; nothing will be sent again."
+          : row.source === "live_state" || c.recoveryChecking ? copy.stream.ask.recoveryChecking
+          : "The live question could not be recovered. You can stop the known run.";
       }
     }
   }
@@ -126,7 +161,7 @@ export function currentTurn(c: Conversation, selected = true): CurrentTurn {
       ? !c.modelChecking && c.model?.state === "ready" && c.model.current !== null
         && !uncertain && e?.admission_available === true
       : c.proposal?.available === true),
-    canAnswer: !uncertain && active !== null && c.stopRequested !== active,
+    canAnswer: !uncertain && !c.recoveryChecking && active !== null && !c.closedRuns.has(active) && c.stopRequested !== active,
     terminalRunId: terminal?.run_id === e?.run_id ? terminal?.run_id ?? null : null,
     stopRequested: active !== null && c.stopRequested === active,
   };
@@ -185,13 +220,13 @@ export function createConversationStore() {
       const turn = currentTurn(c);
       if (id === null || content.sessionId !== sid || !turn.canAnswer
         || turn.questionId !== id || turn.status !== "Waiting for your answer"
-        || turn.runId !== (row.question ?? row.call)?.runId
+        || turn.runId !== questionRunId(c, row) || !pendingAtRead(c, row)
         || askContent(row, c.answers[id]).state !== "answerable") return false;
-      update(sid, c => ({ ...c, answers: { ...c.answers, [id]: { phase: "sending" } } }));
+      update(sid, c => ({ ...c, barrier: ++clock, answers: { ...c.answers, [id]: { phase: "sending" } } }));
       return true;
     },
     answer(sid: string, id: string, post: AskPost) {
-      update(sid, c => ({ ...c, answers: { ...c.answers, [id]: post } }));
+      update(sid, c => ({ ...c, barrier: ++clock, answers: { ...c.answers, [id]: post } }));
     },
     begin(sid: string | null, context?: ContextEnvelope, reviewedModelRevision?: ModelRevision): SendAttempt | null {
       const c = get(sid);
@@ -223,15 +258,25 @@ export function createConversationStore() {
       update(sid, c => ({ ...c, modelPending: true, modelError: null, modelBarrier: ++clock, barrier: clock }));
       return revision;
     },
-    modelSnapshot(sid: string, model: SessionModelState, execution: ExecutionSnapshot | undefined, ticket: number) {
+    modelSnapshot(sid: string, model: SessionModelState, execution: ExecutionSnapshot | undefined, ticket: number, questions?: LiveQuestions) {
       update(sid, c => {
         if (ticket < c.modelBarrier || ticket < c.barrier) return c;
         const prior = c.model?.revision;
         if (prior?.epoch === model.revision.epoch && prior.version > model.revision.version) return c;
         const e = c.execution;
-        const acceptExecution = execution !== undefined && !(e?.epoch === execution.epoch && e.version > execution.version);
+        const acceptExecution = execution !== undefined && !(e?.epoch === execution.epoch && e.version > execution.version)
+          && !(execution.active_run_id && c.closedRuns.has(execution.active_run_id));
+        if (questions && c.liveQuestions && c.liveQuestions.epoch === execution?.epoch && questions.revision < c.liveQuestions.revision) return c;
+        const recovered = [...c.recovered];
+        if (acceptExecution && questions) for (const q of questions.pending) {
+          if (!recovered.some(old => old.epoch === execution.epoch && old.run_id === q.run_id && old.question_id === q.question_id)) recovered.push({ ...q, epoch: execution.epoch });
+        }
         return { ...c, model, modelChecking: false, modelBarrier: ticket,
-          ...(acceptExecution ? { execution, checking: false, barrier: ticket } : {}) };
+          ...(acceptExecution ? { execution, checking: false, barrier: ticket, recovered,
+            liveQuestions: questions ? { ...questions, epoch: execution.epoch } : null,
+            recoveryChecking: questions?.unavailable_reason != null,
+            closedRuns: execution.terminal ? new Set([...c.closedRuns, execution.terminal.run_id]) : c.closedRuns,
+          } : {}) };
       });
     },
     echo(sid: string, text: string) { update(sid, c => ({ ...c, live: appendEcho(c.live, text) })); },
@@ -259,7 +304,9 @@ export function createConversationStore() {
         if (ticket < c.barrier || execution === undefined) return c;
         const prior = c.execution;
         if (prior?.epoch === execution.epoch && prior.version > execution.version) return c;
-        return { ...c, execution, checking: false, barrier: ticket };
+        if (execution.active_run_id && c.closedRuns.has(execution.active_run_id)) return c;
+        return { ...c, execution, checking: false, barrier: ticket,
+          closedRuns: execution.terminal ? new Set([...c.closedRuns, execution.terminal.run_id]) : c.closedRuns };
       });
     },
     unreconciled(ticket: number, present: readonly string[] = []) {
@@ -291,15 +338,18 @@ export function createConversationStore() {
         const changed = (frame.kind === "terminal" && frame.run_id === c.execution?.run_id)
           || (frame.kind !== "terminal" && frame.run_id !== c.execution?.run_id && frame.run_id !== c.live.runId);
         return { ...c, live: receive(c.live, frame), checking: c.checking || changed,
-          barrier: changed ? ++clock : c.barrier };
+          // Accepted answers and terminals are stronger than pending read snapshots.
+          closedRuns: frame.kind === "terminal" ? new Set([...c.closedRuns, frame.run_id]) : c.closedRuns,
+          ...(frame.kind === "question" ? { liveQuestions: null } : {}),
+          barrier: changed || ["answer", "terminal", "question"].includes(frame.kind) ? ++clock : c.barrier };
       });
     },
     transport(sid: string, status: LiveState["status"]) {
-      update(sid, c => ({ ...c, live: disconnected(c.live, status), checking: true, modelChecking: true, barrier: ++clock }));
+      update(sid, c => ({ ...c, live: disconnected(c.live, status), checking: true, recoveryChecking: true, modelChecking: true, barrier: ++clock }));
     },
     gap(sid: string) { update(sid, c => ({ ...c, live: resync(c.live), checking: true })); },
     stop(sid: string, runId: string) {
-      update(sid, c => c.execution?.active_run_id !== runId ? c : { ...c, stopRequested: runId });
+      update(sid, c => c.execution?.active_run_id !== runId ? c : { ...c, stopRequested: runId, barrier: ++clock });
     },
     needsRefresh() { return [...records.values()].some(c => c.checking || c.execution?.active_run_id || c.attempt?.phase === "sending" || c.attempt?.phase === "unknown"); },
   };
@@ -318,16 +368,16 @@ export const conversationStore = createConversationStore();
 /** Selected-session read only; listing remains a no-probe projection. */
 export async function readSessionModel(sid: string, checking = false): Promise<void> {
   const ticket = conversationStore.ticket();
-  if (checking) conversationStore.update(sid, c => ({ ...c, modelChecking: true, modelBarrier: ticket }));
+  if (checking) conversationStore.update(sid, c => ({ ...c, modelChecking: true, recoveryChecking: true, modelBarrier: ticket }));
   try {
     const doc = await fetchSessionModel(sid);
-    conversationStore.modelSnapshot(sid, doc.model_state, doc.execution, ticket);
+    conversationStore.modelSnapshot(sid, doc.model_state, doc.execution, ticket, doc.live_questions);
     conversationStore.update(sid, c => c.modelBarrier !== ticket
       || !(c.modelError === copy.models.readFailed || (c.modelError === copy.models.lost && c.model?.state === "ready"))
       ? c : { ...c, modelError: null });
   } catch {
     conversationStore.update(sid, c => ticket < Math.max(c.barrier, c.modelBarrier) ? c
-      : { ...c, modelChecking: true, modelError: copy.models.readFailed, modelBarrier: ticket });
+      : { ...c, checking: true, recoveryChecking: true, modelChecking: true, modelError: copy.models.readFailed, modelBarrier: ticket });
   }
 }
 /** Error extras are top-level on the wire (WorkspaceError.data preserves them). */

@@ -44,7 +44,43 @@ export interface SessionModelState {
   readonly state: "ready" | "changing" | "unavailable" | "uncertain";
   readonly reason: string | null;
 }
+export interface LiveQuestion {
+  readonly session_id: string;
+  readonly run_id: string;
+  readonly question_id: string;
+  readonly question: string;
+  readonly options: readonly (string | { readonly label: string; readonly consequence: string })[];
+  readonly allow_free_text: boolean;
+  readonly multi: boolean;
+  readonly answered: false;
+}
+export interface LiveQuestions {
+  readonly revision: number;
+  readonly pending: readonly LiveQuestion[];
+  readonly unavailable_reason: null | "run_authority_unavailable" | "ambiguous_question";
+}
+/** An absent additive field is unsupported, never an authoritative empty set. */
+export function isLiveQuestions(value: unknown, sid: string, execution: ExecutionSnapshot): value is LiveQuestions {
+  if (value === null || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  if (!Number.isSafeInteger(v["revision"]) || (v["revision"] as number) < 0
+    || ![null, "run_authority_unavailable", "ambiguous_question"].includes(v["unavailable_reason"] as string | null)
+    || !Array.isArray(v["pending"]) || v["pending"].length > 1) return false;
+  return v["pending"].every((raw: unknown) => {
+    if (raw === null || typeof raw !== "object" || v["unavailable_reason"] !== null) return false;
+    const q = raw as Record<string, unknown>;
+    return q["session_id"] === sid && typeof q["question_id"] === "string" && q["question_id"].length > 0
+      && typeof q["run_id"] === "string" && q["run_id"].length > 0
+      && q["run_id"] === execution.active_run_id && q["run_id"] === execution.run_id && execution.terminal === null
+      && execution.admission_available === false && q["answered"] === false
+      && typeof q["question"] === "string" && typeof q["multi"] === "boolean" && typeof q["allow_free_text"] === "boolean"
+      && Array.isArray(q["options"]) && q["options"].every((o: unknown) => typeof o === "string" || (o !== null && typeof o === "object"
+        && typeof (o as Record<string, unknown>)["label"] === "string" && typeof (o as Record<string, unknown>)["consequence"] === "string"));
+  });
+}
+
 export interface SessionModelDocument {
+  readonly live_questions?: LiveQuestions;
   readonly status: "ok";
   readonly session_id: string;
   readonly model_state: SessionModelState;
@@ -75,7 +111,8 @@ export function isExecutionSnapshot(value: unknown): value is ExecutionSnapshot 
 }
 function modelDocument(doc: SessionModelDocument, sid: string): SessionModelDocument {
   if (doc?.status !== "ok" || typeof doc.session_id !== "string" || doc.session_id !== sid || !isSessionModelState(doc.model_state)
-    || !isExecutionSnapshot(doc.execution)) throw new Error("Invalid session model document");
+    || !isExecutionSnapshot(doc.execution)
+    || (doc.live_questions !== undefined && !isLiveQuestions(doc.live_questions, sid, doc.execution))) throw new Error("Invalid session model document");
   return doc;
 }
 export async function fetchSessionModel(sid: string): Promise<SessionModelDocument> {

@@ -12,6 +12,7 @@ import type { RuntimeFault } from "../../stream/runtimeFault";
 import type { PanelRow, TranscriptItem } from "../../stream/transcript";
 import { presentationRows, runsWithTerminal } from "../../stream/transcript";
 import { AskUserWidget } from "./AskUserWidget";
+import { askContent } from "../../stream/ask";
 import { TextBlock, ThoughtSection } from "./ThoughtSection";
 import { EventImageInline } from "./EventImage";
 import { ToolChip } from "./ToolChip";
@@ -79,12 +80,13 @@ function Row({ row, runtimeFault, terminals, currentTurn }: {
       // Unfolded before reconciliation by presentationRows.
       return null;
     case "ask": {
-      const runId = (row.question ?? row.call ?? row.answer)?.runId ?? null;
+      const runId = row.recovery?.run_id ?? (row.question ?? row.call ?? row.answer)?.runId ?? null;
       return (
         <AskUserWidget
           row={row}
           taskStatus={currentTurn?.status === "Checking" ? copy.composer.checking : currentTurn?.status ?? null}
-          executionAllowed={currentTurn === undefined || (currentTurn.canAnswer && currentTurn.runId === runId)}
+          executionAllowed={currentTurn === undefined || (currentTurn.canAnswer && currentTurn.runId === runId
+            && currentTurn.questionId != null && currentTurn.questionId === askContent(row).questionId)}
           death={{
             fault: runtimeFault,
             runHasTerminal: runId !== null && (terminals.has(runId) || currentTurn?.terminalRunId === runId),

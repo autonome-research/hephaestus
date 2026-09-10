@@ -40,7 +40,7 @@ import {
   type EventKind,
   type HistoryEventFrame,
 } from "../api/events";
-import type { HistoryUserPrompt, TurnOutcome, TurnOutcomeState } from "../api/sessions";
+import type { HistoryUserPrompt, TurnOutcome, TurnOutcomeState, LiveQuestion } from "../api/sessions";
 
 export type Surface = "live" | "historical";
 
@@ -251,7 +251,8 @@ export type TranscriptRow =
       readonly row: "ask";
       readonly key: string;
       /** §7.3: `question` live, `tool_result` in a reopened transcript. */
-      readonly source: "question" | "tool_result";
+      readonly source: "question" | "tool_result" | "live_state";
+      readonly recovery?: LiveQuestion & { readonly epoch: string };
       readonly question: TranscriptItem | null;
       readonly call: TranscriptItem | null;
       readonly result: TranscriptItem | null;

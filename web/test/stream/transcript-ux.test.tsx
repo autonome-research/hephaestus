@@ -86,12 +86,16 @@ describe("conversation-first transcript", () => {
   it("keeps an authoritative current question actionable and outside technical disclosures", () => {
     const question = liveItem({ run_id: "run-current", session_id: "session", seq: 0,
       kind: "question", payload: { question_id: "q-current", question: "Which edge?", options: ["Top", "Bottom"] } });
-    const doc = render(groupRows([question]));
+    // The shared task projection names the actionable address; active-run
+    // ownership alone must no longer light up a stale question's controls.
+    const doc = render(groupRows([question]), { ...working, status: "Waiting for your answer", questionId: "q-current" });
     const ask = doc.querySelector("[data-question-id='q-current']");
     expect(ask).not.toBeNull();
     expect(ask?.closest("details")).toBeNull();
     expect(face(doc.body)).toContain("Which edge?");
     expect(ask?.querySelector('[data-ask-option="Top"]')?.getAttribute("aria-disabled")).not.toBe("true");
+    const unaddressed = render(groupRows([question]), working);
+    expect(unaddressed.querySelector('[data-ask-option="Top"]')?.getAttribute("aria-disabled")).toBe("true");
     const blocked = render(groupRows([question]), { ...working, status: "Checking", canAnswer: false });
     expect(blocked.querySelector('[data-ask-option="Top"]')?.getAttribute("aria-disabled")).toBe("true");
   });

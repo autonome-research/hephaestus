@@ -5,10 +5,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { fetchHistoryPage, fetchThread, type ThreadDocument } from "../api/sessions";
 import { loadHistory, type HistoryProgress } from "./history";
-import { conversationStore, currentTurn, readSessionModel, useConversation, visiblePrompts, type CurrentTurn } from "./conversation";
+import { conversationStore, currentTurn, readSessionModel, useConversation, conversationRows, type CurrentTurn } from "./conversation";
 import { sessionPromptStore } from "./sessionPrompts";
 import { loadThreadTree, threadTabs, type ThreadTab } from "./thread";
-import { panelRows, type PanelRow, type StreamState } from "./transcript";
+import { type PanelRow, type StreamState } from "./transcript";
 
 export interface StreamView {
   readonly rows: readonly PanelRow[];
@@ -95,7 +95,7 @@ export function useStream(sessionId: string | null): StreamView {
   }, [sessionId, terminalId, history.endCursor]);
   const clearRunId = useCallback(() => undefined, []); // execution reads own identity
   return {
-    rows: panelRows(history.items, live.entries, visiblePrompts(conversation), sessionId),
+    rows: conversationRows(conversation, sessionId),
     status: sessionId === null ? "historical" : live.status,
     currentTurn: turn, history,
     tabs: thread?.sid === sessionId ? thread.tabs : NO_TABS,

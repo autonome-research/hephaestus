@@ -59,7 +59,7 @@ import {
 import { fieldDisplay, parseToolResult } from "../../stream/toolResult";
 import { readToolResult } from "../../api/events";
 import { chipAttributes } from "./ToolChip";
-import { conversationStore, useConversation, readExecutionSessions, questionRunId } from "../../stream/conversation";
+import { conversationStore, useConversation, readExecutionSessions, readSessionModel, questionRunId } from "../../stream/conversation";
 import { readableReason, sanitizeDiagnostic } from "../../stream/outcome";
 import { Button, TextInput } from "../../system";
 import styles from "./Transcript.module.css";
@@ -67,7 +67,7 @@ import styles from "./Transcript.module.css";
 export function AskUserWidget({
   row,
   death = null,
-  executionAllowed = true,
+  executionAllowed: executionPermitted = true,
   taskStatus = null,
 }: {
   readonly taskStatus?: string | null;
@@ -77,6 +77,7 @@ export function AskUserWidget({
 }): React.JSX.Element | null {
   const initial = askContent(row);
   const conversation = useConversation(initial.sessionId);
+  const executionAllowed = executionPermitted && (!row.recovery || row.recovery.epoch === conversation.execution?.epoch);
   const post = initial.questionId === null ? ASK_POST_IDLE : conversation.answers[initial.questionId] ?? ASK_POST_IDLE;
   // The two in-progress answers a person can be composing. They are pixels, not
   // facts: nothing is sent until a submit, and nothing here is ever read back as
@@ -84,7 +85,7 @@ export function AskUserWidget({
   const [checked, setChecked] = useState<readonly number[]>([]);
   const [typed, setTyped] = useState("");
 
-  const anchor = row.call ?? row.question ?? row.answer;
+  const anchor = row.call ?? row.question ?? row.answer ?? { eventId: undefined, surface: undefined };
   const boundRun = questionRunId(conversation, row);
   const terminal = conversation.execution?.terminal;
   const content = askContent(row, post, {
@@ -94,7 +95,7 @@ export function AskUserWidget({
   const chip = row.call === null ? null : chipAttributes("ask_user", row.status, row.call);
   const resultPayload = row.result === null ? null : readToolResult(row.result.payload);
   const parsed = resultPayload === null ? null : parseToolResult(resultPayload.text);
-  if (anchor === null) return null;
+  if (anchor.eventId === undefined && !row.recovery) return null;
 
   // Two flags, because "the controls are here but busy" and "there are no
   // controls" are different states and rendering them the same way would make a
@@ -161,7 +162,10 @@ export function AskUserWidget({
               },
         );
       },
-    ).finally(() => { void readExecutionSessions().catch(() => undefined); });
+    ).finally(() => {
+      void readExecutionSessions().catch(() => undefined);
+      void readSessionModel(sessionId);
+    });
   }
 
   // The chip attributes are spread *before* the identity pair below: `anchor` is
@@ -187,6 +191,7 @@ export function AskUserWidget({
       <header className={styles["askHeader"]}>
         <span className={styles["askTitle"]}>{copy.stream.ask.title}</span>
       </header>
+      {content.source === "live_state" ? <p className={styles["note"]}>{copy.stream.ask.recovered}</p> : null}
 
 
       <p

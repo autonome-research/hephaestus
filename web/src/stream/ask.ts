@@ -51,7 +51,7 @@ import {
   readToolResult,
   type ClarificationOption,
 } from "../api/events";
-import type { AnswerDocument, AnsweredBy } from "../api/sessions";
+import type { AnswerDocument, AnsweredBy, LiveQuestion } from "../api/sessions";
 import type { RuntimeFault } from "./runtimeFault";
 import { parseToolResult } from "./toolResult";
 import type { ChipStatus, TranscriptItem } from "./transcript";
@@ -127,7 +127,7 @@ export type AskChoice =
   | { readonly kind: "text"; readonly text: string };
 
 export interface AskContent {
-  readonly source: "question" | "tool_result";
+  readonly source: "question" | "tool_result" | "live_state";
   readonly questionId: string | null;
   /** The question's own session, from the event envelope — never the URL's. */
   readonly sessionId: string | null;
@@ -153,7 +153,8 @@ export interface AskContent {
 }
 
 export interface AskRowLike {
-  readonly source: "question" | "tool_result";
+  readonly source: "question" | "tool_result" | "live_state";
+  readonly recovery?: LiveQuestion & { readonly epoch: string };
   readonly question: TranscriptItem | null;
   readonly call: TranscriptItem | null;
   readonly result: TranscriptItem | null;
@@ -181,7 +182,8 @@ export function askContent(
   post: AskPost = ASK_POST_IDLE,
   death: AskRuntimeDeath | null = null,
 ): AskContent {
-  const question = row.question === null ? null : readQuestion(row.question.payload);
+  const question = row.recovery ? readQuestion(row.recovery)
+    : row.question === null ? null : readQuestion(row.question.payload);
   const call = row.call === null ? null : readToolCall(row.call.payload);
   const args =
     call === null || typeof call.args !== "object" || call.args === null || Array.isArray(call.args)
@@ -205,7 +207,7 @@ export function askContent(
   // one field, `session_id`, and it is `null` when the run→session binding has
   // been evicted). Falling back to whichever session the workspace happens to be
   // showing would post an answer against a session this question is not in.
-  const sessionId = (row.question ?? row.call ?? row.answer)?.sessionId ?? null;
+  const sessionId = row.recovery?.session_id ?? (row.question ?? row.call ?? row.answer)?.sessionId ?? null;
 
   const live = row.answer === null ? null : readAnswer(row.answer.payload);
   const recorded = recordedSelection(row.result);
@@ -327,7 +329,7 @@ export function askAffordance(
 }
 
 function askUnavailable(
-  source: "question" | "tool_result",
+  source: AskRowLike["source"],
   questionId: string | null,
   sessionId: string | null,
   affordance: AskAffordance,

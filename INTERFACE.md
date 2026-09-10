@@ -675,7 +675,7 @@ the sidecar, read again, and the row is `readable: true` with
 | `GET /providers` | specs, availability, auth state, egress acknowledgements, `auth_source`, file mode — **no credential material** | §23.8 |
 | `GET /providers/catalog` | Existing `providers.list` sign-in projection: provider identities and model-ID arrays, **not** the active session model | §23.1 |
 | `GET /providers/models` | `providers.models`: declared options joined to the configured runtime's resolved names/capabilities, plus explicit proposed default | §7A.10(d) |
-| `GET /sessions/{id}/model` | `session.model.get`: `{status:"ok", session_id, model_state, execution}`; live identity or honest blocked persisted selection | §7A.10(d) |
+| `GET /sessions/{id}/model` | `session.model.get` plus Python-owned live question projection: `{status:"ok", session_id, model_state, execution, live_questions}`; `Cache-Control: no-store`; no prompt/answer/cancel | §7A.7, §7A.10(d) |
 | `GET /providers/{id}/auth/status` | `{state, type?, expires_at?, health, last_observed_at, flow?}` — metadata only | §23.8 |
 | `POST /providers/discover` **Stage 10C** | the discovery **offer**: `[{kind, provider_id, model_ids[], source_path}]` — never a secret, never a masked tail, and it runs **only** on this explicit request | §23.5 |
 
@@ -1167,8 +1167,11 @@ lossy-but-labelled channel.
 
 **`ask_user` with two clients attached.** The question broadcasts to every
 attached client. `POST /sessions/{id}/answer` is idempotent on the question id
-and **the first answer wins**: the run resumes, every client receives the
-`answer` event, and each widget disables its answer controls. A retained POST
+and **the first answer wins**: reservation releases the waiting call and later
+contenders receive the retained winner. This acknowledgment does not establish
+that the run resumed successfully or completed; accepted answer evidence and
+terminal evidence remain separate. Attached clients receive the `answer` event
+subject to the observer delivery bounds above and disable answer controls. A retained POST
 receipt may set `data-answered-by="self"|"other"`; an event/record without actor
 source omits attribution and displays a neutral recorded answer. Both the CLI's numbered prompt and the web
 widget may answer; neither is privileged. Inventing a web-side lock over a
@@ -3738,7 +3741,9 @@ historical missing result never grants active-run or answer authority.
   **reopened** `AskUserWidget` is rendered from the `ask_user` tool call and
   its tool result — which history does carry — and is marked
   `data-widget-source="tool_result"` and non-interactive. It is not
-  reconstructed from `question`/`answer`, because those are not there.
+  reconstructed from `question`/`answer`, because those are not there. A separate
+  authenticated live-state read may supply an actionable `live_state` widget
+  (§7A.7); it is not an event and cannot lend an address to historical IDs.
 - `answer` → the recorded answer (live only; see above).
 - `audit` → a compact line carrying `payload.event`.
 - `progress` → a coalesced transient indicator that never accumulates history;
@@ -4745,10 +4750,62 @@ named because the web widget must not be built to match it.
 
 **Answer address and recorded evidence are distinct.** A reopened widget is
 rebuilt from the `ask_user` call/result and marked
-`data-widget-source="tool_result"`. Without a retained live question address it
-cannot post an answer; this absence does **not** establish that its run ended.
-Only matching terminal/runtime evidence closes the run's unanswered question.
-A retained live address still requires reconciled ownership of that same run.
+`data-widget-source="tool_result"`. It cannot post an answer from that record;
+this absence does **not** establish that its run ended. Only matching
+terminal/runtime evidence closes the run's unanswered question. A live event or
+recovery address still requires reconciled ownership of that same run.
+
+**Authenticated reload/reconnect recovery.** The existing selected-session
+`GET /sessions/{id}/model` adds `live_questions` beside `execution`:
+
+```
+live_questions: {
+  revision: <process-local monotonically increasing registry integer>,
+  pending: [{session_id, run_id, question_id, question, options,
+             allow_free_text, multi, answered: false}],
+  unavailable_reason: null | "run_authority_unavailable" | "ambiguous_question"
+}
+```
+
+This is a read-only HTTP composition, not a Pi RPC/event/history extension.
+After the existing model read completes, Python captures execution and copied
+registry state under one short runtime → database → registry critical section.
+No RPC, pump operation or user wait occurs inside it. Every pending address must
+match the requested existing principal, the unique actual active runtime holder,
+latest run, run/session binding and installed run-specific answerer; durable
+cancel/terminal closure forbids fresh acceptance. Parent/child edges never lend
+answer authority; internal children without their own supported answerer cannot
+be recovered as the parent. Multiple unresolved registry candidates fail closed.
+Options/consequences and answer-shape flags are copied without translation.
+Missing/inconsistent authority returns a named unavailable reason and no
+addresses; absent additive field means unsupported, not an empty pending set.
+The response is `no-store`, under the existing bearer/loopback/principal policy.
+No new idempotency key, credential, query address, persistence or provider write
+is introduced.
+
+The answer POST retains its closed `{question_id, answer}` body. Path-session
+ownership is checked before revealing any selection, including bounded settled
+records. For a fresh answer, the same runtime/database guard orders the first
+registry reservation against durable terminal/cancel insertion and registry
+abandonment. Foreign, stale, unbound, ambiguous or closed-unanswered addresses
+refuse `404 unknown_question` without waking or exposing another session's
+answer. Same-session retained winners return `accepted:false` and the exact
+selection; eviction or process restart never recreates an address.
+
+The browser reconciles this projection on selected-session load, reconnect and
+the existing read cycle. It retains an explicit `data-widget-source="live_state"`
+card with visible recovery provenance, **no invented event ID/sequence**, and
+unchanged options/consequences. Only an explicit matching live question ID/run
+may join it to a real live row; no text, tool ID or historical ordinal matching.
+All original historical/tool/narration rows and delivery gaps remain inspectable.
+Local answer reservation/receipt, accepted answer events, terminal evidence,
+Stop, successor/epoch and read-ticket/registry-revision barriers beat older
+pending snapshots. Empty pending is not an answer, a terminal or Send permission.
+A GET is not a lease: a remote winner after the snapshot is arbitrated by POST.
+Failed reads retain held content/draft/context/model evidence, show Checking
+with recovery uncertainty, gate writes and preserve only the known-run Stop
+target. No answer/prompt replay, cancellation-to-recover, inferred actor or
+reload-durable private draft storage is permitted.
 Options and their consequences stay inline; the question's primary state never
 uses a tool-result No result badge. Recording answer suppresses duplicate actions
 and Waiting copy. Unknown answer delivery reconciles by reads, never by re-answer.

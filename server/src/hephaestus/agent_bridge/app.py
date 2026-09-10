@@ -1140,6 +1140,41 @@ class BridgeRuntime:
                 },
             }
 
+    def question_state(
+        self, session_id: str, visit: Callable[[ExecutionSnapshot, str | None], Any]
+    ) -> Any:
+        """Compose/accept live question state at one runtime-owned read point.
+
+        Lock order: runtime → database → caller's question registry. The visitor
+        must only copy/reserve registry state: no RPC, pump calls or user waits.
+        The DB lock orders reservation against ALL in-process durable terminal
+        and cancel writers, not just HTTP Stop. Those writers release the DB
+        before event taps acquire runtime ownership. No session edge confers
+        authority: principal, actual holder, latest run and binding must agree.
+        """
+        with self._lock, self._store.db.reading():
+            if self._closed or session_id not in self._principals:
+                raise UnknownSessionError("session authority unavailable", session_id=session_id)
+            execution = self._execution_snapshot(session_id)
+            holders = [r for r in self._runs.values() if r.session_id == session_id]
+            eligible = None
+            rid = execution["active_run_id"]
+            if (
+                rid
+                and len(holders) == 1
+                and holders[0].run_id == rid == execution["run_id"]
+                and self._run_sessions.get(rid) == session_id
+                and rid in self._answerers
+            ):
+                try:
+                    admission = self._admission.get(rid)
+                except NotFoundError:
+                    pass
+                else:
+                    if str(admission.state) in ("ADMITTED", "DISPATCHED"):
+                        eligible = rid
+            return visit(execution, eligible)
+
     def _model_refusal(self, session_id: str, reason: str) -> ModelSelectionError:
         data: dict[str, Any] = {
             "session_id": session_id,

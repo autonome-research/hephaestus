@@ -1705,7 +1705,8 @@ def build_app(runtime: WorkspaceRuntime) -> Starlette:
 
     async def get_session_model(request: Request) -> Response:
         return JSONResponse(
-            await asyncio.to_thread(sessions_or_refuse().backend.session_model, _session(request))
+            await asyncio.to_thread(sessions_or_refuse().session_model, _session(request)),
+            headers={"Cache-Control": "no-store"},
         )
 
     async def put_session_model(request: Request) -> Response:

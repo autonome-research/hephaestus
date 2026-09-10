@@ -34,6 +34,7 @@ from typing import Any, Final
 from hephaestus.agent_bridge.app import PromptResult, UnknownSessionError
 from hephaestus.agent_bridge.events import EventPump, HephaestusEvent, ObserverClient
 from hephaestus.agent_bridge.model_selection import (
+    ExecutionSnapshot,
     ModelRef,
     ModelRevision,
     ModelsDocument,
@@ -283,6 +284,21 @@ class FakeAgent:
                     "terminal": None,
                 },
             }
+
+    def question_state(
+        self, session_id: str, visit: Callable[[ExecutionSnapshot, str | None], Any]
+    ) -> Any:
+        # Disposable no-sidecar double; real durable interleavings are covered
+        # against BridgeRuntime, not simulated by this active-turn map.
+        with self._lock:
+            execution = self.session_model(session_id)["execution"]
+            rid = execution["active_run_id"]
+            eligible = (
+                rid
+                if rid and self._run_sessions.get(rid) == session_id and rid not in self.cancelled
+                else None
+            )
+            return visit(execution, eligible)
 
     def select_session_model(
         self, session_id: str, model: ModelRef, expected: ModelRevision

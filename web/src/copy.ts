@@ -1421,6 +1421,8 @@ export const copy = {
     /** §7.3 / §7A.7's AskUserWidget — the one place this workspace answers. */
     ask: {
       title: "Question for you",
+      recovered: "Recovered from the live run. This is current question state, not a recorded event.",
+      recoveryChecking: "Checking the live question. Held content is retained; no answer or message will be sent automatically.",
       question: "Question",
       options: "Options",
       noOptions: "This question recorded no options.",
