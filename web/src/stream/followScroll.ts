@@ -40,6 +40,39 @@ export function shouldStickToLatest(following: boolean, cause: FollowCause): boo
   return cause !== "rows" || following;
 }
 
+/** What a scroll event means for the follow state. */
+export type FollowMove = "follow" | "unfollow" | "repin" | "hold";
+
+/**
+ * Read one scroll event: did the OPERATOR leave the newest row?
+ *
+ * A scroll event is not evidence of a scroll. A transcript settles after its
+ * first paint — an image decodes, a font swaps, a markdown block reflows — and
+ * the growth alone moves the viewport's relation to the end; Chrome's scroll
+ * anchoring then fires `scroll` with nobody touching the wheel. Reading that as
+ * "the operator scrolled up" detached a followed transcript from its own
+ * output, which is the opposite of the behaviour this module exists for, and it
+ * happened exactly when output was arriving fastest.
+ *
+ * So the signal is the viewport MOVING UP (`scrollTop` decreasing), not the
+ * distance from the end. Content that grew under a pinned viewport leaves
+ * `scrollTop` where it was and is re-pinned; the operator dragging upward
+ * lowers it and detaches. `previousTop` is the last position this hook saw,
+ * not the last one it set, so a nudge inside the slack still counts as the
+ * operator's.
+ */
+export function readFollowMove(
+  previousTop: number,
+  following: boolean,
+  el: ScrollMetrics,
+  threshold = FOLLOW_BOTTOM_PX,
+): FollowMove {
+  const away = scrolledAwayFromBottom(el, threshold);
+  if (!away) return following ? "hold" : "follow";
+  if (!following) return "hold";
+  return el.scrollTop < previousTop ? "unfollow" : "repin";
+}
+
 export function pinToLatest(el: { scrollTop: number; scrollHeight: number }): void {
   el.scrollTop = el.scrollHeight;
 }
@@ -58,6 +91,9 @@ export function useFollowScroll(
   const [following, setFollowing] = useState(true);
   const followingRef = useRef(true);
   const sessionRef = useRef(sessionId);
+  //: The last position this hook OBSERVED, which is what makes a decrease
+  //: attributable to the operator rather than to the content settling.
+  const lastTopRef = useRef(0);
 
   const setFollow = (next: boolean): void => {
     followingRef.current = next;
@@ -69,6 +105,7 @@ export function useFollowScroll(
     if (el === null) return;
     setFollow(true);
     pinToLatest(el);
+    lastTopRef.current = el.scrollTop;
   }, [scrollerRef]);
 
   useLayoutEffect(() => {
@@ -80,15 +117,24 @@ export function useFollowScroll(
     if (!shouldStickToLatest(followingRef.current, cause)) return;
     if (opened) setFollow(true);
     pinToLatest(el);
+    lastTopRef.current = el.scrollTop;
   }, [sessionId, rowCount, scrollerRef]);
 
   useLayoutEffect(() => {
     const el = scrollerRef.current;
     if (el === null) return;
     const onScroll = (): void => {
-      const away = scrolledAwayFromBottom(el);
-      if (away === !followingRef.current) return;
-      setFollow(!away);
+      const move = readFollowMove(lastTopRef.current, followingRef.current, el);
+      if (move === "repin") {
+        // The content grew under a pinned viewport: stay with the newest row
+        // rather than reading the growth as the operator leaving it.
+        pinToLatest(el);
+        lastTopRef.current = el.scrollTop;
+        return;
+      }
+      lastTopRef.current = el.scrollTop;
+      if (move === "follow") setFollow(true);
+      else if (move === "unfollow") setFollow(false);
     };
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => {

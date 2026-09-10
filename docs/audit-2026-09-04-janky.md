@@ -350,7 +350,22 @@ correctly retried the part whose delegation failed. All four now take
 `reading()`; both structural checks match the MENTION of the raw connection
 rather than a call shape, which is what makes the aliased spelling visible.
 The reproduction — six busy cores beside the gate — went from about one run in
-ten to 0 in 40. The audit did not find the
+ten to 0 in 40.
+
+**A followed transcript detached from its own output (2026-09-10).** The
+pinned-image lane then failed on `web/e2e/stream.spec.ts`'s §7.4 C20 clause: the
+Latest pill was mounted on a transcript nobody had scrolled. `useFollowScroll`
+treated every `scroll` EVENT as the operator moving, and a scroll event is not
+evidence of a scroll — a transcript settles after its first paint (an image
+decodes, a font swaps, a markdown block reflows) and the growth alone changes
+the viewport's relation to the end, with Chrome's scroll anchoring firing
+`scroll` on top. So a followed transcript stopped following exactly while
+output was arriving fastest, which is the opposite of what that module exists
+for. The signal is now the viewport MOVING UP rather than its distance from the
+end: content that grew under a pinned viewport is re-pinned, the operator
+dragging up detaches, and a detached reader is still never yanked. Pinned by a
+hook-level test (`web/test/stream/followScroll-live.test.tsx`) because the
+existing unit tests covered the predicates, which were never wrong. The audit did not find the
 defect underneath them: `POST /sessions/{id}/prompt` named no timeout, so a
 whole TURN inherited `SupervisorConfig.default_timeout_s`, which is
 `timeouts.tool_seconds` — a TOOL bound around a turn that runs a model round
