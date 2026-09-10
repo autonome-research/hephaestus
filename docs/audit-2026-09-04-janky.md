@@ -319,7 +319,38 @@ SQLite reads on the shared connection is gone. The latter answered `GET
 misuse`): `opstore` enforces "no read without `reading()`" for its own package
 only, and fifteen bare statements had accumulated across six consumer modules,
 each one a concurrent write away from the same crash. A structural test now
-extends that guarantee to the consumer packages. The audit did not find the
+extends that guarantee to the consumer packages.
+
+**The repair-cap "nondeterminism" is diagnosed, and it is not a workflow
+defect (2026-09-09).** This register recorded that
+`tests/stage2/test_workflow_gate.py::test_workflow_repair_cap_stops_without_claiming_verification`
+"occasionally repairs BOTH parts instead of the shelf alone". It reproduces
+about one run in ten under CPU load (six busy cores beside it) and the cause is
+one layer down: a part's DELEGATION fails, and `repairTargets`
+(`agent/src/workflows/cad_workflow.ts`) then targets that part by its own
+documented rule — a part whose delegation did not complete is retried. Both
+parts being repaired is the correct response to the failure, not a bug in the
+cap. Two distinct delegation failures were captured, and both are races on the
+child's admission row rather than anything the workflow decides:
+
+- `InterfaceError: bad parameter or other API misuse` — the shared-connection
+  read race above, reaching the delegation path. It still fires after the
+  fifteen consumer reads were guarded, so at least one unguarded read remains
+  on that path; the structural test cannot see it because it aliases the
+  connection into a local (`conn = store.db.conn`) or reaches it through a
+  helper.
+- `NotFoundError: run cr-… has no admission row`, raised from
+  `DelegationService.dispatch` → `admission.dispatch(child_run_id)`. The child
+  is reserved ADMITTED by `_delegate` and its row is GONE by the time the
+  coordinator dispatches it, so something acknowledges that terminal in
+  between — the event pump (`events.py`) acks any terminal it observes, and the
+  child's run id is also the part session's. Ownership of a child run's
+  admission row across the pump and the delegation service is the question to
+  settle; it is a design decision, not a patch, which is why this is recorded
+  rather than guessed at.
+
+Both predate the 2026-09-09 bridge fixes: the same two errors reproduce with
+`dispatch.py` and `workflows.py` at 511d0e0. The audit did not find the
 defect underneath them: `POST /sessions/{id}/prompt` named no timeout, so a
 whole TURN inherited `SupervisorConfig.default_timeout_s`, which is
 `timeouts.tool_seconds` — a TOOL bound around a turn that runs a model round
