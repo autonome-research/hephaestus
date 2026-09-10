@@ -48,8 +48,14 @@ for (const width of [843, 1000, 1024, 1279, 1440]) {
     const chosen = (await separator.getAttribute("aria-valuenow"))!;
     expect(Number(chosen)).toBeGreaterThan(360);
     await input(page).fill("Synthetic editable draft\nSecond line");
-    const composerHeight = (await page.locator("[data-composer]").boundingBox())!.height;
-    expect(composerHeight).toBeLessThan(200);
+    const composer = (await page.locator("[data-composer]").boundingBox())!;
+    const panel = (await page.locator('[data-testid="stream-panel"]').boundingBox())!;
+    expect(composer.height).toBeLessThanOrEqual(panel.height * 0.55);
+    for (const selector of ["[data-model-button]", "[data-context-summary]", "[data-composer-input-row]", "[data-composer-hint]"]) {
+      const box = (await page.locator(selector).boundingBox())!;
+      expect(box.y).toBeGreaterThanOrEqual(composer.y);
+      expect(box.y + box.height).toBeLessThanOrEqual(composer.y + composer.height);
+    }
     await page.locator("[data-stream-collapse]").click();
     const hidden = (await page.locator('[data-stream-strip]').boundingBox())!;
     expect(hidden.width).toBeGreaterThan(hidden.height * 3);

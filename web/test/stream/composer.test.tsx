@@ -454,17 +454,15 @@ describe("the DOM contract", () => {
   });
 
   it("integrates the wired model with context above the input row (issue 120)", () => {
-    // §7A.10's 2026-09-02 amendment, plus issue 114. POSITIVE: the form's
-    // directly rendered rows number two — the context row (§7A.3(a)'s summary
-    // line) and the input row (the textarea with Send on the same row).
-    // NEGATIVE: no meta line, no action row, no model/effort vocabulary.
+    // Stable context/input core, visible keyboard hint, then bounded details.
+    // No model/effort readout substitute and no extra Send action.
     const html = markup({}, { providers: providersDocument() });
     const host = document.createElement("div");
     host.innerHTML = html;
     const form = host.querySelector("[data-composer]");
     expect(form).not.toBeNull();
     const rows = [...(form?.children ?? [])];
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(4);
     expect(rows[0]?.querySelector("[data-context-summary]")).not.toBeNull();
     expect(rows[0]?.querySelector("[data-model-button]")).not.toBeNull();
     expect(form?.querySelector("[data-composer-model]")).toBeNull();
@@ -472,8 +470,21 @@ describe("the DOM contract", () => {
     expect(html).not.toContain("data-composer-provider");
     expect(rows[1]?.hasAttribute("data-composer-input-row")).toBe(true);
     expect(rows[1]?.contains(form?.querySelector("[data-composer-send]") ?? null)).toBe(true);
-    expect(html).not.toContain("data-composer-hint");
+    expect(rows[2]?.textContent).toBe(copy.composer.sendHint);
+    expect(rows[3]?.getAttribute("data-composer-details")).toBe("");
+    expect(rows[3]?.getAttribute("aria-label")).toBe(copy.composer.messageDetails);
     expect(html).not.toContain("data-composer-cancel");
+  });
+
+  it.each(["Checking", "Completed"] as const)("does not advertise Enter sends while next-send admission is blocked after %s", status => {
+    const host = document.createElement("div");
+    host.innerHTML = markup({ currentTurn: { status, reason: "Checking session model…", runId: null,
+      terminalRunId: status === "Completed" ? "finished-run" : null,
+      canSend: false, canAnswer: false, stopRequested: false } });
+    expect(host.querySelector("[data-composer-hint]")?.textContent).toBe(copy.composer.sendHintBusy);
+    expect(host.querySelector("[data-composer-send]")?.getAttribute("aria-disabled")).toBe("true");
+    expect(host.querySelector("[data-composer-cancel]")).toBeNull();
+    expect(host.querySelector("[data-model-button]")).not.toBeNull();
   });
 
   it("adds the Cancel row only as the running exception (C15's loud path)", () => {
@@ -485,7 +496,8 @@ describe("the DOM contract", () => {
     const host = document.createElement("div");
     host.innerHTML = html;
     const form = host.querySelector("[data-composer]");
-    expect([...(form?.children ?? [])].length).toBe(4);
+    expect([...(form?.children ?? [])].length).toBe(6);
+    expect(form?.querySelector("[data-composer-details]")?.contains(form.querySelector("[data-composer-send]"))).toBe(false);
     const cancel = form?.querySelector("[data-composer-cancel]");
     expect(cancel).not.toBeNull();
     expect(host.querySelector("[data-task-action]")?.contains(cancel ?? null)).toBe(true);

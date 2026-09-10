@@ -129,14 +129,14 @@ test.describe("§7A.12 case 1 — the blank canvas reaches the workspace", () =>
       inner.x >= outer.x - 1 &&
       inner.x + inner.width <= outer.x + outer.width + 1;
     expect(within(sendBox!, inputRowBox!)).toBe(true);
-    // C15's negative half: no third row mounts at rest — no meta line, no
-    // empty action row. Cancel does not mount while nothing is cancellable
-    // (§7A.10(b)) and the state attribute says so with no control present,
-    // and the chip form does not mount while the disclosure is collapsed
-    // (§7A.3(c)).
+    // Stable context/input core, visible keyboard hint, then bounded details.
+    // No empty action row/Stop without authority; chips mount only on Preview.
     expect(
       await composer.evaluate((form) => form.children.length),
-    ).toBe(2);
+    ).toBe(4);
+    await expect(composer.locator("[data-composer-hint]")).toHaveText("Enter sends · Shift+Enter for a new line");
+    await expect(composer.getByRole("region", { name: "Message details" })).toContainText("Full model identity");
+    await expect(composer.locator("[data-composer-details] [data-composer-send]")).toHaveCount(0);
     await expect(composer).toHaveAttribute("data-cancel-state", "unavailable");
     await expect(composer.locator("[data-composer-cancel]")).toHaveCount(0);
     await expect(composer.locator("[data-context-chips]")).toHaveCount(0);

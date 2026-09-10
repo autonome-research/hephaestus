@@ -12,7 +12,7 @@ for (const width of [843, 1440]) {
     const control = page.locator("[data-model-button]");
     await expect(control).toHaveAccessibleName(/local\/fake\/spark.*Text only/);
     await expect(control).toBeEnabled();
-    const details = page.locator("[data-model-control] > details");
+    const details = page.getByRole("region", { name: "Message details" }).locator("details");
     await details.locator("summary").press("Enter");
     await expect(details).toContainText("local/fake/spark");
     await details.locator("summary").click(); // touch/click-accessible disclosure as well

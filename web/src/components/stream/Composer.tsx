@@ -333,6 +333,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   const dropped = conversation.contextDropped;
   const added = conversation.contextAdded;
   const [disclosed, setDisclosed] = useState(false);
+  const [modelDetailsContainer, setModelDetailsContainer] = useState<HTMLDivElement | null>(null);
   const [preview, setPreview] = useState<ContextDocument | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [cancelNote, setCancelNote] = useState<string | null>(null);
@@ -355,6 +356,31 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   // ModelPicker reads the live session, never the first provider declaration.
   // No thinking/effort controls or prompt fields; no implicit model changes.
   const promptRows = 2;
+  // Grow only the visible editor, never the draft revision. Include wrapped
+  // lines and width changes; longer drafts retain native internal scrolling.
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!(input instanceof HTMLTextAreaElement)) return;
+    const fit = () => {
+      const css = getComputedStyle(input);
+      const line = Number.parseFloat(css.lineHeight);
+      if (!Number.isFinite(line)) return;
+      const edges = Number.parseFloat(css.paddingTop) + Number.parseFloat(css.paddingBottom)
+        + Number.parseFloat(css.borderTopWidth) + Number.parseFloat(css.borderBottomWidth);
+      input.style.height = "0px";
+      input.style.height = `${Math.max(2 * line + edges, Math.min(input.scrollHeight + 2, 4 * line + edges))}px`;
+    };
+    fit();
+    if (typeof ResizeObserver === "undefined") return;
+    let width = input.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (input.clientWidth === width) return;
+      width = input.clientWidth;
+      fit();
+    });
+    observer.observe(input);
+    return () => observer.disconnect();
+  }, [text]);
 
   // §7A.3 (C22): ONE handler for both copies of the affordance. The line's
   // copy and the form's copy do exactly the same thing — un-drop and add the
@@ -688,7 +714,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   const unavailableReasonId = useId();
   const sendDescribes = disabledReason === "agent_unavailable";
   const sendHint =
-    sending || refusedRunInFlight ? copy.composer.sendHintBusy : copy.composer.sendHint;
+    !turn.canSend || agentUnavailable ? copy.composer.sendHintBusy : copy.composer.sendHint;
 
   // Enter sends; `stream/composerGate.ts` decides which keystroke that is.
   //
@@ -825,7 +851,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
           <p>{attempt.submitted.text}</p>
         </details> : null}
       <div className={styles["contextRow"]}>
-      <ModelPicker key={sessionId ?? "new"} sessionId={sessionId} />
+      <ModelPicker key={sessionId ?? "new"} sessionId={sessionId} detailsContainer={modelDetailsContainer} />
       {props.scopePart && state.part && props.scopePart !== state.part ?
         <p className={styles["note"]} data-context-mismatch="">
           {copy.composer.scopeMismatch(props.scopePart, state.part, summary.keys.includes("part"))}{" "}
@@ -843,32 +869,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
       />
       </div>
 
-      {/* §7A.3(c): the editable chip form IS the disclosure. It does not mount
-          while collapsed — `chipsFor` still enumerates every member, so the row
-          is complete when it is shown; what changed is when it mounts. */}
-      {disclosed && chips.length > 0 ? (
-        <ul
-          className={styles["chips"]}
-          data-context-chips=""
-          aria-label={copy.composer.contextHeading}
-        >
-          {chips.map((chip) => (
-            <ContextChipRow
-              key={chip.key}
-              chip={chip}
-              dropped={dropped.has(chip.key)}
-              onToggle={toggleChip}
-            />
-          ))}
-        </ul>
-      ) : null}
-
-      {/* §7A.10 (C15): the INPUT ROW — the textarea with Send right-aligned on
-          the same row, at the input's trailing edge, not in a row of its own.
-          §7A.10(a)'s restated testable is scoped here: in the resting state
-          this row holds exactly one element with a button role, and it is the
-          Send button below. The keyboard hint lives on Send's `title` — the
-          meta line that used to carry it no longer mounts. */}
+      {/* Stable composition core precedes the bounded detail scroller. */}
       {!turn.canSend && !agentUnavailable ? <p className={styles["note"]} data-next-draft="">
         {copy.composer.nextDraft} · {copy.composer.nextDraftHint}
       </p> : null}
@@ -911,6 +912,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
           {copy.composer.send}
         </Button>
       </div>
+      <p className={styles["hint"]} data-composer-hint="">{sendHint}</p>
 
       {/* §7A.10(b) / C15's negative half: Cancel's row is an EXCEPTION and
           mounts only while a run this tab can cancel is in flight — at rest no
@@ -963,8 +965,14 @@ export function Composer(props: ComposerProps): React.JSX.Element {
         </p>
       ) : null}
 
+      <div className={styles["messageDetails"]} data-composer-details="" data-expanded={disclosed}
+        role="region" aria-label={copy.composer.messageDetails} tabIndex={0}>
+      <div ref={setModelDetailsContainer} />
       {disclosed ? (
-        <div className={styles["disclosure"]} data-context-preview="">
+        <div className={styles["preview"]} data-context-preview="">
+          {chips.length > 0 ? <ul className={styles["chips"]} data-context-chips="" aria-label={copy.composer.contextHeading}>
+            {chips.map(chip => <ContextChipRow key={chip.key} chip={chip} dropped={dropped.has(chip.key)} onToggle={toggleChip} />)}
+          </ul> : null}
           <Button variant="quiet" onClick={addCurrentView} data-context-add-view="">
             {copy.composer.addCurrentView}
           </Button>
@@ -991,6 +999,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
           )}
         </div>
       ) : null}
+      </div>
     </form>
   );
 }

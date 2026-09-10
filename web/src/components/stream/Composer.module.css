@@ -19,13 +19,30 @@
 .composer {
   display: flex;
   flex-direction: column;
-  gap: var(--gap-stack);
-  padding: var(--space-2) var(--space-3) var(--space-3);
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
   border-top: 1px solid var(--border);
   flex: 0 0 auto;
   min-width: 0;
-  max-height: 45%;
+  max-height: 55%;
   overflow-y: auto;
+}
+
+/* Core controls never shrink behind expanded metadata. Exceptional long
+   refusals still have the form's fallback scroll rather than clipped actions. */
+.composer > * { flex-shrink: 0; }
+.composer > .messageDetails {
+  flex: 0 1 auto;
+  min-height: 28px;
+  max-height: 10rem;
+  overflow: auto;
+}
+.messageDetails[data-expanded="true"] { min-height: 64px; }
+.preview { display: flex; flex-direction: column; gap: var(--space-1); }
+.hint {
+  composes: label from "../../system/type.module.css";
+  margin: 0;
+  color: var(--ink-muted);
 }
 
 /* ---- the resting context line (§7A.3(a), 2026-09-01) ---------------- */
@@ -152,7 +169,7 @@
 }
 
 .note p { margin: 0; }
-.grow textarea { max-height: 8rem; resize: vertical; }
+.grow textarea { max-height: 8rem; resize: none; }
 
 /*
  * §7A.8's composed refusal. `stretch` — NOT `flex-start` (J-web-stream-3).
@@ -233,8 +250,6 @@
 .block {
   composes: code from "../../system/type.module.css";
   margin: 0;
-  max-height: 18rem;
-  overflow: auto;
   padding: var(--space-2);
   background: var(--surface-app);
   color: var(--ink-base);

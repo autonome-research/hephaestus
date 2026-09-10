@@ -1541,13 +1541,14 @@ export const copy = {
      * and it is announced, because an unannounced one is indistinguishable from
      * a text box that loses your newline.
      */
+    messageDetails: "Message details",
     sendHint: "Enter sends · Shift+Enter for a new line",
     /**
      * Mid-turn the box stays typable (#63) so the next message can be written,
      * but Enter must not look bound. A silent `submit()` return is the same
      * class of lie as a Send that looks enabled and does nothing (#44).
      */
-    sendHintBusy: "Draft only, not sent or queued — wait for the current task, or use Stop.",
+    sendHintBusy: "Draft only · not sent or queued · Shift+Enter for a new line",
 
     /**
      * §7A.5's TIGHTENING: the composer never retries a prompt automatically.

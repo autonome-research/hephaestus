@@ -398,12 +398,11 @@ describe("the composer is usable, and says how it is used", () => {
     expect(composer).not.toMatch(/seenTerminals\.current = count/);
   });
 
-  it("keeps a stable compact composer, and the hint out of it", () => {
+  it("keeps a bounded multiline composer with a visible keyboard hint", () => {
     expect(composer).toContain("const promptRows = 2;");
-    // AMENDED 2026-09-02 (§0.2c, C15): the meta line that used to carry the
-    // hint is struck outright — the keyboard binding lives on Send's `title`
-    // and no `data-composer-hint` row mounts in any state.
-    expect(composer).not.toContain("data-composer-hint");
+    expect(composer).toContain("4 * line + edges");
+    expect(composer).toContain("data-composer-hint");
+    expect(composer).toContain("data-composer-details");
     expect(composer).toMatch(/title=\{sendHint\}/);
   });
 });

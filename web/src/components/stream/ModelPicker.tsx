@@ -1,6 +1,7 @@
 // Copyright 2026 The Hephaestus Authors
 // SPDX-License-Identifier: Apache-2.0
 import { useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import { loadModels, type ModelOption } from "../../api/providers";
 import { copy } from "../../copy";
@@ -16,9 +17,11 @@ export interface CreationModelChoice {
   readonly onChoose: (option: ModelOption) => void;
 }
 
-export function ModelPicker({ sessionId, creation }: {
+export function ModelPicker({ sessionId, creation, detailsContainer }: {
   readonly sessionId: string | null;
   readonly creation?: CreationModelChoice;
+  /** Composer metadata shares its bounded details region; dialogs stay inline. */
+  readonly detailsContainer?: HTMLElement | null;
 }): React.JSX.Element {
   const c = useConversation(sessionId);
   const [open, setOpen] = useState(false);
@@ -57,6 +60,11 @@ export function ModelPicker({ sessionId, creation }: {
     void catalog.refetch();
     if (sessionId !== null) void readSessionModel(sessionId, true);
   };
+  const details = <details className={styles["details"]}>
+    <summary>{copy.models.details}</summary>
+    <p>{prefix}: {model === null ? copy.models.none : modelIdentity(model)} · {capability}</p>
+    {c.model?.pending_selection ? <p>{copy.models.changing} {modelIdentity(c.model.pending_selection)}</p> : null}
+  </details>;
   return <div className={styles["control"]} data-model-control="">
     <p className={styles["note"]}>{label}</p>
     <Button variant="secondary" onClick={show} className={styles["button"]}
@@ -65,11 +73,7 @@ export function ModelPicker({ sessionId, creation }: {
       <span aria-hidden="true" className={styles["identity"]}>{sessionId === null ? `${prefix}: ` : ""}{model === null ? copy.models.none : "name" in model && typeof model.name === "string" ? model.name : model.model_id}</span>
       <span aria-hidden="true" className={styles["badge"]}>{capability}</span>
     </Button>
-    <details className={styles["details"]}>
-      <summary>{copy.models.details}</summary>
-      <p>{prefix}: {model === null ? copy.models.none : modelIdentity(model)} · {capability}</p>
-      {c.model?.pending_selection ? <p>{copy.models.changing} {modelIdentity(c.model.pending_selection)}</p> : null}
-    </details>
+    {detailsContainer === undefined ? details : detailsContainer === null ? null : createPortal(details, detailsContainer)}
     {sessionId !== null && busy ? <p className={styles["note"]}>{reason}</p> : null}
     {sessionId !== null && c.model?.state === "uncertain" ? <p role="status">{copy.models.uncertain}</p> : null}
     {(sessionId === null && model && "available" in model && !model.available) || (sessionId !== null && c.model?.reason) ?

@@ -338,7 +338,7 @@ in place, never silently rewritten.
 | R7 | ok-card demotion | **§4.7** | C11 |
 | R8 | Stream width | **§4.1** | C12 |
 | R9 | Provider rail consolidation | **§23.8** | C13-C14 |
-| R10 | Composer two rows | **§7A.10** | C15 |
+| R10 | Composer core and details | **§7A.10** | C15 |
 | R11 | Geometry-table visibility column | **§6.1** | C16-C17 |
 | R12 | Viewport overlay contract | **§5.5**, **§7.4** | C18-C20 |
 | R13 | Run-start boundaries | **§7.3** | C21 |
@@ -5215,11 +5215,10 @@ lost-POST statement ("the turn may have started"), §7A.8's `cause`, and every
 disabled *reason* are **exempt** — they are the exceptional path, and this
 amendment shortens the resting path only.
 
-**AMENDED 2026-09-02 (§0.2c, C15) — the resting composer is two rows, counted.**
-The 2026-09-01 amendment took the composer to one summary line, an input, and
-one button, and the build still stacked them four high: context line, input,
-a meta line for the model chip, an action row for Send. Normative — the resting
-composer has **two direct regions**, whose content may wrap:
+**Stable composition core and bounded details (§0.2c, C15).**
+The resting composer has four direct regions. Context and editor/Send precede
+expanded metadata, so checking the send contract does not require scrolling
+away from the draft. Content may wrap:
 
 1. **The context region** contains the actual model control in clause (d),
    followed by §7A.3(a)'s compact wrapping Next message includes line and, when
@@ -5232,14 +5231,26 @@ composer has **two direct regions**, whose content may wrap:
    row — the action row it queried no longer mounts at rest; this clause
    states where that button sits.
 
-**The negative half:** no decorative model chip, empty action row or redundant
-keyboard-hint band mounts at rest. The form contains context region plus input
-row. Active/uncertain tasks add the named task/Stop row, separate unqueued next
-draft label, and retained-attempt/delivery reasons specified in §7A.5–6.
-Expanded Preview is independently scrollable and Send remains reachable at843.
-**Testable:** an admissible resting form has two direct regions; its actual
-model is inside the context region; Send's box lies inside the input row;
-`[data-composer-model]` is absent.
+3. **Keyboard hint** beside the editor: Enter sends / Shift+Enter newline;
+   while busy it explicitly says draft only, not sent or queued. Send retains
+   its disabled reason and the keyboard/form/click paths share the same guard.
+4. **Message details**, one bounded, keyboard-scrollable region: Full model
+   identity, and when Preview is expanded all opt-outs, Add current view,
+   advisory and raw preview. Full identity remains inline in the creation dialog.
+   No nested raw-preview scrollbar. Actual model/capability and genuine
+   uncertainty remain in the core; metadata scrolling does not hide them.
+
+The editor grows from two to four visual lines including wrapping; longer
+text scrolls internally. This is presentation only, never a draft/attempt revision
+or persistence change. The composer uses at most55% of panel height with compact
+spacing; ordinary expanded Preview must not push editor/Send/context/model offscreen
+at1440,1280,1024,843. Retain a meaningful separate transcript region. Exceptional
+long refusals retain fallback form scrolling rather than clipping diagnostics.
+Active/uncertain tasks add the named task/Stop row, unqueued next-draft label and
+retained-attempt/delivery reasons in §7A.5–6; no decorative model chip or empty
+action row. **Testable:** four resting regions, one Send in the input row,
+`[data-composer-model]` absent; opening/scrolling details, navigation, creation
+Cancel and reveal cause no product mutation (Preview's existing POST is read-only).
 
 **AMENDED 2026-09-03 — the textarea stays typable.** `data-disabled-reason`
 may still be `no_session` when no tab is selected, and Send stays
