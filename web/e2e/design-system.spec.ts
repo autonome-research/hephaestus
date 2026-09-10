@@ -355,14 +355,13 @@ test("the shell grid matches §4.1's table at five widths and never overflows", 
   expect(measured[1440]?.stream).toBeGreaterThanOrEqual(360);
   expect(measured[1280]?.stream).toBeGreaterThanOrEqual(360);
 
-  // 1279 and 1024: still three columns, and the stream is the docked strip —
-  // the band where the shipped CSS and the shipped `useState` disagreed.
-  expect(measured[1279]?.columns).toBe(3);
-  expect(measured[1024]?.columns).toBe(3);
-  expect(measured[1279]?.stream).toBeLessThan(80);
-  expect(measured[1024]?.stream).toBeLessThan(80);
+  // Below1280 Parts leaves the grid; conversation intent remains open.
+  expect(measured[1279]?.columns).toBe(2);
+  expect(measured[1024]?.columns).toBe(2);
+  expect(measured[1279]?.stream).toBeGreaterThanOrEqual(360);
+  expect(measured[1024]?.stream).toBeGreaterThanOrEqual(360);
 
-  // Below 1024 the rail leaves the grid and becomes an overlay: two columns.
+  // Narrow desktop uses the same two peers.
   expect(measured[1023]?.columns).toBe(2);
 
   for (const width of WIDTHS) {
@@ -379,6 +378,8 @@ test("the Rail-hidden Stream opens as a full peer column and recollapses at a na
   const body = page.locator("[data-band]");
   await expect(body).toHaveAttribute("data-band", "narrow");
   await expect(body).toHaveAttribute("data-rail", "hidden");
+  await expect(body).toHaveAttribute("data-stream", "open");
+  await page.locator('[data-stream-collapse]').click();
   await expect(body).toHaveAttribute("data-stream", "collapsed");
   await expect(body.locator(":scope > nav")).toHaveCount(1);
   await expect(body.locator(":scope > nav")).toBeHidden();
@@ -416,9 +417,9 @@ test("the Rail-hidden Stream opens as a full peer column and recollapses at a na
     });
 
   const collapsed = await geometry();
-  expect(collapsed.columns).toBe(2);
-  expect(collapsed.streamWidth).toBeCloseTo(44, 0);
-  expect(collapsed.stageWidth + collapsed.streamWidth).toBeCloseTo(collapsed.bodyWidth, 0);
+  expect(collapsed.columns).toBe(1);
+  expect(collapsed.streamWidth).toBeCloseTo(collapsed.bodyWidth, 0);
+  expect(collapsed.stageWidth).toBeCloseTo(collapsed.bodyWidth, 0);
   expect(collapsed.streamRight).toBeCloseTo(collapsed.bodyRight, 0);
   expect(collapsed.panelWidth).toBeNull();
   expect(collapsed.overflow).toBe(false);
@@ -477,25 +478,25 @@ test("the header draws one build-state chip, and it is the pin (§4.1(d))", asyn
   await expect(page.locator("[data-pin-mode]").first()).toHaveAttribute("data-pin-mode", /.+/);
 });
 
-test("the collapsed stream strip carries no count, dot, or badge (§4.1(f))", async ({ page }) => {
-  // Repair (b): "the docked strip with an unread count" is WITHDRAWN, recorded
-  // as §19 item 42, and the strip renders the strip and nothing else. This is
-  // the assertion that makes the deferral a decision rather than a silence.
+test("hidden return carries session/task state, not an invented unread count (§4.1(f))", async ({ page }) => {
   await open(page, route(PART));
   await expect(page.locator("[data-testid='artifact-pin']")).toBeVisible();
   await page.setViewportSize({ width: 1279, height: 1000 });
   await expect(page.locator("[data-band]")).toHaveAttribute("data-band", "medium");
 
+  await page.locator('[data-stream-collapse]').click();
   const strip = page.locator("[data-stream-strip]");
   await expect(strip).toHaveCount(1);
+  await expect(strip.locator('[data-return-state]')).toHaveCount(1);
+  await expect(strip).toContainText('Conversation');
   await expect(strip.locator("[data-resync-count]")).toHaveCount(0);
   await expect(strip.locator("[data-stream-state]")).toHaveCount(0);
   await expect(strip.locator("[role='status']")).toHaveCount(0);
-  // No number, in any shape: a count that arrived as "9+" would still be one.
-  expect(((await strip.textContent()) ?? "").replace(/\s+/gu, "")).not.toMatch(/[0-9]/u);
+  // Human session titles may contain numbers; an unread counter may not exist.
+  await expect(strip.locator('[data-unread], [data-stream-count], [data-stream-unread]')).toHaveCount(0);
 });
 
-test("the rail overlay below 1024px can be dismissed (§4.1(b), §3.13.4)", async ({ page }) => {
+test("the rail overlay below1280px can be dismissed (§4.1(b), §3.13.4)", async ({ page }) => {
   await open(page, route(PART));
   await page.setViewportSize({ width: 1000, height: 900 });
   await expect(page.locator("[data-band]")).toHaveAttribute("data-band", "narrow");

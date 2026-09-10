@@ -2161,9 +2161,9 @@ testable.
    reachable by Tab. Tab bars implement roving tabindex with
    `role="tablist"`/`tab`/`aria-selected`; the rail tree implements arrow-key
    navigation with `role="tree"`/`treeitem`/`aria-expanded`; popovers trap focus,
-   restore it to the opener, and close on `Escape`. The rail overlay below
-   1024px gains a scrim and a close control — today it has neither and **cannot
-   be dismissed at all**.
+   restore it to the opener, and close on `Escape`. Parts overlays below1280px:
+   Close, Escape and scrim dismiss it and return focus to Parts; Tab/Shift+Tab
+   stay inside the overlay, with the covered workspace inert.
 5. **Live regions.** `aria-live="polite"` on run-terminal transitions and the
    pager; `assertive` on `RefusalBanner`.
 6. **Target size.** Every control ≥ 24×24px hit area, achieved by padding rather
@@ -2268,53 +2268,52 @@ surface except the three the operator asked us to add.
   default. Giving the agent a column rather than a bottom drawer is the
   "collaborator, not console" claim cashed out in layout.
 
-Breakpoints: below 1280px the Stream collapses to a docked strip ~~with an
-unread count~~ **STRUCK 2026-09-01, repair (b) — see clause (f) of the
-2026-09-01 amendment below, which defers the unread count explicitly rather than
-leaving it a normative clause nothing implements**; below 1024px the Rail
-collapses to an overlay. There is no phone layout and none is attempted.
+Responsive capacity: Parts is a column at1280px and above, a dismissible
+closed-by-default overlay below1280px. Conversation is open on first entry at
+supported desktop widths843px and above and remains a full-height peer when
+open. Width changes never override explicit Hide/Open intent or auto-open
+Parts. There is no phone layout and none is attempted.
 
 **AMENDED 2026-08-28 — three corrections, each a defect the shipped build can
 be measured exhibiting.**
 
-**(a) The breakpoint has one authority, not two.** Measured today:
+**(a) Capacity and intent have distinct ownership.** `useBreakpoint.ts` alone
+measures width into the client shell presentation store, separate from §4.5's
+URL record. CSS has no media query changing `grid-template-columns`; React sets
+`data-stream`/`data-rail` from that store. Width clamps dimensions, never session,
+actual model, draft/submitted attempt, reading anchor/disclosures or task state.
+Explicit Hide/Open survives every band crossing, including a pending width
+observation after a focus-only Skip action.
 
-| width | `grid-template-columns` | stream box | stream `scrollWidth` | body overflows |
-|---|---|---|---|---|
-| 1440 | `280px 740px 420px` | 420 | 419 | no |
-| 1280 | `280px 580px 420px` | 420 | 419 | no |
-| **1279** | `280px 955px 44px` | **44** | **81** | **yes** |
-| **1024** | `280px 700px 44px` | **44** | **81** | **yes** |
-| 1023 | `979px 44px` | 44 | 81 | yes |
+| width | default Parts | open conversation width | design width |
+|---|---|---|---|
+| 1440 | 280px column | 420px | 740px |
+| 1280 | 280px column | 384px | 616px |
+| 1024 | closed overlay | 360px | 664px |
+| 843 | closed overlay | 360px | 483px |
 
-`Shell.module.css` collapses the column; `Shell.tsx` decides whether the panel
-renders. Between 1024 and 1279 they disagree and `StreamPanel` shreds into a
-one-word-per-line ribbon. 1280×800 is the default MacBook Air logical
-resolution and any half-screen split on a 2560px monitor lands inside the broken
-band; this is not an edge case.
+Budgets include seams; explicit separator preference can change these widths
+within §7's capacity clamps. At843×800 all task actions (Go to question and
+Stop while authorized) and keyboard separators remain reachable without document
+horizontal overflow or overlapping controls. The transition
+1440→1280→1024→843→1024→1440 preserves active question/address, session/model,
+next draft, immutable attempt and valid per-session reading/disclosures. Layout
+and focus changes never create, send, answer or cancel.
 
-**TIGHTENING (binds G4's shell deliverable):** `web/src/system/useBreakpoint.ts`
-is the **sole** authority. It writes `streamOpen` / `railOverlay` into workspace
-state; `Shell.module.css` keeps **no** media query that changes
-`grid-template-columns`; the grid is driven by `data-stream` and `data-rail`,
-which React sets. A user's explicit collapse survives a resize inside a band and
-is re-evaluated on a band crossing. **The Stream strip is a control, not a
-narrower panel** (§7A.1): focusing or activating it expands the column, because
-a composer cannot live in 44px.
-
-**(b) `data-rail` is wired, not deleted.** `grep -rn 'data-rail' web/src`
-returns exactly one hit — the CSS rule that consumes it. Nothing sets it, so
-below 1024px the rail is a 280px absolutely-positioned overlay covering a third
-of the stage with no scrim, no close control, and **no dismissal**.
-`useBreakpoint` sets it; the header gains a rail toggle; the overlay gains a
-scrim, an `Escape` handler, and trapped focus (§3.13.4).
+**(b) Parts has bounded overlay ownership.** Below1280, `data-rail` removes the
+column and the header exposes Parts. Entering overlay capacity does not open it;
+width changes within overlay capacity preserve its explicit state. Close,
+Escape and scrim dismiss and return focus, with focus containment (§3.13.4).
+Selecting a part changes inspection, not the conversation. Fit-mode resizes
+projection extents to the canvas; deliberate orbit/zoom/pan remains held until
+explicit Fit/view navigation. Resize never forces a viewpoint or moves a pin.
 
 **(c) The inspector drawer stops resizing the viewport.** §4.1 says the drawer
 is "resizable"; the code makes it *variable* — `grid-template-rows: minmax(0,1fr)
 auto` with a 132px floor — which is not the same thing and is what produces the
 76% canvas-height swing of §3.3.4. The stage row becomes an explicit
 `--drawer-height` (`clamp(200px, 32vh, 420px)` by default) with a 6px drag
-handle writing it into workspace state; `.content { overflow: auto }` already
+handle writing it into the client shell presentation store; `.content { overflow: auto }` already
 exists and takes the excess. Height is then identical across tabs **by
 construction**, which §3.14's e2e asserts.
 
@@ -2421,22 +2420,19 @@ collapse affordance into the session tab strip. Every non-band obligation of
 this clause — the hook, the accessible names, the no-visible-title rule —
 survives in (h).)*
 
-**(f) The unread count is DEFERRED, explicitly, and is not a live clause.** The
-struck breakpoint phrase promised an unread count on the 44px collapsed strip
-and nothing has ever implemented one — a normative clause silently unimplemented
-is the failure mission rule 1 exists to catch, and this document does not
-tolerate it in either direction. **The clause is withdrawn, not merely
-unbuilt**, for a stated reason: §4.1(a)/§7A.1 already make the strip a
-**control** that expands on focus or activation, so the number would be a badge
-on a thing whose only job is to stop existing; and "unread" has no definition in
-this document — the client has `(run_id, seq)` and `(session_id, ordinal)`
-(§2.8) and no read watermark of any kind, so implementing it would mean minting
-one, which is client-side derived state (§1) about events the server never
-tracked. **Normative now:** the collapsed Stream strip renders **the collapsed
-strip and nothing else** — no count, no dot, no badge. Should the count be
-wanted, it re-enters as a §19 item with a server-side or explicitly
-workspace-state-backed read watermark, and only then. It is recorded in §19 so
-it is not lost.
+**(f) Hidden conversation has a horizontal, state-bearing return control.**
+Explicit Hide expands the design and leaves `Conversation · <session title> ·
+<known task state> · Open` in a persistent horizontal row, not a44px vertical
+strip. S2's §7 task projection is its only authority: Answer needed for an
+addressable waiting question, Working, Request failed, Checking or the other
+known task states as applicable. No invented unread count, dot or read watermark.
+The selected conversation's live evidence continues at project lifetime while
+its panel is unmounted. Tab focus alone does not open it or disappear the focused
+control; explicit activation opens the same session and focuses its known
+question, or restores its reading anchor and focuses the existing composer.
+Activation writes no request/answer/cancellation and status updates steal no
+focus. Hide returns keyboard focus to this control. Skip retains §3.13's
+focus-only reveal behavior.
 
 **AMENDED 2026-09-02 (§0.2c) — three shell measurements from the refinement
 round.**
@@ -2448,8 +2444,8 @@ that already exists.** The fixed `420px` STREAM track becomes
 **The negative half:** no media query is added for this — (a)'s "no media query
 that changes `grid-template-columns`" survives verbatim, and a build that
 implements the clamp as a breakpoint has reintroduced the two-authority defect
-(a) closed. The 1280px collapse boundary and the 44px strip are unchanged; the
-clamp governs the *expanded* track only. The diagram's `420px` is read as this
+(a) closed. The1280px boundary changes Parts capacity only; the
+clamp governs the *expanded* conversation track only. The diagram's `420px` is read as this
 clamp's maximum. **Testable:** at 1280px window width the expanded stream track
 measures 384px (30vw); at ≥1400px it measures 420px; at every expanded width it
 is ≥360px, and the body never scrolls horizontally.
@@ -2483,7 +2479,7 @@ interactive element in every state.
 pressure.** At viewport widths **≥1280px** `[data-chrome-export]` and
 `[data-chrome-bom]` each render the sprite icon **and** the visible word;
 **below 1280px** they render icon-only, word on `aria-label`/`title` — the
-labels collapse at the same boundary the Stream does, one breakpoint authority
+labels collapse at the same boundary Parts becomes an overlay, one breakpoint authority
 (§4.1(a)), not a new one. Both stay visible, unmoved, at every width; the
 accessible name is identical in both forms. **Testable:** at 1440px both
 controls have a visible text node equal to their accessible name; at 1200px
@@ -2937,7 +2933,12 @@ appear as a golden mismatch in an unrelated stage.
 The slider drives `explode_t ∈ [0,1]`; the client translates each solid's node
 by `explode_offset · t`. Camera framing is not re-fit during the drag (the
 server frames once at `t=1`; the client mirrors that by framing once and
-holding). G4.6 reads pairwise centroid distances back out of the scene graph
+holding). In Fit mode only, canvas resize may recompute projection extents for
+that same full-explode bound and current view (§4.1(b)); it never frames to an
+intermediate slider value. Deliberate camera pose/zoom/pan stays held. The
+existing read-only viewport harness may expose fresh camera presentation
+snapshots to assert these constraints; it exposes no camera setter or new fact.
+G4.6 reads pairwise centroid distances back out of the scene graph
 and demands a strict increase over **all** pairs, so a single-solid fixture
 makes the clause vacuous: the fixture carries **≥3 solids** (§14).
 
@@ -3399,7 +3400,7 @@ Other prior amendments, including CAM/provider/sidebar work, remain intact.
   restores focus. The composer stays compact and stable. The divider supports
   pointer capture/cleanup plus ArrowLeft/ArrowRight, Home/End, visible focus and
   ARIA width bounds/current value. Width preference stays outside URL state;
-  viewport/rail clamps preserve usable columns and the 44px collapsed control.
+  viewport/rail clamps preserve usable columns and the horizontal hidden return control.
 
 Executable synthetic browser coverage is in `web/e2e/synthetic/`; it exercises
 real DOM interaction and isolated HTTP/WebSocket fixtures, not CSS source alone.
@@ -4277,10 +4278,10 @@ input at the popover would create two prompt paths with different scopes and
 different seeding, distinguishable only by which pixel was clicked. **The
 popover spawns; the spawned tab's composer prompts.**
 
-**TIGHTENING (binds §4.1's breakpoint prose).** A composer cannot live in a 44px
-strip, so the strip is a **control** rather than a narrower panel: focusing or
-activating it expands the column. §4.1(a) makes the breakpoint and the panel's
-open state one fact with one owner, which this section depends on.
+**Responsive composition.** A hidden conversation renders §4.1(f)'s horizontal
+state-bearing Open control, never a narrower composer. Capacity and explicit
+panel intent are separate (§4.1(a)); activation or focus-only Skip reveals the
+existing session without a write. Focus alone on Open preserves hidden intent.
 
 ### 7A.2 The blank canvas: creating a session, and the profile a web-started one gets
 
@@ -6398,8 +6399,8 @@ four amendments.** Each names its stage. **Updated 2026-08-28: the
 
 17. **`Composer` mounted in `StreamPanel`**, one per session tab, with the closed
     `data-composer-state` / `data-disabled-reason` contract (§7A.1, §7A.10), and
-    the strip-expands-on-focus behaviour that makes the <1280px breakpoint and
-    the panel's open state one fact with one owner (§4.1a).
+    the horizontal state-bearing return and persistent explicit panel intent,
+    independent of the Parts capacity boundary (§4.1a).
 18. **Four client API functions** in `web/src/api/sessions.ts`, which is
     read-only by construction today ("Read types only"): `createSession`,
     `sendPrompt`, `cancelRun`, `answerQuestion`. `apiJson` already accepts a
@@ -6522,10 +6523,8 @@ four amendments.** Each names its stage. **Updated 2026-08-28: the
     and historical ones `(session_id, ordinal)` (§2.8), no read watermark exists
     on either side, and a client-side one would be derived state (§1). Building
     it means minting a watermark — server-side, or as explicit §4.5 workspace
-    state with a stated definition of "read" — **and** re-arguing §4.1(a)'s rule
-    that the strip is a control that expands on focus, which is what makes a
-    count on it near-pointless today. Until then the strip renders no count, and
-    that is a decision rather than a gap.
+    state with a stated definition of "read". Until separately authorized, the
+    horizontal return renders known current task state (§4.1(f)), not a count.
 
 43. **The turn record, and the tail read** (§2.8, added 2026-09-03). Four
     pieces, all inside `agent/src`: the `turn` ordinal stamped on every

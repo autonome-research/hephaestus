@@ -25,6 +25,7 @@
 // plain-JSON snapshot, and nothing on the handle can change what is rendered.
 
 import type { SolidIndex } from "./scene";
+import type { ViewportEngine } from "./engine";
 import { solidCentroids } from "./scene";
 
 /** The global name the handle is published under. Namespaced, and stable. */
@@ -50,6 +51,8 @@ export interface ViewportHandle {
   readonly artifact_ref: string | null;
   /** The scene's solids. A snapshot: calling again re-reads the live graph. */
   solids(): readonly ViewportSolidSnapshot[];
+  /** Fresh presentation-only camera snapshot; no mutating handle. */
+  camera(): ReturnType<ViewportEngine["cameraSnapshot"]> | null;
 }
 
 interface HandleWindow {
@@ -81,12 +84,14 @@ export function snapshotSolids(index: SolidIndex | null): readonly ViewportSolid
 export function installViewportHandle(read: () => {
   index: SolidIndex | null;
   artifactRef: string | null;
+  camera?: ReturnType<ViewportEngine["cameraSnapshot"]> | null;
 }): () => void {
   const handle: ViewportHandle = {
     get artifact_ref() {
       return read().artifactRef;
     },
     solids: () => snapshotSolids(read().index),
+    camera: () => read().camera ?? null,
   };
   const host = window as unknown as HandleWindow;
   host[VIEWPORT_HANDLE] = handle;

@@ -13,7 +13,7 @@ test("zero-frame ownership guards every send path, drafts survive switch/collaps
   await send(page).dispatchEvent("click");
   expect(c.mutations).toEqual([]);
   await page.locator("[data-stream-collapse]").click();
-  await page.locator("[data-stream-strip]").focus();
+  await page.locator("[data-stream-strip]").press("Enter");
   await expect(input(page)).toHaveValue("Editable next draft");
   await page.locator("[data-session-switch]").click();
   await page.locator(`[data-session-option="${OTHER}"]`).click();

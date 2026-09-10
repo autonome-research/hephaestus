@@ -58,6 +58,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { flushSync } from "react-dom";
 import { WorkspaceError } from "../../api/client";
 import { attachProjection, type AttachProjection } from "../../api/attach";
 import { refreshAfterTurn } from "../../api/refresh";
@@ -305,7 +306,8 @@ export function StreamPanel(): React.JSX.Element {
       icon="chevron-right"
       iconLabel={copy.stream.collapse}
       onClick={() => {
-        shellStore.setStreamOpen(false);
+        flushSync(() => shellStore.setStreamOpen(false));
+        document.querySelector<HTMLElement>("[data-stream-strip]")?.focus();
       }}
       data-stream-collapse=""
     />

@@ -53,7 +53,7 @@ describe("chat width is local shell preference, bounded by current rail and view
     store.setStreamWidth(600);
     store.applyWidth(1024);
     expect(store.getSnapshot().streamOpen).toBe(true);
-    expect(streamSizing(store.getSnapshot()).width).toBe(384);
+    expect(streamSizing(store.getSnapshot()).width).toBe(600);
     store.applyWidth(1279);
     expect(streamSizing(store.getSnapshot()).width).toBe(600);
     store.setStreamWidth(null);

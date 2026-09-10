@@ -1,59 +1,25 @@
 // Copyright 2026 The Hephaestus Authors
 // SPDX-License-Identifier: Apache-2.0
 //
-// Shell layout state (INTERFACE.md §4.1's 2026-08-28 amendment, (a) and (c)).
+// Shell layout capacity and explicit panel intent (INTERFACE.md §4.1).
 //
-// WHAT THIS HOLDS AND WHY IT IS NOT IN §4.5's RECORD — read this before adding
-// a field. §4.1(a) says `useBreakpoint.ts` "writes `streamOpen` / `railOverlay`
-// into workspace state", and §4.1(c) says the drag handle writes
-// `--drawer-height` "into workspace state". §4.5's record is **closed** ("Every
-// field is here; nothing else is workspace state") and is **URL-serialized**.
-// Three fields that describe the viewport's width and a drawer's pixel height
-// are not addressable state: a link carrying `railOverlay=true` would reopen on
-// a machine whose window is a different size and immediately contradict itself.
-//
-// So they live in a store of their own, on the precedent `state/visibility.ts`
-// already set for §5.4's toggles — client state, one authority, deliberately not
-// in the URL. **This is a DEVIATION from §4.1(a)/(c)'s wording and it is
-// recorded, not hidden**: the substantive requirement of both clauses — that
-// there be exactly ONE authority and that CSS not decide the layout behind
-// React's back — is met in full, and the §4.5 closure is left intact. Whoever
-// owns §4.1 should reconcile the two sentences.
-//
-// THE DEFECT (a) NAMES, MEASURED. `Shell.module.css` collapsed the stream column
-// to 44px by media query while `Shell.tsx`'s `useState(true)` decided whether the
-// panel rendered its contents. Between 1024 and 1279px they disagreed, and
-// `StreamPanel` shredded into a one-word-per-line ribbon with the body
-// overflowing horizontally:
-//
-//   width  grid-template-columns          stream box  scrollWidth  overflows
-//   1440   280px 740px 420px              420         419          no
-//   1280   280px 580px 420px              420         419          no
-//   1279   280px 955px 44px               44          81           YES
-//   1024   280px 700px 44px               44          81           YES
-//
-// 1280×800 is the default MacBook Air logical resolution and any half-screen
-// split on a 2560px monitor lands inside the broken band. This is not an edge
-// case, and the fix is that `Shell.module.css` now keeps **no** media query that
-// changes `grid-template-columns`: the grid is driven by `data-stream` and
-// `data-rail`, which React sets from this store.
-//
-// THE DEFECT (b) NAMES. `grep -rn 'data-rail' web/src` returned exactly one hit
-// — the CSS rule that *consumed* it. Nothing set it, so below 1024px the rail
-// was a 280px absolutely-positioned overlay covering a third of the stage with
-// no scrim, no close control, and **no dismissal at all**.
+// Client presentation is not §4.5's addressable URL record. This store owns
+// explicit panel intent and preferred dimensions; useBreakpoint supplies only
+// capacity. CSS consumes data-stream/data-rail, never a competing grid media
+// query. Session/model/draft/attempt/reading/task state has independent owners.
 
-/** §4.1's two thresholds, as numbers. `tokens.css` carries the same two for CSS. */
+/** Capacity thresholds; neither automatically hides the conversation. */
 export const BREAKPOINT_STREAM = 1280;
-export const BREAKPOINT_RAIL = 1024;
+export const BREAKPOINT_RAIL = 1280;
+export const BREAKPOINT_NARROW = 1024;
 
-/** The three bands §4.1's table measures. A band crossing re-evaluates defaults. */
+/** Capacity bands never reset explicit conversation intent. */
 export const BANDS = ["wide", "medium", "narrow"] as const;
 export type Band = (typeof BANDS)[number];
 
 /** Which band a viewport width is in. Pure, so a test needs no window. */
 export function bandFor(width: number): Band {
-  if (width < BREAKPOINT_RAIL) return "narrow";
+  if (width < BREAKPOINT_NARROW) return "narrow";
   if (width < BREAKPOINT_STREAM) return "medium";
   return "wide";
 }
@@ -63,7 +29,7 @@ export interface ShellState {
   readonly viewportWidth: number;
   /** Preferred expanded width; survives collapse and temporary viewport clamps, never serialized. */
   readonly streamWidth: number | null;
-  /** Whether the Stream renders its contents. `false` ⇒ the 44px strip. */
+  /** Explicit open intent; false shows a horizontal state-bearing return control. */
   readonly streamOpen: boolean;
   /** Whether the Rail is an overlay over the Stage rather than a column. */
   readonly railOverlay: boolean;
@@ -105,14 +71,7 @@ type Listener = () => void;
 
 export class ShellStore {
   #state: ShellState = DEFAULT_SHELL;
-  /**
-   * Whether the operator has collapsed or expanded the Stream **by hand** in
-   * the current band.
-   *
-   * §4.1(a): "A user's explicit collapse survives a resize inside a band and is
-   * re-evaluated on a band crossing." This flag is what makes the two halves of
-   * that sentence both true, and it is cleared by `applyWidth` on a crossing.
-   */
+  /** Whether the operator has explicitly set intent, independent of capacity. */
   #streamHeld = false;
   readonly #listeners = new Set<Listener>();
 
@@ -134,32 +93,20 @@ export class ShellStore {
     width = Math.floor(width);
     const band = bandFor(width);
     const previous = this.#state;
-    if (band === previous.band) {
-      // Re-clamp even within a band without changing explicit open/closed state.
-      if (width !== previous.viewportWidth) this.#commit({ ...previous, viewportWidth: width });
-      return;
-    }
-    this.#streamHeld = false;
+    if (width === previous.viewportWidth) return;
+    const railOverlay = width < BREAKPOINT_RAIL;
     this.#commit({
       ...previous,
       band,
       viewportWidth: width,
-      // §4.1: below 1280px the Stream collapses to a docked strip; below 1024px
-      // the Rail collapses to an overlay, and an overlay opens closed.
-      streamOpen: band === "wide",
-      railOverlay: band === "narrow",
-      railOpen: band !== "narrow",
-      drawerHeight: previous.drawerHeight,
+      railOverlay,
+      // Entering overlay capacity never auto-opens Parts. Within that capacity
+      // retain explicit overlay intent, including the 1024 band transition.
+      railOpen: railOverlay ? previous.railOverlay && previous.railOpen : true,
     });
   }
 
-  /**
-   * An explicit collapse or expand.
-   *
-   * §4.1(a): "The Stream strip is a control, not a narrower panel (§7A.1):
-   * focusing or activating it expands the column, because a composer cannot live
-   * in 44px." The strip's only affordance calls this with `true`.
-   */
+  /** Explicit Hide/Open (including focus-only Skip); width observations cannot undo it. */
   setStreamOpen(open: boolean): void {
     this.#streamHeld = true;
     if (this.#state.streamOpen === open) return;
@@ -175,7 +122,7 @@ export class ShellStore {
     this.#commit({ ...this.#state, streamWidth: next });
   }
 
-  /** Whether the current stream state is the operator's rather than the band's. */
+  /** Whether conversation intent has been explicitly set. */
   streamHeld(): boolean {
     return this.#streamHeld;
   }

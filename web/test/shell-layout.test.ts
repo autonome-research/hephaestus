@@ -81,9 +81,9 @@ describe("shell layout — usable at 1280px, not a 2400px desk", () => {
       /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+var\(--stream-width\)/,
     );
     expect(railHidden).not.toContain("var(--stream-strip-width)");
-    expect(railHiddenCollapsed).toMatch(
-      /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+var\(--stream-strip-width\)/,
-    );
+    expect(railHiddenCollapsed).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\);/);
+    expect(shell).toMatch(/\.strip\s*\{[^}]*flex-direction:\s*row/);
+    expect(shell).not.toContain("writing-mode: vertical-rl");
   });
 
   it("shortens a full artifact ref to a chip that fits the 420px stream", () => {
@@ -116,7 +116,7 @@ describe("stream aside — one child, one row (J-web-stream-1)", () => {
   const shellSrc = readFileSync(join(webSrc, "components/Shell.tsx"), "utf8");
 
   it("gives the .stream aside exactly one definite row, not a two-row template with a leftover track", () => {
-    const rule = /\.stream\s*\{([^}]*)\}/.exec(shell);
+    const rule = /^\.stream\s*\{([^}]*)\}/m.exec(shell);
     expect(rule, ".stream rule not found").not.toBeNull();
     const body = rule?.[1] ?? "";
     expect(body).toMatch(/grid-template-rows:\s*minmax\(0,\s*1fr\)\s*;/);
@@ -162,7 +162,7 @@ describe("stream aside — one child, one row (J-web-stream-1)", () => {
     // Lazy match past any comment block between `? (` and the first element,
     // since the open branch is documented in place (§4.1(h)/C25).
     const openBranch = /shell\.streamOpen\s*\?\s*\([\s\S]*?<StreamPanel\s*\/>/.exec(body);
-    const collapsedBranch = /<button[\s\S]*data-stream-strip/.exec(body);
+    const collapsedBranch = /<ConversationReturn/.exec(body);
     expect(openBranch, "open branch must render exactly <StreamPanel />").not.toBeNull();
     expect(collapsedBranch, "collapsed branch must render the strip control").not.toBeNull();
   });
@@ -207,11 +207,11 @@ describe("§4.1(f) — the collapsed strip renders no count", () => {
     return readFileSync(join(webSrc, relative), "utf8");
   }
 
-  const shell = source("components/Shell.tsx");
-  const strip = shell.slice(shell.indexOf("data-stream-strip"), shell.indexOf("</aside>"));
+  const strip = source("components/stream/ConversationReturn.tsx");
 
   it("draws the control and its name, and nothing that reports a number", () => {
-    expect(strip).toContain("<Icon");
+    expect(strip).toContain("data-return-state");
+    expect(strip).toContain("currentTurn(conversation");
     expect(strip).toContain("stripLabel");
     // No Badge, no count, no unread vocabulary. The strip's whole content is
     // the icon and the vertical name of the column it expands.

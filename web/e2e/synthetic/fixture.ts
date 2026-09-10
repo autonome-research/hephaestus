@@ -152,7 +152,7 @@ export async function setup(page: Page, initial = execution()) {
   await page.waitForFunction(() => document.querySelector("[data-pin-mode]") !== null);
   await page.evaluate(sid => { location.hash = `#/p/bracket?s=${sid}`; }, SID);
   const strip = page.locator("[data-stream-strip]");
-  if (await strip.isVisible()) await strip.focus();
+  if (await strip.isVisible()) await strip.click();
   await expect(page.locator("[data-composer-input]")).toBeVisible();
   return control;
 }

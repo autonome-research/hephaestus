@@ -6,7 +6,7 @@ import { input, setup, SID } from "./fixture";
 async function budget(page: Page, width: number) {
   const box = (await page.locator("#chat-column").boundingBox())!;
   expect(box.width).toBeGreaterThanOrEqual(360);
-  expect(width - (width < 1024 ? 0 : 280) - box.width).toBeGreaterThanOrEqual(359);
+  expect(width - (width < 1280 ? 0 : 280) - box.width).toBeGreaterThanOrEqual(359);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0);
   expect(await page.evaluate(() => document.body.scrollWidth - document.documentElement.clientWidth)).toBe(0);
   const field = (await input(page).boundingBox())!;
@@ -51,11 +51,12 @@ for (const width of [843, 1000, 1024, 1279, 1440]) {
     const composerHeight = (await page.locator("[data-composer]").boundingBox())!.height;
     expect(composerHeight).toBeLessThan(200);
     await page.locator("[data-stream-collapse]").click();
-    expect((await page.locator("#chat-column").boundingBox())!.width).toBe(44);
-    await page.locator("[data-stream-strip]").focus();
+    const hidden = (await page.locator('[data-stream-strip]').boundingBox())!;
+    expect(hidden.width).toBeGreaterThan(hidden.height * 3);
+    await page.locator("[data-stream-strip]").press('Enter');
     await expect(separator).toHaveAttribute("aria-valuenow", chosen);
     await expect(input(page)).toHaveValue("Synthetic editable draft\nSecond line");
-    if (width < 1024) {
+    if (width < 1280) {
       await page.locator("[data-rail-toggle]").click();
       await expect(page.locator("[data-rail-scrim]")).toBeVisible();
       await page.locator("[data-rail-close]").click();
@@ -121,8 +122,7 @@ test("explicit width survives viewport clamping", async ({ page }) => {
   for (const width of [843, 1000, 1024, 1279, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     await expect(page.locator("[data-band]")).toHaveAttribute("data-band", width < 1024 ? "narrow" : width < 1280 ? "medium" : "wide");
-    const strip = page.locator("[data-stream-strip]");
-    if (await strip.isVisible()) await strip.focus();
+    await expect(page.locator('[data-stream-strip]')).toHaveCount(0);
     await expect(separator).toBeVisible();
     await budget(page, width);
   }

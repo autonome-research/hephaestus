@@ -7,26 +7,10 @@
 // default. Giving the agent a column rather than a bottom drawer is the
 // 'collaborator, not console' claim cashed out in layout."
 //
-// §4.1's 2026-08-28 AMENDMENT, all three corrections, live here:
-//
-// (a) ONE BREAKPOINT AUTHORITY. `useBreakpoint()` reads the width; React writes
-//     `data-stream` and `data-rail`; `Shell.module.css` keeps **no** media query
-//     that changes `grid-template-columns`. The shipped arrangement had the CSS
-//     collapsing the column while `useState(true)` decided whether the panel
-//     rendered, and between 1024 and 1279px they disagreed and the panel shredded
-//     into a one-word-per-line ribbon with the body overflowing. `state/shell.ts`
-//     carries the measurement table.
-//
-// (b) `data-rail` IS WIRED. It was consumed by a CSS rule and set by nothing, so
-//     below 1024px the rail was a 280px overlay over a third of the stage with no
-//     scrim, no close control, and **no dismissal at all**. It now has all three,
-//     plus focus restored to the toggle that opened it (§3.13.4).
-//
-// (c) The drawer's height is explicit and lives in `Stage.tsx`.
-//
-// §4.1 also makes the collapsed Stream **a control, not a narrower panel**:
-// focusing or activating the strip expands the column, "because a composer
-// cannot live in 44px" (§7A.1).
+// Width supplies capacity, never conversation intent. Parts overlays below1280;
+// an open conversation stays a peer down to843. Explicit Hide leaves a horizontal
+// S2-backed return control; its activation reveals without writing a task.
+// Conversation evidence and S1 reading/disclosures outlive this panel's mount.
 
 import { useCallback, useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
 import { flushSync } from "react-dom";
@@ -35,7 +19,8 @@ import { useProject } from "../api/queries";
 import { copy } from "../copy";
 import { useWorkspace } from "../state/react";
 import { shellStore, streamSizing } from "../state/shell";
-import { Button, Icon, useBreakpoint } from "../system";
+import { Button, useBreakpoint } from "../system";
+import { ConversationReturn } from "./stream/ConversationReturn";
 import { bindOverlayScrollTree } from "../system/overlayScroll";
 import roles from "../system/type.module.css";
 import { Header } from "./Header";
@@ -174,9 +159,20 @@ export function Shell(): React.JSX.Element {
   useEffect(() => {
     if (!railOverlayOpen) return;
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== "Escape") return;
-      shellStore.setRailOpen(false);
-      focusRailToggle();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        shellStore.setRailOpen(false);
+        focusRailToggle();
+      }
+      if (event.key === "Tab") {
+        const controls = [...railRef.current?.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+        ) ?? []].filter(el => el.getClientRects().length > 0);
+        const first = controls[0];
+        const last = controls.at(-1);
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }
     };
     document.addEventListener("keydown", onKey);
     railRef.current?.querySelector<HTMLElement>("button, [tabindex]")?.focus();
@@ -207,6 +203,8 @@ export function Shell(): React.JSX.Element {
               onClick={() => {
                 shellStore.setRailOpen(!shell.railOpen);
               }}
+              aria-expanded={railOverlayOpen}
+              aria-controls="parts-navigation"
               data-rail-toggle=""
             />
           ) : undefined
@@ -231,6 +229,7 @@ export function Shell(): React.JSX.Element {
             data-rail-scrim=""
             onClick={() => {
               shellStore.setRailOpen(false);
+              focusRailToggle();
             }}
           />
         ) : null}
@@ -239,6 +238,7 @@ export function Shell(): React.JSX.Element {
           ref={railRef}
           className={styles["rail"]}
           aria-label={copy.rail.title}
+          id="parts-navigation"
           data-overlay-scroll=""
         >
           {shell.railOverlay ? (
@@ -288,9 +288,9 @@ export function Shell(): React.JSX.Element {
           <Stage />
         </main>
 
-        {shell.streamOpen ? <StreamResize sizing={sizing} viewportWidth={shell.viewportWidth} /> : null}
+        {shell.streamOpen && !railOverlayOpen ? <StreamResize sizing={sizing} viewportWidth={shell.viewportWidth} /> : null}
 
-        <aside className={styles["stream"]} id="chat-column" aria-label={copy.stream.title}>
+        <aside className={styles["stream"]} id="chat-column" aria-label={copy.stream.title} {...(railOverlayOpen ? { inert: "" } : {})}>
           {shell.streamOpen ? (
             /* §4.1(h), amended 2026-09-02 (C25): the eyebrow band is struck AS
                A BAND. The collapse control renders as the trailing item of the
@@ -300,39 +300,16 @@ export function Shell(): React.JSX.Element {
                renders above the transcript — the strip itself. */
             <StreamPanel />
           ) : (
-            // §4.1: the strip is a CONTROL. Focus alone expands it, because a
-            // composer cannot live in 44px and a tab stop that leads into a
-            // 44px column is a trap with extra steps.
-            //
-            // §4.1(f), amended 2026-09-01 — repair (b): **no unread count, and
-            // that is a decision rather than a gap.** The struck breakpoint
-            // prose promised "a docked strip with an unread count" and nothing
-            // ever built one. The clause is WITHDRAWN, not merely unbuilt: a
-            // badge on a control whose only job is to stop existing on focus
-            // would be a number nobody reads, and "unread" is a fact this
-            // product does not have — live events are keyed `(run_id, seq)`,
-            // historical ones `(session_id, ordinal)` (§2.8), and there is no
-            // read watermark on either side, so a count here would be
-            // client-side derived state (§1). It re-enters as §19 item 42, with
-            // a server-side or explicit §4.5 workspace-state watermark, or not
-            // at all. The strip renders the strip and nothing else — no count,
-            // no dot, no badge (asserted in `test/shell-layout.test.ts`).
-            <button
-              type="button"
-              className={styles["strip"]}
-              aria-label={copy.stream.expand}
-              aria-expanded={false}
-              data-stream-strip=""
-              onFocus={() => {
-                shellStore.setStreamOpen(true);
-              }}
-              onClick={() => {
-                shellStore.setStreamOpen(true);
-              }}
-            >
-              <Icon id="sidebar" size={13} />
-              <span className={styles["stripLabel"]}>{copy.stream.title}</span>
-            </button>
+            <ConversationReturn onOpen={(questionId) => {
+              flushSync(() => shellStore.setStreamOpen(true));
+              // Return to the same live question if one is actually addressable;
+              // otherwise retain S1's session reading anchor and focus composer.
+              const question = questionId === null ? null : document.querySelector<HTMLElement>(`[data-question-id="${CSS.escape(questionId)}"]`);
+              if (question) {
+                question.scrollIntoView({ block: "nearest" });
+                question.focus();
+              } else skipTo("composer");
+            }} />
           )}
         </aside>
       </div>

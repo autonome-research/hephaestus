@@ -292,8 +292,12 @@ export function Viewport(): React.JSX.Element {
   const [loadedIntoScene, setLoadedIntoScene] = useState<string | null>(null);
 
   const onCameraSettled = useCallback((viewName: string): void => {
-    framedRef.current = null;
+    // Recording an orbit's nearest name must not refit its zoom/pan or round
+    // its pose. Explicit view navigation and Fit still frame normally.
+    framedRef.current = `${viewName}|${workspaceStore.getSnapshot().explode_t > 0 ? "exploded" : "collapsed"}`;
     workspaceStore.update({ view: viewName });
+    setScale(engineRef.current?.scale() ?? 0);
+    setStep(engineRef.current?.gridStep() ?? 0);
   }, []);
 
   const onFit = useCallback((): void => {
@@ -326,6 +330,7 @@ export function Viewport(): React.JSX.Element {
     const removeHandle = installViewportHandle(() => ({
       index: indexRef.current,
       artifactRef: loadedRefRef.current,
+      camera: engineRef.current?.cameraSnapshot() ?? null,
     }));
     const created = engine;
     return () => {
@@ -347,6 +352,7 @@ export function Viewport(): React.JSX.Element {
       const rect = host.getBoundingClientRect();
       engineRef.current?.resize(rect.width, rect.height);
       setScale(engineRef.current?.scale() ?? 0);
+      setStep(engineRef.current?.gridStep() ?? 0);
       setStageWidth(rect.width);
     });
     observer.observe(host);
