@@ -45,6 +45,8 @@
 // measured on a `ready` canvas, where every overlay is exactly where it was.
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { flushSync } from "react-dom";
+import { shellStore } from "../../../state/shell";
 import { WorkspaceError } from "../../../api/client";
 import { copy } from "../../../copy";
 import { useBuild } from "../../../api/queries";
@@ -54,7 +56,7 @@ import { parseSectionPlane } from "../../../viewport/section";
 import { installViewportHandle } from "../../../viewport/testHook";
 import { useGlb } from "../../../viewport/useGlb";
 import { labelsForPart, visibilityStore } from "../../../state/visibility";
-import { Badge, Chip, EmptyState, type IconId } from "../../../system";
+import { Badge, Button, Chip, EmptyState, type IconId } from "../../../system";
 import type { SolidIndex } from "../../../viewport/scene";
 import { appearanceStore } from "../../../state/appearance";
 import { AppearanceControls } from "./AppearanceControls";
@@ -158,6 +160,12 @@ export function ViewportAbsence({
           <EmptyState
             icon={ABSENCE_ICON[state]}
             title={copy.viewport.notBuilt.title(name)}
+            action={<Button variant="secondary" data-unbuilt-conversation="" onClick={() => {
+              flushSync(() => shellStore.setStreamOpen(true));
+              const target = document.querySelector<HTMLElement>("[data-composer-input]:not(:disabled)")
+                ?? document.querySelector<HTMLElement>("#composer");
+              target?.focus({ preventScroll: true });
+            }}>{copy.viewport.notBuilt.open}</Button>}
             body={
               <>
                 <p>{copy.viewport.notBuilt.ask}</p>

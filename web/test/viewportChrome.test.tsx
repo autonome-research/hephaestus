@@ -184,9 +184,10 @@ describe("the not-built absence — §5.5 C10, both halves of the never-renders 
     // The title names the part — a server fact, composed not derived.
     const title = host.querySelector("[data-density] > p")?.textContent ?? "";
     expect(title).toContain("tread");
-    // Remedy one: the agent below. Remedy two: the CLI command, in `.code`.
+    // Reveal/focus conversation, never spatial "below" guidance or an implicit build.
     const body = host.querySelector("[data-density] > div")?.textContent ?? "";
-    expect(body).toContain("agent");
+    expect(body).toContain("conversation");
+    expect(host.querySelector("[data-unbuilt-conversation]")?.textContent).toBe("Open conversation");
     expect(host.querySelector("[data-not-built-command]")?.textContent).toBe("heph build tread");
   });
 });

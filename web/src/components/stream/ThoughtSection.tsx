@@ -106,6 +106,7 @@ export function TextBlock({
             <span key={item.eventId} data-event-id={item.eventId} className={styles["eventAnchor"]} />
           ))
         : null}
+      <p className={styles["roleMarker"]} data-assistant-landmark="">Assistant</p>
       <Markdown text={joined} />
     </div>
   );

@@ -25,7 +25,7 @@
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-1);
 }
 
 .row {
@@ -275,9 +275,15 @@
   align-items: center;
   gap: var(--space-2);
   min-height: var(--target-min);
-  padding-block: var(--space-1);
+  padding-block: 0;
   cursor: pointer;
   list-style: none;
+  color: var(--ink-muted);
+}
+
+.toolDone {
+  composes: label from "../../system/type.module.css";
+  flex: none;
   color: var(--ink-muted);
 }
 

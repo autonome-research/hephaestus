@@ -60,7 +60,8 @@ export function ToolChip({ toolName, call, result, images, status, children }: T
         onToggle={(event) => { setOpen(event.currentTarget.open); }}>
         <summary className={styles["toolSummary"]} aria-expanded={open}>
           <span className={styles["chipName"]}>{toolName || copy.stream.chip.unnamed}</span>
-          <StatusBadge status={status}>{copy.stream.chip.status[status]}</StatusBadge>
+          {status === "ok" ? <span className={styles["toolDone"]} data-tool-outcome="ok">{copy.stream.chip.status[status]}</span>
+            : <StatusBadge status={status}>{copy.stream.chip.status[status]}</StatusBadge>}
         </summary>
         <div className={styles["toolBody"]}>
           {conditions.map((condition) => <p key={condition} className={styles["note"]}>{condition}</p>)}

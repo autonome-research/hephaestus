@@ -2832,17 +2832,13 @@ action, and `[data-composer-send]` is present with `data-variant="secondary"`;
 with every credential rejected but the composer enabled, it has length 1 and
 it is `[data-composer-send]`.
 
-**(C11) A finished, successful tool card rests on the seam border.** `ToolChip`
-"a raised card" was implemented as `--border-strong` on every chip, so a
-transcript of routine successes read as a wall of detached cards. Tightened
-per §3.10's own split: a chip whose `data-status` is **`ok`** draws its card
-edge with **`--border`** (the seam token); only a chip whose status is
-**non-terminal or failed** — `running`, `error`, or `unknown` — draws
-`--border-strong`. The raised fill, radius, and every §7.2 attribute are
-unchanged; what changes is that detachment is now the *exception's* signal,
-which is §0.2b's discipline applied to a border. **Testable:** in a transcript
-of `ok` chips no chip's computed border colour equals `--border-strong`;
-induce one `error` chip and exactly that chip's does.
+**(C11) Compact tool rows are not raised success cards.** Each individual
+native disclosure has a transparent, unpadded outer row and a minimum24px
+summary target. Quiet Done text reduces repeated success emphasis; failed calls
+retain their error label and visible failure note. Every §7.2 identity/field
+attribute and full result remains available. **Testable:** repeated successes
+remain separate disclosures, and a failed call stays individually visible and
+inspectable without opening any group.
 
 **(C27) Metrics become a key/value grid when the drawer is wide enough to hold
 one.** The `DataTable` carrying `BuildResult.metrics` in `ResultsPanel` (the
@@ -3157,9 +3153,11 @@ part's build state is `not_built`** — the state where the well is empty becaus
 this part has simply never been built — and in no other state: with no part
 selected, `no-pin` renders as before, and a part with a failed build renders
 the failure, never this. Its `EmptyState` names the part in the `.title`
-("**`<part>` has not been built**") and its `.body` is exactly the two
-remedies, each in the reader's own vocabulary: **ask the agent in the stream
-below**, and **run `heph build <part>`** (the command in `.code`). Both facts
+("**`<part>` has not been built**") and says **Open the conversation to
+request a build**, with an **Open conversation** action. That action only
+reveals/focuses the existing composer or no-session invitation: it never
+builds, creates a session, inserts/replaces a draft, or sends. The secondary
+CLI guidance remains **run `heph build <part>`** (the command in `.code`). Both facts
 in the heading — the part name and the state — are server projections
 (`GET /parts`, `GET /parts/{part}/build`); the client composes, it does not
 derive (§1). **Testable:** select an unbuilt part with no pin — the well
@@ -3287,7 +3285,10 @@ implementation, byte-parity asserted on the canonical JSON.
 Badge vocabulary is closed and mirrors the report: `pass`, `fail`, `error`,
 `not_run`. **`not_run` renders as its own visible state with the words "not
 run"** — the rule that silence never reads as a pass is a UI obligation, not
-only a tool one.
+only a tool one. Project checks lead with a tally of the supplied badge states
+and the first attention item (error, fail, not run, then pass), never a computed
+predicate or readiness score. All measurements remain available; bundle and
+generation live in a collapsed Provenance disclosure after the checks.
 
 ### 6.4 DFM — the orphaned clause, given a home
 
@@ -3296,10 +3297,19 @@ findings in the web panel" from G6 and deferred it *to* G4/G5, whose verbatim
 text does not mention it and may not be edited. It is binding under mission
 rule 1, so it lands here as coverage inside `pnpm test:e2e`:
 
-- **`DfmPanel`** renders a `run_dfm` result: `severity_counts` header, findings
-  list, `errored_rules`, a `truncated` marker, `process`, pack
-  `{name, version, registry, registry_digest}`, `material`, and `resolved_from ∈
-  {current, artifact_ref, project_snapshot}` as a visible chip.
+- **`DfmPanel`** leads with **DFM · part · artifact relation**, the known
+  evaluation outcome, supplied `severity_counts`, and the first finding before
+  provenance. No readiness score or inferred clean result is permitted. An
+  absent run, unavailable summary, rule error, truncated/incomplete evaluation,
+  and other-artifact/stale result remain distinct. Current artifact relation
+  compares the recorded source ref with the current build projection; an
+  unavailable build read says relation unknown. Build freshness is not DFM approval.
+  All findings, `errored_rules`, and the `truncated` marker remain readable.
+  A collapsed **Provenance** disclosure retains `process`, pack
+  `{name, version, registry, registry_digest}`, `material`, full source ref,
+  auto-run setting and original `resolved_from ∈ {current, artifact_ref,
+  project_snapshot}`. That original resolution mode is not a claim that a
+  formerly current artifact is still current.
 - Each finding renders `rule_id`, `severity`, `title`, `message`, `measured`,
   `suggested_bound` + `bound_unit`, `tags`, and **artifact-bound topology
   descriptors** `{kind, solid_id, topology_index, tag}`. G6 pins that findings
@@ -3316,7 +3326,8 @@ rule 1, so it lands here as coverage inside `pnpm test:e2e`:
   workspace exposes (a) a **Run DFM** action → `POST /parts/{part}/dfm`, and (b)
   a project-settings toggle → `POST /project/config/dfm`. Collapsing them into
   one composer switch would imply a tool argument that does not exist. The e2e
-  covers (a) surfacing findings and (b) the setting round-tripping.
+  covers (a) surfacing findings and (b) the setting round-tripping. Merely
+  opening/reordering this panel never runs DFM or enables auto-run.
 - `capability_not_available` (no sandbox) renders as an explicit explanatory
   refusal card, never an empty list. Silence never reads as a pass.
 
@@ -3324,15 +3335,19 @@ rule 1, so it lands here as coverage inside `pnpm test:e2e`:
 
 ## 7. The agent stream
 
-**AMENDED — approved integrated chat semantics.** This amendment supersedes
-older presentation requirements below for repeat/cycle coalescing, prominent
-recorded/live seams, refused-echo retention, and last-live-frame cancellation.
-Other prior amendments, including CAM/provider/sidebar work, remain intact.
+**Approved integrated chat semantics.** The following ownership rules and the
+component clauses below describe one continuous conversation contract.
+Unrelated CAM/provider/sidebar commitments remain intact.
 
 - Recorded and live messages form one continuous reading surface while retaining
   their separate event identities. Each tool call has its own compact native
   disclosure, collapsed by default, with expandable arguments and results;
-  expansion survives streaming result updates. Narration stays visible. Failure
+  expansion survives streaming result updates, session return and panel remount,
+  owned by session and stable row/call identity. Compact tool rows retain at
+  least the minimum keyboard/pointer target; successful Done is quiet text,
+  not a repeated prominent success badge. Every individual call and its outcome
+  stays present; no turn-level tool group or generated summary hides calls.
+  Narration stays visible with Assistant landmarks distinct from You requests. Failure
   labels, unanswered questions and known delivery gaps stay prominent; successful
   outcome/provenance/connection details are secondary, optional diagnostics.
   A failed session read does not erase already held transcript or gap evidence.
@@ -3629,143 +3644,29 @@ schema-driven chip. Both satisfy the same attribute contract, so a degraded
 fixture never breaks the contract — it renders plainly. **A chip degrades by
 omission and names the absent fields; it never fabricates a placeholder value.**
 
-**AMENDED 2026-09-01 (§0.2b) — the chip's resting face, and repetition.** Nothing
-below touches the attribute contract above: `data-tool-name`, `data-status`,
-`data-event-id`, `data-tool-call-id` and the `data-field` set are **unchanged in
-every clause**, and both assertions of the completeness predicate still run
-against every call. What changes is what a *resting, successful, repeated* chip
-draws.
+**Individual compact tool disclosures (a–e, C4/C5/C23).** Every call has its
+own native disclosure, closed by default, even when adjacent calls or
+call/narration cycles repeat identical results. No repeat count, shared tool
+group, generated headline or turn-level accordion replaces individual calls.
+The summary names the actual tool and evidence-based outcome; Done is quiet
+text, while error/unknown/no-result states stay distinguishable. Failures have
+visible primary copy outside the disclosure. Narration remains visible in order.
 
-**(a) Consecutive identical successful calls coalesce into one row.** Define a
-**repeat group**: a maximal run of two or more transcript items that are
-*adjacent in render order with no item of any other kind between them*, share
-one `data-tool-name`, each have `data-status="ok"`, and whose §7.2 result
-documents are **byte-identical after canonical-JSON serialization**. A repeat
-group renders as **one row**: the tool name, a repeat count, the shared status
-badge, and the one-line headline `stream/toolSummary.ts` computes for the shared
-document — with **one** disclosure holding the detail.
+Each call retains its singular `data-tool-call-id` and its own event identity;
+its result and images retain their own identities even while closed. All
+`data-field` nodes remain mounted. Both completeness and groundedness assertions
+above apply independently to **every** call. The transcript identity set equals
+the underlying recorded/live evidence set, in their separate namespaces, with
+no duplicate identities or missing narration; §7.3's named presentation-row
+exclusions are the only archive exclusions. No result or payload is merged.
 
-- **Count.** The row draws `×N` where `N` is the number of calls in the group,
-  in the type role §3.8 gives a count, never as a sentence.
-- **Nothing is dropped from the DOM.** The row carries
-  `data-chip-repeat="N"`, `data-event-id` of the **first** member (so existing
-  addressing still resolves), and `data-event-ids` as a space-separated list of
-  every member's id in render order. `data-tool-call-id` likewise becomes
-  `data-tool-call-ids` on a coalesced row and stays singular on a single chip.
-  §7.2's `data-field` nodes render once, on the coalesced row, from the shared
-  document. **Testable:** for any transcript, the **set** of ids in
-  `data-event-id` ∪ `data-event-ids` across all chips equals the set of
-  tool-call event ids in the underlying entries. A coalescing that loses an id
-  fails. *Set, not multiset, and the reason is stated rather than left to the
-  test: the anchor id is deliberately published twice — once as
-  `data-event-id`, so existing addressing still resolves, and again as the first
-  entry of `data-event-ids`, so the member list is complete on its own. A
-  multiset comparison would count that anchor twice and fail on a correct
-  render, which is a testable the build cannot pass rather than a rule the build
-  must meet (§0.2b).*
-- **The negative half, stated four ways, because this is where honesty is at
-  risk.** A group does **not** form, and every member renders as its own chip,
-  when: any member's `data-status` is `error`, `running` or `unknown`; the
-  members' result documents differ in any byte; any item of another kind
-  (`text_delta`, `thought`, `image`, `question`, `answer`, `audit`, `terminal`,
-  a resync seam, or the §8 history/live seam) falls between them; or the members
-  lie on opposite sides of that seam. **Two failed calls never coalesce, even
-  when identical.** A repeated failure is the signal this column exists to
-  carry, and folding nine failures into one row would be eliding the fact
-  §4.4 forbids eliding.
-- **N=1 draws no count.** A single call renders exactly as it does today, with
-  no `data-chip-repeat` attribute.
-- Coalescing is a **rendering** operation over already-normalized entries. It
-  computes nothing, merges no payloads, and never produces a document no
-  server sent (§1). The one document a coalesced row renders is one member's,
-  and the members are byte-identical by the group's own definition.
-
-**(b) The resting face loses the field count.** The collapsed `N result fields`
-row (`copy.stream.chip.detail`, `copy.ts`:959-960) **does not render on the
-resting chip face in any state.** It renders **inside** the disclosure, as that
-disclosure's own label or first line, where a reader who asked for detail can
-use it. **Testable:** with every disclosure closed, no chip in the transcript
-renders the string produced by `copy.stream.chip.detail`; opening one disclosure
-renders it exactly once. The `data-field` nodes themselves are unchanged and
-stay in the DOM whether the disclosure is open or shut, as they already do — the
-count was chrome about a list, not the list.
-
-**(c) At most one preamble note, and never above the headline.**
-`ToolChip.tsx`:144-152 stacks up to three `<p class=note>` blocks — `unknownWhy`,
-`runningWhy`, `callMissing` — between the header and the summary line.
-**Normative:** the resting chip face renders **at most one** note, and it renders
-**below** the headline, not above it. The note renders **only** when the chip is
-in an exceptional state — `data-status` of `error`, `running` or `unknown`, or a
-missing result record. When more than one condition is true the chip draws the
-**most specific** one, in the fixed precedence `callMissing` → `unknown` →
-`running`, and the others are unmounted rather than stacked. **A chip with
-`data-status="ok"` and a result present renders no note at all.** The suppressed
-conditions are not lost: each stays on the chip's `title`, and §7.2's
-`data-field-state="unparsed"` path is untouched — an unparsed result still
-renders its stated reason in the chip body, because that is a refusal carrying
-its cause and not a preamble.
-
-**(d) What a coalesced row must still be able to say.** A group whose members
-are `ok` can still hold a result the summary cannot headline; that row renders
-`data-chip-summary="opaque"` exactly as a single chip does (§7.2's named
-fallback), and the ×N count does not change the sentence. A coalesced row is
-never `data-chip-summary` absent.
-
-**(e) These clauses bind `Transcript.tsx`, `ToolChip.tsx` and
-`stream/toolSummary.ts` only.** Grouping is decided in the transcript's row
-construction (`stream/transcript.ts`'s `PanelRow`), not inside a chip, because a
-chip cannot see its neighbours and a chip that could would be reading the
-transcript.
-
-**AMENDED 2026-09-02 (§0.2c) — cycles coalesce the way repeats do, and the
-headline gets an order.** The 2026-09-01 clause (a) covers a run of identical
-chips with nothing between them; the build's actual noise is one step more
-structured — the agent loops *tool call, short narration, same tool call, same
-narration* — and (a)'s "no item of any other kind between them" correctly
-refuses to touch it. This block extends the same discipline to that shape
-rather than loosening (a).
-
-**(C4) A cycle group coalesces from the second repetition of the pair.** Define
-a **cycle group**: a maximal run of **three or more** consecutive
-(chip-or-repeat-group, text-row) *pairs* in render order, where every pair's
-chip member shares one `data-tool-name`, every chip member has
-`data-status="ok"`, and every chip member's §7.2 result document is
-**byte-identical after canonical-JSON serialization** across the group. A cycle
-group renders as: the **first pair in full**, exactly as ungrouped — its chip
-(or ×N row) and its text row — then **one compact line per subsequent pair**:
-the tool name, the running `×N` ordinal, the shared status badge, and nothing
-else, each compact line **≤ 1.5× target-min (36px, §0.2c) tall**. The
-subsequent pairs' **text rows and the chips' Detail render behind the first
-pair's disclosure**, in order, so one disclosure opens the whole cycle.
-**The negative half, same four ways as (a):** no group forms if any chip
-member's status is not `ok`, if any result document differs in a byte, if the
-interleaved text rows are joined by any item of a third kind (`thought`,
-`image`, `question`, `answer`, `audit`, `terminal`, a resync seam, the §8 seam,
-or a §7.3 presentation row), or across that seam. Two pairs are two pairs —
-the threshold is three, because two occurrences are not yet a cycle.
-
-**(C5) A cycle group loses nothing the DOM discipline tracks.** Every clause of
-(a)'s id rule applies unchanged: the first pair's chip anchors `data-event-id`;
-every member event of the group — chip **and** text events, compact lines
-included — appears in `data-event-ids` (and tool-call ids in
-`data-tool-call-ids`) on the elements that render them; and the (a) testable's
-set equality over the whole transcript holds identically for a transcript
-containing cycle groups. Text content is never dropped: the folded text rows
-render inside the disclosure with their own `data-event-id` spans, exactly as
-§8's grouping rule already requires. A cycle rendering that elides a text
-row's content, rather than relocating it behind the disclosure, fails this
-clause and §4.4 together.
-
-**(C23) The headline field priority is closed and ordered.** The one-line
-headline `stream/toolSummary.ts` computes chooses its fields in this order and
-no other: **(1) a `status` field, (2) a `message` field, (3) a `name` field,
-(4) `*_ref` fields (abbreviated per §4.1(a)), (5) bare counters last** —
-counts of things summarize a document least, which is §0.2b's "a count is not a
-fact" applied to the headline. A document with none of these renders
-`data-chip-summary="opaque"` exactly as before; the priority adds no new
-sentence, it orders the existing choice. **Testable:** for a fixture document
-carrying both a `message` and a counter, the headline renders the message and
-not the counter.
+Arguments, full results, unparsed-result reasons and missing-record explanations
+are inside that call's disclosure, accessible by keyboard rather than only by
+hover. The `N result fields` count appears only when its disclosure is open,
+exactly once; it is never the resting headline. Minimum target size remains
+24px. Session/stable-row-owned expansion survives result growth, navigation and
+panel remount. Unknown evidence never reads as successful execution, and a
+historical missing result never grants active-run or answer authority.
 
 ### 7.3 Kinds
 
@@ -4003,24 +3904,23 @@ rendered text node or box affordance that is not a colour and not an attribute;
 the marker's text is present with the row at rest, not on hover and not on
 `title` alone.
 
-*Copy key: `copy.stream.userPrompt.marker`, beside the `accessible` string that
-key already carries. The marker names the **speaker**, not the medium — the
-agent's own rows carry none, because the model is this surface's default voice
-and a marker on every row is a marker on none (§0.2b's struck `live` badge).
-The house word is `operator`, the noun this document uses for the person
-throughout; it is not a possessive, not a name, and not `you`.*
+*Copy key: `copy.stream.userPrompt.marker`, beside its accessible equivalent.
+The marker names the speaker: **You** for operator requests and **Assistant**
+for assistant narration. An explicit recorded agent-origin prompt retains
+**Agent continuation** rather than being attributed to You. These are grounded
+roles, not inferred human identities or claims about who answered a clarification.*
 
 **RECONCILED 2026-09-03 — the marker rides BOTH operator rows, and the clause is
 widened to say so.** This clause was written about the restored `user-prompt`
-row, and the shipped renderer puts the same `operator` marker on the live
+row, and the renderer puts the same **You** marker on the live
 `[data-row="local-prompt"]` echo as well. That is right and the spec follows it:
 a live echo and a restored prompt are **the same voice from two sources**, and a
 transcript where the operator is labelled only after a reload would teach the
 reader that the marker means "old" rather than "who". What stays different is
-the *category* marker beside it — C2's `unrecorded`, and §7A.5's `refused` — which
-is about the **row's status**, not about who spoke. So a live echo carries the
-role marker and its own category markers; a restored prompt carries the role
-marker alone; the agent's rows carry none.
+the uncertainty explanation beside it, which concerns delivery rather than
+who spoke. A named refusal retains text/reason outside the accepted conversation
+rather than an apparent second user turn (§7A.5). Both accepted prompt forms
+carry You; assistant narration carries its distinct Assistant landmark.
 
 **(b) The envelope is a collapsed disclosure, labelled as the server's
 projection.** When `user_prompts[].envelope` is non-null the row renders

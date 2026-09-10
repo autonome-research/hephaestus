@@ -69,12 +69,18 @@ export interface ChecksViewProps {
 }
 
 export function ChecksView({ checks }: ChecksViewProps): React.JSX.Element {
-  const names = Object.keys(checks.badges).sort();
+  // Order supplied verdicts for attention; never re-evaluate measured values.
+  const priority = { error: 0, fail: 1, not_run: 2, pass: 3 };
+  const names = Object.keys(checks.badges).sort((a, b) =>
+    priority[checks.badges[a] ?? "not_run"] - priority[checks.badges[b] ?? "not_run"] || a.localeCompare(b));
 
   return (
     <Panel label={copy.checks.heading} data-panel="checks">
       <PanelHeader title={copy.checks.heading} level={3} />
       <PanelBody>
+        {names.length > 0 ? <p data-checks-summary="">{(["error", "fail", "not_run", "pass"] as const)
+          .filter(status => names.some(name => checks.badges[name] === status))
+          .map(status => `${names.filter(name => checks.badges[name] === status).length} ${copy.checks.badge[status]}`).join(" · ")}</p> : null}
         {names.length === 0 ? (
           <EmptyState icon="check" title={copy.checks.emptyTitle} body={copy.checks.empty} />
         ) : (
@@ -124,6 +130,7 @@ export function ChecksView({ checks }: ChecksViewProps): React.JSX.Element {
 
         <PanelNote>{copy.checks.scope}</PanelNote>
 
+        <details data-checks-provenance=""><summary>{copy.dfm.provenance}</summary>
         <DataTable
           rows={[
             {
@@ -149,6 +156,7 @@ export function ChecksView({ checks }: ChecksViewProps): React.JSX.Element {
             },
           ]}
         />
+        </details>
       </PanelBody>
     </Panel>
   );

@@ -470,7 +470,8 @@ export const copy = {
      */
     notBuilt: {
       title: (part: string): string => `${part} has not been built`,
-      ask: "Ask the agent in the stream below to build it.",
+      ask: "Open the conversation to request a build.",
+      open: "Open conversation",
       run: "Or run",
       command: (part: string): string => `heph build ${part}`,
     },
@@ -750,6 +751,14 @@ export const copy = {
   /** §6.4: findings, descriptors, and the two DFM controls kept apart. */
   dfm: {
     heading: "Manufacturability findings",
+    provenance: "Provenance",
+    currentArtifact: "current artifact",
+    otherArtifact: "other artifact / stale result",
+    relationUnknown: "artifact relation unknown",
+    incomplete: "Evaluation incomplete",
+    summaryUnknown: "Evaluation summary unavailable",
+    findingsReported: "Findings reported",
+    findingsUnavailable: "Findings were reported, but their details are unavailable.",
     absentTitle: "Not evaluated",
     capabilityTitle: "No secure executor",
     cleanTitle: "No findings",

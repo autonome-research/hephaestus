@@ -72,7 +72,8 @@ describe("individual compact tool disclosures", () => {
     const prose = [...doc.querySelectorAll("[data-row='text']")];
     expect(prose).toHaveLength(3);
     for (const node of prose) {
-      expect(node.textContent).toBe("Same actual narration.");
+      expect(node.querySelector("[data-assistant-landmark]")?.textContent).toBe("Assistant");
+      expect(node.textContent).toBe("AssistantSame actual narration.");
       expect(node.closest("details")).toBeNull();
     }
     expect(ids(doc)).toEqual(items.map((item) => item.eventId));

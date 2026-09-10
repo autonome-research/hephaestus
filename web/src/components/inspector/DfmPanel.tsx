@@ -46,7 +46,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { WorkspaceError } from "../../api/client";
 import { writeDfmAutoRun, runDfm } from "../../api/dfm";
 import { uuid7 } from "../../api/idempotency";
-import { keys, useDfm, useProject } from "../../api/queries";
+import { keys, useBuild, useDfm, useProject } from "../../api/queries";
 import { refreshAfterTurn } from "../../api/refresh";
 import type { DfmDocument, DfmFinding, DfmRun, TopologyDescriptor } from "../../api/types";
 import { copy } from "../../copy";
@@ -64,6 +64,7 @@ import {
   type Severity,
 } from "../../system";
 import { Fact } from "../Fact";
+import { RefusalBanner } from "../RefusalBanner";
 import { MeasuredAside, MeasuredText, measuredText, readMeasured } from "./MeasuredValue";
 import { useWorkspace } from "../../state/react";
 import styles from "./panels.module.css";
@@ -272,6 +273,7 @@ export function DfmActions({
 
 export interface DfmViewProps {
   readonly dfm: DfmDocument;
+  readonly currentArtifactRef?: string | null | undefined;
   readonly onToggleAutoRun?: (() => void) | undefined;
   readonly onRunDfm?: (() => void) | undefined;
   readonly dfmBusy?: "auto_run" | "run" | null | undefined;
@@ -291,6 +293,7 @@ export interface DfmViewProps {
 
 export function DfmView({
   dfm,
+  currentArtifactRef,
   secureExecutor,
   onResolveDescriptor,
   onToggleAutoRun,
@@ -301,6 +304,15 @@ export function DfmView({
   const run = dfm.last;
   const source = run === null ? null : dfmSource(run);
   const severities = run === null ? [] : Object.keys(run.severity_counts).sort();
+  const relation = run === null ? copy.dfm.absentTitle : currentArtifactRef === undefined
+    ? copy.dfm.relationUnknown : run.source_artifact_ref === currentArtifactRef
+      ? copy.dfm.currentArtifact : copy.dfm.otherArtifact;
+  const incomplete = run !== null && (run.errored_rules.length > 0 || run.rules.some(rule => rule.status === "error") || run.truncated);
+  const summaryKnown = run !== null && (severities.length > 0 || run.rules.length > 0);
+  const hasFindings = run !== null && (run.findings.length > 0 || Object.values(run.severity_counts).some(count => count > 0)
+    || run.rules.some(rule => rule.status === "violations"));
+  const outcome = incomplete ? copy.dfm.incomplete : !summaryKnown ? copy.dfm.summaryUnknown
+    : hasFindings ? copy.dfm.findingsReported : copy.dfm.cleanTitle;
 
   return (
     <Panel
@@ -309,7 +321,7 @@ export function DfmView({
       data-dfm-source={source ?? ""}
       data-dfm-resolved-from={dfm.resolved_from ?? ""}
     >
-      <PanelHeader title={copy.dfm.heading} level={3} />
+      <PanelHeader title={`DFM · ${dfm.part} · ${relation}`} level={3} />
       <PanelBody>
         <DfmActions
           dfm={dfm}
@@ -327,6 +339,66 @@ export function DfmView({
           />
         ) : (
           <>
+              <div className={styles["chips"]} aria-label={copy.dfm.severity}>
+                <strong data-dfm-decision="">{outcome}</strong>
+                {severities.length === 0 ? null : (
+                  severities.map((severity) => (
+                    <SeverityBadge key={severity} severity={severityOf(severity)}>
+                      {severity}:{" "}
+                      <Fact
+                        source="dfm.last.severity_counts[]"
+                        value={run.severity_counts[severity] ?? null}
+                      />
+                    </SeverityBadge>
+                  ))
+                )}
+              </div>
+
+            {run.truncated ? (
+              <PanelNote data-dfm-truncated="true">{copy.dfm.truncated}</PanelNote>
+            ) : null}
+
+            {run.errored_rules.length === 0 ? null : (
+              <PanelSection eyebrow={copy.dfm.errored}>
+                <div className={styles["chips"]}>
+                  {run.errored_rules.map((rule) => (
+                    <SeverityBadge key={rule} severity="warning" data-dfm-errored-rule={rule}>
+                      <Fact source="dfm.last.errored_rules[]" value={rule} />
+                    </SeverityBadge>
+                  ))}
+                </div>
+                <PanelNote>{copy.dfm.erroredNote}</PanelNote>
+              </PanelSection>
+            )}
+
+            {run.findings.length === 0 ? (
+              <PanelNote>{incomplete ? copy.dfm.erroredNote : hasFindings ? copy.dfm.findingsUnavailable
+                : summaryKnown ? copy.dfm.clean : copy.dfm.summaryUnknown}</PanelNote>
+            ) : (
+              <ul className={styles["list"]}>
+                {run.findings.map((finding, index) => (
+                  <Finding
+                    key={`${finding.rule_id}-${String(index)}`}
+                    finding={finding}
+                    index={index}
+                    source={source ?? "current"}
+                    onResolve={
+                      onResolveDescriptor === undefined
+                        ? undefined
+                        : (descriptor) => {
+                            onResolveDescriptor({
+                              part: dfm.part,
+                              source_artifact_ref: finding.source_artifact_ref,
+                              rule_id: finding.rule_id,
+                              descriptor,
+                            });
+                          }
+                    }
+                  />
+                ))}
+              </ul>
+            )}
+            <details data-dfm-provenance=""><summary>{copy.dfm.provenance}</summary>
             <DataTable
               rows={[
                 {
@@ -402,67 +474,7 @@ export function DfmView({
               ]}
             />
 
-            <PanelSection eyebrow={copy.dfm.severity}>
-              <div className={styles["chips"]}>
-                {severities.length === 0 ? (
-                  <Chip data-dfm-clean="">{copy.dfm.clean}</Chip>
-                ) : (
-                  severities.map((severity) => (
-                    <SeverityBadge key={severity} severity={severityOf(severity)}>
-                      {severity}:{" "}
-                      <Fact
-                        source="dfm.last.severity_counts[]"
-                        value={run.severity_counts[severity] ?? null}
-                      />
-                    </SeverityBadge>
-                  ))
-                )}
-              </div>
-            </PanelSection>
-
-            {run.truncated ? (
-              <PanelNote data-dfm-truncated="true">{copy.dfm.truncated}</PanelNote>
-            ) : null}
-
-            {run.errored_rules.length === 0 ? null : (
-              <PanelSection eyebrow={copy.dfm.errored}>
-                <div className={styles["chips"]}>
-                  {run.errored_rules.map((rule) => (
-                    <SeverityBadge key={rule} severity="warning" data-dfm-errored-rule={rule}>
-                      <Fact source="dfm.last.errored_rules[]" value={rule} />
-                    </SeverityBadge>
-                  ))}
-                </div>
-                <PanelNote>{copy.dfm.erroredNote}</PanelNote>
-              </PanelSection>
-            )}
-
-            {run.findings.length === 0 ? (
-              <EmptyState icon="check" title={copy.dfm.cleanTitle} body={copy.dfm.clean} />
-            ) : (
-              <ul className={styles["list"]}>
-                {run.findings.map((finding, index) => (
-                  <Finding
-                    key={`${finding.rule_id}-${String(index)}`}
-                    finding={finding}
-                    index={index}
-                    source={source ?? "current"}
-                    onResolve={
-                      onResolveDescriptor === undefined
-                        ? undefined
-                        : (descriptor) => {
-                            onResolveDescriptor({
-                              part: dfm.part,
-                              source_artifact_ref: finding.source_artifact_ref,
-                              rule_id: finding.rule_id,
-                              descriptor,
-                            });
-                          }
-                    }
-                  />
-                ))}
-              </ul>
-            )}
+            </details>
           </>
         )}
       </PanelBody>
@@ -477,6 +489,7 @@ export function DfmPanel({
 }): React.JSX.Element {
   const part = useWorkspace((s) => s.part);
   const dfm = useDfm(part);
+  const build = useBuild(part);
   const project = useProject();
   const client = useQueryClient();
   const [dfmBusy, setDfmBusy] = useState<"auto_run" | "run" | null>(null);
@@ -519,10 +532,12 @@ export function DfmPanel({
   if (part === null) {
     return <EmptyState icon="cube" title={copy.inspector.noPartTitle} body={copy.inspector.selectPart} />;
   }
+  if (dfm.error !== null) return <RefusalBanner error={dfm.error} />;
   if (dfm.data === undefined) return <PanelNote>{copy.absent.loading}</PanelNote>;
   return (
     <DfmView
       dfm={dfm.data}
+      currentArtifactRef={build.data?.artifact_ref}
       secureExecutor={project.data?.capabilities?.secure_executor}
       onResolveDescriptor={onResolveDescriptor}
       onToggleAutoRun={toggleAutoRun}
