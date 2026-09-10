@@ -144,7 +144,6 @@ export function StreamPanel(): React.JSX.Element {
   const tabs = useMemo(() => sessionForest(rows, stream.tabs), [rows, stream.tabs]);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const { following, jumpToLatest } = useFollowScroll(scrollRef, selected, stream.rows.length);
   const firstPrompts = useSyncExternalStore(
     sessionPromptStore.subscribe,
     sessionPromptStore.getSnapshot,
@@ -157,6 +156,7 @@ export function StreamPanel(): React.JSX.Element {
 
   const refusal = sessions.error instanceof WorkspaceError ? sessions.error : null;
   const unavailable = refusal !== null && refusal.reason === "agent_unavailable";
+  const { following, jumpToLatest } = useFollowScroll(scrollRef, selected, selected !== null && (!unavailable || stream.rows.length > 0));
   // §7A.8/§19.25: the cause rides in §2.4's `data`. `null` covers both "not this
   // refusal" and "this process never attempted an attach", and neither is
   // guessed at — §4.4's rule is that a missing answer says it is missing.
@@ -469,6 +469,12 @@ export function StreamPanel(): React.JSX.Element {
                 starts this session's first turn, so a second create affordance
                 in the middle of the column would be the "wall of buttons" §7.1
                 rules out. */}
+            {stream.history.state === "failed" ? (
+              <p className={styles["historyNote"]} role="status">{copy.stream.historyFailed}</p>
+            ) : null}
+            {stream.history.state === "loading" ? (
+              <p className={styles["historyNote"]} role="status" data-transcript-loading="">{copy.stream.historyLoading}</p>
+            ) : null}
             {emptyTranscript ? (
               <EmptyState
                 className={styles["emptyTranscript"]}
@@ -492,7 +498,7 @@ export function StreamPanel(): React.JSX.Element {
                 data-transcript-scroll=""
                 data-overlay-scroll=""
               >
-                <Transcript rows={stream.rows} currentTurn={stream.currentTurn} />
+                <Transcript sessionId={selected} rows={stream.rows} currentTurn={stream.currentTurn} />
               </div>
               {following ? null : (
                 <Button

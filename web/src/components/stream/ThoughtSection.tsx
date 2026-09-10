@@ -20,6 +20,7 @@
 // inside. G4.11 matches archived ids against the reopened DOM, and an id lost to
 // grouping would be an id the gate cannot find.
 
+import { PersistentDetails } from "../../stream/disclosure";
 import { readText } from "../../api/events";
 import { copy } from "../../copy";
 import { Markdown } from "../../stream/markdown";
@@ -54,7 +55,7 @@ export function ThoughtSection({
   const empty = joined.trim() === "";
 
   return (
-    <details
+    <PersistentDetails
       className={styles["thought"]}
       data-thought="1"
       data-surface={first.surface}
@@ -80,7 +81,7 @@ export function ThoughtSection({
           <Markdown text={joined} />
         )}
       </div>
-    </details>
+    </PersistentDetails>
   );
 }
 

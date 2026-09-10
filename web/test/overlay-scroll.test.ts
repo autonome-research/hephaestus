@@ -167,6 +167,17 @@ describe("overlayThumbAlong", () => {
     expect(overlayThumbAlong(0, 100, 80)).toBeNull();
   });
 
+  it("clamps elastic offsets and minimum thumbs inside very large ranges", () => {
+    expect(overlayThumbAlong(-50, 100, 1_000_000)).toEqual({ offset: 0, size: 2 });
+    expect(overlayThumbAlong(1_000_000, 100, 1_000_000)).toEqual({ offset: 98, size: 2 });
+    const el = mountScroller({ overflow: true });
+    el.scrollTop = 320;
+    syncOverlayScrollCue(el);
+    expect(el.style.getPropertyValue("--overlay-scroll-top")).toBe("64px");
+    expect(globalCss).not.toContain("[data-overlay-scroll]::after");
+    expect(globalCss).toContain("background-size:");
+  });
+
   it("tracks the visible window along the axis", () => {
     expect(overlayThumbAlong(0, 100, 200)).toEqual({ offset: 0, size: 50 });
     expect(overlayThumbAlong(100, 100, 200)).toEqual({ offset: 50, size: 50 });

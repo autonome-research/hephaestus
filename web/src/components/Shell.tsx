@@ -29,6 +29,7 @@
 // cannot live in 44px" (§7A.1).
 
 import { useCallback, useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
+import { flushSync } from "react-dom";
 import { useProjectRefresh } from "../api/projectRefresh";
 import { useProject } from "../api/queries";
 import { copy } from "../copy";
@@ -148,8 +149,22 @@ export function Shell(): React.JSX.Element {
 
   const railOverlayOpen = shell.railOverlay && shell.railOpen;
 
+  const skipTo = (destination: "stage" | "composer"): void => {
+    // Focus destinations are not workspace routes. Reveal before focusing,
+    // including when the existing conversation is currently unmounted.
+    flushSync(() => {
+      if (railOverlayOpen) shellStore.setRailOpen(false);
+      if (destination === "composer") shellStore.setStreamOpen(true);
+    });
+    const target = destination === "composer"
+      ? document.querySelector<HTMLElement>("[data-composer-input]:not(:disabled)") ?? document.querySelector<HTMLElement>("#composer")
+      : document.querySelector<HTMLElement>("#stage") ?? document.querySelector<HTMLElement>("[data-stage-focus]");
+    target?.focus({ preventScroll: true });
+    target?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  };
+
   // Overlay scroll cues (#115 leftover). Native thumbs are hidden globally so
-  // they take no layout; this binds the 2px absolutely positioned cue on every
+  // they take no layout; this binds the 2px paint-only cue on every
   // `[data-overlay-scroll]` that mounts — rail, well, Results, stage.
   useLayoutEffect(() => bindOverlayScrollTree(document), []);
 
@@ -172,11 +187,13 @@ export function Shell(): React.JSX.Element {
 
   return (
     <div className={styles["shell"]} data-pin-mode={pinMode}>
-      <nav className={styles["skip"]} aria-label={copy.skip.links}>
-        <a className={roles["label"]} href="#stage" data-skip="stage">
+      <nav className={styles["skip"]} aria-label={copy.skip.links} {...(railOverlayOpen ? { inert: "" } : {})}>
+        <a className={roles["label"]} href="#stage" data-skip="stage"
+          onClick={event => { event.preventDefault(); skipTo("stage"); }}>
           {copy.skip.stage}
         </a>
-        <a className={roles["label"]} href="#composer" data-skip="composer">
+        <a className={roles["label"]} href="#composer" data-skip="composer"
+          onClick={event => { event.preventDefault(); skipTo("composer"); }}>
           {copy.skip.composer}
         </a>
       </nav>
@@ -267,7 +284,7 @@ export function Shell(): React.JSX.Element {
           />
         </nav>
 
-        <main className={styles["stage"]}>
+        <main className={styles["stage"]} data-stage-focus="" tabIndex={-1} {...(railOverlayOpen ? { inert: "" } : {})}>
           <Stage />
         </main>
 

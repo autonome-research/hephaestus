@@ -50,7 +50,7 @@ describe("showsEmptyTranscript — the six exclusions (§7.4(e))", () => {
     expect(showsEmptyTranscript(base({ listRefused: true }))).toBe(false);
   });
 
-  it("5a. the history read is still loading — visibly filling already (§8(b))", () => {
+  it("5a. loading has its own visible status, not a true-empty claim (§8(b))", () => {
     expect(
       showsEmptyTranscript(base({ history: { ...emptyHistory(), state: "loading" } })),
     ).toBe(false);

@@ -1,7 +1,7 @@
 // Copyright 2026 The Hephaestus Authors
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState } from "react";
+import { DisclosureOwner, PersistentDetails, useDisclosure } from "../../stream/disclosure";
 
 import { readAudit, readTerminal } from "../../api/events";
 import { copy } from "../../copy";
@@ -18,10 +18,12 @@ import styles from "./Transcript.module.css";
 
 export function Transcript({
   rows,
+  sessionId = null,
   runtimeFault = null,
   currentTurn,
 }: {
   readonly rows: readonly PanelRow[];
+  readonly sessionId?: string | null;
   readonly currentTurn?: CurrentTurn;
   readonly runtimeFault?: RuntimeFault | null;
 }): React.JSX.Element {
@@ -33,6 +35,7 @@ export function Transcript({
           key={row.key}
           className={styles["row"]}
           data-row={row.row}
+          data-row-key={row.key}
           {...(row.row === "local-prompt"
             ? {
                 "data-local-echo": "1",
@@ -48,7 +51,9 @@ export function Transcript({
             : {})}
           {...(row.row === "run-start" ? { "data-run-id": row.runId } : {})}
         >
-          <Row row={row} runtimeFault={runtimeFault} terminals={terminals} currentTurn={currentTurn} />
+          <DisclosureOwner.Provider value={sessionId === null ? null : JSON.stringify([sessionId, row.key])}>
+            <Row row={row} runtimeFault={runtimeFault} terminals={terminals} currentTurn={currentTurn} />
+          </DisclosureOwner.Provider>
         </li>
       ))}
     </ol>
@@ -89,21 +94,21 @@ function Row({ row, runtimeFault, terminals, currentTurn }: {
       return <EventImageInline item={row.item} />;
     case "audit":
       return (
-        <details className={styles["provenance"]} data-event-id={row.item.eventId}
+        <PersistentDetails className={styles["provenance"]} data-event-id={row.item.eventId}
           data-surface={row.item.surface} data-audit="1">
           <summary>{copy.stream.audit}</summary>
           <p className={styles["note"]}>{readAudit(row.item.payload) ?? copy.absent.unavailable}</p>
-        </details>
+        </PersistentDetails>
       );
     case "terminal":
       return <TerminalBand item={row.item} currentTurn={currentTurn} />;
     case "unknown":
       return (
-        <details className={styles["provenance"]} data-event-id={row.item.eventId}
+        <PersistentDetails className={styles["provenance"]} data-event-id={row.item.eventId}
           data-surface={row.item.surface} data-unknown-kind={row.item.rawKind}>
           <summary>{copy.stream.unknownKind}</summary>
           <pre className={styles["raw"]}>{JSON.stringify(row.item.payload, null, 2)}</pre>
-        </details>
+        </PersistentDetails>
       );
     case "absence":
       return <p className={styles["absence"]} data-absence={row.absence}
@@ -114,10 +119,10 @@ function Row({ row, runtimeFault, terminals, currentTurn }: {
       return (
         <div data-seam="1" data-seam-kind={row.kind}>
           {row.kind === "mid-run" ? <p className={styles["absence"]}>{copy.stream.seamMidRun}</p> : null}
-          <details className={styles["provenance"]}>
+          <PersistentDetails className={styles["provenance"]}>
             <summary>{copy.stream.deliveryDetails}</summary>
             <p className={styles["note"]}>{copy.stream.seam}</p>
-          </details>
+          </PersistentDetails>
         </div>
       );
     case "local-prompt":
@@ -176,30 +181,30 @@ function Row({ row, runtimeFault, terminals, currentTurn }: {
     }
     case "run-start":
       return (
-        <details className={styles["provenance"]}>
+        <PersistentDetails className={styles["provenance"]}>
           <summary>{copy.stream.runDetails}</summary>
           <p className={styles["note"]}>{row.runId}</p>
-        </details>
+        </PersistentDetails>
       );
     case "resync":
       return (
         <div className={styles["resync"]} data-resync={row.resync.outcome}
           title={copy.stream.resyncDetail[row.resync.outcome]}>
           <p className={styles["note"]}>{copy.stream.resync[row.resync.outcome]}</p>
-          <details className={styles["provenance"]}>
+          <PersistentDetails className={styles["provenance"]}>
             <summary>{copy.stream.deliveryDetails}</summary>
             <p className={styles["note"]}>{copy.stream.resyncDetail[row.resync.outcome]}</p>
             {row.resync.after === null ? null : <p className={styles["resyncAfter"]}>
               {copy.stream.resync.after}: {row.resync.after.run_id}#{row.resync.after.seq}
             </p>}
-          </details>
+          </PersistentDetails>
         </div>
       );
   }
 }
 
 function PromptEnvelope({ envelope }: { readonly envelope: string }): React.JSX.Element {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useDisclosure("envelope");
   return (
     <details className={styles["envelope"]} data-prompt-envelope="" aria-expanded={open}
       title={copy.stream.userPrompt.envelope.title}

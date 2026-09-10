@@ -9,8 +9,8 @@
 // rule. Overlay means the scroller's layout width equals its content box.
 //
 // Native thumbs are hidden (`scrollbar-width: none`, `scrollbar-gutter: auto`).
-// Overflow stays reachable. The position cue is a 1–2px absolutely positioned
-// strip (`[data-overlay-scroll]::after`) that is not in the flow.
+// Overflow stays reachable. The position cue is a 1–2px painted background
+// on `[data-overlay-scroll]`. Paint cannot extend scroll bounds.
 
 /** The overlay cue is 2px (`--space-0`). A classic track is ~10–15px. */
 export const OVERLAY_SCROLL_CUE_PX = 2;
@@ -56,16 +56,16 @@ export function overlayThumbAlong(
   cuePx = OVERLAY_SCROLL_CUE_PX,
 ): OverlayThumb | null {
   if (content <= client || client <= 0) return null;
-  const size = Math.max(cuePx, (client / content) * client);
+  const size = Math.min(client, Math.max(cuePx, (client / content) * client));
   const range = content - client;
   const max = Math.max(0, client - size);
-  const offset = range === 0 ? 0 : (scroll / range) * max;
+  const offset = (Math.min(range, Math.max(0, scroll)) / range) * max;
   return { offset, size };
 }
 
-/** Write the cue custom properties. `top` includes `scrollTop` so the
- * absolutely-positioned `::after` (a descendant of the scroller) stays in
- * the visible box as the content moves. */
+/** Paint in the visible padding box, never in scrollable descendant geometry.
+ * An absolute pseudo-element at scrollTop + offset retains stale overflow
+ * after content shrinks (and can grow it at very large ranges). */
 export function syncOverlayScrollCue(el: HTMLElement): void {
   const y = overlayThumbAlong(el.scrollTop, el.clientHeight, el.scrollHeight);
   if (y === null) {
@@ -73,7 +73,7 @@ export function syncOverlayScrollCue(el: HTMLElement): void {
     el.style.setProperty("--overlay-scroll-top", "0px");
     return;
   }
-  el.style.setProperty("--overlay-scroll-top", `${String(el.scrollTop + y.offset)}px`);
+  el.style.setProperty("--overlay-scroll-top", `${String(y.offset)}px`);
   el.style.setProperty("--overlay-scroll-height", `${String(y.size)}px`);
 }
 
@@ -81,22 +81,20 @@ export function bindOverlayScrollCue(el: HTMLElement): () => void {
   const sync = (): void => {
     syncOverlayScrollCue(el);
   };
-  const watch = (node: Element): void => {
-    ro?.observe(node);
-  };
-  sync();
-  el.addEventListener("scroll", sync, { passive: true });
   const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(sync);
-  ro?.observe(el);
-  for (const child of el.children) watch(child);
+  const watch = (): void => {
+    ro?.disconnect();
+    ro?.observe(el);
+    for (const child of el.children) ro?.observe(child);
+    sync();
+  };
+  watch();
+  el.addEventListener("scroll", sync, { passive: true });
   // Content in the rail / Results arrives after mount (queries). The scroller's
   // own box does not resize; scrollHeight does. Watch the tree so the cue
   // appears when overflow begins.
-  const mo = typeof MutationObserver === "undefined" ? null : new MutationObserver(() => {
-    for (const child of el.children) watch(child);
-    sync();
-  });
-  mo?.observe(el, { childList: true, subtree: true });
+  const mo = typeof MutationObserver === "undefined" ? null : new MutationObserver(watch);
+  mo?.observe(el, { childList: true, characterData: true, subtree: true });
   return () => {
     el.removeEventListener("scroll", sync);
     ro?.disconnect();

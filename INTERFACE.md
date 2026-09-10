@@ -2062,11 +2062,16 @@ On a classic-track OS it still reserves the native scrollbar (~10px; measured
 11px on the parts rail and 10px on Results) and wins over a 2px
 `::-webkit-scrollbar` rule. Permitted forms: `scrollbar-width: none` with
 `scrollbar-gutter: auto` (never `stable`), native overlay scrollbars, or a
-**1–2px absolutely positioned** cue that is not in the flow. **The negative
+**1–2px painted** cue that cannot participate in scrollable overflow. Neither
+content shrink nor a large scroll range may retain or enlarge bounds through
+scroll decorations; being absolutely positioned is not sufficient. **The negative
 half:** do not hide overflow so content is unreachable, do not leave
 `scrollbar-width: thin` if it reserves layout, and do not draw a custom 15px
 track. **Testable:** the scroller's layout width equals its content box
 (`offsetWidth − clientWidth` is borders only), or `overflow` is overlay.
+Content shrink must clamp scrollTop to real content, including after a long
+session is replaced by short or empty history. Cue endpoints remain within the
+visible client box even when the minimum thumb size applies.
 
 ### 3.11 The viewport is not chrome — the one problem no CSS solves
 
@@ -2147,7 +2152,10 @@ testable.
    substrate §3.14 specifies: every badge state differs in icon **and** text,
    not only in colour.
 3. **Focus visibility** on every keyboard-reachable control including the
-   viewport canvas.
+   viewport canvas. Skip to composer/stage are focus-only actions: reveal the
+   existing destination (opening a hidden conversation first), then focus it.
+   They do not rewrite the workspace fragment, switch inspection tabs, change
+   part/session/model/draft, move the pin/camera, or create/send a request.
 4. **Keyboard reachability.** Every control except the orbit interaction is
    reachable by Tab. Tab bars implement roving tabindex with
    `role="tablist"`/`tab`/`aria-selected`; the rail tree implements arrow-key
@@ -2582,6 +2590,13 @@ WorkspaceState {
 ```
 
 Serialized as `/#/p/{part}?ref=…&view=iso&t=0.0&sec=…&sel=…&tab=viewport&s=…`.
+
+Workspace fragments are navigation, not keyboard focus destinations. Back,
+Forward and pasted workspace deep links restore this record without pushing
+new entries during replay. Per-session draft revisions, reading anchors,
+following flags and disclosure states are project-lifetime presentation state,
+not serialized route fields; session selection and panel remount must not reset
+them. Skip navigation changes only visibility/focus as specified in §3.13.
 
 **DECISION:** no `/session/{uuid}` route. That URL shape is observed evidence
 from the reference product and is a false friend here — `architecture.md` §1
@@ -3839,16 +3854,12 @@ list is stated once, here, and it is those five plus §8(f)'s `turn-outcome`.
 The rule the sentence exists for is untouched and is the whole point: the skip
 is **by name**, never by "has no id", so a real event row that dropped its id
 still fails the match.)* It never enters
-history, never crosses the wire, and **states its own nature on its visible
-face, not on `title` alone**: each presentation row renders a visible-at-rest
-marker word in `.code` at `--ink-muted` (the echo row's marker reads
-`unrecorded`; the run-start row's rule-line-plus-run-id *is* its marker) paired
-with an accessible equivalent — visually-hidden text or `aria-description`
-carrying the not-a-recorded-event statement — because `title` is unreachable
-from keyboard, touch, and most screen readers, and a disclosure only a hovering
-mouse can read is not a disclosure (§3.9's colour-is-never-alone discipline,
-applied to honesty). `title` keeps the long form. §8's recorded-event honesty
-rules are not relaxed one word by this category — see §8's C3.
+history and never crosses the wire. Role and actionable uncertainty are visible
+at rest; routine source/run diagnostics are secondary keyboard-accessible
+disclosures, not repeated category-marker bands. Run-start retains its own
+run ID in Run details, without granting Stop authority. Unknown delivery and
+known gaps remain prominent. §8's identity and no-cross-namespace rules are
+unchanged — see §8's C3.
 
 **(C2 — member one: the local prompt echo.** DOM: `data-row="local-prompt"`,
 `data-local-echo="1"`.) On Send, the originating tab appends one presentation
@@ -4157,9 +4168,9 @@ the unchanged label. Nothing is compared across the seam (§8's C3 stands),
 nothing is read from history, and no run start is inferred — the number the
 server already put on the frame is the whole derivation.
 
-**Before the first live frame, the label is the unchanged one.** A seam with
-nothing under it is not making a claim that can be wrong, so it renders
-`copy.stream.seam` until a live row exists and switches on that row's arrival if
+**Before the first live frame, the source disclosure keeps the routine label.**
+A seam with nothing under it keeps `copy.stream.seam` inside Delivery details
+until a live row exists; a visible missing-output warning is added on arrival if
 its `seq > 0`. The alternative — hedging every seam in advance against a run that
 may not be in progress — would put the mid-run sentence over the ordinary case,
 which is the same overclaim in the other direction. `data-seam` gains
@@ -5360,12 +5371,10 @@ Rules the client obeys and the e2e checks:
 - **Live and historical events are never merged**, because they are not in one
   namespace: live events are keyed `(run_id, seq)` and historical ones
   `(session_id, ordinal)` (§2.8). History renders as the transcript's
-  **prefix**, the live stream as its suffix, and the boundary between them is a
-  visible seam, not a silent join — and AMENDED 2026-09-03 the seam **says
-  which boundary it is**: `copy.stream.seam` when this tab held the run below it
-  from its first frame, `copy.stream.seamMidRun` when it attached with the run
-  already in progress and the frames before its handshake are simply gone
-  (§7.4). Within the live stream, terminal events sort
+  **prefix**, the live stream as its suffix. The boundary retains a labelled
+  source disclosure: `copy.stream.seam` when this tab held the run from its
+  first frame. `copy.stream.seamMidRun` stays visible at rest when earlier output
+  is missing (§7.4); compactness never hides a known gap. Within the live stream, terminal events sort
   last by their `seq = 2**62` minting — a statement about the live stream only,
   since no `terminal` ever appears in a history page (§7.3).
 - **Four kinds used to be unrecoverable from a reopened transcript** (§2.7's
@@ -5416,9 +5425,10 @@ only if** at least one of:
 **(b) When it must NOT render.** In every other state — including
 `pages === 1`, including `pages === 0`, including `state === "loading"` while
 the first page is in flight, and including a multi-page history whose latest
-page is the one on screen — **no `historyBar` element mounts**. The loading
-ellipsis is not an exception: a transcript that is still filling is already
-visibly filling.
+page is the one on screen — **no `historyBar` element mounts**. Independently
+of that counter, a visible Loading recorded conversation status renders while
+history is loading, alongside any held content. A failed read remains visible
+in the reading region, not solely inside connection diagnostics.
 
 **(c) Nothing the gates read moves.** `data-history-state` and
 `data-history-pages` are the attributes G4 reads and they stay

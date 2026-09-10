@@ -1142,13 +1142,7 @@ export const copy = {
      */
     seamMidRun:
       "Some earlier output is not shown; this page connected after the turn began.",
-    /*
-     * `historyLoading` is REMOVED (§8(b), amended 2026-09-01): "the loading
-     * ellipsis is not an exception — a transcript that is still filling is
-     * already visibly filling", so the string had no site left to render in and
-     * a copy key nothing draws is the dead surface §0.2b's repair (c) is about.
-     * `data-history-state="loading"` on the panel root still reports the state.
-     */
+    historyLoading: "Loading recorded conversation…",
     historyPages: (pages: number): string =>
       pages === 1 ? "1 page of recorded transcript" : `${pages} pages of recorded transcript`,
     historyTruncated:

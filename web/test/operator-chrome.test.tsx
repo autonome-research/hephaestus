@@ -617,9 +617,9 @@ describe("shell scrollbars overlay the panel and do not eat layout (issue 115)",
 
   it("paints the 1–2px cue as an overlay, not in the flow", () => {
     const global = css("global.css");
-    expect(global).toMatch(/\[data-overlay-scroll\]::after\s*\{[^}]*position:\s*absolute/);
-    expect(global).toMatch(/\[data-overlay-scroll\]::after\s*\{[^}]*width:\s*var\(--space-0\)/);
-    expect(global).toMatch(/\[data-overlay-scroll\]::after\s*\{[^}]*pointer-events:\s*none/);
+    expect(global).not.toMatch(/\[data-overlay-scroll\]::after/);
+    expect(global).toMatch(/\[data-overlay-scroll\]\s*\{[^}]*background-image:\s*linear-gradient/);
+    expect(global).toMatch(/\[data-overlay-scroll\]\s*\{[^}]*background-size:\s*var\(--space-0\)/);
     const tokens = css("system/tokens.css");
     expect(tokens).toMatch(/--space-0:\s*2px/);
   });
