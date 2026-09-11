@@ -19,6 +19,7 @@ its TypeScript twin and the schema cap, in the running sidecar.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import threading
 from collections.abc import Iterator
@@ -47,10 +48,16 @@ def png_header(width: int, height: int) -> bytes:
 
 
 def image(width: int, height: int) -> dict[str, Any]:
+    # Header-only fixture for the bounded parser, not a claimed raster decode.
+    # A legacy view/channel descriptor must still name the exact payload hash;
+    # the old view-only descriptor with an unrelated top-level ref was invalid.
+    png = png_header(width, height)
     return {
-        "data": base64.b64encode(png_header(width, height)).decode("ascii"),
+        "data": base64.b64encode(png).decode("ascii"),
         "mime_type": "image/png",
         "view": "iso",
+        "channel": "rgb",
+        "render_artifact_ref": f"artifact:render:sha256:{hashlib.sha256(png).hexdigest()}",
     }
 
 
@@ -168,7 +175,7 @@ def test_bridge_bounds_a_valid_render_reaches_the_model_inline(sidecar: Sidecar)
         {
             "status": "ok",
             "source_artifact_ref": ARTIFACT,
-            "render_artifact_refs": [ARTIFACT],
+            "render_artifact_refs": [payload["render_artifact_ref"]],
             "images": [payload],
         }
     )
@@ -177,6 +184,31 @@ def test_bridge_bounds_a_valid_render_reaches_the_model_inline(sidecar: Sidecar)
     # The image rode inline as an image block, not as base64 inside the text.
     assert "image_url" in body or "image" in body
     assert str(payload["data"]) in body
+
+
+@pytest.mark.parametrize("fault", ["missing-ref", "wrong-hash", "wrong-kind"])
+def test_bridge_bounds_stale_identity_is_still_refused(sidecar: Sidecar, fault: str) -> None:
+    payload = image(64, 64)
+    if fault == "missing-ref":
+        del payload["render_artifact_ref"]
+    elif fault == "wrong-hash":
+        payload["render_artifact_ref"] = ARTIFACT
+    else:
+        payload["render_artifact_ref"] = str(payload["render_artifact_ref"]).replace(
+            ":render:", ":selection-pass:"
+        )
+    sidecar.set_result(
+        {
+            "status": "ok",
+            "source_artifact_ref": ARTIFACT,
+            "render_artifact_refs": [payload.get("render_artifact_ref", ARTIFACT)],
+            "images": [payload],
+        }
+    )
+    tool_text, body = run_inspect(sidecar, {"name": "widget", "views": ["iso"]}, session=fault)
+    assert sidecar.tools() == ["inspect_part"]
+    assert "image bytes/ref/order mismatch" in tool_text
+    assert str(payload["data"]) not in body
 
 
 def test_bridge_bounds_an_image_bomb_is_refused_from_its_header(sidecar: Sidecar) -> None:
