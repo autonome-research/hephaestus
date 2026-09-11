@@ -132,7 +132,7 @@ that the selected model's image capability reaches the next tool/model request.
 ## Image identity (owned packaged world)
 
 `pnpm exec playwright test -c playwright.images.config.ts` runs the focused
-`image-identity.spec.ts` case; the full packaged suite also includes it. It owns
+`image-identity.spec.ts` cases; the full packaged suite also includes them. Each owns
 its own disposable workspace, provider script and server, so it consumes no
 shared G4 script slots. Python renders two distinct views; provider observations
 validate decoded PNG/MIME/dimensions and hash-to-render-ref identity. Browser
@@ -143,6 +143,25 @@ A test-only Node launcher confines sidecar sockets to the owned provider; the
 browser refuses requests outside its owned server. All model replies are scripted
 transport probes, never evidence of visual understanding. Evidence and fixture
 cleanup records remain in the Playwright output directory.
+
+The Sol case actually selects native `openai-codex/gpt-5.6-sol` from pinned Pi
+0.80.10. Production native-provider configuration is unchanged: the owned test
+launcher redirects only the exact Codex endpoint URL to loopback, without
+altering model metadata, request bodies, image blocks or serialization. The fake
+endpoint refuses WebSocket upgrade, then observes the same SDK execution's HTTP
+SSE fallback (including zstd request decompression). It verifies the ordered
+`function_call_output` text descriptors and `input_image` data URIs against live
+browser and immutable-artifact bytes. There are exactly two Sol HTTP requests
+per world; a separate missing-build world verifies ordinary tool failure and
+zero images. These are transport/identity checks, **not Sol vision reasoning**.
+
+`agent/test/sol-image-refusal.test.ts` runs real pinned Pi/ToolProxy loops with
+synthetic malformed base64, hash mismatch, MIME mismatch, oversized dimensions,
+and excess image counts: every continuation carries zero `input_image` blocks.
+Its synthetic false-capability seam supplements, rather than substitutes for,
+the browser's actual text-only admission test with Sol available. Network guard
+units reject external HTTP, WebSocket, direct socket and unrelated loopback
+attempts before connection. Existing G4 fake scripts and budgets are unchanged.
 
 ## Three things that are easy to get wrong here
 

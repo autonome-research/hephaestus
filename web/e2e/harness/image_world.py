@@ -40,7 +40,7 @@ def image_proof(data_uri: str, descriptor: dict[str, Any]) -> dict[str, Any]:
     return {**descriptor, "sha256": digest}
 
 
-def main(directory: str) -> None:
+def main(directory: str, sol_endpoint: str | None = None) -> None:
     from hephaestus.testing.fake_openai import RequestInfo, start_fake_openai
     from hephaestus.testing.workspace_fixture import materialize_workspace_fixture
 
@@ -119,6 +119,40 @@ def main(directory: str) -> None:
     spec = fake.provider_spec()
     spec["models"].append({**spec["models"][0], "id": "image-text-only", "input": ["text"]})
     write_provider_config(project, spec)
+    if sol_endpoint is not None:
+        from urllib.parse import urlparse
+
+        endpoint = urlparse(sol_endpoint)
+        assert endpoint.scheme == "http" and endpoint.hostname == "127.0.0.1"
+        # Fresh fabricated credential only. The pinned Codex adapter requires a
+        # JWT-shaped access string with this account claim; no login or refresh.
+        payload = base64.b64encode(
+            json.dumps(
+                {"https://api.openai.com/auth": {"chatgpt_account_id": "owned-loopback-fixture"}}
+            ).encode()
+        ).decode()
+        auth = scratch / "synthetic-auth.json"
+        auth.write_text(
+            json.dumps(
+                {
+                    "openai-codex": {
+                        "type": "oauth",
+                        "access": f"synthetic.{payload}.not-a-signature",
+                        "refresh": "unused-synthetic-refresh",
+                        "expires": int(time.time() * 1000) + 3600000,
+                    }
+                }
+            )
+        )
+        auth.chmod(0o600)
+        config = {
+            "providers": [
+                spec,
+                {"id": "openai-codex", "kind": "pi_native", "models": [{"id": "gpt-5.6-sol"}]},
+            ],
+            "auth_source": str(auth),
+        }
+        (project / ".heph" / "providers.json").write_text(json.dumps(config))
     node = shutil.which("node")
     assert node is not None
     launcher = scratch / "node-loopback"
@@ -126,7 +160,9 @@ def main(directory: str) -> None:
     network_journal = scratch / "network.jsonl"
     launcher.write_text(
         "#!/bin/sh\n"
-        f"export HEPH_TEST_ENDPOINT={shlex.quote(fake.base_url)}\n"
+        f"export HEPH_TEST_ENDPOINT={shlex.quote(sol_endpoint or fake.base_url)}\n"
+        f"export HEPH_TEST_EXTRA_ENDPOINT={shlex.quote(fake.base_url)}\n"
+        f"export HEPH_TEST_CODEX_REDIRECT={'1' if sol_endpoint else '0'}\n"
         f"export HEPH_TEST_NETWORK_JOURNAL={shlex.quote(str(network_journal))}\n"
         f'exec {shlex.quote(node)} --import {shlex.quote(str(guard))} "$@"\n'
     )
@@ -162,7 +198,8 @@ def main(directory: str) -> None:
                     "project_root": str(project),
                     "observations": str(observations),
                     "provider": spec["id"],
-                    "image_model": spec["models"][0]["id"],
+                    "image_model": "gpt-5.6-sol" if sol_endpoint else spec["models"][0]["id"],
+                    "image_provider": "openai-codex" if sol_endpoint else spec["id"],
                     "text_model": "image-text-only",
                 }
             )
@@ -188,4 +225,4 @@ def main(directory: str) -> None:
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    main(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None)
