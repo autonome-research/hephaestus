@@ -123,7 +123,8 @@ export function currentTurn(c: Conversation, selected = true): CurrentTurn {
   const e = c.execution;
   const active = e?.active_run_id ?? null;
   const terminal = e?.terminal;
-  const uncertain = c.checking || e === null || c.attempt?.phase === "unknown";
+  const executionUncertain = c.checking || e === null;
+  const uncertain = executionUncertain || c.attempt?.phase === "unknown";
   let status: CurrentTurn["status"] = null;
   let reason: string | null = null;
   const pending = c.attempt?.phase === "sending";
@@ -171,7 +172,9 @@ export function currentTurn(c: Conversation, selected = true): CurrentTurn {
   }
   const delivery = active !== null && c.stopDelivery?.runId === active && c.stopDelivery.epoch === e?.epoch
     ? c.stopDelivery : null;
-  const canRetryStop = delivery?.phase === "uncertain" && !uncertain && !c.closedRuns.has(active ?? "");
+  // Cancel targets the reconciled run, independently of the prompt's receipt.
+  // Keep that receipt uncertain for Send/Answer; it cannot veto same-run Stop.
+  const canRetryStop = delivery?.phase === "uncertain" && !executionUncertain && !c.closedRuns.has(active ?? "");
   if (delivery?.phase === "uncertain") status = "Checking";
   const blocked = c.attempt?.phase === "sending" || c.attempt?.phase === "unknown";
   return {

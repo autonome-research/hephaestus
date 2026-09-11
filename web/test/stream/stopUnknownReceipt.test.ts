@@ -1,0 +1,33 @@
+import { expect, it } from "vitest";
+import { createConversationStore, currentTurn } from "../../src/stream/conversation";
+import type { ExecutionSnapshot } from "../../src/api/sessions";
+import { modelState } from "../fixtures/models";
+
+it("fresh same-run authority permits explicit Retry Stop despite unresolved prompt receipt", () => {
+  const s = createConversationStore();
+  const idle: ExecutionSnapshot = { epoch: "epoch", version: 1, run_id: null, active_run_id: null, admission_available: true, terminal: null };
+  s.modelSnapshot("s", modelState, idle, s.ticket());
+  s.draft("s", "ask a question");
+  const prompt = s.begin("s")!;
+  const active: ExecutionSnapshot = { ...idle, version: 2, run_id: "run", active_run_id: "run", admission_available: false };
+  s.snapshot("s", active, s.ticket());
+  s.finish("s", prompt.id, "unknown");
+  s.modelSnapshot("s", modelState, active, s.ticket());
+  const stop = s.stop("s", "run")!;
+  expect(stop).not.toBeNull();
+  const stale = s.ticket();
+  s.stopResult("s", stop, "uncertain");
+  s.modelSnapshot("s", modelState, active, stale);
+  expect(currentTurn(s.get("s")).canRetryStop).toBe(false);
+  expect(s.stop("s", "run")).toBeNull();
+  s.modelSnapshot("s", modelState, active, s.ticket());
+  expect(s.get("s").attempt?.phase).toBe("unknown");
+  expect(currentTurn(s.get("s"))).toMatchObject({ canSend: false, canAnswer: false, canRetryStop: true });
+  const retry = s.stop("s", "run");
+  expect(retry).not.toBeNull();
+  expect(retry).not.toBe(stop);
+  expect(s.stop("s", "run")).toBeNull();
+  s.snapshot("s", { ...active, version: 3, run_id: "successor", active_run_id: "successor" }, s.ticket());
+  expect(s.stop("s", "run")).toBeNull();
+  expect(currentTurn(s.get("s")).canRetryStop).toBe(false);
+});

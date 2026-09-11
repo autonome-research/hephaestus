@@ -153,6 +153,11 @@ session-owned in memory, not durable: reload must read authority again and may
 offer ordinary Stop for the active run, never invent an earlier receipt or
 replay a write. Permanent store/component regressions are
 `test/stream/stopRecovery.test.ts` and `test/stream/composer.test.tsx`.
+`stop-unknown-receipt.spec.ts` owns another unchanged-script world: a lost
+browser prompt response plus a dropped Stop must permit explicit same-run retry
+after fresh authority, without enabling Send/Answer or duplicating the prompt.
+`test/stream/stopUnknownReceipt.test.ts` also pins the stale-read and successor
+guards for that combination.
 
 ## Image identity (owned packaged world)
 
