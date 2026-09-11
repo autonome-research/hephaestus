@@ -19,7 +19,8 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
+import { test } from "./harness/geometryHealth";
 import {
   CONTROL_CHANGED_MAX,
   INSIDE_CHANGED_MIN,

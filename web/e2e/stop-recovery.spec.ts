@@ -3,7 +3,8 @@
 // Real built UI + packaged sidecar + unchanged 16-request fake script, in a
 // separate owned world. Transport injection is at the browser HTTP boundary;
 // execution/question readback and all terminal events remain real.
-import { expect, test } from "@playwright/test";
+import { expect } from "@playwright/test";
+import { test, expectReadyGeometry } from "./harness/geometryHealth";
 import { api, open, route, world, startRecoveryWorld, closeRecoveryWorld } from "./harness/recoveryWorld";
 import type { CreatedSessionDocument, SessionModelDocument, PromptDocument, CancelDocument } from "../src/api/sessions";
 import type { ModelsDocument } from "../src/api/providers";
@@ -47,6 +48,7 @@ for (const scenario of ["dropped request with explicit retry", "dropped request 
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({ profile: "orchestrator", model: {
         provider_id: models.proposed_default!.provider_id, model_id: models.proposed_default!.model_id } }) });
     const sid = created.session_id;
+    const build = await api<{ artifact_ref: string }>("/parts/tread/build");
     await open(page, route("tread", { s: sid }));
     await expect(page.locator('[data-testid="stream-panel"]')).toHaveAttribute("data-stream", "live");
     let releasePrompt = () => {};
@@ -101,6 +103,7 @@ for (const scenario of ["dropped request with explicit retry", "dropped request 
         expect(stillActive.live_questions?.pending[0]?.question_id).toBe(before.live_questions?.pending[0]?.question_id);
         expect(cancelPaths).toEqual([cancelPath]); // positive reconciliation edge, no timed negative
         await expect(input).toHaveValue("keep this next-message draft");
+        await expectReadyGeometry(page, build.artifact_ref);
         await page.screenshot({ path: info.outputPath("retry-stop.png") });
         if (scenario === "dropped request then reload") {
           await page.reload();
@@ -134,6 +137,7 @@ for (const scenario of ["dropped request with explicit retry", "dropped request 
       expect(errors).toEqual([]);
       await info.attach("stop-authority", { contentType: "application/json", body: JSON.stringify({ scenario, sid, runId,
         cancelPaths, terminal: ended.execution.terminal, modelRevision: ended.model_state.revision, external, errors }) });
+      await expectReadyGeometry(page, build.artifact_ref);
       await page.screenshot({ path: info.outputPath("terminal.png") });
     } finally {
       release();

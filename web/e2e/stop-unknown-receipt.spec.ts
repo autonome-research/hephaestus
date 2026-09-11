@@ -1,4 +1,5 @@
-import { expect, test } from "@playwright/test";
+import { expect } from "@playwright/test";
+import { test, expectReadyGeometry } from "./harness/geometryHealth";
 import { api, open, route, world, startRecoveryWorld, closeRecoveryWorld } from "./harness/recoveryWorld";
 import type { CreatedSessionDocument, SessionModelDocument } from "../src/api/sessions";
 import type { ModelsDocument } from "../src/api/providers";
@@ -28,6 +29,7 @@ test("lost browser prompt response plus dropped Stop must allow same-run explici
   const created = await api<CreatedSessionDocument>("/sessions", { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ profile: "orchestrator", model: { provider_id: models.proposed_default!.provider_id, model_id: models.proposed_default!.model_id } }) });
   const sid = created.session_id;
+  const build = await api<{ artifact_ref: string }>("/parts/tread/build");
   await open(page, route("tread", { s: sid }));
   await expect(page.locator('[data-testid="stream-panel"]')).toHaveAttribute("data-stream", "live");
   let losePrompt = () => {};
@@ -67,6 +69,7 @@ test("lost browser prompt response plus dropped Stop must allow same-run explici
       modelRevision: active.model_state.revision, cancels, writes, external, stopText: await page.locator("[data-composer-cancel]").innerText(),
       stopDisabled: await page.locator("[data-composer-cancel]").isDisabled(), promptState: await page.locator("[data-composer]").getAttribute("data-send-state") };
     writeFileSync(info.outputPath("same-run-authority.json"), JSON.stringify(evidence, null, 2));
+    await expectReadyGeometry(page, build.artifact_ref);
     await page.screenshot({ path: info.outputPath("same-run-retry.png") });
     await expect(page.getByRole("button", { name: "Retry Stop", exact: true })).toBeEnabled();
     await expect(page.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
@@ -81,6 +84,7 @@ test("lost browser prompt response plus dropped Stop must allow same-run explici
     expect(writes.filter(path => path.endsWith("/answer"))).toHaveLength(0);
     expect(external).toEqual([]);
     await expect(page.locator("[data-composer-input]")).toHaveValue("preserve next draft");
+    await expectReadyGeometry(page, build.artifact_ref);
   } finally {
     losePrompt();
     const current = await api<SessionModelDocument>(`/sessions/${sid}/model`, { signal: AbortSignal.timeout(30_000) });
