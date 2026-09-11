@@ -124,7 +124,9 @@ Browser reload checks re-adoption; durable sidecar restart is covered by the
 agent tests, not claimed by this browser test.
 
 Closed/open screenshots at 843px and 1440px and sanitized readback/request
-evidence go to `/tmp/hephaestus-model-selection-validation/`. The actual
+evidence go to the test's `model-selection/` directory under Playwright's
+output directory (set `--output` to an owned unique root for validation).
+No shared historical evidence directory is written. The actual
 narrow-width expand affordance is used, and no token remains in the captured
 URL or visible page text. The existing RPC wiring regression separately checks
 that the selected model's image capability reaches the next tool/model request.
