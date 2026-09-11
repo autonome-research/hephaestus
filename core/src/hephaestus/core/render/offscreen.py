@@ -425,11 +425,26 @@ class OffscreenSession:
         scene.add(camera, pose=framing.pose)
         return framing.pose
 
+    def _release_native_thread(self) -> None:
+        """End deferred EGL destruction before admitting another owner.
+
+        Pinned pyrender deletes GL resources while current, then destroys and
+        terminates without unbinding. ReleaseThread works even after terminate;
+        unbinding before delete would not work because delete makes current again.
+        """
+        from OpenGL import EGL
+
+        if not EGL.eglReleaseThread():
+            raise RenderUnavailableError("could not release owner EGL thread")
+        if EGL.eglGetCurrentContext() or EGL.eglGetCurrentDisplay():
+            raise RenderUnavailableError("owner EGL thread remains current after release")
+
     def close(self) -> None:
         self._check_owner(require_open=False)
         try:
             if self._renderer is not None:
                 self._renderer.delete()
+                self._release_native_thread()
                 self._renderer = None
         except BaseException as exc:
             self._fail_lifetime(exc)

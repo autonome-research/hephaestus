@@ -71,6 +71,10 @@ async def _concurrent_geometry(root: Path, patch: pytest.MonkeyPatch, peer: str)
             assert closed.wait(40), "first lifetime never closed"
         try:
             original_close(session)
+            assert not EGL.eglGetCurrentContext(), "closed HTTP worker retains EGL context"
+            assert not EGL.eglGetCurrentDisplay(), "closed HTTP worker retains EGL display"
+            assert not EGL.eglGetCurrentSurface(EGL.EGL_READ)
+            assert not EGL.eglGetCurrentSurface(EGL.EGL_DRAW)
         finally:
             if role.get() == "A":
                 closed.set()
@@ -80,7 +84,7 @@ async def _concurrent_geometry(root: Path, patch: pytest.MonkeyPatch, peer: str)
     importlib.import_module("pyrender")
     from OpenGL import EGL
 
-    for name in ("eglCreateContext", "eglDestroyContext", "eglTerminate"):
+    for name in ("eglCreateContext", "eglDestroyContext", "eglTerminate", "eglReleaseThread"):
         real = getattr(EGL, name)
 
         def traced(*args: Any, _real: Any = real, _name: str = name) -> Any:
@@ -169,7 +173,12 @@ async def _concurrent_geometry(root: Path, patch: pytest.MonkeyPatch, peer: str)
             assert [(name, call) for name, call, _ in events] == [
                 (name, call)
                 for name in ("A", "B")
-                for call in ("eglCreateContext", "eglDestroyContext", "eglTerminate")
+                for call in (
+                    "eglCreateContext",
+                    "eglDestroyContext",
+                    "eglTerminate",
+                    "eglReleaseThread",
+                )
             ], events
             for name in ("A", "B"):
                 assert len({tid for who, _, tid in events if who == name}) == 1

@@ -135,6 +135,9 @@ def fake_renderer(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
         pass
 
     monkeypatch.setattr(offscreen.OffscreenSession, "_validate_software", validated)
+    # This fixture owns fake handles only; real post-close state/faults are
+    # exercised without this seam in test_render_native_release.py.
+    monkeypatch.setattr(offscreen.OffscreenSession, "_release_native_thread", validated)
     # Fault cases poison only fake GL state; restore the module after each test.
     monkeypatch.setattr(offscreen, "_session_failure", None, raising=False)
     return handles
