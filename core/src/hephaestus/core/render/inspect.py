@@ -552,6 +552,13 @@ def inspect_part(
     resolved_views, channel_lit, mask_mode_lit = _validate(
         views, channel, mask_mode, section_plane, explode, last_good, artifact_ref
     )
+    if focus is not None and channel_lit == "section":
+        # The focused camera path has no section-plane clipping. Do not publish
+        # a plain shaded preview under a section identity.
+        raise ValidationError(
+            "focus with channel='section' is not supported; omit focus for a section render",
+            kind="contract",
+        )
     resolved = resolve_render_source(project, name, last_good=last_good, artifact_ref=artifact_ref)
     shape = load_brep_shape(resolved.brep)
 
@@ -659,7 +666,7 @@ def _render_channel_focused(
     width: int,
     height: int,
 ) -> tuple[list[InspectImage], list[str], Mapping[str, JSONValue] | None]:
-    """Focused rgb/mask/section: reframe on the focused subset, whole model drawn.
+    """Focused rgb/mask: reframe on the focused subset, whole model drawn.
 
     ``focus`` changes only the camera; the ID namespace / legend are unchanged
     (the solid-ID mask legend is the scene's, keyed by ``solid_index``).
@@ -691,7 +698,7 @@ def _render_channel_focused(
             if channel == "mask":
                 array = session.render_flat(mask_items, framing)
                 decodable = True
-            else:  # rgb / section both fall back to a plain shaded focus preview
+            else:  # rgb; focus+section is refused before source resolution
                 array = session.render_shaded(shaded_meshes, framing)
                 decodable = False
             png = encode_png(array)
