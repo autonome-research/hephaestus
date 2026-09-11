@@ -24,6 +24,19 @@ function fixture() {
   });
   return { status: "ok", source_artifact_ref: source, render_artifact_refs: images.map(i => i.render_artifact_ref), images };
 }
+function selectionFixture() {
+  const raw = fixture();
+  const images = raw.images.map(image => ({ ...image, channel: "mask",
+    render_artifact_ref: image.render_artifact_ref.replace(":render:", ":selection-preview:") }));
+  const bundles = images.map((image, index) => ({ view: image.view,
+    bundle_ref: `artifact:selection-bundle:sha256:${String(index).repeat(64)}`,
+    pass_refs: Object.fromEntries(["solid", "face", "edge"].map((kind, offset) =>
+      [kind, `artifact:selection-pass:sha256:${String(index * 3 + offset).repeat(64)}`])) }));
+  return { ...raw, images, selection_bundles: bundles,
+    render_artifact_refs: images.flatMap((image, index) => [image.render_artifact_ref,
+      ...["solid", "face", "edge"].map(kind => bundles[index]!.pass_refs[kind]!)]) };
+}
+const selectionArgs = { name: "p", views: ["iso", "+X"], channel: "mask", mask_mode: "selection" };
 function execute(result: JsonValue, context = ctx) {
   return new ToolProxy(async () => result).execute("inspect_part", { name: "p", views: ["iso", "+X"] }, context);
 }
@@ -84,16 +97,45 @@ describe("render identity contract", () => {
     }
   });
   it("preserves selection-mask preview/pass retention boundaries", async () => {
-    const raw = fixture();
-    const bundles = raw.images.map((image, index) => ({ view: image.view, bundle_ref: `bundle-${index}`, pass_refs: { solid: image.render_artifact_ref, face: image.render_artifact_ref, edge: image.render_artifact_ref } }));
-    const result = await new ToolProxy(async () => ({ ...raw, images: raw.images.map(i => ({ ...i, channel: "mask" })), selection_bundles: bundles, render_artifact_refs: raw.images.flatMap(i => Array(4).fill(i.render_artifact_ref) as string[]) })).execute("inspect_part", { name: "p", views: ["iso", "+X"], channel: "mask", mask_mode: "selection" }, ctx);
+    // The publisher mints previews and artifact-only ID passes with distinct kinds.
+    const raw = selectionFixture();
+    const result = await new ToolProxy(async () => raw).execute("inspect_part", selectionArgs, ctx);
     expect(result.content.filter(c => c.type === "image")).toHaveLength(2);
     expect(JSON.stringify(result.content[0])).toContain("selection_bundles");
   });
   it("refuses a selection bundle whose view disagrees with its preview", async () => {
-    const raw = fixture();
-    const bundles = raw.images.map(image => ({ view: "-Z", bundle_ref: "bundle", pass_refs: { solid: image.render_artifact_ref, face: image.render_artifact_ref, edge: image.render_artifact_ref } }));
-    await expect(new ToolProxy(async () => ({ ...raw, images: raw.images.map(i => ({ ...i, channel: "mask" })), selection_bundles: bundles, render_artifact_refs: raw.images.flatMap(i => Array(4).fill(i.render_artifact_ref) as string[]) })).execute("inspect_part", { name: "p", views: ["iso", "+X"], channel: "mask", mask_mode: "selection" }, ctx)).rejects.toMatchObject({ code: "image_identity_mismatch" });
+    const raw = selectionFixture();
+    raw.selection_bundles[0]!.view = "-Z";
+    await expect(new ToolProxy(async () => raw).execute("inspect_part", selectionArgs, ctx)).rejects.toMatchObject({ code: "image_identity_mismatch" });
+  });
+  it.each(["render", "selection-pass", "posed-render", "unknown", "hash", "pass-kind", "bundle-kind", "order", "source", "mode", "missing-bundles"])("rejects selection %s mismatch", async fault => {
+    const raw = selectionFixture();
+    if (["render", "selection-pass", "posed-render", "unknown"].includes(fault)) {
+      raw.images[0]!.render_artifact_ref = raw.images[0]!.render_artifact_ref.replace(":selection-preview:", `:${fault}:`);
+      raw.render_artifact_refs[0] = raw.images[0]!.render_artifact_ref;
+    }
+    if (fault === "hash") raw.images[0]!.data = raw.images[1]!.data;
+    if (fault === "pass-kind") {
+      raw.selection_bundles[0]!.pass_refs.solid = raw.selection_bundles[0]!.pass_refs.solid!.replace(":selection-pass:", ":render:");
+      raw.render_artifact_refs[1] = raw.selection_bundles[0]!.pass_refs.solid!;
+    }
+    if (fault === "bundle-kind") raw.selection_bundles[0]!.bundle_ref = raw.selection_bundles[0]!.bundle_ref.replace(":selection-bundle:", ":render:");
+    if (fault === "order") raw.render_artifact_refs.reverse();
+    if (fault === "source") raw.images[0]!.source_artifact_ref = `artifact:build:sha256:${"b".repeat(64)}`;
+    const result = fault === "missing-bundles" ? { ...raw, selection_bundles: undefined, render_artifact_refs: raw.images.map(i => i.render_artifact_ref) } : raw;
+    await expect(new ToolProxy(async () => result as JsonValue).execute("inspect_part", { ...selectionArgs, mask_mode: fault === "mode" ? "solid" : "selection" }, ctx)).rejects.toMatchObject({ code: "image_identity_mismatch" });
+  });
+  it("keeps selection identities in live events and byte-free history", async () => {
+    const raw = selectionFixture();
+    const result = await new ToolProxy(async () => raw).execute("inspect_part", selectionArgs, ctx);
+    const live = normalizeLiveEvent({ type: "tool_execution_end", toolName: "inspect_part", toolCallId: "c", result, isError: false } as AgentSessionEvent, "r", () => 0).filter(e => e.kind === "image");
+    const history = normalizeEntries([{ type: "message", id: "e", parentId: null, timestamp: "now", message: { role: "toolResult", toolName: "inspect_part", toolCallId: "c", content: result.content, isError: false, timestamp: 0 } } as SessionEntry], "s").filter(e => e.kind === "image");
+    expect(live).toHaveLength(2); expect(history).toHaveLength(2);
+    for (const [index, image] of raw.images.entries()) {
+      const { data, mime_type: _mime, ...identity } = image;
+      expect(live[index]?.payload).toMatchObject({ identity, data });
+      expect(history[index]?.payload).toEqual({ mimeType: "image/png", identity });
+    }
   });
   it("enforces the unchanged aggregate pixel budget", async () => {
     const raw = fixture();

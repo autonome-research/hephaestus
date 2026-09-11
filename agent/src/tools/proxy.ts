@@ -526,6 +526,11 @@ export class ToolProxy {
         if (toolName === "inspect_part" && args?.artifact_ref != null && args.artifact_ref !== obj.source_artifact_ref) {
           throw new ProxyResultError("image_identity_mismatch", `${toolName} explicit source artifact mismatch`);
         }
+        // A preview kind is valid only for an invoked selection-mask result.
+        // Its three ID passes are retained artifacts, never inline previews.
+        if (toolName === "inspect_part" && (obj.selection_bundles !== undefined) !== (args?.channel === "mask" && args?.mask_mode === "selection")) {
+          throw new ProxyResultError("image_identity_mismatch", `${toolName} selection mode/bundle mismatch`);
+        }
         const extracted = this.extractImages(toolName, obj.images, obj, args);
         images.push(...extracted.images);
         // Strip base64 from the text rendering; keep lightweight descriptors so
@@ -603,7 +608,7 @@ export class ToolProxy {
           throw new ProxyResultError("image_identity_mismatch", `${toolName} incomplete or mismatched image identity`);
         }
         const refs = inlineRenderRefs(result, raw.length);
-        if (refs === undefined || refs[index] !== img.render_artifact_ref || img.render_artifact_ref !== renderRef(buffer)) {
+        if (refs === undefined || refs[index] !== img.render_artifact_ref || img.render_artifact_ref !== renderRef(buffer, result.selection_bundles === undefined ? "render" : "selection-preview")) {
           throw new ProxyResultError("image_identity_mismatch", `${toolName} image bytes/ref/order mismatch`);
         }
         for (const key of IMAGE_IDENTITY_FIELDS) {
