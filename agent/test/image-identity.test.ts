@@ -57,6 +57,21 @@ describe("render identity contract", () => {
     if (fault === "partial") first.view = "";
     await expect(execute(raw)).rejects.toMatchObject({ name: "ProxyResultError" });
   });
+  it.each(["modern", "legacy", "absent"])("rejects a self-consistent wrong explicit source (%s metadata)", async metadata => {
+    const raw = fixture();
+    const images = metadata === "modern" ? raw.images : raw.images.map(image => {
+      const { data, mime_type, view, channel, render_artifact_ref } = image;
+      return metadata === "legacy" ? { data, mime_type, view, channel, render_artifact_ref } : { data, mime_type };
+    });
+    const proxy = new ToolProxy(async () => ({ ...raw, images }));
+    await expect(proxy.execute("inspect_part", { name: "p", views: ["iso", "+X"], artifact_ref: `artifact:build:sha256:${"b".repeat(64)}` }, ctx)).rejects.toMatchObject({ code: "image_identity_mismatch" });
+  });
+  it.each([source, null, undefined])("preserves matching by-ref and implicit source inspection (%s)", async artifact_ref => {
+    const result = await new ToolProxy(async () => fixture()).execute("inspect_part", {
+      name: "p", views: ["iso", "+X"], ...(artifact_ref === undefined ? {} : { artifact_ref }),
+    }, ctx);
+    expect(result.details.images).toBe(2);
+  });
   it("normalizes the same tuple live and in metadata-only history without extra Pi fields", async () => {
     const result = await execute(fixture());
     const live = normalizeLiveEvent({ type: "tool_execution_end", toolName: "inspect_part", toolCallId: "c", result, isError: false } as AgentSessionEvent, "r", () => 0).filter(e => e.kind === "image");

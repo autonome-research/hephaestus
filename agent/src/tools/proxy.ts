@@ -521,6 +521,11 @@ export class ToolProxy {
         capability = obj.code;
       }
       if (Array.isArray(obj.images)) {
+        // Correlate the response with an explicitly pinned invocation, not only
+        // with its own descriptors. Legacy metadata cannot excuse a wrong ref.
+        if (toolName === "inspect_part" && args?.artifact_ref != null && args.artifact_ref !== obj.source_artifact_ref) {
+          throw new ProxyResultError("image_identity_mismatch", `${toolName} explicit source artifact mismatch`);
+        }
         const extracted = this.extractImages(toolName, obj.images, obj, args);
         images.push(...extracted.images);
         // Strip base64 from the text rendering; keep lightweight descriptors so
