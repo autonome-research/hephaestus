@@ -3732,7 +3732,9 @@ historical missing result never grants active-run or answer authority.
   channel, source_artifact_ref, render_artifact_ref}`. It is projected only from
   the same tool result's complete ordered descriptors. Live normalization checks
   MIME and byte-hash correlation; history reports recorded metadata, not a fresh
-  artifact validation. Captions show part, view/channel and abbreviated refs,
+  artifact validation. `part` is the requested inspection context, not inferred
+  ownership of an explicit source ref. Captions label it **Requested part**, show
+  view/channel and abbreviated refs in readable full-width rows,
   with exact refs available as text titles, never external URLs. Missing, legacy
   or invalid tuples are explicitly identity-unavailable, never reconstructed from
   current UI state. Event kinds, sequence numbers and authority are unchanged.

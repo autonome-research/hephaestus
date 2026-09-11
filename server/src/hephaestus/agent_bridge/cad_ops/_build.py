@@ -423,6 +423,8 @@ class BuildOps(CadOpsState):
                 {
                     "data": base64.b64encode(image.png).decode("ascii"),
                     "mime_type": "image/png",
+                    # The invoking part context, not a claim that an explicit
+                    # artifact_ref belongs to this part (by-ref renders may not).
                     "part": name,
                     "view": image.view,
                     "channel": image.channel,

@@ -517,7 +517,11 @@ carries per-inline-image `part`, `view`, `channel`, `source_artifact_ref`, and
 `render_artifact_ref` in Python bridge responses. The sidecar retains these in
 bounded model-visible JSON descriptors beside MIME, byte count and dimensions;
 Pi image blocks themselves remain the pinned SDK's `{type, data, mimeType}`.
-The source ref is the resolved source, not a guessed current build. Supplied
+`part` is the requested part operand/context, **not proof of ownership** of an
+explicit source artifact. By-ref inspection deliberately supports an immutable
+build/checkpoint even when it is not that part's current build; the caption must
+label the operand as requested. The source ref is the resolved source, not a
+guessed current build. Supplied
 render refs must equal SHA-256 of the actual decoded bytes and agree with the
 ordered retention list (including selection-mask artifact-only passes below).
 Modern tuples must be complete and match the invocation's part/view/channel.

@@ -4,6 +4,8 @@ import { createHash } from "node:crypto";
 import type { JsonValue } from "./framing.js";
 
 export const IMAGE_IDENTITY_FIELDS = ["part", "view", "channel", "source_artifact_ref", "render_artifact_ref"] as const;
+// `part` names the requested inspection context; an explicit immutable source
+// ref can be non-current, so this is not an artifact ownership assertion.
 export type ImageIdentity = { readonly [K in typeof IMAGE_IDENTITY_FIELDS[number]]: string };
 export const RENDER_REF = /^artifact:render:sha256:[a-f0-9]{64}$/;
 const SOURCE_REF = /^artifact:[a-z][a-z0-9-]*:sha256:[a-f0-9]{64}$/;

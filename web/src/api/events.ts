@@ -210,6 +210,7 @@ export function readToolResult(payload: unknown): ToolResultPayload | null {
 }
 
 export interface ImageIdentity {
+  /** Requested part context, NOT inferred ownership of an explicit source ref. */
   readonly part: string;
   readonly view: string;
   readonly channel: string;

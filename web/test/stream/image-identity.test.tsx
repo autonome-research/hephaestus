@@ -16,6 +16,7 @@ describe("image identity captions", () => {
     expect(figure.dataset["imageState"]).toBe(live ? "shown" : "metadata_only");
     expect(figure.dataset["renderRef"]).toBe(identity.render_artifact_ref);
     expect(figure.textContent).toContain("p · +X / rgb");
+    expect(figure.textContent).toContain("Requested part: p");
     expect(figure.textContent).toContain("artifact:render:sha256:bbbbbbbbbbbb…");
     expect(dom.querySelector(`[title="${identity.source_artifact_ref}"]`)).not.toBeNull();
     expect(dom.querySelectorAll("a")).toHaveLength(0);

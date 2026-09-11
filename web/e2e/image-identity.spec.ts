@@ -63,6 +63,7 @@ for (const sol of [false, true]) test(`packaged ${sol ? "pinned Sol Codex" : "ge
           const image = images.nth(index);
           await expect(image).toHaveAttribute("data-image-identity", "recorded");
           await expect(image).toContainText(`tread · ${view} / rgb`);
+          await expect(image).toContainText("Requested part: tread");
           const ref = await image.getAttribute("data-render-ref");
           expect(ref).toMatch(/^artifact:render:sha256:[a-f0-9]{64}$/);
           refs.push(ref!);
@@ -80,6 +81,13 @@ for (const sol of [false, true]) test(`packaged ${sol ? "pinned Sol Codex" : "ge
           expect(page.url()).not.toContain(world.token);
           await images.last().scrollIntoViewIfNeeded();
           await expect(images.last().locator("figcaption")).toBeVisible();
+          const caption = await images.last().locator("figcaption").evaluate(element => {
+            const first = element.firstElementChild!;
+            return { direction: getComputedStyle(element).flexDirection, firstHeight: first.getBoundingClientRect().height, lineHeight: Number.parseFloat(getComputedStyle(first).lineHeight) };
+          });
+          expect(caption.direction).toBe("column");
+          // This short fixture's operand/view must fit on one line at both widths.
+          expect(caption.firstHeight).toBeLessThanOrEqual(caption.lineHeight + 1);
           await page.screenshot({ path: testInfo.outputPath(`image-${width}.png`) });
         }
         await page.reload();

@@ -1385,6 +1385,7 @@ export const copy = {
     image: {
       alt: "Image produced by the agent",
       identityUnavailable: "Image identity unavailable (legacy or missing metadata).",
+      requestedPart: "Requested part",
       source: "Source",
       render: "Render",
       /** §7.3: history keeps metadata, never image bytes. */

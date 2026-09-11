@@ -54,7 +54,7 @@ export function EventImageInline({
       {state === "shown" && data !== null ? (
         <img
           className={styles["imageBody"]}
-          alt={identity === null ? copy.stream.image.alt : `${identity.part} · ${identity.view} / ${identity.channel}`}
+          alt={identity === null ? copy.stream.image.alt : `${copy.stream.image.requestedPart}: ${identity.part} · ${identity.view} / ${identity.channel}`}
           src={`data:${mimeType ?? "image/png"};base64,${data}`}
           onError={() => {
             setFailed(true);
@@ -69,7 +69,7 @@ export function EventImageInline({
       )}
       <figcaption className={styles["imageCaption"]}>
         {identity === null ? <span>{copy.stream.image.identityUnavailable}</span> : <>
-          <span>{identity.part} · {identity.view} / {identity.channel}</span>
+          <span>{copy.stream.image.requestedPart}: {identity.part} · {identity.view} / {identity.channel}</span>
           <span title={identity.source_artifact_ref}>{copy.stream.image.source}: {identity.source_artifact_ref.slice(0, identity.source_artifact_ref.lastIndexOf(":") + 13)}…</span>
           <span title={identity.render_artifact_ref}>{copy.stream.image.render}: {identity.render_artifact_ref.slice(0, identity.render_artifact_ref.lastIndexOf(":") + 13)}…</span>
         </>}
