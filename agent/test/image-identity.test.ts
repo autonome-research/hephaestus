@@ -75,6 +75,11 @@ describe("render identity contract", () => {
     expect(result.content.filter(c => c.type === "image")).toHaveLength(2);
     expect(JSON.stringify(result.content[0])).toContain("selection_bundles");
   });
+  it("refuses a selection bundle whose view disagrees with its preview", async () => {
+    const raw = fixture();
+    const bundles = raw.images.map(image => ({ view: "-Z", bundle_ref: "bundle", pass_refs: { solid: image.render_artifact_ref, face: image.render_artifact_ref, edge: image.render_artifact_ref } }));
+    await expect(new ToolProxy(async () => ({ ...raw, images: raw.images.map(i => ({ ...i, channel: "mask" })), selection_bundles: bundles, render_artifact_refs: raw.images.flatMap(i => Array(4).fill(i.render_artifact_ref) as string[]) })).execute("inspect_part", { name: "p", views: ["iso", "+X"], channel: "mask", mask_mode: "selection" }, ctx)).rejects.toMatchObject({ code: "image_identity_mismatch" });
+  });
   it("enforces the unchanged aggregate pixel budget", async () => {
     const raw = fixture();
     const bytes = Buffer.from(raw.images[0]!.data, "base64");

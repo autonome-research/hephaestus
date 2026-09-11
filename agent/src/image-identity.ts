@@ -34,6 +34,8 @@ export function inlineRenderRefs(result: Record<string, JsonValue>, count: numbe
   if (!Array.isArray(bundles) || bundles.length !== count || refs.length !== count * 4) return undefined;
   for (const [index, bundle] of bundles.entries()) {
     if (!bundle || typeof bundle !== "object" || Array.isArray(bundle)) return undefined;
+    const image = Array.isArray(result.images) ? result.images[index] : undefined;
+    if (!image || typeof image !== "object" || Array.isArray(image) || image.view !== bundle.view || image.channel !== "mask") return undefined;
     const passes = bundle.pass_refs;
     if (!passes || typeof passes !== "object" || Array.isArray(passes)) return undefined;
     if (["solid", "face", "edge"].some((key, offset) => typeof passes[key] !== "string" || !RENDER_REF.test(passes[key] as string) || passes[key] !== refs[index * 4 + offset + 1])) return undefined;
