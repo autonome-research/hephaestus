@@ -29,6 +29,7 @@ import ctypes
 import os
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -240,34 +241,98 @@ class ColoredMesh:
     rgb: tuple[int, int, int]
 
 
+# pyrender 0.1.45 terminates the shared EGLDisplay on every delete; its EGL
+# make_uncurrent is a no-op. Exclude whole lifetimes, including construction,
+# across ALL callers (HTTP publication and tool inspection use different pools).
+_session_lock = threading.Lock()
+_session_owner: threading.Thread | None = None
+# Retain uncertain native resources/tracebacks until process exit. Never admit a
+# new context after failed construction/deletion or let late finalizers race it.
+_session_failure: tuple[OffscreenSession, BaseException] | None = None
+
+
 class OffscreenSession:
     """A pyrender ``OffscreenRenderer`` pinned to the software EGL device.
 
     Construction selects and validates the device (fail-closed) and creates the
     GL context. Reuse one session for many renders; call :meth:`close` when done
-    (also usable as a context manager).
+    (also usable as a context manager). The entire lifetime stays on its owner
+    thread and excludes other sessions in this process. Nested distinct sessions
+    are rejected; pass an existing session to consumers that support reuse.
+    Failed native construction/cleanup blocks further sessions until restart.
     """
 
     def __init__(self, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT) -> None:
         if width <= 0 or height <= 0:
             raise RenderUnavailableError("viewport dimensions must be positive")
+        global _session_owner
         self.width = width
         self.height = height
-        device = software_egl_device()
-        os.environ["EGL_DEVICE_ID"] = str(device)
-        import pyrender
-
-        # pyrender is untyped; keep the handle as Any so ``close()`` may null it.
+        self._owner = threading.current_thread()
         self._renderer: Any = None
+        self._cleanup_failure: BaseException | None = None
+        self._owns_lifetime = False
         self.gl_renderer: str = ""
+        if _session_owner is self._owner:
+            raise RenderUnavailableError(
+                "nested offscreen sessions are unsupported; reuse the session"
+            )
+        _session_lock.acquire()
+        self._owns_lifetime = True
+        _session_owner = self._owner
         try:
-            self._renderer = pyrender.OffscreenRenderer(width, height)
-        except Exception as exc:  # pragma: no cover - device-specific
-            raise RenderUnavailableError(f"could not create offscreen renderer: {exc}") from exc
-        self._validate_software()
+            if _session_failure is not None:
+                raise RenderUnavailableError(
+                    "previous EGL construction or cleanup failed; renderer process must restart"
+                ) from _session_failure[1]
+            device = software_egl_device()
+            os.environ["EGL_DEVICE_ID"] = str(device)
+            import pyrender
+
+            try:
+                self._renderer = pyrender.OffscreenRenderer(width, height)
+            except BaseException as exc:
+                # A failed constructor may have partially initialized EGL. Its
+                # traceback retains the partial handle; do not retry/admit peers.
+                self._fail_lifetime(exc)
+                if isinstance(exc, Exception):
+                    raise RenderUnavailableError(
+                        f"could not create offscreen renderer: {exc}"
+                    ) from exc
+                raise
+            self._validate_software()
+        except BaseException:
+            if self._cleanup_failure is None:
+                self.close()
+            else:
+                self._release_lifetime()
+            raise
+
+    def _check_owner(self, *, require_open: bool = True) -> None:
+        if threading.current_thread() is not self._owner:
+            raise RenderUnavailableError("offscreen session must stay on its owner thread")
+        if self._cleanup_failure is not None:
+            raise RenderUnavailableError("offscreen cleanup failed; session is unusable") from (
+                self._cleanup_failure
+            )
+        if require_open and (not self._owns_lifetime or self._renderer is None):
+            raise RenderUnavailableError("offscreen session is closed")
+
+    def _fail_lifetime(self, exc: BaseException) -> None:
+        global _session_failure
+        self._cleanup_failure = exc
+        _session_failure = (self, exc)
+
+    def _release_lifetime(self) -> None:
+        global _session_owner
+        if self._owns_lifetime:
+            self._owns_lifetime = False
+            _session_owner = None
+            _session_lock.release()
 
     def _validate_software(self) -> None:
         """Force context creation and reject a non-software renderer."""
+        self._check_owner()
         import pyrender
 
         probe = pyrender.Scene(bg_color=[0, 0, 0, 0], ambient_light=[0, 0, 0])
@@ -276,7 +341,6 @@ class OffscreenSession:
         try:
             self._renderer.render(probe, flags=_seg_flags())
         except Exception as exc:
-            self.close()
             raise RenderUnavailableError(
                 f"software EGL device {os.environ.get('EGL_DEVICE_ID')!r} unusable: {exc}"
             ) from exc
@@ -285,7 +349,6 @@ class OffscreenSession:
         raw = GL.glGetString(GL.GL_RENDERER)
         renderer = bytes(raw).decode("ascii", "replace") if raw is not None else ""
         if not _is_software(renderer):
-            self.close()
             raise RenderUnavailableError(
                 f"EGL device {os.environ.get('EGL_DEVICE_ID')!r} is not a software "
                 f"rasterizer (GL_RENDERER={renderer!r}); renders would be non-deterministic"
@@ -301,6 +364,7 @@ class OffscreenSession:
 
         Returns an ``(H, W, 3)`` uint8 array; the background is ``(0, 0, 0)``.
         """
+        self._check_owner()
         import pyrender
 
         scene = pyrender.Scene(bg_color=[0, 0, 0, 0], ambient_light=[0, 0, 0])
@@ -319,6 +383,7 @@ class OffscreenSession:
         framing: CameraFraming,
     ) -> NDArray[np.uint8]:
         """Flat ID pass for edge polylines (a separate, faces-free layer)."""
+        self._check_owner()
         import pyrender
 
         scene = pyrender.Scene(bg_color=[0, 0, 0, 0], ambient_light=[0, 0, 0])
@@ -338,6 +403,7 @@ class OffscreenSession:
         background: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
     ) -> NDArray[np.uint8]:
         """Ordinary lit ``rgb`` channel: returns an ``(H, W, 4)`` RGBA array."""
+        self._check_owner()
         import pyrender
         from pyrender.constants import RenderFlags
 
@@ -360,12 +426,19 @@ class OffscreenSession:
         return framing.pose
 
     def close(self) -> None:
-        renderer = getattr(self, "_renderer", None)
-        if renderer is not None:
-            renderer.delete()
-            self._renderer = None
+        self._check_owner(require_open=False)
+        try:
+            if self._renderer is not None:
+                self._renderer.delete()
+                self._renderer = None
+        except BaseException as exc:
+            self._fail_lifetime(exc)
+            raise
+        finally:
+            self._release_lifetime()
 
     def __enter__(self) -> OffscreenSession:
+        self._check_owner()
         return self
 
     def __exit__(self, *exc: object) -> None:
