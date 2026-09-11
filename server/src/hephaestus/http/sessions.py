@@ -29,6 +29,7 @@ event stream (§2.8 — the durable edge table is the only source).
 
 from __future__ import annotations
 
+import copy
 import threading
 from collections import OrderedDict, deque
 from collections.abc import Callable, Collection, Iterable, Sequence
@@ -37,6 +38,13 @@ from typing import Any, Final, Protocol
 
 from hephaestus.agent_bridge.app import PromptResult
 from hephaestus.agent_bridge.events import BUFFERED_EVENTS_MAX, HephaestusEvent, ObserverClient
+from hephaestus.agent_bridge.model_selection import (
+    ExecutionSnapshot,
+    ModelRef,
+    ModelRevision,
+    ModelsDocument,
+    SessionModelDocument,
+)
 from hephaestus.agent_bridge.session_edges import (
     THREAD_LINKED,
     THREAD_UNLINKED,
@@ -128,7 +136,20 @@ class SessionBackend(Protocol):
         part: str | None = ...,
         session_id: str | None = ...,
         resume: bool = ...,
+        model: ModelRef | None = ...,
     ) -> str: ...
+
+    def provider_models(self) -> ModelsDocument: ...
+
+    def session_model(self, session_id: str) -> SessionModelDocument: ...
+
+    def question_state(
+        self, session_id: str, visit: Callable[[ExecutionSnapshot, str | None], Any]
+    ) -> Any: ...
+
+    def select_session_model(
+        self, session_id: str, model: ModelRef, expected: ModelRevision
+    ) -> SessionModelDocument: ...
 
     def new_run_id(self) -> str: ...
 
@@ -142,6 +163,7 @@ class SessionBackend(Protocol):
         answerer: Callable[[dict[str, Any]], Any] | None = ...,
         on_event: Callable[[dict[str, Any]], None] | None = ...,
         timeout: float | None = ...,
+        expected_model_revision: ModelRevision | None = ...,
     ) -> PromptResult: ...
 
     def cancel(self, run_id: str) -> None: ...
@@ -267,7 +289,9 @@ class PendingQuestion:
             "session_id": self.session_id,
             "run_id": self.run_id,
             "question": self.params.get("question"),
-            "options": self.params.get("options", []),
+            "options": copy.deepcopy(self.params.get("options", [])),
+            "allow_free_text": self.params.get("allow_free_text", True),
+            "multi": self.params.get("multi", False),
             "answered": self.answered,
         }
 
@@ -295,6 +319,7 @@ class PendingQuestions:
         #: has to outlive the suspension.
         self._settled: OrderedDict[str, PendingQuestion] = OrderedDict()
         self._minted = 0
+        self._revision = 0
 
     def answerer(self, session_id: str) -> Callable[[dict[str, Any]], Any]:
         """An :data:`AskUserAnswerer` bound to ``session_id``.
@@ -327,23 +352,28 @@ class PendingQuestions:
             else:
                 self._minted += 1
                 question_id = f"q-{run_id}-local-{self._minted}"
+            if question_id in self._by_id or question_id in self._settled:
+                raise AskAbandoned("duplicate question address")
             pending = PendingQuestion(
                 question_id=question_id,
                 session_id=session_id,
                 run_id=run_id,
-                params=dict(params),
+                params=copy.deepcopy(params),
             )
             self._by_id[question_id] = pending
+            self._revision += 1
         try:
             pending.ready.wait(timeout)
-            if pending.abandoned:
-                raise AskAbandoned(f"question {question_id} was abandoned before it was answered")
-            if not pending.answered:
-                raise AskAbandoned(f"question {question_id} timed out without an answer")
-            return pending.selection
+            with self._lock:
+                if pending.abandoned or not pending.answered:
+                    pending.abandoned = True
+                    self._revision += 1
+                    raise AskAbandoned(f"question {question_id} ended without an answer")
+                return pending.selection
         finally:
             with self._lock:
                 settled = self._by_id.pop(question_id, None)
+                self._revision += 1
                 # ONLY an answered question is retained. An abandoned one keeps
                 # today's 404 on purpose: §7A.6 reads that refusal as "answered,
                 # abandoned, or never asked", and a 200 for an abandoned
@@ -363,7 +393,35 @@ class PendingQuestions:
                     while len(self._settled) > SETTLED_QUESTIONS_MAX:
                         self._settled.popitem(last=False)
 
-    def answer(self, question_id: str, selection: Any) -> tuple[PendingQuestion, bool]:
+    def snapshot(self, session_id: str, eligible_run: str | None) -> dict[str, Any]:
+        """Copied read projection, under the runtime's ownership/terminal guard."""
+        with self._lock:
+            candidates = [
+                q
+                for q in self._by_id.values()
+                if q.session_id == session_id and not q.answered and not q.abandoned
+            ]
+            reason = None
+            if candidates and (
+                eligible_run is None or any(q.run_id != eligible_run for q in candidates)
+            ):
+                reason = "run_authority_unavailable"
+            elif len(candidates) > 1:
+                reason = "ambiguous_question"
+            return {
+                "revision": self._revision,
+                "pending": [] if reason else [q.projection() for q in candidates],
+                "unavailable_reason": reason,
+            }
+
+    def answer(
+        self,
+        question_id: str,
+        selection: Any,
+        *,
+        session_id: str | None = None,
+        eligible_run: str | None = None,
+    ) -> tuple[PendingQuestion, bool]:
         """Answer a question. Returns ``(question, accepted)``.
 
         Three outcomes, and the middle one is the point (audit-2026-09-04
@@ -387,16 +445,27 @@ class PendingQuestions:
         404 and nothing grows without limit.
         """
         with self._lock:
-            pending = self._by_id.get(question_id)
-            if pending is None:
-                settled = self._settled.get(question_id)
-                if settled is None:
-                    raise KeyError(question_id)
-                return settled, False
+            pending = self._by_id.get(question_id) or self._settled.get(question_id)
+            if pending is None or (session_id is not None and pending.session_id != session_id):
+                raise KeyError(question_id)
             if pending.answered:
                 return pending, False
-            pending.selection = selection
+            if pending.abandoned:
+                raise KeyError(question_id)
+            if session_id is not None and (
+                not eligible_run
+                or pending.run_id != eligible_run
+                or sum(
+                    1
+                    for q in self._by_id.values()
+                    if q.session_id == session_id and not q.answered and not q.abandoned
+                )
+                != 1
+            ):
+                raise KeyError(question_id)
+            pending.selection = copy.deepcopy(selection)
             pending.answered = True
+            self._revision += 1
         pending.ready.set()
         return pending, True
 
@@ -422,6 +491,7 @@ class PendingQuestions:
             doomed = [q for q in self._by_id.values() if q.run_id == run_id and not q.answered]
             for pending in doomed:
                 pending.abandoned = True
+            self._revision += len(doomed)
         for pending in doomed:
             pending.ready.set()
         return len(doomed)
@@ -431,6 +501,7 @@ class PendingQuestions:
             doomed = [q for q in self._by_id.values() if not q.answered]
             for pending in doomed:
                 pending.abandoned = True
+            self._revision += len(doomed)
         for pending in doomed:
             pending.ready.set()
         return len(doomed)
@@ -634,6 +705,7 @@ class WorkspaceSessions:
         part: str | None = None,
         session_id: str | None = None,
         resume: bool = False,
+        model: ModelRef | None = None,
     ) -> dict[str, Any]:
         """``session.create``, optionally naming or **resuming** a session.
 
@@ -668,9 +740,12 @@ class WorkspaceSessions:
         answer that could disagree with the first.
         """
         opened = self.backend.create_session(
-            profile, part=part, session_id=session_id, resume=resume
+            profile, part=part, session_id=session_id, resume=resume, model=model
         )
+        document = self.backend.session_model(opened)
         return {
+            "model_state": document["model_state"],
+            "execution": document["execution"],
             "status": "ok",
             "session_id": opened,
             "profile": profile,
@@ -733,6 +808,7 @@ class WorkspaceSessions:
         run_id: str | None = None,
         context: str | None = None,
         include_events: bool = True,
+        expected_model_revision: ModelRevision | None = None,
     ) -> dict[str, Any]:
         """One prompt turn, blocking, projected onto the wire.
 
@@ -777,6 +853,7 @@ class WorkspaceSessions:
             run_id=run,
             context=context,
             answerer=self.questions.answerer(session_id),
+            expected_model_revision=expected_model_revision,
         )
         # What the turn EMITTED, not what survived: the backend's own buffer is
         # bounded by the same key (J-http-limits-4's memory half), so
@@ -841,8 +918,26 @@ class WorkspaceSessions:
             "abandoned_questions": abandoned,
         }
 
+    def session_model(self, session_id: str) -> dict[str, Any]:
+        # Existing sidecar/model reconciliation finishes OUTSIDE the short guard.
+        document = dict(self.backend.session_model(session_id))
+
+        def snapshot(execution: ExecutionSnapshot, eligible: str | None) -> dict[str, Any]:
+            return {
+                **document,
+                "execution": execution,
+                "live_questions": self.questions.snapshot(session_id, eligible),
+            }
+
+        return self.backend.question_state(session_id, snapshot)
+
     def answer_question(self, session_id: str, question_id: str, selection: Any) -> dict[str, Any]:
-        pending, accepted = self.questions.answer(question_id, selection)
+        pending, accepted = self.backend.question_state(
+            session_id,
+            lambda _execution, eligible: self.questions.answer(
+                question_id, selection, session_id=session_id, eligible_run=eligible
+            ),
+        )
         return {
             "status": "ok",
             "question_id": question_id,

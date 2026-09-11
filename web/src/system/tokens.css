@@ -366,11 +366,10 @@
      the window through the one rule that already owns the grid — this token is
      consumed only by `Shell.module.css`'s `data-stream`-driven
      `grid-template-columns`, so the clamp adds no second authority and no
-     media query. 30vw of the 1280px collapse boundary is 384px; the diagram's
-     420px is this clamp's maximum. The boundary itself and the 44px strip are
-     unchanged. */
+     media query. 30vw at the1280px Parts boundary is384px; the diagram's
+     420px is this default clamp's maximum. Explicit preference is supplied by
+     the shell presentation store. Width never resets conversation intent. */
   --stream-width: clamp(360px, 30vw, 420px);
-  --stream-strip-width: 44px;
   --header-height: 44px;
   /* §4.1(c): the drawer is an EXPLICIT height, not a `minmax` floor. Height is
      then identical across inspector tabs BY CONSTRUCTION, which is what
@@ -381,9 +380,8 @@
      by font-size. The shipped 11px pill controls were ~18px tall. */
   --target-min: 24px;
 
-  /* §4.1's bands. `useBreakpoint.ts` is the SOLE authority that reads them;
-     `Shell.module.css` keeps no media query that changes
-     `grid-template-columns` (§4.1(a)). */
+  /* Documented capacity thresholds, mirrored by state/shell.ts. The hook is
+     the sole width observer; CSS never independently changes grid columns. */
   --breakpoint-stream: 1280px;
-  --breakpoint-rail: 1024px;
+  --breakpoint-rail: 1280px;
 }

@@ -227,10 +227,9 @@ describe("the ask_user widget (§7.3)", () => {
   // part of this build", which was true of the hardcoded `disabled` §7A.7 calls
   // a **deviation** and closes. What survives unweakened — and is what the
   // assertion was actually for — is that a disabled control still states its
-  // reason: §7A.7 keeps the reopened widget non-interactive *correctly* ("there
-  // is no pending question; the run is over") and requires it to keep its
-  // stated reason. So the control is still disabled, and the reason is now the
-  // named `reopened` one rather than a build-status apology.
+  // reason: a recorded call without a live address cannot post an answer.
+  // That absence does not prove the run ended; accepted evidence remains
+  // readable, and the disabled controls say the question was answered.
   it("disables every control in a reopened transcript and says which kind of disabled it is", () => {
     const document_ = renderRows(groupRows(historyItems));
     const options = [...document_.querySelectorAll("[data-ask-option]")];
@@ -245,12 +244,13 @@ describe("the ask_user widget (§7.3)", () => {
     expect(ask?.textContent ?? "").toContain("Rebuilt from the recorded ask_user call");
   });
 
-  it("is built from the live question, and marks who answered", () => {
+  it("is built from the live question, with neutral unknown attribution", () => {
     const document_ = renderRows(liveRowsOf(liveEntries));
     const ask = document_.querySelector("[data-widget-source]");
     expect(ask?.getAttribute("data-widget-source")).toBe("question");
     expect(ask?.getAttribute("data-question-id")).toBe(`q-${fixture.run_id}-0`);
-    expect(ask?.getAttribute("data-answered-by")).toBe("other");
+    expect(ask?.getAttribute("data-answered-by")).toBeNull();
+    expect(ask?.textContent).not.toContain("another client");
     expect(document_.querySelector("[data-ask-answer]")?.textContent ?? "").toContain("Keep 2 mm");
   });
 });

@@ -3,19 +3,10 @@
 //
 // `useBreakpoint` — the SOLE authority for §4.1's breakpoints.
 //
-// §4.1's 2026-08-28 TIGHTENING (binds G4's shell deliverable): "`useBreakpoint.ts`
-// is the **sole** authority. It writes `streamOpen` / `railOverlay` into
-// workspace state; `Shell.module.css` keeps **no** media query that changes
-// `grid-template-columns`; the grid is driven by `data-stream` and `data-rail`,
-// which React sets."
-//
-// The measurement that convicts the shipped arrangement is in `state/shell.ts`'s
-// header, along with the one deviation this implementation takes (the three
-// fields live in a shell store rather than in §4.5's closed, URL-serialized
-// record). What matters here is the shape of the fix: **exactly one party reads
-// the viewport width**, and it is this hook. `Shell.module.css` reads
-// `[data-stream]` and `[data-rail]` and never a media query for the grid, so the
-// two cannot disagree between 1024 and 1279px — which is where they did.
+// Width is capacity, not intent: applyWidth clamps dimensions and chooses
+// Parts column/overlay capacity without writing conversation open state. The
+// client shell presentation store is separate from §4.5's URL record. CSS
+// consumes React's data-stream/data-rail and has no competing grid media query.
 //
 // `ResizeObserver` on the document element rather than a `resize` listener: it
 // fires for a devtools dock and a zoom change too, both of which move the layout

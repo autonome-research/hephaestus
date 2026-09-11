@@ -20,9 +20,9 @@
 //
 // ANSWERING IS IN THIS BUILD, AND EVERY DISABLED STATE STILL SAYS WHY (§7A.7).
 // A live question posts `POST /sessions/{id}/answer`; first answer wins, and the
-// route's `accepted` decides `data-answered-by` — `"self"` for the winner,
-// `"other"` for every other client, *including this one when it submitted and
-// lost*, because who acted is the server's fact and not this tab's. The four
+// retained POST receipt decides `data-answered-by`; observers without that
+// receipt omit attribution. An event or component remount cannot identify an
+// actor. Primary answer copy stays neutral and readable. The four
 // states that cannot be answered — a reopened transcript, a question with no id,
 // an event with no session, and a question that admits no answer at all — each
 // render with their own named reason rather than as an inert control, and a
@@ -49,41 +49,53 @@ import { answerQuestion } from "../../api/sessions";
 import { copy } from "../../copy";
 import {
   answerValue,
+  readableAnswer,
   askContent,
   ASK_POST_IDLE,
   type AskChoice,
-  type AskPost,
   type AskRowLike,
   type AskRuntimeDeath,
 } from "../../stream/ask";
 import { fieldDisplay, parseToolResult } from "../../stream/toolResult";
 import { readToolResult } from "../../api/events";
 import { chipAttributes } from "./ToolChip";
-import { Button, StatusBadge, TextInput } from "../../system";
+import { conversationStore, useConversation, readExecutionSessions, readSessionModel, questionRunId } from "../../stream/conversation";
+import { readableReason, sanitizeDiagnostic } from "../../stream/outcome";
+import { Button, TextInput } from "../../system";
 import styles from "./Transcript.module.css";
 
 export function AskUserWidget({
   row,
   death = null,
-  executionAllowed = true,
+  executionAllowed: executionPermitted = true,
+  taskStatus = null,
 }: {
+  readonly taskStatus?: string | null;
   readonly executionAllowed?: boolean;
   readonly row: AskRowLike;
   readonly death?: AskRuntimeDeath | null;
 }): React.JSX.Element | null {
-  const [post, setPost] = useState<AskPost>(ASK_POST_IDLE);
+  const initial = askContent(row);
+  const conversation = useConversation(initial.sessionId);
+  const executionAllowed = executionPermitted && (!row.recovery || row.recovery.epoch === conversation.execution?.epoch);
+  const post = initial.questionId === null ? ASK_POST_IDLE : conversation.answers[initial.questionId] ?? ASK_POST_IDLE;
   // The two in-progress answers a person can be composing. They are pixels, not
   // facts: nothing is sent until a submit, and nothing here is ever read back as
   // the answer — `answerValue` reads the payload's labels (§1).
   const [checked, setChecked] = useState<readonly number[]>([]);
   const [typed, setTyped] = useState("");
 
-  const anchor = row.call ?? row.question ?? row.answer;
-  const content = askContent(row, post, death);
+  const anchor = row.call ?? row.question ?? row.answer ?? { eventId: undefined, surface: undefined };
+  const boundRun = questionRunId(conversation, row);
+  const terminal = conversation.execution?.terminal;
+  const content = askContent(row, post, {
+    fault: death?.fault ?? null,
+    runHasTerminal: death?.runHasTerminal === true || (boundRun !== null && terminal?.run_id === boundRun),
+  });
   const chip = row.call === null ? null : chipAttributes("ask_user", row.status, row.call);
   const resultPayload = row.result === null ? null : readToolResult(row.result.payload);
   const parsed = resultPayload === null ? null : parseToolResult(resultPayload.text);
-  if (anchor === null) return null;
+  if (anchor.eventId === undefined && !row.recovery) return null;
 
   // Two flags, because "the controls are here but busy" and "there are no
   // controls" are different states and rendering them the same way would make a
@@ -109,17 +121,21 @@ export function AskUserWidget({
     ? copy.stream.ask.answeredRunLost
     : content.lostToRuntime
       ? copy.stream.ask.abandonedRuntime
-      : content.unavailable !== null
-        ? copy.stream.ask.unavailable[content.unavailable]
+      : content.answered
+        ? copy.stream.ask.answeredAlready
         : content.state === "submitting"
           ? copy.stream.ask.sending
           : content.state === "abandoned"
             ? copy.stream.ask.abandoned
+            : content.state === "checking"
+              ? copy.stream.ask.checking
             : content.state === "failed"
               ? copy.stream.ask.failed
-              : !executionAllowed
-                ? copy.composer.checking
-                : copy.stream.ask.answeredAlready;
+              : content.unavailable !== null
+                ? copy.stream.ask.unavailable[content.unavailable]
+                : !executionAllowed
+                  ? taskStatus ?? copy.composer.checking
+                  : copy.stream.ask.answeredAlready;
   const sessionId = content.sessionId;
   const questionId = content.questionId;
 
@@ -130,13 +146,13 @@ export function AskUserWidget({
     // the route is addressed by. A widget without them is already rendering
     // `unavailable` with the reason, so there is nothing to say here.
     if (!interactive || value === null || sessionId === null || questionId === null) return;
-    setPost({ phase: "sending" });
+    if (!conversationStore.beginAnswer(sessionId, row)) return;
     void answerQuestion(sessionId, questionId, value).then(
       (document) => {
-        setPost({ phase: "settled", document });
+        conversationStore.answer(sessionId, questionId, { phase: "settled", document });
       },
       (error: unknown) => {
-        setPost(
+        conversationStore.answer(sessionId, questionId,
           error instanceof WorkspaceError
             ? { phase: "refused", reason: error.reason, message: error.message }
             : {
@@ -146,7 +162,10 @@ export function AskUserWidget({
               },
         );
       },
-    );
+    ).finally(() => {
+      void readExecutionSessions().catch(() => undefined);
+      void readSessionModel(sessionId);
+    });
   }
 
   // The chip attributes are spread *before* the identity pair below: `anchor` is
@@ -156,6 +175,7 @@ export function AskUserWidget({
   return (
     <section
       className={styles["ask"]}
+      tabIndex={-1}
       data-widget-source={content.source}
       data-ask-state={content.state}
       data-ask-affordance={content.affordance}
@@ -170,14 +190,9 @@ export function AskUserWidget({
     >
       <header className={styles["askHeader"]}>
         <span className={styles["askTitle"]}>{copy.stream.ask.title}</span>
-        {row.call === null ? null : (
-          <StatusBadge status={row.status}>{copy.stream.chip.status[row.status]}</StatusBadge>
-        )}
       </header>
+      {content.source === "live_state" ? <p className={styles["note"]}>{copy.stream.ask.recovered}</p> : null}
 
-      {content.source === "tool_result" ? (
-        <p className={styles["note"]}>{copy.stream.ask.fromToolResult}</p>
-      ) : null}
 
       <p
         className={styles["askQuestion"]}
@@ -326,13 +341,15 @@ export function AskUserWidget({
         </p>
       ) : null}
 
+      {content.state === "checking" ? <p className={styles["note"]} role="status">{copy.stream.ask.checking}</p> : null}
+
       {content.state === "failed" && content.refusal !== null ? (
         <p className={styles["note"]}>
-          {copy.stream.ask.failed} {content.refusal.message}
+          {copy.stream.ask.failed} {readableReason(content.refusal.message)}
         </p>
       ) : null}
 
-      {content.unavailable === null ? null : (
+      {content.unavailable === null || content.answered || content.state === "abandoned" ? null : (
         <p className={styles["note"]} data-ask-disabled="1">
           {copy.stream.ask.unavailable[content.unavailable]}
         </p>
@@ -347,19 +364,18 @@ export function AskUserWidget({
             : { "data-event-id": row.answer.eventId, "data-surface": row.answer.surface })}
         >
           <span className={styles["fieldName"]}>{copy.stream.ask.answer}</span>
-          <code className={styles["fieldValue"]}>{fieldDisplay(content.answer)}</code>
-          <span className={styles["note"]}>
-            {content.answeredBy === "self"
-              ? copy.stream.ask.answeredSelf
-              : copy.stream.ask.answeredOther}
-          </span>
+          <span>{readableAnswer(content.answer) ?? copy.stream.ask.answerInDetails}</span>
         </div>
-      ) : content.state === "abandoned" || content.state === "failed" ? null : (
-        <p className={styles["note"]}>{copy.stream.ask.pending}</p>
-      )}
+      ) : content.state === "answerable" ? (
+        <p className={styles["note"]}>{executionAllowed ? copy.stream.ask.pending : taskStatus ?? copy.composer.checking}</p>
+      ) : null}
 
       {/* As in `ToolChip`: the result block carries the result event's own
           identity, so a reopened transcript names every archived event. */}
+      {parsed === null && !content.answered ? null : <details>
+        <summary>{copy.stream.ask.details}</summary>
+        {content.source === "tool_result" ? <p className={styles["note"]}>{copy.stream.ask.fromToolResult}</p> : null}
+        {content.answered ? <pre className={styles["raw"]}>{sanitizeDiagnostic(content.answer)}</pre> : null}
       {parsed === null ? null : parsed.state === "unparsed" ? (
         <p
           className={styles["note"]}
@@ -384,6 +400,7 @@ export function AskUserWidget({
           ))}
         </dl>
       )}
+      </details>}
     </section>
   );
 }

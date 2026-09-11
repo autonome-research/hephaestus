@@ -45,6 +45,8 @@
 // measured on a `ready` canvas, where every overlay is exactly where it was.
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { flushSync } from "react-dom";
+import { shellStore } from "../../../state/shell";
 import { WorkspaceError } from "../../../api/client";
 import { copy } from "../../../copy";
 import { useBuild } from "../../../api/queries";
@@ -54,7 +56,7 @@ import { parseSectionPlane } from "../../../viewport/section";
 import { installViewportHandle } from "../../../viewport/testHook";
 import { useGlb } from "../../../viewport/useGlb";
 import { labelsForPart, visibilityStore } from "../../../state/visibility";
-import { Badge, Chip, EmptyState, type IconId } from "../../../system";
+import { Badge, Button, Chip, EmptyState, type IconId } from "../../../system";
 import type { SolidIndex } from "../../../viewport/scene";
 import { appearanceStore } from "../../../state/appearance";
 import { AppearanceControls } from "./AppearanceControls";
@@ -158,6 +160,12 @@ export function ViewportAbsence({
           <EmptyState
             icon={ABSENCE_ICON[state]}
             title={copy.viewport.notBuilt.title(name)}
+            action={<Button variant="secondary" data-unbuilt-conversation="" onClick={() => {
+              flushSync(() => shellStore.setStreamOpen(true));
+              const target = document.querySelector<HTMLElement>("[data-composer-input]:not(:disabled)")
+                ?? document.querySelector<HTMLElement>("#composer");
+              target?.focus({ preventScroll: true });
+            }}>{copy.viewport.notBuilt.open}</Button>}
             body={
               <>
                 <p>{copy.viewport.notBuilt.ask}</p>
@@ -292,8 +300,12 @@ export function Viewport(): React.JSX.Element {
   const [loadedIntoScene, setLoadedIntoScene] = useState<string | null>(null);
 
   const onCameraSettled = useCallback((viewName: string): void => {
-    framedRef.current = null;
+    // Recording an orbit's nearest name must not refit its zoom/pan or round
+    // its pose. Explicit view navigation and Fit still frame normally.
+    framedRef.current = `${viewName}|${workspaceStore.getSnapshot().explode_t > 0 ? "exploded" : "collapsed"}`;
     workspaceStore.update({ view: viewName });
+    setScale(engineRef.current?.scale() ?? 0);
+    setStep(engineRef.current?.gridStep() ?? 0);
   }, []);
 
   const onFit = useCallback((): void => {
@@ -326,6 +338,7 @@ export function Viewport(): React.JSX.Element {
     const removeHandle = installViewportHandle(() => ({
       index: indexRef.current,
       artifactRef: loadedRefRef.current,
+      camera: engineRef.current?.cameraSnapshot() ?? null,
     }));
     const created = engine;
     return () => {
@@ -347,6 +360,7 @@ export function Viewport(): React.JSX.Element {
       const rect = host.getBoundingClientRect();
       engineRef.current?.resize(rect.width, rect.height);
       setScale(engineRef.current?.scale() ?? 0);
+      setStep(engineRef.current?.gridStep() ?? 0);
       setStageWidth(rect.width);
     });
     observer.observe(host);

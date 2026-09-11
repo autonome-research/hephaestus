@@ -152,20 +152,22 @@ describe("§4.1(a) — one breakpoint authority, and the band it got wrong", () 
     // The band where `Shell.module.css` and `Shell.tsx` disagreed: the column
     // was 44px, the panel's scrollWidth was 81px, and the body overflowed.
     expect(bandFor(BREAKPOINT_STREAM - 1)).toBe("medium");
-    expect(bandFor(BREAKPOINT_RAIL)).toBe("medium");
-    expect(bandFor(BREAKPOINT_RAIL - 1)).toBe("narrow");
+    expect(bandFor(BREAKPOINT_RAIL)).toBe("wide");
+    expect(bandFor(1024)).toBe("medium");
+    expect(bandFor(1023)).toBe("narrow");
   });
 
-  it("closes the stream and opens the rail as a column in the middle band", () => {
+  it("retains open conversation and hides Parts overlay in the middle band", () => {
     shellStore.applyWidth(1279);
     const state = shellStore.getSnapshot();
     expect(state.band).toBe("medium");
     // The two facts that used to have two owners now have one, and they agree.
-    expect(state.streamOpen).toBe(false);
-    expect(state.railOverlay).toBe(false);
+    expect(state.streamOpen).toBe(true);
+    expect(state.railOverlay).toBe(true);
+    expect(state.railOpen).toBe(false);
   });
 
-  it("overlays the rail below 1024 and opens it CLOSED, with a way back", () => {
+  it("overlays the rail below1280 and opens it CLOSED, with a way back", () => {
     shellStore.applyWidth(900);
     expect(shellStore.getSnapshot().railOverlay).toBe(true);
     expect(shellStore.getSnapshot().railOpen).toBe(false);
@@ -181,7 +183,7 @@ describe("§4.1(a) — one breakpoint authority, and the band it got wrong", () 
       band: "narrow",
       railOverlay: true,
       railOpen: false,
-      streamOpen: false,
+      streamOpen: true,
     });
 
     shellStore.setStreamOpen(true);
@@ -200,8 +202,7 @@ describe("§4.1(a) — one breakpoint authority, and the band it got wrong", () 
   });
 
   it("keeps an explicit collapse across a resize INSIDE a band", () => {
-    // §4.1(a): "A user's explicit collapse survives a resize inside a band and
-    // is re-evaluated on a band crossing."
+    // Capacity never overrides explicit intent.
     shellStore.applyWidth(1440);
     expect(shellStore.getSnapshot().streamOpen).toBe(true);
     shellStore.setStreamOpen(false);
@@ -210,12 +211,16 @@ describe("§4.1(a) — one breakpoint authority, and the band it got wrong", () 
     expect(shellStore.streamHeld()).toBe(true);
   });
 
-  it("re-evaluates on a band CROSSING, and forgets the hold", () => {
-    shellStore.applyWidth(1440);
-    shellStore.setStreamOpen(false);
-    shellStore.applyWidth(1000);
-    expect(shellStore.streamHeld()).toBe(false);
-    shellStore.applyWidth(1440);
+  it.each([true, false])("preserves explicit intent %s through every band and late resize observation", open => {
+    shellStore.setStreamOpen(open);
+    for (const width of [1440, 1280, 1024, 843, 1024, 1440]) {
+      shellStore.applyWidth(width);
+      expect(shellStore.streamHeld()).toBe(true);
+      expect(shellStore.getSnapshot().streamOpen).toBe(open);
+      expect(shellStore.getSnapshot().railOverlay).toBe(width < 1280);
+    }
+    shellStore.setStreamOpen(true); // Skip before a pending resize callback
+    shellStore.applyWidth(843);
     expect(shellStore.getSnapshot().streamOpen).toBe(true);
   });
 

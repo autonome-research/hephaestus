@@ -175,6 +175,28 @@ def test_a_prompt_runs_on_the_server_and_its_events_come_back(server: Any) -> No
     assert len([e for e in seen if str(e.get("kind")) == "text_delta"]) == 1
 
 
+def test_client_model_conflict_preserves_explicit_action_and_never_replays(server: Any) -> None:
+    client = attach_client(server.root)
+    assert client is not None
+    try:
+        sid = client.create_session("orchestrator")
+        before = server.agent.session_model(sid)["model_state"]
+        assert before["selected"] == {"provider_id": "fake", "model_id": "text"}
+        server.agent.select_session_model(
+            sid, {"provider_id": "fake", "model_id": "vision"}, before["revision"]
+        )
+        with pytest.raises(ClientModeError) as exc:
+            client.prompt(sid, "do not replay this draft")
+        assert exc.value.code == "model_changed"
+        assert server.agent.prompts == []
+        # Only a later explicit action uses the reconciled revision.
+        assert client.prompt(sid, "explicitly reviewed").status == "completed"
+        assert len(server.agent.prompts) == 1
+        assert server.agent.prompts[0] == ("explicitly reviewed", None)
+    finally:
+        client.close()
+
+
 def test_client_mode_refuses_session_and_resume_by_name(server: Any) -> None:
     """Silently ignoring ``--session foo --resume`` would let an operator believe
     they had reopened a transcript they had not."""

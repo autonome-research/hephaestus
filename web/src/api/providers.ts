@@ -158,6 +158,68 @@ export interface CatalogDocument {
   readonly catalog?: readonly { readonly id: string; readonly name: string }[];
 }
 
+/** Selector-specific runtime projection; declarations are not live identity. */
+export interface ModelRef {
+  readonly provider_id: string;
+  readonly model_id: string;
+}
+export interface ModelRevision {
+  readonly epoch: string;
+  readonly version: number;
+}
+export interface ResolvedModel extends ModelRef {
+  readonly name: string;
+  readonly input: readonly ("text" | "image")[];
+}
+export interface ModelOption extends ModelRef {
+  readonly name: string;
+  readonly input: readonly ("text" | "image")[] | null;
+  readonly available: boolean;
+  readonly unavailable_reason: string | null;
+}
+export interface ModelsDocument {
+  readonly status: "ok";
+  readonly providers: readonly {
+    readonly provider_id: string;
+    readonly name: string;
+    readonly models: readonly ModelOption[];
+  }[];
+  readonly proposed_default: ResolvedModel | null;
+  readonly default_policy: "first_available_declared";
+}
+export function isModelRef(value: unknown): value is ModelRef {
+  if (value === null || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  return typeof v["provider_id"] === "string" && typeof v["model_id"] === "string";
+}
+export function isModelRevision(value: unknown): value is ModelRevision {
+  if (value === null || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  return typeof v["epoch"] === "string" && typeof v["version"] === "number"
+    && Number.isSafeInteger(v["version"]) && v["version"] >= 0;
+}
+export function isModelInput(value: unknown): value is ResolvedModel["input"] {
+  return Array.isArray(value) && value.every(v => v === "text" || v === "image");
+}
+export function isResolvedModel(value: unknown): value is ResolvedModel {
+  return isModelRef(value) && "name" in value && typeof value.name === "string"
+    && "input" in value && isModelInput(value.input);
+}
+export async function loadModels(): Promise<ModelsDocument> {
+  const doc = await apiJson<ModelsDocument>("/providers/models", { cache: "no-store" });
+  if (doc?.status !== "ok" || doc.default_policy !== "first_available_declared"
+    || !(doc.proposed_default === null || isResolvedModel(doc.proposed_default))
+    || !Array.isArray(doc.providers) || !doc.providers.every(p =>
+      typeof p.provider_id === "string" && typeof p.name === "string" && Array.isArray(p.models)
+      && p.models.every((m: ModelOption) => isModelRef(m) && m.provider_id === p.provider_id
+        && typeof m.name === "string" && (m.input === null || isModelInput(m.input))
+        && typeof m.available === "boolean"
+        && (m.unavailable_reason === null || typeof m.unavailable_reason === "string")))) {
+    throw new Error("Invalid models document");
+  }
+  return doc;
+}
+
 /** One provider spec, as `PUT /providers/specs` accepts it. */
 export interface ProviderSpecInput {
   readonly id: string;

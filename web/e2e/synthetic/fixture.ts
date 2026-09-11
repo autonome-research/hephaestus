@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { readFileSync } from "node:fs";
 import { expect, type Page, type Route, type WebSocketRoute } from "@playwright/test";
-import type { ExecutionSnapshot, HistoryUserPrompt } from "../../src/api/sessions";
+import type { CreatedSessionDocument, ExecutionSnapshot, HistoryUserPrompt, SessionModelState } from "../../src/api/sessions";
+import { models, modelState } from "../../test/fixtures/models";
 
 export const SID = "synthetic-session";
 export const OTHER = "synthetic-other";
@@ -20,6 +21,21 @@ export async function setup(page: Page, initial = execution()) {
   let version = 0;
   const control = {
     execution: initial, sessionsFail: false, stale: false,
+    model: { ...modelState } as SessionModelState, modelReads: 0, holdModel: false,
+    created: null as CreatedSessionDocument | null,
+    pendingModel: null as Route | null,
+    async releaseModel() {
+      await expect.poll(() => control.pendingModel !== null).toBe(true);
+      const next = models.providers.flatMap(p => p.models).find(m => m.provider_id === control.model.pending_selection?.provider_id
+        && m.model_id === control.model.pending_selection.model_id);
+      if (next?.input == null || !next.available) throw new Error("Invalid synthetic model selection");
+      control.model = { ...control.model, current: { provider_id: next.provider_id, model_id: next.model_id, name: next.name, input: next.input },
+        selected: { provider_id: next.provider_id, model_id: next.model_id },
+        pending_selection: null, state: "ready", reason: null, revision: { ...control.model.revision, version: control.model.revision.version + 1 } };
+      const route = control.pendingModel!; control.pendingModel = null;
+      await route.fulfill({ json: { status: "ok", session_id: SID, model_state: control.model,
+        execution: { ...control.execution, version: ++version } } });
+    },
     prompts: [{ turn: 0, seq: 0, run_id: OLD, text: "Recorded fixture request", outcome: { state: "completed" } }] as HistoryUserPrompt[],
     events: [
       { run_id: SID, seq: 0, turn: 0, kind: "text_delta", payload: { text: "Recorded narration stays visible." } },
@@ -52,22 +68,77 @@ export async function setup(page: Page, initial = execution()) {
     const path = url.pathname.replace("/api/v1", "");
     if (request.method() !== "GET") {
       control.mutations.push({ path, body: request.postDataJSON() as unknown });
-      if (path.endsWith("/prompt")) { control.pending = route; return; }
+      if (path === "/context/preview") {
+        await route.fulfill({ json: { status: "ok", block: "Synthetic advisory context preview", truncated: false, sources: [] } }); return;
+      }
+      if (path === "/sessions") {
+        const body = request.postDataJSON() as { profile: "orchestrator" | "part"; part?: string; model: { provider_id: string; model_id: string } };
+        const choice = models.providers.flatMap(p => p.models).find(m => m.provider_id === body.model.provider_id && m.model_id === body.model.model_id);
+        if (choice?.input == null || !choice.available) throw new Error("Invalid synthetic creation choice");
+        control.created = { status: "ok", session_id: "synthetic-created", profile: body.profile, part: body.part ?? null, resumed: false,
+          model_state: { ...modelState, current: { provider_id: choice.provider_id, model_id: choice.model_id, name: choice.name, input: choice.input }, selected: body.model }, execution: execution() };
+        await route.fulfill({ json: control.created }); return;
+      }
+      if (path.endsWith("/model") && request.method() === "PUT") {
+        const body = request.postDataJSON() as { model: { provider_id: string; model_id: string }; expected_model_revision: { epoch: string; version: number } };
+        const reason = control.execution.active_run_id !== null ? "run_in_flight"
+          : control.model.state === "changing" ? "model_change_in_progress"
+          : JSON.stringify(body.expected_model_revision) !== JSON.stringify(control.model.revision) ? "model_changed" : null;
+        if (reason !== null) {
+          await route.fulfill({ status: 409, json: { status: "error", reason, message: reason, session_id: SID,
+            model_state: control.model, execution: { ...control.execution, version: ++version } } }); return;
+        }
+        control.model = { ...control.model, state: "changing", pending_selection: body.model,
+          revision: { ...control.model.revision, version: control.model.revision.version + 1 } };
+        control.pendingModel = route;
+        if (!control.holdModel) await control.releaseModel();
+        return;
+      }
+      if (path.endsWith("/prompt")) {
+        const body = request.postDataJSON() as { expected_model_revision?: { epoch: string; version: number } };
+        const current = path.includes(SID) ? control.model : modelState;
+        const reason = body.expected_model_revision === undefined ? "model_revision_required"
+          : current.state === "changing" ? "model_change_in_progress"
+          : body.expected_model_revision.epoch !== current.revision.epoch || body.expected_model_revision.version !== current.revision.version ? "model_changed" : null;
+        if (reason !== null) {
+          await route.fulfill({ status: reason === "model_revision_required" ? 428 : 409,
+            json: { status: "error", reason, message: reason, session_id: SID, model_state: current,
+              execution: { ...control.execution, version: ++version, admission_available: current.state === "ready" && control.execution.admission_available } } }); return;
+        }
+        control.pending = route; return;
+      }
       if (path.endsWith("/cancel")) {
         await route.fulfill({ json: { status: "ok", run_id: path.split("/")[2], questions_cancelled: 0 } }); return;
       }
       await route.fulfill({ status: 409, json: { status: "error", reason: "fixture_unexpected_mutation", message: "Unexpected synthetic mutation" } }); return;
     }
+    if (path === "/providers/models") { await route.fulfill({ json: models }); return; }
+    if (path.endsWith("/model")) {
+      control.modelReads++;
+      if (control.sessionsFail) { await route.fulfill({ status: 503, json: { status: "error", reason: "agent_unavailable", message: "Synthetic read failure" } }); return; }
+      const sid = path.split("/")[2];
+      const model = sid === SID ? control.model : control.created !== null && sid === control.created.session_id ? control.created.model_state : modelState;
+      const snapshot = sid === SID ? control.execution : execution();
+      await route.fulfill({ json: { status: "ok", session_id: sid, model_state: model,
+        execution: { ...snapshot, version: control.stale ? 0 : ++version,
+          admission_available: snapshot.admission_available && model.state === "ready" } } }); return;
+    }
     if (path === "/sessions") {
       control.sessionReads++;
       if (control.sessionsFail) { await route.fulfill({ status: 503, json: { status: "error", reason: "agent_unavailable", message: "Synthetic read failure" } }); return; }
-      const rows = [SID, OTHER].map(session_id => ({ session_id, profile: "orchestrator", part: null,
+      const rows = [SID, OTHER, ...(control.created ? [control.created.session_id] : [])].map(session_id => ({ session_id,
+        profile: session_id === control.created?.session_id ? control.created.profile : "orchestrator",
+        part: session_id === control.created?.session_id ? control.created.part : null,
         parent_session_id: null, thread_state: "unlinked", readable: true, unreadable_reason: null,
         execution: session_id === SID ? { ...control.execution, version: control.stale ? 0 : ++version } : { ...execution(), version: ++version } }));
       await route.fulfill({ json: { status: "ok", sessions: rows,
         profiles: [{ profile: "orchestrator", can_delegate: true, part_scoped: false, requires_part: false }] } }); return;
     }
     if (path.endsWith("/history")) {
+      if (control.created !== null && path.split("/")[2] === control.created.session_id) {
+        await route.fulfill({ json: { status: "ok", session_id: control.created.session_id,
+          events: [], user_prompts: [], cursor: null, done: true, end_cursor: "new-tail" } }); return;
+      }
       const tail = url.searchParams.has("after");
       if (tail) control.tailReads++;
       await route.fulfill({ json: { status: "ok", session_id: SID, events: tail ? [] : control.events,
@@ -86,7 +157,7 @@ export async function setup(page: Page, initial = execution()) {
   await page.waitForFunction(() => document.querySelector("[data-pin-mode]") !== null);
   await page.evaluate(sid => { location.hash = `#/p/bracket?s=${sid}`; }, SID);
   const strip = page.locator("[data-stream-strip]");
-  if (await strip.isVisible()) await strip.focus();
+  if (await strip.isVisible()) await strip.click();
   await expect(page.locator("[data-composer-input]")).toBeVisible();
   return control;
 }

@@ -42,11 +42,12 @@ import threading
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
 from .app import AskUserAnswerer, PromptResult
+from .model_selection import ModelRevision, model_ref, model_state, models_document
 from .serve_record import (
     WORKSPACE_API_PREFIX,
     ServeRecord,
@@ -87,6 +88,9 @@ class ServerAgentClient:
     #: Opened lazily on the first prompt; ``None`` when the upgrade is
     #: unavailable, in which case events are rendered from the prompt response.
     _stream: _EventStream | None = None
+    _model_revisions: dict[str, ModelRevision] = field(
+        default_factory=lambda: dict[str, ModelRevision]()
+    )
 
     # -- transport ---------------------------------------------------------
 
@@ -150,10 +154,23 @@ class ServerAgentClient:
                 "--session/--resume are not available in client mode: the owning "
                 "server creates sessions, and `GET /sessions` lists what it holds",
             )
-        body = cast(
-            "dict[str, Any]", self.request("POST", "/sessions", {"profile": profile, "part": part})
+        proposal = models_document(self.request("GET", "/providers/models"))["proposed_default"]
+        if proposal is None:
+            raise ClientModeError("selection_required", "No eligible declared model is available")
+        print(
+            f"Proposed default: {proposal['provider_id']}/{proposal['model_id']} · "
+            + ("Text + images" if "image" in proposal["input"] else "Text only")
         )
-        return str(body["session_id"])
+        choice = model_ref(
+            {"provider_id": proposal["provider_id"], "model_id": proposal["model_id"]}
+        )
+        body = cast(
+            "dict[str, Any]",
+            self.request("POST", "/sessions", {"profile": profile, "part": part, "model": choice}),
+        )
+        sid = str(body["session_id"])
+        self._model_revisions[sid] = model_state(body["model_state"])["revision"]
+        return sid
 
     def sessions(self) -> list[dict[str, Any]]:
         body = cast("dict[str, Any]", self.request("GET", "/sessions"))
@@ -182,10 +199,29 @@ class ServerAgentClient:
         """Run one turn on the server, rendering its events as they arrive."""
         run = run_id or self.new_run_id()
         stream = self._ensure_stream(session_id, on_event=on_event, answerer=answerer)
-        body = cast(
-            "dict[str, Any]",
-            self.request("POST", f"/sessions/{session_id}/prompt", {"text": text, "run_id": run}),
-        )
+        if session_id not in self._model_revisions:
+            current = self.request("GET", f"/sessions/{session_id}/model")
+            self._model_revisions[session_id] = model_state(current["model_state"])["revision"]
+        try:
+            body = cast(
+                "dict[str, Any]",
+                self.request(
+                    "POST",
+                    f"/sessions/{session_id}/prompt",
+                    {
+                        "text": text,
+                        "run_id": run,
+                        "expected_model_revision": self._model_revisions[session_id],
+                    },
+                ),
+            )
+        except ClientModeError:
+            # Reconcile for a later explicit action, never resubmit this turn.
+            current = self.request("GET", f"/sessions/{session_id}/model")
+            state = model_state(current["model_state"])
+            self._model_revisions[session_id] = state["revision"]
+            print(f"Session model: {state['current']}; review before sending again.")
+            raise
         events = cast("list[dict[str, Any]]", body.get("events", []))
         if stream is None and on_event is not None:
             # No socket: render what the turn returned, so a run is never

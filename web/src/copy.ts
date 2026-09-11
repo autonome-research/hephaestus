@@ -19,6 +19,32 @@
 //   reads as a pass, and a blank field never stands in for "not known".
 
 export const copy = {
+  models: {
+    label: "Session model", choose: "Choose model", search: "Search provider or model",
+    proposed: "Proposed default", choice: "New-session choice", current: "Current model",
+    saved: "Saved selection (not active)", none: "Selection required",
+    text: "Text only", images: "Text + images", unknownCapability: "Capability unknown",
+    details: "Full model identity", checking: "Checking session model…",
+    changing: "Changing model — Send is blocked until confirmed.",
+    busy: "Model selection is disabled until the current turn and cleanup finish.",
+    uncertain: "Model selection is uncertain. Choose explicitly to reconcile before sending.",
+    readFailed: "Could not confirm the session model. Send is blocked; check again.",
+    catalogFailed: "Could not load configured models.", catalogLoading: "Loading configured models…", unavailable: "Unavailable",
+    noMatches: "No matching configured models.", done: "Done", retry: "Check again",
+    local: "Available means locally configured, not a live provider test.",
+    lost: "Model change was not confirmed. Checking state; the write will not be retried.",
+    changed: "The session model changed. Review it before sending again.",
+    currentLabel: "Model for this conversation", newLabel: "Model for this new conversation",
+    create: "Create conversation", createTitle: "New conversation", cancel: "Cancel", creating: "Creating conversation…",
+    reasons: {
+      model_unknown: "Not supported by the configured runtime",
+      provider_unknown: "Provider is not configured in the runtime",
+      model_not_configured: "Not declared for this project",
+      model_unavailable: "Not currently eligible in the configured runtime",
+      selection_required: "Choose a model before sending",
+      model_selection_uncertain: "Choose explicitly to reconcile the previous change",
+    } as Readonly<Record<string, string>>,
+  },
   app: {
     /** The product name. Used in the document title and the header. */
     name: "Hephaestus",
@@ -444,7 +470,8 @@ export const copy = {
      */
     notBuilt: {
       title: (part: string): string => `${part} has not been built`,
-      ask: "Ask the agent in the stream below to build it.",
+      ask: "Open the conversation to request a build.",
+      open: "Open conversation",
       run: "Or run",
       command: (part: string): string => `heph build ${part}`,
     },
@@ -724,6 +751,14 @@ export const copy = {
   /** §6.4: findings, descriptors, and the two DFM controls kept apart. */
   dfm: {
     heading: "Manufacturability findings",
+    provenance: "Provenance",
+    currentArtifact: "current artifact",
+    otherArtifact: "other artifact / stale result",
+    relationUnknown: "artifact relation unknown",
+    incomplete: "Evaluation incomplete",
+    summaryUnknown: "Evaluation summary unavailable",
+    findingsReported: "Findings reported",
+    findingsUnavailable: "Findings were reported, but their details are unavailable.",
     absentTitle: "Not evaluated",
     capabilityTitle: "No secure executor",
     cleanTitle: "No findings",
@@ -932,11 +967,17 @@ export const copy = {
     connectionDetails: "Connection and history details",
     executionUnavailable: "Execution could not be confirmed. No message will be resent.",
     title: "Agent",
-    collapse: "Collapse the agent column",
-    expand: "Expand the agent column",
+    collapse: "Hide conversation",
+    expand: "Open conversation",
+    conversation: "Conversation",
+    open: "Open",
+    answerNeeded: "Answer needed",
     resize: "Resize the agent column",
     width: (pixels: number) => `${String(pixels)} pixels`,
-    switchSession: "Switch session",
+    switchSession: "Switch conversation",
+    switchAction: "Switch",
+    newAction: "New",
+    hideAction: "Hide",
     switchDone: "Done",
 
     /** §7.4's closed vocabulary on the Stream header, each with its reason. */
@@ -1050,7 +1091,7 @@ export const copy = {
      * control therefore has two entries. Icon-only controls carry their label
      * as `aria-label` (§3.12), so this is the name the control is announced by.
      */
-    createMenu: "Start a session",
+    createMenu: "New conversation",
 
     /** §7.1's tab list; the profile and edge words are the server's own. */
     profile: {
@@ -1117,13 +1158,7 @@ export const copy = {
      */
     seamMidRun:
       "Some earlier output is not shown; this page connected after the turn began.",
-    /*
-     * `historyLoading` is REMOVED (§8(b), amended 2026-09-01): "the loading
-     * ellipsis is not an exception — a transcript that is still filling is
-     * already visibly filling", so the string had no site left to render in and
-     * a copy key nothing draws is the dead surface §0.2b's repair (c) is about.
-     * `data-history-state="loading"` on the panel root still reports the state.
-     */
+    historyLoading: "Loading recorded conversation…",
     historyPages: (pages: number): string =>
       pages === 1 ? "1 page of recorded transcript" : `${pages} pages of recorded transcript`,
     historyTruncated:
@@ -1389,14 +1424,17 @@ export const copy = {
     /** §7.3 / §7A.7's AskUserWidget — the one place this workspace answers. */
     ask: {
       title: "Question for you",
+      recovered: "Recovered from the live run. This is current question state, not a recorded event.",
+      recoveryChecking: "Checking the live question. Held content is retained; no answer or message will be sent automatically.",
       question: "Question",
       options: "Options",
       noOptions: "This question recorded no options.",
       consequenceMissing: "No consequence was recorded for this option.",
-      answeredSelf: "Answered from this page.",
-      answeredOther: "Answered from another client first.",
-      answer: "Answer",
-      pending: "Waiting for an answer.",
+      answer: "Answer recorded:",
+      answerInDetails: "See the recorded selection in Details.",
+      details: "Details",
+      goToQuestion: "Go to question",
+      pending: "Waiting for your answer",
       /** §7.3: a reopened widget is rebuilt from the call and result, not the events. */
       fromToolResult:
         "Rebuilt from the recorded ask_user call and its result. The live question and answer events are not part of a reopened transcript.",
@@ -1406,7 +1444,8 @@ export const copy = {
       freeTextPlaceholder: "Your answer",
       submit: "Send answer",
       submitMulti: "Send selected answers",
-      sending: "Sending your answer…",
+      sending: "Recording answer",
+      checking: "Checking whether the answer was recorded. Nothing will be sent again.",
       multiHint: "Choose every option that applies, then send.",
       /**
        * §4.7's disabled-reason rule, for the three states that turn a control
@@ -1422,7 +1461,7 @@ export const copy = {
        * fact the server did not give us.
        */
       abandoned:
-        "This question is no longer open. It was answered elsewhere, abandoned with its run, or never reached this server.",
+        "This question is no longer open. No answer is available in the held evidence.",
       /**
        * `data-runtime-fault` is set and this run never produced a `terminal`.
        * Same `abandoned` state — no sixth §7.4 / §7A.7 value — said in words
@@ -1445,7 +1484,7 @@ export const copy = {
        */
       unavailable: {
         reopened:
-          "This is a reopened transcript. The run that asked has ended, so there is no question left to answer.",
+          "The recorded call has no live question address. An answer cannot be submitted from this record; this does not establish that the run ended.",
         no_question_id:
           "This question carries no question id, so no client can address an answer to it. It was raised by a sidecar older than the id.",
         no_session:
@@ -1477,7 +1516,12 @@ export const copy = {
     label: "Message the agent",
     placeholder: "Ask the agent about this, or tell it what to change.",
     send: "Send",
-    sending: "Sending…",
+    sending: "Sending request",
+    submittedAttempt: "Submitted attempt (not queued)",
+    nextDraft: "Draft for next message",
+    nextDraftHint: "Not sent or queued.",
+    receiptUncertain: "Execution evidence is available but the request receipt is missing; nothing will be resent.",
+    recoveryNext: "Review the result before writing a new request.",
     /**
      * "Cancel the run" wrapped the actions row at 420px, pushing §7A.3's
      * disclosure onto a second line under an idle composer. The word is the
@@ -1500,13 +1544,14 @@ export const copy = {
      * and it is announced, because an unannounced one is indistinguishable from
      * a text box that loses your newline.
      */
+    messageDetails: "Message details",
     sendHint: "Enter sends · Shift+Enter for a new line",
     /**
      * Mid-turn the box stays typable (#63) so the next message can be written,
      * but Enter must not look bound. A silent `submit()` return is the same
      * class of lie as a Send that looks enabled and does nothing (#44).
      */
-    sendHintBusy: "A turn is running; wait for it to finish, or Cancel.",
+    sendHintBusy: "Draft only · not sent or queued · Shift+Enter for a new line",
 
     /**
      * §7A.5's TIGHTENING: the composer never retries a prompt automatically.
@@ -1541,7 +1586,7 @@ export const copy = {
       agent_unavailable:
         "This server has no agent runtime attached, so there is nobody to send this to.",
       run_in_flight:
-        "A turn is already running. Wait for it to finish, or cancel it, before starting another.",
+        "A task is active. This draft is not sent or queued. Wait for it to finish, or use Stop.",
       no_session: "No session is selected, so this message has nowhere to go.",
     },
     /**
@@ -1564,7 +1609,10 @@ export const copy = {
      * that follow are the closed §4.5 tokens and echoed identifiers the
      * envelope carries, and a longer preamble would be words about words.
      */
-    contextSummary: "Context:",
+    contextSummary: "Next message includes:",
+    scopeMismatch: (scope: string, viewed: string, included: boolean): string =>
+      `Conversation scoped to ${scope}; ${included ? `next message includes the viewed ${viewed}` : `viewing ${viewed} (part reference excluded)`}.`,
+    viewScope: (part: string): string => `View ${part}`,
     /** The blank canvas, in one word. The long form is `contextNone`. */
     contextEmpty: "none",
     /** §7A.3(a)'s `+N`: a count of the client's own envelope members. */
@@ -1637,7 +1685,7 @@ export const copy = {
      * before it is used — "a user who does not know their session cannot
      * delegate reads `scope_denied` as a broken product".
      */
-    createOrchestrator: "New session",
+    createOrchestrator: "New conversation",
     createPart: (part: string): string => `Ask about ${part}`,
     createTitle: "No session yet",
     /**

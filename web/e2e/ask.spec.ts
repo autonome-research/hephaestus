@@ -8,7 +8,7 @@
 // acceptance evidence the plan names for that item:
 //
 //   * `data-answered-by="self"` on the widget that answered;
-//   * `data-answered-by="other"` on a second attached client;
+//   * neutral recorded answer on a second attached client without a POST receipt;
 //   * a question that is no longer open renders `data-ask-state="abandoned"`
 //     **in place** — from its run's durable terminal, without an answer attempt.
 //
@@ -25,20 +25,17 @@
 // not from a web-side lock over the suspended question, because inventing one
 // would be a second session-ownership mechanism.
 //
-// ON `accepted:false`. The plan lists it with the two `data-answered-by` values.
-// It is asserted where it is deterministic — `web/test/stream/ask.test.tsx`
-// renders the loser's document — because the server pops a question the instant
-// the winner's answer releases the suspended run, so a second client that posts
-// after that (which is what a real second client does) receives
-// `404 unknown_question` rather than `accepted:false`. That refusal is asserted
-// below, on the route and in the DOM; the two-microsecond window in which the
-// route answers `accepted:false` instead is not something a browser can be
-// aimed at, and a test that tried would be a coin toss.
+// ON `accepted:false`: bounded settled records retain the winner after the
+// waiter exits, so a same-session late contender deterministically receives
+// the exact winning selection. Foreign/unknown/closed-unanswered addresses
+// refuse without disclosing a selection. Real reload recovery is covered by
+// recovery.spec.ts; these two clients attach before the live question.
 
 import { expect, test, type Page } from "@playwright/test";
 import { archive } from "./harness/archive";
 import { api, open, route, world } from "./harness/world";
 
+import { modelRevision, proposedModel } from "./helpers/models";
 const PART = "tread";
 
 interface SessionDocument {
@@ -61,7 +58,7 @@ async function createSession(): Promise<string> {
   const created = await api<SessionDocument>("/sessions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ profile: "orchestrator" }),
+    body: JSON.stringify({ profile: "orchestrator", model: await proposedModel() }),
   });
   return created.session_id;
 }
@@ -73,11 +70,11 @@ async function createSession(): Promise<string> {
  * cannot finish until somebody answers the question it raises. The promise is
  * returned so the test can settle it at the end rather than leave it dangling.
  */
-function startTurn(sessionId: string): Promise<PromptDocument> {
+async function startTurn(sessionId: string): Promise<PromptDocument> {
   return api<PromptDocument>(`/sessions/${encodeURIComponent(sessionId)}/prompt`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text: `${world().ask.sentinel}: which wall thickness?` }),
+    body: JSON.stringify({ text: `${world().ask.sentinel}: which wall thickness?`, expected_model_revision: await modelRevision(sessionId) }),
   });
 }
 
@@ -143,11 +140,11 @@ test("a browser answers a suspended ask_user; a second client sees who won (§7A
       timeout: 60_000,
     });
     await expect(widget(answering)).toHaveAttribute("data-ask-state", "answered");
-    // The second client learns it from the run's `answer` event, and reports the
-    // only thing it can honestly report about who acted.
-    await expect(widget(observing)).toHaveAttribute("data-answered-by", "other", {
+    // The answer event carries the selection, not the actor's identity.
+    await expect(widget(observing)).toHaveAttribute("data-ask-state", "answered", {
       timeout: 60_000,
     });
+    await expect(widget(observing)).not.toHaveAttribute("data-answered-by", /self|other/);
 
     // Both render the SAME recorded selection, and it is the option's `label` —
     // not a rendered string, not a serialized option object.
@@ -227,7 +224,7 @@ test("a question whose run was cancelled renders as abandoned, in place (§7A.7)
     // durable terminal; that stronger evidence settles the still-rendered
     // question in place even if this observer sampled before the final socket
     // frames. No click — and therefore no answer POST — is needed.
-    await expect(page.locator('[data-current-turn="Stopped"]')).toBeVisible({
+    await expect(page.locator('[data-current-turn="Cancelled"]')).toBeVisible({
       timeout: 60_000,
     });
     await expect(ask).toHaveAttribute("data-ask-state", "abandoned", { timeout: 60_000 });

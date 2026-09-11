@@ -156,8 +156,12 @@ def _chunk(model: str, delta: dict[str, Any], finish: str | None) -> bytes:
     return f"data: {json.dumps(payload)}\n\n".encode()
 
 
-def start_fake_openai(script: list[TurnResolver] | None = None) -> FakeOpenAI:
-    """Start a threaded fake server on an ephemeral port."""
+def start_fake_openai(
+    script: list[TurnResolver] | None = None,
+    *,
+    on_request: Callable[[RequestInfo], None] | None = None,
+) -> FakeOpenAI:
+    """Start on an ephemeral port; optionally observe every POST, including compaction."""
     fake_holder: dict[str, FakeOpenAI] = {}
 
     class Handler(BaseHTTPRequestHandler):
@@ -202,6 +206,14 @@ def start_fake_openai(script: list[TurnResolver] | None = None) -> FakeOpenAI:
                 body_text=body,
             )
             fake.requests.append(info)
+            if on_request is not None:
+                try:
+                    on_request(info)
+                except BaseException as exc:
+                    # Like resolver failures, an observer failure must fail the
+                    # owning test at teardown, not disappear on a handler thread.
+                    fake.script_error = exc
+                    raise
 
             # Tool-less request => compaction/summarization: answer with text.
             if not info.tool_names:

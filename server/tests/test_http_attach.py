@@ -217,11 +217,20 @@ def test_attach_puts_the_session_routes_into_service(
     assert listed.status_code == 200
     assert listed.json()["sessions"] == []
 
-    created = ws.post("/sessions", json={"profile": "orchestrator"})
+    created = ws.post(
+        "/sessions",
+        json={"profile": "orchestrator", "model": {"provider_id": "fake", "model_id": "m"}},
+    )
     assert created.status_code == 200, created.text
     session_id = created.json()["session_id"]
 
-    prompted = ws.post(f"/sessions/{session_id}/prompt", json={"text": "hello"})
+    prompted = ws.post(
+        f"/sessions/{session_id}/prompt",
+        json={
+            "text": "hello",
+            "expected_model_revision": created.json()["model_state"]["revision"],
+        },
+    )
     assert prompted.status_code == 200, prompted.text
     assert prompted.json()["session_id"] == session_id
 
@@ -321,7 +330,13 @@ def test_the_sidecar_outlives_the_request_that_spawned_it(
 
     assert pid_alive(pid), "the sidecar died with the thread that spawned it"
     assert ws.get("/sessions").status_code == 200
-    assert ws.post("/sessions", json={"profile": "orchestrator"}).status_code == 200
+    assert (
+        ws.post(
+            "/sessions",
+            json={"profile": "orchestrator", "model": {"provider_id": "fake", "model_id": "m"}},
+        ).status_code
+        == 200
+    )
 
 
 # --------------------------------------------------------------------------

@@ -34,6 +34,97 @@
 
 import { apiJson } from "./client";
 import type { HistoryEventFrame } from "./events";
+import { isModelRef, isModelRevision, isResolvedModel, type ModelRef, type ModelRevision, type ResolvedModel } from "./providers";
+
+export interface SessionModelState {
+  readonly revision: ModelRevision;
+  readonly current: ResolvedModel | null;
+  readonly selected: ModelRef | null;
+  readonly pending_selection: ModelRef | null;
+  readonly state: "ready" | "changing" | "unavailable" | "uncertain";
+  readonly reason: string | null;
+}
+export interface LiveQuestion {
+  readonly session_id: string;
+  readonly run_id: string;
+  readonly question_id: string;
+  readonly question: string;
+  readonly options: readonly (string | { readonly label: string; readonly consequence: string })[];
+  readonly allow_free_text: boolean;
+  readonly multi: boolean;
+  readonly answered: false;
+}
+export interface LiveQuestions {
+  readonly revision: number;
+  readonly pending: readonly LiveQuestion[];
+  readonly unavailable_reason: null | "run_authority_unavailable" | "ambiguous_question";
+}
+/** An absent additive field is unsupported, never an authoritative empty set. */
+export function isLiveQuestions(value: unknown, sid: string, execution: ExecutionSnapshot): value is LiveQuestions {
+  if (value === null || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  if (!Number.isSafeInteger(v["revision"]) || (v["revision"] as number) < 0
+    || ![null, "run_authority_unavailable", "ambiguous_question"].includes(v["unavailable_reason"] as string | null)
+    || !Array.isArray(v["pending"]) || v["pending"].length > 1) return false;
+  return v["pending"].every((raw: unknown) => {
+    if (raw === null || typeof raw !== "object" || v["unavailable_reason"] !== null) return false;
+    const q = raw as Record<string, unknown>;
+    return q["session_id"] === sid && typeof q["question_id"] === "string" && q["question_id"].length > 0
+      && typeof q["run_id"] === "string" && q["run_id"].length > 0
+      && q["run_id"] === execution.active_run_id && q["run_id"] === execution.run_id && execution.terminal === null
+      && execution.admission_available === false && q["answered"] === false
+      && typeof q["question"] === "string" && typeof q["multi"] === "boolean" && typeof q["allow_free_text"] === "boolean"
+      && Array.isArray(q["options"]) && q["options"].every((o: unknown) => typeof o === "string" || (o !== null && typeof o === "object"
+        && typeof (o as Record<string, unknown>)["label"] === "string" && typeof (o as Record<string, unknown>)["consequence"] === "string"));
+  });
+}
+
+export interface SessionModelDocument {
+  readonly live_questions?: LiveQuestions;
+  readonly status: "ok";
+  readonly session_id: string;
+  readonly model_state: SessionModelState;
+  readonly execution: ExecutionSnapshot;
+}
+export interface SelectModelRequest {
+  readonly model: ModelRef;
+  readonly expected_model_revision: ModelRevision;
+}
+export function isSessionModelState(value: unknown): value is SessionModelState {
+  if (value === null || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  return isModelRevision(v["revision"])
+    && (v["current"] === null || isResolvedModel(v["current"]))
+    && (v["selected"] === null || isModelRef(v["selected"]))
+    && (v["pending_selection"] === null || isModelRef(v["pending_selection"]))
+    && typeof v["state"] === "string" && ["ready", "changing", "unavailable", "uncertain"].includes(v["state"])
+    && (v["reason"] === null || typeof v["reason"] === "string");
+}
+export function isExecutionSnapshot(value: unknown): value is ExecutionSnapshot {
+  if (value === null || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  const nullableString = (s: unknown) => s === null || typeof s === "string";
+  const t = v["terminal"] as Record<string, unknown> | null;
+  return isModelRevision(value) && nullableString(v["run_id"]) && nullableString(v["active_run_id"])
+    && typeof v["admission_available"] === "boolean" && (t === null || (typeof t === "object"
+      && typeof t["run_id"] === "string" && typeof t["terminal_id"] === "string" && typeof t["state"] === "string"));
+}
+function modelDocument(doc: SessionModelDocument, sid: string): SessionModelDocument {
+  if (doc?.status !== "ok" || typeof doc.session_id !== "string" || doc.session_id !== sid || !isSessionModelState(doc.model_state)
+    || !isExecutionSnapshot(doc.execution)
+    || (doc.live_questions !== undefined && !isLiveQuestions(doc.live_questions, sid, doc.execution))) throw new Error("Invalid session model document");
+  return doc;
+}
+export async function fetchSessionModel(sid: string): Promise<SessionModelDocument> {
+  return modelDocument(await apiJson<SessionModelDocument>(sessionPath(sid, "/model"), { cache: "no-store" }), sid);
+}
+/** Keyless, one write, no automatic retry. */
+export async function selectSessionModel(sid: string, request: SelectModelRequest): Promise<SessionModelDocument> {
+  return modelDocument(await apiJson<SessionModelDocument>(sessionPath(sid, "/model"), {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  }), sid);
+}
 
 /** §2.4's two refusal reasons a session route now names (2026-09-03). */
 export const UNREADABLE_REASONS = ["unknown_session", "agent_unavailable"] as const;
@@ -384,6 +475,8 @@ export interface CreatedSessionDocument {
   readonly profile: SessionProfile;
   readonly part: string | null;
   readonly resumed: boolean;
+  readonly model_state: SessionModelState;
+  readonly execution: ExecutionSnapshot;
 }
 
 /** `POST /sessions/{id}/prompt` — `run_prompt`'s projection (§2.3, §7A.6). */
@@ -424,17 +517,20 @@ export interface CancelDocument {
  * and the panel says it can be left rather than offering a close button no
  * route backs.
  */
-export function createSession(
+export async function createSession(
   profile: Exclude<SessionProfile, "quick_edit">,
-  part?: string | null,
+  part: string | null,
+  model: ModelRef,
 ): Promise<CreatedSessionDocument> {
-  const body: Record<string, unknown> = { profile };
+  const body: Record<string, unknown> = { profile, model: { provider_id: model.provider_id, model_id: model.model_id } };
   if (part !== undefined && part !== null) body["part"] = part;
-  return apiJson<CreatedSessionDocument>("/sessions", {
+  const doc = await apiJson<CreatedSessionDocument>("/sessions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  modelDocument(doc, doc.session_id);
+  return doc;
 }
 
 /**
@@ -463,12 +559,13 @@ export function createSession(
 export function sendPrompt(
   sessionId: string,
   text: string,
-  context: ContextEnvelope | null = null,
+  context: ContextEnvelope | null,
+  expectedModelRevision: ModelRevision,
 ): Promise<PromptDocument> {
   return apiJson<PromptDocument>(sessionPath(sessionId, "/prompt"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, context }),
+    body: JSON.stringify({ text, context, expected_model_revision: expectedModelRevision }),
   });
 }
 

@@ -39,12 +39,9 @@
 //    `option_label`, which is what makes two surfaces answering one question
 //    hand the model one value (§7A.7's tightening, §19.29).
 //
-// `"self"` is now reachable and is the **route's** answer, never this client's
-// guess: `accepted` decides it, so the winner renders `"self"` and every other
-// client `"other"`, including a client that submitted and lost. The recorded
-// selection returned by the route is the winner's, so both agree on what the run
-// was told. No web-side lock is invented over a suspended question; that would
-// be a second session-ownership mechanism (§2.7).
+// A retained POST receipt may report self/other. A live answer or recorded
+// selection without that receipt says nothing about actor identity; it is
+// neutral, including after remount. Server first-answer-wins stays authoritative.
 
 import {
   readAnswer,
@@ -54,7 +51,7 @@ import {
   readToolResult,
   type ClarificationOption,
 } from "../api/events";
-import type { AnswerDocument, AnsweredBy } from "../api/sessions";
+import type { AnswerDocument, AnsweredBy, LiveQuestion } from "../api/sessions";
 import type { RuntimeFault } from "./runtimeFault";
 import { parseToolResult } from "./toolResult";
 import type { ChipStatus, TranscriptItem } from "./transcript";
@@ -79,7 +76,7 @@ export const ASK_AFFORDANCES = [
 export type AskAffordance = (typeof ASK_AFFORDANCES)[number];
 
 /**
- * The widget's state, closed at six. Every value is a *rendered* state with its
+ * The widget's lifecycle, including uncertain answer delivery. Every value has
  * own copy; none of them is a disabled control with no explanation.
  *
  * `abandoned` is §7A.7's first-class closed-question rendering. A `404
@@ -93,6 +90,7 @@ export const ASK_STATES = [
   "answered",
   "abandoned",
   "failed",
+  "checking",
   "unavailable",
 ] as const;
 export type AskState = (typeof ASK_STATES)[number];
@@ -100,9 +98,9 @@ export type AskState = (typeof ASK_STATES)[number];
 /**
  * Why a widget cannot be answered from this page, closed at four.
  *
- * `reopened` is the honest majority: §7A.7 keeps the reopened widget disabled
- * *correctly* — there is no pending question, the run is over — and requires it
- * to keep its stated reason. The other three are live widgets missing something
+ * `reopened` means the recorded call has no live answer address, NOT that its
+ * run ended. Only matching terminal evidence can establish that closure.
+ * The other three are live widgets missing something
  * an answer needs, and each says which rather than rendering a dead control.
  */
 export const ASK_UNAVAILABLE_REASONS = [
@@ -113,7 +111,7 @@ export const ASK_UNAVAILABLE_REASONS = [
 ] as const;
 export type AskUnavailableReason = (typeof ASK_UNAVAILABLE_REASONS)[number];
 
-/** The lifecycle of this client's own POST. Owned by the widget, read here. */
+/** The lifecycle of this client's own POST, retained by session/question. */
 export type AskPost =
   | { readonly phase: "idle" }
   | { readonly phase: "sending" }
@@ -129,7 +127,7 @@ export type AskChoice =
   | { readonly kind: "text"; readonly text: string };
 
 export interface AskContent {
-  readonly source: "question" | "tool_result";
+  readonly source: "question" | "tool_result" | "live_state";
   readonly questionId: string | null;
   /** The question's own session, from the event envelope — never the URL's. */
   readonly sessionId: string | null;
@@ -148,15 +146,15 @@ export interface AskContent {
   readonly answeredBy: AnsweredBy | null;
   /**
    * `data-runtime-fault` is set for this session and this widget's run has
-   * not produced a `terminal`. Same six `AskState` values — no sixth §7.4
-   * state. An unanswered question is `abandoned`; an accepted answer stays
+   * not produced a `terminal`. An unanswered question is `abandoned`; an accepted answer stays
    * recorded and this flag is what names "the run did not resume".
    */
   readonly lostToRuntime: boolean;
 }
 
 export interface AskRowLike {
-  readonly source: "question" | "tool_result";
+  readonly source: "question" | "tool_result" | "live_state";
+  readonly recovery?: LiveQuestion & { readonly epoch: string };
   readonly question: TranscriptItem | null;
   readonly call: TranscriptItem | null;
   readonly result: TranscriptItem | null;
@@ -184,7 +182,8 @@ export function askContent(
   post: AskPost = ASK_POST_IDLE,
   death: AskRuntimeDeath | null = null,
 ): AskContent {
-  const question = row.question === null ? null : readQuestion(row.question.payload);
+  const question = row.recovery ? readQuestion(row.recovery)
+    : row.question === null ? null : readQuestion(row.question.payload);
   const call = row.call === null ? null : readToolCall(row.call.payload);
   const args =
     call === null || typeof call.args !== "object" || call.args === null || Array.isArray(call.args)
@@ -208,7 +207,7 @@ export function askContent(
   // one field, `session_id`, and it is `null` when the run→session binding has
   // been evicted). Falling back to whichever session the workspace happens to be
   // showing would post an answer against a session this question is not in.
-  const sessionId = (row.question ?? row.call ?? row.answer)?.sessionId ?? null;
+  const sessionId = row.recovery?.session_id ?? (row.question ?? row.call ?? row.answer)?.sessionId ?? null;
 
   const live = row.answer === null ? null : readAnswer(row.answer.payload);
   const recorded = recordedSelection(row.result);
@@ -233,8 +232,8 @@ export function askContent(
 
   // ORDER IS THE ARGUMENT. A settled POST is this client's own outcome and the
   // only thing that can say `"self"`. An `answer` event or a recorded selection
-  // outranks a refusal, because "another client answered, here is what the run
-  // was told" is truer and more useful than "that question is gone" — and a
+  // outranks a refusal, because a recorded answer is stronger than an absent
+  // receipt. It does not establish who answered. A
   // cancelled run, which has no answer anywhere, still lands on `abandoned`.
   // A runtime fault does not relabel an accepted answer "already answered";
   // `lostToRuntime` is the note that the run did not resume.
@@ -257,7 +256,7 @@ export function askContent(
       refusal: null,
       answered: true,
       answer: live.answer,
-      answeredBy: "other",
+      answeredBy: null,
     };
   }
   if (recorded.answered) {
@@ -268,7 +267,7 @@ export function askContent(
       refusal: null,
       answered: true,
       answer: recorded.answer,
-      answeredBy: "other",
+      answeredBy: null,
     };
   }
   // Once the question's own run has terminal evidence it cannot still accept
@@ -294,10 +293,11 @@ export function askContent(
   }
   if (post.phase === "refused") {
     const abandoned = post.reason === "unknown_question";
+    const uncertain = ["transport_error", "timeout"].includes(post.reason);
     return {
       ...base,
       questionId,
-      state: abandoned ? "abandoned" : "failed",
+      state: abandoned ? "abandoned" : uncertain ? "checking" : "failed",
       refusal: { reason: post.reason, message: post.message },
       answered: false,
       answer: null,
@@ -329,7 +329,7 @@ export function askAffordance(
 }
 
 function askUnavailable(
-  source: "question" | "tool_result",
+  source: AskRowLike["source"],
   questionId: string | null,
   sessionId: string | null,
   affordance: AskAffordance,
@@ -372,6 +372,23 @@ export function answerValue(content: AskContent, choice: AskChoice): string | st
     .filter((_option, index) => chosen.has(index))
     .map((option) => option.label);
   return labels.length === 0 ? null : labels;
+}
+
+/** Read structured selections as prose; retain unknown structures in Details. */
+export function readableAnswer(value: unknown): string | null {
+  if (typeof value === "string") return value;
+  if (typeof value === "boolean" || typeof value === "number") return String(value);
+  if (Array.isArray(value)) {
+    const parts = value.map(readableAnswer);
+    return parts.every(part => part !== null) ? parts.join(", ") : null;
+  }
+  if (value !== null && typeof value === "object") {
+    const selection = value as Record<string, unknown>;
+    for (const key of ["option_label", "option_labels", "text", "selection"]) {
+      if (Object.hasOwn(selection, key)) return readableAnswer(selection[key]);
+    }
+  }
+  return null;
 }
 
 /**

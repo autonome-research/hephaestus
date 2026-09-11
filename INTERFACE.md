@@ -338,7 +338,7 @@ in place, never silently rewritten.
 | R7 | ok-card demotion | **§4.7** | C11 |
 | R8 | Stream width | **§4.1** | C12 |
 | R9 | Provider rail consolidation | **§23.8** | C13-C14 |
-| R10 | Composer two rows | **§7A.10** | C15 |
+| R10 | Composer core and details | **§7A.10** | C15 |
 | R11 | Geometry-table visibility column | **§6.1** | C16-C17 |
 | R12 | Viewport overlay contract | **§5.5**, **§7.4** | C18-C20 |
 | R13 | Run-start boundaries | **§7.3** | C21 |
@@ -591,8 +591,9 @@ side effect on a live run.
 
 | Route | Is | Why no key, and what stands in for one |
 |---|---|---|
-| `POST /sessions` | `session.create` (profile from a closed set), body `{profile, part?, session_id?, resume?}` — **documented 2026-09-04, having shipped undocumented** | Creates a session; a duplicate is an extra *idle* session, not a lost or doubled write. At-least-once is the stated consequence: a retried create may leave an orphan session, which `GET /sessions` lists and the operator closes. **`resume: true` for an id with no persisted session directory is `404 unknown_session` (§2.4), not a fresh session minted under that name** — the runtime that owns the session directories is the one layer that can answer the question, and it refuses there. `resumed` in the response is a *fact about the transcript*, never an echo of the request flag. |
-| `POST /sessions/{id}/prompt` | `prompt`, body `{text, context?}` (§7A.3) | A prompt is not idempotent in any useful sense — the same words twice are two turns, and pretending otherwise would let a replay swallow a deliberate re-ask. At-least-once, stated. The optional `context` member changes nothing about the key policy: it carries references, never facts (§7A.3). |
+| `POST /sessions` | `session.create` (profile from a closed set), body `{profile, part?, session_id?, resume?, model?}` — **amended 2026-09-10, #120:** fresh creation **requires** `model: {provider_id, model_id}`; resume forbids it (§7A.10(d)). Returns existing fields plus `model_state` and `execution` | Creates a session; a duplicate is an extra *idle* session, not a lost or doubled write. At-least-once is the stated consequence: a retried create may leave an orphan session, which `GET /sessions` lists and the operator closes. **`resume: true` for an id with no persisted session directory is `404 unknown_session` (§2.4), not a fresh session minted under that name** — the runtime that owns the session directories is the one layer that can answer the question, and it refuses there. `resumed` in the response is a *fact about the transcript*, never an echo of the request flag. |
+| `POST /sessions/{id}/prompt` | `session.prompt`, body `{text, expected_model_revision, context?, run_id?, include_events?}` (§7A.3, §7A.10(d)); revision is required, not a model choice | A prompt is not idempotent in any useful sense — the same words twice are two turns, and pretending otherwise would let a replay swallow a deliberate re-ask. At-least-once, stated. The optional `context` member changes nothing about the key policy: it carries references, never facts (§7A.3). |
+| `PUT /sessions/{id}/model` | `session.model.set`, body `{model, expected_model_revision}`; returns `{status:"ok", session_id, model_state, execution}` (§7A.10(d)) | Keyless session control; a supplied key is ignored. One explicit write, never automatically retried or replayed; reconcile a lost response by reading. |
 | `POST /sessions/{id}/answer` | `session.answer` for a pending `ask_user` | Governed by **question-id idempotency**, not by the header ladder: idempotent on the question id, first answer wins (§2.7). That is a stronger and already-existing guarantee; a second mechanism over it would be the duplication mission rule 6 forbids. |
 | `POST /runs/{run_id}/cancel` | `cancel` — cancellation targets a **run**, so the route does | Idempotent **by construction**: `app.py::cancel` is a quiet no-op after close and a repeated `request_cancel` on an already-cancelled run changes nothing. A key would record a replay of a no-op. |
 | `POST /parts/{part}/quick_edit` | `spawn_quick_edit` (§12.5) | Spawns a child session. Same shape as `POST /sessions`: at-least-once, a duplicate is an extra child tab, and the durable edge (§2.8) makes the duplicate visible rather than silent. |
@@ -672,7 +673,9 @@ the sidecar, read again, and the row is `readable: true` with
 | `GET /parts/{part}/exports` | committed `tp_exports` projection: rows with paths, blobs, sizes, source ref, `extra` | §22.7 |
 | `GET /exports/{export_blob}/bytes` | the file, as an `attachment`, addressed by the blob a **`COMMITTED`** row names | §22.3 |
 | `GET /providers` | specs, availability, auth state, egress acknowledgements, `auth_source`, file mode — **no credential material** | §23.8 |
-| `GET /providers/catalog` | Pi's built-in catalog, live over the bridge | §23.1 |
+| `GET /providers/catalog` | Existing `providers.list` sign-in projection: provider identities and model-ID arrays, **not** the active session model | §23.1 |
+| `GET /providers/models` | `providers.models`: declared options joined to the configured runtime's resolved names/capabilities, plus explicit proposed default | §7A.10(d) |
+| `GET /sessions/{id}/model` | `session.model.get` plus Python-owned live question projection: `{status:"ok", session_id, model_state, execution, live_questions}`; `Cache-Control: no-store`; no prompt/answer/cancel | §7A.7, §7A.10(d) |
 | `GET /providers/{id}/auth/status` | `{state, type?, expires_at?, health, last_observed_at, flow?}` — metadata only | §23.8 |
 | `POST /providers/discover` **Stage 10C** | the discovery **offer**: `[{kind, provider_id, model_ids[], source_path}]` — never a secret, never a masked tail, and it runs **only** on this explicit request | §23.5 |
 
@@ -725,6 +728,9 @@ are enforced rather than asserted here.
 Structured taxonomies survive the wire. The body is always
 `{"status":"error", "reason": <machine reason>, "message": <human>, …data}`;
 HTTP status is a coarse envelope over the reason and never replaces it.
+**AMENDED 2026-09-10 (#120):** the model refusals below and §7A.10(d)'s
+state/persistence contract are part of this closed mapping; their sanitized
+`model_state` and `execution` extras remain top-level.
 
 | Engine condition | HTTP | Body |
 |---|---|---|
@@ -737,6 +743,12 @@ HTTP status is a coarse envelope over the reason and never replaces it.
 | `unknown_tool`, unknown artifact | 404 | reason verbatim |
 | `StaleSelectionError` | 409 | `stale_selection` + `reason ∈ {rgb_ref, wrong_mode, mismatched, expired, malformed}` |
 | `session_busy`, `part_busy`, `key_expired`, `key_timestamp_skew`, `key_payload_mismatch` | 409 | full refusal payload verbatim |
+| missing prompt/select model revision | 428 | `model_revision_required` |
+| unknown provider / model | 404 | `provider_unknown` / `model_unknown` |
+| undeclared or ineligible model | 409 | `model_not_configured` / `model_unavailable` (plus `unavailable_reason`) |
+| missing, stale, changing or uncertain selection | 409 | `selection_required`, `model_changed`, `model_change_in_progress`, `model_selection_uncertain` |
+| session admission/selection conflict | 409 | `run_in_flight` + holding session/run and `scope` |
+| failed model application or persistence | 500 | `model_selection_failed` + sanitized state when known |
 | snapshot ref past retention | 410 | `snapshot_expired` |
 | admission full (17th run) | 429 | `busy` |
 | **sidecar does not know a session the runtime lists, after one re-adoption attempt (§2.8); or `POST /sessions` names an id with `resume: true` and no persisted session directory exists for it** | **404** | **`unknown_session`** + `{session_id}` |
@@ -1155,9 +1167,13 @@ lossy-but-labelled channel.
 
 **`ask_user` with two clients attached.** The question broadcasts to every
 attached client. `POST /sessions/{id}/answer` is idempotent on the question id
-and **the first answer wins**: the run resumes, every client receives the
-`answer` event, and each widget disables itself with
-`data-answered-by="self"|"other"`. Both the CLI's numbered prompt and the web
+and **the first answer wins**: reservation releases the waiting call and later
+contenders receive the retained winner. This acknowledgment does not establish
+that the run resumed successfully or completed; accepted answer evidence and
+terminal evidence remain separate. Attached clients receive the `answer` event
+subject to the observer delivery bounds above and disable answer controls. A retained POST
+receipt may set `data-answered-by="self"|"other"`; an event/record without actor
+source omits attribution and displays a neutral recorded answer. Both the CLI's numbered prompt and the web
 widget may answer; neither is privileged. Inventing a web-side lock over a
 suspended question would be a second session-ownership mechanism.
 
@@ -2050,11 +2066,16 @@ On a classic-track OS it still reserves the native scrollbar (~10px; measured
 11px on the parts rail and 10px on Results) and wins over a 2px
 `::-webkit-scrollbar` rule. Permitted forms: `scrollbar-width: none` with
 `scrollbar-gutter: auto` (never `stable`), native overlay scrollbars, or a
-**1–2px absolutely positioned** cue that is not in the flow. **The negative
+**1–2px painted** cue that cannot participate in scrollable overflow. Neither
+content shrink nor a large scroll range may retain or enlarge bounds through
+scroll decorations; being absolutely positioned is not sufficient. **The negative
 half:** do not hide overflow so content is unreachable, do not leave
 `scrollbar-width: thin` if it reserves layout, and do not draw a custom 15px
 track. **Testable:** the scroller's layout width equals its content box
 (`offsetWidth − clientWidth` is borders only), or `overflow` is overlay.
+Content shrink must clamp scrollTop to real content, including after a long
+session is replaced by short or empty history. Cue endpoints remain within the
+visible client box even when the minimum thumb size applies.
 
 ### 3.11 The viewport is not chrome — the one problem no CSS solves
 
@@ -2108,8 +2129,8 @@ which case the control carries `aria-label` from `copy.ts`.
 
 **SPEC EDIT 2026-09-01 (§0.2b, §7.1(b)) — the eighteenth id becomes nineteen.**
 `plus` is added to the action group, as the single-path `M8 3 L8 13 M3 8 L13 8`,
-because §7.1(b)'s amended create affordance is "a single icon-only `+` control"
-and no id in the closed 18 draws a plus. Recorded here rather than minted in a
+for §7.1(b)'s single creation control (now labelled New beside the plus);
+no id in the former closed 18 drew a plus. Recorded here rather than minted in a
 component, which is exactly the edit this section requires; the count above is
 the number a test asserts, so the two cannot drift.
 
@@ -2135,14 +2156,17 @@ testable.
    substrate §3.14 specifies: every badge state differs in icon **and** text,
    not only in colour.
 3. **Focus visibility** on every keyboard-reachable control including the
-   viewport canvas.
+   viewport canvas. Skip to composer/stage are focus-only actions: reveal the
+   existing destination (opening a hidden conversation first), then focus it.
+   They do not rewrite the workspace fragment, switch inspection tabs, change
+   part/session/model/draft, move the pin/camera, or create/send a request.
 4. **Keyboard reachability.** Every control except the orbit interaction is
    reachable by Tab. Tab bars implement roving tabindex with
    `role="tablist"`/`tab`/`aria-selected`; the rail tree implements arrow-key
    navigation with `role="tree"`/`treeitem`/`aria-expanded`; popovers trap focus,
-   restore it to the opener, and close on `Escape`. The rail overlay below
-   1024px gains a scrim and a close control — today it has neither and **cannot
-   be dismissed at all**.
+   restore it to the opener, and close on `Escape`. Parts overlays below1280px:
+   Close, Escape and scrim dismiss it and return focus to Parts; Tab/Shift+Tab
+   stay inside the overlay, with the covered workspace inert.
 5. **Live regions.** `aria-live="polite"` on run-terminal transitions and the
    pager; `assertive` on `RefusalBanner`.
 6. **Target size.** Every control ≥ 24×24px hit area, achieved by padding rather
@@ -2247,53 +2271,52 @@ surface except the three the operator asked us to add.
   default. Giving the agent a column rather than a bottom drawer is the
   "collaborator, not console" claim cashed out in layout.
 
-Breakpoints: below 1280px the Stream collapses to a docked strip ~~with an
-unread count~~ **STRUCK 2026-09-01, repair (b) — see clause (f) of the
-2026-09-01 amendment below, which defers the unread count explicitly rather than
-leaving it a normative clause nothing implements**; below 1024px the Rail
-collapses to an overlay. There is no phone layout and none is attempted.
+Responsive capacity: Parts is a column at1280px and above, a dismissible
+closed-by-default overlay below1280px. Conversation is open on first entry at
+supported desktop widths843px and above and remains a full-height peer when
+open. Width changes never override explicit Hide/Open intent or auto-open
+Parts. There is no phone layout and none is attempted.
 
 **AMENDED 2026-08-28 — three corrections, each a defect the shipped build can
 be measured exhibiting.**
 
-**(a) The breakpoint has one authority, not two.** Measured today:
+**(a) Capacity and intent have distinct ownership.** `useBreakpoint.ts` alone
+measures width into the client shell presentation store, separate from §4.5's
+URL record. CSS has no media query changing `grid-template-columns`; React sets
+`data-stream`/`data-rail` from that store. Width clamps dimensions, never session,
+actual model, draft/submitted attempt, reading anchor/disclosures or task state.
+Explicit Hide/Open survives every band crossing, including a pending width
+observation after a focus-only Skip action.
 
-| width | `grid-template-columns` | stream box | stream `scrollWidth` | body overflows |
-|---|---|---|---|---|
-| 1440 | `280px 740px 420px` | 420 | 419 | no |
-| 1280 | `280px 580px 420px` | 420 | 419 | no |
-| **1279** | `280px 955px 44px` | **44** | **81** | **yes** |
-| **1024** | `280px 700px 44px` | **44** | **81** | **yes** |
-| 1023 | `979px 44px` | 44 | 81 | yes |
+| width | default Parts | open conversation width | design width |
+|---|---|---|---|
+| 1440 | 280px column | 420px | 740px |
+| 1280 | 280px column | 384px | 616px |
+| 1024 | closed overlay | 360px | 664px |
+| 843 | closed overlay | 360px | 483px |
 
-`Shell.module.css` collapses the column; `Shell.tsx` decides whether the panel
-renders. Between 1024 and 1279 they disagree and `StreamPanel` shreds into a
-one-word-per-line ribbon. 1280×800 is the default MacBook Air logical
-resolution and any half-screen split on a 2560px monitor lands inside the broken
-band; this is not an edge case.
+Budgets include seams; explicit separator preference can change these widths
+within §7's capacity clamps. At843×800 all task actions (Go to question and
+Stop while authorized) and keyboard separators remain reachable without document
+horizontal overflow or overlapping controls. The transition
+1440→1280→1024→843→1024→1440 preserves active question/address, session/model,
+next draft, immutable attempt and valid per-session reading/disclosures. Layout
+and focus changes never create, send, answer or cancel.
 
-**TIGHTENING (binds G4's shell deliverable):** `web/src/system/useBreakpoint.ts`
-is the **sole** authority. It writes `streamOpen` / `railOverlay` into workspace
-state; `Shell.module.css` keeps **no** media query that changes
-`grid-template-columns`; the grid is driven by `data-stream` and `data-rail`,
-which React sets. A user's explicit collapse survives a resize inside a band and
-is re-evaluated on a band crossing. **The Stream strip is a control, not a
-narrower panel** (§7A.1): focusing or activating it expands the column, because
-a composer cannot live in 44px.
-
-**(b) `data-rail` is wired, not deleted.** `grep -rn 'data-rail' web/src`
-returns exactly one hit — the CSS rule that consumes it. Nothing sets it, so
-below 1024px the rail is a 280px absolutely-positioned overlay covering a third
-of the stage with no scrim, no close control, and **no dismissal**.
-`useBreakpoint` sets it; the header gains a rail toggle; the overlay gains a
-scrim, an `Escape` handler, and trapped focus (§3.13.4).
+**(b) Parts has bounded overlay ownership.** Below1280, `data-rail` removes the
+column and the header exposes Parts. Entering overlay capacity does not open it;
+width changes within overlay capacity preserve its explicit state. Close,
+Escape and scrim dismiss and return focus, with focus containment (§3.13.4).
+Selecting a part changes inspection, not the conversation. Fit-mode resizes
+projection extents to the canvas; deliberate orbit/zoom/pan remains held until
+explicit Fit/view navigation. Resize never forces a viewpoint or moves a pin.
 
 **(c) The inspector drawer stops resizing the viewport.** §4.1 says the drawer
 is "resizable"; the code makes it *variable* — `grid-template-rows: minmax(0,1fr)
 auto` with a 132px floor — which is not the same thing and is what produces the
 76% canvas-height swing of §3.3.4. The stage row becomes an explicit
 `--drawer-height` (`clamp(200px, 32vh, 420px)` by default) with a 6px drag
-handle writing it into workspace state; `.content { overflow: auto }` already
+handle writing it into the client shell presentation store; `.content { overflow: auto }` already
 exists and takes the excess. Height is then identical across tabs **by
 construction**, which §3.14's e2e asserts.
 
@@ -2400,22 +2423,19 @@ collapse affordance into the session tab strip. Every non-band obligation of
 this clause — the hook, the accessible names, the no-visible-title rule —
 survives in (h).)*
 
-**(f) The unread count is DEFERRED, explicitly, and is not a live clause.** The
-struck breakpoint phrase promised an unread count on the 44px collapsed strip
-and nothing has ever implemented one — a normative clause silently unimplemented
-is the failure mission rule 1 exists to catch, and this document does not
-tolerate it in either direction. **The clause is withdrawn, not merely
-unbuilt**, for a stated reason: §4.1(a)/§7A.1 already make the strip a
-**control** that expands on focus or activation, so the number would be a badge
-on a thing whose only job is to stop existing; and "unread" has no definition in
-this document — the client has `(run_id, seq)` and `(session_id, ordinal)`
-(§2.8) and no read watermark of any kind, so implementing it would mean minting
-one, which is client-side derived state (§1) about events the server never
-tracked. **Normative now:** the collapsed Stream strip renders **the collapsed
-strip and nothing else** — no count, no dot, no badge. Should the count be
-wanted, it re-enters as a §19 item with a server-side or explicitly
-workspace-state-backed read watermark, and only then. It is recorded in §19 so
-it is not lost.
+**(f) Hidden conversation has a horizontal, state-bearing return control.**
+Explicit Hide expands the design and leaves `Conversation · <session title> ·
+<known task state> · Open` in a persistent horizontal row, not a44px vertical
+strip. S2's §7 task projection is its only authority: Answer needed for an
+addressable waiting question, Working, Request failed, Checking or the other
+known task states as applicable. No invented unread count, dot or read watermark.
+The selected conversation's live evidence continues at project lifetime while
+its panel is unmounted. Tab focus alone does not open it or disappear the focused
+control; explicit activation opens the same session and focuses its known
+question, or restores its reading anchor and focuses the existing composer.
+Activation writes no request/answer/cancellation and status updates steal no
+focus. Hide returns keyboard focus to this control. Skip retains §3.13's
+focus-only reveal behavior.
 
 **AMENDED 2026-09-02 (§0.2c) — three shell measurements from the refinement
 round.**
@@ -2427,42 +2447,34 @@ that already exists.** The fixed `420px` STREAM track becomes
 **The negative half:** no media query is added for this — (a)'s "no media query
 that changes `grid-template-columns`" survives verbatim, and a build that
 implements the clamp as a breakpoint has reintroduced the two-authority defect
-(a) closed. The 1280px collapse boundary and the 44px strip are unchanged; the
-clamp governs the *expanded* track only. The diagram's `420px` is read as this
+(a) closed. The1280px boundary changes Parts capacity only; the
+clamp governs the *expanded* conversation track only. The diagram's `420px` is read as this
 clamp's maximum. **Testable:** at 1280px window width the expanded stream track
 measures 384px (30vw); at ≥1400px it measures 420px; at every expanded width it
 is ≥360px, and the body never scrolls horizontally.
 
-**(h) C25 — the stream has exactly one header row, and the chevron joins it.**
-Amendment (e) left the collapse affordance a **band of its own** — one control
-tall, above the session strip. That band is now **struck as a band**: the
-`streamHeader` element does not render, and `[data-stream-collapse]` renders as
-the **trailing item of the session tab strip**, after the §7.1(b) `+` control,
-keeping its hook, its `iconLabel` accessible name, and the `aside`'s
-`aria-label` exactly as (e) specified. **Normative both ways, scoped to the
-steady state:** with the Stream expanded, **in the steady state** — stream
-`live`, no runtime fault, no §8(a) historyBar condition — exactly **one** row
-of chrome renders above the transcript: the session tab strip (tabs, `+`,
-chevron); no element above the transcript matches the former `streamHeader`;
-with the Stream collapsed, the 44px strip is unchanged from (f). **The
-exceptional elements keep their loudness and gain a named home:** the §7.4(a)
-stream-state badge with its `[data-resync-count]` readout, and the §8(a)
-`historyBar`, mount as an **exception row directly below the tab strip and
-above the transcript scroll region** — one shared row when both mount, badge
-leading — exactly and only in the states those clauses already name. This is
-the C15 pattern: the steady state is counted, the exceptions are exceptions
-by name and stay loud; nothing in this clause re-scopes when §7.4 or §8
-mounts anything. **Testable:** in the steady state, count the Stream column's
-children above the transcript scroll region — one; inducing `resyncing` or a
-failed history read adds exactly one exception row below the tab strip;
-`[data-stream-collapse]` is a descendant of the tab strip and is its last
-interactive element in every state.
+**(h) C25 — one conversation identity header, without a separate title band.**
+The `streamHeader` element does not render. `[data-stream-collapse]` is the
+last interactive item of the compact session strip, after Switch/New, with its
+accessible Hide conversation name. Human title and full scope may use two
+compact lines inside that header. Below it, §7's one task projection shows
+known current state and Go to question when addressable. It is independent of
+connection health: a live socket does not suppress Waiting, failure or Checking.
+The one live Stop control stays next to task state in the composer.
+
+Connection/history diagnostics remain secondary in their named disclosure;
+known delivery gaps and failed/loading history remain visible alongside retained
+content. No duplicate Agent eyebrow band or transport badge substitutes for
+operator state. Hidden conversation uses (f)'s horizontal return.
+**Testable:** Hide remains the strip's last interactive item; current task state
+and actionable question use the same evidence; history failure preserves held
+rows and gaps rather than replacing them with diagnostics.
 
 **(i) C26 — Export and BOM are icon+word at full width, icon-only under
 pressure.** At viewport widths **≥1280px** `[data-chrome-export]` and
 `[data-chrome-bom]` each render the sprite icon **and** the visible word;
 **below 1280px** they render icon-only, word on `aria-label`/`title` — the
-labels collapse at the same boundary the Stream does, one breakpoint authority
+labels collapse at the same boundary Parts becomes an overlay, one breakpoint authority
 (§4.1(a)), not a new one. Both stay visible, unmoved, at every width; the
 accessible name is identical in both forms. **Testable:** at 1440px both
 controls have a visible text node equal to their accessible name; at 1200px
@@ -2570,6 +2582,13 @@ WorkspaceState {
 ```
 
 Serialized as `/#/p/{part}?ref=…&view=iso&t=0.0&sec=…&sel=…&tab=viewport&s=…`.
+
+Workspace fragments are navigation, not keyboard focus destinations. Back,
+Forward and pasted workspace deep links restore this record without pushing
+new entries during replay. Per-session draft revisions, reading anchors,
+following flags and disclosure states are project-lifetime presentation state,
+not serialized route fields; session selection and panel remount must not reset
+them. Skip navigation changes only visibility/focus as specified in §3.13.
 
 **DECISION:** no `/session/{uuid}` route. That URL shape is observed evidence
 from the reference product and is a false friend here — `architecture.md` §1
@@ -2816,17 +2835,13 @@ action, and `[data-composer-send]` is present with `data-variant="secondary"`;
 with every credential rejected but the composer enabled, it has length 1 and
 it is `[data-composer-send]`.
 
-**(C11) A finished, successful tool card rests on the seam border.** `ToolChip`
-"a raised card" was implemented as `--border-strong` on every chip, so a
-transcript of routine successes read as a wall of detached cards. Tightened
-per §3.10's own split: a chip whose `data-status` is **`ok`** draws its card
-edge with **`--border`** (the seam token); only a chip whose status is
-**non-terminal or failed** — `running`, `error`, or `unknown` — draws
-`--border-strong`. The raised fill, radius, and every §7.2 attribute are
-unchanged; what changes is that detachment is now the *exception's* signal,
-which is §0.2b's discipline applied to a border. **Testable:** in a transcript
-of `ok` chips no chip's computed border colour equals `--border-strong`;
-induce one `error` chip and exactly that chip's does.
+**(C11) Compact tool rows are not raised success cards.** Each individual
+native disclosure has a transparent, unpadded outer row and a minimum24px
+summary target. Quiet Done text reduces repeated success emphasis; failed calls
+retain their error label and visible failure note. Every §7.2 identity/field
+attribute and full result remains available. **Testable:** repeated successes
+remain separate disclosures, and a failed call stays individually visible and
+inspectable without opening any group.
 
 **(C27) Metrics become a key/value grid when the drawer is wide enough to hold
 one.** The `DataTable` carrying `BuildResult.metrics` in `ResultsPanel` (the
@@ -2909,7 +2924,12 @@ appear as a golden mismatch in an unrelated stage.
 The slider drives `explode_t ∈ [0,1]`; the client translates each solid's node
 by `explode_offset · t`. Camera framing is not re-fit during the drag (the
 server frames once at `t=1`; the client mirrors that by framing once and
-holding). G4.6 reads pairwise centroid distances back out of the scene graph
+holding). In Fit mode only, canvas resize may recompute projection extents for
+that same full-explode bound and current view (§4.1(b)); it never frames to an
+intermediate slider value. Deliberate camera pose/zoom/pan stays held. The
+existing read-only viewport harness may expose fresh camera presentation
+snapshots to assert these constraints; it exposes no camera setter or new fact.
+G4.6 reads pairwise centroid distances back out of the scene graph
 and demands a strict increase over **all** pairs, so a single-solid fixture
 makes the clause vacuous: the fixture carries **≥3 solids** (§14).
 
@@ -3136,9 +3156,11 @@ part's build state is `not_built`** — the state where the well is empty becaus
 this part has simply never been built — and in no other state: with no part
 selected, `no-pin` renders as before, and a part with a failed build renders
 the failure, never this. Its `EmptyState` names the part in the `.title`
-("**`<part>` has not been built**") and its `.body` is exactly the two
-remedies, each in the reader's own vocabulary: **ask the agent in the stream
-below**, and **run `heph build <part>`** (the command in `.code`). Both facts
+("**`<part>` has not been built**") and says **Open the conversation to
+request a build**, with an **Open conversation** action. That action only
+reveals/focuses the existing composer or no-session invitation: it never
+builds, creates a session, inserts/replaces a draft, or sends. The secondary
+CLI guidance remains **run `heph build <part>`** (the command in `.code`). Both facts
 in the heading — the part name and the state — are server projections
 (`GET /parts`, `GET /parts/{part}/build`); the client composes, it does not
 derive (§1). **Testable:** select an unbuilt part with no pin — the well
@@ -3266,7 +3288,10 @@ implementation, byte-parity asserted on the canonical JSON.
 Badge vocabulary is closed and mirrors the report: `pass`, `fail`, `error`,
 `not_run`. **`not_run` renders as its own visible state with the words "not
 run"** — the rule that silence never reads as a pass is a UI obligation, not
-only a tool one.
+only a tool one. Project checks lead with a tally of the supplied badge states
+and the first attention item (error, fail, not run, then pass), never a computed
+predicate or readiness score. All measurements remain available; bundle and
+generation live in a collapsed Provenance disclosure after the checks.
 
 ### 6.4 DFM — the orphaned clause, given a home
 
@@ -3275,10 +3300,19 @@ findings in the web panel" from G6 and deferred it *to* G4/G5, whose verbatim
 text does not mention it and may not be edited. It is binding under mission
 rule 1, so it lands here as coverage inside `pnpm test:e2e`:
 
-- **`DfmPanel`** renders a `run_dfm` result: `severity_counts` header, findings
-  list, `errored_rules`, a `truncated` marker, `process`, pack
-  `{name, version, registry, registry_digest}`, `material`, and `resolved_from ∈
-  {current, artifact_ref, project_snapshot}` as a visible chip.
+- **`DfmPanel`** leads with **DFM · part · artifact relation**, the known
+  evaluation outcome, supplied `severity_counts`, and the first finding before
+  provenance. No readiness score or inferred clean result is permitted. An
+  absent run, unavailable summary, rule error, truncated/incomplete evaluation,
+  and other-artifact/stale result remain distinct. Current artifact relation
+  compares the recorded source ref with the current build projection; an
+  unavailable build read says relation unknown. Build freshness is not DFM approval.
+  All findings, `errored_rules`, and the `truncated` marker remain readable.
+  A collapsed **Provenance** disclosure retains `process`, pack
+  `{name, version, registry, registry_digest}`, `material`, full source ref,
+  auto-run setting and original `resolved_from ∈ {current, artifact_ref,
+  project_snapshot}`. That original resolution mode is not a claim that a
+  formerly current artifact is still current.
 - Each finding renders `rule_id`, `severity`, `title`, `message`, `measured`,
   `suggested_bound` + `bound_unit`, `tags`, and **artifact-bound topology
   descriptors** `{kind, solid_id, topology_index, tag}`. G6 pins that findings
@@ -3295,7 +3329,8 @@ rule 1, so it lands here as coverage inside `pnpm test:e2e`:
   workspace exposes (a) a **Run DFM** action → `POST /parts/{part}/dfm`, and (b)
   a project-settings toggle → `POST /project/config/dfm`. Collapsing them into
   one composer switch would imply a tool argument that does not exist. The e2e
-  covers (a) surfacing findings and (b) the setting round-tripping.
+  covers (a) surfacing findings and (b) the setting round-tripping. Merely
+  opening/reordering this panel never runs DFM or enables auto-run.
 - `capability_not_available` (no sandbox) renders as an explicit explanatory
   refusal card, never an empty list. Silence never reads as a pass.
 
@@ -3303,21 +3338,44 @@ rule 1, so it lands here as coverage inside `pnpm test:e2e`:
 
 ## 7. The agent stream
 
-**AMENDED — approved integrated chat semantics.** This amendment supersedes
-older presentation requirements below for repeat/cycle coalescing, prominent
-recorded/live seams, refused-echo retention, and last-live-frame cancellation.
-Other prior amendments, including CAM/provider/sidebar work, remain intact.
+**Approved integrated chat semantics.** The following ownership rules and the
+component clauses below describe one continuous conversation contract.
+Unrelated CAM/provider/sidebar commitments remain intact.
 
 - Recorded and live messages form one continuous reading surface while retaining
   their separate event identities. Each tool call has its own compact native
   disclosure, collapsed by default, with expandable arguments and results;
-  expansion survives streaming result updates. Narration stays visible. Failure
+  expansion survives streaming result updates, session return and panel remount,
+  owned by session and stable row/call identity. Compact tool rows retain at
+  least the minimum keyboard/pointer target; successful Done is quiet text,
+  not a repeated prominent success badge. Every individual call and its outcome
+  stays present; no turn-level tool group or generated summary hides calls.
+  Narration stays visible with Assistant landmarks distinct from You requests. Failure
   labels, unanswered questions and known delivery gaps stay prominent; successful
   outcome/provenance/connection details are secondary, optional diagnostics.
   A failed session read does not erase already held transcript or gap evidence.
-- `CurrentTurn` is independent of transport/history: `Working` follows active
-  ownership, `Finished` an explicit completed winner, `Stopped` a confirmed
-  cancelled/failed/interrupted winner, and `Checking` unreconciled evidence.
+  First entry follows latest content. Return restores a valid per-session content
+  anchor and following flag, not another session's pixel offset. While detached,
+  dynamic text/result/image growth, disclosure expansion and viewport resizing
+  preserve the reading anchor; while following, they reach actual latest content
+  even with unchanged row count. Latest is explicit and never deletes narration,
+  individual calls or retained gaps. Loading, true empty and failed history are
+  explicit visible states, never stale blank overflow.
+- `CurrentTurn` is the one operator-state projection over existing execution,
+  model, run, question/answer and terminal evidence, reusable without mounting
+  the conversation (including a hidden-conversation control). It does not create
+  execution authority. `Working` means reconciled active ownership; an addressable
+  unanswered question on that run means `Waiting for your answer`, with Go to
+  question. A locally submitted unresolved answer means `Recording answer`.
+  An unconfirmed explicit prompt means `Sending request`; uncertain ownership,
+  model admission or answer delivery means `Checking`, with the known reason.
+  `Completed`, `Cancelled`, `Request failed` and `Interrupted` are distinct
+  matching terminal winners. An accepted active question is never labelled
+  Sending or No result merely because the prompt POST has not returned.
+  Failure reason is readable primary prose, followed by review-before-new-request
+  guidance; sanitized technical envelopes belong in Details. Neither failure
+  nor interruption establishes that no design changed. No automatic retry is
+  offered or implied.
   Historical outcomes never describe current Stop availability. Missed terminal
   frames are reconciled through session reads; old-epoch/version or pre-write
   responses cannot override newer ownership. A pending send cannot inherit the
@@ -3325,22 +3383,34 @@ Other prior amendments, including CAM/provider/sidebar work, remain intact.
 - Send, Enter and form submission share one busy/admission guard. Drafts and
   immutable submitted attempts are session-keyed for project lifetime, surviving
   collapse, unmount and session switches. Drafts remain editable during a pending
-  POST; settlement clears only the submitted revision, not subsequent edits.
+  POST in a separately labelled **Draft for next message — Not sent or queued**
+  field. The immutable submitted attempt retains text, session, model revision
+  and context references; it is not an indefinitely Sending textarea. Settlement
+  clears only the submitted revision, not subsequent edits. A later terminal
+  for the accepted attempt may update task copy before the blocking POST returns,
+  without releasing the outstanding-attempt admission guard.
   A named refusal retains the draft and reason, not a duplicate user-message
   echo. Uncertain delivery never triggers automatic resend, queueing or cancel;
   after reconciliation an operator may explicitly keep the draft for a new send.
 - Stop is explicit and targets only a known current `active_run_id`, including
   authoritative ownership obtained before the first live frame or while the
-  socket is disconnected. A cancel acknowledgement means **Stop requested**, not
-  Stopped; only matching terminal evidence confirms Stopped. Questions are
-  answerable only for reconciled active ownership, never because old history
-  happens to contain an unanswered call.
+  socket is disconnected. The single live Stop control sits beside task status
+  and remains discoverable during a question. An explicit request (including a
+  pending HTTP response or acknowledgement) means **Stop requested**, never
+  Cancelled; only matching terminal evidence confirms the outcome. Lost Stop
+  delivery is stated as uncertain, with read reconciliation and no automatic
+  cancellation. Questions are answerable only for reconciled active ownership
+  and their own live question address, never because old history happens to
+  contain an unanswered call. Answer reservations/receipts are session/question
+  keyed for project lifetime; remount cannot enable a duplicate answer or imply
+  that another client won. Recorded selections read as **Answer recorded:** and
+  readable labels/free text, not serialized JSON. Unknown actor source is neutral.
 - The header shows one compact selected human title and scope, with switch,
   new-session and collapse controls. Selecting a session closes its switcher and
   restores focus. The composer stays compact and stable. The divider supports
   pointer capture/cleanup plus ArrowLeft/ArrowRight, Home/End, visible focus and
   ARIA width bounds/current value. Width preference stays outside URL state;
-  viewport/rail clamps preserve usable columns and the 44px collapsed control.
+  viewport/rail clamps preserve usable columns and the horizontal hidden return control.
 
 Executable synthetic browser coverage is in `web/e2e/synthetic/`; it exercises
 real DOM interaction and isolated HTTP/WebSocket fixtures, not CSS source alone.
@@ -3375,8 +3445,9 @@ one — while `GET /sessions` returned three rows, because the panel drew the
 selected thread and fell back to the listing only when the walk returned
 nothing, which a route that always answers with at least one node never does.
 
-Attachment is explicit: opening a part shows its session if one exists; the
-"attach" affordance lists live sessions. **A browser tab is a client, never a
+Conversation selection is explicit: opening a part changes workspace inspection,
+not the selected conversation, model or draft. The switcher lists live sessions;
+the header keeps the selected human title and full scope on a compact second line. **A browser tab is a client, never a
 lease holder.** While the CLI holds a persistent session's lease, the browser
 reads and can prompt *through the owning server* (§2.1), which is the only
 reason both surfaces can drive one session at all.
@@ -3392,10 +3463,13 @@ unchanged; `copy.stream.sessionsHeading` survives as that label only. **Testable
 no visible text node inside the Stream column renders `copy.stream.sessionsHeading`;
 `[role=tablist]`/the sessions list still exposes it as an accessible name.
 
-**(b) The create affordances merge into the strip as ONE compact `+` action.**
-`StreamPanel.tsx`:404's `createAction` pair (`New session` / `Ask about <part>`)
-renders as **a single icon-only `+` control that is the last item of the session
-tab strip**, not as a band below it. **Normative, and each half is testable:**
+**(b) The create affordances merge into ONE compact New action.**
+The selected title/scope has its own line above a compact **Switch / New / Hide**
+action row. Icons accompany visible labels; accessible names remain Switch
+conversation, New conversation and Hide conversation. Narrow rail navigation
+likewise shows **Parts** beside its icon. No control depends on icon interpretation.
+The `createAction` pair (`New conversation` / `Ask about <part>`) is one New
+control in the strip, before Hide. **Normative, and each half is testable:**
 
 1. The `+` control renders **whenever the panel can create a session** — which
    is the condition the shipped pair already renders under (no runtime fault,
@@ -3403,17 +3477,20 @@ tab strip**, not as a band below it. **Normative, and each half is testable:**
    and renders **in no other state**. The empty-list invitation (§7A.2) is
    unchanged and is the one place a full-width worded create control still
    renders, because there is no strip to hang an icon on.
-2. **No wording appears twice.** `New session` and `Ask about <part>` do not
-   render as visible button labels anywhere the tab strip is drawn. They become
-   the two entries of the `+` control's menu, and the menu is drawn **only while
+2. **One creation entry point.** The compact label is New; `New conversation`
+   and `Ask about <part>` are its scope choices, not competing creation controls.
+   They are the two entries of New's menu, and the menu is drawn **only while
    open**. When a part is selected the menu has both entries; with no part
    selected it has one, and the `+` activates it directly rather than opening a
-   one-item menu.
+   one-item menu. The trailing control's menu opens inward below its anchor;
+   both complete scope labels and keyboard focus targets remain within the
+   viewport at 1440, 1024 and 843px. Long names wrap inside the bounded menu.
 3. The existing test hooks are **unmoved**: `[data-session-create]` and
    `[data-session-ask]` still address the two actions, wherever they live. A
    lane that renames them has changed a contract this clause did not open.
-4. `data-create-error` is unchanged and still renders as a note; a create
-   failure is an exception and stays loud.
+4. These actions open §7A.2's named creation dialog, not an inline second
+   model/composer target. `data-create-error` remains a readable error inside
+   that dialog; a create failure never triggers automatic retry.
 
 **(c) Dead surface, repair (c) — the one-character filename confusion.**
 `stream/sessionPrompt.ts` (the gate, `sessionCannotPrompt`) and
@@ -3440,7 +3517,7 @@ thing. Normative:
    derives nothing** (§1); `hh:mm` formatting is presentation in `format.ts`.
 2. **No rendered tab's accessible name is string-equal to any create-control
    label** — not `copy.stream.createOrchestrator`, not `copy.stream.createPart`
-   (nor their `New session` / `Ask about <part>` menu forms, §7.1(b)) — in any
+   (nor their `New conversation` / `Ask about <part>` menu forms, §7.1(b)) — in any
    state. A tab that names itself after a verb phrase for creating sessions
    fails this clause; this is the testable, run over every tab the fixture can
    produce.
@@ -3481,12 +3558,12 @@ because it constrains component design directly.
 ```
 
 - `data-tool-name` — the canonical tool name from `tool_call.name`.
-- `data-status` — closed set **`running | ok | error`**, derived only from
-  normalized events: a `tool_call` with no matching `tool_result` is `running`;
-  a `tool_result` with `isError` true is `error`, false is `ok`. There is no
-  fourth value — a cancelled run's orphan chips stay `running` until the
-  `terminal` event marks the *run*, because cancellation is a property of the
-  run, not of a chip.
+- `data-status` — closed set **`running | ok | error | unknown`**, from normalized
+  tool evidence: `isError` true is `error`, false is `ok`, and unrecoverable
+  result status is `unknown`. A call without a result retains the `running`
+  hook but displays **No result**, not an assertion that a historical call is
+  still running. A tool's status is not the run's status; cancellation and Stop
+  permission come only from reconciled execution evidence.
 - `data-field` — **one node per schema-required output field or reference that
   is present in the fixture's event payload**, under the predicate below.
 
@@ -3505,12 +3582,9 @@ own closing rule. Therefore:
 > archive is baselined, so the archive records the corrected shape and is not
 > re-baselined a stage later.
 
-**Fallback if the signal proves unrecoverable from Pi entries:** the closed set
-gains a fourth, **visible** value `unknown`, rendered with explanatory copy
-("this transcript does not record whether the call failed"), used only for
-historical chips. That is strictly worse than fixing the normalizer and is
-recorded as the fallback rather than the plan — but defaulting a failed call to
-`ok` is not an option in either branch.
+**If result evidence is unrecoverable:** render **visible** `unknown` with its
+missing-evidence explanation. Live calls may also lack a result; neither
+missing evidence nor an absent `isError` may default a failed call to `ok`.
 
 **TIGHTENING (binds G4.D) — the completeness predicate, over the parsed result
 document.** Two defects had to be fixed together here, so the predicate is
@@ -3576,143 +3650,29 @@ schema-driven chip. Both satisfy the same attribute contract, so a degraded
 fixture never breaks the contract — it renders plainly. **A chip degrades by
 omission and names the absent fields; it never fabricates a placeholder value.**
 
-**AMENDED 2026-09-01 (§0.2b) — the chip's resting face, and repetition.** Nothing
-below touches the attribute contract above: `data-tool-name`, `data-status`,
-`data-event-id`, `data-tool-call-id` and the `data-field` set are **unchanged in
-every clause**, and both assertions of the completeness predicate still run
-against every call. What changes is what a *resting, successful, repeated* chip
-draws.
+**Individual compact tool disclosures (a–e, C4/C5/C23).** Every call has its
+own native disclosure, closed by default, even when adjacent calls or
+call/narration cycles repeat identical results. No repeat count, shared tool
+group, generated headline or turn-level accordion replaces individual calls.
+The summary names the actual tool and evidence-based outcome; Done is quiet
+text, while error/unknown/no-result states stay distinguishable. Failures have
+visible primary copy outside the disclosure. Narration remains visible in order.
 
-**(a) Consecutive identical successful calls coalesce into one row.** Define a
-**repeat group**: a maximal run of two or more transcript items that are
-*adjacent in render order with no item of any other kind between them*, share
-one `data-tool-name`, each have `data-status="ok"`, and whose §7.2 result
-documents are **byte-identical after canonical-JSON serialization**. A repeat
-group renders as **one row**: the tool name, a repeat count, the shared status
-badge, and the one-line headline `stream/toolSummary.ts` computes for the shared
-document — with **one** disclosure holding the detail.
+Each call retains its singular `data-tool-call-id` and its own event identity;
+its result and images retain their own identities even while closed. All
+`data-field` nodes remain mounted. Both completeness and groundedness assertions
+above apply independently to **every** call. The transcript identity set equals
+the underlying recorded/live evidence set, in their separate namespaces, with
+no duplicate identities or missing narration; §7.3's named presentation-row
+exclusions are the only archive exclusions. No result or payload is merged.
 
-- **Count.** The row draws `×N` where `N` is the number of calls in the group,
-  in the type role §3.8 gives a count, never as a sentence.
-- **Nothing is dropped from the DOM.** The row carries
-  `data-chip-repeat="N"`, `data-event-id` of the **first** member (so existing
-  addressing still resolves), and `data-event-ids` as a space-separated list of
-  every member's id in render order. `data-tool-call-id` likewise becomes
-  `data-tool-call-ids` on a coalesced row and stays singular on a single chip.
-  §7.2's `data-field` nodes render once, on the coalesced row, from the shared
-  document. **Testable:** for any transcript, the **set** of ids in
-  `data-event-id` ∪ `data-event-ids` across all chips equals the set of
-  tool-call event ids in the underlying entries. A coalescing that loses an id
-  fails. *Set, not multiset, and the reason is stated rather than left to the
-  test: the anchor id is deliberately published twice — once as
-  `data-event-id`, so existing addressing still resolves, and again as the first
-  entry of `data-event-ids`, so the member list is complete on its own. A
-  multiset comparison would count that anchor twice and fail on a correct
-  render, which is a testable the build cannot pass rather than a rule the build
-  must meet (§0.2b).*
-- **The negative half, stated four ways, because this is where honesty is at
-  risk.** A group does **not** form, and every member renders as its own chip,
-  when: any member's `data-status` is `error`, `running` or `unknown`; the
-  members' result documents differ in any byte; any item of another kind
-  (`text_delta`, `thought`, `image`, `question`, `answer`, `audit`, `terminal`,
-  a resync seam, or the §8 history/live seam) falls between them; or the members
-  lie on opposite sides of that seam. **Two failed calls never coalesce, even
-  when identical.** A repeated failure is the signal this column exists to
-  carry, and folding nine failures into one row would be eliding the fact
-  §4.4 forbids eliding.
-- **N=1 draws no count.** A single call renders exactly as it does today, with
-  no `data-chip-repeat` attribute.
-- Coalescing is a **rendering** operation over already-normalized entries. It
-  computes nothing, merges no payloads, and never produces a document no
-  server sent (§1). The one document a coalesced row renders is one member's,
-  and the members are byte-identical by the group's own definition.
-
-**(b) The resting face loses the field count.** The collapsed `N result fields`
-row (`copy.stream.chip.detail`, `copy.ts`:959-960) **does not render on the
-resting chip face in any state.** It renders **inside** the disclosure, as that
-disclosure's own label or first line, where a reader who asked for detail can
-use it. **Testable:** with every disclosure closed, no chip in the transcript
-renders the string produced by `copy.stream.chip.detail`; opening one disclosure
-renders it exactly once. The `data-field` nodes themselves are unchanged and
-stay in the DOM whether the disclosure is open or shut, as they already do — the
-count was chrome about a list, not the list.
-
-**(c) At most one preamble note, and never above the headline.**
-`ToolChip.tsx`:144-152 stacks up to three `<p class=note>` blocks — `unknownWhy`,
-`runningWhy`, `callMissing` — between the header and the summary line.
-**Normative:** the resting chip face renders **at most one** note, and it renders
-**below** the headline, not above it. The note renders **only** when the chip is
-in an exceptional state — `data-status` of `error`, `running` or `unknown`, or a
-missing result record. When more than one condition is true the chip draws the
-**most specific** one, in the fixed precedence `callMissing` → `unknown` →
-`running`, and the others are unmounted rather than stacked. **A chip with
-`data-status="ok"` and a result present renders no note at all.** The suppressed
-conditions are not lost: each stays on the chip's `title`, and §7.2's
-`data-field-state="unparsed"` path is untouched — an unparsed result still
-renders its stated reason in the chip body, because that is a refusal carrying
-its cause and not a preamble.
-
-**(d) What a coalesced row must still be able to say.** A group whose members
-are `ok` can still hold a result the summary cannot headline; that row renders
-`data-chip-summary="opaque"` exactly as a single chip does (§7.2's named
-fallback), and the ×N count does not change the sentence. A coalesced row is
-never `data-chip-summary` absent.
-
-**(e) These clauses bind `Transcript.tsx`, `ToolChip.tsx` and
-`stream/toolSummary.ts` only.** Grouping is decided in the transcript's row
-construction (`stream/transcript.ts`'s `PanelRow`), not inside a chip, because a
-chip cannot see its neighbours and a chip that could would be reading the
-transcript.
-
-**AMENDED 2026-09-02 (§0.2c) — cycles coalesce the way repeats do, and the
-headline gets an order.** The 2026-09-01 clause (a) covers a run of identical
-chips with nothing between them; the build's actual noise is one step more
-structured — the agent loops *tool call, short narration, same tool call, same
-narration* — and (a)'s "no item of any other kind between them" correctly
-refuses to touch it. This block extends the same discipline to that shape
-rather than loosening (a).
-
-**(C4) A cycle group coalesces from the second repetition of the pair.** Define
-a **cycle group**: a maximal run of **three or more** consecutive
-(chip-or-repeat-group, text-row) *pairs* in render order, where every pair's
-chip member shares one `data-tool-name`, every chip member has
-`data-status="ok"`, and every chip member's §7.2 result document is
-**byte-identical after canonical-JSON serialization** across the group. A cycle
-group renders as: the **first pair in full**, exactly as ungrouped — its chip
-(or ×N row) and its text row — then **one compact line per subsequent pair**:
-the tool name, the running `×N` ordinal, the shared status badge, and nothing
-else, each compact line **≤ 1.5× target-min (36px, §0.2c) tall**. The
-subsequent pairs' **text rows and the chips' Detail render behind the first
-pair's disclosure**, in order, so one disclosure opens the whole cycle.
-**The negative half, same four ways as (a):** no group forms if any chip
-member's status is not `ok`, if any result document differs in a byte, if the
-interleaved text rows are joined by any item of a third kind (`thought`,
-`image`, `question`, `answer`, `audit`, `terminal`, a resync seam, the §8 seam,
-or a §7.3 presentation row), or across that seam. Two pairs are two pairs —
-the threshold is three, because two occurrences are not yet a cycle.
-
-**(C5) A cycle group loses nothing the DOM discipline tracks.** Every clause of
-(a)'s id rule applies unchanged: the first pair's chip anchors `data-event-id`;
-every member event of the group — chip **and** text events, compact lines
-included — appears in `data-event-ids` (and tool-call ids in
-`data-tool-call-ids`) on the elements that render them; and the (a) testable's
-set equality over the whole transcript holds identically for a transcript
-containing cycle groups. Text content is never dropped: the folded text rows
-render inside the disclosure with their own `data-event-id` spans, exactly as
-§8's grouping rule already requires. A cycle rendering that elides a text
-row's content, rather than relocating it behind the disclosure, fails this
-clause and §4.4 together.
-
-**(C23) The headline field priority is closed and ordered.** The one-line
-headline `stream/toolSummary.ts` computes chooses its fields in this order and
-no other: **(1) a `status` field, (2) a `message` field, (3) a `name` field,
-(4) `*_ref` fields (abbreviated per §4.1(a)), (5) bare counters last** —
-counts of things summarize a document least, which is §0.2b's "a count is not a
-fact" applied to the headline. A document with none of these renders
-`data-chip-summary="opaque"` exactly as before; the priority adds no new
-sentence, it orders the existing choice. **Testable:** for a fixture document
-carrying both a `message` and a counter, the headline renders the message and
-not the counter.
+Arguments, full results, unparsed-result reasons and missing-record explanations
+are inside that call's disclosure, accessible by keyboard rather than only by
+hover. The `N result fields` count appears only when its disclosure is open,
+exactly once; it is never the resting headline. Minimum target size remains
+24px. Session/stable-row-owned expansion survives result growth, navigation and
+panel remount. Unknown evidence never reads as successful execution, and a
+historical missing result never grants active-run or answer authority.
 
 ### 7.3 Kinds
 
@@ -3784,7 +3744,9 @@ not the counter.
   **reopened** `AskUserWidget` is rendered from the `ask_user` tool call and
   its tool result — which history does carry — and is marked
   `data-widget-source="tool_result"` and non-interactive. It is not
-  reconstructed from `question`/`answer`, because those are not there.
+  reconstructed from `question`/`answer`, because those are not there. A separate
+  authenticated live-state read may supply an actionable `live_state` widget
+  (§7A.7); it is not an event and cannot lend an address to historical IDs.
 - `answer` → the recorded answer (live only; see above).
 - `audit` → a compact line carrying `payload.event`.
 - `progress` → a coalesced transient indicator that never accumulates history;
@@ -3827,24 +3789,18 @@ list is stated once, here, and it is those five plus §8(f)'s `turn-outcome`.
 The rule the sentence exists for is untouched and is the whole point: the skip
 is **by name**, never by "has no id", so a real event row that dropped its id
 still fails the match.)* It never enters
-history, never crosses the wire, and **states its own nature on its visible
-face, not on `title` alone**: each presentation row renders a visible-at-rest
-marker word in `.code` at `--ink-muted` (the echo row's marker reads
-`unrecorded`; the run-start row's rule-line-plus-run-id *is* its marker) paired
-with an accessible equivalent — visually-hidden text or `aria-description`
-carrying the not-a-recorded-event statement — because `title` is unreachable
-from keyboard, touch, and most screen readers, and a disclosure only a hovering
-mouse can read is not a disclosure (§3.9's colour-is-never-alone discipline,
-applied to honesty). `title` keeps the long form. §8's recorded-event honesty
-rules are not relaxed one word by this category — see §8's C3.
+history and never crosses the wire. Role and actionable uncertainty are visible
+at rest; routine source/run diagnostics are secondary keyboard-accessible
+disclosures, not repeated category-marker bands. Run-start retains its own
+run ID in Run details, without granting Stop authority. Unknown delivery and
+known gaps remain prominent. §8's identity and no-cross-namespace rules are
+unchanged — see §8's C3.
 
 **(C2 — member one: the local prompt echo.** DOM: `data-row="local-prompt"`,
 `data-local-echo="1"`.) On Send, the originating tab appends one presentation
 row carrying the **sent text verbatim**, at the live suffix's tail, with the
-category's visible-at-rest marker (`unrecorded`, `.code` muted) and its
-accessible equivalent stating it was **typed on this page and is not a
-recorded event** — a `title` carries the long form, per the category rule
-above, never the only copy.
+visible **You** role marker. Uncertain delivery adds its visible explanation;
+a routine accepted echo does not repeat an unrecorded/transport badge.
 §7A.5's amendment states when it is minted and what it marks; the rules here
 state what it is. **The negative halves:** it renders only in the tab that sent
 the prompt (an observer tab has no local text to echo, and echoing another
@@ -3852,9 +3808,9 @@ tab's would require inventing it); it is never re-rendered from history on
 reopen — AMENDED 2026-09-03: a reopen restores recorded operator turns from
 history's additive `user_prompts` as `[data-row="user-prompt"]` rows with a
 historical identity, not as this presentation echo, and it does not mint the
-old user-prompt absence notice; and a failed POST does not remove the echo,
-because the text was typed whether or not the turn started
-(`data-send-state="unknown"` renders beside it, §7A.5).
+old user-prompt absence notice. A lost POST retains the unconfirmed attempt;
+a named admission refusal removes the unaccepted echo but preserves recoverable
+text and the refusal reason (§7A.5). Neither path duplicates an accepted prompt.
 
 **(C21 — member two: the run-start boundary.** DOM: `data-row="run-start"`,
 `data-run-id="run-…"`.) The transcript mints a boundary row **when a live
@@ -3956,24 +3912,23 @@ rendered text node or box affordance that is not a colour and not an attribute;
 the marker's text is present with the row at rest, not on hover and not on
 `title` alone.
 
-*Copy key: `copy.stream.userPrompt.marker`, beside the `accessible` string that
-key already carries. The marker names the **speaker**, not the medium — the
-agent's own rows carry none, because the model is this surface's default voice
-and a marker on every row is a marker on none (§0.2b's struck `live` badge).
-The house word is `operator`, the noun this document uses for the person
-throughout; it is not a possessive, not a name, and not `you`.*
+*Copy key: `copy.stream.userPrompt.marker`, beside its accessible equivalent.
+The marker names the speaker: **You** for operator requests and **Assistant**
+for assistant narration. An explicit recorded agent-origin prompt retains
+**Agent continuation** rather than being attributed to You. These are grounded
+roles, not inferred human identities or claims about who answered a clarification.*
 
 **RECONCILED 2026-09-03 — the marker rides BOTH operator rows, and the clause is
 widened to say so.** This clause was written about the restored `user-prompt`
-row, and the shipped renderer puts the same `operator` marker on the live
+row, and the renderer puts the same **You** marker on the live
 `[data-row="local-prompt"]` echo as well. That is right and the spec follows it:
 a live echo and a restored prompt are **the same voice from two sources**, and a
 transcript where the operator is labelled only after a reload would teach the
 reader that the marker means "old" rather than "who". What stays different is
-the *category* marker beside it — C2's `unrecorded`, and §7A.5's `refused` — which
-is about the **row's status**, not about who spoke. So a live echo carries the
-role marker and its own category markers; a restored prompt carries the role
-marker alone; the agent's rows carry none.
+the uncertainty explanation beside it, which concerns delivery rather than
+who spoke. A named refusal retains text/reason outside the accepted conversation
+rather than an apparent second user turn (§7A.5). Both accepted prompt forms
+carry You; assistant narration carries its distinct Assistant landmark.
 
 **(b) The envelope is a collapsed disclosure, labelled as the server's
 projection.** When `user_prompts[].envelope` is non-null the row renders
@@ -4037,15 +3992,15 @@ either satisfies this clause, and neither may be a blank.*
 `user_prompts[].outcome` is present, one `[data-row="turn-outcome"]` row renders
 **directly under that turn's prompt row**, carrying
 `data-outcome-state="cancelled" | "error" | "interrupted"`, the state as a word,
-and `message` when the record has one. It renders for no other turn: absence of
-`outcome` means the turn completed (§2.8(4)), and a label on every turn would
-spend a row saying nothing, which is what §0.2b struck the `live` badge for.
+and the readable cause when recorded. An explicit `completed` outcome may
+render in collapsed Turn details. An absent outcome creates no outcome row and
+never grants current execution/admission authority; an unanswered recorded
+question alone cannot establish completion.
 
-*Copy: `copy.stream.turnOutcome` keyed by the three states, one sentence each per
-§7.4(d), with the recorded `message` rendered **verbatim beside** the sentence
-and never substituted for it — the record's message is the sidecar's or the
-model's wording and may be empty, absent, or unhelpful, and the house sentence
-is what guarantees the row says something. The row's `key` is
+*Copy: **Cancelled**, **Request failed**, or **Interrupted**, with the readable
+recorded cause and review-before-new-request guidance. Sanitized technical
+outcome/message evidence remains in Details, not raw JSON as primary prose.
+No error wording establishes that nothing changed. The row's `key` is
 `turn-outcome:<turn>`, so it is stable across re-renders for the same reason the
 prompt row's is. Position is normative: **directly under that turn's prompt
 row**, above that turn's replies — the outcome is a fact about the whole turn,
@@ -4145,9 +4100,9 @@ the unchanged label. Nothing is compared across the seam (§8's C3 stands),
 nothing is read from history, and no run start is inferred — the number the
 server already put on the frame is the whole derivation.
 
-**Before the first live frame, the label is the unchanged one.** A seam with
-nothing under it is not making a claim that can be wrong, so it renders
-`copy.stream.seam` until a live row exists and switches on that row's arrival if
+**Before the first live frame, the source disclosure keeps the routine label.**
+A seam with nothing under it keeps `copy.stream.seam` inside Delivery details
+until a live row exists; a visible missing-output warning is added on arrival if
 its `seq > 0`. The alternative — hedging every seam in advance against a run that
 may not be in progress — would put the mid-run sentence over the ordinary case,
 which is the same overclaim in the other direction. `data-seam` gains
@@ -4167,12 +4122,11 @@ turn, and a seam with no live row under it yet, render `copy.stream.seam` and
 `data-seam-kind="end"`; exactly one `[data-seam]` element renders in every
 case.
 
-**AMENDED 2026-09-02 (§0.2c, C20) — the Latest pill lives in the gutter, off
-the cards.** `[data-jump-latest]` floated over the transcript's content column
-and landed on top of tool cards. Normative: the pill anchors **in the
-transcript's scroll-gutter edge** — the strip the scrollbar owns, at the
-column's trailing edge — with a stated clearance: its bounding box intersects
-**no** chip, text row, or presentation row at any scroll position. Its mount
+**Latest navigation (§0.2c, C20) — horizontal, outside transcript content.**
+`[data-jump-latest]` occupies a small trailing-aligned horizontal navigation row
+that is a sibling of the transcript scroller, never an overlay or scroll child.
+It contributes nothing to the transcript's scroll range. Its bounding box
+intersects **no visible** chip, text row, or presentation row at any scroll position. Its mount
 condition is unchanged (it renders only while the view is not following the
 latest row, and never while followed — the §0.2b discipline already applied to
 it). **Testable:** with the transcript scrolled up over a chip-dense fixture,
@@ -4227,23 +4181,40 @@ input at the popover would create two prompt paths with different scopes and
 different seeding, distinguishable only by which pixel was clicked. **The
 popover spawns; the spawned tab's composer prompts.**
 
-**TIGHTENING (binds §4.1's breakpoint prose).** A composer cannot live in a 44px
-strip, so the strip is a **control** rather than a narrower panel: focusing or
-activating it expands the column. §4.1(a) makes the breakpoint and the panel's
-open state one fact with one owner, which this section depends on.
+**Responsive composition.** A hidden conversation renders §4.1(f)'s horizontal
+state-bearing Open control, never a narrower composer. Capacity and explicit
+panel intent are separate (§4.1(a)); activation or focus-only Skip reveals the
+existing session without a write. Focus alone on Open preserves hidden intent.
 
 ### 7A.2 The blank canvas: creating a session, and the profile a web-started one gets
 
 The operator ask has two halves — "about the displayed material" and "about a
 blank canvas" — and they are the same route with a different `part`.
 
-**DECISION.** `POST /sessions` is reachable from exactly two affordances, both
-explicit:
+**DECISION.** The two creation entry points open the bounded flow below;
+only its explicit Create confirms `POST /sessions`. The separate first-Send
+path described below remains explicit as well:
 
 | Affordance | Body | Profile | Bound part |
 |---|---|---|---|
-| STREAM empty state / "New session" | `{profile: "orchestrator"}` | `orchestrator` | none |
-| A part row's context action, or "Ask about `<part>`" | `{profile: "part", part: "<part>"}` | `part` | that part |
+| STREAM empty state / "New conversation" | `{profile: "orchestrator", model: {provider_id, model_id}}` | `orchestrator` | none |
+| A part row's context action, or "Ask about `<part>`" | `{profile: "part", part: "<part>", model: {provider_id, model_id}}` | `part` | that part |
+
+**Bound creation.** These affordances open one named accessible modal dialog
+or sheet: **New conversation · Project** or **New conversation · part**.
+It contains the existing scope choice, **Model for this new conversation**,
+explicit server-proposed default and capabilities, accessible provider/model
+identity, unavailable explanation, **Cancel** and **Create conversation**.
+The proposal is dialog-local and distinct from the current session model and
+no-session draft. Old controls are inert; keyboard focus stays inside, Escape
+cancels (or closes only the nested picker), and Cancel restores opener focus,
+original session/model/draft without a write. While a creation request is
+pending, duplicate Create and cancellation are disabled. Create makes exactly
+one idle session with the reviewed pair, reconciles actual model, selects it,
+and focuses its empty composer; it never posts a prompt or copies an old draft.
+An absent/default-unknown proposal requires a deliberate available choice; a
+refresh never silently substitutes a model. The existing separate explicit
+first-Send path remains unchanged. Opening/choosing alone creates nothing.
 
 **The blank canvas is the orchestrator profile with no part**, and that is not a
 workaround: `dispatch.py`:412-413 exempts an orchestrator principal from
@@ -4306,8 +4277,8 @@ is to **type English at an orchestrator agent, which calls `create_part`**.
 There is no part-creation route, no button, and none is added: §15.9 forbids the
 workspace inventing model tools and a part is authored source, not a form. What
 this section owes the operator is therefore not a button but an **entry point**:
-the parts-empty state is an `EmptyState` (§4.7) whose action creates an
-orchestrator session and focuses the composer, with copy naming `create_part` as
+the parts-empty state is an `EmptyState` (§4.7) whose action opens the bounded
+orchestrator creation flow, with copy naming `create_part` as
 the mechanism. **A blank canvas the operator has to guess is filled by talking
 is the same defect as a composer that is not there.** Project creation is
 further out of reach and is refused by name (§15.30): `heph serve` opens an
@@ -4411,14 +4382,29 @@ re-shape a single member of `context`. It changes **only** how the composer
 draws the envelope it is about to send.
 
 **(a) One summary line at rest.** Above the composer input the resting state
-renders **exactly one** line: the word `Context:` followed by the envelope's
+renders one compact, wrapping line: **Next message includes:** followed by the envelope's
 present members in the fixed order `part`, `artifact_ref` (abbreviated by
 `formatOid`/`formatRef`, §4.1(a)), `stage_tab`/`inspector_tab` as one
 `stage/inspector` pair, `view`, then a `+N` count for any remaining members —
-for example `Context: tread · build f908224c · viewport/results · iso`. Values
+for example `Next message includes: tread · build f908224c · viewport/results · iso [Preview]`. Values
 are the same closed tokens and echoed identifiers the envelope carries; the line
 **re-words nothing and computes nothing** (§1), and a member absent from the
-envelope is absent from the line.
+envelope is absent from the line. Conversation scope is a separate server fact,
+not a claim about these references. When a tread-scoped conversation views riser,
+both scope and **next message includes the viewed riser** are readable before
+Send at wide and narrow widths. An excluded part reference is stated as excluded,
+not claimed as included. **View tread** is explicitly labelled workspace navigation
+only; **Preview** retains exclusions and advisory send-time recomposition.
+Exclusions and explicit Add current view preferences are project-page-lifetime,
+keyed by session (including the no-session draft), not by Composer mount. Hide,
+Open, keyboard reveal and width changes cannot reset them; switching sessions
+must neither copy preferences into the destination nor erase the source's choices.
+First-send creation carries the no-session draft's preferences into its created
+conversation; independent dialog creation starts with its own defaults. No
+modal, automatic navigation or context rewrite is required to keep riser context.
+Part-profile tool restrictions and server-resolved per-turn context remain
+unchanged; subsequent part/model choices cannot alter a submitted attempt's
+frozen references/model revision or the context recorded on its turn.
 
 **(b) The chip form is the disclosure.** Activating the summary line expands the
 **editable** chip form — the `<ul data-context-chips>` of §7A.10, with its
@@ -4430,7 +4416,11 @@ envelope.
 currently pushes `stage_tab`, `inspector_tab` and `view` unconditionally, so
 three rows are always mounted. **Normative: `ul[data-context-chips]` does not
 mount while the disclosure is collapsed**, and the composer's resting height is
-one line of context regardless of how many members the envelope carries.
+a compact wrapping context line, plus the explicit scope-mismatch notice when
+needed; never a one-word column or clipped Send control. The bounded composer
+scrolls expanded regions; its independently scrollable preview must not
+flex-shrink to zero height or make Add current view unreachable behind the
+input/form. Keyboard and ordinary pointer activation remain usable.
 `chipsFor` still enumerates every member — the chips are complete when shown;
 what changes is when the list mounts.
 
@@ -4588,27 +4578,25 @@ a heading the operator never wrote.
 is ignored (§2.3). The composer cashes that out rather than routing around it.
 
 **TIGHTENING (binds §2.3's prompt row).** The composer **never retries a prompt
-automatically.** A failed or lost POST leaves the operator's text in the box,
-marks the turn `data-send-state="unknown"`, and states that the turn may have
-started and that the stream is the authority. An auto-retry over an at-least-once
+automatically.** A lost POST retains the immutable attempt and newer editable
+next draft separately, marks `data-send-state="unknown"`, and states what is
+unknown. Reconciled execution/terminal evidence may establish what ran despite
+an absent POST receipt; the UI must not deny that stronger evidence. An auto-retry over an at-least-once
 route is a duplicate-turn generator with a spinner on it.
 
-**The run id comes from the stream, not from the response.**
-`WorkspaceSessions.run_prompt` blocks for the whole turn, so the response arrives
-*after* the run is over and cannot be the source of a mid-run cancel target. The
-composer learns its run id from the first `/events` frame whose envelope
-`session_id` matches the tab — precisely the field §2.7 added the envelope for.
+**The Stop target comes from reconciled active execution ownership.**
+`WorkspaceSessions.run_prompt` blocks for the whole turn; its response cannot be
+used as a mid-run cancel target. Session execution reads can establish active
+ownership before any event. A last-frame ID alone is not Stop authority.
 
 *Rejected: the client mints the run id.* The route accepts one, but
 `BridgeRuntime.new_run_id` owns that namespace, and a second minter in it is the
 duplication mission rule 6 forbids, with a collision producing
 `run '<id>' already active` as its symptom.
 
-**Named limit:** between submit and the first event carrying the run id, **cancel
-is unavailable**. The composer renders `data-cancel-state="unavailable"` with
-its reason ("no run id yet") rather than a dead button, and the same state when
-the socket is not `live` (§7.4), because a tab with no stream has no way to learn
-the id. The window is one model round-trip.
+**Named limit:** Stop is unavailable until authoritative active ownership is
+known. `data-cancel-state="unavailable"` retains its reason; socket connectivity
+alone neither grants nor removes the ability to stop a known active run.
 
 **TIGHTENING + NEW WORK (§19.27) — one live run per runtime.** `manager.ts`
 guards run-id uniqueness only; nothing refuses a second prompt on a session that
@@ -4646,9 +4634,8 @@ round-trip the operator's own words existed nowhere on screen. Normative:
    the operator's own words rather than by a spinner; the echo then **licenses**
    the first frame's C21 run-start row, which lands directly after it — C21's
    base case: with no previous rendered live row to compare against, the echo
-   is the held fact that permits the boundary. The named limit above (cancel
-   unavailable until the first frame) is unchanged — the echo marks the turn,
-   it does not stand in for the run id.
+   is the held fact that permits the boundary. The echo is not Stop authority;
+   only reconciled active ownership can supply that target.
 3. **The negative halves are C2's,** restated where they bind the send path: a
    lost POST leaves the echo standing with `data-send-state="unknown"` rendered
    beside it (the words were sent into uncertainty, and hiding them would
@@ -4661,55 +4648,23 @@ containing the prompt text renders before any frame arrives; reopen the session
 history as `[data-row="user-prompt"]` when `user_prompts` is present, and
 the well does not draw the old user-prompt absence notice.
 
-**AMENDED 2026-09-03 — a refused prompt's echo is marked refused, not left
-standing as if it were a turn.** The echo is appended *before* the POST, and
-every failure branch touches only the post phase — so a prompt the server
-refused by name leaves a permanent, unmarked operator row in the transcript that
-looks exactly like a turn that ran, and that a reload silently deletes. The local
-gate cannot prevent it: `run_in_flight` is refused per **runtime** across all
-clients (§7A.5's TIGHTENING), so a tab can be refused for a run it never saw
-start. C2's rule that the echo is never removed is **correct and unchanged** —
-the words were typed, and un-saying them would be a worse lie than showing them —
-so the fix is a mark, not a deletion.
+**Refused admission and uncertain delivery stay distinct.** A named admission
+refusal (for example `409 run_in_flight`) removes the unaccepted local echo,
+retains the submitted text/revision and readable refusal reason, and does not
+invent a recorded turn. Newer draft edits survive. It does not replay the text,
+queue it, or permit Send before execution/model admission is reconciled.
 
-Normative: on a **named refusal** to `POST /sessions/{id}/prompt` (§2.4's body:
-`run_in_flight`, `unknown_session`, `agent_unavailable`, `busy`, any other), the
-echo row keeps its text verbatim and gains, at rest and on its visible face:
+A lost POST is not a named refusal: retain the immutable attempt and any
+unconfirmed echo with `data-send-state="unknown"`, reconcile by reads, and never
+resend automatically. Stronger accepted/terminal evidence may resolve what ran;
+keep exactly one accepted request echo/record and retain labelled delivery gaps.
+No uncertain outcome establishes that no design changed.
 
-* `data-echo-state="refused"` and `data-refused-reason="<the server's reason>"`,
-  the reason string never rewritten and never collapsed into a neighbour;
-* a **second visible marker word** beside C2's `unrecorded` — the refusal word
-  and the server's reason in `.code`, on the presentation-row marker precedent —
-  with an accessible equivalent stating that the turn **did not start**, and the
-  long form on `title`.
-
-*Copy: `copy.stream.localEcho.refused` as `{marker, accessible, title}`, beside
-the `{marker, accessible, title}` the `localEcho` key already carries for C2. The
-server's reason is **rendered, never translated** — it is drawn as the reason
-string the server sent, next to the house marker word, because the client has no
-table of reasons and inventing one would be a second vocabulary drifting behind
-§2.4's. A reason the client has never heard of therefore still renders,
-correctly, as itself. `data-echo-state` defaults to `"sent"` on every echo row so
-the attribute is unconditionally present, on §7A.10's precedent for
-`data-send-state`.*
-
-**`refused` and `unknown` are different facts and stay two words.** `unknown` is
-§7A.5's lost POST: the turn *may* have started and the stream is the authority.
-`refused` is a server answer: the turn definitively did not start, and the text
-in the box is still sendable. A row that spelled them the same would tell an
-operator to go looking in the stream for a turn that never existed. The echo
-row's own vocabulary is therefore closed at three —
-`data-echo-state="sent" | "unknown" | "refused"` — and the composer form's
-`data-send-state` (§7A.10, closed at `ok | unknown`) is **untouched**: the form
-reports this tab's last send attempt, the row reports the fate of one echoed
-prompt, and the two are not the same subject.
-
-**Testable:** a POST refused `409 run_in_flight` leaves exactly one
-`[data-row="local-prompt"]` carrying the sent text, with
-`data-echo-state="refused"`, `data-refused-reason="run_in_flight"`, and the
-refusal word present as rendered text at rest (not on `title` alone, not by
-colour alone); the row still carries no `data-event-id`; and a reload renders no
-such row, because a refused turn was never recorded.
+**Testable:** a named `run_in_flight` refusal leaves zero unaccepted local-prompt
+rows, retains the original text and reason without erasing a newer draft, and
+issues no second prompt or cancellation. Lost delivery preserves the attempt,
+blocks duplicate Send/Enter/form submission, and cannot create a duplicate
+accepted prompt after history/live reconciliation.
 
 ### 7A.6 Cancellation, and what a `4409` does to a run this tab started
 
@@ -4727,15 +4682,12 @@ live-only and never appears in a history page (§7.3), so a tab that resyncs
 across the end of its own run could lose the event that says the run ended. It
 does not need it.
 
-**TIGHTENING (binds §2.3's prompt row, §7.4).** The composer's turn-completion
-state comes from the **prompt response**, not from the `terminal` event.
-`run_prompt` already returns `{run_status, terminal, events[]}` for exactly this
-reason — "the socket is the live surface; this list is what a client with no
-socket renders instead, so a run is never invisible". The stream is the live
-rendering; the response is the authority for *this turn is over*. Observers that
-did not issue the prompt still depend on `terminal` and still get §7.4's
-labelled `resyncing` break. Only the originating tab gets the stronger
-guarantee, and it gets it from a field that already exists.
+**Turn completion (binds §2.3 and §7.4).** Reconciled stored terminal evidence
+has precedence over a competing late prompt response. The response's existing
+`{run_status, terminal, events[]}` can settle its own run when no stored winner
+is known; it cannot terminate a successor run. Both originating and observing
+pages reconcile execution reads after missed terminal frames. Retained delivery
+gaps remain labelled independently of confirmed execution outcome.
 
 **Cancel with a question pending.** `cancel_run` calls
 `questions.abandon_run(run_id)`, so every suspended question on that run is
@@ -4743,8 +4695,8 @@ released and the tool call fails `AskAbandoned` rather than receiving a
 fabricated selection. The cancelling client learns from `abandoned_questions` in
 the cancel response. **Named wart:** there is no `question_abandoned` event, and
 minting one would extend the vocabulary (§15.10). An *observer* tab's widget
-therefore stays interactive until it either sees the run's `terminal` or attempts
-an answer and receives `404 unknown_question`; on that 404 it disables with
+closes on a matching reconciled terminal or live terminal evidence, or on an
+answer refusal `404 unknown_question`; on that 404 it disables with
 `data-ask-state="abandoned"` and the stated reason. This is a real gap, bounded
 by the `terminal` band in the common case, and it is written down rather than
 closed with a new event kind.
@@ -4798,19 +4750,77 @@ The CLI's `str(o)` stringification is **NEW WORK (§19.29)**: a Python repr
 crossing into a model-visible selection is a defect independent of this section,
 named because the web widget must not be built to match it.
 
-**Live only, and the reopened widget stays disabled — correctly.** §7.3's
-reopened widget is rebuilt from the `ask_user` call and its result and marked
-`data-widget-source="tool_result"`. There is no pending question; the run is
-over; its disabled state is right and keeps its stated reason. What changes is
-only the live branch. **`data-answered-by` becomes honest:** `ask.ts`:23-30
-reserves `"self"` and records that this build can only ever report `"other"`.
-With the post wired, `answered_by` comes from the route's `accepted` flag — the
-winner renders `"self"`, every other client `"other"`, and the recorded selection
-is the winner's, returned unchanged so both clients agree on what the run was
-told. No web-side lock is invented over the suspended question; that would be a
-second session-ownership mechanism (§2.7). `404 unknown_question` is a
-first-class rendered state — "answered, abandoned, or never asked" — on the
-widget, in place, not in a toast.
+**Answer address and recorded evidence are distinct.** A reopened widget is
+rebuilt from the `ask_user` call/result and marked
+`data-widget-source="tool_result"`. It cannot post an answer from that record;
+this absence does **not** establish that its run ended. Only matching
+terminal/runtime evidence closes the run's unanswered question. A live event or
+recovery address still requires reconciled ownership of that same run.
+
+**Authenticated reload/reconnect recovery.** The existing selected-session
+`GET /sessions/{id}/model` adds `live_questions` beside `execution`:
+
+```
+live_questions: {
+  revision: <process-local monotonically increasing registry integer>,
+  pending: [{session_id, run_id, question_id, question, options,
+             allow_free_text, multi, answered: false}],
+  unavailable_reason: null | "run_authority_unavailable" | "ambiguous_question"
+}
+```
+
+This is a read-only HTTP composition, not a Pi RPC/event/history extension.
+After the existing model read completes, Python captures execution and copied
+registry state under one short runtime → database → registry critical section.
+No RPC, pump operation or user wait occurs inside it. Every pending address must
+match the requested existing principal, the unique actual active runtime holder,
+latest run, run/session binding and installed run-specific answerer; durable
+cancel/terminal closure forbids fresh acceptance. Parent/child edges never lend
+answer authority; internal children without their own supported answerer cannot
+be recovered as the parent. Multiple unresolved registry candidates fail closed.
+Options/consequences and answer-shape flags are copied without translation.
+Missing/inconsistent authority returns a named unavailable reason and no
+addresses; absent additive field means unsupported, not an empty pending set.
+The response is `no-store`, under the existing bearer/loopback/principal policy.
+No new idempotency key, credential, query address, persistence or provider write
+is introduced.
+
+The answer POST retains its closed `{question_id, answer}` body. Path-session
+ownership is checked before revealing any selection, including bounded settled
+records. For a fresh answer, the same runtime/database guard orders the first
+registry reservation against durable terminal/cancel insertion and registry
+abandonment. Foreign, stale, unbound, ambiguous or closed-unanswered addresses
+refuse `404 unknown_question` without waking or exposing another session's
+answer. Same-session retained winners return `accepted:false` and the exact
+selection; eviction or process restart never recreates an address.
+
+The browser reconciles this projection on selected-session load, reconnect and
+the existing read cycle. It retains an explicit `data-widget-source="live_state"`
+card with visible recovery provenance, **no invented event ID/sequence**, and
+unchanged options/consequences. Only an explicit matching live question ID/run
+may join it to a real live row; no text, tool ID or historical ordinal matching.
+All original historical/tool/narration rows and delivery gaps remain inspectable.
+Local answer reservation/receipt, accepted answer events, terminal evidence,
+Stop, successor/epoch and read-ticket/registry-revision barriers beat older
+pending snapshots. Empty pending is not an answer, a terminal or Send permission.
+A GET is not a lease: a remote winner after the snapshot is arbitrated by POST.
+Failed reads retain held content/draft/context/model evidence, show Checking
+with recovery uncertainty, gate writes and preserve only the known-run Stop
+target. No answer/prompt replay, cancellation-to-recover, inferred actor or
+reload-durable private draft storage is permitted.
+Options and their consequences stay inline; the question's primary state never
+uses a tool-result No result badge. Recording answer suppresses duplicate actions
+and Waiting copy. Unknown answer delivery reconciles by reads, never by re-answer.
+
+The route's explicit `answered_by` receipt can be retained as `data-answered-by`;
+absent receipt/source evidence must omit attribution, not infer `other` from
+component lifetime. Primary display is neutral **Answer recorded:** followed by
+readable option labels, multiple labels or free text. Unknown structured values
+remain inspectable in Details, alongside the recorded technical result and its
+original event identity. Accepted answers survive navigation/remount and later
+terminal/runtime evidence. `404 unknown_question` is an in-place closed-question
+state, not proof that someone else answered. First-answer-wins remains server
+owned; the local reservation only prevents duplicate explicit submission.
 
 ### 7A.8 No agent runtime: `agent_unavailable` stays, and gains a cause
 
@@ -4990,15 +5000,190 @@ row. It renders as a **compact, quiet toggle attached to the summary line of
 The `POST /context/preview` behaviour above is entirely unchanged; only its
 entry point moves.
 
-**(d) The model chip does not rest.** ~~`[data-composer-model]` /
-`[data-composer-provider]` keep their attributes and their `<Fact>` attribution
-— `providers.models.id` is a server fact and §4.6 governs it — but the chip
-renders as **quiet inline text**~~ *(STRUCK 2026-09-03, #114: the idle
-composer mounts no model/effort vocabulary. Model identity lives on the rail's
-Model providers section. Do not invent a picker; do not put model on
-`POST /sessions/{id}/prompt`.)* The projection helpers in
-`stream/composerChrome.ts` remain: identifiers still come from `GET /providers`,
-never house names. They are not drawn at rest.
+**(d) Actual model visibility and explicit selection — NORMATIVE, 2026-09-10,
+#120.** This clause **replaces** the 2026-09-03 prohibition on a resting model
+control/picker. #114 correctly retired a nonfunctional, first-declaration chip;
+that historical rationale remains, but is not a prohibition on a **wired**
+selector. No decorative `[data-composer-model]` revival, thinking/effort control,
+or implicit model swap is authorized. Issues #121–124 are outside this increment.
+
+**Identity and capabilities.** The authority for `current` is **live
+`AgentSession.model`**, never the first provider declaration or a cached
+creation-time model. At admitted turn start the sidecar captures this live model
+and uses that same model for image capability and provider-health attribution.
+Provider/model identity is **two separate strings**, never parsed from a
+slash-joined display label. A model absent from the latest catalog stays named
+as current; the UI must not relabel it as another option.
+
+One compact, conspicuous `[data-model-button]` immediately above the composer,
+integrated with its context area where space permits, is labelled **Model for
+this conversation**, names the actual readable display name (ID if unavailable)
+and **Text only / Text + images** (or **Capability unknown**). There is one
+current-model actionable target, inert during §7A.2's creation dialog. Its
+`[data-model-control]` offers keyboard/touch-accessible full provider/model
+identity disclosure, not merely a `title`. At narrow widths the capability
+badge remains visible. The searchable picker groups by provider, matches
+provider/model IDs and names, and retains disabled options with readable
+reasons. Labelled dialog/combobox/listbox semantics, selected state, arrow
+navigation without mutation, Enter confirmation, Escape dismissal and focus
+restoration are required. While busy, identity remains readable and selection
+is disabled with a reason.
+
+**Wire documents (all named fields required; absences are `null`).**
+
+```typescript
+type ModelRef = { provider_id: string; model_id: string };
+type ModelRevision = { epoch: string; version: number };
+type ResolvedModel = ModelRef & { name: string; input: ("text" | "image")[] };
+type ModelOption = ModelRef & {
+  name: string; input: ("text" | "image")[] | null;
+  available: boolean; unavailable_reason: string | null;
+};
+type ModelsDocument = {
+  status: "ok";
+  providers: { provider_id: string; name: string; models: ModelOption[] }[];
+  proposed_default: ResolvedModel | null;
+  default_policy: "first_available_declared";
+};
+type SessionModelState = {
+  revision: ModelRevision;
+  current: ResolvedModel | null;
+  selected: ModelRef | null;
+  pending_selection: ModelRef | null;
+  state: "ready" | "changing" | "unavailable" | "uncertain";
+  reason: string | null;
+};
+type SessionModelDocument = {
+  status: "ok"; session_id: string;
+  model_state: SessionModelState; execution: ExecutionSnapshot;
+};
+```
+
+`ExecutionSnapshot` retains §2.3's execution fields, including its own
+epoch/version and terminal evidence. `admission_available` is additionally
+false while model selection is reserved, changing, unavailable or uncertain.
+`selected` means last committed choice, **not** current; `pending_selection`
+means unresolved intent. The model revision epoch is fresh per sidecar/session
+incarnation; version is a nonnegative safe integer (0 through 2^53−1, **not a
+boolean**, fractional number or string). Bump version on each model-state
+transition, including changing/uncertain; GET itself does not bump it. An
+A→B→A change never revives an old revision.
+
+**Routes and callers.** Paths are relative to `/api/v1`, bearer-authenticated.
+
+- `GET /providers/models` → `providers.models` returns `ModelsDocument`, with
+  the same route-level loopback guard as other `/providers/**` reads. It joins
+  **project declarations** to the configured `ModelRuntime`. Resolved name and
+  input come from `runtime.getModel`; unresolved declarations stay disabled,
+  with `input: null` and a reason such as `model_unknown`. Provider failures
+  disable, not delete, options. Eligibility is locally revalidated on
+  create/select/prompt; it is **not** proof of a live provider probe. No
+  discovery, network catalog refresh, ambient model imports, external definition
+  loading or credential mutation is caused by a picker read. Existing
+  `GET /providers` and `GET /providers/catalog` sign-in surfaces stay compatible.
+- `GET /sessions/{id}/model` → `session.model.get` describes the live session
+  or its blocked persisted selection in `SessionModelDocument`. A successful
+  description of an unavailable/uncertain session is still `status: "ok"`.
+  `GET /sessions` retains its existing **no-probe listing** behavior.
+- `PUT /sessions/{id}/model` → `session.model.set` accepts **only**
+  `{model: ModelRef, expected_model_revision: ModelRevision}` and returns
+  `SessionModelDocument` after verified application and durable commit. It is
+  keyless session control: no replay and no automatic write retry, even on
+  timeout; a supplied `Idempotency-Key` is ignored as for other session controls.
+- Fresh `POST /sessions` **requires** an explicit `model: ModelRef`. Its
+  existing response fields gain `model_state` and `execution`. The shared
+  ordered resolver proposes `first_available_declared`; the UI displays
+  **Proposed default: provider/model · Text only** (or **Text + images**) and
+  submits that exact pair on explicit creation or explicit first Send. A
+  pre-creation choice is local UI state and creates nothing. A now-ineligible
+  proposal is refused, never replaced by the next option. Existing-session
+  choices do not alter this proposal. `resume: true` requires `session_id` and
+  **forbids** a simultaneous model argument: resume restores; PUT selects.
+- `POST /sessions/{id}/prompt` requires `expected_model_revision` from the
+  reviewed state. This is a concurrency precondition, **not** model selection;
+  `model` and effort fields remain forbidden. CLI **client mode** follows the
+  same HTTP requirements: prints/submits the proposal, retains the revision,
+  and reconciles a conflict for a later explicit action without resending.
+  Compatibility defaults/omitted revisions are confined to private non-HTTP
+  callers, which still pass through the same admission/eligibility guard.
+
+**Serialization and refusals.** Python atomically reserves each session under
+its admission lock, without holding the global lock across RPC/turns. Selection,
+prompt admission, explicit compaction and re-adoption coordinate there or at
+the sidecar's synchronous per-session reservation before any SDK await. The
+sidecar repeats the busy/revision/ready guard before SDK mutation, prompt
+markers or provider work, checking registered runs and actual Pi idle state
+(including compaction/retry/pending messages), not merely `isStreaming`.
+Admitted turns include awaiting-answer, cancellation cleanup and post-turn
+compaction. Conflicts are **immediately refused**, never queued; other sessions
+remain usable. If prompt wins, selection gets `run_in_flight`; if selection
+wins, Send gets `model_change_in_progress` or the completed-change refusal
+`model_changed`. Two selectors follow the same in-progress/stale distinction.
+Preflight refusals release bookkeeping without inventing transcript turns or
+terminals. No stale Send is automatically resubmitted.
+
+The §2.4 envelope is unchanged: `{status:"error", reason, message, ...extras}`.
+`session_id`, sanitized `model_state`, `execution`, and `unavailable_reason`
+when applicable are **top-level**, never nested under `error` or `data`.
+
+| HTTP status | Model-selection reasons |
+|---|---|
+| 400 | `invalid_params`: malformed or unknown fields; missing fresh model |
+| 428 | `model_revision_required`: missing prompt/select precondition |
+| 404 | `unknown_session`, `provider_unknown`, `model_unknown` |
+| 409 | `model_not_configured`, `model_unavailable` (with `unavailable_reason`), `selection_required`, `model_changed`, `model_change_in_progress`, `model_selection_uncertain` |
+| 409 | Existing `run_in_flight`, preserving holding session/run and `scope` |
+| 500 | `model_selection_failed`: sanitized SDK/application/persistence failure |
+| 503 / 504 | Existing `agent_unavailable` / `timeout` |
+
+**Persistence, loss and re-adoption.** Each persistent session owns a private,
+atomically replaced `<sessionDir>/model-selection.json` at mode `0600`:
+
+```json
+{"schema_version":1,"selected":{"provider_id":"p","model_id":"m"},"pending_selection":null}
+```
+
+`selected` may be null when no committed identity is recoverable. Under the
+reservation, durably write pending intent retaining the previous selection,
+await `AgentSession.setModel`, verify **live** identity, then atomically commit
+selected and clear pending. Per-session in-memory settings prevent changes to
+project/global defaults. Pi may clamp effective thinking; no effort control or
+unchanged-thinking guarantee follows. Pi defers fresh JSONL persistence until
+an assistant message exists, so this private record also makes pre-first-turn
+selection durable. There is **no SDK rollback guarantee**: partial mutation or
+persistence failure reports the live identity honestly, retains uncertainty,
+blocks Send and requires explicit selection to reconcile.
+
+Load metadata before resume; only legacy sessions without it recover the
+recorded pair from public `SessionManager.buildSessionContext().model`. Resolve
+and explicitly supply that exact pair to SDK creation, never a startup default
+or SDK fallback. Pending/corrupt metadata is uncertain, not permission to apply
+either choice. No identity means `selection_required`; an unavailable saved
+choice retains a transcript/session-manager handle with `current: null`, not
+a fallback agent. History remains readable. Explicit PUT can adopt that same
+transcript under the same application session ID using a supported replacement.
+An already-live selection changes **in place**, without disposing/recreating
+its agent or replacing transcript/drafts.
+
+Pi's `setModel` is uncancellable: an HTTP timeout cannot release its sidecar
+reservation while the mutation may still settle. Reads report changing until
+actual settlement; transport loss must not be claimed unchanged. Reconcile by
+GET, never replay a model write or timed-out prompt. The existing once-per-child
+re-adoption applies only to definitive unknown-session recovery and preserves
+model refusal reasons. The browser synchronously reserves model writes in the
+shared conversation store, blocking Send (including Enter/form submission) and
+other selections. Model updates preserve session-keyed drafts, attempts,
+transcript, history cursors and scroll; they never settle a send attempt as a
+model operation. Stale-read barriers plus epoch/version comparison reject late
+responses. Refresh the selected model on session selection, picker opening,
+focus/reconnect and turn settlement; poll the visible session even while idle
+for other-client changes. Lost-response/conflict reconciliation preserves the
+draft and requires another explicit Send.
+
+Shared credential linking remains unchanged (§23): selection does not copy,
+rotate, unlink or otherwise mutate credentials. Existing `inspect_part`
+`image_model_required` capability refusals remain; choosing an image-capable
+model does not retry the tool or send a continuation.
 
 **(e) Dead surface, repair (c) — remove or wire, and this document chooses.**
 Three groups, each with a stated disposition, because an exported symbol nothing
@@ -5008,14 +5193,11 @@ imports is a claim the codebase makes and cannot support:
    `isEffortLevel`, `modelKey`, `parseModelKey`. The effort vocabulary is
    **removed**: no clause of §7A specifies a thinking-level control, and a
    closed vocabulary with no surface is a spec claim by implication. `modelKey`
-   / `parseModelKey` are **removed unless the model selector wires them in the
-   same change** — the selector's option identity is `providerId/modelId`
-   either way, and if it is wired it is wired through these functions rather
-   than through a second inline spelling of the same join. **AMENDED 2026-09-03
-   (#114):** the idle composer no longer imports or mounts this module — the
-   resting chip is gone. The remaining projection helpers (`modelsFrom`,
-   `defaultModel`, `showModelChrome`) stay as the GET /providers decision
-   module and are imported from tests. **Testable, split by export kind:**
+   / `parseModelKey` remain **removed** under the 2026-09-10 contract: identity
+   is two strings, not a reversible slash join. **AMENDED 2026-09-10 (#120):**
+   `modelsFrom`, `defaultModel`, and `showModelChrome` first-declaration helpers
+   are retired. The module instead supports the wired selector's resolved
+   identity, capability, filtering and unavailable-reason projections. **Testable, split by export kind:**
    every **value** export of `composerChrome.ts` has at least one importer
    under `web/src` or `web/test`; every **type** export appears in the
    signature of at least one value this module exports. Composer source does
@@ -5035,15 +5217,15 @@ lost-POST statement ("the turn may have started"), §7A.8's `cause`, and every
 disabled *reason* are **exempt** — they are the exceptional path, and this
 amendment shortens the resting path only.
 
-**AMENDED 2026-09-02 (§0.2c, C15) — the resting composer is two rows, counted.**
-The 2026-09-01 amendment took the composer to one summary line, an input, and
-one button, and the build still stacked them four high: context line, input,
-a meta line for the model chip, an action row for Send. Normative — the resting
-composer is **exactly two rows below the context line's top edge**:
+**Stable composition core and bounded details (§0.2c, C15).**
+The resting composer has four direct regions. Context and editor/Send precede
+expanded metadata, so checking the send contract does not require scrolling
+away from the draft. Content may wrap:
 
-1. **The context row** is §7A.3(a)'s summary line. ~~The model id renders
-   inline at its right end~~ *(STRUCK 2026-09-03, #114 — see clause (d). The
-   idle line answers "what will be sent"; "to what" lives on the rail.)*
+1. **The context region** contains the actual model control in clause (d),
+   followed by §7A.3(a)'s compact wrapping Next message includes line and, when
+   needed, the visible scope mismatch. These are one context region, not a
+   promise of one physical text line.
 2. **The input row** holds the textarea with **`[data-composer-send]`
    right-aligned on the same row**, at the input's trailing edge — not in a row
    of its own. Clause (a)'s one-resting-button rule is unchanged in substance,
@@ -5051,14 +5233,26 @@ composer is **exactly two rows below the context line's top edge**:
    row — the action row it queried no longer mounts at rest; this clause
    states where that button sits.
 
-**The negative half:** in the resting state no third row mounts — no meta line,
-no empty action row, **no model chip** — and the composer's rendered height is
-the context row plus the input row and nothing else. Exceptional states may
-add their rows as specified (Cancel while running, §7A.6; the disabled reason;
-C1's `data-send-state="unknown"` note), because they are exceptions and stay
-loud. **Testable:** in the resting state the composer form's directly rendered
-rows number two; Send's box lies within the input row's box;
-`[data-composer-model]` is not in the form.
+3. **Keyboard hint** beside the editor: Enter sends / Shift+Enter newline;
+   while busy it explicitly says draft only, not sent or queued. Send retains
+   its disabled reason and the keyboard/form/click paths share the same guard.
+4. **Message details**, one bounded, keyboard-scrollable region: Full model
+   identity, and when Preview is expanded all opt-outs, Add current view,
+   advisory and raw preview. Full identity remains inline in the creation dialog.
+   No nested raw-preview scrollbar. Actual model/capability and genuine
+   uncertainty remain in the core; metadata scrolling does not hide them.
+
+The editor grows from two to four visual lines including wrapping; longer
+text scrolls internally. This is presentation only, never a draft/attempt revision
+or persistence change. The composer uses at most55% of panel height with compact
+spacing; ordinary expanded Preview must not push editor/Send/context/model offscreen
+at1440,1280,1024,843. Retain a meaningful separate transcript region. Exceptional
+long refusals retain fallback form scrolling rather than clipping diagnostics.
+Active/uncertain tasks add the named task/Stop row, unqueued next-draft label and
+retained-attempt/delivery reasons in §7A.5–6; no decorative model chip or empty
+action row. **Testable:** four resting regions, one Send in the input row,
+`[data-composer-model]` absent; opening/scrolling details, navigation, creation
+Cancel and reveal cause no product mutation (Preview's existing POST is read-only).
 
 **AMENDED 2026-09-03 — the textarea stays typable.** `data-disabled-reason`
 may still be `no_session` when no tab is selected, and Send stays
@@ -5083,8 +5277,8 @@ transcript full of successful tool calls and a rail that still says the project
 has no parts.
 
 **DECISION, normative as the write path is.** On a `terminal` frame for a run on
-this project — and on the prompt response, which §7A.6 already makes the
-authority for turn completion — the client invalidates
+this project — and on the prompt response, subject to §7A.6's matching-run
+terminal precedence — the client invalidates
 `keys.project`, `keys.parts`, `keys.build(part)`, `keys.script(part)`,
 `keys.params(part)`, `keys.properties(part)`, `keys.checks(part)`,
 `keys.dfm(part)` and `keys.gitStatus()`.
@@ -5146,9 +5340,10 @@ fixture **separate** from G4.8's:
    on the ops layer, not the DOM);
 4. **concurrent purity** — two prompts on two sessions; each critique sees its
    own request (pytest; §7A.4);
-5. `ask_user` answered from the browser: `data-answered-by="self"` on the
-   answering widget, `"other"` on a second attached client, `accepted:false` for
-   the loser;
+5. `ask_user` answered from the browser: `data-answered-by="self"` from the
+   answering widget's retained receipt, neutral readable recorded answer on an
+   observer without actor evidence, `accepted:false`/`"other"` only from an actual
+   losing submission receipt; remount never manufactures that receipt;
 6. `agent_unavailable`: serve with no `providers.json`; the composer renders
    disabled with `data-disabled-reason="agent_unavailable"` and the named
    `cause`;
@@ -5170,12 +5365,10 @@ Rules the client obeys and the e2e checks:
 - **Live and historical events are never merged**, because they are not in one
   namespace: live events are keyed `(run_id, seq)` and historical ones
   `(session_id, ordinal)` (§2.8). History renders as the transcript's
-  **prefix**, the live stream as its suffix, and the boundary between them is a
-  visible seam, not a silent join — and AMENDED 2026-09-03 the seam **says
-  which boundary it is**: `copy.stream.seam` when this tab held the run below it
-  from its first frame, `copy.stream.seamMidRun` when it attached with the run
-  already in progress and the frames before its handshake are simply gone
-  (§7.4). Within the live stream, terminal events sort
+  **prefix**, the live stream as its suffix. The boundary retains a labelled
+  source disclosure: `copy.stream.seam` when this tab held the run from its
+  first frame. `copy.stream.seamMidRun` stays visible at rest when earlier output
+  is missing (§7.4); compactness never hides a known gap. Within the live stream, terminal events sort
   last by their `seq = 2**62` minting — a statement about the live stream only,
   since no `terminal` ever appears in a history page (§7.3).
 - **Four kinds used to be unrecoverable from a reopened transcript** (§2.7's
@@ -5226,9 +5419,10 @@ only if** at least one of:
 **(b) When it must NOT render.** In every other state — including
 `pages === 1`, including `pages === 0`, including `state === "loading"` while
 the first page is in flight, and including a multi-page history whose latest
-page is the one on screen — **no `historyBar` element mounts**. The loading
-ellipsis is not an exception: a transcript that is still filling is already
-visibly filling.
+page is the one on screen — **no `historyBar` element mounts**. Independently
+of that counter, a visible Loading recorded conversation status renders while
+history is loading, alongside any held content. A failed read remains visible
+in the reading region, not solely inside connection diagnostics.
 
 **(c) Nothing the gates read moves.** `data-history-state` and
 `data-history-pages` are the attributes G4 reads and they stay
@@ -6202,8 +6396,8 @@ four amendments.** Each names its stage. **Updated 2026-08-28: the
 
 17. **`Composer` mounted in `StreamPanel`**, one per session tab, with the closed
     `data-composer-state` / `data-disabled-reason` contract (§7A.1, §7A.10), and
-    the strip-expands-on-focus behaviour that makes the <1280px breakpoint and
-    the panel's open state one fact with one owner (§4.1a).
+    the horizontal state-bearing return and persistent explicit panel intent,
+    independent of the Parts capacity boundary (§4.1a).
 18. **Four client API functions** in `web/src/api/sessions.ts`, which is
     read-only by construction today ("Read types only"): `createSession`,
     `sendPrompt`, `cancelRun`, `answerQuestion`. `apiJson` already accepts a
@@ -6326,10 +6520,8 @@ four amendments.** Each names its stage. **Updated 2026-08-28: the
     and historical ones `(session_id, ordinal)` (§2.8), no read watermark exists
     on either side, and a client-side one would be derived state (§1). Building
     it means minting a watermark — server-side, or as explicit §4.5 workspace
-    state with a stated definition of "read" — **and** re-arguing §4.1(a)'s rule
-    that the strip is a control that expands on focus, which is what makes a
-    count on it near-pointless today. Until then the strip renders no count, and
-    that is a decision rather than a gap.
+    state with a stated definition of "read". Until separately authorized, the
+    horizontal return renders known current task state (§4.1(f)), not a count.
 
 43. **The turn record, and the tail read** (§2.8, added 2026-09-03). Four
     pieces, all inside `agent/src`: the `turn` ordinal stamped on every
@@ -6362,8 +6554,8 @@ four amendments.** Each names its stage. **Updated 2026-08-28: the
     record made readable:** the operator row's role marker, the envelope
     disclosure, the `turn-outcome` row, and the session tab label and
     `document.title` following `user_prompts[].text` rather than the envelope
-    (§7A.4). **Two honesty fixes the same code touches:** the refused echo's
-    `data-echo-state="refused"` mark, and `copy.stream.seamMidRun` for a tab
+    (§7A.4). **Two honesty fixes the same code touches:** retained refused text
+    and reason without an unaccepted user echo (§7A.5), and `copy.stream.seamMidRun` for a tab
     that attached with a run already running. **And one sequencing rule, because
     losing it would ship a partial fix that looks complete:** segmentation may
     start before item 43 lands and must not *merge* before it — the fallback is
@@ -7559,6 +7751,7 @@ refusal a future configuration change could quietly contradict is worse than no
 refusal, because a reader stops looking.
 
 **Reads (no key):** `GET /providers`, `GET /providers/catalog`,
+`GET /providers/models` (§7A.10(d), added 2026-09-10),
 `GET /providers/{id}/auth/status` — **metadata only** (§23.8).
 
 **Config mutation — key required:** `PUT /providers/specs` (§2.3's first table),
@@ -7704,8 +7897,10 @@ configure result and provider projection. The unknown declarations stay in the
 configuration; neither their definitions nor code are imported from the other
 installation. No recognized declared model means the provider still refuses
 `model_unknown`. No credential or unknown provider still fails closed.
-Default selection uses the first recognized declared model, never an undeclared
-catalog entry or a replacement for an explicitly named unsupported model.
+**AMENDED 2026-09-10 (#120):** the fresh-session **proposed** default uses
+the first eligible recognized declared model, never an undeclared catalog
+entry. Creation submits an explicit pair; neither it nor resume substitutes a
+replacement for an unsupported choice (§7A.10(d)).
 The panel shows partial readiness at rest and names unsupported models in
 configuration, so partial setup is not silent substitution or a claim that all
 models verified. This changes the all-models-required setup rule, not the

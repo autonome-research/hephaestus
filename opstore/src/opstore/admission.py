@@ -209,6 +209,8 @@ class AdmissionControl:
 
     def get_terminal(self, run_id: str) -> TerminalRecord | None:
         """The run's terminal record, or None if no terminal was inserted."""
+        # History and model/execution polling share this connection with the
+        # terminal writer. A helper call must not bypass Database's read lock.
         with self._db.reading() as conn:
             raw = self._fetch_terminal(conn, run_id)
         return None if raw is None else _to_terminal(raw)
@@ -231,8 +233,9 @@ class AdmissionControl:
 
     def available_slots(self) -> int:
         """Slots a NEW admission could take right now (resume reservations excluded)."""
-        free = self._config.run_slots - self.active_count() - self.pending_resume_count()
-        return max(0, free)
+        with self._db.reading():
+            free = self._config.run_slots - self.active_count() - self.pending_resume_count()
+            return max(0, free)
 
     def admit(
         self,

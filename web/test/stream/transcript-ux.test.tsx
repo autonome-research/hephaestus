@@ -60,10 +60,16 @@ describe("conversation-first transcript", () => {
     const terminal = liveItem({ run_id: "run-old", session_id: "session", seq: 99,
       kind: "terminal", payload: { state: "cancelled", terminal_id: "terminal-old", payload: { reason: "user_cancel" } } });
     const doc = render([
-      { row: "turn-outcome", key: "outcome", turn: 0, outcome: { state: "interrupted" } },
+      ...panelRows([], [], [{ turn: 0, seq: 0, text: "Earlier request", outcome: { state: "interrupted" } }], "session"),
       ...groupRows([terminal]),
     ]);
-    expect(face(doc.body)).toContain("This earlier turn was interrupted.");
+    const earlier = doc.querySelector('[data-row="turn-outcome"]')!;
+    expect(earlier.previousElementSibling?.getAttribute("data-row")).toBe("user-prompt");
+    expect(earlier.previousElementSibling?.textContent).toContain("Earlier request");
+    expect(earlier.getAttribute("data-outcome-state")).toBe("interrupted");
+    expect(face(earlier)).toContain("Interrupted");
+    expect(face(earlier)).toContain(copy.composer.recoveryNext);
+    expect(doc.querySelector('[data-terminal-state="cancelled"]')?.getAttribute("data-event-id")).toBe(terminal.eventId);
     expect(face(doc.body)).not.toContain("Stopped");
     expect(doc.querySelector("[role='status'], [aria-live]")).toBeNull();
     expect(doc.querySelector("[data-terminal-state] pre")?.textContent).toContain("user_cancel");
@@ -80,12 +86,16 @@ describe("conversation-first transcript", () => {
   it("keeps an authoritative current question actionable and outside technical disclosures", () => {
     const question = liveItem({ run_id: "run-current", session_id: "session", seq: 0,
       kind: "question", payload: { question_id: "q-current", question: "Which edge?", options: ["Top", "Bottom"] } });
-    const doc = render(groupRows([question]));
+    // The shared task projection names the actionable address; active-run
+    // ownership alone must no longer light up a stale question's controls.
+    const doc = render(groupRows([question]), { ...working, status: "Waiting for your answer", questionId: "q-current" });
     const ask = doc.querySelector("[data-question-id='q-current']");
     expect(ask).not.toBeNull();
     expect(ask?.closest("details")).toBeNull();
     expect(face(doc.body)).toContain("Which edge?");
     expect(ask?.querySelector('[data-ask-option="Top"]')?.getAttribute("aria-disabled")).not.toBe("true");
+    const unaddressed = render(groupRows([question]), working);
+    expect(unaddressed.querySelector('[data-ask-option="Top"]')?.getAttribute("aria-disabled")).toBe("true");
     const blocked = render(groupRows([question]), { ...working, status: "Checking", canAnswer: false });
     expect(blocked.querySelector('[data-ask-option="Top"]')?.getAttribute("aria-disabled")).toBe("true");
   });

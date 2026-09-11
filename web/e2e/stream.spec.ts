@@ -195,9 +195,8 @@ test("reopening loads the multi-page transcript and matches the archive (G4.9, G
     );
   }
 
-  // §7.4 C20 (amended 2026-09-02): the Latest pill lives in the gutter, off
-  // the cards — both sides of the mount condition, then the pairwise
-  // non-intersection over this chip-dense fixture.
+  // Horizontal Latest is outside the scroller, never over visible evidence.
+  // Both mount conditions, clipping-aware pairwise clearance and true bottom.
   await expect(page.locator("[data-jump-latest]")).toHaveCount(0); // followed: never mounted
   await page.locator("[data-transcript-scroll]").evaluate((node) => {
     node.scrollTop = 0; // leave the newest row: following stops
@@ -206,13 +205,20 @@ test("reopening loads the multi-page transcript and matches the archive (G4.9, G
   await expect(pill).toHaveCount(1);
   const pillBox = await pill.boundingBox();
   expect(pillBox).not.toBeNull();
+  const scroller = page.locator("[data-transcript-scroll]");
+  const clip = (await scroller.boundingBox())!;
+  expect(pillBox!.y).toBeGreaterThanOrEqual(clip.y + clip.height);
+  expect(await pill.evaluate(el => el.closest("[data-transcript-scroll]") === null)).toBe(true);
+  expect(await pill.evaluate(el => getComputedStyle(el).writingMode)).toBe("horizontal-tb");
   const cardBoxes = await page
     .locator("[data-tool-name], [data-row]")
-    .evaluateAll((nodes) =>
+    .evaluateAll((nodes, clip) =>
       nodes.map((node) => {
         const box = node.getBoundingClientRect();
-        return { x: box.x, y: box.y, width: box.width, height: box.height };
-      }),
+        const x = Math.max(box.x, clip.x), y = Math.max(box.y, clip.y);
+        return { x, y, width: Math.min(box.right, clip.x + clip.width) - x,
+          height: Math.min(box.bottom, clip.y + clip.height) - y };
+      }).filter(box => box.width > 0 && box.height > 0), clip,
     );
   expect(cardBoxes.length).toBeGreaterThan(0);
   for (const box of cardBoxes) {
@@ -225,6 +231,7 @@ test("reopening loads the multi-page transcript and matches the archive (G4.9, G
   }
   await pill.click();
   await expect(page.locator("[data-jump-latest]")).toHaveCount(0); // following again
+  await expect.poll(() => scroller.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeLessThan(4);
 
   await archive(page, testInfo, "g4.9-reopened-transcript");
 });
@@ -474,7 +481,7 @@ test("the compact session header switches through the session dropdown (§7.1)",
     );
   for (const name of optionNames) {
     expect(name).not.toBe("");
-    expect(name).not.toBe("New session");
+    expect(name).not.toBe("New conversation");
     expect(name).not.toBe("Start a session");
     expect(name).not.toMatch(/^Ask about /);
   }
@@ -506,7 +513,7 @@ test("the compact session header switches through the session dropdown (§7.1)",
   await expect(menu).toHaveCount(1);
   await expect(menu.locator("[data-session-create]")).toHaveCount(1);
   await expect(menu.locator("[data-session-ask]")).toHaveCount(1);
-  await expect(menu.getByText("New session", { exact: true })).toHaveCount(1);
+  await expect(menu.getByText("New conversation", { exact: true })).toHaveCount(1);
   await expect(menu.getByText(`Ask about ${PART}`, { exact: true })).toHaveCount(1);
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
@@ -514,9 +521,8 @@ test("the compact session header switches through the session dropdown (§7.1)",
   // §3.9 C29: the `+` is a quiet button with a worded accessible name, never a
   // bare accent glyph.
   await expect(create).toHaveAttribute("data-variant", "quiet");
-  const createName = await create.getAttribute("aria-label");
-  expect(createName).toBeTruthy();
-  expect(createName).not.toBe("+");
+  await expect(create).toHaveAccessibleName("New conversation");
+  await expect(create.locator('span[aria-hidden="true"]')).toHaveText("New");
 
   // §4.1(h), amended 2026-09-02 (C25): the eyebrow band is struck as a band.
   // The collapse control is a descendant of the session tab strip and its last
@@ -613,6 +619,10 @@ test("the composer still sits at the column's bottom edge for an EMPTY session (
   const menuButton = page.locator("[data-session-create-menu]");
   if ((await menuButton.count()) > 0) await menuButton.click();
   await page.locator("[data-session-create]").first().click();
+  const creation = page.getByRole("dialog", { name: "New conversation · Project", exact: true });
+  await expect(creation).toContainText("Proposed default");
+  await expect(creation.getByRole("button", { name: "Create conversation", exact: true })).toBeEnabled();
+  await creation.getByRole("button", { name: "Create conversation", exact: true }).click();
   await expect
     .poll(async () => await page.locator("[data-session-tab][aria-selected='true']").count())
     .toBe(1);
@@ -723,6 +733,10 @@ test("creating a session keeps every session in the dropdown, and the new one su
   const menuButton = page.locator("[data-session-create-menu]");
   if ((await menuButton.count()) > 0) await menuButton.click();
   await page.locator("[data-session-create]").first().click();
+  const creation = page.getByRole("dialog", { name: "New conversation · Project", exact: true });
+  await expect(creation).toContainText("Proposed default");
+  await expect(creation.getByRole("button", { name: "Create conversation", exact: true })).toBeEnabled();
+  await creation.getByRole("button", { name: "Create conversation", exact: true }).click();
 
   // Creation selects the new session in the compact header; it does not add a
   // second resting tab. Wait for that concrete result rather than a tab count.

@@ -150,6 +150,7 @@ export function SessionTabs({
 
   return (
     <div ref={stripRef} className={styles["tabs"]} data-session-strip="">
+      <div className={styles["selectedSession"]}>
       <TabBar
         attr="data-session-tab"
         panelId={panelId}
@@ -166,6 +167,13 @@ export function SessionTabs({
           ...choice, style: { paddingLeft: "var(--space-2)" },
         }))}
       />
+      <p className={styles["scope"]} data-conversation-scope="">
+        {selectedTab ? (byId.get(selectedId)?.part ?? originPart(selectedTab.origin)) != null
+          ? `Part: ${byId.get(selectedId)?.part ?? originPart(selectedTab.origin)}`
+          : byId.get(selectedId)?.profile === "orchestrator" ? "Project scope" : "Scope unavailable"
+          : "No conversation selected"}
+      </p>
+      </div>
       <div className={styles["tabsCreate"]}>
         {tabs.length > 0 ? (
           <Button
@@ -175,7 +183,7 @@ export function SessionTabs({
             expanded={switchOpen}
             onClick={() => setSwitchOpen((open) => !open)}
             data-session-switch=""
-          />
+          ><span aria-hidden="true">{copy.stream.switchAction}</span><span className={styles["srOnly"]}>{copy.stream.switchSession}</span></Button>
         ) : null}
         {create}
         {collapse == null ? null : <div className={styles["tabsCollapse"]}>{collapse}</div>}
@@ -280,7 +288,7 @@ export function SessionCreateAction({
         data-session-create=""
         data-create-profile="orchestrator"
         {...disablement}
-      />
+      ><span aria-hidden="true">{copy.stream.newAction}</span><span className={styles["srOnly"]}>{copy.composer.createOrchestrator}</span></Button>
     );
   }
 
@@ -297,7 +305,7 @@ export function SessionCreateAction({
         }}
         data-session-create-menu=""
         {...disablement}
-      />
+      ><span aria-hidden="true">{copy.stream.newAction}</span><span className={styles["srOnly"]}>{copy.stream.createMenu}</span></Button>
       <Popover
         open={open}
         onClose={() => {

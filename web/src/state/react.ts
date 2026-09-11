@@ -40,6 +40,7 @@ export function startUrlSync(store: WorkspaceStore = workspaceStore): () => void
   let lastPart = store.getSnapshot().part;
 
   const push = (): void => {
+    if (writing) return;
     const state = store.getSnapshot();
     const next = encodeWorkspaceUrl(state);
     if (window.location.hash === next) return;
@@ -59,7 +60,16 @@ export function startUrlSync(store: WorkspaceStore = workspaceStore): () => void
 
   const onHashChange = (): void => {
     if (writing) return;
-    store.reset(decodeWorkspaceUrl(window.location.hash));
+    const state = decodeWorkspaceUrl(window.location.hash);
+    // Replaying browser navigation must not push a new part entry and destroy
+    // Forward. Subscribers still see the reset; URL projection is suppressed.
+    writing = true;
+    try {
+      lastPart = state.part;
+      store.reset(state);
+    } finally {
+      writing = false;
+    }
   };
 
   const unsubscribe = store.subscribe(push);

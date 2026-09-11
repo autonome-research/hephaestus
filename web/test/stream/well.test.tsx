@@ -240,16 +240,14 @@ describe("the well spends its height on the transcript", () => {
     expect(source("components/stream/StreamHeader.tsx")).toContain("copy.stream.historyFailed");
   });
 
-  it("anchors the Latest pill in the scroll gutter, off the cards (§7.4 C20)", () => {
-    // The scroller reserves a trailing strip by padding, and the pill anchors
-    // inside it, written vertically so a word fits a gutter. The pairwise
-    // non-intersection half is the e2e (`stream.spec.ts`); this is the
-    // mechanism that makes it hold at every scroll position.
-    expect(stream).toMatch(/\.scroll\s*\{[^}]*padding-right:\s*var\(--space-5\)/);
-    const pill = stream.slice(stream.indexOf(".scrollHost .jumpLatest"));
-    expect(pill).toMatch(/position:\s*absolute/);
-    expect(pill).toMatch(/writing-mode:\s*vertical-rl/);
-    expect(pill).toMatch(/right:\s*var\(--space-0\)/);
+  it("places horizontal Latest outside the scroller, off the cards (§7.4 C20)", () => {
+    const pill = stream.slice(stream.indexOf(".scrollHost .jumpLatest"), stream.indexOf(".scrollHost .jumpLatest") + 150);
+    expect(pill).toMatch(/flex:\s*none/);
+    expect(pill).toMatch(/align-self:\s*flex-end/);
+    expect(pill).not.toMatch(/position:\s*absolute|writing-mode:/);
+    // The native button is a sibling, never a transcript child. Browser gates
+    // also check non-intersection and true-bottom scroll bounds.
+    expect(panel).toMatch(/<Transcript[^]*?<\/div>\s*\{following \? null/);
     // Mount condition unchanged: only while the view is not following.
     expect(panel).toMatch(/\{following \? null : \(/);
   });
@@ -398,12 +396,11 @@ describe("the composer is usable, and says how it is used", () => {
     expect(composer).not.toMatch(/seenTerminals\.current = count/);
   });
 
-  it("keeps a stable compact composer, and the hint out of it", () => {
+  it("keeps a bounded multiline composer with a visible keyboard hint", () => {
     expect(composer).toContain("const promptRows = 2;");
-    // AMENDED 2026-09-02 (§0.2c, C15): the meta line that used to carry the
-    // hint is struck outright — the keyboard binding lives on Send's `title`
-    // and no `data-composer-hint` row mounts in any state.
-    expect(composer).not.toContain("data-composer-hint");
+    expect(composer).toContain("4 * line + edges");
+    expect(composer).toContain("data-composer-hint");
+    expect(composer).toContain("data-composer-details");
     expect(composer).toMatch(/title=\{sendHint\}/);
   });
 });
@@ -670,15 +667,14 @@ describe("the create affordance is one `+` in the strip (§7.1(b))", () => {
     );
   }
 
-  it("prints neither wording as a visible label while the strip is drawn", () => {
+  it("shows New with its full accessible name, keeping scope choices behind the menu", () => {
     for (const part of [null, "kerf_card"]) {
       const drawn = strip(part);
-      const text = drawn.body.textContent ?? "";
-      expect(text, String(part)).not.toContain(copy.composer.createOrchestrator);
-      expect(text, String(part)).not.toContain(copy.composer.createPart("kerf_card"));
-      // Icon-only: the label is the accessible name, not a word in the strip.
       const button = drawn.querySelector("button");
-      expect(button?.getAttribute("aria-label") ?? "", String(part)).not.toBe("");
+      expect(button?.querySelector('span[aria-hidden="true"]')?.textContent).toBe(copy.stream.newAction);
+      expect(button?.querySelector('span[class*="srOnly"]')?.textContent).toBe(copy.stream.createMenu);
+      expect(drawn.querySelector("[data-session-create-open]")).toBeNull();
+      expect(drawn.body.textContent).not.toContain(copy.composer.createPart("kerf_card"));
     }
   });
 
@@ -690,7 +686,7 @@ describe("the create affordance is one `+` in the strip (§7.1(b))", () => {
       const drawn = strip(part);
       const button = drawn.querySelector("button");
       expect(button?.getAttribute("data-variant"), String(part)).toBe("quiet");
-      const name = button?.getAttribute("aria-label") ?? "";
+      const name = button?.querySelector('span[class*="srOnly"]')?.textContent ?? "";
       expect(name, String(part)).not.toBe("");
       expect(name, String(part)).not.toBe("+");
       // No unbordered accent glyph: the `+` is an Icon inside a Button, not a

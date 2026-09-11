@@ -165,6 +165,7 @@ NON_TOOL_KEY_ROUTES: Final[tuple[tuple[str, str], ...]] = (
 #: effect on a live run, and ``tool_schema.md``'s key clause (source/config/
 #: output mutations) does not reach session control at all.
 SESSION_CONTROL_ROUTES: Final[tuple[tuple[str, str], ...]] = (
+    ("PUT", "/sessions/{id}/model"),
     ("POST", "/sessions"),
     ("POST", "/sessions/{id}/prompt"),
     ("POST", "/sessions/{id}/answer"),

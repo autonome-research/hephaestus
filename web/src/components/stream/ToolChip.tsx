@@ -1,7 +1,7 @@
 // Copyright 2026 The Hephaestus Authors
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState } from "react";
+import { useDisclosure } from "../../stream/disclosure";
 import { readToolCall, readToolResult } from "../../api/events";
 import { copy } from "../../copy";
 import { StatusBadge } from "../../system";
@@ -38,7 +38,7 @@ export function chipAttributes(toolName: string, status: ChipStatus, anchor: Tra
  * Args, results and images stay mounted with their own identities when closed.
  */
 export function ToolChip({ toolName, call, result, images, status, children }: ToolChipProps): React.JSX.Element {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useDisclosure("tool");
   const callPayload = readToolCall(call.payload);
   const resultPayload = result === null ? null : readToolResult(result.payload);
   const parsed = resultPayload === null ? null : parseToolResult(resultPayload.text);
@@ -60,7 +60,8 @@ export function ToolChip({ toolName, call, result, images, status, children }: T
         onToggle={(event) => { setOpen(event.currentTarget.open); }}>
         <summary className={styles["toolSummary"]} aria-expanded={open}>
           <span className={styles["chipName"]}>{toolName || copy.stream.chip.unnamed}</span>
-          <StatusBadge status={status}>{copy.stream.chip.status[status]}</StatusBadge>
+          {status === "ok" ? <span className={styles["toolDone"]} data-tool-outcome="ok">{copy.stream.chip.status[status]}</span>
+            : <StatusBadge status={status}>{copy.stream.chip.status[status]}</StatusBadge>}
         </summary>
         <div className={styles["toolBody"]}>
           {conditions.map((condition) => <p key={condition} className={styles["note"]}>{condition}</p>)}

@@ -109,6 +109,26 @@ it gets the closing text turn, a prompt carrying the handshake's
 had already run, which is a coupling that only ever bites when someone adds a
 spec.
 
+## Model selection (#120)
+
+`pnpm exec playwright test e2e/models.spec.ts` uses this same packaged world,
+not the synthetic server. The disposable provider has two declared models:
+its historical image-capable default and a second text-only model. The test
+starts on the non-default, sends a text turn, changes model through the actual
+picker, and checks both server readback and the **model identities received by
+the provider's HTTP handler**. The harness records only request indices/model
+IDs in a scratch JSONL file, never headers, credentials or prompt bodies.
+Selection sends no request to the model and preserves the draft/session/history;
+a subsequent `ask_user` turn proves busy rejection and same-model continuation.
+Browser reload checks re-adoption; durable sidecar restart is covered by the
+agent tests, not claimed by this browser test.
+
+Closed/open screenshots at 843px and 1440px and sanitized readback/request
+evidence go to `/tmp/hephaestus-model-selection-validation/`. The actual
+narrow-width expand affordance is used, and no token remains in the captured
+URL or visible page text. The existing RPC wiring regression separately checks
+that the selected model's image capability reaches the next tool/model request.
+
 ## Three things that are easy to get wrong here
 
 **The token.** `open()` loads `#t=<token>` first and then navigates to the §4.5
@@ -189,7 +209,7 @@ a gate cannot read a row that is not mounted (§7.4(b), §8(c)) —
 `[data-session-create]` / `[data-session-ask]` / `[data-session-create-menu]`,
 `[data-session-strip]` with `[data-stream-collapse]` as its last interactive
 element (§4.1(h) C25 — the former `streamHeader` band is struck),
-`[data-jump-latest]` anchored in the transcript scroll gutter (§7.4 C20),
+`[data-jump-latest]` horizontal outside the transcript scroller (§7.4 C20),
 `[data-session-tab]` with
 `data-thread-depth` / `data-thread-kind`, `[data-event-id]`+`data-surface`,
 `[data-tool-name]`+`data-status`+`data-tool-call-id` (with §7.2 (a)'s

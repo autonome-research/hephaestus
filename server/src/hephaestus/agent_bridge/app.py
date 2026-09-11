@@ -73,6 +73,21 @@ from .events import (
     PerClientQueue,
 )
 from .limits import TURN_SECONDS
+from .model_selection import (
+    MODEL_STATUSES,
+    ExecutionSnapshot,
+    ModelRef,
+    ModelRevision,
+    ModelsDocument,
+    ModelSelectionError,
+    SessionModelDocument,
+    SessionModelState,
+    model_ref,
+    model_state,
+    models_document,
+    require_ready,
+    revision,
+)
 from .protocol import ErrorCode, ProtocolError
 from .query_snapshot import (
     QuerySnapshotError,
@@ -764,6 +779,7 @@ class BridgeRuntime:
         self._readopted: dict[str, int] = {}
         self._readopt_locks: dict[str, threading.Lock] = {}
         self._runs: dict[str, _Run] = {}
+        self._detached_runs: set[str] = set()
         self._latest_runs: dict[str, str] = {}
         self._execution_epoch = str(uuid.uuid4())
         self._execution_version = 0
@@ -779,6 +795,8 @@ class BridgeRuntime:
         self._run_sessions: OrderedDict[str, str] = OrderedDict()
         self._answerers: dict[str, AskUserAnswerer] = {}
         self._lock = threading.RLock()
+        self._model_operations: dict[str, str] = {}
+        self._model_states: dict[str, SessionModelState] = {}
         # Serializes cancel() against close(): cancels arrive on daemon
         # threads (bench budget ceilings, timeouts) and write through the
         # opstore, so a cancel in flight while close() tears the store down
@@ -1090,6 +1108,173 @@ class BridgeRuntime:
         """
         return _as_dict(self._sup.call("providers.list", {}))
 
+    def provider_models(self) -> ModelsDocument:
+        return models_document(self._sup.call("providers.models", {}))
+
+    def _execution_snapshot(self, session_id: str) -> ExecutionSnapshot:
+        with self._lock:
+            self._execution_version += 1
+            rid = self._latest_runs.get(session_id)
+            holding = next(
+                (r.run_id for r in self._runs.values() if r.session_id == session_id), None
+            )
+            terminal = self._admission.get_terminal(rid) if rid else None
+            state = self._model_states.get(session_id)
+            return {
+                "epoch": self._execution_epoch,
+                "version": self._execution_version,
+                "run_id": rid,
+                "active_run_id": holding if terminal is None else None,
+                "admission_available": holding is None
+                and self._admission.capacity() > 0
+                and session_id not in self._model_operations
+                and state is not None
+                and state["state"] == "ready",
+                "terminal": None
+                if terminal is None
+                else {
+                    "run_id": terminal.run_id,
+                    "terminal_id": terminal.terminal_id,
+                    "state": str(terminal.state),
+                    "payload": terminal.data,
+                },
+            }
+
+    def question_state(
+        self, session_id: str, visit: Callable[[ExecutionSnapshot, str | None], Any]
+    ) -> Any:
+        """Compose/accept live question state at one runtime-owned read point.
+
+        Lock order: runtime → database → caller's question registry. The visitor
+        must only copy/reserve registry state: no RPC, pump calls or user waits.
+        The DB lock orders reservation against ALL in-process durable terminal
+        and cancel writers, not just HTTP Stop. Those writers release the DB
+        before event taps acquire runtime ownership. No session edge confers
+        authority: principal, actual holder, latest run and binding must agree.
+        """
+        with self._lock, self._store.db.reading():
+            if self._closed or session_id not in self._principals:
+                raise UnknownSessionError("session authority unavailable", session_id=session_id)
+            execution = self._execution_snapshot(session_id)
+            holders = [r for r in self._runs.values() if r.session_id == session_id]
+            eligible = None
+            rid = execution["active_run_id"]
+            if (
+                rid
+                and len(holders) == 1
+                and holders[0].run_id == rid == execution["run_id"]
+                and self._run_sessions.get(rid) == session_id
+                and rid in self._answerers
+            ):
+                try:
+                    admission = self._admission.get(rid)
+                except NotFoundError:
+                    pass
+                else:
+                    if str(admission.state) in ("ADMITTED", "DISPATCHED"):
+                        eligible = rid
+            return visit(execution, eligible)
+
+    def _model_refusal(self, session_id: str, reason: str) -> ModelSelectionError:
+        data: dict[str, Any] = {
+            "session_id": session_id,
+            "execution": self._execution_snapshot(session_id),
+        }
+        state = self._model_states.get(session_id)
+        if state is not None:
+            data["model_state"] = state
+        return ModelSelectionError(reason, data=data)
+
+    def _reserve_model_operation(self, session_id: str, operation: str) -> None:
+        # Caller holds _lock. No RPC or waiting under this lock.
+        if session_id in self._model_operations:
+            raise self._model_refusal(session_id, "model_change_in_progress")
+        for run in self._runs.values():
+            if run.session_id == session_id:
+                raise RunInFlightError(session_id, run.run_id, scope="session")
+        self._model_operations[session_id] = operation
+
+    def session_model(self, session_id: str) -> SessionModelDocument:
+        generation = self._sup.spawn_count
+        with self._lock:
+            operation_at_start = self._model_operations.get(session_id)
+        raw = self._call_for_session(
+            "session.model.get", {"session_id": session_id}, session_id=session_id
+        )
+        state = model_state(raw["model_state"])
+        with self._lock:
+            previous = self._model_states.get(session_id)
+            if generation == self._sup.spawn_count and (
+                previous is None
+                or previous["revision"]["epoch"] != state["revision"]["epoch"]
+                or previous["revision"]["version"] <= state["revision"]["version"]
+            ):
+                self._model_states[session_id] = state
+            state = self._model_states.get(session_id, state)
+            # A timed-out write is never replayed. Only an actual settled read
+            # releases its reservation; Pi owns the uncancellable await.
+            if (
+                operation_at_start == "lost"
+                and generation == self._sup.spawn_count
+                and self._model_operations.get(session_id) == "lost"
+                and state["state"] != "changing"
+            ):
+                self._model_operations.pop(session_id, None)
+            return {
+                "status": "ok",
+                "session_id": session_id,
+                "model_state": state,
+                "execution": self._execution_snapshot(session_id),
+            }
+
+    def select_session_model(
+        self, session_id: str, model: ModelRef, expected: ModelRevision
+    ) -> SessionModelDocument:
+        ref, expected = model_ref(model), revision(expected)
+        with self._lock:
+            self._reserve_model_operation(session_id, "select")
+        lost = False
+        try:
+            with self._lock:
+                known = self._model_states.get(session_id)
+                if known is not None:
+                    if known["state"] == "changing":
+                        raise self._model_refusal(session_id, "model_change_in_progress")
+                    if known["revision"] != expected:
+                        raise self._model_refusal(session_id, "model_changed")
+            # No _call_for_session here: a model write must NEVER be replayed.
+            raw = self._sup.call(
+                "session.model.set",
+                {"session_id": session_id, "model": ref, "expected_model_revision": expected},
+            )
+            state = model_state(raw["model_state"])
+            with self._lock:
+                self._model_states[session_id] = state
+        except SupervisorError as exc:
+            data = exc.error.get("data", {})
+            lost = not exc.error or exc.error.get("code") in (
+                ErrorCode.TIMEOUT,
+                ErrorCode.PROCESS_DOWN,
+            )
+            if isinstance(data, dict):
+                if "model_state" in data:
+                    with self._lock:
+                        self._model_states[session_id] = model_state(data["model_state"])
+                data["execution"] = self._execution_snapshot(session_id)
+            raise
+        finally:
+            with self._lock:
+                if lost:
+                    self._model_operations[session_id] = "lost"
+                else:
+                    self._model_operations.pop(session_id, None)
+        return {
+            "status": "ok",
+            "session_id": session_id,
+            "model_state": state,
+            "execution": self._execution_snapshot(session_id),
+        }
+
     def credential_status(self, provider_id: str) -> dict[str, Any]:
         """``{state, type?, expires_at?, health, last_observed_at, flow?}`` — metadata only."""
         return _as_dict(self._sup.call("credentials.status", {"provider_id": provider_id}))
@@ -1268,6 +1453,7 @@ class BridgeRuntime:
         part: str | None = None,
         session_id: str | None = None,
         resume: bool = False,
+        model: ModelRef | None = None,
     ) -> str:
         """Create (or resume) a sidecar session; record its principal for authz."""
         params: dict[str, Any] = {
@@ -1280,10 +1466,25 @@ class BridgeRuntime:
             params["part"] = part
         if resume:
             params["resume"] = True
-        result = self._sup.call("session.create", params)
+        if resume and model is not None:
+            raise ModelSelectionError("invalid_params")
+        if model is not None:
+            params["model"] = model_ref(model)
+        # Named creation/re-adoption reserves the same boundary as selection.
+        if session_id is not None:
+            with self._lock:
+                self._reserve_model_operation(session_id, "adopt")
+        try:
+            result = self._sup.call("session.create", params)
+        finally:
+            if session_id is not None:
+                with self._lock:
+                    self._model_operations.pop(session_id, None)
         sid = str(result["session_id"])
         with self._lock:
             self._principals[sid] = Principal(session_id=sid, profile=profile, part=part)
+            if "model_state" in result:
+                self._model_states[sid] = model_state(result["model_state"])
             # §2.3: the mark is cleared the moment a call for that session
             # succeeds. Opening it IS such a call, so a hand-written
             # ``resume_session`` (the CLI, the stage-2 workflow tests) heals the
@@ -1354,14 +1555,30 @@ class BridgeRuntime:
         storm read the other way round.
         """
         generation = self._sup.spawn_count
-        with self._readopt_lock(session_id):
+        readopt_lock = self._readopt_lock(session_id)
+        if not readopt_lock.acquire(blocking=False):
+            raise self._model_refusal(session_id, "model_change_in_progress")
+        try:
             with self._lock:
                 if self._readopted.get(session_id) == generation:
                     # Another reader already spent this child's attempt; the
                     # caller retries the call rather than resuming a second time.
                     return
+                # Definitive unknown-session from the child means no old SDK
+                # mutation can still touch this child's session. Clear only a
+                # lost transport reservation, never an active operation.
+                if self._model_operations.get(session_id) == "lost":
+                    self._model_operations.pop(session_id, None)
                 self._readopted[session_id] = generation
-            self.resume_session(principal.profile, session_id, part=principal.part)
+            try:
+                self.resume_session(principal.profile, session_id, part=principal.part)
+            except (ModelSelectionError, RunInFlightError):
+                # A local admission conflict made no recovery attempt at all.
+                with self._lock:
+                    self._readopted.pop(session_id, None)
+                raise
+        finally:
+            readopt_lock.release()
 
     def _refuse_by_name(
         self,
@@ -1395,6 +1612,11 @@ class BridgeRuntime:
         where the operator most needs the truth — a mistyped or foreign id looks
         exactly like a transcript this runtime broke.
         """
+        if (
+            isinstance(exc.error.get("data"), dict)
+            and exc.error["data"].get("reason") in MODEL_STATUSES
+        ):
+            return exc
         if _names_unknown_session(exc):
             reason = UnknownSessionError.reason
         elif not exc.error and not self._sup.is_running():
@@ -1468,7 +1690,11 @@ class BridgeRuntime:
             result = self._sup.call(method, params, timeout=timeout)
         except SupervisorError as exc:
             principal = self._principal_of(session_id)
-            if principal is None or not _names_unknown_session(exc):
+            if (
+                principal is None
+                or not _names_unknown_session(exc)
+                or (method == "session.prompt" and session_id in self._model_states)
+            ):
                 # No attempt is made here and none was possible: either the
                 # failure is not an addressing miss, or this runtime retains no
                 # principal to re-open. The sentence must not claim one ran.
@@ -1563,7 +1789,13 @@ class BridgeRuntime:
                     "version": self._execution_version,
                     "run_id": run_id,
                     "active_run_id": holding if terminal is None else None,
-                    "admission_available": holding is None and capacity > 0,
+                    "admission_available": holding is None
+                    and capacity > 0
+                    and p.session_id not in self._model_operations
+                    and (
+                        p.session_id not in self._model_states
+                        or self._model_states[p.session_id]["state"] == "ready"
+                    ),
                     "terminal": None
                     if terminal is None
                     else {
@@ -1602,6 +1834,7 @@ class BridgeRuntime:
         answerer: AskUserAnswerer | None = None,
         on_event: EventCallback | None = None,
         timeout: float | None = None,
+        expected_model_revision: ModelRevision | None = None,
     ) -> PromptResult:
         """Run one prompt turn; stream normalized events; return its outcome.
 
@@ -1623,9 +1856,18 @@ class BridgeRuntime:
         the rung that exists to catch a design that does not meet its brief would
         be measuring the workspace's own context block.
         """
+        if expected_model_revision is not None:
+            expected_model_revision = revision(expected_model_revision)
         run_id = run_id or self.new_run_id()
         run = _Run(run_id=run_id, session_id=session_id, on_event=on_event)
-        self._admit_turn(run, answerer)
+        # Internal callers may omit the precondition, but never bypass admission.
+        # Reads happen outside the global lock; _admit_turn rechecks atomically.
+        if expected_model_revision is not None or session_id in self._model_states:
+            self.session_model(session_id)
+        with self._lock:
+            previous_run = self._latest_runs.get(session_id)
+            self._admit_turn(run, answerer, expected_model_revision)
+        awaiting_settlement = False
         # Everything from here is inside the ``finally`` that un-registers the
         # run. It has to be: with the §7A.5 guard in place, a turn that leaked
         # its ``_runs`` entry on a failed admission would refuse the session's
@@ -1655,6 +1897,8 @@ class BridgeRuntime:
                 "run_id": run_id,
                 "prompt": text,
             }
+            if expected_model_revision is not None:
+                params["expected_model_revision"] = expected_model_revision
             if context is not None:
                 # Present only when there is one, so an unmodified sidecar sees
                 # the params it always saw and a turn with no workspace context
@@ -1676,11 +1920,47 @@ class BridgeRuntime:
                 timeout=TURN_SECONDS if timeout is None else timeout,
             )
             status = str(result.get("status", "completed"))
+        except SupervisorError as exc:
+            awaiting_settlement = not exc.error or exc.error.get("code") in (
+                ErrorCode.TIMEOUT,
+                ErrorCode.PROCESS_DOWN,
+            )
+            data = _as_dict(exc.error.get("data", {}))
+            if data.get("reason") in MODEL_STATUSES or _names_unknown_session(exc):
+                # The sidecar promises these refusals precede markers/provider work.
+                # Remove ONLY our never-dispatched reservation; never invent a
+                # terminal or erase an authoritative terminal winner.
+                with self._store.db.transaction() as conn:
+                    conn.execute(
+                        "DELETE FROM admissions WHERE run_id = ? AND state = 'ADMITTED' "
+                        "AND NOT EXISTS (SELECT 1 FROM terminals WHERE run_id = ?)",
+                        (run_id, run_id),
+                    )
+                self._sup.untrack_run(run_id)
+                with self._lock:
+                    if self._latest_runs.get(session_id) == run_id:
+                        if previous_run is None:
+                            self._latest_runs.pop(session_id, None)
+                        else:
+                            self._latest_runs[session_id] = previous_run
+                    self._run_sessions.pop(run_id, None)
+                    self._runs.pop(run_id, None)
+                    self._answerers.pop(run_id, None)
+                if "model_state" in data:
+                    with self._lock:
+                        self._model_states[session_id] = model_state(data["model_state"])
+                data["execution"] = self._execution_snapshot(session_id)
+            raise
         finally:
-            release_run_request_text(run_id)
             with self._lock:
-                self._answerers.pop(run_id, None)
-                self._runs.pop(run_id, None)
+                if awaiting_settlement and run.terminal is None:
+                    # HTTP/RPC timeout is not Pi idle. Keep the same admission
+                    # and ask_user context until actual settlement/process loss.
+                    self._detached_runs.add(run_id)
+                else:
+                    release_run_request_text(run_id)
+                    self._answerers.pop(run_id, None)
+                    self._runs.pop(run_id, None)
         # The durable terminal also wins over the blocking RPC response (for
         # example, backpressure may have failed a run before a late success).
         winner = self._admission.get_terminal(run_id)
@@ -1700,7 +1980,9 @@ class BridgeRuntime:
             events_dropped=run.events_dropped,
         )
 
-    def _admit_turn(self, run: _Run, answerer: AskUserAnswerer | None) -> None:
+    def _admit_turn(
+        self, run: _Run, answerer: AskUserAnswerer | None, expected: ModelRevision | None = None
+    ) -> None:
         """Register a turn, or refuse it ``run_in_flight`` (``INTERFACE.md`` §7A.5).
 
         Two conditions, one reason, told apart by ``scope``:
@@ -1726,6 +2008,16 @@ class BridgeRuntime:
         (§2.1), a different fact with a different remedy.
         """
         with self._lock:
+            if run.session_id in self._model_operations:
+                raise self._model_refusal(run.session_id, "model_change_in_progress")
+            state = self._model_states.get(run.session_id)
+            if state is not None:
+                try:
+                    require_ready(state, expected)
+                except ModelSelectionError as exc:
+                    raise self._model_refusal(run.session_id, exc.reason) from exc
+            elif expected is not None:
+                raise self._model_refusal(run.session_id, "selection_required")
             live = self._runs.get(run.run_id)
             if live is not None:
                 raise RunInFlightError(live.session_id, live.run_id, scope="run_id")
@@ -1999,6 +2291,11 @@ class BridgeRuntime:
                         "payload": winner.data,
                     }
                 )
+            if run_id in self._detached_runs:
+                self._detached_runs.discard(run_id)
+                self._runs.pop(run_id, None)
+                self._answerers.pop(run_id, None)
+                release_run_request_text(run_id)
 
     def _ack_terminal(self, run_id: str, terminal_id: str) -> None:
         """Pump callback: the terminal is durable — name it back to the sidecar."""

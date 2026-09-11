@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // The composer — the surface that **speaks** (INTERFACE.md §7A).
+// Issue 120 supersedes the historical picker exclusions below: the context row
+// now includes a wired live-session model control. Model state and reservations
+// live in conversation.ts; prompt requests carry the reviewed model revision.
 //
 // §7 specifies the stream as a surface that *renders*. This is the other half,
 // and it is the half the shipped build declined to write: `StreamPanel.tsx`
@@ -175,7 +178,10 @@ import { sessionPromptStore } from "../../stream/sessionPrompts";
 import { holderSessionTitle } from "../../stream/sessionTitle";
 import { promptFailurePost, runtimeFaultOf, type RuntimeFault } from "../../stream/runtimeFault";
 import type { ContextMember } from "../../api/sessions";
-import { conversationStore, currentTurn, useConversation, type CurrentTurn } from "../../stream/conversation";
+import { conversationStore, currentTurn, modelRefusal, readSessionModel, useConversation, type CurrentTurn } from "../../stream/conversation";
+import { ModelPicker } from "./ModelPicker";
+import { sameModel } from "../../stream/composerChrome";
+import type { ModelRevision } from "../../api/providers";
 import styles from "./Composer.module.css";
 
 /** §7A.10's closed `data-composer-state` vocabulary. */
@@ -196,6 +202,7 @@ export interface ComposerProps {
   readonly currentTurn?: CurrentTurn;
   /** That session's profile, from `GET /sessions`. Rendered, never inferred. */
   readonly profile: string | null;
+  readonly scopePart?: string | null;
   /** The §7A.8 attach projection when the runtime is missing, else `null`. */
   readonly attach: AttachProjection | null;
   /** `true` when the session routes are refusing `agent_unavailable`. */
@@ -311,7 +318,10 @@ export function Composer(props: ComposerProps): React.JSX.Element {
 
   const conversation = useConversation(sessionId);
   const turn = props.currentTurn ?? currentTurn(conversation, sessionId !== null);
-  const text = conversation.draft.text;
+  // Keep the immutable submitted revision recoverable, but never present it as
+  // an editable/queued next message while the blocking POST is unresolved.
+  const text = (conversation.attempt?.phase === "sending" || conversation.attempt?.phase === "unknown")
+    && conversation.draft.revision === conversation.attempt.submitted.revision ? "" : conversation.draft.text;
   const setText = (value: string) => conversationStore.draft(sessionId, value);
   const attempt = conversation.attempt;
   const post: Post = attempt?.phase === "sending" ? { phase: "sending" }
@@ -320,9 +330,10 @@ export function Composer(props: ComposerProps): React.JSX.Element {
       phase: "refused", reason: attempt.reason ?? "", message: attempt.reason ?? "",
       data: { session_id: attempt.holderSession, run_id: attempt.holderRun },
     } : { phase: "idle" };
-  const [dropped, setDropped] = useState<ReadonlySet<ContextMember>>(() => new Set());
-  const [added, setAdded] = useState<ReadonlySet<ContextMember>>(() => new Set());
+  const dropped = conversation.contextDropped;
+  const added = conversation.contextAdded;
   const [disclosed, setDisclosed] = useState(false);
+  const [modelDetailsContainer, setModelDetailsContainer] = useState<HTMLDivElement | null>(null);
   const [preview, setPreview] = useState<ContextDocument | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [cancelNote, setCancelNote] = useState<string | null>(null);
@@ -342,16 +353,34 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     [envelope, chips, dropped],
   );
 
-  // -- session chrome (issue #13, retired #114) --------------------------
-  //
-  // Model is a projection of `GET /providers`. The idle composer no longer
-  // draws it: the rail's Model providers section already names the attached
-  // runtime (`openai-codex`). A resting `gpt-5.5` chip next to Send was
-  // leftover vocabulary after the model/effort surface retired. Effort is
-  // not a prompt field. DFM lives on the inspector panel (§6.4): two
-  // controls, never a composer Plan switch. Idle chrome here is context +
-  // prompt + Send. Cancel mounts only while cancellable (§7A.6).
+  // ModelPicker reads the live session, never the first provider declaration.
+  // No thinking/effort controls or prompt fields; no implicit model changes.
   const promptRows = 2;
+  // Grow only the visible editor, never the draft revision. Include wrapped
+  // lines and width changes; longer drafts retain native internal scrolling.
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!(input instanceof HTMLTextAreaElement)) return;
+    const fit = () => {
+      const css = getComputedStyle(input);
+      const line = Number.parseFloat(css.lineHeight);
+      if (!Number.isFinite(line)) return;
+      const edges = Number.parseFloat(css.paddingTop) + Number.parseFloat(css.paddingBottom)
+        + Number.parseFloat(css.borderTopWidth) + Number.parseFloat(css.borderBottomWidth);
+      input.style.height = "0px";
+      input.style.height = `${Math.max(2 * line + edges, Math.min(input.scrollHeight + 2, 4 * line + edges))}px`;
+    };
+    fit();
+    if (typeof ResizeObserver === "undefined") return;
+    let width = input.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (input.clientWidth === width) return;
+      width = input.clientWidth;
+      fit();
+    });
+    observer.observe(input);
+    return () => observer.disconnect();
+  }, [text]);
 
   // §7A.3 (C22): ONE handler for both copies of the affordance. The line's
   // copy and the form's copy do exactly the same thing — un-drop and add the
@@ -359,19 +388,8 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   // while it is already open, and the line's copy closing the gap is what
   // unmounts it, not a disclosure it never asked for.
   const addCurrentView = useCallback(() => {
-    setDropped((previous) => {
-      const next = new Set(previous);
-      next.delete("view");
-      if (state.selection !== null) next.delete("selection");
-      return next;
-    });
-    setAdded((previous) => {
-      const next = new Set(previous);
-      next.add("view");
-      if (state.selection !== null) next.add("selection");
-      return next;
-    });
-  }, [state.selection]);
+    conversationStore.addCurrentView(sessionId, state.selection !== null);
+  }, [sessionId, state.selection]);
 
   // §7A.3 (C22): the resting line's copy renders exactly while the gap it
   // closes is visible. The predicate (and its three negative halves) is
@@ -482,12 +500,8 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   }, [disclosed, envelope]);
 
   const toggleChip = useCallback((key: ContextMember) => {
-    setDropped((previous) => {
-      const next = new Set(previous);
-      if (!next.delete(key)) next.add(key);
-      return next;
-    });
-  }, []);
+    conversationStore.toggleContext(sessionId, key);
+  }, [sessionId]);
 
   // -- the turn -----------------------------------------------------------
 
@@ -502,7 +516,8 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   // told us is in flight. §7A.5's "the composer disables while any run is live"
   // is a statement about sending, and sending is what happens here.
   const sending = post.phase === "sending";
-  const sendAllowed = canSendTurn({ disabledReason, text, sending }) && turn.canSend;
+  const sendAllowed = canSendTurn({ disabledReason, text, sending }) && turn.canSend
+    && currentTurn(conversation, sessionId !== null).canSend;
 
   const submit = useCallback(() => {
     // THE GUARD IS THE SAME PREDICATE AS THE SEND BUTTON. Enter, click, and
@@ -510,7 +525,12 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     // button would be one the keyboard walks past; a gate that lived only
     // here would leave Send looking enabled while a click did nothing (#44).
     if (!canSendTurn({ disabledReason, text, sending: post.phase === "sending" }) || !turn.canSend) return;
-    const submitted = conversationStore.begin(sessionId);
+    // Use the revision this render actually showed, not a newer store value
+    // that arrived between paint and activation. A stale action is refused.
+    const revision = conversation.model?.revision;
+    const choice = conversationStore.get(null).proposal;
+    if (sessionId !== null ? revision === undefined : choice?.available !== true) return;
+    const submitted = conversationStore.begin(sessionId, envelope ?? undefined, revision);
     if (submitted === null) return;
     let attemptSid = sessionId;
     const setPost = (next: Post) => {
@@ -531,9 +551,9 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     props.onForgetLiveRun?.();
     void client.invalidateQueries({ queryKey: ["sessions"] });
 
-    const postPrompt = (sid: string): void => {
+    const postPrompt = (sid: string, expected: ModelRevision): void => {
       props.onEcho?.(sid, opening);
-      void sendPrompt(sid, opening, envelope)
+      void sendPrompt(sid, opening, envelope, expected)
         .then((document) => {
           setPost({ phase: "idle" });
           conversationStore.response(sid, document);
@@ -567,29 +587,42 @@ export function Composer(props: ComposerProps): React.JSX.Element {
               message: cause.message,
               data: cause.data,
             });
+            modelRefusal(sid, cause);
             return;
           }
           setPost({ phase: "unknown" });
-        });
+        }).finally(() => { void readSessionModel(sid, true); });
     };
 
     if (sessionId !== null) {
-      postPrompt(sessionId);
+      if (revision !== undefined) postPrompt(sessionId, revision);
       return;
     }
 
     const profile = state.part !== null ? "part" : "orchestrator";
-    void createSession(profile, state.part)
+    if (choice === null) return;
+    void createSession(profile, state.part, choice)
       .then((created) => {
         attemptSid = created.session_id;
-        conversationStore.update(created.session_id, c => ({ ...c, attempt: submitted,
-          draft: conversationStore.get(null).draft, checking: true, barrier: conversationStore.ticket() }));
+        conversationStore.update(created.session_id, c => ({ ...c,
+          attempt: { ...submitted, sessionId: created.session_id, modelRevision: created.model_state.revision,
+            baselineRunId: created.execution?.run_id ?? null },
+          draft: conversationStore.get(null).draft,
+          contextDropped: conversationStore.get(null).contextDropped,
+          contextAdded: conversationStore.get(null).contextAdded,
+          checking: true, barrier: conversationStore.ticket() }));
         conversationStore.finish(null, submitted.id, "settled");
         if (workspaceStore.getSnapshot().session === sessionId) {
           workspaceStore.update({ session: created.session_id });
         }
         void client.invalidateQueries({ queryKey: ["sessions"] });
-        postPrompt(created.session_id);
+        conversationStore.modelSnapshot(created.session_id, created.model_state, created.execution, conversationStore.ticket());
+        if (created.model_state.state !== "ready" || !sameModel(created.model_state.current, choice)) {
+          setPost({ phase: "refused", reason: created.model_state.state === "ready" ? "model_changed" : "selection_required",
+            message: copy.models.none, data: {} });
+          return;
+        }
+        postPrompt(created.session_id, created.model_state.revision);
       })
       .catch((cause: unknown) => {
         const fault = runtimeFaultOf(cause);
@@ -605,13 +638,16 @@ export function Composer(props: ComposerProps): React.JSX.Element {
         }
         setPost({ phase: "unknown" });
       });
-  }, [disabledReason, sessionId, text, post.phase, envelope, client, state.part, props, turn.canSend]);
+  }, [disabledReason, sessionId, text, post.phase, envelope, client, state.part, props, turn.canSend, conversation.model?.revision]);
 
   const cancelTurn = useCallback(() => {
     // An acknowledgement only records Stop requested for this same active run.
     // It is never terminal evidence, and cannot mark a successor run stopped.
     const target = turn.runId;
-    if (target === null) return;
+    if (target === null || sessionId === null) return;
+    const latest = currentTurn(conversationStore.get(sessionId));
+    if (latest.runId !== target || latest.stopRequested) return;
+    conversationStore.stop(sessionId, target);
     void cancelRun(target)
       .then((document) => {
         if (sessionId === null || document.run_id !== target) return;
@@ -651,8 +687,15 @@ export function Composer(props: ComposerProps): React.JSX.Element {
 
   const sendDisabled = !sendAllowed;
   const sendReason =
-    disabledReason !== null
+    turn.status !== null && !turn.canSend && !agentUnavailable
+      && (turn.runId !== null || sending || post.phase === "unknown")
+      ? `${turn.status}. ${copy.composer.nextDraftHint}`
+    : disabledReason !== null
       ? copy.composer.disabled[disabledReason]
+      : conversation.modelPending || conversation.model?.state === "changing"
+        ? copy.models.changing
+      : conversation.modelChecking || conversation.model?.state !== "ready"
+        ? copy.models.checking
       : !turn.canSend
         ? copy.composer.checking
         : sending
@@ -671,7 +714,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   const unavailableReasonId = useId();
   const sendDescribes = disabledReason === "agent_unavailable";
   const sendHint =
-    sending || refusedRunInFlight ? copy.composer.sendHintBusy : copy.composer.sendHint;
+    !turn.canSend || agentUnavailable ? copy.composer.sendHintBusy : copy.composer.sendHint;
 
   // Enter sends; `stream/composerGate.ts` decides which keystroke that is.
   //
@@ -793,7 +836,29 @@ export function Composer(props: ComposerProps): React.JSX.Element {
           attached to it: §7A.10(c) makes the line and the toggle one
           affordance, so the chip form and the composed preview open together.
           C22 mounts the Add-current-view control here exactly while the gap
-          it closes is visible. No model id at rest (#114). */}
+          it closes is visible. Issue 120 integrates the model control here. */}
+      {turn.runId !== null ? <div className={styles["note"]} data-task-action="">
+        <span>{turn.status}</span>{" "}
+        {cancellable ? (
+          <Button variant="secondary" onClick={cancelTurn} data-composer-cancel=""
+            {...(turn.stopRequested ? { disabled: true as const, reason: copy.composer.stopRequested } : {})}>
+            {copy.composer.cancel}
+          </Button>
+        ) : null}
+      </div> : null}
+      {(attempt?.phase === "sending" || attempt?.phase === "unknown") && turn.runId === null ?
+        <details data-submitted-attempt=""><summary>{copy.composer.submittedAttempt}</summary>
+          <p>{attempt.submitted.text}</p>
+        </details> : null}
+      <div className={styles["contextRow"]}>
+      <ModelPicker key={sessionId ?? "new"} sessionId={sessionId} detailsContainer={modelDetailsContainer} />
+      {props.scopePart && state.part && props.scopePart !== state.part ?
+        <p className={styles["note"]} data-context-mismatch="">
+          {copy.composer.scopeMismatch(props.scopePart, state.part, summary.keys.includes("part"))}{" "}
+          <Button variant="quiet" onClick={() => workspaceStore.update({ part: props.scopePart!, selection: null, measure: null })} data-view-scope="">
+            {copy.composer.viewScope(props.scopePart)}
+          </Button>
+        </p> : null}
       <ContextSummaryLine
         summary={summary}
         disclosed={disclosed}
@@ -802,36 +867,15 @@ export function Composer(props: ComposerProps): React.JSX.Element {
         }}
         onAddView={addViewLine ? addCurrentView : null}
       />
+      </div>
 
-      {/* §7A.3(c): the editable chip form IS the disclosure. It does not mount
-          while collapsed — `chipsFor` still enumerates every member, so the row
-          is complete when it is shown; what changed is when it mounts. */}
-      {disclosed && chips.length > 0 ? (
-        <ul
-          className={styles["chips"]}
-          data-context-chips=""
-          aria-label={copy.composer.contextHeading}
-        >
-          {chips.map((chip) => (
-            <ContextChipRow
-              key={chip.key}
-              chip={chip}
-              dropped={dropped.has(chip.key)}
-              onToggle={toggleChip}
-            />
-          ))}
-        </ul>
-      ) : null}
-
-      {/* §7A.10 (C15): the INPUT ROW — the textarea with Send right-aligned on
-          the same row, at the input's trailing edge, not in a row of its own.
-          §7A.10(a)'s restated testable is scoped here: in the resting state
-          this row holds exactly one element with a button role, and it is the
-          Send button below. The keyboard hint lives on Send's `title` — the
-          meta line that used to carry it no longer mounts. */}
+      {/* Stable composition core precedes the bounded detail scroller. */}
+      {!turn.canSend && !agentUnavailable ? <p className={styles["note"]} data-next-draft="">
+        {copy.composer.nextDraft} · {copy.composer.nextDraftHint}
+      </p> : null}
       <div className={styles["inputRow"]} data-composer-input-row="">
         <TextInput
-          label={copy.composer.label}
+          label={turn.canSend ? copy.composer.label : copy.composer.nextDraft}
           hideLabel
           multiline
           rows={promptRows}
@@ -851,12 +895,6 @@ export function Composer(props: ComposerProps): React.JSX.Element {
             state in which Sign-in (§23.8, C9) takes `primary` instead. Every
             other disabled reason keeps Send primary: a disabled-with-reason
             primary is the operator's target for "why can't I send?". */}
-        {cancellable ? (
-          <Button variant="secondary" onClick={cancelTurn} data-composer-cancel=""
-            {...(turn.stopRequested ? { disabled: true as const, reason: copy.composer.stopRequested } : {})}>
-            {copy.composer.cancel}
-          </Button>
-        ) : null}
         <Button
           variant={signInPrimary(disabledReason) ? "secondary" : "primary"}
           type="button"
@@ -871,9 +909,10 @@ export function Composer(props: ComposerProps): React.JSX.Element {
               }
             : {})}
         >
-          {post.phase === "sending" ? copy.composer.sending : copy.composer.send}
+          {copy.composer.send}
         </Button>
       </div>
+      <p className={styles["hint"]} data-composer-hint="">{sendHint}</p>
 
       {/* §7A.10(b) / C15's negative half: Cancel's row is an EXCEPTION and
           mounts only while a run this tab can cancel is in flight — at rest no
@@ -886,7 +925,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
           generator with a spinner on it. */}
       {post.phase === "unknown" && post.runtimeFault !== true ? (
         <p className={styles["note"]} data-send-unknown="" role="status">
-          {copy.composer.deliveryUncertain}
+          {turn.runId !== null || turn.terminalRunId !== null ? copy.composer.receiptUncertain : copy.composer.deliveryUncertain}
           {!conversation.checking && conversation.execution?.admission_available === true ? (
             <Button variant="quiet" onClick={() => {
               conversationStore.update(sessionId, c => ({ ...c, attempt: null }));
@@ -898,7 +937,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
       {post.phase === "refused" ? (
         <div className={styles["note"]} data-composer-refused={post.reason} role="status">
           {post.reason !== "run_in_flight" || typeof post.data["session_id"] !== "string"
-            ? <span>{copy.composer.notSent(post.reason)}</span> : null}
+            ? <span>{copy.composer.notSent(post.reason)}{post.reason === "model_changed" ? ` ${copy.models.changed}` : ""}</span> : null}
           {/* §7A.5: the refusal NAMES which session holds the live run. The
               ids come from the server's own payload — a client that guessed
               would be naming a session it inferred was busy. */}
@@ -926,8 +965,14 @@ export function Composer(props: ComposerProps): React.JSX.Element {
         </p>
       ) : null}
 
+      <div className={styles["messageDetails"]} data-composer-details="" data-expanded={disclosed}
+        role="region" aria-label={copy.composer.messageDetails} tabIndex={0}>
+      <div ref={setModelDetailsContainer} />
       {disclosed ? (
-        <div className={styles["disclosure"]} data-context-preview="">
+        <div className={styles["preview"]} data-context-preview="">
+          {chips.length > 0 ? <ul className={styles["chips"]} data-context-chips="" aria-label={copy.composer.contextHeading}>
+            {chips.map(chip => <ContextChipRow key={chip.key} chip={chip} dropped={dropped.has(chip.key)} onToggle={toggleChip} />)}
+          </ul> : null}
           <Button variant="quiet" onClick={addCurrentView} data-context-add-view="">
             {copy.composer.addCurrentView}
           </Button>
@@ -954,6 +999,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
           )}
         </div>
       ) : null}
+      </div>
     </form>
   );
 }

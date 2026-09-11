@@ -51,7 +51,7 @@ STARTUP_TIMEOUT_S = 180.0
 
 
 def main(handshake_path: str) -> int:
-    from hephaestus.testing.fake_openai import start_fake_openai
+    from hephaestus.testing.fake_openai import RequestInfo, start_fake_openai
     from hephaestus.testing.workspace_fixture import (
         GATE_PARTS,
         ORCHESTRATOR_SESSION_ID,
@@ -66,8 +66,26 @@ def main(handshake_path: str) -> int:
     materialize_workspace_fixture(project_root)
     build(project_root, GATE_PARTS)
 
-    fake = start_fake_openai(scripted_turns(SUBJECT_PART))
-    write_provider_config(project_root, fake.provider_spec())
+    observations = scratch / "model-requests.jsonl"
+    observations.touch(mode=0o600)
+
+    def observe(info: RequestInfo) -> None:
+        # Every model HTTP POST, including tool-less compaction. No headers,
+        # credentials or prompt bodies escape the disposable fake provider.
+        with observations.open("a", encoding="utf-8") as output:
+            output.write(
+                json.dumps({"index": info.index, "model": json.loads(info.body_text)["model"]})
+                + "\n"
+            )
+
+    fake = start_fake_openai(scripted_turns(SUBJECT_PART), on_request=observe)
+    spec = fake.provider_spec()
+    # Keep the historical image model/default for existing G4 cases. The
+    # selector case deliberately starts on the second, text-only declaration.
+    spec["models"].append(
+        {**spec["models"][0], "id": "heph-text-only", "name": "Text only probe", "input": ["text"]}
+    )
+    write_provider_config(project_root, spec)
 
     server = start_server(project_root)
     try:
@@ -82,6 +100,7 @@ def main(handshake_path: str) -> int:
                     "project_root": str(project_root),
                     "sessions": sessions,
                     "model_base_url": fake.base_url,
+                    "model_observations": str(observations),
                     "pid": server.pid,
                     # §7A.7's spec needs the prompt that provokes a question and
                     # the labels the model will offer. They are published here
@@ -210,6 +229,8 @@ def scripted_turns(subject_part: str) -> list[Any]:
             )
         if ASK_SENTINEL in info.body_text:
             return tool_call("ask_user", dict(ASK_PARAMS), "c-live-ask")
+        if "HEPH_MODEL_SELECTION" in info.body_text:
+            return text("HEPH_MODEL_SELECTION_DONE")
         if COMPOSER_SENTINEL in info.body_text:
             # §7A.12 case 1. A REAL mutation through the real dispatcher: the
             # clause's assertion is that the part appears in the tree without a

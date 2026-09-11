@@ -6,7 +6,7 @@ import { input, setup, SID } from "./fixture";
 async function budget(page: Page, width: number) {
   const box = (await page.locator("#chat-column").boundingBox())!;
   expect(box.width).toBeGreaterThanOrEqual(360);
-  expect(width - (width < 1024 ? 0 : 280) - box.width).toBeGreaterThanOrEqual(359);
+  expect(width - (width < 1280 ? 0 : 280) - box.width).toBeGreaterThanOrEqual(359);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0);
   expect(await page.evaluate(() => document.body.scrollWidth - document.documentElement.clientWidth)).toBe(0);
   const field = (await input(page).boundingBox())!;
@@ -22,7 +22,18 @@ for (const width of [843, 1000, 1024, 1279, 1440]) {
     await budget(page, width);
     const header = page.locator("[data-session-strip]");
     const height = (await header.boundingBox())!.height;
-    expect(height).toBeLessThanOrEqual(64);
+    // Title/scope and readable actions now have separate lines, not icon-only
+    // targets sharing a truncated title. Preserve a bounded header budget.
+    expect(height).toBeLessThanOrEqual(96);
+    const title = (await header.locator("[data-session-tab]").boundingBox())!;
+    for (const [selector, label] of [["[data-session-switch]", "Switch"], ["[data-session-create-menu]", "New"], ["[data-stream-collapse]", "Hide"]]) {
+      const action = header.locator(selector!);
+      await expect(action.locator('span[aria-hidden="true"]')).toHaveText(label!);
+      const box = (await action.boundingBox())!;
+      expect(box.y).toBeGreaterThanOrEqual(title.y + title.height);
+      expect(box.y + box.height).toBeLessThanOrEqual((await header.boundingBox())!.y + height);
+      expect(box.height).toBeGreaterThanOrEqual(24);
+    }
     await expect(header.locator("[data-session-tab]")).toHaveCount(1);
     await page.locator("[data-session-switch]").press("Enter");
     await expect(page.locator("[data-session-option]")).toHaveCount(2);
@@ -48,14 +59,21 @@ for (const width of [843, 1000, 1024, 1279, 1440]) {
     const chosen = (await separator.getAttribute("aria-valuenow"))!;
     expect(Number(chosen)).toBeGreaterThan(360);
     await input(page).fill("Synthetic editable draft\nSecond line");
-    const composerHeight = (await page.locator("[data-composer]").boundingBox())!.height;
-    expect(composerHeight).toBeLessThan(200);
+    const composer = (await page.locator("[data-composer]").boundingBox())!;
+    const panel = (await page.locator('[data-testid="stream-panel"]').boundingBox())!;
+    expect(composer.height).toBeLessThanOrEqual(panel.height * 0.55);
+    for (const selector of ["[data-model-button]", "[data-context-summary]", "[data-composer-input-row]", "[data-composer-hint]"]) {
+      const box = (await page.locator(selector).boundingBox())!;
+      expect(box.y).toBeGreaterThanOrEqual(composer.y);
+      expect(box.y + box.height).toBeLessThanOrEqual(composer.y + composer.height);
+    }
     await page.locator("[data-stream-collapse]").click();
-    expect((await page.locator("#chat-column").boundingBox())!.width).toBe(44);
-    await page.locator("[data-stream-strip]").focus();
+    const hidden = (await page.locator('[data-stream-strip]').boundingBox())!;
+    expect(hidden.width).toBeGreaterThan(hidden.height * 3);
+    await page.locator("[data-stream-strip]").press('Enter');
     await expect(separator).toHaveAttribute("aria-valuenow", chosen);
     await expect(input(page)).toHaveValue("Synthetic editable draft\nSecond line");
-    if (width < 1024) {
+    if (width < 1280) {
       await page.locator("[data-rail-toggle]").click();
       await expect(page.locator("[data-rail-scrim]")).toBeVisible();
       await page.locator("[data-rail-close]").click();
@@ -121,8 +139,7 @@ test("explicit width survives viewport clamping", async ({ page }) => {
   for (const width of [843, 1000, 1024, 1279, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     await expect(page.locator("[data-band]")).toHaveAttribute("data-band", width < 1024 ? "narrow" : width < 1280 ? "medium" : "wide");
-    const strip = page.locator("[data-stream-strip]");
-    if (await strip.isVisible()) await strip.focus();
+    await expect(page.locator('[data-stream-strip]')).toHaveCount(0);
     await expect(separator).toBeVisible();
     await budget(page, width);
   }

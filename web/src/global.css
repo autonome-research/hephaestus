@@ -75,8 +75,8 @@ a {
  * `::-webkit-scrollbar` rule. Hide the classic thumb/track so they take
  * no layout. Overflow stays reachable (wheel, trackpad, keyboard).
  * `scrollbar-gutter: auto` so we never reserve a stable strip.
- * Position cue: a 2px absolutely positioned overlay on
- * `[data-overlay-scroll]`, not in the flow. A custom 15px track is not
+ * Position cue: a 2px painted background on
+ * `[data-overlay-scroll]`, unable to extend scrollable overflow. A custom 15px track is not
  * permitted. TabBar's `scrollbar-width: none` stays more specific than
  * `*` and still hides its own strip.
  */
@@ -101,17 +101,16 @@ a {
 
 [data-overlay-scroll] {
   position: relative;
+  background-image: linear-gradient(var(--ink-faint), var(--ink-faint));
+  background-repeat: no-repeat;
+  background-attachment: scroll;
+  background-position: right 0 top var(--overlay-scroll-top, 0px);
+  background-size: var(--space-0) var(--overlay-scroll-height, 0px);
 }
 
-[data-overlay-scroll]::after {
-  content: "";
-  position: absolute;
-  right: 0;
-  top: var(--overlay-scroll-top, 0px);
-  width: var(--space-0);
-  height: var(--overlay-scroll-height, 0px);
-  background: var(--ink-faint);
-  pointer-events: none;
+[data-transcript-scroll] {
+  /* Content anchors own restoration; don't race native anchoring. */
+  overflow-anchor: none;
 }
 
 /* §3.10's motion block, kept verbatim. */

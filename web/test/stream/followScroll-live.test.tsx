@@ -4,20 +4,25 @@
 // The hook, not its predicates: what `useFollowScroll` does with the scroll
 // events a real transcript produces.
 //
-// `followScroll.test.ts` covers `scrolledAwayFromBottom` and
-// `shouldStickToLatest` as functions. Neither could catch the defect these
-// clauses pin, because the defect is in what the hook TREATS as the operator
+// `followScroll.test.ts` covers the scroll predicates and persisted reading
+// anchors as functions. Neither alone could catch the defect these clauses pin,
+// because the defect is in what the hook TREATS as the operator
 // scrolling: a transcript whose content grows under a pinned viewport fires
 // scroll events too, and the browser's own scroll anchoring fires them while
 // the operator's hands are nowhere near the wheel.
 
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { act, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { useFollowScroll } from "../../src/stream/followScroll";
+import { sessionReading, useFollowScroll } from "../../src/stream/followScroll";
 
 beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+});
+
+afterEach(() => {
+  sessionReading.clear();
+  document.body.replaceChildren();
 });
 
 /** A scroller whose metrics a test can drive; jsdom performs no layout. */
@@ -63,11 +68,11 @@ interface Probe {
   jump: () => void;
 }
 
-function mount(scroller: FakeScroller, rows: number): { root: Root; probe: Probe } {
+function mount(scroller: FakeScroller): { root: Root; probe: Probe } {
   const probe: Probe = { following: true, jump: () => {} };
-  function Harness({ rowCount }: { rowCount: number }): null {
+  function Harness(): null {
     const ref = useRef<HTMLElement | null>(scroller.el);
-    const { following, jumpToLatest } = useFollowScroll(ref, "s1", rowCount);
+    const { following, jumpToLatest } = useFollowScroll(ref, "s1", true);
     probe.following = following;
     probe.jump = jumpToLatest;
     return null;
@@ -76,7 +81,7 @@ function mount(scroller: FakeScroller, rows: number): { root: Root; probe: Probe
   document.body.appendChild(host);
   const root = createRoot(host);
   act(() => {
-    root.render(<Harness rowCount={rows} />);
+    root.render(<Harness />);
   });
   return { root, probe };
 }
@@ -84,7 +89,7 @@ function mount(scroller: FakeScroller, rows: number): { root: Root; probe: Probe
 describe("useFollowScroll against the events a live transcript fires", () => {
   it("keeps following when the CONTENT grows under a pinned viewport", () => {
     const scroller = new FakeScroller();
-    const { root, probe } = mount(scroller, 10);
+    const { root, probe } = mount(scroller);
     try {
       expect(probe.following).toBe(true);
       expect(scroller.top).toBe(scroller.scrollHeight - scroller.clientHeight);
@@ -108,7 +113,7 @@ describe("useFollowScroll against the events a live transcript fires", () => {
 
   it("detaches when the operator actually scrolls up, and reattaches at the end", () => {
     const scroller = new FakeScroller();
-    const { root, probe } = mount(scroller, 10);
+    const { root, probe } = mount(scroller);
     try {
       act(() => {
         scroller.scrollTo(0);
@@ -128,7 +133,7 @@ describe("useFollowScroll against the events a live transcript fires", () => {
 
   it("leaves a detached viewport alone while content grows", () => {
     const scroller = new FakeScroller();
-    const { root, probe } = mount(scroller, 10);
+    const { root, probe } = mount(scroller);
     try {
       act(() => {
         scroller.scrollTo(0);
@@ -151,7 +156,7 @@ describe("useFollowScroll against the events a live transcript fires", () => {
 
   it("the jump control re-attaches and pins", () => {
     const scroller = new FakeScroller();
-    const { root, probe } = mount(scroller, 10);
+    const { root, probe } = mount(scroller);
     try {
       act(() => {
         scroller.scrollTo(0);

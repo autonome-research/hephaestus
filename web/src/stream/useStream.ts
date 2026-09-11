@@ -5,10 +5,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { fetchHistoryPage, fetchThread, type ThreadDocument } from "../api/sessions";
 import { loadHistory, type HistoryProgress } from "./history";
-import { conversationStore, currentTurn, useConversation, visiblePrompts, type CurrentTurn } from "./conversation";
+import { conversationStore, currentTurn, readSessionModel, useConversation, conversationRows, type CurrentTurn } from "./conversation";
 import { sessionPromptStore } from "./sessionPrompts";
 import { loadThreadTree, threadTabs, type ThreadTab } from "./thread";
-import { panelRows, type PanelRow, type StreamState } from "./transcript";
+import { type PanelRow, type StreamState } from "./transcript";
 
 export interface StreamView {
   readonly rows: readonly PanelRow[];
@@ -62,6 +62,24 @@ export function useStream(sessionId: string | null): StreamView {
   // outcome-only updates to older turns, even when no event was appended.
   const terminalId = conversation.execution?.terminal?.terminal_id;
   useEffect(() => {
+    if (sessionId === null) return;
+    const refresh = () => { void readSessionModel(sessionId, true); };
+    refresh();
+    // Idle polling is intentional: other clients can select without sending an event.
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== "hidden") void readSessionModel(sessionId);
+    }, 5_000);
+    window.addEventListener("focus", refresh);
+    window.addEventListener("online", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("online", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [sessionId, terminalId, live.status]);
+  useEffect(() => {
     if (sessionId === null || terminalId === undefined || history.endCursor == null) return;
     let attached = true;
     void fetchHistoryPage(sessionId, null, history.endCursor).then(page => {
@@ -77,7 +95,7 @@ export function useStream(sessionId: string | null): StreamView {
   }, [sessionId, terminalId, history.endCursor]);
   const clearRunId = useCallback(() => undefined, []); // execution reads own identity
   return {
-    rows: panelRows(history.items, live.entries, visiblePrompts(conversation), sessionId),
+    rows: conversationRows(conversation, sessionId),
     status: sessionId === null ? "historical" : live.status,
     currentTurn: turn, history,
     tabs: thread?.sid === sessionId ? thread.tabs : NO_TABS,

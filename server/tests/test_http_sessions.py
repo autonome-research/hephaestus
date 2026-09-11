@@ -31,7 +31,15 @@ from hephaestus.http.event_identity import (
 )
 from hephaestus.http.idempotency import KEY_REQUIRED_ROUTES, SESSION_CONTROL_ROUTES
 from hephaestus.testing.fake_agent import HISTORY_PAGE_SIZE, decode_cursor
-from hephaestus.testing.workspace import workspace
+from hephaestus.testing.workspace import Workspace, workspace
+
+
+def prompt(web: Workspace, session: str, body: dict[str, Any]) -> Any:
+    revision = web.get(f"/sessions/{session}/model").json()["model_state"]["revision"]
+    return web.post(
+        f"/sessions/{session}/prompt", json={**body, "expected_model_revision": revision}
+    )
+
 
 # --------------------------------------------------------------------------
 # GET /sessions and POST /sessions
@@ -44,8 +52,18 @@ def test_creating_and_listing_sessions_needs_no_idempotency_key(tmp_path: Path) 
     at-least-once, stated. ``GET /sessions`` is what makes the orphan visible.
     """
     with workspace(tmp_path / "proj", agent=True) as web:
-        first = web.post("/sessions", json={"profile": "orchestrator"})
-        second = web.post("/sessions", json={"profile": "part", "part": "widget"})
+        first = web.post(
+            "/sessions",
+            json={"profile": "orchestrator", "model": {"provider_id": "fake", "model_id": "text"}},
+        )
+        second = web.post(
+            "/sessions",
+            json={
+                "profile": "part",
+                "part": "widget",
+                "model": {"provider_id": "fake", "model_id": "text"},
+            },
+        )
         assert first.status_code == 200
         assert second.status_code == 200
         listed = web.get("/sessions").json()
@@ -608,7 +626,7 @@ def test_prompt_runs_a_turn_and_streams_it_to_an_attached_observer(
 
         agent.on_prompt = script
         with web.events() as socket:
-            body = web.post(f"/sessions/{session}/prompt", json={"text": "hello"}).json()
+            body = prompt(web, session, {"text": "hello"}).json()
             frame = socket.receive_json()
 
     assert body["status"] == "ok"
@@ -623,7 +641,7 @@ def test_a_prompt_without_text_is_refused(tmp_path: Path) -> None:
         agent = web.agent
         assert agent is not None
         session = agent.create_session("orchestrator")
-        refused = web.post(f"/sessions/{session}/prompt", json={})
+        refused = prompt(web, session, {})
     assert refused.status_code == 400
     assert refused.json()["reason"] == "invalid_params"
 
@@ -685,7 +703,7 @@ def test_a_completed_runs_cancel_is_still_200_idempotent(tmp_path: Path) -> None
         agent = web.agent
         assert agent is not None
         session = agent.create_session("orchestrator")
-        prompted = web.post(f"/sessions/{session}/prompt", json={"text": "hi"})
+        prompted = prompt(web, session, {"text": "hi"})
         run_id = prompted.json()["run_id"]
         response = web.post(f"/runs/{run_id}/cancel")
     assert response.status_code == 200, response.text
@@ -722,7 +740,7 @@ def test_the_second_answerer_gets_not_accepted_with_the_winners_selection(
         agent.on_prompt = script
 
         def prompt_thread() -> None:
-            web.post(f"/sessions/{session}/prompt", json={"text": "ask me"})
+            prompt(web, session, {"text": "ask me"})
 
         worker = threading.Thread(target=prompt_thread)
         worker.start()
@@ -794,7 +812,7 @@ def test_ask_user_broadcasts_and_the_first_answer_wins(tmp_path: Path) -> None:
         answers: list[Any] = []
 
         def prompt_thread() -> None:
-            web.post(f"/sessions/{session}/prompt", json={"text": "ask me"})
+            prompt(web, session, {"text": "ask me"})
 
         worker = threading.Thread(target=prompt_thread)
         worker.start()
@@ -885,6 +903,7 @@ def test_session_control_accepts_a_request_with_no_key(
     served = {row[1] for row in KEY_REQUIRED_ROUTES} | {
         "/sessions",
         "/sessions/{id}/prompt",
+        "/sessions/{id}/model",
         "/sessions/{id}/answer",
         "/runs/{run_id}/cancel",
     }
@@ -896,8 +915,18 @@ def test_session_control_accepts_a_request_with_no_key(
         session = agent.create_session("orchestrator")
         path = template.replace("{id}", session).replace("{run_id}", "run-none")
         bodies: dict[str, Any] = {
-            "/sessions": {"profile": "orchestrator"},
-            "/sessions/{id}/prompt": {"text": "hi"},
+            "/sessions": {
+                "profile": "orchestrator",
+                "model": {"provider_id": "fake", "model_id": "text"},
+            },
+            "/sessions/{id}/prompt": {
+                "text": "hi",
+                "expected_model_revision": agent.session_model(session)["model_state"]["revision"],
+            },
+            "/sessions/{id}/model": {
+                "model": {"provider_id": "fake", "model_id": "vision"},
+                "expected_model_revision": agent.session_model(session)["model_state"]["revision"],
+            },
             "/sessions/{id}/answer": {"question_id": "q-absent", "answer": "x"},
             "/runs/{run_id}/cancel": {},
         }

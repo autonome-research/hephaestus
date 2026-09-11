@@ -36,11 +36,13 @@ import {
 } from "../../src/api/sessions";
 import type * as SessionsModule from "../../src/api/sessions";
 import type { ProvidersDocument } from "../../src/api/providers";
+import type * as ProvidersModule from "../../src/api/providers";
 import type { DfmDocument } from "../../src/api/types";
 import { collectSessionIds } from "../../src/api/projectRefresh";
 import { refreshAfterTurn, refreshKeys } from "../../src/api/refresh";
 import { keys } from "../../src/api/queries";
-import { defaultModel, modelsFrom, showModelChrome } from "../../src/stream/composerChrome";
+import { filterModels, modelCapability, modelIdentity } from "../../src/stream/composerChrome";
+import { models, modelState, modelDoc, vision, createdModelState } from "../fixtures/models";
 import {
   CHIP_ORDER,
   SUMMARY_ORDER,
@@ -63,8 +65,16 @@ import { ATTACH_CAUSES, attachDetailAdds, type AttachCause } from "../../src/api
 // wholesale stub would make that assertion about the stub.
 vi.mock("../../src/api/sessions", async (importOriginal) => {
   const actual = await importOriginal<typeof SessionsModule>();
-  return { ...actual, sendPrompt: vi.fn(), cancelRun: vi.fn(), createSession: vi.fn() };
+  return { ...actual, sendPrompt: vi.fn(), cancelRun: vi.fn(), createSession: vi.fn(),
+    fetchSessionModel: vi.fn(async (sid: string) => {
+      const c = conversationStore.get(sid);
+      return modelDoc(sid, c.model ?? modelState, { ...(c.execution ?? IDLE_EXECUTION),
+        admission_available: c.attempt?.reason === "run_in_flight" ? false : c.execution?.admission_available ?? true });
+    }) };
 });
+vi.mock("../../src/api/providers", async importOriginal => ({
+  ...await importOriginal<typeof ProvidersModule>(), loadModels: vi.fn(async () => models),
+}));
 
 const NOTHING: ReadonlySet<ContextMember> = new Set();
 
@@ -120,6 +130,8 @@ function markup(
   props: Partial<React.ComponentProps<typeof Composer>> = {},
   seeded: { providers?: ProvidersDocument; dfm?: DfmDocument } = {},
 ): string {
+  conversationStore.modelSnapshot(props.sessionId ?? "sess-1", modelState, IDLE_EXECUTION, conversationStore.ticket());
+  conversationStore.catalog(models);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   if (seeded.providers !== undefined) {
     client.setQueryData(keys.providers(), seeded.providers);
@@ -441,26 +453,38 @@ describe("the DOM contract", () => {
     expect(host.querySelector("[data-composer-send]")?.getAttribute("aria-disabled")).toBe("true");
   });
 
-  it("is exactly two rows at rest, and mounts no model chip (C15, issue 114)", () => {
-    // §7A.10's 2026-09-02 amendment, plus issue 114. POSITIVE: the form's
-    // directly rendered rows number two — the context row (§7A.3(a)'s summary
-    // line) and the input row (the textarea with Send on the same row).
-    // NEGATIVE: no meta line, no action row, no model/effort vocabulary.
+  it("integrates the wired model with context above the input row (issue 120)", () => {
+    // Stable context/input core, visible keyboard hint, then bounded details.
+    // No model/effort readout substitute and no extra Send action.
     const html = markup({}, { providers: providersDocument() });
     const host = document.createElement("div");
     host.innerHTML = html;
     const form = host.querySelector("[data-composer]");
     expect(form).not.toBeNull();
     const rows = [...(form?.children ?? [])];
-    expect(rows).toHaveLength(2);
-    expect(rows[0]?.hasAttribute("data-context-summary")).toBe(true);
+    expect(rows).toHaveLength(4);
+    expect(rows[0]?.querySelector("[data-context-summary]")).not.toBeNull();
+    expect(rows[0]?.querySelector("[data-model-button]")).not.toBeNull();
     expect(form?.querySelector("[data-composer-model]")).toBeNull();
     expect(html).not.toContain("gpt-5.5");
     expect(html).not.toContain("data-composer-provider");
     expect(rows[1]?.hasAttribute("data-composer-input-row")).toBe(true);
     expect(rows[1]?.contains(form?.querySelector("[data-composer-send]") ?? null)).toBe(true);
-    expect(html).not.toContain("data-composer-hint");
+    expect(rows[2]?.textContent).toBe(copy.composer.sendHint);
+    expect(rows[3]?.getAttribute("data-composer-details")).toBe("");
+    expect(rows[3]?.getAttribute("aria-label")).toBe(copy.composer.messageDetails);
     expect(html).not.toContain("data-composer-cancel");
+  });
+
+  it.each(["Checking", "Completed"] as const)("does not advertise Enter sends while next-send admission is blocked after %s", status => {
+    const host = document.createElement("div");
+    host.innerHTML = markup({ currentTurn: { status, reason: "Checking session model…", runId: null,
+      terminalRunId: status === "Completed" ? "finished-run" : null,
+      canSend: false, canAnswer: false, stopRequested: false } });
+    expect(host.querySelector("[data-composer-hint]")?.textContent).toBe(copy.composer.sendHintBusy);
+    expect(host.querySelector("[data-composer-send]")?.getAttribute("aria-disabled")).toBe("true");
+    expect(host.querySelector("[data-composer-cancel]")).toBeNull();
+    expect(host.querySelector("[data-model-button]")).not.toBeNull();
   });
 
   it("adds the Cancel row only as the running exception (C15's loud path)", () => {
@@ -472,12 +496,16 @@ describe("the DOM contract", () => {
     const host = document.createElement("div");
     host.innerHTML = html;
     const form = host.querySelector("[data-composer]");
-    expect([...(form?.children ?? [])].length).toBe(2);
+    expect([...(form?.children ?? [])].length).toBe(6);
+    expect(form?.querySelector("[data-composer-details]")?.contains(form.querySelector("[data-composer-send]"))).toBe(false);
     const cancel = form?.querySelector("[data-composer-cancel]");
     expect(cancel).not.toBeNull();
-    expect(host.querySelector("[data-composer-input-row]")?.contains(cancel ?? null)).toBe(true);
+    expect(host.querySelector("[data-task-action]")?.contains(cancel ?? null)).toBe(true);
+    expect(host.querySelector("[data-task-action]")?.textContent).toContain("Working");
+    expect(host.querySelector("[data-next-draft]")?.textContent).toContain("Not sent or queued");
     const row = host.querySelector("[data-composer-input-row]");
-    expect(row?.querySelectorAll("button, [role='button']").length).toBe(2);
+    expect(row?.contains(cancel ?? null)).toBe(false);
+    expect(row?.querySelectorAll("button, [role='button']").length).toBe(1);
   });
 
   it("puts no data-source on any context chip", () => {
@@ -818,30 +846,25 @@ describe("the resting line's Add current view predicate", () => {
 // issue #13 — session chrome, still a thin client
 // ---------------------------------------------------------------------------
 
-describe("session chrome from GET /providers", () => {
-  it("uses the provider's own model id as the identifier, never a house name", () => {
-    const document = providersDocument();
-    const models = modelsFrom(document);
-    expect(models).toHaveLength(1);
-    expect(models[0]?.id).toBe("heph-fake-model");
-    expect(models[0]?.providerId).toBe("heph-fake");
-    expect(models[0]?.id).not.toMatch(/smith|arche|composer-1/i);
-    expect(models[0]?.providerId).not.toMatch(/smith|arche|composer-1/i);
+describe("authoritative session model chrome (issue 120)", () => {
+  it("shows live Spark, not the first configured model", () => {
+    expect(models.providers[0]?.models[0]?.model_id).toBe(vision.model_id);
+    const html = mount().textContent ?? "";
+    expect(html).toContain("local/fake/spark");
+    expect(html).toContain("Text only");
+    expect(modelIdentity(vision)).toBe("local/fake/vision/image");
   });
 
-  it("projects the FIRST declared model, and nothing when there is none", () => {
-    expect(defaultModel(modelsFrom(providersDocument()))?.id).toBe("heph-fake-model");
-    expect(defaultModel([])).toBeNull();
+  it("gets capabilities from resolved input, not names", () => {
+    expect(modelCapability(null)).toBe("Capability unknown");
+    expect(modelCapability(vision.input)).toBe("Text + images");
   });
 
-  it("names no models when the configuration file does not exist", () => {
-    expect(modelsFrom(providersDocument({ config_exists: false, providers: [] }))).toEqual([]);
-    expect(showModelChrome(false, [])).toBe(false);
+  it("has no options without a selector document", () => {
+    expect(filterModels(null, "")).toEqual([]);
   });
 
-  it("hides the model projection when the runtime is missing", () => {
-    const models = modelsFrom(providersDocument());
-    expect(showModelChrome(true, models)).toBe(false);
+  it("retains the readable model control when the runtime is missing", () => {
     const html = markup(
       {
         agentUnavailable: true,
@@ -860,13 +883,12 @@ describe("session chrome from GET /providers", () => {
     expect(html).not.toContain("data-context-add-view");
   });
 
-  it("does not rest a model chip or picker when a runtime is attached (issue 114)", () => {
+  it("restores a wired model control, not the retired decorative chip", () => {
     const html = markup({}, { providers: providersDocument() });
     expect(html).not.toContain("data-composer-model");
     expect(html).not.toContain("data-composer-provider");
     expect(html).not.toContain("gpt-5.5");
-    // §7A.3's prompt body is `{text, context?}`. A Select here would write
-    // nothing and read as hosted-chat chrome.
+    expect(html).toContain("data-model-button");
     expect(html).not.toMatch(/<select\b/i);
   });
 
@@ -1039,8 +1061,9 @@ afterEach(() => {
 function mount(props: Partial<React.ComponentProps<typeof Composer>> = {}): HTMLDivElement {
   const sid = props.sessionId ?? "sess-1";
   if (conversationStore.get(sid).execution === null) {
-    conversationStore.snapshot(sid, IDLE_EXECUTION, conversationStore.ticket());
+    conversationStore.modelSnapshot(sid, modelState, IDLE_EXECUTION, conversationStore.ticket());
   }
+  conversationStore.catalog(models);
   const element = document.createElement("div");
   document.body.appendChild(element);
   const root = createRoot(element);
@@ -1158,7 +1181,7 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     await act(async () => settle({ status: "ok", session_id: "sess-1", run_id: "run-1",
       run_status: "completed", terminal: null, events: [], context: null }));
     expect(input(root).value).toBe("new draft");
-    expect(currentTurn(conversationStore.get("sess-1")).status).toBe("Finished");
+    expect(currentTurn(conversationStore.get("sess-1")).status).toBe("Completed");
   });
 
   it("retains pending sends and per-session drafts through collapse and session switches", async () => {
@@ -1179,7 +1202,7 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     root.remove();
     root = mount();
     expect(input(root).value).toBe("draft for first session");
-    expect(currentTurn(conversationStore.get("sess-1")).status).toBe("Finished");
+    expect(currentTurn(conversationStore.get("sess-1")).status).toBe("Completed");
     expect(sendPrompt).toHaveBeenCalledTimes(1);
     expect(cancelRun).not.toHaveBeenCalled();
   });
@@ -1192,11 +1215,13 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     type(root, "first submission");
     pressEnter(root);
     type(root, "edited while creating");
-    await act(async () => created({ status: "ok", session_id: "sess-new", profile: "orchestrator", part: null, resumed: false }));
+    await act(async () => created({ status: "ok", session_id: "sess-new", profile: "orchestrator", part: null, resumed: false, model_state: createdModelState, execution: IDLE_EXECUTION }));
     expect(sendPrompt).toHaveBeenCalledTimes(1);
-    expect(sendPrompt).toHaveBeenCalledWith("sess-new", "first submission", null);
+    expect(sendPrompt).toHaveBeenCalledWith("sess-new", "first submission", null, modelState.revision);
     expect(conversationStore.get("sess-new").draft.text).toBe("edited while creating");
-    expect(conversationStore.get("sess-new").attempt?.submitted.text).toBe("first submission");
+    expect(conversationStore.get("sess-new").attempt).toMatchObject({
+      submitted: { text: "first submission" }, sessionId: "sess-new", modelRevision: createdModelState.revision,
+    });
   });
 
   it("a named race rejection leaves no normal transcript entry", async () => {
@@ -1324,7 +1349,9 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
 
     expect(report).toHaveBeenCalledWith("process_down");
     expect(composer(root).getAttribute("data-send-state")).toBe("unknown");
-    expect(input(root).value).toBe("Bump the kerf to 0.25 mm.");
+    expect(input(root).value).toBe("");
+    expect(root.querySelector("[data-submitted-attempt]")?.textContent).toContain("Bump the kerf to 0.25 mm.");
+    expect(conversationStore.get("sess-1").attempt?.submitted.text).toBe("Bump the kerf to 0.25 mm.");
     expect(root.querySelector("[data-composer-refused]")).toBeNull();
     expect(root.textContent ?? "").not.toContain("sidecar restarted");
   });
@@ -1355,7 +1382,7 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
       session_id: "sess-new",
       profile: "part",
       part: "tread",
-      resumed: false,
+      resumed: false, model_state: createdModelState, execution: IDLE_EXECUTION,
     });
     vi.mocked(sendPrompt).mockResolvedValue({
       status: "ok",
@@ -1372,11 +1399,12 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     type(root, "Ask about this plate.");
     pressEnter(root);
     await act(async () => undefined);
-    expect(vi.mocked(createSession)).toHaveBeenCalledWith("part", "tread");
+    expect(vi.mocked(createSession)).toHaveBeenCalledWith("part", "tread", expect.objectContaining({ provider_id: vision.provider_id, model_id: vision.model_id }));
     expect(vi.mocked(sendPrompt)).toHaveBeenCalledWith(
       "sess-new",
       "Ask about this plate.",
       expect.anything(),
+      modelState.revision,
     );
     expect(workspaceStore.getSnapshot().session).toBe("sess-new");
     workspaceStore.reset(DEFAULT_STATE);
@@ -1713,7 +1741,7 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     expect(cancelRun).toHaveBeenCalledTimes(1);
     act(() => conversationStore.snapshot("sess-1", { ...IDLE_EXECUTION, version: 3, run_id: "run-live",
       terminal: { run_id: "run-live", terminal_id: "terminal-live", state: "cancelled" } }, conversationStore.ticket()));
-    expect(currentTurn(conversationStore.get("sess-1")).status).toBe("Stopped");
+    expect(currentTurn(conversationStore.get("sess-1")).status).toBe("Cancelled");
     expect(root.querySelector("[data-composer-cancel]")).toBeNull();
     expect(sendPrompt).not.toHaveBeenCalled();
   });

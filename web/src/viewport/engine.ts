@@ -78,6 +78,7 @@ import {
   boundsAt,
   framingFor,
   indexSolidNodes,
+  perspectiveFovDeg,
   type Framing,
   type SolidIndex,
 } from "./scene";
@@ -129,6 +130,8 @@ export class ViewportEngine {
   /** The `t = 1` extent — the `explode` channel's framing. */
   private explodedBounds: Box3 | null = null;
   private framing: Framing | null = null;
+  private fit: { view: string; exploded: boolean } | null = null;
+  private interacting = false;
   private frameRequest = 0;
   private disposed = false;
 
@@ -200,6 +203,7 @@ export class ViewportEngine {
     this.controls.enableDamping = false;
     this.controls.addEventListener("change", this.requestFrame);
     this.controls.addEventListener("end", this.settleCamera);
+    this.controls.addEventListener("start", this.holdCamera);
   }
 
   /** Replace the scene's geometry with the meshes of `bytes`. */
@@ -226,6 +230,7 @@ export class ViewportEngine {
     this.bounds = null;
     this.explodedBounds = null;
     this.framing = null;
+    this.fit = null;
     // No part, no floor. A grid left standing over an empty canvas would be the
     // viewport drawing a ruler for something it is not showing.
     this.rebuildGrid();
@@ -270,6 +275,7 @@ export class ViewportEngine {
     const framing = framingFor(bounds, view, this.aspect());
     if (framing === null) return;
     this.framing = framing;
+    this.fit = { view, exploded };
     this.applyCurrentFraming(framing);
     this.controls.target.set(framing.target[0], framing.target[1], framing.target[2]);
     this.controls.update();
@@ -391,20 +397,25 @@ export class ViewportEngine {
     if (width <= 0 || height <= 0) return;
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.setSize(width, height, false);
-    const framing = this.framing;
-    if (framing !== null) {
-      // Keep the vertical extent and re-fit the horizontal one, so a resize
-      // changes how much is visible and never how large a millimetre is.
-      const halfWidth = framing.halfHeight * this.aspect();
-      if (this.camera === this.orthoCamera) {
-        this.orthoCamera.left = -halfWidth;
-        this.orthoCamera.right = halfWidth;
-        this.orthoCamera.updateProjectionMatrix();
-      } else {
-        this.perspCamera.aspect = this.aspect();
-        this.perspCamera.updateProjectionMatrix();
-      }
+    const aspect = this.aspect();
+    const bounds = this.fit?.exploded ? this.explodedBounds : this.bounds;
+    const fitted = this.fit !== null && bounds !== null ? framingFor(bounds, this.fit.view, aspect) : null;
+    if (fitted !== null) {
+      // Fit follows capacity, not a new viewpoint. Only projection extents
+      // change; no eye/target/up writes and no workspace or pin mutation.
+      this.framing = fitted;
+      this.orthoCamera.top = fitted.halfHeight;
+      this.orthoCamera.bottom = -fitted.halfHeight;
+      this.perspCamera.fov = perspectiveFovDeg(fitted.halfHeight, this.camera.position.distanceTo(this.controls.target));
+      this.rebuildGrid();
     }
+    // Held mode keeps the actual vertical extent/zoom, not an old fit's scale.
+    const halfWidth = this.orthoCamera.top * aspect;
+    this.orthoCamera.left = -halfWidth;
+    this.orthoCamera.right = halfWidth;
+    this.orthoCamera.updateProjectionMatrix();
+    this.perspCamera.aspect = aspect;
+    this.perspCamera.updateProjectionMatrix();
     this.render();
   }
 
@@ -445,6 +456,7 @@ export class ViewportEngine {
     if (this.frameRequest !== 0) cancelAnimationFrame(this.frameRequest);
     this.controls.removeEventListener("change", this.requestFrame);
     this.controls.removeEventListener("end", this.settleCamera);
+    this.controls.removeEventListener("start", this.holdCamera);
     this.controls.dispose();
     this.frameListeners.clear();
     this.clearRoot();
@@ -484,6 +496,16 @@ export class ViewportEngine {
       // an axis leaning toward the viewer.
       depth: world.dot(forward),
     }));
+  }
+
+  /** Read-only camera evidence for the existing packaged browser harness. */
+  cameraSnapshot() {
+    return {
+      eye: this.camera.position.toArray(), target: this.controls.target.toArray(),
+      up: this.camera.up.toArray(), zoom: this.camera.zoom, scale: this.scale(),
+      fit: this.fit !== null, projection: this.ortho ? "orthographic" : "perspective",
+      size: this.renderer.getSize(new Vector2()).toArray(),
+    };
   }
 
   private aspect(): number {
@@ -541,8 +563,12 @@ export class ViewportEngine {
     this.gridRoot.add(grid.object);
   }
 
+  /** A plain click is not a camera change; hold only on a controls change. */
+  private readonly holdCamera = (): void => { this.interacting = true; };
+
   /** A user drag: coalesce to one frame per animation frame. */
   private readonly requestFrame = (): void => {
+    if (this.interacting) this.fit = null;
     if (this.disposed || this.frameRequest !== 0) return;
     this.frameRequest = requestAnimationFrame(() => {
       this.frameRequest = 0;
@@ -555,6 +581,7 @@ export class ViewportEngine {
    * keeping every reachable camera nameable."
    */
   private readonly settleCamera = (): void => {
+    this.interacting = false;
     const direction = this.camera.position.clone().sub(this.controls.target);
     if (direction.lengthSq() === 0) return;
     direction.normalize();

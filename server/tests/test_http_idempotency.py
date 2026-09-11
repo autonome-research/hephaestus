@@ -377,7 +377,7 @@ def test_an_unpaired_surrogate_in_a_body_is_refused_before_sizing_or_hashing(
 
 
 def test_session_control_routes_are_declared_key_free_in_both_directions() -> None:
-    """§2.3's second table: five routes, a key **not required** and one **ignored**.
+    """§2.3's session controls: a key **not required** and one **ignored**.
 
     The two tables are disjoint by construction, and the second is not a weaker
     version of the first — it is a different contract. ``answer`` is governed by
@@ -391,7 +391,8 @@ def test_session_control_routes_are_declared_key_free_in_both_directions() -> No
     """
     from hephaestus.http.idempotency import requires_key, validate_key
 
-    assert len(SESSION_CONTROL_ROUTES) == 5
+    assert len(SESSION_CONTROL_ROUTES) == 6
+    assert ("PUT", "/sessions/{id}/model") in SESSION_CONTROL_ROUTES
     assert set(SESSION_CONTROL_ROUTES) & set(KEY_REQUIRED_ROUTES) == set()
     for method, template in SESSION_CONTROL_ROUTES:
         assert not requires_key(method, template)

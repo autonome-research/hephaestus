@@ -9,7 +9,7 @@ const WIDTHS = [843, 1000, 1024, 1279, 1440];
 
 async function expand(page: Page): Promise<void> {
   const strip = page.locator("[data-stream-strip]");
-  if (await strip.isVisible()) await strip.focus();
+  if (await strip.isVisible()) await strip.click();
   await expect(page.locator("[data-stream-resize]")).toBeVisible();
 }
 
@@ -17,7 +17,7 @@ async function assertBudget(page: Page, width: number): Promise<void> {
   const box = await page.locator("#chat-column").boundingBox();
   expect(box).not.toBeNull();
   expect(box!.width).toBeGreaterThanOrEqual(360);
-  expect(width - (width < 1024 ? 0 : 280) - box!.width).toBeGreaterThanOrEqual(359);
+  expect(width - (width < 1280 ? 0 : 280) - box!.width).toBeGreaterThanOrEqual(359);
   const dimensions = await page.evaluate(() => ({
     scroll: document.documentElement.scrollWidth,
     client: document.documentElement.clientWidth,
@@ -72,15 +72,17 @@ for (const width of WIDTHS) {
     await assertBudget(page, width);
     await page.locator("[data-stream-collapse]").click();
     await expect(separator).toHaveCount(0);
-    expect((await page.locator("#chat-column").boundingBox())!.width).toBe(44);
+    const hidden = (await page.locator('[data-stream-strip]').boundingBox())!;
+    expect(hidden.width).toBeGreaterThan(hidden.height * 3);
     await expand(page);
     await expect(separator).toHaveAttribute("aria-valuenow", chosen!);
 
-    if (width < 1024) {
+    if (width < 1280) {
       await page.locator("[data-rail-toggle]").click();
       await expect(page.locator("[data-rail-scrim]")).toBeVisible();
-      await expect(separator).toHaveAttribute("aria-valuenow", chosen!);
+      await expect(separator).toHaveCount(0); // covered separators cannot take focus
       await page.locator("[data-rail-close]").click();
+      await expect(separator).toHaveAttribute("aria-valuenow", chosen!);
       await assertBudget(page, width);
     }
     expect(mutations).toEqual([]);
@@ -110,7 +112,13 @@ test("selected title stays compact while switcher exposes the session tree", asy
   await expect(strip.locator("[data-session-tab]")).toHaveCount(1);
   await expect(page.locator("[data-session-option]")).toHaveCount(0);
   const height = (await strip.boundingBox())!.height;
-  expect(height).toBeLessThanOrEqual(64);
+  expect(height).toBeLessThanOrEqual(96); // title/scope plus readable action row
+  const titleBox = (await strip.locator("[data-session-tab]").boundingBox())!;
+  for (const [selector, label] of [["[data-session-switch]", "Switch"], ["[data-session-create-menu]", "New"], ["[data-stream-collapse]", "Hide"]]) {
+    const action = strip.locator(selector!);
+    await expect(action.locator('span[aria-hidden="true"]')).toHaveText(label!);
+    expect((await action.boundingBox())!.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
+  }
   await page.locator("[data-session-switch]").focus();
   await page.locator("[data-session-switch]").press("Enter");
   await expect(page.locator("[data-session-switch-open]")).toBeVisible();

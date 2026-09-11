@@ -58,13 +58,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { flushSync } from "react-dom";
 import { WorkspaceError } from "../../api/client";
 import { attachProjection, type AttachProjection } from "../../api/attach";
 import { refreshAfterTurn } from "../../api/refresh";
 import { processGone, runtimeFaultOf, type RuntimeFault } from "../../stream/runtimeFault";
 import { sessionCannotPrompt } from "../../stream/sessionPromptGate";
 import {
-  createSession,
   type ProfileCapability,
   type SessionRow,
   type SessionsDocument,
@@ -78,6 +78,7 @@ import { sessionEmptyBody, sessionEmptyKind } from "../../stream/sessionEmpty";
 import { showsEmptyTranscript } from "../../stream/streamChrome";
 import { useStream } from "../../stream/useStream";
 import { readExecutionSessions } from "../../stream/conversation";
+import { NewConversationDialog } from "./NewConversationDialog";
 import { useFollowScroll } from "../../stream/followScroll";
 import { sessionPromptStore } from "../../stream/sessionPrompts";
 import { titleForSession } from "../../stream/sessionTitle";
@@ -113,8 +114,8 @@ export function StreamPanel(): React.JSX.Element {
   const rows = useMemo(() => sessions.data?.sessions ?? EMPTY_SESSIONS, [sessions.data]);
   const profiles = useMemo(() => sessions.data?.profiles ?? EMPTY_PROFILES, [sessions.data]);
   const stream = useStream(selected);
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
+  const [createTarget, setCreateTarget] = useState<{ profile: "orchestrator" | "part"; part: string | null; opener: HTMLElement | null } | null>(null);
+  const creating = createTarget !== null;
   const [focusNonce, setFocusNonce] = useState(0);
 
   // §4.5 addresses a session as `?s=`. With none in the URL, the first session
@@ -141,7 +142,6 @@ export function StreamPanel(): React.JSX.Element {
   const tabs = useMemo(() => sessionForest(rows, stream.tabs), [rows, stream.tabs]);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const { following, jumpToLatest } = useFollowScroll(scrollRef, selected, stream.rows.length);
   const firstPrompts = useSyncExternalStore(
     sessionPromptStore.subscribe,
     sessionPromptStore.getSnapshot,
@@ -154,6 +154,7 @@ export function StreamPanel(): React.JSX.Element {
 
   const refusal = sessions.error instanceof WorkspaceError ? sessions.error : null;
   const unavailable = refusal !== null && refusal.reason === "agent_unavailable";
+  const { following, jumpToLatest } = useFollowScroll(scrollRef, selected, selected !== null && (!unavailable || stream.rows.length > 0));
   // §7A.8/§19.25: the cause rides in §2.4's `data`. `null` covers both "not this
   // refusal" and "this process never attempted an attach", and neither is
   // guessed at — §4.4's rule is that a missing answer says it is missing.
@@ -229,27 +230,12 @@ export function StreamPanel(): React.JSX.Element {
   // keystroke, never as recovery from a failed prompt. At-least-once is the
   // stated consequence and the UI carries it: a duplicate create is an extra
   // *idle* session, and there is no route that closes one, so none is offered.
-  const create = useCallback(
-    (profile: "orchestrator" | "part", boundPart: string | null) => {
-      setCreating(true);
-      setCreateError(null);
-      void createSession(profile, boundPart)
-        .then((document) => {
-          workspaceStore.update({ session: document.session_id });
-          void client.invalidateQueries({ queryKey: ["sessions"] });
-          // §7A.2 / #61: the create exists so the operator can talk. Focus
-          // the box after the session is addressed; do not wait for a click.
-          setFocusNonce((n) => n + 1);
-        })
-        .catch((cause: unknown) => {
-          setCreateError(cause instanceof Error ? cause.message : copy.errors.title);
-        })
-        .finally(() => {
-          setCreating(false);
-        });
-    },
-    [client],
-  );
+  const create = useCallback((profile: "orchestrator" | "part", boundPart: string | null) => {
+    const active = document.activeElement;
+    const opener = active instanceof HTMLElement && !active.closest("[data-session-create-open]")
+      ? active : document.querySelector<HTMLElement>("[data-session-create-menu]");
+    setCreateTarget({ profile, part: boundPart, opener });
+  }, []);
 
   // The worded pair, kept for the two surfaces §7.1(b)(1) leaves it on: the
   // empty-list invitation (§7A.2 — "there is no strip to hang an icon on") and
@@ -292,10 +278,11 @@ export function StreamPanel(): React.JSX.Element {
       icon="chevron-right"
       iconLabel={copy.stream.collapse}
       onClick={() => {
-        shellStore.setStreamOpen(false);
+        flushSync(() => shellStore.setStreamOpen(false));
+        document.querySelector<HTMLElement>("[data-stream-strip]")?.focus();
       }}
       data-stream-collapse=""
-    />
+    ><span aria-hidden="true">{copy.stream.hideAction}</span><span className={styles["srOnly"]}>{copy.stream.collapse}</span></Button>
   );
 
   return (
@@ -348,7 +335,11 @@ export function StreamPanel(): React.JSX.Element {
         <p className={styles["note"]} role="status" aria-live="polite" data-current-turn={stream.currentTurn.status}>
           <strong>{stream.currentTurn.status}</strong>
           {stream.currentTurn.reason === null ? null : ` — ${stream.currentTurn.reason}`}
-          {stream.currentTurn.stopRequested ? ` — ${copy.composer.stopRequested}` : null}
+          {stream.currentTurn.questionId ? <Button variant="quiet" onClick={() => {
+            const question = scrollRef.current?.querySelector<HTMLElement>(`[data-question-id="${CSS.escape(stream.currentTurn.questionId!)}"]`);
+            question?.scrollIntoView({ block: "nearest" });
+            question?.focus();
+          }}>{copy.stream.ask.goToQuestion}</Button> : null}
         </p>
       )}
       {selected === null ? null : (
@@ -431,12 +422,6 @@ export function StreamPanel(): React.JSX.Element {
           )
         ) : null}
 
-        {createError !== null ? (
-          <p className={styles["note"]} data-create-error="">
-            {createError}
-          </p>
-        ) : null}
-
         {/* A failed admission read blocks writes, not already held conversation
             evidence; keep narration, questions and delivery gaps inspectable. */}
         {selected !== null && (!unavailable || stream.rows.length > 0) ? (
@@ -456,6 +441,12 @@ export function StreamPanel(): React.JSX.Element {
                 starts this session's first turn, so a second create affordance
                 in the middle of the column would be the "wall of buttons" §7.1
                 rules out. */}
+            {stream.history.state === "failed" ? (
+              <p className={styles["historyNote"]} role="status">{copy.stream.historyFailed}</p>
+            ) : null}
+            {stream.history.state === "loading" ? (
+              <p className={styles["historyNote"]} role="status" data-transcript-loading="">{copy.stream.historyLoading}</p>
+            ) : null}
             {emptyTranscript ? (
               <EmptyState
                 className={styles["emptyTranscript"]}
@@ -479,7 +470,7 @@ export function StreamPanel(): React.JSX.Element {
                 data-transcript-scroll=""
                 data-overlay-scroll=""
               >
-                <Transcript rows={stream.rows} currentTurn={stream.currentTurn} />
+                <Transcript sessionId={selected} rows={stream.rows} currentTurn={stream.currentTurn} />
               </div>
               {following ? null : (
                 <Button
@@ -501,9 +492,13 @@ export function StreamPanel(): React.JSX.Element {
           session tab, and it renders in every state — including
           `agent_unavailable`, because that is exactly where its reason is
           needed. `no_session` stays typable: the first Send creates then posts. */}
+      {createTarget !== null ? <NewConversationDialog {...createTarget} profiles={profiles}
+        onCancel={() => setCreateTarget(null)}
+        onCreated={() => { setCreateTarget(null); setFocusNonce(n => n + 1); }} /> : null}
       <Composer
         sessionId={selected}
         profile={activeProfile}
+        scopePart={rows.find(row => row.session_id === selected)?.part ?? null}
         currentTurn={stream.currentTurn}
         attach={attach}
         agentUnavailable={unavailable}
