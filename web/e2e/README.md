@@ -135,8 +135,9 @@ that the selected model's image capability reaches the next tool/model request.
 packaged world through `recoveryWorld.ts`, using the existing **unchanged**
 16-request fake-provider script. It aborts a Stop before forwarding, explicitly
 retries only after same-run reconciliation, reloads an undelivered waiting
-question, and withholds a delivered Stop response until the real terminal has
-removed the control. Server execution/question readback remains real; browser
+question, withholds a delivered Stop response until the real terminal has
+removed the control, and holds a browser-submitted prompt response across its
+run's terminal. Server execution/question readback remains real; browser
 traffic outside that fixture origin is refused. Screenshots and sanitized
 run/terminal identity attachments are retained in the test output.
 

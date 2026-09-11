@@ -15,7 +15,7 @@ test.beforeAll(async ({ browserName }, info) => {
 });
 test.afterAll(async () => { await closeRecoveryWorld(); });
 
-for (const scenario of ["dropped request with explicit retry", "dropped request then reload", "lost response after terminal"] as const) {
+for (const scenario of ["dropped request with explicit retry", "dropped request then reload", "lost response after terminal", "terminal before prompt response"] as const) {
   test(scenario, async ({ page }, info) => {
     test.setTimeout(180_000); // real packaged startup/turn hang detector
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -23,6 +23,9 @@ for (const scenario of ["dropped request with explicit retry", "dropped request 
     const errors: string[] = [];
     const writes: string[] = [];
     page.on("pageerror", error => errors.push(error.message));
+    page.on("request", request => {
+      if (request.method() === "POST") writes.push(new URL(request.url()).pathname);
+    });
     await page.context().route("**/*", async r => {
       const url = new URL(r.request().url());
       if (url.origin !== world().base_url) {
@@ -30,7 +33,6 @@ for (const scenario of ["dropped request with explicit retry", "dropped request 
         await r.abort();
         return;
       }
-      if (r.request().method() === "POST") writes.push(url.pathname);
       await r.fallback();
     });
     await page.routeWebSocket("**/*", ws => {
@@ -47,7 +49,20 @@ for (const scenario of ["dropped request with explicit retry", "dropped request 
     const sid = created.session_id;
     await open(page, route("tread", { s: sid }));
     await expect(page.locator('[data-testid="stream-panel"]')).toHaveAttribute("data-stream", "live");
-    const turn = api<PromptDocument>(`/sessions/${sid}/prompt`, { method: "POST", signal: AbortSignal.timeout(150_000),
+    let releasePrompt = () => {};
+    let turn: Promise<PromptDocument>;
+    if (scenario === "terminal before prompt response") {
+      const heldPrompt = new Promise<void>(resolve => { releasePrompt = resolve; });
+      await page.route(`**/sessions/${sid}/prompt`, async r => {
+        const response = await r.fetch({ timeout: 150_000 });
+        await heldPrompt;
+        await r.fulfill({ response });
+      });
+      turn = page.waitForResponse(r => r.url().endsWith(`/sessions/${sid}/prompt`), { timeout: 150_000 })
+        .then(async response => await response.json() as PromptDocument);
+      await page.locator("[data-composer-input]").fill(world().ask.sentinel);
+      await page.getByRole("button", { name: "Send", exact: true }).click();
+    } else turn = api<PromptDocument>(`/sessions/${sid}/prompt`, { method: "POST", signal: AbortSignal.timeout(150_000),
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: world().ask.sentinel,
         expected_model_revision: created.model_state.revision }) });
     // Keep a rejection observed even if a browser assertion fails first.
@@ -68,7 +83,7 @@ for (const scenario of ["dropped request with explicit retry", "dropped request 
       const held = new Promise<void>(resolve => { release = resolve; });
       await page.route(`**${cancelPath}`, async r => {
         cancelPaths.push(new URL(r.request().url()).pathname);
-        if (cancelPaths.length > 1) { await r.continue(); return; }
+        if (cancelPaths.length > 1 || scenario === "terminal before prompt response") { await r.continue(); return; }
         if (scenario === "lost response after terminal") {
           const response = await r.fetch(); // server receives Stop and abandons the question
           expect(response.status()).toBe(200);
@@ -78,7 +93,7 @@ for (const scenario of ["dropped request with explicit retry", "dropped request 
         await r.abort("failed"); // request never sent OR response deliberately lost
       });
       await page.getByRole("button", { name: "Stop", exact: true }).click();
-      if (scenario !== "lost response after terminal") {
+      if (scenario === "dropped request with explicit retry" || scenario === "dropped request then reload") {
         await expect(page.getByRole("button", { name: "Retry Stop", exact: true })).toBeEnabled();
         await expect(page.locator("[data-cancel-note]")).toContainText("request or response may be lost");
         const stillActive = await api<SessionModelDocument>(`/sessions/${sid}/model`);
@@ -100,6 +115,7 @@ for (const scenario of ["dropped request with explicit retry", "dropped request 
       await expect(page.locator("[data-composer-cancel]")).toHaveCount(0);
       await expect(page.locator("[data-cancel-note]")).toHaveCount(0);
       release();
+      releasePrompt();
       const result = await turn;
       expect(result.run_id).toBe(runId);
       expect(result.run_status).toBe("cancelled");
@@ -110,9 +126,10 @@ for (const scenario of ["dropped request with explicit retry", "dropped request 
       expect(ended.model_state.revision).toEqual(before.model_state.revision);
       await expect(page.locator("[data-composer-cancel]")).toHaveCount(0);
       await expect(page.locator("[data-cancel-note]")).toHaveCount(0);
-      expect(cancelPaths).toEqual(scenario === "lost response after terminal" ? [cancelPath] : [cancelPath, cancelPath]);
+      expect(cancelPaths).toEqual(scenario === "lost response after terminal" || scenario === "terminal before prompt response" ? [cancelPath] : [cancelPath, cancelPath]);
       if (scenario === "lost response after terminal") expect(delivered).toMatchObject({ run_id: runId, abandoned_questions: 1 });
-      expect(writes.filter(path => /\/(prompt|answer)$/.test(path))).toEqual([]);
+      expect(writes.filter(path => /\/(prompt|answer)$/.test(path))).toEqual(
+        scenario === "terminal before prompt response" ? [`/api/v1/sessions/${sid}/prompt`] : []);
       expect(external).toEqual([]);
       expect(errors).toEqual([]);
       await info.attach("stop-authority", { contentType: "application/json", body: JSON.stringify({ scenario, sid, runId,
@@ -120,6 +137,7 @@ for (const scenario of ["dropped request with explicit retry", "dropped request 
       await page.screenshot({ path: info.outputPath("terminal.png") });
     } finally {
       release();
+      releasePrompt();
       const current = await api<SessionModelDocument>(`/sessions/${sid}/model`, { signal: AbortSignal.timeout(30_000) });
       if (runId !== null && current.execution.active_run_id === runId) {
         await api(`/runs/${runId}/cancel`, { method: "POST", signal: AbortSignal.timeout(30_000) });

@@ -131,7 +131,7 @@ export function currentTurn(c: Conversation, selected = true): CurrentTurn {
     && (!pending || terminal.run_id !== c.attempt?.baselineRunId);
   // A known terminal settles the outcome, not project admission. In particular,
   // a terminal frame must not leave Stop visible while its read is in flight.
-  if (newTerminal && active === null && !pending) {
+  if (newTerminal && active === null && c.attempt?.phase !== "unknown") {
     status = outcomeLabel(terminal.state) as CurrentTurn["status"];
     reason = readableReason(terminal.payload);
   }

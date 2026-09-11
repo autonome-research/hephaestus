@@ -26,6 +26,23 @@ describe("Stop delivery recovery", () => {
     s.snapshot("s", terminal, s.ticket());
     expect(currentTurn(s.get("s")).canSend).toBe(true);
   });
+  it("a terminal settles a known new run even while its prompt response is pending", () => {
+    const s = setup();
+    s.snapshot("s", terminal, s.ticket());
+    expect(s.begin("s")).not.toBeNull();
+    s.snapshot("s", { ...active, version: 4, run_id: "next", active_run_id: "next" }, s.ticket());
+    s.stop("s", "next");
+    s.frame({ session_id: "s", run_id: "next", seq: 2, kind: "terminal", payload: { state: "cancelled" } });
+    expect(currentTurn(s.get("s"))).toMatchObject({ status: "Cancelled", runId: null, canSend: false, stopRequested: false });
+  });
+  it("an older terminal cannot settle a new prompt whose delivery is unknown", () => {
+    const s = setup();
+    s.snapshot("s", terminal, s.ticket());
+    const send = s.begin("s")!;
+    s.finish("s", send.id, "unknown");
+    s.snapshot("s", terminal, s.ticket());
+    expect(currentTurn(s.get("s"))).toMatchObject({ status: "Checking", canSend: false, canRetryStop: false });
+  });
   it.each(["request dropped", "response lost"])("%s is uncertain, retry requires a newer authoritative read", () => {
     const s = setup();
     const attempt = s.stop("s", "run")!;
