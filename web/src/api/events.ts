@@ -209,20 +209,45 @@ export function readToolResult(payload: unknown): ToolResultPayload | null {
   };
 }
 
+export interface ImageIdentity {
+  readonly part: string;
+  readonly view: string;
+  readonly channel: string;
+  readonly source_artifact_ref: string;
+  readonly render_artifact_ref: string;
+}
+
+/** A complete recorded tuple only; never infer a missing field from UI state. */
+function readImageIdentity(value: unknown): ImageIdentity | null {
+  const body = record(value);
+  if (body === null) return null;
+  const keys = ["part", "view", "channel", "source_artifact_ref", "render_artifact_ref"] as const;
+  for (const key of keys) {
+    const field = body[key];
+    if (typeof field !== "string" || field.length === 0 || field.length > 256 || [...field].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) return null;
+  }
+  if (!/^artifact:render:sha256:[a-f0-9]{64}$/.test(body["render_artifact_ref"] as string) || !/^artifact:[a-z][a-z0-9-]*:sha256:[a-f0-9]{64}$/.test(body["source_artifact_ref"] as string)) return null;
+  if (!["rgb", "mask", "section"].includes(body["channel"] as string)) return null;
+  return Object.fromEntries(keys.map(key => [key, body[key]])) as unknown as ImageIdentity;
+}
+
 export interface ImagePayload {
   readonly mimeType: string | null;
-  /** Live only: base64 bytes. History retains `{mimeType}` alone (§7.3). */
+  /** Complete recorded provenance, null for legacy/absent/invalid metadata. */
+  readonly identity: ImageIdentity | null;
+  /** Live only: base64 bytes. History retains metadata only (§7.3). */
   readonly data: string | null;
   readonly bytes: number | null;
 }
 
-/** `image` → live `{mimeType, bytes, data}`, historical `{mimeType}`. */
+/** `image` → live bytes + metadata; history metadata only. */
 export function readImage(payload: unknown): ImagePayload | null {
   const body = record(payload);
   if (body === null) return null;
   const bytes = body["bytes"];
   return {
     mimeType: str(body["mimeType"]),
+    identity: readImageIdentity(body["identity"]),
     data: str(body["data"]),
     bytes: typeof bytes === "number" && Number.isFinite(bytes) ? bytes : null,
   };

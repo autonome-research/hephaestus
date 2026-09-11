@@ -9,7 +9,7 @@
 // * **Live, oversized or undecodable.** A labelled placeholder, and it never
 //   throws — the CLI's precedent. A browser that fails to decode a data URI
 //   fires `onerror`; that is the one signal available and it is used.
-// * **Historical.** `normalizeEntries` emits `{mimeType}` alone; the base64
+// * **Historical.** `normalizeEntries` emits recorded metadata only; the base64
 //   `data` that the live path carries is **not retained** in the archived
 //   payload. So a reopened transcript renders a labelled metadata placeholder
 //   stating the mime type and that the bytes are not kept. Rendering nothing
@@ -36,6 +36,7 @@ export function EventImageInline({
 }): React.JSX.Element {
   const [failed, setFailed] = useState(false);
   const payload = readImage(item.payload);
+  const identity = payload?.identity ?? null;
   const mimeType = payload?.mimeType ?? null;
   const data = payload?.data ?? null;
   const state: ImageState = data === null ? "metadata_only" : failed ? "undecodable" : "shown";
@@ -46,12 +47,14 @@ export function EventImageInline({
       data-event-id={item.eventId}
       data-surface={item.surface}
       data-image-state={state}
+      data-image-identity={identity === null ? "unavailable" : "recorded"}
+      {...(identity === null ? {} : { "data-render-ref": identity.render_artifact_ref })}
       {...(mimeType === null ? {} : { "data-mime-type": mimeType })}
     >
       {state === "shown" && data !== null ? (
         <img
           className={styles["imageBody"]}
-          alt={copy.stream.image.alt}
+          alt={identity === null ? copy.stream.image.alt : `${identity.part} · ${identity.view} / ${identity.channel}`}
           src={`data:${mimeType ?? "image/png"};base64,${data}`}
           onError={() => {
             setFailed(true);
@@ -65,6 +68,11 @@ export function EventImageInline({
         </div>
       )}
       <figcaption className={styles["imageCaption"]}>
+        {identity === null ? <span>{copy.stream.image.identityUnavailable}</span> : <>
+          <span>{identity.part} · {identity.view} / {identity.channel}</span>
+          <span title={identity.source_artifact_ref}>{copy.stream.image.source}: {identity.source_artifact_ref.slice(0, identity.source_artifact_ref.lastIndexOf(":") + 13)}…</span>
+          <span title={identity.render_artifact_ref}>{copy.stream.image.render}: {identity.render_artifact_ref.slice(0, identity.render_artifact_ref.lastIndexOf(":") + 13)}…</span>
+        </>}
         <span>
           {copy.stream.image.mimeType}: {mimeType ?? copy.absent.unavailable}
         </span>

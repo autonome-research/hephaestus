@@ -129,6 +129,21 @@ narrow-width expand affordance is used, and no token remains in the captured
 URL or visible page text. The existing RPC wiring regression separately checks
 that the selected model's image capability reaches the next tool/model request.
 
+## Image identity (owned packaged world)
+
+`pnpm exec playwright test -c playwright.images.config.ts` runs the focused
+`image-identity.spec.ts` case; the full packaged suite also includes it. It owns
+its own disposable workspace, provider script and server, so it consumes no
+shared G4 script slots. Python renders two distinct views; provider observations
+validate decoded PNG/MIME/dimensions and hash-to-render-ref identity. Browser
+assertions compare the live bytes with the immutable artifact endpoint, then
+reload to check recorded captions and metadata-only placeholders. A separately
+selected text-only session refuses without claiming that no vision model exists.
+A test-only Node launcher confines sidecar sockets to the owned provider; the
+browser refuses requests outside its owned server. All model replies are scripted
+transport probes, never evidence of visual understanding. Evidence and fixture
+cleanup records remain in the Playwright output directory.
+
 ## Three things that are easy to get wrong here
 
 **The token.** `open()` loads `#t=<token>` first and then navigates to the §4.5

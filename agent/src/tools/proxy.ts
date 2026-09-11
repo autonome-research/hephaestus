@@ -20,6 +20,7 @@
 // (e.g. export nested_sheet -> capability_not_available) are passed THROUGH to
 // the model as a discriminated tool result rather than failing closed.
 
+import { IMAGE_IDENTITY_FIELDS, inlineRenderRefs, readImageIdentity, renderRef } from "../image-identity.js";
 import { Value } from "@sinclair/typebox/value";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import type { JsonValue } from "../framing.js";
@@ -287,10 +288,8 @@ export function checkConditionals(paramsSchema: SchemaNode, value: unknown): boo
  * model is text-only. Returns `undefined` when the result carries no images or
  * the model can read them (the overwhelmingly common path).
  *
- * Stage 2 has no vision-model fallback wired: with a text-only active model and
- * no configured image model the refusal IS the outcome, and it is discriminated
- * so a client can branch on it. Routing to a configured vision model would land
- * here as an alternative branch.
+ * This layer knows the admitted model's capability, not the configured model
+ * inventory. No automatic routing or visual review is inferred.
  */
 function imageCapabilityRefusal(
   result: JsonValue,
@@ -304,8 +303,9 @@ function imageCapabilityRefusal(
     status: "capability_error",
     code: "image_model_required",
     message:
-      "the active model cannot read image blocks and no vision model is configured; " +
-      "the renders are on disk and readable by artifact ref",
+      "the admitted model is text-only; automatic routing to an image-capable model is unavailable. " +
+      "These renders were not visually reviewed. Select an available image-capable model " +
+      "explicitly for a new request; render artifact refs are retained.",
   };
   if (typeof obj.source_artifact_ref === "string") {
     refusal.source_artifact_ref = obj.source_artifact_ref;
@@ -388,7 +388,7 @@ export class ToolProxy {
     if (refusal !== undefined) return this.render(toolName, refusal);
 
     // 7. Render.
-    return this.render(toolName, result);
+    return this.render(toolName, result, args);
   }
 
   /**
@@ -510,7 +510,7 @@ export class ToolProxy {
     throw err;
   }
 
-  private render(toolName: string, result: JsonValue): ProxyToolResult {
+  private render(toolName: string, result: JsonValue, args?: { [k: string]: JsonValue }): ProxyToolResult {
     const images: { type: "image"; data: string; mimeType: string }[] = [];
     let renderable: JsonValue = result;
     let capability: string | undefined;
@@ -521,7 +521,7 @@ export class ToolProxy {
         capability = obj.code;
       }
       if (Array.isArray(obj.images)) {
-        const extracted = this.extractImages(toolName, obj.images);
+        const extracted = this.extractImages(toolName, obj.images, obj, args);
         images.push(...extracted.images);
         // Strip base64 from the text rendering; keep lightweight descriptors so
         // the model still sees that images were returned (artifact refs remain).
@@ -540,6 +540,8 @@ export class ToolProxy {
   private extractImages(
     toolName: string,
     raw: JsonValue[],
+    result: { [k: string]: JsonValue },
+    args?: { [k: string]: JsonValue },
   ): {
     images: { type: "image"; data: string; mimeType: string }[];
     descriptors: JsonValue[];
@@ -553,7 +555,8 @@ export class ToolProxy {
     const images: { type: "image"; data: string; mimeType: string }[] = [];
     const descriptors: JsonValue[] = [];
     let totalBytes = 0;
-    for (const entry of raw) {
+    let totalPixels = 0;
+    for (const [index, entry] of raw.entries()) {
       if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
         throw new ProxyResultError("invalid_image", `${toolName} image entry is not an object`);
       }
@@ -566,6 +569,7 @@ export class ToolProxy {
       let buffer: Buffer;
       try {
         buffer = Buffer.from(data, "base64");
+        if (buffer.toString("base64") !== data) throw new Error("noncanonical base64");
       } catch {
         throw new ProxyResultError("invalid_image", `${toolName} image is not valid base64`);
       }
@@ -575,6 +579,37 @@ export class ToolProxy {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         throw new ProxyResultError("invalid_image", `${toolName} image rejected: ${message}`);
+      }
+      if (mime !== `image/${dims.kind}`) {
+        throw new ProxyResultError("invalid_image", `${toolName} image MIME/header mismatch`);
+      }
+      totalPixels += dims.width * dims.height;
+      if (totalPixels > LIMITS.image.max_total_pixels) {
+        throw new ProxyResultError("invalid_image", `${toolName} images exceed aggregate pixel budget`);
+      }
+      const metadata: { [k: string]: JsonValue } = {};
+      const hasIdentity = IMAGE_IDENTITY_FIELDS.some(key => key in img);
+      if (hasIdentity) {
+        // Modern descriptors must carry the full tuple. Older Python descriptors
+        // have view/channel/render only; retain those facts without inventing part.
+        const modern = "part" in img || "source_artifact_ref" in img;
+        const views = Array.isArray(args?.views) ? args.views : ["iso"];
+        if (modern && (!readImageIdentity(img) || img.part !== args?.name || img.source_artifact_ref !== result.source_artifact_ref || img.view !== views[index] || img.channel !== (args?.channel ?? "rgb") || views.length !== raw.length)) {
+          throw new ProxyResultError("image_identity_mismatch", `${toolName} incomplete or mismatched image identity`);
+        }
+        const refs = inlineRenderRefs(result, raw.length);
+        if (refs === undefined || refs[index] !== img.render_artifact_ref || img.render_artifact_ref !== renderRef(buffer)) {
+          throw new ProxyResultError("image_identity_mismatch", `${toolName} image bytes/ref/order mismatch`);
+        }
+        for (const key of IMAGE_IDENTITY_FIELDS) {
+          if (key in img) {
+            const field = img[key];
+            if (typeof field !== "string" || field.length === 0 || field.length > 256 || [...field].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) {
+              throw new ProxyResultError("image_identity_mismatch", `${toolName} invalid identity field`);
+            }
+            metadata[key] = field;
+          }
+        }
       }
       // J-http-limits-9: the AGGREGATE binary budget, accumulated across the
       // result's images. The per-image cap is checked inside
@@ -589,6 +624,7 @@ export class ToolProxy {
       }
       images.push({ type: "image", data, mimeType: mime });
       descriptors.push({
+        ...metadata,
         mime_type: mime,
         bytes: buffer.length,
         width: dims.width,

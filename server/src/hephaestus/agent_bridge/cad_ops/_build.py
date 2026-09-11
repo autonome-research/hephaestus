@@ -21,6 +21,7 @@ child consumes.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import uuid
 from collections.abc import Mapping, Sequence
@@ -37,7 +38,13 @@ from opstore.types import JSONValue
 
 from opstore import LeaseHeldError
 
-from ..limits import MAX_IMAGES_PER_RESULT, LimitError, enforce_binary_budget, parse_image_header
+from ..limits import (
+    MAX_IMAGES_PER_RESULT,
+    MAX_TOTAL_PIXELS,
+    LimitError,
+    enforce_binary_budget,
+    parse_image_header,
+)
 from ._base import CadOpError, CadOpsState, json_map
 from ._critique import (
     critique_block,
@@ -386,15 +393,40 @@ class BuildOps(CadOpsState):
         except LimitError as exc:
             raise CadOpError(exc.code, exc.message) from exc
         images: list[dict[str, Any]] = []
+        expected_refs: list[str] = []
+        for index, image in enumerate(result.images):
+            expected_refs.append(image.render_ref)
+            if result.selection_bundles is not None:
+                if len(result.selection_bundles) != len(result.images):
+                    raise CadOpError("image_identity_mismatch", "render bundle count mismatch")
+                bundle = result.selection_bundles[index]
+                if bundle.view != image.view:
+                    raise CadOpError("image_identity_mismatch", "render bundle view mismatch")
+                expected_refs.extend(
+                    (bundle.pass_refs.solid, bundle.pass_refs.face, bundle.pass_refs.edge)
+                )
+        if tuple(expected_refs) != result.render_artifact_refs:
+            raise CadOpError("image_identity_mismatch", "render refs do not match image order")
+        total_pixels = 0
         for image in result.images:
             # Bounded header parse BEFORE anything decodes the payload (§5).
-            parse_image_header(image.png)
+            dimensions = parse_image_header(image.png)
+            total_pixels += dimensions.width * dimensions.height
+            if total_pixels > MAX_TOTAL_PIXELS:
+                raise CadOpError("image_too_large", "images exceed aggregate pixel budget")
+            expected_ref = f"artifact:render:sha256:{hashlib.sha256(image.png).hexdigest()}"
+            if image.render_ref != expected_ref:
+                raise CadOpError(
+                    "image_identity_mismatch", "render bytes do not match immutable ref"
+                )
             images.append(
                 {
                     "data": base64.b64encode(image.png).decode("ascii"),
                     "mime_type": "image/png",
+                    "part": name,
                     "view": image.view,
                     "channel": image.channel,
+                    "source_artifact_ref": result.source_artifact_ref,
                     "render_artifact_ref": image.render_ref,
                     "palette_decodable": image.palette_decodable,
                 }

@@ -1152,7 +1152,7 @@ exactly six kinds — `audit`, `text_delta`, `thought`, `tool_call`,
 | Kind | Reconstructible from history? |
 |---|---|
 | `text_delta`, `thought`, `tool_call`, `tool_result`, `audit` | yes |
-| `image` | **metadata only** — `history.ts`:99-101 emits `{mimeType}`; the base64 `data` that `live.ts`:119-132 carries is not in the archived payload (§7.3) |
+| `image` | **metadata only** — MIME plus a complete recorded identity when available; base64 `data` is never returned in the archived payload (§7.3) |
 | `question`, `answer` | **no** — synthetic, minted only into the live run stream around `py.ask_user` (`main.ts`:105-125) |
 | `terminal` | **no** — minted only by the Python pump (`events.py`:264-275) |
 | `progress` | **no** — coalesced, the only `DROPPABLE_KINDS` member, never durable |
@@ -3727,9 +3727,17 @@ historical missing result never grants active-run or answer authority.
   shown inline; an oversized or undecodable payload renders a labelled
   placeholder and never throws (the CLI's precedent). This is §0's deficit
   being closed: the images live in the transcript, not only in
-  `.heph/agent_images/`. **Historical**: the archived payload is `{mimeType}`
-  only (`history.ts`:99-101) — the base64 `data` that `live.ts`:119-132 carries
-  is not retained — so a reopened transcript renders a **labelled metadata
+  `.heph/agent_images/`. **Image identity amendment (2026-09-11):** both live
+  and historical payloads may additionally carry `identity: {part, view,
+  channel, source_artifact_ref, render_artifact_ref}`. It is projected only from
+  the same tool result's complete ordered descriptors. Live normalization checks
+  MIME and byte-hash correlation; history reports recorded metadata, not a fresh
+  artifact validation. Captions show part, view/channel and abbreviated refs,
+  with exact refs available as text titles, never external URLs. Missing, legacy
+  or invalid tuples are explicitly identity-unavailable, never reconstructed from
+  current UI state. Event kinds, sequence numbers and authority are unchanged.
+  **Historical**: base64 `data` is never returned — no historical-byte loading or
+  artifact fetch is introduced — so a reopened transcript renders a **labelled metadata
   placeholder** stating the mime type and that the bytes are not retained in
   history. Rendering nothing there would read as "the agent produced no image",
   which is false; carrying the bytes into Pi entries would be engine new work
