@@ -1384,9 +1384,13 @@ export const copy = {
     unknownKind: "This event is outside the published event vocabulary and is shown unread.",
     image: {
       alt: "Image produced by the agent",
-      /** §7.3: history keeps `{mimeType}`; the bytes are not retained. */
+      identityUnavailable: "Image identity unavailable (legacy or missing metadata).",
+      requestedPart: "Requested part",
+      source: "Source",
+      render: "Render",
+      /** §7.3: history keeps metadata, never image bytes. */
       historicalPlaceholder:
-        "An image was produced here. A reopened transcript keeps its type only — the bytes are not retained — so the image itself cannot be shown.",
+        "An image was produced here. A reopened transcript keeps metadata only — the bytes are not retained — so the image itself cannot be shown.",
       undecodable:
         "This image could not be decoded and is described rather than shown, so the transcript does not read as though no image was produced.",
       mimeType: "Type",

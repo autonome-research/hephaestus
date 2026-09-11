@@ -14,6 +14,7 @@
 // Payload keys deliberately mirror `history.ts` so a client can render a live
 // stream and a `history.page` replay with one renderer.
 
+import { imageIdentities } from "../image-identity.js";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { HephaestusEvent } from "../events.js";
 import type { JsonValue } from "../framing.js";
@@ -116,9 +117,9 @@ export function normalizeLiveEvent(
         { toolName: event.toolName, text, isError: event.isError },
         event.toolCallId,
       );
-      for (const item of content) {
-        if (item.type !== "image") continue;
-        const image = item as ToolResultImage;
+      const imageBlocks = content.filter((item): item is ToolResultImage => item.type === "image");
+      const identities = imageIdentities(text, imageBlocks, true);
+      for (const [index, image] of imageBlocks.entries()) {
         const data = typeof image.data === "string" ? image.data : "";
         emit(
           "image",
@@ -126,6 +127,7 @@ export function normalizeLiveEvent(
             mimeType: image.mimeType ?? "image/png",
             bytes: Buffer.byteLength(data, "base64"),
             data,
+            ...(identities[index] ? { identity: identities[index] } : {}),
           },
           event.toolCallId,
         );
