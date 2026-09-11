@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { expect, test, type Page, type Route } from "@playwright/test";
 import { execution, input, OTHER, RUN, setup, SID, send, status, stop } from "./fixture";
+import type { CancelDocument } from "../../src/api/sessions";
 const question = { question_id: "question-1", question: "Which stock?", options: ["Keep 5.5 mm", "Use 6 mm stock"], allow_free_text: false };
 async function select(page: Page, sid: string) {
   await page.locator("[data-session-switch]").click();
@@ -93,7 +94,9 @@ for (const outcome of ["cancelled", "failed"]) test(`delayed Stop never wins ove
   await reopen(page);
   await expect(status(page)).toHaveAttribute("data-current-turn", "Stop requested");
   await expect.poll(() => cancel !== null).toBe(true);
-  await cancel!.fulfill({ json: { status: "ok", run_id: RUN, abandoned_questions: 0 } });
+  // Match the real acknowledgement's required session binding; assertions and
+  // delivery timing remain unchanged (malformed receipts must stay uncertain).
+  await cancel!.fulfill({ json: { status: "ok", session_id: SID, run_id: RUN, abandoned_questions: 0 } satisfies CancelDocument });
   await expect(status(page)).toHaveAttribute("data-current-turn", "Stop requested");
   await expect(send(page)).toHaveAttribute("aria-disabled", "true");
   const error = '400: {"error":{"message":"The comparison was refused. No design changed.","token":"private-value","url":"https://private.invalid"}}';

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { readFileSync } from "node:fs";
 import { expect, type Page, type Route, type WebSocketRoute } from "@playwright/test";
-import type { CreatedSessionDocument, ExecutionSnapshot, HistoryUserPrompt, SessionModelState } from "../../src/api/sessions";
+import type { CancelDocument, CreatedSessionDocument, ExecutionSnapshot, HistoryUserPrompt, SessionModelState } from "../../src/api/sessions";
 import { models, modelState } from "../../test/fixtures/models";
 
 export const SID = "synthetic-session";
@@ -108,7 +108,10 @@ export async function setup(page: Page, initial = execution()) {
         control.pending = route; return;
       }
       if (path.endsWith("/cancel")) {
-        await route.fulfill({ json: { status: "ok", run_id: path.split("/")[2], questions_cancelled: 0 } }); return;
+        // Required fields match the shipped Stop receipt, not the old invented
+        // questions_cancelled spelling; keep the model script/budget untouched.
+        await route.fulfill({ json: { status: "ok", run_id: path.split("/")[2]!, session_id: SID,
+          abandoned_questions: 0 } satisfies CancelDocument }); return;
       }
       await route.fulfill({ status: 409, json: { status: "error", reason: "fixture_unexpected_mutation", message: "Unexpected synthetic mutation" } }); return;
     }

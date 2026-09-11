@@ -383,8 +383,10 @@ describe("the composer is usable, and says how it is used", () => {
     expect(composer).toMatch(/\{cancellable \? \(/);
     expect(composer).toContain('data-cancel-state={cancellable ? "available" : "unavailable"}');
     expect(composer).toMatch(/cancelWhy !== null \? \{ title: cancelWhy \}/);
-    // Only an acknowledged Stop request dims the known-run control, with a reason.
-    expect(composer).toMatch(/turn\.stopRequested \? \{ disabled: true as const, reason: copy\.composer\.stopRequested \}/);
+    // Pending/acknowledged Stop stays disabled; only fresh same-run authority
+    // after delivery failure permits the explicit retry (stopRecovery.test.ts).
+    expect(composer).toMatch(/turn\.stopRequested && !turn\.canRetryStop \? \{ disabled: true as const, reason: copy\.composer\.stopRequested \}/);
+    expect(composer).toMatch(/turn\.canRetryStop \? copy\.composer\.retryStop : copy\.composer\.cancel/);
   });
 
   it("makes a run_in_flight refusal cancellable and typable, so it has an exit", () => {

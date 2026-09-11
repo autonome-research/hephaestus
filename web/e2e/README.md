@@ -129,6 +129,29 @@ narrow-width expand affordance is used, and no token remains in the captured
 URL or visible page text. The existing RPC wiring regression separately checks
 that the selected model's image capability reaches the next tool/model request.
 
+## Stop delivery recovery
+
+`pnpm exec playwright test e2e/stop-recovery.spec.ts` starts a separate owned
+packaged world through `recoveryWorld.ts`, using the existing **unchanged**
+16-request fake-provider script. It aborts a Stop before forwarding, explicitly
+retries only after same-run reconciliation, reloads an undelivered waiting
+question, withholds a delivered Stop response until the real terminal has
+removed the control, and holds a browser-submitted prompt response across its
+run's terminal. Server execution/question readback remains real; browser
+traffic outside that fixture origin is refused. Screenshots and sanitized
+run/terminal identity attachments are retained in the test output.
+
+A fetch failure cannot distinguish a dropped request from a lost response: the
+UI says delivery is uncertain, never that cancellation succeeded. Retry is an
+explicit same-run action after a fresh authoritative read, not a timer. An
+acknowledgement means cleanup is pending, not that the run has terminated.
+Terminal events clear Stop immediately without granting send/model admission;
+those still require reconciled execution authority. Delivery intent is
+session-owned in memory, not durable: reload must read authority again and may
+offer ordinary Stop for the active run, never invent an earlier receipt or
+replay a write. Permanent store/component regressions are
+`test/stream/stopRecovery.test.ts` and `test/stream/composer.test.tsx`.
+
 ## Three things that are easy to get wrong here
 
 **The token.** `open()` loads `#t=<token>` first and then navigates to the §4.5
