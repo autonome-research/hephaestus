@@ -336,7 +336,6 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   const [modelDetailsContainer, setModelDetailsContainer] = useState<HTMLDivElement | null>(null);
   const [preview, setPreview] = useState<ContextDocument | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
-  const [cancelNote, setCancelNote] = useState<string | null>(null);
   const [attaching, setAttaching] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);
   const [attachError, setAttachError] = useState<string | null>(null);
@@ -547,7 +546,6 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     // `no_session` is typable: Send creates the appropriate session (part if
     // one is selected, else a project/orchestrator session) and then posts.
     const opening = text;
-    setCancelNote(null);
     props.onForgetLiveRun?.();
     void client.invalidateQueries({ queryKey: ["sessions"] });
 
@@ -645,20 +643,19 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     // It is never terminal evidence, and cannot mark a successor run stopped.
     const target = turn.runId;
     if (target === null || sessionId === null) return;
-    const latest = currentTurn(conversationStore.get(sessionId));
-    if (latest.runId !== target || latest.stopRequested) return;
-    conversationStore.stop(sessionId, target);
+    const attempt = conversationStore.stop(sessionId, target);
+    if (attempt === null) return;
     void cancelRun(target)
       .then((document) => {
-        if (sessionId === null || document.run_id !== target) return;
-        conversationStore.stop(sessionId, target);
-        setCancelNote(null);
+        if (document.run_id !== target || document.status !== "ok"
+          || (document.session_id !== null && document.session_id !== sessionId)) throw new Error("Invalid Stop acknowledgement");
+        conversationStore.stopResult(sessionId, attempt, "acknowledged");
         void client.invalidateQueries({ queryKey: ["sessions"] });
       })
       .catch(() => {
-        // A cancel that does not come back changes nothing this client can
-        // report honestly; the run's own terminal is what settles it.
-        setCancelNote(copy.composer.stopUncertain);
+        // Fetch failure cannot distinguish a dropped request from a lost
+        // response. Only a fresh same-run read may enable an explicit retry.
+        conversationStore.stopResult(sessionId, attempt, "uncertain");
         void client.invalidateQueries({ queryKey: ["sessions"] });
       });
   }, [turn.runId, sessionId, client]);
@@ -841,8 +838,8 @@ export function Composer(props: ComposerProps): React.JSX.Element {
         <span>{turn.status}</span>{" "}
         {cancellable ? (
           <Button variant="secondary" onClick={cancelTurn} data-composer-cancel=""
-            {...(turn.stopRequested ? { disabled: true as const, reason: copy.composer.stopRequested } : {})}>
-            {copy.composer.cancel}
+            {...(turn.stopRequested && !turn.canRetryStop ? { disabled: true as const, reason: copy.composer.stopRequested } : {})}>
+            {turn.canRetryStop ? copy.composer.retryStop : copy.composer.cancel}
           </Button>
         ) : null}
       </div> : null}
@@ -959,9 +956,9 @@ export function Composer(props: ComposerProps): React.JSX.Element {
         </div>
       ) : null}
 
-      {cancelNote !== null ? (
+      {turn.stopNote != null ? (
         <p className={styles["note"]} data-cancel-note="">
-          {cancelNote}
+          {turn.stopNote}
         </p>
       ) : null}
 
