@@ -12,7 +12,7 @@ function requests(): { index: number; model: string }[] {
     .filter(Boolean).map(line => JSON.parse(line) as { index: number; model: string });
 }
 
-test("actual picker preserves the session/draft and changes the next provider HTTP request; busy selection refuses", async ({ page }) => {
+test("actual picker preserves the session/draft and changes the next provider HTTP request; busy selection refuses", async ({ page }, info) => {
   const catalog = await api<ModelsDocument>("/providers/models");
   const options = catalog.providers.flatMap(p => p.models);
   const text = options.find(m => m.available && m.input?.length === 1)!;
@@ -64,7 +64,9 @@ test("actual picker preserves the session/draft and changes the next provider HT
   expect(requests()).toHaveLength(beforeSwitch);
   for (const id of historyBefore) await expect(page.locator(`[data-event-id="${id}"]`)).toHaveCount(1);
 
-  const shots = "/tmp/hephaestus-model-selection-validation";
+  // Per-test output follows the runner's unique evidence root. Never overwrite
+  // historical screenshots from another checkout or validation attempt.
+  const shots = info.outputPath("model-selection");
   mkdirSync(shots, { recursive: true });
   for (const width of [843, 1440]) {
     await page.setViewportSize({ width, height: 1000 });

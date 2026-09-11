@@ -9,7 +9,7 @@ import { WorkspaceError } from "../api/client";
 import type { ModelRef, ModelsDocument, ModelOption, ModelRevision } from "../api/providers";
 import { sameModel } from "./composerChrome";
 import { copy } from "../copy";
-import type { EventFrame } from "../api/events";
+import { readTerminal, isTerminalState, type EventFrame } from "../api/events";
 import { askContent, ASK_POST_IDLE, type AskPost, type AskRowLike } from "./ask";
 import { panelRows, type PanelRow } from "./transcript";
 import { outcomeLabel, readableReason } from "./outcome";
@@ -29,6 +29,12 @@ export interface SendAttempt {
   readonly sessionId?: string | null;
   readonly modelRevision?: ModelRevision;
   readonly context?: ContextEnvelope;
+}
+export interface StopDelivery {
+  readonly id: number;
+  readonly runId: string;
+  readonly epoch: string;
+  readonly phase: "sending" | "uncertain" | "acknowledged";
 }
 export interface Conversation {
   readonly draft: Draft;
@@ -53,6 +59,7 @@ export interface Conversation {
   readonly execution: ExecutionSnapshot | null;
   readonly checking: boolean;
   readonly stopRequested: string | null;
+  readonly stopDelivery: StopDelivery | null;
   readonly history: HistoryProgress;
   readonly live: LiveState;
   /** Local evidence barrier: reads begun before a write cannot settle it. */
@@ -67,12 +74,14 @@ export interface CurrentTurn {
   readonly canAnswer: boolean;
   readonly terminalRunId: string | null;
   readonly stopRequested: boolean;
+  readonly canRetryStop?: boolean;
+  readonly stopNote?: string | null;
 }
 const EMPTY: Conversation = {
   draft: { text: "", revision: 0 }, contextDropped: new Set(), contextAdded: new Set(),
   answers: {}, recovered: [], liveQuestions: null, recoveryChecking: false, closedRuns: new Set(),
   attempt: null, execution: null,
-  checking: true, stopRequested: null, history: emptyHistory(),
+  checking: true, stopRequested: null, stopDelivery: null, history: emptyHistory(),
   live: emptyLive("reconnecting"), barrier: 0,
   model: null, modelChecking: true, modelPending: false, modelError: null, modelBarrier: 0,
   proposal: null, proposalInitialized: false, proposalIsDefault: true,
@@ -114,13 +123,20 @@ export function currentTurn(c: Conversation, selected = true): CurrentTurn {
   const e = c.execution;
   const active = e?.active_run_id ?? null;
   const terminal = e?.terminal;
-  const uncertain = c.checking || e === null || c.attempt?.phase === "unknown";
+  const executionUncertain = c.checking || e === null;
+  const uncertain = executionUncertain || c.attempt?.phase === "unknown";
   let status: CurrentTurn["status"] = null;
   let reason: string | null = null;
   const pending = c.attempt?.phase === "sending";
   const newTerminal = terminal && terminal.run_id === e?.run_id
     && (!pending || terminal.run_id !== c.attempt?.baselineRunId);
-  if (selected && uncertain) {
+  // A known terminal settles the outcome, not project admission. In particular,
+  // a terminal frame must not leave Stop visible while its read is in flight.
+  if (newTerminal && active === null && c.attempt?.phase !== "unknown") {
+    status = outcomeLabel(terminal.state) as CurrentTurn["status"];
+    reason = readableReason(terminal.payload);
+  }
+  else if (selected && uncertain) {
     status = pending && active === null ? "Sending request" : "Checking";
     if (c.recoveryChecking && c.recovered.some(q => q.run_id === active)) reason = copy.stream.ask.recoveryChecking;
   }
@@ -154,6 +170,12 @@ export function currentTurn(c: Conversation, selected = true): CurrentTurn {
       }
     }
   }
+  const delivery = active !== null && c.stopDelivery?.runId === active && c.stopDelivery.epoch === e?.epoch
+    ? c.stopDelivery : null;
+  // Cancel targets the reconciled run, independently of the prompt's receipt.
+  // Keep that receipt uncertain for Send/Answer; it cannot veto same-run Stop.
+  const canRetryStop = delivery?.phase === "uncertain" && !executionUncertain && !c.closedRuns.has(active ?? "");
+  if (delivery?.phase === "uncertain") status = "Checking";
   const blocked = c.attempt?.phase === "sending" || c.attempt?.phase === "unknown";
   return {
     status, reason, questionId, runId: active,
@@ -164,6 +186,9 @@ export function currentTurn(c: Conversation, selected = true): CurrentTurn {
     canAnswer: !uncertain && !c.recoveryChecking && active !== null && !c.closedRuns.has(active) && c.stopRequested !== active,
     terminalRunId: terminal?.run_id === e?.run_id ? terminal?.run_id ?? null : null,
     stopRequested: active !== null && c.stopRequested === active,
+    canRetryStop,
+    stopNote: delivery?.phase === "uncertain" ? copy.composer.stopUncertain
+      : delivery?.phase === "acknowledged" ? copy.composer.stopAcknowledged : null,
   };
 }
 
@@ -234,7 +259,7 @@ export function createConversationStore() {
       const attempt: SendAttempt = { id: ++attemptId, submitted: c.draft, phase: "sending",
         baselineRunId: c.execution?.run_id ?? null, sessionId: sid,
         ...(reviewedModelRevision ? { modelRevision: reviewedModelRevision } : c.model ? { modelRevision: c.model.revision } : {}), ...(context ? { context } : {}) };
-      update(sid, c => ({ ...c, attempt, checking: true, barrier: ++clock, stopRequested: null }));
+      update(sid, c => ({ ...c, attempt, checking: true, barrier: ++clock, stopRequested: null, stopDelivery: null }));
       return attempt;
     },
     catalog(document: ModelsDocument) {
@@ -272,7 +297,7 @@ export function createConversationStore() {
           if (!recovered.some(old => old.epoch === execution.epoch && old.run_id === q.run_id && old.question_id === q.question_id)) recovered.push({ ...q, epoch: execution.epoch });
         }
         return { ...c, model, modelChecking: false, modelBarrier: ticket,
-          ...(acceptExecution ? { execution, checking: false, barrier: ticket, recovered,
+          ...(acceptExecution ? { execution, ...reconcileStop(c, execution), checking: false, barrier: ticket, recovered,
             liveQuestions: questions ? { ...questions, epoch: execution.epoch } : null,
             recoveryChecking: questions?.unavailable_reason != null,
             closedRuns: execution.terminal ? new Set([...c.closedRuns, execution.terminal.run_id]) : c.closedRuns,
@@ -305,7 +330,7 @@ export function createConversationStore() {
         const prior = c.execution;
         if (prior?.epoch === execution.epoch && prior.version > execution.version) return c;
         if (execution.active_run_id && c.closedRuns.has(execution.active_run_id)) return c;
-        return { ...c, execution, checking: false, barrier: ticket,
+        return { ...c, execution, ...reconcileStop(c, execution), checking: false, barrier: ticket,
           closedRuns: execution.terminal ? new Set([...c.closedRuns, execution.terminal.run_id]) : c.closedRuns };
       });
     },
@@ -324,7 +349,8 @@ export function createConversationStore() {
         if (e?.terminal?.run_id === document.run_id) return c;
         const state = document.terminal?.["state"] ?? document.run_status;
         if (typeof state !== "string" || !["completed", "cancelled", "failed", "interrupted"].includes(state)) return c;
-        return { ...c, checking: false, execution: {
+        return { ...c, checking: false, stopRequested: null, stopDelivery: null,
+          closedRuns: new Set([...c.closedRuns, document.run_id]), execution: {
           epoch: e?.epoch ?? "response", version: e?.version ?? 0,
           run_id: document.run_id, active_run_id: null, admission_available: true,
           terminal: { run_id: document.run_id, terminal_id: String(document.terminal?.["terminal_id"] ?? ""),
@@ -337,7 +363,15 @@ export function createConversationStore() {
       update(frame.session_id, c => {
         const changed = (frame.kind === "terminal" && frame.run_id === c.execution?.run_id)
           || (frame.kind !== "terminal" && frame.run_id !== c.execution?.run_id && frame.run_id !== c.live.runId);
+        const payload = frame.kind === "terminal" ? readTerminal(frame.payload) : null;
+        const terminal = payload !== null && isTerminalState(payload.state) && frame.run_id === c.execution?.run_id
+          && c.execution.terminal === null;
         return { ...c, live: receive(c.live, frame), checking: c.checking || changed,
+          ...(terminal ? { stopRequested: null, stopDelivery: null, execution: { ...c.execution!,
+            active_run_id: null, admission_available: false,
+            terminal: { run_id: frame.run_id, terminal_id: payload.terminalId ?? "",
+              state: payload.state!, payload: frame.payload },
+          } } : {}),
           // Accepted answers and terminals are stronger than pending read snapshots.
           closedRuns: frame.kind === "terminal" ? new Set([...c.closedRuns, frame.run_id]) : c.closedRuns,
           ...(frame.kind === "question" ? { liveQuestions: null } : {}),
@@ -348,11 +382,28 @@ export function createConversationStore() {
       update(sid, c => ({ ...c, live: disconnected(c.live, status), checking: true, recoveryChecking: true, modelChecking: true, barrier: ++clock }));
     },
     gap(sid: string) { update(sid, c => ({ ...c, live: resync(c.live), checking: true })); },
-    stop(sid: string, runId: string) {
-      update(sid, c => c.execution?.active_run_id !== runId ? c : { ...c, stopRequested: runId, barrier: ++clock });
+    stop(sid: string, runId: string): StopDelivery | null {
+      const c = get(sid);
+      const turn = currentTurn(c);
+      if (c.execution === null || turn.runId !== runId || c.closedRuns.has(runId)
+        || (turn.stopRequested && !turn.canRetryStop)) return null;
+      const delivery: StopDelivery = { id: ++clock, runId, epoch: c.execution.epoch, phase: "sending" };
+      update(sid, c => ({ ...c, stopRequested: runId, stopDelivery: delivery, barrier: clock }));
+      return delivery;
+    },
+    stopResult(sid: string, attempt: StopDelivery, phase: "uncertain" | "acknowledged") {
+      update(sid, c => c.stopDelivery?.id !== attempt.id || c.execution?.active_run_id !== attempt.runId
+        || c.execution.epoch !== attempt.epoch || c.closedRuns.has(attempt.runId) ? c
+        : { ...c, stopDelivery: { ...attempt, phase }, checking: phase === "uncertain" || c.checking, barrier: ++clock });
     },
     needsRefresh() { return [...records.values()].some(c => c.checking || c.execution?.active_run_id || c.attempt?.phase === "sending" || c.attempt?.phase === "unknown"); },
   };
+}
+/** A read may retain intent only for the very same authoritative active run. */
+function reconcileStop(c: Conversation, execution: ExecutionSnapshot) {
+  return c.stopDelivery?.runId === execution.active_run_id && c.stopDelivery.epoch === execution.epoch
+    && !c.closedRuns.has(c.stopDelivery.runId)
+    ? {} : { stopRequested: null, stopDelivery: null };
 }
 export function canSelectModel(c: Conversation): boolean {
   return !c.modelPending && !c.modelChecking && !c.checking && c.model !== null

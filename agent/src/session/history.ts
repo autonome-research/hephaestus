@@ -16,6 +16,7 @@
 // additive: no event's `seq`, page boundary or payload moves, which is what
 // keeps the G4.11 event archive green without a re-baseline.
 
+import { imageIdentities } from "../image-identity.js";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { HephaestusEvent, EventKind } from "../events.js";
 import type { JsonValue } from "../framing.js";
@@ -473,8 +474,10 @@ function walkEntries(entries: readonly SessionEntry[], runId: string): Walk {
         text,
         isError,
       });
-      for (const item of message.content) {
-        if (item.type === "image") emit("image", { mimeType: item.mimeType }, message.toolCallId);
+      const images = message.content.filter((item): item is PiImageContent => item.type === "image");
+      const identities = imageIdentities(text, images, false);
+      for (const [index, item] of images.entries()) {
+        emit("image", { mimeType: item.mimeType, ...(identities[index] ? { identity: identities[index] } : {}) }, message.toolCallId);
       }
     }
     // user messages: recorded beside the page (`extractUserPrompts`), not here.

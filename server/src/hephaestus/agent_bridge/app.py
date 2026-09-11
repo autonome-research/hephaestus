@@ -426,29 +426,6 @@ def _provider_status_of(result: Any) -> list[dict[str, Any]]:
 #: is what :data:`BridgeRuntime._sequential_lock` is for.
 
 
-def _declares_image_input(spec: ProviderSpec) -> bool:
-    """Does any model in this provider spec declare ``image`` input?
-
-    The shape is ``runtime.configure``'s own (``{"models": [{"input": [...]}]}``
-    — see ``testing/fake_openai.py``'s provider spec and the sidecar's
-    ``session/runtime.ts``), read defensively because a provider config is
-    operator-written JSON: anything that is not the expected shape simply does
-    not count as evidence of a multimodal model.
-    """
-    models = spec.get("models")
-    if not isinstance(models, list):
-        return False
-    for model in cast("list[Any]", models):
-        if not isinstance(model, dict):
-            continue
-        inputs = cast("dict[str, Any]", model).get("input")
-        if isinstance(inputs, list) and any(
-            isinstance(kind, str) and kind == "image" for kind in cast("list[Any]", inputs)
-        ):
-            return True
-    return False
-
-
 class _BridgeSnapshotCaller:
     """``query.snapshot`` over the live sidecar: the ephemeral vision child.
 
@@ -462,13 +439,10 @@ class _BridgeSnapshotCaller:
     request came in on, and a handler occupying the only reader could never have
     been answered. Nothing occupies the reader now.
 
-    Reaching the child is not the same as the child being able to *see*, and
-    :meth:`unavailable` is where the difference is stated: it reports the two
-    conditions that survive — no multimodal model on this runtime, and a sidecar
-    handler that never delivers the prepared renders — instead of the deadlock
-    it used to report. Deleting the deadlock reason without asking what else the
-    method was answering is what made ``query_snapshot`` return the *render's*
-    refusal about an unbuilt part in place of the runtime's own.
+    Reaching the child is not the same as delivering images. The sidecar still
+    drops the prepared renders, so :meth:`unavailable` refuses before rendering.
+    Provider config is not a resolved model catalog: native specs may contain
+    only IDs, so omitted input metadata cannot establish absence of vision.
     """
 
     def __init__(self, sup: Supervisor, providers: Sequence[ProviderSpec] = ()) -> None:
@@ -486,38 +460,13 @@ class _BridgeSnapshotCaller:
         model ``addressing_error: part 'widget' has no current successful build``
         as if the part were the problem.
 
-        The caller-thread restriction this used to report IS gone, and that is a
-        real gain: J-agent-wiring-13 moved ``py.*`` dispatch off the supervisor's
-        single reader thread, so a handler can now call the sidecar. It was
-        never the only reason to refuse. Two remain, and each is checked in the
-        order a reader would ask them:
-
-        1. **No model here can read an image.** The vision child runs on this
-           runtime's configured models (``profiles.ts``'s ``query_snapshot``
-           profile is toolless and single-turn, not separately provisioned), so
-           when no configured model declares ``image`` input there is nothing to
-           ask. This is the same fact ``inspect_part`` reports on the sidecar as
-           ``image_model_required``.
-        2. **The renders do not reach the child.** ``agent/src/main.ts``'s
-           ``query.snapshot`` handler creates the ephemeral session and prompts
-           it with the QUESTION ONLY: the ``image_refs`` this side prepares are
-           accepted on the wire and then dropped (``image_refs`` appears nowhere
-           else in ``agent/src``). A single-turn child that answers a visual
-           question having seen no image does not report a gap — it invents an
-           answer, and the model has no way to tell that apart from a real
-           observation. So the gap is reported here, honestly, instead.
-
-        Condition 2 holds on every runtime today, which is why this method still
-        never returns ``None``; it collapses to condition 1 alone the moment the
-        sidecar delivers the refs it is already handed. Both sentences name the
-        runtime, so the model is told what is missing rather than being told its
-        part is broken.
+        ``agent/src/main.ts``'s ``query.snapshot`` handler prompts the ephemeral
+        session with the question alone, dropping ``image_refs``. That blocker
+        holds regardless of model capability. Do not infer catalog availability
+        from provider-config fields, switch models, or claim a visual review.
+        This must remain a refusal until image delivery and authoritative child
+        capability admission are implemented separately.
         """
-        if not any(_declares_image_input(spec) for spec in self._providers):
-            return (
-                "no multimodal model is configured on this runtime: no provider "
-                "declares a model with image input, so no child could read the renders"
-            )
         return (
             "this runtime has no vision child wired: the sidecar's query.snapshot "
             "prompts an ephemeral single-turn session with the question alone and "

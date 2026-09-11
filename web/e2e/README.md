@@ -124,10 +124,74 @@ Browser reload checks re-adoption; durable sidecar restart is covered by the
 agent tests, not claimed by this browser test.
 
 Closed/open screenshots at 843px and 1440px and sanitized readback/request
-evidence go to `/tmp/hephaestus-model-selection-validation/`. The actual
+evidence go to the test's `model-selection/` directory under Playwright's
+output directory (set `--output` to an owned unique root for validation).
+No shared historical evidence directory is written. The actual
 narrow-width expand affordance is used, and no token remains in the captured
 URL or visible page text. The existing RPC wiring regression separately checks
 that the selected model's image capability reaches the next tool/model request.
+
+## Stop delivery recovery
+
+`pnpm exec playwright test e2e/stop-recovery.spec.ts` starts a separate owned
+packaged world through `recoveryWorld.ts`, using the existing **unchanged**
+16-request fake-provider script. It aborts a Stop before forwarding, explicitly
+retries only after same-run reconciliation, reloads an undelivered waiting
+question, withholds a delivered Stop response until the real terminal has
+removed the control, and holds a browser-submitted prompt response across its
+run's terminal. Server execution/question readback remains real; browser
+traffic outside that fixture origin is refused. Screenshots and sanitized
+run/terminal identity attachments are retained in the test output.
+
+A fetch failure cannot distinguish a dropped request from a lost response: the
+UI says delivery is uncertain, never that cancellation succeeded. Retry is an
+explicit same-run action after a fresh authoritative read, not a timer. An
+acknowledgement means cleanup is pending, not that the run has terminated.
+Terminal events clear Stop immediately without granting send/model admission;
+those still require reconciled execution authority. Delivery intent is
+session-owned in memory, not durable: reload must read authority again and may
+offer ordinary Stop for the active run, never invent an earlier receipt or
+replay a write. Permanent store/component regressions are
+`test/stream/stopRecovery.test.ts` and `test/stream/composer.test.tsx`.
+`stop-unknown-receipt.spec.ts` owns another unchanged-script world: a lost
+browser prompt response plus a dropped Stop must permit explicit same-run retry
+after fresh authority, without enabling Send/Answer or duplicating the prompt.
+`test/stream/stopUnknownReceipt.test.ts` also pins the stale-read and successor
+guards for that combination.
+
+## Image identity (owned packaged world)
+
+`pnpm exec playwright test -c playwright.images.config.ts` runs the focused
+`image-identity.spec.ts` cases; the full packaged suite also includes them. Each owns
+its own disposable workspace, provider script and server, so it consumes no
+shared G4 script slots. Python renders two distinct views; provider observations
+validate decoded PNG/MIME/dimensions and hash-to-render-ref identity. Browser
+assertions compare the live bytes with the immutable artifact endpoint, then
+reload to check recorded captions and metadata-only placeholders. A separately
+selected text-only session refuses without claiming that no vision model exists.
+A test-only Node launcher confines sidecar sockets to the owned provider; the
+browser refuses requests outside its owned server. All model replies are scripted
+transport probes, never evidence of visual understanding. Evidence and fixture
+cleanup records remain in the Playwright output directory.
+
+The Sol case actually selects native `openai-codex/gpt-5.6-sol` from pinned Pi
+0.80.10. Production native-provider configuration is unchanged: the owned test
+launcher redirects only the exact Codex endpoint URL to loopback, without
+altering model metadata, request bodies, image blocks or serialization. The fake
+endpoint refuses WebSocket upgrade, then observes the same SDK execution's HTTP
+SSE fallback (including zstd request decompression). It verifies the ordered
+`function_call_output` text descriptors and `input_image` data URIs against live
+browser and immutable-artifact bytes. There are exactly two Sol HTTP requests
+per world; a separate missing-build world verifies ordinary tool failure and
+zero images. These are transport/identity checks, **not Sol vision reasoning**.
+
+`agent/test/sol-image-refusal.test.ts` runs real pinned Pi/ToolProxy loops with
+synthetic malformed base64, hash mismatch, MIME mismatch, oversized dimensions,
+and excess image counts: every continuation carries zero `input_image` blocks.
+Its synthetic false-capability seam supplements, rather than substitutes for,
+the browser's actual text-only admission test with Sol available. Network guard
+units reject external HTTP, WebSocket, direct socket and unrelated loopback
+attempts before connection. Existing G4 fake scripts and budgets are unchanged.
 
 ## Three things that are easy to get wrong here
 

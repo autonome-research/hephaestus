@@ -512,6 +512,29 @@ inspect_part(name: str, views: list[str] = ["iso", "+X"],  # maxItems=4
      | {status: "capability_error", code: "image_model_required",
         source_artifact_ref, render_artifact_refs, message}
 ```
+**Image identity amendment (2026-09-11).** The existing open `images` array
+carries per-inline-image `part`, `view`, `channel`, `source_artifact_ref`, and
+`render_artifact_ref` in Python bridge responses. The sidecar retains these in
+bounded model-visible JSON descriptors beside MIME, byte count and dimensions;
+Pi image blocks themselves remain the pinned SDK's `{type, data, mimeType}`.
+`part` is the requested part operand/context, **not proof of ownership** of an
+explicit source artifact. By-ref inspection deliberately supports an immutable
+build/checkpoint even when it is not that part's current build; the caption must
+label the operand as requested. The source ref is the resolved source, not a
+guessed current build. Supplied
+render refs must equal SHA-256 of the actual decoded bytes and agree with the
+ordered retention list (including selection-mask artifact-only passes below).
+Modern tuples must be complete and match the invocation's part/view/channel.
+Malformed, mismatched, MIME/header-inconsistent or over-budget image results
+fail closed. Legacy descriptors without identity remain identity-unavailable;
+missing fields are never filled from viewport state or adjacent tool calls.
+
+A text-only admitted model receives `image_model_required` with zero image
+blocks. This says only that the admitted model cannot read images and automatic
+routing is unavailable; it must not claim that no other image-capable model is
+configured. Model selection and any new request remain explicit operator acts.
+This refusal is not visual review and does not implement `query_snapshot`.
+
 Renders the current build by default. `artifact_ref` renders an exact immutable
 build/checkpoint returned by `build_part`; canonical JSON Schema makes it
 mutually exclusive with `last_good=true`. `last_good=true` is a convenience

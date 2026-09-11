@@ -21,7 +21,9 @@ child consumes.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
+import re
 import uuid
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -31,13 +33,25 @@ from hephaestus.core.addressing import PART_SELECTOR, Resolution
 from hephaestus.core.executor.runner import UnpublishedBuild
 from hephaestus.core.lint import checks_thresholds
 from hephaestus.core.project_store.store import blob_hash_of_ref
+from hephaestus.core.render.bundle import (
+    RENDER_KIND,
+    SELECTION_BUNDLE_KIND,
+    SELECTION_PASS_KIND,
+    SELECTION_PREVIEW_KIND,
+)
 from hephaestus.core.render.inspect import inspect_part, prepare_render_bundle
 from hephaestus.core.types import BuildFreshness, BuildResult, Metrics
 from opstore.types import JSONValue
 
 from opstore import LeaseHeldError
 
-from ..limits import MAX_IMAGES_PER_RESULT, LimitError, enforce_binary_budget, parse_image_header
+from ..limits import (
+    MAX_IMAGES_PER_RESULT,
+    MAX_TOTAL_PIXELS,
+    LimitError,
+    enforce_binary_budget,
+    parse_image_header,
+)
 from ._base import CadOpError, CadOpsState, json_map
 from ._critique import (
     critique_block,
@@ -385,16 +399,68 @@ class BuildOps(CadOpsState):
             enforce_binary_budget(sum(len(image.png) for image in result.images), field="images")
         except LimitError as exc:
             raise CadOpError(exc.code, exc.message) from exc
+        # Inspect's publisher uses a distinct kind for composite selection
+        # previews, not for arbitrary image artifacts (e.g. posed renders).
+        selection = channel == "mask" and mask_mode == "selection"
+        if (
+            result.channel != channel
+            or result.mask_mode != mask_mode
+            or (result.selection_bundles is not None) != selection
+        ):
+            raise CadOpError("image_identity_mismatch", "render channel/mode/bundle mismatch")
+        if artifact_ref is not None and result.source_artifact_ref != artifact_ref:
+            raise CadOpError("image_identity_mismatch", "render explicit source mismatch")
+        render_kind = SELECTION_PREVIEW_KIND if selection else RENDER_KIND
         images: list[dict[str, Any]] = []
+        expected_refs: list[str] = []
+        for index, image in enumerate(result.images):
+            expected_refs.append(image.render_ref)
+            if result.selection_bundles is not None:
+                if len(result.selection_bundles) != len(result.images):
+                    raise CadOpError("image_identity_mismatch", "render bundle count mismatch")
+                bundle = result.selection_bundles[index]
+                if bundle.view != image.view:
+                    raise CadOpError("image_identity_mismatch", "render bundle view mismatch")
+                if not re.fullmatch(
+                    rf"artifact:{SELECTION_BUNDLE_KIND}:sha256:[a-f0-9]{{64}}", bundle.bundle_ref
+                ) or any(
+                    not re.fullmatch(rf"artifact:{SELECTION_PASS_KIND}:sha256:[a-f0-9]{{64}}", ref)
+                    for ref in (
+                        bundle.pass_refs.solid,
+                        bundle.pass_refs.face,
+                        bundle.pass_refs.edge,
+                    )
+                ):
+                    raise CadOpError(
+                        "image_identity_mismatch", "render selection ref kind mismatch"
+                    )
+                expected_refs.extend(
+                    (bundle.pass_refs.solid, bundle.pass_refs.face, bundle.pass_refs.edge)
+                )
+        if tuple(expected_refs) != result.render_artifact_refs:
+            raise CadOpError("image_identity_mismatch", "render refs do not match image order")
+        total_pixels = 0
         for image in result.images:
             # Bounded header parse BEFORE anything decodes the payload (§5).
-            parse_image_header(image.png)
+            dimensions = parse_image_header(image.png)
+            total_pixels += dimensions.width * dimensions.height
+            if total_pixels > MAX_TOTAL_PIXELS:
+                raise CadOpError("image_too_large", "images exceed aggregate pixel budget")
+            expected_ref = f"artifact:{render_kind}:sha256:{hashlib.sha256(image.png).hexdigest()}"
+            if image.render_ref != expected_ref or image.channel != channel:
+                raise CadOpError(
+                    "image_identity_mismatch", "render bytes do not match immutable ref"
+                )
             images.append(
                 {
                     "data": base64.b64encode(image.png).decode("ascii"),
                     "mime_type": "image/png",
+                    # The invoking part context, not a claim that an explicit
+                    # artifact_ref belongs to this part (by-ref renders may not).
+                    "part": name,
                     "view": image.view,
                     "channel": image.channel,
+                    "source_artifact_ref": result.source_artifact_ref,
                     "render_artifact_ref": image.render_ref,
                     "palette_decodable": image.palette_decodable,
                 }

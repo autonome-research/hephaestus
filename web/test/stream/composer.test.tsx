@@ -1712,6 +1712,33 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     expect(root.querySelector("[data-composer-cancel]")).toBeNull();
   });
 
+  it("retries failed Stop only on an explicit click after a fresh same-run read", async () => {
+    const root = mount({ liveRunId: "run-live", streamLive: true });
+    const active = { ...IDLE_EXECUTION, version: 2, run_id: "run-live", active_run_id: "run-live", admission_available: false };
+    act(() => conversationStore.snapshot("sess-1", active, conversationStore.ticket()));
+    vi.mocked(cancelRun).mockRejectedValueOnce(new Error("request or response dropped"));
+    const button = root.querySelector<HTMLButtonElement>("[data-composer-cancel]")!;
+    act(() => button.click());
+    await act(async () => undefined);
+    expect(cancelRun).toHaveBeenCalledExactlyOnceWith("run-live");
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(root.querySelector("[data-cancel-note]")?.textContent).toContain("request or response may be lost");
+    act(() => conversationStore.snapshot("sess-1", active, conversationStore.ticket()));
+    expect(button.textContent).toBe(copy.composer.retryStop);
+    expect(button.getAttribute("aria-disabled")).not.toBe("true");
+    expect(cancelRun).toHaveBeenCalledTimes(1); // reads never retry writes
+    vi.mocked(cancelRun).mockResolvedValueOnce({ status: "ok", run_id: "run-live", session_id: "sess-1", abandoned_questions: 1 });
+    act(() => button.click());
+    await act(async () => undefined);
+    expect(cancelRun).toHaveBeenCalledTimes(2);
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(root.querySelector("[data-cancel-note]")?.textContent).toBe(copy.composer.stopAcknowledged);
+    act(() => conversationStore.frame({ session_id: "sess-1", run_id: "run-live", seq: 99, kind: "terminal", payload: { state: "cancelled" } }));
+    expect(root.querySelector("[data-composer-cancel]")).toBeNull();
+    expect(root.querySelector("[data-cancel-note]")).toBeNull();
+    expect(sendPrompt).not.toHaveBeenCalled();
+  });
+
   it("keeps Cancel available through a live turn (#45)", async () => {
     const root = mount({ liveRunId: "run-live", streamLive: true });
     act(() => conversationStore.snapshot("sess-1", { ...IDLE_EXECUTION, version: 2,

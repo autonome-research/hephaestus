@@ -84,7 +84,7 @@ had drifted by up to 550 lines, and the surface count had moved 53 → 54 under
 `compare_to_scan`. All of them were re-resolved against `HEAD` on 2026-08-30
 and are correct as written *now*. Two of them were load-bearing rather than
 cosmetic — G13A clause 14 greps the `check_assembly` occurrence of "There is
-no solver." (`tool_schema.md:1053`, which the 2026-08-30 amendment rewrote in
+no solver." (`tool_schema.md:1076`, which the 2026-08-30 amendment rewrote in
 place, so the clause now reads the amended wording at the same line), and
 G13B clause 40 repoints the two literal `assert len(...) == N` pins — so a
 stale line number here is not a typo but a gate clause nobody can write.
@@ -161,7 +161,7 @@ touched anything.
 - `VALIDATION.md:67-77` — "insufficient_scan_seeds"
 - `VALIDATION.md:163-167` — "independent second solution"
 - `VALIDATION.md:510-516` — "budget = ceil"
-- `tool_schema.md:1053` — "No solver moves geometry"
+- `tool_schema.md:1076` — "No solver moves geometry"
 - `tool_schema.md:135-141` — "orchestrator-only"
 - `script_contract.md:119-140` — "PARAMS"
 - `script_contract.md:141-149` — "globals.py"
@@ -244,7 +244,7 @@ holds it.*
   authored, in Stage 9 and in Stage 13 alike (`SOLVER.md` §1)."
 - **`tool_schema.md`** — **§`check_assembly`'s "There is no solver."**
   was rewritten to the amended `ASSEMBLY.md` §1 wording and **LANDED
-  2026-08-30 with the plan amendment** (`tool_schema.md:1053-1068`), rather than
+  2026-08-30 with the plan amendment** (`tool_schema.md:1076-1091`), rather than
   at the **13A** the row was drafted for. The row said "at 13A, in the same
   change that adds the `solve_pose` heading"; the sentence went one step
   earlier and the heading did not move with it, because the two halves are
@@ -426,7 +426,7 @@ first sentence is the one below, unchanged):
 stay authored." — **unamended**, scoped at 13B.
 
 `tool_schema.md`'s `check_assembly` section, **as it stood** (now
-`tool_schema.md:1053-1068`, opening "**No solver moves geometry.**" and carrying
+`tool_schema.md:1076-1091`, opening "**No solver moves geometry.**" and carrying
 the amended `ASSEMBLY.md` §1 wording):
 
 > **There is no solver.** Scripts position geometry; constraints verify, they
@@ -1822,7 +1822,7 @@ do.
 14. **Amendment drift, asserted at the sub-stage that ships the heading.**
     With 13A's amendments landed: `tool_schema.md` contains a `solve_pose`
     heading **and** no un-scoped sentence "There is no solver." (the
-    `check_assembly` occurrence at `tool_schema.md:1053` now reads the amended
+    `check_assembly` occurrence at `tool_schema.md:1076` now reads the amended
     `ASSEMBLY.md` §1 wording); every name in `TOOL_NAMES` has a matching
     normative heading with a parseable signature block (the
     `tests/stage2/test_g2_contract_drift.py:270-305` shape, re-run here);
