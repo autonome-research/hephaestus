@@ -256,18 +256,6 @@ def test_delegation_queued_follow_up_is_cancellable_by_ref(
     assert service.get(ref).phase is DelegationPhase.TERMINAL
 
 
-def test_delegation_queue_overflow_is_a_rejection_not_a_child_failure(
-    project: Project, clock: FakeClock
-) -> None:
-    """Queue overflow rejects pre-admission; it never invents a failed child."""
-    wire(project, clock=clock, gate=_Gate(RejectionReason.QUEUE_FULL))
-    out = delegate(project, entry="qf", delivery="follow_up")
-    assert out["status"] == "rejected" and out["reason"] == "queue_full"
-    # No admission row, no terminal, nothing to replay: there is no child at all.
-    assert project.store.admission.active_count() == 0
-    assert project.store.admission.occupied_run_ids() == frozenset()
-
-
 # ---------------------------------------------------------------------------
 # 2. stable child ids / idempotency
 

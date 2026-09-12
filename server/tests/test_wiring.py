@@ -300,12 +300,11 @@ def test_the_shipped_construction_never_runs_a_generator_unsandboxed(tmp_path: P
 
 # -- ProjectDelegationGate (J-agent-wiring-6) -------------------------------
 #
-# ``PartExistsGate`` closed the ``invalid_part`` clause (B-2); it left three
-# more of the delegation protocol's declared reasons unreachable —
-# ``part_busy``, ``session_busy`` and self-delegation's ``scope_denied`` — and
-# left a permissive default (``_AllowAllGate``) reachable from any code that
-# constructs a ``DelegationService`` without wiring a gate at all. These pin
-# the richer gate directly, and the still-open mandatory-gate half of the fix.
+# ``PartExistsGate`` closed the ``invalid_part`` clause (B-2); the richer gate
+# also produces ``part_busy`` and self-delegation's ``scope_denied``. A
+# permissive default (``_AllowAllGate``) was reachable from code constructing a
+# ``DelegationService`` without a gate; these tests pin the richer mandatory
+# gate directly.
 
 
 class _FakeLiveRuns:

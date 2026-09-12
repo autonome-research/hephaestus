@@ -244,9 +244,8 @@ def test_prompt_too_large_is_a_rejection_with_no_child(project: Project, clock: 
     "reason",
     [
         RejectionReason.PART_BUSY,
-        RejectionReason.SESSION_BUSY,
         RejectionReason.INVALID_PART,
-        RejectionReason.QUEUE_FULL,
+        RejectionReason.SCOPE_DENIED,
     ],
 )
 def test_gate_rejections_carry_no_child_ref(

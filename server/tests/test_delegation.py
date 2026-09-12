@@ -118,10 +118,8 @@ def test_prompt_terminal_then_resume_parent(store: OpStore, clock: FakeClock) ->
     "reason",
     [
         RejectionReason.PART_BUSY,
-        RejectionReason.SESSION_BUSY,
         RejectionReason.INVALID_PART,
         RejectionReason.SCOPE_DENIED,
-        RejectionReason.QUEUE_FULL,
     ],
 )
 def test_gate_rejections_have_no_child(

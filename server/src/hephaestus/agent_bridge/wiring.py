@@ -125,17 +125,12 @@ class ProjectDelegationGate:
       the very session this delegation would prompt. INTERFACE.md's delegation
       clause is about handing work to *another* session.
 
-    What this gate still does **not** decide, and why: ``no_run_slot`` is
-    decided by admission itself inside
-    :meth:`~.delegation.DelegationService.delegate`; ``queue_full`` describes a
-    prompt queue that does not exist (J-http-limits-10 removed its limit);
-    ``prompt_too_large`` is enforced by the state machine's own byte check. And
-    ``session_busy`` — a session held by a *foreign* live owner — has no
-    observable producer on this runtime: the per-session lease layer it belongs
-    to was superseded in production by a coarser process-level record, so the
-    only ownership this process can see is its own, which ``part_busy`` already
-    covers. Answering it from absent knowledge would be a guess, and a guessed
-    rejection is worse than none.
+    The other two declared reasons are produced outside this gate:
+    ``no_run_slot`` is decided by admission itself inside
+    :meth:`~.delegation.DelegationService.delegate`, and ``prompt_too_large`` is
+    enforced by the state machine's own byte check. The removed ``queue_full``
+    and ``session_busy`` tokens had no producer on this runtime and therefore do
+    not belong in the public delegation-result vocabulary.
 
     ``live`` is optional so the three non-sidecar runtimes (``heph mcp``, the
     CLI's project-only construction) keep the part-existence check without

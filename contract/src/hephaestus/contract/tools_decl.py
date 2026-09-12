@@ -1666,11 +1666,9 @@ def _delegate_part_agent() -> ToolDecl:
                     "reason": _enum(
                         [
                             "part_busy",
-                            "queue_full",
                             "no_run_slot",
                             "prompt_too_large",
                             "scope_denied",
-                            "session_busy",
                             "invalid_part",
                         ]
                     ),

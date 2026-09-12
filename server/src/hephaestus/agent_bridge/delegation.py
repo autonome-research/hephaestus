@@ -114,11 +114,9 @@ class RejectionReason(enum.StrEnum):
     """Pre-admission rejection reasons (no child run/ref is created)."""
 
     PART_BUSY = "part_busy"
-    QUEUE_FULL = "queue_full"
     NO_RUN_SLOT = "no_run_slot"
     PROMPT_TOO_LARGE = "prompt_too_large"
     SCOPE_DENIED = "scope_denied"
-    SESSION_BUSY = "session_busy"
     INVALID_PART = "invalid_part"
 
 
@@ -140,8 +138,8 @@ class DelegationGate(Protocol):
     """Pre-admission policy oracle owned by the session service.
 
     Returns a :class:`RejectionReason` when the delegation must be rejected
-    *before* any child run is created (invalid/foreign/busy part, scope denial,
-    prompt-queue overflow), or ``None`` when admission may proceed. Implementations
+    *before* any child run is created (invalid/busy part or scope denial), or
+    ``None`` when admission may proceed. Implementations
     must be side-effect free.
     """
 
@@ -358,7 +356,7 @@ class DelegationService:
                 )
             return self._advance_if_prepared(existing, child_owner)
 
-        # 4. Pre-admission gate (invalid_part / scope_denied / *_busy / queue_full).
+        # 4. Pre-admission gate (invalid_part / scope_denied / part_busy).
         reason = self._gate.classify(parent_run_id, part, delivery)
         if reason is not None:
             return Rejected(reason)

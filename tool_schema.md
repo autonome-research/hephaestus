@@ -1749,8 +1749,8 @@ delegate_part_agent(part: str, prompt: str,  # x-hephaestus-maxUtf8Bytes=32768
      | {status: "queued", part_session_id, child_run_id, delegation_ref}
      | {status: "failed"|"cancelled"|"timed_out"|"interrupted",
         part_session_id, child_run_id, delegation_ref, error}
-     | {status: "rejected", reason: "part_busy"|"queue_full"|"no_run_slot"|
-        "prompt_too_large"|"scope_denied"|"session_busy"|"invalid_part",
+     | {status: "rejected", reason: "part_busy"|"no_run_slot"|
+        "prompt_too_large"|"scope_denied"|"invalid_part",
         part_session_id?}
 get_delegation_status(delegation_ref: str)
     -> {status: "queued"|"running", part_session_id, child_run_id,
