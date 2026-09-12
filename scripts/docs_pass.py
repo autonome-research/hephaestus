@@ -154,8 +154,11 @@ def main(argv: list[str] | None = None) -> int:
         print()
 
     if not changed:
-        print("No non-documentation paths changed. Re-stamp after re-verifying, or leave as is.")
-        return 1
+        # A documentation-only range needs no pass: there is nothing new to
+        # verify against. The stamps stay where they are, which is why the
+        # oldest one can legitimately sit behind HEAD.
+        print("Only projectdocumentation/ changed in this range; no pass is due.")
+        return 0
 
     hits: dict[str, list[str]] = {}
     unmapped: list[str] = []

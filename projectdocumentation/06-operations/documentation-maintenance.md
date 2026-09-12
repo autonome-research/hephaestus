@@ -36,7 +36,9 @@ $ uv run python scripts/docs_pass.py --stamps          # just the stamps
 $ uv run python scripts/docs_pass.py --since HEAD~20   # an explicit range
 ```
 
-Exit `0` means every document is stamped at `HEAD`; exit `1` means a pass is due.
+Exit `0` means no pass is due — either every document is stamped at `HEAD`, or
+the only thing that changed since the oldest stamp is this set itself. Exit `1`
+means code moved and a pass is due.
 
 **It reports; it never edits.** Moving a stamp without re-verifying would
 manufacture exactly the false confidence the stamp exists to prevent.
