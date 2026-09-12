@@ -81,6 +81,56 @@ CHECK_SNAPSHOT_KIND: Final[str] = "check-snapshot"
 #: because the server renamed a type tag.
 LEGACY_CHECK_SNAPSHOT_KIND: Final[str] = "part-snapshot"
 
+#: Refusal tokens originated directly by CadOps domain methods. Translated
+#: lower-layer exceptions retain their source vocabularies and are not copied
+#: here. A source-walking drift test holds literal ``CadOpError`` constructions
+#: equal to this set.
+CAD_OP_REFUSAL_REASONS: Final[frozenset[str]] = frozenset(
+    {
+        "blank_unknown",
+        "capability_not_available",
+        "conflict",
+        "export_failed",
+        "gltf_not_published",
+        "image_identity_mismatch",
+        "image_too_large",
+        "incoherent_project_snapshot",
+        "incomplete_component_cite",
+        "invalid_check_generation",
+        "invalid_constraint",
+        "invalid_coupling",
+        "invalid_cursor",
+        "invalid_dimension_finding",
+        "invalid_joint",
+        "invalid_motion_check",
+        "invalid_params",
+        "invalid_pose",
+        "invalid_ref",
+        "invalid_requirement",
+        "invalid_solve_request",
+        "invalid_source",
+        "invalid_target",
+        "key_payload_mismatch",
+        "mass_density_unbound",
+        "namespace_unrecorded",
+        "part_busy",
+        "path_confinement",
+        "scan_timeout",
+        "stale_selection",
+        "stale_source",
+        "target_exists",
+        "too_many_images",
+        "unknown_artifact",
+        "unknown_constraint",
+        "unknown_motion_check",
+        "unknown_page",
+        "unknown_reference",
+        "unknown_requirement",
+        "unreadable_reference",
+        "unresolvable",
+    }
+)
+
 #: CAS pointer holding a part's persisted parameter-override document.
 PART_PARAMS_POINTER_PREFIX: Final[str] = "part-params:"
 #: CAS pointer holding the project's persisted parameter-override document.

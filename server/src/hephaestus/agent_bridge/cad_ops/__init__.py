@@ -115,6 +115,7 @@ if TYPE_CHECKING:
     from ._artifacts import BINARY_ARTIFACT_KINDS, TEXT_ARTIFACT_MIME, ArtifactOps
     from ._assembly import AssemblyOps
     from ._base import (
+        CAD_OP_REFUSAL_REASONS,
         PART_PARAMS_POINTER_PREFIX,
         PROJECT_PARAMS_POINTER,
         CadOpError,
@@ -259,6 +260,7 @@ _EXPORTS: Final[dict[str, str]] = {
     "TEXT_ARTIFACT_MIME": "_artifacts",
     "ArtifactOps": "_artifacts",
     "AssemblyOps": "_assembly",
+    "CAD_OP_REFUSAL_REASONS": "_base",
     "PART_PARAMS_POINTER_PREFIX": "_base",
     "PROJECT_PARAMS_POINTER": "_base",
     "CadOpError": "_base",
@@ -369,6 +371,7 @@ __all__ = [
     "ALIGN_MODES",
     "BINARY_ARTIFACT_KINDS",
     "BINDING_WARNING_KINDS",
+    "CAD_OP_REFUSAL_REASONS",
     "CHECK_DESCRIPTION_SENTINEL",
     "CHECK_TEMPLATE_HEADER",
     "CLARIFICATION_MAX_OPTIONS",

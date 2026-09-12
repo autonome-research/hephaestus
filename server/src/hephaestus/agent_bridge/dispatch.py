@@ -120,6 +120,7 @@ __all__ = [
     "BLANK_TEMPLATES",
     "CAD_TOOLS",
     "DELEGATION_TOOLS",
+    "DISPATCH_REFUSAL_REASONS",
     "MUTATION_TOOLS",
     "NOT_IMPLEMENTED_TOOLS",
     "REGISTRY_TOOLS",
@@ -135,6 +136,25 @@ __all__ = [
 
 #: The VALIDATION.md §5 termination-review profile: project-wide reads only.
 REVIEWER_PROFILE: str = "reviewer"
+
+#: Refusal tokens originated directly by this dispatcher. Exceptions translated
+#: from lower layers retain those layers' declared vocabularies and are not
+#: duplicated here. A source-walking drift test holds every literal
+#: ``DispatchError`` construction equal to this set.
+DISPATCH_REFUSAL_REASONS: frozenset[str] = frozenset(
+    {
+        "already_exists",
+        "ambiguous_edit",
+        "build_failed",
+        "incoherent_project_snapshot",
+        "invalid_cursor",
+        "invalid_params",
+        "invalid_part",
+        "not_implemented",
+        "scope_denied",
+        "unknown_tool",
+    }
+)
 
 #: Tools whose result never re-does work: idempotency-contract members.
 MUTATION_TOOLS: frozenset[str] = frozenset(
