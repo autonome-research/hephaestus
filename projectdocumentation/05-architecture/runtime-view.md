@@ -1,6 +1,6 @@
 # Runtime view
 
-> **Verified against** `49a90c6` on 2026-09-12.
+> **Verified against** `3af69da` on 2026-09-12.
 > Sequences traced through the code; state machines read from the modules that
 > own them.
 

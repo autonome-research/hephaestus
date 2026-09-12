@@ -1,6 +1,6 @@
 # Web workspace client
 
-> **Verified against** `49a90c6` on 2026-09-12.
+> **Verified against** `3af69da` on 2026-09-12.
 > Dependencies read from `web/package.json`; module inventory from
 > `find web/src -name '*.ts*' | wc -l` = 128 source files, 77 unit test files,
 > 44 e2e files; lint rules read from `web/eslint-rules/`.

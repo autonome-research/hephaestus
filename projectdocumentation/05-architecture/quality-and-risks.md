@@ -1,6 +1,6 @@
 # Quality requirements and risks
 
-> **Verified against** `49a90c6` on 2026-09-12.
+> **Verified against** `3af69da` on 2026-09-12.
 > Test inventory from `find … -name 'test_*.py' | wc -l` = 370 Python test files
 > (opstore 11, core 85, server 88, contract 2, staged gates 183), plus 77 web
 > unit files and 44 e2e files. Scoring rules read from

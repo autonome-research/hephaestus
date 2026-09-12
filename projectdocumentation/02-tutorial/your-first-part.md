@@ -1,6 +1,6 @@
 # Your first part
 
-> **Verified against** `49a90c6` on 2026-09-12.
+> **Verified against** `3af69da` on 2026-09-12.
 > Every command below was run start to finish in a scratch directory, and every
 > output shown is the output that appeared. The artifact hashes are real and
 > reproduced across runs.

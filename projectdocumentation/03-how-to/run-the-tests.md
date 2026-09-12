@@ -1,6 +1,6 @@
 # Run the tests
 
-> **Verified against** `49a90c6` on 2026-09-12.
+> **Verified against** `3af69da` on 2026-09-12.
 > `testpaths`, `addopts`, markers and the timeout settings read from
 > `pyproject.toml`; CI job names from `.github/workflows/ci.yml`; suite sizes
 > from `find … -name 'test_*.py' | wc -l`.

@@ -1,6 +1,6 @@
 # Agent tool catalogue
 
-> **Verified against** `49a90c6` on 2026-09-12.
+> **Verified against** `3af69da` on 2026-09-12.
 > Counts printed from `hephaestus.contract.tools_decl`: 57 tools, 27 sequential,
 > 27 idempotent, 4 profiles; `ls schemas/tools/ | wc -l` = 57.
 

@@ -1,6 +1,6 @@
 # What Hephaestus is
 
-> **Verified against** `49a90c6` on 2026-09-12.
+> **Verified against** `3af69da` on 2026-09-12.
 > Sources checked: `README.md`, `uv run heph --help`, `uv run heph serve --help`,
 > `pyproject.toml`, each package's `pyproject.toml` / `package.json`.
 

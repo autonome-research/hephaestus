@@ -1,6 +1,6 @@
 # Architecture decisions
 
-> **Verified against** `49a90c6` on 2026-09-12.
+> **Verified against** `3af69da` on 2026-09-12.
 > Every decision below is recorded from the code that implements it and the
 > reasoning the code itself carries. None is a proposal.
 

@@ -1,6 +1,6 @@
 # Command line reference
 
-> **Verified against** `49a90c6` on 2026-09-12.
+> **Verified against** `3af69da` on 2026-09-12.
 > Verb list from `uv run heph --help`; behaviour claims exercised against a
 > scratch project created with `heph init`.
 

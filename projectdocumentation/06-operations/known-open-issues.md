@@ -1,6 +1,6 @@
 # Known open issues
 
-> **Verified against** `49a90c6` on 2026-09-12.
+> **Verified against** `3af69da` on 2026-09-12.
 > Each entry below was re-checked against the code or by running a command at
 > this commit; the evidence is given with the entry. Items fixed since the audit
 > that recorded them are not listed.

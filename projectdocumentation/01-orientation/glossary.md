@@ -1,6 +1,6 @@
 # Glossary
 
-> **Verified against** `49a90c6` on 2026-09-12.
+> **Verified against** `3af69da` on 2026-09-12.
 > Each term is defined from the code that uses it, and links to where it is
 > specified in full.
 

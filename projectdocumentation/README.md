@@ -1,6 +1,6 @@
 # Hephaestus project documentation
 
-> **Verified against** `49a90c6` on 2026-09-12.
+> **Verified against** `3af69da` on 2026-09-12.
 > Every factual claim in this set was checked against the code or a command that
 > was run. See [the verification rule](#the-house-rule-nothing-is-written-that-was-not-checked).
 

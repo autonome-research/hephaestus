@@ -1,6 +1,6 @@
 # Install and run
 
-> **Verified against** `49a90c6` on 2026-09-12.
+> **Verified against** `3af69da` on 2026-09-12.
 > Bootstrap behaviour read from `scripts/bootstrap.sh`; prerequisite versions
 > from `pyproject.toml`, `agent/package.json`, `web/package.json`; `heph
 > --version` and `heph init` run.

@@ -1,6 +1,6 @@
 # Building block view
 
-> **Verified against** `49a90c6` on 2026-09-12.
+> **Verified against** `3af69da` on 2026-09-12.
 > Module inventories from `ls` on each package; responsibilities read from each
 > module's own docstring.
 

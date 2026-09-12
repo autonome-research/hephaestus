@@ -1,6 +1,6 @@
 # Documentation maintenance
 
-> **Verified against** `49a90c6` on 2026-09-12.
+> **Verified against** `3af69da` on 2026-09-12.
 
 How this set stays true as the code changes. Documentation rots by default; the
 only thing that prevents it is a routine somebody actually runs.
@@ -80,6 +80,12 @@ First match wins, so the specific prefixes come before the general ones.
 | `packaging/` | [release and package](../03-how-to/release-and-package.md) |
 | `pyproject.toml` | [run the tests](../03-how-to/run-the-tests.md) |
 | anything else | reported as **unmapped**; decide by hand |
+
+A change to a root specification (`INTERFACE.md`, `SOLVER.md`, `tool_schema.md`
+and the rest) lands in the unmapped list on purpose. This set *points at* those
+documents rather than describing them, so which pages a spec change touches is a
+judgement — usually none, sometimes [the glossary](../01-orientation/glossary.md)
+or [known open issues](known-open-issues.md).
 
 A change to a refusal name, a limit, a route or a tool signature always touches
 [the reference section](../04-reference/), because those are enumerations. So does

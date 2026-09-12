@@ -1,6 +1,6 @@
 # Architecture: introduction, constraints, context, strategy
 
-> **Verified against** `49a90c6` on 2026-09-12.
+> **Verified against** `3af69da` on 2026-09-12.
 > Package boundaries from each `pyproject.toml` / `package.json`; import bans
 > confirmed against the tests that assert them.
 
