@@ -38,9 +38,9 @@ addressable and returned, but never current. Carries the `preview` retention
 class (7 days) rather than `default` (30).
 
 **Stale** — a recorded build input no longer hashes to what the build recorded.
-`heph part show` reports `stale` and `stale_inputs`. **`heph build --stale` is
-narrower**: it rebuilds *consumers* of changed shared inputs (`globals.py`, a
-project parameter, a replaced import), not a part whose own script you edited.
+`heph part show` reports `stale` and `stale_inputs`; `heph build --stale`
+rebuilds parts using the same definition, including parts whose own script
+changed and consumers of changed shared inputs.
 
 **Checkpoint** — the record the worker writes after each top-level statement:
 index, line, verbatim text, span, bound names.

@@ -7,8 +7,8 @@
   evidence on failure). ``--json`` emits the exact §8 BuildResult JSON, one
   object per line per built part. Any ``--param``/``--global-param`` override
   makes the build a transient preview (never current, never clearing stale).
-  ``--stale`` rebuilds every part marked stale by project-param/globals.py
-  changes (after syncing the live ``hc`` projection).
+  ``--stale`` rebuilds every part whose current build inputs changed, including
+  its own script and shared globals/project/import inputs.
 - ``heph check [--project] [--json]`` runs the ``checks/*.py`` cross-part
   check set against each part's current published artifact; ``--project``
   additionally assembles (and requires) a coherent project snapshot.
@@ -383,8 +383,22 @@ def _cmd_build(args: argparse.Namespace) -> int:
         # INGEST.md §1: a replaced imports/ file makes its importers stale, and
         # --stale must see that before it picks the rebuild set.
         publisher.sync_import_state()
+        # The projection's stale set tracks consumers invalidated by shared
+        # inputs. ``freshness`` additionally compares each current build with
+        # its own live script/toolchain/import hashes. Use their union so
+        # ``build --stale`` and ``part show`` answer the same question.
+        projected_stale = publisher.projections.state().stale
         stale_parts = [
-            name for name in sorted(publisher.projections.state().stale) if name not in built
+            name
+            for name in sorted(publisher.parts.list_parts())
+            if name not in built
+            and (
+                name in projected_stale
+                or (
+                    (freshness := publisher.freshness(name)) is not None
+                    and bool(freshness.changed_inputs)
+                )
+            )
         ]
         for name in stale_parts:
             result, kind = _build_and_publish(
@@ -864,7 +878,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="global_param",
         help="transient project-parameter override (makes the build a preview)",
     )
-    build.add_argument("--stale", action="store_true", help="rebuild every stale consumer part")
+    build.add_argument("--stale", action="store_true", help="rebuild every stale part")
     build.add_argument("--json", action="store_true", help="emit the exact BuildResult JSON")
     build.add_argument(
         "--unsafe-local-executor",

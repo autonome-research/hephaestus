@@ -270,7 +270,9 @@ $ heph prompt show --json
 ### `heph build [PART]`
 
 Build a part and publish the result. There are exactly two entry paths: a named
-target, and `--stale`, which rebuilds every part the projection marks stale.
+target, and `--stale`, which rebuilds every part whose current build inputs no
+longer match the live project—including an edited part script and changed shared
+inputs.
 **There is no build-everything form** — a bare `heph build` is a usage refusal,
 because an accidental bare invocation in a large project is expensive.
 

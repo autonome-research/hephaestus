@@ -141,6 +141,22 @@ def test_check_project_incoherent_after_failed_part(
     assert "incoherent" in captured.err
 
 
+def test_stale_rebuild_after_own_script_edit(
+    project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    script = project / "parts" / "primary.py"
+    script.write_text(script.read_text(encoding="utf-8") + "\n# rebuild me\n", encoding="utf-8")
+    monkeypatch.chdir(project)
+
+    rc = main(["build", "--stale", "--json", UNSAFE])
+    captured = capsys.readouterr()
+
+    assert rc == 0, captured.err
+    assert one_json(captured.out)["part"] == "primary"
+
+
 def test_stale_rebuild_after_globals_edit(
     project: Path,
     monkeypatch: pytest.MonkeyPatch,

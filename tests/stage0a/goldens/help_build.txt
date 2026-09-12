@@ -10,7 +10,7 @@ options:
   --param NAME=VALUE    transient part-parameter override (makes the build a preview)
   --global-param NAME=VALUE
                         transient project-parameter override (makes the build a preview)
-  --stale               rebuild every stale consumer part
+  --stale               rebuild every stale part
   --json                emit the exact BuildResult JSON
   --unsafe-local-executor
                         run the worker WITHOUT OS sandboxing (local debugging only)

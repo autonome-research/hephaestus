@@ -345,9 +345,9 @@ $ heph build --stale
 example: ok (current) artifact=artifact:build:sha256:bb878bf1ec285460313b28a6f60665fa585183f1597478e764a1a4a25e8482ba
 ```
 
-`--stale` rebuilds **consumers** of changed shared inputs. A part whose own script
-you edited is reported stale by `heph part show` but is not in that set — rebuild
-it by name. See [the CLI reference](../04-reference/cli.md#builds-previews-and-staleness).
+`--stale` rebuilds every part whose current build no longer matches its live
+inputs, including consumers of changed shared inputs and parts whose own script
+changed. See [the CLI reference](../04-reference/cli.md#builds-previews-and-staleness).
 
 ## What you have seen
 

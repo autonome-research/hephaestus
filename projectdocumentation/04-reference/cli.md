@@ -103,19 +103,15 @@ effective parameters, each named import, and **the projection of `hc` names the
 part actually read** — not all of `globals.py`, which would make every part stale
 whenever anyone touched the shared namespace.
 
-**`--stale` is narrower than that field**, and the distinction matters. Its help
-says "rebuild every stale **consumer** part": it rebuilds the parts made stale by
-a change to a *shared* input — `globals.py`, a project parameter, a replaced file
-under `imports/` — and prints `no stale parts` when there is none. A part whose
-own script you edited is reported stale by `part show` and is **not** picked up by
-`heph build --stale`; rebuild it by name.
+`heph build --stale` uses that same definition. It rebuilds a part when its own
+script or toolchain changed, or when a shared input it consumed changed
+(`globals.py`, a project parameter, or a replaced file under `imports/`). It
+prints `no stale parts` only when every current build still matches its live
+inputs.
 
 ```console
-$ heph build --stale          # after editing globals.py
+$ heph build --stale          # after editing globals.py or parts/spacer.py
 example: ok (current) artifact=artifact:build:sha256:bb878bf1…
-
-$ heph build --stale          # after editing parts/spacer.py only
-no stale parts
 ```
 
 ## `serve` has three modes
