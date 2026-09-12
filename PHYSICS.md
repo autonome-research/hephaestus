@@ -12,18 +12,16 @@ high-water mark (`architecture.md` 00, `script_contract.md` 01,
 08, `ASSEMBLY.md` 09, `EXTERNAL_EVAL.md` 10, `KINEMATICS.md` 11,
 `INTERFACE.md` 12, `PARTS_STORE.md` 13, `MESH_INGEST.md` 14, `SOLVER.md` 15).
 
-**Stage number.** 11, not 10. `KINEMATICS.md:50-51` forward-references FEA as
-a "Stage 10 candidate"; two days later `mission_plan.md:700` claimed Stage 10
-for "Workspace egress and provider attachment (amendment 2026-08-28,
-maintainer-directed)". That forward reference is now stale prose and this
-spec corrects it explicitly (see the amendment manifest) rather than
-inheriting it.
+**Stage number.** 15. `KINEMATICS.md:50-51` originally forward-referenced FEA
+as a "Stage 10 candidate"; Stage 10 was later assigned to workspace egress and
+provider attachment, and Stages 11–14 were assigned before this draft. The
+amendment manifest therefore corrects that stale forward reference to Stage 15.
 
 **Status: DRAFT.** Not normative. This document is pending (a) a hostile
 adversarial review against the codebase, on the `KINEMATICS.md` precedent —
 that spec was revised after a 40-agent review folded in 31 confirmed findings
 (`KINEMATICS.md:10-12`) — and (b) a `mission_plan.md` amendment opening Stage
-11. Mission rule 5 (`mission_plan.md:815-817`) names FEA by name among the
+15. Mission rule 5 (`mission_plan.md:815-817`) names FEA by name among the
 deferred items that "enter only by amending this plan with a new gated
 stage", so the amendment is the *authorized* mechanism, not an exception to
 it. **This document does not itself amend `mission_plan.md`**; the staging

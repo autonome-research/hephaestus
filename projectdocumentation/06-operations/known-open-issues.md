@@ -1,6 +1,6 @@
 # Known open issues
 
-> **Verified against** `16f9613` on 2026-09-12.
+> **Verified against** `3c3847c` on 2026-09-12.
 > Each entry below was re-checked against the code or by running a command at
 > this commit; the evidence is given with the entry. Items fixed since the audit
 > that recorded them are not listed.
@@ -80,22 +80,6 @@ done" is visible rather than inferred from silence.
 
 ---
 
-## OPEN-5 — Delegation declares two reasons nothing produces
-
-**Severity: low. Status: recorded in code.**
-
-Seven rejection reasons are declared: `part_busy`, `queue_full`, `no_run_slot`,
-`prompt_too_large`, `scope_denied`, `session_busy`, `invalid_part`.
-
-**Five are producible today.** `queue_full` names a prompt queue that no longer
-exists, and `session_busy` has no producer on this runtime.
-
-Both are marked as such in the code rather than quietly left to look live — an
-unreachable reason that *looks* reachable is a worse defect than a missing one —
-but a caller writing a handler for all seven is writing dead code for two.
-
----
-
 ## OPEN-6 — Three specified HTTP routes are not served
 
 **Severity: low. Status: recorded in code as `UNSERVED_SPEC_ROUTES`.**
@@ -136,129 +120,11 @@ lying. The caller decides what an unverified blob may do.
 
 ---
 
-## OPEN-8 — `heph build --stale` and `part show`'s `stale` mean different things
-
-**Severity: low. Newly recorded here, 2026-09-12. Verified by running it.**
-
-`heph part show <part> --json` reports `stale: true` when any recorded build input
-no longer hashes to what the build recorded — including the part's **own script**.
-
-`heph build --stale` rebuilds the parts made stale by a change to a *shared*
-input: `globals.py`, a project parameter, a replaced file under `imports/`. Its
-own help says "rebuild every stale **consumer** part", so the CLI is honest; but
-the two uses of the word do not coincide.
-
-Reproduced at this commit:
-
-```console
-$ # after editing parts/spacer.py only
-$ heph part show spacer --json | jq '{stale, stale_inputs}'
-{"stale": true, "stale_inputs": ["script"]}
-$ heph build --stale
-no stale parts
-
-$ # after editing globals.py only
-$ heph build --stale
-example: ok (current) artifact=artifact:build:sha256:bb878bf1…
-```
-
-Not a defect in either component. Recorded because a reader who sees
-`stale: true` and then runs `build --stale` is told "no stale parts" and can
-reasonably conclude the staleness report is broken.
-
----
-
-## OPEN-9 — Two refusal families have no declared set
-
-**Severity: low. Newly recorded here, 2026-09-12.**
-
-Most closed vocabularies in this system are **data in the code**, with a drift
-test asserting the live surface *is* that data: `REASON_STATUS` (87 HTTP
-reasons), the solver's verdict and refusal tuples, `EVENT_KINDS`,
-`CONTROL_FRAME_KEYS`, `ROUTE_TABLE`, `RejectionReason`.
-
-Two families are not:
-
-- the dispatcher's own reasons,
-- the CAD operations' reasons.
-
-Both are string literals at their raise sites. There is nothing to enumerate,
-nothing to intersect against the verdict vocabularies, and nothing a drift test
-can hold — so **no count of either is a property of the code**; it is a property
-of how you search.
-
-Measured at this commit, distinct first arguments to `CadOpError(`:
-
-```console
-$ uv run python -c "
-import re, pathlib
-root = pathlib.Path('server/src/hephaestus/agent_bridge/cad_ops')
-seen = set()
-for path in root.rglob('*.py'):
-    seen |= set(re.findall(r'CadOpError\(\s*[\'\"]([a-z_]+)', path.read_text()))
-print(len(seen))"
-41
-```
-
-A line-based `grep` for the same thing answers 15, because many raise sites wrap
-the reason onto the next line. Two defensible tools, two different answers,
-neither wrong — which is exactly what "not declared" costs.
-
-Giving these families a declared frozenset, the way the others have one, would
-let the disjointness rule be checked mechanically for them too.
-
----
-
 ## Documentation defects in the repository's own specs
 
 These are wrong statements in committed documents, verified at this commit. They
 are listed separately because fixing them is an editorial change, not a code
 change.
-
-### DOC-1 — `verification.md` names two workflows that do not exist
-
-`verification.md` describes `e2e.yml` and `private-reference.yml` as CI
-workflows. The workflow directory contains four files:
-
-```console
-$ ls .github/workflows/
-bench.yml  ci-image.yml  ci.yml  release.yml
-```
-
-The **e2e suite itself is real and does run** — the `test:e2e` script is a step
-of the `render goldens (pinned image)` job in `ci.yml`, where it has access to the
-pinned rasterizer. So the document is stale about *where*, not about *whether*.
-`private-reference.yml` has no counterpart at all.
-
-### DOC-2 — `CAM.md` and `PHYSICS.md` describe unbuilt work
-
-**The numbering contradiction in these two files was fixed on 2026-09-12.** Both
-opened with a heading number and then computed a different one — and both
-computed **13** — because each body paragraph was written when 13 was still free.
-The live numbering is unique and the titles were the correct half:
-
-```
-00 architecture      06 VALIDATION       12 INTERFACE
-01 script_contract   07 INGEST           13 PARTS_STORE
-02 tool_schema       08 COMPARE          14 MESH_INGEST
-03 verification      09 ASSEMBLY         15 SOLVER
-04 mission_plan      10 EXTERNAL_EVAL    16 CAM
-05 repo_conventions  11 KINEMATICS       17 PHYSICS
-```
-
-What remains open is that both are **forward specifications** — CAM.md is Stage 14, PHYSICS.md is
-Stage 15 — describing work that is not built. What `heph cam` does today is
-narrower than CAM.md's title suggests:
-
-```console
-$ heph cam --help
-usage: heph cam [-h] {emit} ...
-    emit      emit a kerf-compensated laser/waterjet cut-file from a built part
-```
-
-2D cut files, not 3-axis milling. Neither document is wrong to exist; both should
-say plainly at the top that they specify unbuilt work, so a reader does not take
-a plan for a description.
 
 ### DOC-3 — `RELEASE_FACTS.md` is a dated survey presented as fact
 

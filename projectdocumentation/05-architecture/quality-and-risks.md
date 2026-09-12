@@ -1,8 +1,8 @@
 # Quality requirements and risks
 
-> **Verified against** `16f9613` on 2026-09-12.
+> **Verified against** `3c3847c` on 2026-09-12.
 > Test inventory from `find … -name 'test_*.py' | wc -l` = 370 Python test files
-> (opstore 11, core 85, server 88, contract 2, staged gates 183), plus 77 web
+> (opstore 11, core 85, server 89, contract 2, staged gates 183), plus 77 web
 > unit files and 44 e2e files. Scoring rules read from
 > `bench/src/hephaestus/bench/scoring.py`.
 
@@ -234,19 +234,7 @@ name. macOS therefore cannot build a part.
 **Mitigation.** Release lane (d) asserts the named refusal rather than skipping,
 so the property is tested rather than assumed.
 
-### R8 — Declared surfaces with no producer
-
-**Severity: low. Known and recorded.**
-
-Delegation declares seven rejection reasons and produces five. `queue_full` names
-a prompt queue that no longer exists; `session_busy` has no producer on this
-runtime.
-
-**Mitigation.** Both are recorded as such in the code rather than quietly left to
-look live — an unreachable reason that looks reachable is a worse defect than a
-missing one.
-
-### R9 — Unverified artifact kinds
+### R8 — Unverified artifact kinds
 
 **Severity: low. Bounded and stated.**
 
@@ -256,7 +244,7 @@ as the empty set, which readers must treat as *unverified*.
 **Mitigation.** The two wrong answers — "no kind matches" and "any kind matches"
 — are both refused by the module; the caller decides.
 
-### R10 — Not published
+### R9 — Not published
 
 **Severity: low. Intentional.**
 

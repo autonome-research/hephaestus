@@ -278,19 +278,18 @@ GitHub Actions on the autonome-research org:
 
 - `ci.yml`: lint (ruff + pyright strict on opstore/core/server; eslint + tsc
   strict on agent/web), Python and Node unit suites, opstore import-boundary and
-  schema/bridge drift checks, Tier 1,
-  and Tier 2 render goldens — every PR.
-- `e2e.yml`: Playwright suite — PRs touching server/, agent/, or web/.
+  schema/bridge drift checks, Tier 1, Tier 2 render goldens, and the Playwright
+  suite. Playwright runs in the `render goldens (pinned image)` job so it uses
+  the pinned rasterizer — every PR.
 - `bench.yml`: Tier 3 corpus — manual dispatch + weekly schedule (API cost
   control), publishing the results artifact.
-- Public stage checks are ordinary `pull_request` workflows and require no
-  private credentials, including for forks. `private-reference.yml` is not
-  `pull_request_target`: it runs a fixed verifier on a protected trusted stage
-  SHA in a networkless worker, mounts fixtures without exposing repository
-  credentials, suppresses worker output/caches/coverage, leak-scans its boundary,
-  and publishes only a signed aggregate status. A stage cannot advance until
-  both its public gate and any named private attestation are green; ordinary
-  external PRs are never required or permitted to fetch private fixtures.
+- Public stage checks are ordinary `pull_request` jobs and require no private
+  credentials, including for forks. No private-reference workflow is present
+  in this checkout. If that verifier lands, it must run a fixed verifier on a
+  protected trusted stage SHA in a networkless worker, mount fixtures without
+  exposing repository credentials, suppress worker output/caches/coverage,
+  leak-scan its boundary, and publish only a signed aggregate status. Ordinary
+  external PRs must never fetch private fixtures.
 - A docs-layout/link check verifies every repository path and section reference
   in the normative root documents.
 

@@ -1,6 +1,6 @@
 # Refusal vocabulary
 
-> **Verified against** `16f9613` on 2026-09-12.
+> **Verified against** `3c3847c` on 2026-09-12.
 > Counts printed from the code: `len(REASON_STATUS)` = 87; solver verdicts 12 distinct
 > spellings, solver refusals 34, intersection empty.
 
@@ -163,35 +163,17 @@ engine's own token:
 The token is prefixed onto the message the model sees, so the model
 discriminates on a name rather than on prose.
 
-**No count is given for the dispatcher and CAD-op streams**, and the omission is
-deliberate. Unlike `REASON_STATUS` and the solver's tuples, neither is declared
-as a set anywhere — the tokens are string literals at their raise sites, so any
-figure is a property of how you grep rather than of the code. Counting distinct
-first arguments to `CadOpError(` yields 41 at this commit:
-
-```console
-$ uv run python -c "
-import re, pathlib
-root = pathlib.Path('server/src/hephaestus/agent_bridge/cad_ops')
-seen = set()
-for path in root.rglob('*.py'):
-    seen |= set(re.findall(r'CadOpError\(\s*[\'\"]([a-z_]+)', path.read_text()))
-print(len(seen))"
-41
-```
-
-A line-based `grep` under-counts this to 15, because many raise sites wrap the
-reason onto the following line. That discrepancy is the point: the figure is a
-property of the tool, not of the code.
-
-So treat 41 as a measurement and a lower bound, not an inventory, and read the
-raise sites when you need the real list. Giving these two families a declared set
-— the way `REASON_STATUS` and the solver's tuples are declared — is worth doing;
-until then, saying so is better than quoting a number that looks authoritative.
+Both direct streams are now declared data: `DISPATCH_REFUSAL_REASONS` contains
+the 10 reasons originated by `dispatch.py`, and `CAD_OP_REFUSAL_REASONS`
+contains the 41 reasons originated by the CAD-operation modules. A source-walking
+test compares each frozenset with every literal constructor call, so adding or
+removing a direct reason requires changing the declaration. Reasons translated
+from lower-layer exceptions remain owned by those layers rather than being
+copied into either set.
 
 ## Delegation
 
-`RejectionReason` declares seven pre-admission reasons; **five have a producer**.
+`RejectionReason` declares exactly the five producible pre-admission reasons.
 
 | Reason | Producer |
 | --- | --- |
@@ -200,24 +182,12 @@ until then, saying so is better than quoting a number that looks authoritative.
 | `part_busy` | the pre-admission gate |
 | `no_run_slot` | admission |
 | `prompt_too_large` | the byte check |
-| `queue_full` | **none** — names a prompt queue that no longer exists |
-| `session_busy` | **none** on this runtime |
 
-Verified by counting the producing sites:
-
-```console
-$ grep -rho 'RejectionReason\.[A-Z_]*' server/src | sort | uniq -c
-      3 RejectionReason.INVALID_PART
-      2 RejectionReason.NO_RUN_SLOT
-      1 RejectionReason.PART_BUSY
-      1 RejectionReason.PROMPT_TOO_LARGE
-      1 RejectionReason.SCOPE_DENIED
-```
-
-The two unproduced reasons are recorded as such in the code rather than quietly
-left to look live — an unreachable reason that *looks* reachable is worse than a
-missing one — but a caller handling all seven is writing dead code for two. See
-[known open issues](../06-operations/known-open-issues.md).
+The old `queue_full` token named a queue that no longer exists, and delegation
+could not observe the foreign ownership needed to produce `session_busy`; both
+were removed from the delegation result schema. Session ownership can still
+refuse separately with `session_busy` before a delegation reaches this state
+machine.
 
 ## Sandbox
 
