@@ -494,21 +494,28 @@ def _tracked_markdown() -> list[str]:
 def _documents() -> list[Path]:
     """The checked set, DISCOVERED rather than listed (J-mirrors-and-dx-33).
 
-    Root markdown, everything under ``docs/``, and every tracked README or
-    design document — minus :data:`EXCLUDED_DOCS`. Discovery is the point: a
-    hand-maintained list leaves a new document uncovered by default, which is
-    how ``INTERFACE.md`` — the largest specification in the repository — was
-    outside the check while the workflow file claimed "the docs build is the
-    reference check".
+    Root markdown, everything under ``docs/`` and ``projectdocumentation/``, and
+    every tracked README or design document — minus :data:`EXCLUDED_DOCS`.
+    Discovery is the point: a hand-maintained list leaves a new document
+    uncovered by default, which is how ``INTERFACE.md`` — the largest
+    specification in the repository — was outside the check while the workflow
+    file claimed "the docs build is the reference check".
+
+    ``projectdocumentation/`` is discovered by its own prefix rather than by the
+    ``named`` set below, which would have caught only its ``README.md`` and left
+    every other file in the set unchecked — the same shape of gap this function
+    exists to close.
     """
     #: Package documents that carry normative prose rather than fixture bytes.
     named = {"README.md", "DESIGN.md", "PUBLISHING.md", "STAGE2_DIGEST.md"}
+    #: Directory trees checked in full.
+    trees = {"docs", "projectdocumentation"}
     chosen: list[str] = []
     for name in _tracked_markdown():
         if name in EXCLUDED_DOCS:
             continue
         head, _, rest = name.partition("/")
-        if not rest or head == "docs" or Path(name).name in named:
+        if not rest or head in trees or Path(name).name in named:
             chosen.append(name)
     return [REPO_ROOT / name for name in sorted(set(chosen)) if (REPO_ROOT / name).is_file()]
 

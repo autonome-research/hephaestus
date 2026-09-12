@@ -5,11 +5,12 @@ SPDX-License-Identifier: Apache-2.0
 
 # 17 — Structural analysis (Stage 15)
 
-**Number.** 13 is the next free slot: `INTERFACE.md` is 12 and is the current
+**Number.** 17 is the next free slot: `CAM.md` is 16 and is the current
 high-water mark (`architecture.md` 00, `script_contract.md` 01,
 `tool_schema.md` 02, `verification.md` 03, `mission_plan.md` 04,
 `repo_conventions.md` 05, `VALIDATION.md` 06, `INGEST.md` 07, `COMPARE.md`
-08, `ASSEMBLY.md` 09, `EXTERNAL_EVAL.md` 10, `KINEMATICS.md` 11).
+08, `ASSEMBLY.md` 09, `EXTERNAL_EVAL.md` 10, `KINEMATICS.md` 11,
+`INTERFACE.md` 12, `PARTS_STORE.md` 13, `MESH_INGEST.md` 14, `SOLVER.md` 15).
 
 **Stage number.** 11, not 10. `KINEMATICS.md:50-51` forward-references FEA as
 a "Stage 10 candidate"; two days later `mission_plan.md:700` claimed Stage 10

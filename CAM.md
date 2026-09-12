@@ -9,7 +9,8 @@ The number is the next free one in the repo's sequence: `architecture.md` is 00,
 `script_contract.md` 01, `tool_schema.md` 02, `verification.md` 03,
 `mission_plan.md` 04, `repo_conventions.md` 05, `VALIDATION.md` 06, `INGEST.md`
 07, `COMPARE.md` 08, `ASSEMBLY.md` 09, `EXTERNAL_EVAL.md` 10, `KINEMATICS.md`
-11, `INTERFACE.md` 12. This is 13.
+11, `INTERFACE.md` 12, `PARTS_STORE.md` 13, `MESH_INGEST.md` 14, `SOLVER.md`
+15. This is 16.
 
 **DRAFT — pending a `mission_plan.md` amendment.** Revised after an adversarial
 pass against the codebase: four blocking findings folded in — the offset
