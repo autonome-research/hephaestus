@@ -1,6 +1,6 @@
 # Work on the sidecar
 
-> **Verified against** `3af69da` on 2026-09-12.
+> **Verified against** `16f9613` on 2026-09-12.
 > Resolution order and integrity rules read from
 > `server/src/hephaestus/agent_bridge/sidecar.py`; the freshness guard from
 > `server/src/hephaestus/testing/sidecar.py`; scripts from

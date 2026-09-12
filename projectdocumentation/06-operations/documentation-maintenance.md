@@ -1,6 +1,6 @@
 # Documentation maintenance
 
-> **Verified against** `3af69da` on 2026-09-12.
+> **Verified against** `16f9613` on 2026-09-12.
 
 How this set stays true as the code changes. Documentation rots by default; the
 only thing that prevents it is a routine somebody actually runs.

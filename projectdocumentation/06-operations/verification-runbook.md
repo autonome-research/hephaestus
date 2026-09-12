@@ -1,6 +1,6 @@
 # Verification runbook
 
-> **Verified against** `3af69da` on 2026-09-12.
+> **Verified against** `16f9613` on 2026-09-12.
 
 How a claim becomes something this documentation is allowed to state. This is
 the procedure behind the house rule in [the set's README](../README.md).

@@ -1,6 +1,6 @@
 # HTTP workspace API
 
-> **Verified against** `3af69da` on 2026-09-12.
+> **Verified against** `16f9613` on 2026-09-12.
 > Route table, key policy and reason map printed from the code:
 > `len(ROUTE_TABLE)` = 56, `len(WEBSOCKET_ROUTES)` = 1,
 > `len(UNSERVED_SPEC_ROUTES)` = 3, `len(REASON_STATUS)` = 87.

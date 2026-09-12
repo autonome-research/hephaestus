@@ -1,6 +1,6 @@
 # Limits and configuration
 
-> **Verified against** `3af69da` on 2026-09-12.
+> **Verified against** `16f9613` on 2026-09-12.
 > Values printed from `schemas/bridge_limits.json`; enforcement sites read in code.
 
 ## One file, both languages

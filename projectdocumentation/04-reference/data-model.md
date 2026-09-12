@@ -1,6 +1,6 @@
 # Data model and durability
 
-> **Verified against** `3af69da` on 2026-09-12.
+> **Verified against** `16f9613` on 2026-09-12.
 > Schema read from `opstore/src/opstore/db.py` (`_SCHEMA_V1`, 10 tables,
 > `SCHEMA_VERSION` = 1); extension tables located by grepping `CREATE TABLE`
 > across `core/src` and `server/src`; `len(opstore.__all__)` = 61.

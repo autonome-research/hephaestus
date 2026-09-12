@@ -1,6 +1,6 @@
 # Refusal vocabulary
 
-> **Verified against** `3af69da` on 2026-09-12.
+> **Verified against** `16f9613` on 2026-09-12.
 > Counts printed from the code: `len(REASON_STATUS)` = 87; solver verdicts 12 distinct
 > spellings, solver refusals 34, intersection empty.
 

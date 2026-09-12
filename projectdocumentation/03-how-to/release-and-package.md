@@ -1,6 +1,6 @@
 # Release and package
 
-> **Verified against** `3af69da` on 2026-09-12.
+> **Verified against** `16f9613` on 2026-09-12.
 > Build sequence from `PACKAGING.md` and `scripts/stage_sidecar.py`; lanes and
 > rules from `.github/workflows/release.yml`; distribution metadata from
 > `packaging/pyproject.toml`.

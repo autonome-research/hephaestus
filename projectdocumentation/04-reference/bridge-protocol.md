@@ -1,6 +1,6 @@
 # Agent bridge protocol
 
-> **Verified against** `3af69da` on 2026-09-12.
+> **Verified against** `16f9613` on 2026-09-12.
 > Method sets printed from `hephaestus.agent_bridge.protocol`: 9 `py.*` requests,
 > 3 `py.*` notifications, 19 sidecar requests, 2 sidecar notifications.
 > Supervisor defaults read from `SupervisorConfig`.

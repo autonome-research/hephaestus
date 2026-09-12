@@ -1,6 +1,6 @@
 # Deployment view
 
-> **Verified against** `3af69da` on 2026-09-12.
+> **Verified against** `16f9613` on 2026-09-12.
 > Workspace members from `pyproject.toml`; lanes and jobs from
 > `.github/workflows/{ci,release}.yml`; staging from `scripts/stage_sidecar.py`.
 

@@ -1,6 +1,6 @@
 # Crosscutting concepts
 
-> **Verified against** `3af69da` on 2026-09-12.
+> **Verified against** `16f9613` on 2026-09-12.
 > Each concept below is asserted somewhere in the test suite; the assertion
 > mechanism is named with the concept.
 

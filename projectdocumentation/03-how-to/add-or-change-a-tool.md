@@ -1,6 +1,6 @@
 # Add or change an agent tool
 
-> **Verified against** `3af69da` on 2026-09-12.
+> **Verified against** `16f9613` on 2026-09-12.
 > Generator interface read from `contract/src/hephaestus/contract/toolgen.py`
 > and confirmed by running `uv run python -m hephaestus.contract.toolgen`;
 > dispatch rules from `server/src/hephaestus/agent_bridge/dispatch.py`.
