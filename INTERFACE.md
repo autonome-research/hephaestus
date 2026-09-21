@@ -5238,6 +5238,22 @@ disabled *reason* are **exempt** — they are the exceptional path, and this
 amendment shortens the resting path only.
 
 **Stable composition core and bounded details (§0.2c, C15).**
+
+> **AMENDED 2026-09-20.** Regions 1 and 4 are struck. The composer no longer
+> NARRATES what it is about to send: the context summary line, its disclosure
+> and the bounded **Message details** region are gone, and with them
+> `copy.models.details` ("Full model identity") and
+> `copy.composer.messageDetails`. The envelope they described is computed and
+> sent exactly as before — only the readout of it went. Full model identity is
+> still spelled out where the choice is the subject of the surface: inline in
+> the creation dialog, and on the composer control's accessible name and
+> `title`, which is what §7A's identity testables now read. What replaces
+> region 1 is the message box's own settings row
+> (`[data-composer-shell-bar]`): model/effort, the view toggle, manufacturing
+> process, images, Plan — controls that SHAPE the message rather than describe
+> it. The two-region rule below (settings above, editor and Send below, neither
+> scrolling the other away) is unchanged and is the half that mattered.
+
 The resting composer has four direct regions. Context and editor/Send precede
 expanded metadata, so checking the send contract does not require scrolling
 away from the draft. Content may wrap:
