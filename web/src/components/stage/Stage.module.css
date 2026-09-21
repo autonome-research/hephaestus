@@ -20,19 +20,56 @@
 }
 
 /*
- * Three rows: the tab strip, §4.1's held-pin marking, and the content.
+ * FOLDED, the drawer's row is its content (2026-09-20).
+ *
+ * The fixed `--drawer-height` is what makes the canvas identical across tabs,
+ * and it has to stop applying the moment the body unmounts — otherwise the
+ * strip sits at the bottom of a full-height track and the canvas stares at
+ * ~150px of nothing above it, which is exactly the dead band this file's
+ * `.region` comment already records once.
+ *
+ * The handle is UNMOUNTED with it. A resize grip for a drawer with no body to
+ * resize is a control that does nothing, and it would keep its own focus stop
+ * in the tab order while doing it.
+ *
+ * TWO TRACKS, THEREFORE, NOT THREE WITH A ZERO IN THE MIDDLE. Unmounting the
+ * handle removes a grid ITEM, and auto-placement then puts the drawer on the
+ * second track — so a `1fr 0 auto` template gave the drawer the `0` and left
+ * the `auto` for nobody, collapsing the strip to a 1px sliver off the bottom
+ * of the screen. This is the same hazard `.region` above records and the same
+ * one that cost the shell a 214px dead band: a template counts ITEMS, not the
+ * regions you were thinking of.
+ */
+.stage:has([data-inspector-collapsed]) {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+/*
+ * TWO rows since 2026-09-20: §4.1's held-pin marking, then the content.
+ *
+ * It was three, for a tab strip that is struck. The template outlived it and
+ * the region kept THREE tracks for TWO in-flow children, so the content landed
+ * in the second — an `auto` row — and the `1fr` row below it held nothing.
+ * `Viewport`'s `height: 100%` then resolved against a content-sized track and
+ * the canvas stopped at 348px inside a 562px region: 214px of dead ground
+ * between the model and the inspector, measured in the browser.
+ *
+ * (The view rail is `position: absolute`, so it is NOT a grid item and does not
+ * take a track — which is exactly why the arithmetic above went unnoticed.)
  *
  * The marking's row is `auto` and its container is ALWAYS rendered (empty in
- * every state but the split), so the row is 0px unless a marker mounts and the
+ * every state but the split), so that row is 0px unless a marker mounts and the
  * content row stays `minmax(0, 1fr)` — which is what keeps `Viewport`'s
  * `height: 100%` resolving against a definite track, and keeps the drawer-height
- * parity across the five stage tabs that this file's header exists to protect
+ * parity across stage tabs that this file's header exists to protect
  * (J-web-viewport-9 mounts the marker INSIDE the region for exactly that
  * reason).
  */
 .region {
+  /* The view rail is absolutely positioned against this box (2026-09-20). */
+  position: relative;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
   min-width: 0;
 }
@@ -43,13 +80,61 @@
   overflow: auto;
 }
 
+/*
+ * The drawer's handle, drawn like the Stream's (2026-09-20): a hairline on a
+ * full-height target. It filled its whole track — `--border` at rest and
+ * `--accent` on hover or focus — which made a divider between two regions read
+ * as a bar between them.
+ */
 .handle {
+  position: relative;
   cursor: row-resize;
-  background: var(--border);
-  transition: background var(--dur-1) var(--ease);
+  background: transparent;
 }
 
-.handle:hover,
+.handle::before {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-50%);
+  background: var(--border);
+  transition: background var(--dur-1) var(--ease), height var(--dur-1) var(--ease);
+}
+
+.handle:hover::before {
+  background: var(--border-strong);
+}
+
 .handle:focus-visible {
+  outline: none;
+}
+
+.handle:focus-visible::before {
   background: var(--accent);
+  height: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .handle::before { transition: none; }
+}
+
+/*
+ * THE RAIL FLOATS OVER THE CANVAS AND NOWHERE ELSE (2026-09-20).
+ *
+ * `StageViewRail` is absolutely positioned on the stage's trailing edge, which
+ * is right for the viewport: it is chrome laid over a picture, like the view
+ * cube in the opposite corner. Every other view is a DOCUMENT — the script
+ * editor and its PARAMS panel, the diff, the timeline — and chrome laid over a
+ * document is occlusion. Measured: the rail sat at x=972..1008 while the PARAMS
+ * panel ran to x=1020, so the cube and diff buttons covered the parameter
+ * controls.
+ *
+ * The inset is the rail's own width plus its offsets, named once here. It is
+ * applied to the content box rather than to each view, so a view added later
+ * inherits the correct behaviour instead of rediscovering this.
+ */
+.content[data-stage-view]:not([data-stage-view="viewport"]) {
+  padding-inline-end: calc(36px + 2 * var(--space-2));
 }

@@ -29,24 +29,22 @@
 
 import { useCallback, useEffect, useRef } from "react";
 import { copy } from "../../copy";
-import { useWorkspace, workspaceStore } from "../../state/react";
+import { useWorkspace } from "../../state/react";
 import { shellStore } from "../../state/shell";
-import { effectiveInspectorTab, STAGE_TABS, type StageTab } from "../../state/workspace";
-import { Badge, EmptyState, TabBar, tabControlId, useShell } from "../../system";
+import { EmptyState, useShell } from "../../system";
 import { ResultsPanel } from "../inspector/ResultsPanel";
 import { useHeldPart } from "../../state/heldPart";
 import { pinSplit } from "../../state/pinSplit";
-import { dirtySideWord, useDirtyIndex } from "../rail/GitDirty";
 import { PinSplitMarker } from "../PinSplitMarker";
 import { Inspector } from "./Inspector";
 import { ScriptWorkspace } from "./ScriptWorkspace";
+import { StageViewRail } from "./StageViewRail";
 import { Timeline } from "./Timeline";
 import { Viewport } from "./viewport/Viewport";
 import styles from "./Stage.module.css";
 
 export function Stage(): React.JSX.Element {
   const tab = useWorkspace((s) => s.stage_tab);
-  const inspectorTab = useWorkspace((s) => s.inspector_tab);
   const part = useWorkspace((s) => s.part);
   // §4.1's held-pin marking (J-web-viewport-9). The stage follows the PIN; the
   // inspector below follows the rail selection, and while the two disagree each
@@ -55,13 +53,8 @@ export function Stage(): React.JSX.Element {
   const artifactRef = useWorkspace((s) => s.artifact_ref);
   const heldPart = useHeldPart();
   const split = pinSplit(pinMode, heldPart, part);
-  const dirty = useDirtyIndex();
   const shell = useShell();
   const hostRef = useRef<HTMLDivElement | null>(null);
-  // §13.1: "a dot on the Script tab", from `git status` and from nothing else.
-  const partDirty = part !== null ? dirty.byPart.get(part) : undefined;
-  const scriptDirtyWord = partDirty === undefined ? null : dirtySideWord(partDirty);
-
   /**
    * The drag handle. Pointer capture rather than document listeners so a drag
    * that leaves the window still ends where the pointer says it ended.
@@ -108,33 +101,21 @@ export function Stage(): React.JSX.Element {
   return (
     <div className={styles["stage"]} ref={hostRef}>
       <div className={styles["region"]}>
-        <TabBar
-          attr="data-stage-tab"
-          panelId="stage-panel"
-          label={copy.stage.tabsLabel}
-          selected={tab}
-          onSelect={(next: StageTab) => {
-            const nextInspector = effectiveInspectorTab(next, inspectorTab);
-            workspaceStore.update(
-              nextInspector === inspectorTab
-                ? { stage_tab: next }
-                : { stage_tab: next, inspector_tab: nextInspector },
-            );
-          }}
-          tabs={STAGE_TABS.map((name) => ({
-            id: name,
-            label: copy.stage.tabs[name],
-            ...(name === "script" && scriptDirtyWord !== null
-              ? {
-                  trailing: (
-                    <Badge status="dirty" title={scriptDirtyWord}>
-                      {scriptDirtyWord}
-                    </Badge>
-                  ),
-                }
-              : {}),
-          }))}
-        />
+        {/* §4.1, amended 2026-09-20: the horizontal tab strip is STRUCK. The
+            same closed `STAGE_TABS` vocabulary is the shell's leading column
+            (`components/views/ViewsBar.tsx`), which keeps `[data-stage-tab]`
+            and `tabControlId` verbatim — the region below still names its
+            labelling control by id, which is valid across the DOM because the
+            ids are derived rather than positional.
+
+            Why it moved rather than shrank: the strip cost the region a full
+            row for five words that were all visible at all times, and it grew
+            with the vocabulary — `timeline` and `results` joined the closed set
+            and the row got wider, not the region taller. A column pays for the
+            vocabulary out of width the shell already owns.
+
+            §13.1's "dot on the Script tab" moves with it, so the marking still
+            sits on the control it marks. */}
 
         {/* §4.1's inherited marking, inside the region it marks
             (J-web-viewport-9). The container is unconditional so the region's
@@ -144,11 +125,24 @@ export function Stage(): React.JSX.Element {
           <PinSplitMarker split={split} region="stage" artifactRef={artifactRef} />
         </div>
 
+        {/* §4.1, amended 2026-09-20: Viewport and Diff switch the stage, so they
+            sit on the stage's own trailing edge. Script stays in the task bar.
+
+            The region is a labelled `region`, not a `tabpanel`: its controls are
+            no longer one tablist, because a roving tabindex cannot span two
+            regions. `[data-stage-tab]` and the ids are unchanged. */}
+        <StageViewRail />
+        {/* `data-stage-view` (2026-09-20) so the stylesheet can tell a view
+            the rail may FLOAT over from one it must not. Over the 3-D canvas
+            an overlaid rail is correct — it is chrome on a picture, the way
+            the view cube is. Over the Script editor it is occlusion: the
+            rail sat on top of the PARAMS panel, which is content. */}
         <div
           className={styles["content"]}
-          role="tabpanel"
+          role="region"
           id="stage-panel"
-          aria-labelledby={tabControlId("data-stage-tab", tab)}
+          aria-label={copy.stage.tabsLabel}
+          data-stage-view={tab}
           data-overlay-scroll=""
         >
           {tab === "script" ? (
@@ -174,16 +168,21 @@ export function Stage(): React.JSX.Element {
       {/* §4.1(c)'s 6px handle. `separator` with an orientation is the role a
           resize grip carries; the value is a pixel height, so no min/max is
           announced that the clamp would then contradict. */}
-      <div
-        className={styles["handle"]}
-        role="separator"
-        aria-orientation="horizontal"
-        aria-label={copy.inspector.resize}
-        tabIndex={0}
-        data-drawer-handle=""
-        onPointerDown={onHandleDown}
-        onKeyDown={onHandleKey}
-      />
+      {/* Unmounted with the drawer's body (2026-09-20): a resize grip for a
+          drawer that has no body to resize is a control that does nothing,
+          and it would hold a focus stop in the tab order while doing it. */}
+      {!shell.drawerOpen ? null : (
+        <div
+          className={styles["handle"]}
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label={copy.inspector.resize}
+          tabIndex={0}
+          data-drawer-handle=""
+          onPointerDown={onHandleDown}
+          onKeyDown={onHandleKey}
+        />
+      )}
 
       <Inspector />
     </div>

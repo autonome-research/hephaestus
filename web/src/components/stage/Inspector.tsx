@@ -38,12 +38,13 @@
 import { useState } from "react";
 import { copy } from "../../copy";
 import { useWorkspace, workspaceStore } from "../../state/react";
+import { shellStore } from "../../state/shell";
 import {
   effectiveInspectorTab,
   inspectorTabsFor,
   type InspectorTab,
 } from "../../state/workspace";
-import { TabBar, tabControlId } from "../../system";
+import { TabBar, tabControlId, useShell } from "../../system";
 import { ChecksPanel } from "../inspector/ChecksPanel";
 import { DfmPanel, type DescriptorIntent } from "../inspector/DfmPanel";
 import { ExportPanel } from "../inspector/ExportPanel";
@@ -59,8 +60,14 @@ import styles from "./Inspector.module.css";
 export function Inspector(): React.JSX.Element {
   const stageTab = useWorkspace((s) => s.stage_tab);
   const requested = useWorkspace((s) => s.inspector_tab);
-  const tab = effectiveInspectorTab(stageTab, requested);
-  const tabs = inspectorTabsFor(stageTab);
+  // The side panel's Geometry disclosure is the third place this readout can
+  // appear; the drawer yields to it exactly as it yields to the stage's own
+  // `results` tab (2026-09-20).
+  const shell = useShell();
+  const panelGeometry = shell.panelOpen.includes("results");
+  const open = shell.drawerOpen;
+  const tab = effectiveInspectorTab(stageTab, requested, panelGeometry);
+  const tabs = inspectorTabsFor(stageTab, panelGeometry);
   const [intent, setIntent] = useState<DescriptorIntent | undefined>(undefined);
   // §4.1's held-pin marking, the selection half (J-web-viewport-9).
   const part = useWorkspace((s) => s.part);
@@ -68,7 +75,47 @@ export function Inspector(): React.JSX.Element {
   const split = pinSplit(pinMode, useHeldPart(), part);
 
   return (
-    <section className={styles["drawer"]} aria-label={copy.inspector.tabs[tab]}>
+    <section
+      className={styles["drawer"]}
+      aria-label={copy.inspector.tabs[tab]}
+      data-drawer-open={open ? "" : undefined}
+      data-inspector-collapsed={open ? undefined : ""}
+    >
+      {/* THE WHOLE STRIP IS THE CONTROL (2026-09-20). A chevron at one end was
+          a 24px target for a fold the operator wants to hit without aiming, so
+          the bar itself takes the click and the chevron is gone.
+
+          The tabs keep their own click, because a tab is a different act: it
+          chooses WHICH readout, not whether there is one. They sit inside this
+          handler, so the check below is "did the click land on a control?" —
+          `closest("button")` rather than `event.target === event.currentTarget`,
+          since a click on a tab's icon or label targets the child, not the
+          button. Only bare strip lands here.
+
+          A `div` with an `onClick` would be an unreachable control, so the
+          strip is a `button`-like region: `role="button"`, in the tab order,
+          and answering Enter and Space the way a real one does. It cannot BE a
+          `<button>` — it contains the tab buttons, and nesting interactive
+          elements is invalid and breaks keyboard traversal. */}
+      <div
+        className={styles["strip"]}
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        aria-label={open ? copy.inspector.collapse : copy.inspector.expand}
+        title={open ? copy.inspector.collapse : copy.inspector.expand}
+        data-drawer-toggle=""
+        onClick={(event) => {
+          if ((event.target as HTMLElement).closest("button") !== null) return;
+          shellStore.toggleDrawer();
+        }}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return;
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          shellStore.toggleDrawer();
+        }}
+      >
       <TabBar
         attr="data-inspector-tab"
         panelId="inspector-panel"
@@ -79,14 +126,18 @@ export function Inspector(): React.JSX.Element {
         }}
         tabs={tabs.map((name) => ({ id: name, label: copy.inspector.tabs[name] }))}
       />
+      </div>
       {/* §4.1's inherited marking, the SELECTION half (J-web-viewport-9). Two
           regions follow the pin (the stage and Export) and two follow the rail
           selection (this drawer and the Script tab); while they disagree each
           says which part it is showing, in words. */}
-      <div data-pin-split-slot="inspector">
-        <PinSplitMarker split={split} region="inspector" />
-      </div>
+      {!open ? null : (
+        <div data-pin-split-slot="inspector">
+          <PinSplitMarker split={split} region="inspector" />
+        </div>
+      )}
 
+      {!open ? null : (
       <div
         className={styles["content"]}
         role="tabpanel"
@@ -116,6 +167,7 @@ export function Inspector(): React.JSX.Element {
           />
         )}
       </div>
+      )}
     </section>
   );
 }

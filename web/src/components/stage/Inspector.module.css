@@ -18,7 +18,40 @@
   background: var(--surface-panel);
   min-height: 0;
   display: grid;
+  /* Folded, the body and the pin marking are UNMOUNTED, so the drawer is the
+     strip alone and the grid has one row to give it. `grid-template-rows` is
+     declared per state rather than left at three: an `auto auto 1fr` template
+     with one child puts that child on the `auto` row and hands the `1fr` to
+     nothing, which is the dead-band defect this file's sibling already had
+     once (`Stage.module.css`'s `.region`). */
+  grid-template-rows: auto;
+}
+
+.drawer[data-drawer-open] {
   grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+/* The strip IS the fold control (2026-09-20), so it shows a pointer over its
+   bare parts and keeps a visible focus ring of its own — it is in the tab
+   order and a keyboard user has to be able to see where they are. The tabs
+   inside keep their own cursor and their own ring. */
+.strip {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-inline);
+  min-width: 0;
+  cursor: pointer;
+}
+
+.strip > *:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  cursor: auto;
+}
+
+.strip:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
 .content {
