@@ -163,9 +163,15 @@
 }
 
 .tabsCreateAnchor .createMenu {
-  /* The trailing header control opens inward, below its anchor. */
+  /* Opens inward, below its anchor — and "inward" follows the anchor. The `+`
+     LEADS the header now, so inward is rightward: anchoring the menu's right
+     edge to the anchor's (`right: 0`) pushed its 148px box off the left edge of
+     a stream panel that is `overflow: hidden`, which clipped all but a ~51px
+     sliver. The menu measured onscreen and Playwright called it visible — a
+     bounding box survives clipping — but every click on an entry landed on the
+     popover scrim instead. Anchor the LEADING edges so it grows into the panel. */
   top: 100%;
-  right: 0;
+  left: 0;
   width: max-content;
   max-width: min(44ch, 80vw);
   max-height: 60vh;
