@@ -1,26 +1,24 @@
 // Copyright 2026 The Hephaestus Authors
 // SPDX-License-Identifier: Apache-2.0
 //
-// J-web-stream-11: the export panel and the header chrome drive the same
-// `POST /parts/{part}/export` submission with what used to be two hand-copied
-// state machines. A shared `useExportSubmission` hook now lives in
-// `components/export/submission.ts`; this file is the PAIRED assertion the
-// ledger asks for — one behavioural table driven against BOTH surfaces —
-// which is what keeps a future edit to one from drifting from the other again,
-// the way the panel's own stale-result clear once did.
+// J-web-stream-11: the export panel drives `POST /parts/{part}/export` through
+// the shared `useExportSubmission` hook in `components/export/submission.ts`,
+// and holds no submission state of its own.
 //
-// BOTH surfaces now run that one hook: `ExportView` (the inspector tab) and
-// `ExportChrome` (the header dialog) hold no export state of their own and
-// differ only in the submission they build and the markup they render, which is
-// the part that legitimately differs. The table below is what keeps that true —
-// the divergence it guards against is the one that actually happened, where the
-// chrome's `run` cleared the previous result and the panel's did not.
+// THERE WAS A SECOND SURFACE, AND THIS WAS A PAIRED TABLE (2026-09-20). The
+// header's `ExportChrome` ran the same hook over a strict subset of the panel's
+// surface, and the divergence this file guards against is the one that actually
+// happened between them: the chrome's `run` cleared the previous result and the
+// panel's did not, so a refusal after a success left the earlier run's kerf
+// block on screen attributed to a submission that produced no kerf. The header
+// chrome is struck (§4.1(i)) and the table now has one row — kept as a table,
+// because the clause is about the hook owning the transition and a second
+// surface can land on it again.
 
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ExportView, resetSubmissionKeys, type Submission } from "../src/components/inspector/ExportPanel";
-import { ExportChrome } from "../src/components/chrome/ExportChrome";
 import type { ExportOutput, ExportResult, ExportsDocument } from "../src/api/exports";
 import { WorkspaceError } from "../src/api/client";
 import { claimToken, dropToken } from "../src/api/token";
@@ -129,26 +127,9 @@ const SURFACES: readonly Surface[] = [
     // The kerf block is only ever rendered from `result.kerf` (§22.1).
     showsResult: (host) => host.querySelector("[data-export-kerf]") !== null,
   },
-  {
-    name: "ExportChrome (header dialog)",
-    mount: (onExport, onDownload, part = "bracket") =>
-      mount(
-        <ExportChrome
-          part={part}
-          pinned={PINNED}
-          pinMode="pinned"
-          history={historyWithProducedStep()}
-          onExport={onExport}
-          onDownload={onDownload}
-          onOpenInspector={() => undefined}
-        />,
-      ),
-    // The produced-file row is only ever rendered from a matched `result`.
-    showsResult: (host) => host.querySelector("[data-export-file]") !== null,
-  },
 ];
 
-describe("both export surfaces clear the previous result on a new refused submission (J-web-stream-11)", () => {
+describe("the export surface clears the previous result on a new refused submission (J-web-stream-11)", () => {
   afterEach(() => {
     resetSubmissionKeys();
     dropToken();

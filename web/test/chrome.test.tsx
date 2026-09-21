@@ -1,22 +1,26 @@
 // Copyright 2026 The Hephaestus Authors
 // SPDX-License-Identifier: Apache-2.0
 //
-// Pin-bound Export / BOM chrome (issue #12). Assertions are on `data-*` and
-// field sets, never on UI copy.
+// Pin-bound Export / BOM (issue #12). Assertions are on `data-*` and field
+// sets, never on UI copy.
+//
+// REWRITTEN 2026-09-20. This file covered `PartChrome`/`ExportChrome`, the
+// header's two pin-bound buttons and the dialog behind them. Both are struck
+// (§4.1(i)): the dialog ran the same submission hook as the Export tab over a
+// strict subset of its surface, and BOM mounted the very component the Sourcing
+// tab mounts. The clauses below are the ones with a subject left, pointed at
+// the surface that kept the capability — and the last describe is the strike
+// itself, so a header that grows a second egress surface fails here.
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 
 import { EXPORT_FORMATS } from "../src/api/exports";
 import { SOURCING_FIELDS } from "../src/api/types";
-import { ExportChrome } from "../src/components/chrome/ExportChrome";
-import { PartChrome } from "../src/components/chrome/PartChrome";
-import { exportBlocker } from "../src/components/inspector/ExportPanel";
-import { shellStore } from "../src/state/shell";
+import { exportBlocker, ExportView } from "../src/components/inspector/ExportPanel";
 import { INSPECTOR_TABS } from "../src/state/workspace";
 
 function render(element: ReactElement): Document {
@@ -27,28 +31,21 @@ function render(element: ReactElement): Document {
 }
 
 function chrome(
-  overrides: Partial<Parameters<typeof ExportChrome>[0]> = {},
+  overrides: Partial<Parameters<typeof ExportView>[0]> = {},
 ): Document {
   return render(
-    <ExportChrome
+    <ExportView
       part="tread"
       pinned="artifact:build:sha256:aaaa"
       pinMode="pinned"
       onExport={() => Promise.reject(new Error("not called"))}
       onDownload={() => Promise.reject(new Error("not called"))}
-      onOpenInspector={() => undefined}
       {...overrides}
     />,
   );
 }
 
-describe("Export chrome — bound to the pin", () => {
-  it("lives in a panel that is not the inspector export tab", () => {
-    const dom = chrome();
-    expect(dom.querySelector("[data-panel='export-chrome']")).not.toBeNull();
-    expect(dom.querySelector("[data-panel='export']")).toBeNull();
-  });
-
+describe("Export — bound to the pin", () => {
   it("renders its subject before any format button", () => {
     const dom = chrome();
     const subject = dom.querySelector("[data-source='workspace.artifact_ref']");
@@ -91,9 +88,8 @@ describe("Export chrome — bound to the pin", () => {
     expect(exportBlocker("tread", "artifact:export:sha256:a")).toBe("invalid_source");
   });
 
-  it("offers a door to the inspector tab without replacing it", () => {
-    expect(chrome().querySelector("[data-chrome-open-inspector='export']")).not.toBeNull();
-    expect([...INSPECTOR_TABS]).toContain("export");
+  it("is the inspector tab, which is where the capability now lives", () => {
+    expect([...INSPECTOR_TABS]).toEqual(expect.arrayContaining(["export", "sourcing"]));
   });
 });
 
@@ -113,8 +109,7 @@ describe("sourcing field set — declared manufacturing identity only", () => {
   it("names no vendor catalog in the sourcing or chrome modules", () => {
     const files = [
       "src/components/inspector/SourcingPanel.tsx",
-      "src/components/chrome/PartChrome.tsx",
-      "src/components/chrome/ExportChrome.tsx",
+      "src/components/inspector/ExportPanel.tsx",
       "src/copy.ts",
     ];
     for (const file of files) {
@@ -125,73 +120,27 @@ describe("sourcing field set — declared manufacturing identity only", () => {
   });
 });
 
-describe("header chrome — two visible controls, pin-bound (§4.1(i) C26)", () => {
-  function partChrome(width = 1440): Document {
-    // C26: the labels collapse at the SAME boundary the Stream does — the
-    // shell store's band, §4.1(a)'s one breakpoint authority. The test drives
-    // the store the way `useBreakpoint` does, then restores the wide band.
-    shellStore.applyWidth(width);
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const dom = render(
-      <QueryClientProvider client={client}>
-        <PartChrome />
-      </QueryClientProvider>,
-    );
-    shellStore.applyWidth(1440);
-    return dom;
-  }
-
-  it("renders Export and BOM as distinct clickable buttons, not an overflow", () => {
-    const dom = partChrome();
-    const host = dom.querySelector("[data-part-chrome]");
-    const exportBtn = dom.querySelector("[data-chrome-export]");
-    const bomBtn = dom.querySelector("[data-chrome-bom]");
-    expect(host).not.toBeNull();
-    expect(exportBtn?.tagName).toBe("BUTTON");
-    expect(bomBtn?.tagName).toBe("BUTTON");
-    expect(exportBtn?.parentElement).toBe(host);
-    expect(bomBtn?.parentElement).toBe(host);
-    expect(dom.querySelector("[data-chrome-more]")).toBeNull();
-    expect(dom.querySelector("[data-chrome-overflow]")).toBeNull();
-    expect(exportBtn).not.toBe(bomBtn);
-  });
-
-  it("renders icon AND word at the wide band, name equal to the visible word", () => {
-    const dom = partChrome(1440);
-    for (const selector of ["[data-chrome-export]", "[data-chrome-bom]"]) {
-      const control = dom.querySelector(selector);
-      expect(control?.querySelector("svg[data-icon]"), selector).not.toBeNull();
-      const word = control?.textContent?.trim() ?? "";
-      expect(word, selector).not.toBe("");
-      // The accessible name IS the content: no aria-label competes with it.
-      expect(control?.getAttribute("aria-label"), selector).toBeNull();
-      expect(control?.getAttribute("title") ?? "", selector).not.toBe("");
+describe("the header grows no second egress surface (§4.1(i), struck 2026-09-20)", () => {
+  it("mounts no Export/BOM chrome and keeps no module for one", () => {
+    const header = readFileSync(resolve(process.cwd(), "src/components/Header.tsx"), "utf-8");
+    // The strike is the assertion: the header renders neither control, and the
+    // modules that drew them are gone rather than left orphaned in the tree.
+    for (const hook of ["data-part-chrome", "data-chrome-export", "data-chrome-bom"]) {
+      expect(header, hook).not.toContain(hook);
+    }
+    for (const gone of [
+      "src/components/chrome/PartChrome.tsx",
+      "src/components/chrome/ExportChrome.tsx",
+      "src/components/chrome/PartChrome.module.css",
+    ]) {
+      expect(existsSync(resolve(process.cwd(), gone)), gone).toBe(false);
     }
   });
 
-  it("renders icon-only below 1280px, with the SAME accessible name", () => {
-    const wide = partChrome(1440);
-    const narrow = partChrome(1200);
-    for (const selector of ["[data-chrome-export]", "[data-chrome-bom]"]) {
-      const wordedName = wide.querySelector(selector)?.textContent?.trim() ?? "";
-      const control = narrow.querySelector(selector);
-      expect(control?.querySelector("svg[data-icon]"), selector).not.toBeNull();
-      expect(control?.textContent?.trim(), selector).toBe("");
-      // C26's testable: the accessible name is identical in both forms.
-      expect(control?.getAttribute("aria-label"), selector).toBe(wordedName);
-      expect(control?.getAttribute("title") ?? "", selector).not.toBe("");
-    }
-  });
-
-  it("still sends the workspace pin and does not grow a third egress surface", () => {
-    const source = readFileSync(resolve(process.cwd(), "src/components/chrome/PartChrome.tsx"), "utf-8");
-    expect(source).toContain("useExportActions");
-    expect(source).toContain("pinned={pinned}");
-    expect(source).toContain("pinMode={pinMode}");
-    expect(source).toContain("data-chrome-export");
-    expect(source).toContain("data-chrome-bom");
-    expect(source).not.toMatch(/data-chrome-overflow|data-chrome-more|overflow menu/);
-    expect(source).not.toContain("inspector_tab: \"sourcing\"");
+  it("leaves the capability reachable, on one surface each", () => {
     expect([...INSPECTOR_TABS]).toEqual(expect.arrayContaining(["export", "sourcing"]));
+    const panel = readFileSync(resolve(process.cwd(), "src/components/inspector/ExportPanel.tsx"), "utf-8");
+    expect(panel).toContain("useExportActions");
+    expect(panel).not.toMatch(/data-chrome-overflow|data-chrome-more/);
   });
 });

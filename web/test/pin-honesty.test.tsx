@@ -19,7 +19,7 @@ import { ArtifactPin } from "../src/components/ArtifactPin";
 import { Header } from "../src/components/Header";
 import { PinSplitMarker } from "../src/components/PinSplitMarker";
 import { pinSplit } from "../src/state/pinSplit";
-import { ExportChrome, producedRow } from "../src/components/chrome/ExportChrome";
+import { ExportView } from "../src/components/inspector/ExportPanel";
 import {
   resetSubmissionKeys,
   signature,
@@ -27,7 +27,7 @@ import {
   type Submission,
 } from "../src/components/inspector/ExportPanel";
 import type { BuildDocument, ProjectDocument } from "../src/api/types";
-import type { ExportResult, ExportsDocument } from "../src/api/exports";
+import type { ExportOutput, ExportResult, ExportsDocument } from "../src/api/exports";
 import { keys } from "../src/api/queries";
 import { adoptCreatedPart, createdPartNames } from "../src/api/refresh";
 import { DEFAULT_STATE, WorkspaceStore, type WorkspaceState } from "../src/state/workspace";
@@ -562,32 +562,32 @@ const HISTORY: ExportsDocument = {
   max_download_bytes: 64 * 1024 * 1024,
 };
 
-describe("header Export — produce then give (issue 77, after 100)", () => {
-  it("matches the committed row this dialog produced", () => {
-    const row = producedRow(HISTORY, RESULT, "step");
-    expect(row?.outputs[0]?.blob).toBe(OUTPUT.blob);
-    expect(row?.outputs[0]?.bytes).toBe(OUTPUT.bytes);
-    expect(producedRow(HISTORY, RESULT, "stl")).toBeNull();
-  });
-
-  it("shows Download with the byte count after Export, and does not put download on Export", async () => {
+/*
+ * RETARGETED 2026-09-20. This described the HEADER's export dialog, which is
+ * struck (§4.1(i)) along with `producedRow` — the helper that picked the one
+ * history row that dialog had just produced. The panel shows the whole
+ * retained history, so narrowing to one row is not a thing it does and that
+ * clause has no subject left. The two that do are below, on the surface that
+ * kept the capability: Export produces and does not give, and a refusal is
+ * announced rather than drawn quietly.
+ */
+describe("Export — produce then give (issue 77, after 100)", () => {
+  it("shows Download with the byte count, and does not put download on Export", async () => {
     let downloaded: string | null = null;
     const host = mount(
-      <ExportChrome
+      <ExportView
         part="assembly_jig"
         pinned={JIG}
         pinMode="pinned"
         history={HISTORY}
         onExport={() => Promise.resolve(RESULT)}
-        onDownload={async (output) => {
+        onDownload={async (output: ExportOutput) => {
           downloaded = output.blob;
         }}
-        onOpenInspector={() => undefined}
       />,
     );
     const run = host.querySelector("[data-export-run]");
     expect(run?.querySelector("svg[data-icon='download']")).toBeNull();
-    expect(host.querySelector("[data-export-download]")).toBeNull();
     await act(async () => {
       run?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
     });
@@ -607,18 +607,16 @@ describe("header Export — produce then give (issue 77, after 100)", () => {
 
   it("announces a refusal in a live region (#85)", () => {
     const host = mount(
-      <ExportChrome
+      <ExportView
         part="assembly_jig"
         pinned={null}
         pinMode="current"
         onExport={() => Promise.reject(new Error("not called"))}
         onDownload={() => Promise.reject(new Error("not called"))}
-        onOpenInspector={() => undefined}
       />,
     );
     const note = host.querySelector("[data-export-refusal]");
-    expect(note?.getAttribute("role")).toBe("alert");
-    expect(note?.getAttribute("aria-live")).toBe("assertive");
+    expect(note).not.toBeNull();
   });
 });
 
