@@ -125,7 +125,17 @@ export function Shell(): React.JSX.Element {
    * a ref would have to be optional at every hop, and the attribute is the same
    * contract the e2e reads.
    */
-  const focusRailToggle = (): void => {
+  const closeRail = (): void => {
+    // `flushSync` is load-bearing, not caution (fixed 2026-09-20). The toggle
+    // has TWO homes — the task bar while the panel is closed, the panel's own
+    // corner while it is open — so the element this selector should find is a
+    // DIFFERENT one before and after the close. Calling it in the same tick as
+    // `setRailOpen(false)` found the corner control that was about to unmount,
+    // focused it, and left focus on `<body>` a moment later. Render first, then
+    // look: §3.13.4 wants focus back on the control that opened the overlay.
+    flushSync(() => {
+      shellStore.setRailOpen(false);
+    });
     document.querySelector<HTMLElement>("[data-rail-toggle]")?.focus();
   };
 
@@ -158,8 +168,7 @@ export function Shell(): React.JSX.Element {
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === "Escape") {
         event.preventDefault();
-        shellStore.setRailOpen(false);
-        focusRailToggle();
+        closeRail();
       }
       if (event.key === "Tab") {
         const controls = [...railRef.current?.querySelectorAll<HTMLElement>(
@@ -193,7 +202,7 @@ export function Shell(): React.JSX.Element {
       {/* 2026-09-20: the header's Parts toggle is struck. `[data-rail-toggle]`
           now lives in the Views bar and serves BOTH capacities — the overlay
           below 1280px and the column above it — so the hook is on exactly one
-          element in every state, which is what `focusRailToggle` below and the
+          element in every state, which is what `closeRail` below and the
           gates that address Parts by name both rely on. */}
       <Header />
       <RefusalBanner
@@ -237,8 +246,7 @@ export function Shell(): React.JSX.Element {
             className={styles["scrim"]}
             data-rail-scrim=""
             onClick={() => {
-              shellStore.setRailOpen(false);
-              focusRailToggle();
+              closeRail();
             }}
           />
         ) : null}
@@ -274,8 +282,7 @@ export function Shell(): React.JSX.Element {
                 expanded
                 title={copy.rail.close}
                 onClick={() => {
-                  shellStore.setRailOpen(false);
-                  focusRailToggle();
+                  closeRail();
                 }}
                 data-rail-toggle=""
                 {...(shell.railOverlay ? { "data-rail-close": "" } : {})}
