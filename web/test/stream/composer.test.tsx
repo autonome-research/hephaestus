@@ -506,7 +506,18 @@ describe("the DOM contract", () => {
     expect(cancel).not.toBeNull();
     expect(host.querySelector("[data-composer-input-action]")?.contains(cancel ?? null)).toBe(true);
     expect(host.querySelector("[data-task-action]")?.textContent).toContain("Working");
-    expect(form?.querySelector("[data-composer-send]")).toBeNull();
+    // CORRECTED 2026-09-20. This asserted Send was NULL during a run, which
+    // blessed a regression rather than describing the contract: Send and
+    // Cancel had become a ternary, so `[data-composer-send]` left the DOM
+    // whenever a run was cancellable. §7A.10(a) says the opposite — Send is
+    // the row's one target and must be PRESENT AND DISABLED WITH A REASON,
+    // because "why can't I send?" needs something to point at. The unit suite
+    // passed while `execution.spec.ts` failed against an element that did not
+    // exist; a test that encodes the bug is worse than no test.
+    const send = form?.querySelector("[data-composer-send]");
+    expect(send).not.toBeNull();
+    expect(send?.getAttribute("aria-disabled")).toBe("true");
+    expect(send?.getAttribute("aria-describedby")).toBeTruthy();
     expect(host.querySelector("[data-composer-input-row]")?.querySelectorAll("button, [role='button']").length).toBe(0);
   });
 

@@ -396,7 +396,11 @@ describe("the composer is usable, and says how it is used", () => {
   // state attribute without turning the entire composer into a tooltip target.
   it("mounts Cancel iff the state is available, and keeps the attribute (§7A.6)", () => {
     expect(composer).toContain('data-composer-cancel=""');
-    expect(composer).toMatch(/\{cancellable \? <Button/);
+    // The shape is `{cancellable ? (<Button .../>) : null}` since Send stopped
+    // being its else-branch — Cancel is still conditional, which is the half
+    // §7A.6 is about.
+    expect(composer).toMatch(/\{cancellable \? \(\s*<Button/);
+    expect(composer).toMatch(/\) : null\}/);
     expect(composer).toContain('data-cancel-state={cancellable ? "available" : "unavailable"}');
     expect(composer).not.toContain("cancelWhy");
     // Pending/acknowledged Stop stays disabled; only fresh same-run authority
