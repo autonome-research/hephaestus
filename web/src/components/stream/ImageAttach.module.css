@@ -1,0 +1,55 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * The composer's held images: the picker's hidden input and the thumbnails.
+ */
+
+/* Not `display: none`: a hidden file input must stay focusable enough for
+   `click()` to open the picker in every browser, and `display: none` makes
+   that unreliable. Clipped to nothing instead. */
+.hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) 0 0;
+  list-style: none;
+}
+
+.held {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.thumb {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  display: block;
+}
+
+/* The remove control sits on the thumbnail's corner; it keeps the system
+   button's own hit area, which is larger than the glyph it draws. */
+.held button {
+  position: absolute;
+  top: calc(-1 * var(--space-1));
+  inset-inline-end: calc(-1 * var(--space-1));
+  background: var(--surface-overlay);
+  border-radius: 50%;
+}

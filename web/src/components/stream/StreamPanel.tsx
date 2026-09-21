@@ -58,7 +58,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { flushSync } from "react-dom";
 import { WorkspaceError } from "../../api/client";
 import { attachProjection, type AttachProjection } from "../../api/attach";
 import { refreshAfterTurn } from "../../api/refresh";
@@ -69,12 +68,10 @@ import {
   type SessionRow,
   type SessionsDocument,
 } from "../../api/sessions";
-import { useParts } from "../../api/queries";
 import { copy } from "../../copy";
-import { Button, EmptyState, tabControlId } from "../../system";
-import { useWorkspace, workspaceStore } from "../../state/react";
 import { shellStore } from "../../state/shell";
-import { sessionEmptyBody, sessionEmptyKind } from "../../stream/sessionEmpty";
+import { Button, EmptyState, tabControlId, useShell } from "../../system";
+import { useWorkspace, workspaceStore } from "../../state/react";
 import { showsEmptyTranscript } from "../../stream/streamChrome";
 import { useStream } from "../../stream/useStream";
 import { readExecutionSessions } from "../../stream/conversation";
@@ -98,8 +95,6 @@ const EMPTY_PROFILES: readonly ProfileCapability[] = [];
 export function StreamPanel(): React.JSX.Element {
   const selected = useWorkspace((s) => s.session);
   const part = useWorkspace((s) => s.part);
-  const parts = useParts();
-  const partCount = parts.data?.parts.length;
   const client = useQueryClient();
   const sessions = useQuery<SessionsDocument, Error>({
     queryKey: ["sessions"],
@@ -202,17 +197,15 @@ export function StreamPanel(): React.JSX.Element {
   //
   // A live `terminal` for a run on this *project* is owned by
   // `useProjectRefresh` (Shell), not this column: a delegated child writes
-  // from a session this tab is not showing, and a collapsed Stream unmounts
-  // this panel entirely (#92). The originating tab still refreshes from its
-  // prompt response in Composer.
+  // from a session this tab is not showing (#92). The originating tab still
+  // refreshes from its prompt response in Composer.
   //
   // Sidecar death produces neither a `terminal` nor a prompt response, so
   // without this path the rail stays stale (#59). A grade that means the
   // process is gone is itself a turn-settled signal: refetch the same keys.
   // A held pin is not written here — `observeCurrent` is already a no-op
   // while held. Selecting a part `create_part` just added is a §4.5
-  // amendment, not an advance of `pin_mode === "pinned"`. The project
-  // observer repeats this for the collapsed-Stream band.
+  // amendment, not an advance of `pin_mode === "pinned"`.
   const refreshedFault = useRef<RuntimeFault | null>(null);
   useEffect(() => {
     if (fault === null || !processGone(fault)) {
@@ -225,7 +218,7 @@ export function StreamPanel(): React.JSX.Element {
   }, [fault, client, part]);
 
   // §7A.2: `POST /sessions` is reached from explicit operator actions — the
-  // empty-state / New session pair, Ask about <part>, and the composer's first
+  // header's New conversation control, Ask about <part>, and the composer's first
   // Send when no session is selected. Never on focus, never on a first
   // keystroke, never as recovery from a failed prompt. At-least-once is the
   // stated consequence and the UI carries it: a duplicate create is an extra
@@ -237,19 +230,36 @@ export function StreamPanel(): React.JSX.Element {
     setCreateTarget({ profile, part: boundPart, opener });
   }, []);
 
-  // The worded pair, kept for the two surfaces §7.1(b)(1) leaves it on: the
-  // empty-list invitation (§7A.2 — "there is no strip to hang an icon on") and
-  // the runtime-fault band, which the clause's own render condition excludes
-  // from the `+` by name ("no runtime fault") and which §4.7 keeps loud.
+  // Runtime faults retain the worded recovery action; the normal header uses
+  // the compact leading `+` in both empty and populated conversation lists.
   const createAction = (
     <NewSessionAction profiles={profiles} part={part} pending={creating} onCreate={create} />
   );
-  // §7.1(b): beside a drawn tab strip the pair is ONE icon-only `+` at the end
-  // of the strip, under exactly the condition the pair rendered under before.
-  const stripCreate =
-    fault === null && (cannotPrompt || rows.length > 0) ? (
-      <SessionCreateAction profiles={profiles} part={part} pending={creating} onCreate={create} />
-    ) : null;
+  // The leading `+` MOUNTS IN EVERY STATE the panel draws — before the first
+  // conversation exists, and while the runtime is faulted or unattached.
+  //
+  // It used to be suppressed in exactly those two states, which left the strip
+  // holding one right-aligned control and nothing else: a 40px band whose only
+  // content was the button that makes the column go away. §4.7's rule is the
+  // one that applies — a control that cannot act says why it cannot, rather
+  // than vanishing and taking the column's leading landmark with it (#43, the
+  // same argument that keeps the create alive when `profiles` comes back empty).
+  const createBlocked =
+    fault !== null
+      ? copy.stream.runtimeFaultWhy[fault]
+      : unavailable
+        ? copy.composer.disabled.agent_unavailable
+        : null;
+  const stripCreate = (
+    <SessionCreateAction
+      profiles={profiles}
+      part={part}
+      pending={creating}
+      onCreate={create}
+      blockedReason={createBlocked}
+    />
+  );
+  const streamOpen = useShell().streamOpen;
   const emptyInvitation = !unavailable && rows.length === 0 && sessions.isFetched;
 
   // §7.4(e), added 2026-09-05: a session that exists and has never been
@@ -267,24 +277,6 @@ export function StreamPanel(): React.JSX.Element {
     rows: stream.rows.length,
   });
 
-  // §4.1(h) C25: the collapse affordance is the session tab strip's TRAILING
-  // item — the former `streamHeader` band is struck. The shell still owns the
-  // open/closed state (`state/shell.ts` is §4.1(a)'s one breakpoint authority);
-  // this panel only places the control. It rides IN the strip in every state
-  // the panel draws, so collapsing the column never requires a session.
-  const collapseControl = (
-    <Button
-      variant="quiet"
-      icon="chevron-right"
-      iconLabel={copy.stream.collapse}
-      onClick={() => {
-        flushSync(() => shellStore.setStreamOpen(false));
-        document.querySelector<HTMLElement>("[data-stream-strip]")?.focus();
-      }}
-      data-stream-collapse=""
-    ><span aria-hidden="true">{copy.stream.hideAction}</span><span className={styles["srOnly"]}>{copy.stream.collapse}</span></Button>
-  );
-
   return (
     <div
       className={styles["panel"]}
@@ -300,10 +292,9 @@ export function StreamPanel(): React.JSX.Element {
       {...(cannotPrompt ? { "data-session-cannot-prompt": "" } : {})}
     >
       {/* §4.1(h) C25: in the steady state, exactly ONE row of chrome above the
-          transcript — the session tab strip (tabs, `+`, chevron). The strip is
-          mounted in every state the panel draws, so the collapse control never
-          disappears with the session list: with nothing to list it is a strip
-          of zero tabs holding the chevron.
+          transcript — the session tab strip (tabs and the leading `+`). The
+          strip is mounted in every state the panel draws; with nothing to list
+          it is a strip of zero tabs holding the `+`.
 
           §7.1(b), amended: the create rides IN the strip as a `+` rather than
           as a band under it, so "New session" and "Ask about <part>" are not
@@ -316,7 +307,27 @@ export function StreamPanel(): React.JSX.Element {
         bounded={stream.threadBounded}
         panelId="transcript-panel"
         create={stripCreate}
-        collapse={collapseControl}
+        {...(streamOpen
+          ? {
+              // Only while the column is DRAWN. The panel stays mounted when
+              // closed so a draft survives, which means this control is still
+              // in the DOM — and two elements carrying `[data-stream-toggle]`
+              // is the duplicate-hook defect, even when one of them is inside
+              // an `inert` column nobody can reach.
+              close: (
+                <Button
+                  variant="quiet"
+                  icon="close"
+                  iconLabel={copy.stream.collapse}
+                  title={copy.stream.collapse}
+                  onClick={() => {
+                    shellStore.setStreamOpen(false);
+                  }}
+                  data-stream-toggle=""
+                />
+              ),
+            }
+          : {})}
         onSelect={(sessionId) => {
           workspaceStore.update({ session: sessionId });
         }}
@@ -405,21 +416,6 @@ export function StreamPanel(): React.JSX.Element {
             />
             {cannotPrompt ? createAction : null}
           </>
-        ) : !unavailable && rows.length === 0 && sessions.isFetched ? (
-          // §7A.2's entry point. One honest sentence plus the two create
-          // actions — a three-paragraph tutorial under the buttons pushed
-          // the pinned composer off an 800px stream. When the fault band
-          // already carries the pair, do not mount it twice.
-          fault !== null ? null : (
-            <EmptyState
-              icon="info"
-              title={copy.stream.noSessionsTitle}
-              body={sessionEmptyBody(partCount, part)}
-              density="inline"
-              data-session-empty={sessionEmptyKind(partCount)}
-              action={createAction}
-            />
-          )
         ) : null}
 
         {/* A failed admission read blocks writes, not already held conversation

@@ -1,20 +1,140 @@
 /* Copyright 2026 The Hephaestus Authors
  * SPDX-License-Identifier: Apache-2.0 */
-.control { min-width: 0; flex: 1 1 16rem; }
-.button { max-width: 100%; width: 100%; }
-.button > span { display: flex; align-items: center; gap: var(--space-2); min-width: 0; width: 100%; }
+.control { position: relative; min-width: 0; flex: 0 1 auto; }
+.button { max-width: 11rem; min-height: 34px; padding-inline: var(--space-2); }
+.button svg { width: 16px; height: 16px; }
+.button > span { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
 .identity { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .badge { flex-shrink: 0; white-space: nowrap; padding: var(--space-1); background: var(--surface-control); border-radius: var(--radius-control); }
-.details { composes: label from "../../system/type.module.css"; margin-top: var(--space-1); overflow-wrap: anywhere; }
-.details summary { cursor: pointer; min-height: 24px; }
-.details p { margin: var(--space-1) 0; }
 .note { composes: label from "../../system/type.module.css"; margin: var(--space-1) 0; overflow-wrap: anywhere; }
-.picker { width: min(36rem, calc(100vw - 2 * var(--pad-overlay))); box-sizing: border-box; }
+/*
+ * THE OVERLAP DEFECT, AND WHY IT HAPPENED (2026-09-20).
+ *
+ * The card painted the model list and the effort column ON TOP of the provider
+ * block below them. Measured: `.pickerGrid` reported 236px tall while its own
+ * children were 253px and 279px, and `.providers` began at y=439 — inside the
+ * range those children were still painting into.
+ *
+ * The cause is three rules meeting. `Popover.module.css`'s `.panel` is a FLEX
+ * COLUMN, so everything here is a flex item that may shrink. This card bounds
+ * itself with `max-height`, so there is always shrinking to do once the model
+ * list is long. And `.pickerGrid` declared `min-height: 0`, which removes the
+ * automatic min-content floor that would otherwise have stopped it — so the
+ * grid shrank below its content, and `overflow: visible` let that content
+ * paint straight over the next flex item.
+ *
+ * `min-height: 0` is the right tool for a child that OWNS a scroller; it is
+ * the wrong one for a child that does not. The fix is to say which children
+ * may shrink and which may not, and to put the bound on the one box that
+ * actually scrolls — the options list.
+ */
+.picker {
+  bottom: calc(100% + var(--space-2));
+  /* LEFT-ANCHORED AND SIZED TO FIT (2026-09-20). The model button sits at the
+     LEFT end of the composer's control row, so the card opens rightward from
+     there and must fit in what remains of the window.
+     
+     Right-anchoring was tried and is worse: growing leftward puts the card
+     over the Stage, whose stacking context wins, and the card renders BEHIND
+     the canvas. Staying inside the column it belongs to avoids the question. */
+  left: 0;
+  right: auto;
+  top: auto;
+  /* 21rem, not 26: the anchor sits ~930px into a 1280px window, so anything
+     wider than about 340px runs off the right edge. */
+  width: min(21rem, calc(100vw - 2 * var(--pad-overlay)));
+  max-width: min(21rem, calc(100vw - 2 * var(--pad-overlay)));
+  max-height: min(32rem, 72vh);
+  overflow: auto;
+  box-sizing: border-box;
+}
+
+/* ONE COLUMN, THREE SECTIONS (2026-09-20). The card was a two-column grid with
+   the model list and the effort scale side by side, which gave the list 13rem
+   to print model names into and stacked a provider block underneath at a
+   different rhythm. Read top to bottom it is one question at a time: which
+   model, then how hard it should think, then how it is connected. */
+.pickerGrid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  /* NOT a shrinking item, and not `min-height: 0`. See the defect note above. */
+  flex: 0 0 auto;
+}
+
+.modelColumn, .effortColumn { min-width: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+
+/* The effort scale is a ROW now: three rungs of one scale read as a scale when
+   they sit side by side, and as three unrelated buttons when they stack. */
+.effortColumn {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-3);
+}
+
+/* The three rungs are direct children after the heading, so the section is the
+   row and the heading is pulled out of it. `flex-wrap` rather than a fixed
+   three-up grid: at the narrowest column a rung that wrapped is still legible,
+   where a squeezed one is not. */
+.effortColumn {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.effortColumn > .heading {
+  flex: 1 0 100%;
+  margin: 0;
+}
+
+.effortColumn > button { flex: 1 1 5rem; }
+.heading { composes: eyebrow from "../../system/type.module.css"; margin: 0 0 var(--space-2); color: var(--ink-muted); }
 .search { composes: body from "../../system/type.module.css"; padding: var(--space-2); color: var(--ink-base); background: var(--surface-control); border: 1px solid var(--border-control); border-radius: var(--radius-control); width: 100%; box-sizing: border-box; }
-.options { overflow-y: auto; min-height: 0; }
-.provider { composes: label from "../../system/type.module.css"; margin: var(--space-2) 0; overflow-wrap: anywhere; }
-.option { composes: body from "../../system/type.module.css"; display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2); overflow-wrap: anywhere; cursor: pointer; }
-.option[data-highlighted="true"] { outline: 2px solid var(--border-control); outline-offset: -2px; }
-.option[aria-selected="true"] { background: var(--surface-control); }
-.option[aria-disabled="true"] { cursor: not-allowed; }
+/* THE ONE BOX THAT SCROLLS. The bound lives here rather than on an ancestor,
+   so a long provider list makes THIS scroll instead of squeezing the sections
+   around it. 15rem is about eight rows, which is where the search field turns
+   on anyway. */
+.options { overflow-y: auto; min-height: 0; max-height: 15rem; }
+.provider { composes: label from "../../system/type.module.css"; margin: var(--space-2) 0; color: var(--ink-muted); overflow-wrap: anywhere; }
+.option {
+  composes: body from "../../system/type.module.css";
+  appearance: none;
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1rem minmax(0, 1fr);
+  gap: var(--space-2);
+  min-height: 36px;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-control);
+  color: var(--ink-base);
+  background: transparent;
+  text-align: start;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.option small { grid-column: 2; color: var(--ink-muted); }
+.option[data-highlighted="true"], .option:hover { background: var(--surface-control); }
+.option[aria-selected="true"] { color: var(--ink-strong); }
+.option[aria-disabled="true"] { cursor: not-allowed; color: var(--ink-muted); }
 .srOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (max-width: 520px) {
+  .picker { left: auto; right: 0; }
+  .pickerGrid { grid-template-columns: minmax(0, 1fr); }
+  .effortColumn { border-inline-start: 0; border-top: 1px solid var(--border); padding: var(--space-2) 0 0; flex-direction: row; flex-wrap: wrap; }
+  .effortColumn .heading { flex-basis: 100%; }
+  .identity { max-width: 6rem; }
+}
+
+/* §23's providers surface, below the model grid inside the one popover. It is
+   a whole panel, so it gets its own scroll rather than stretching the popover
+   past the column it opens in. */
+.providers {
+  min-width: 0;
+  /* `flex: none` for the same reason `.pickerGrid` has it: a flex item that
+     may shrink, holding content that may overflow visibly, is the defect
+     documented at the top of this file. The card scrolls; this does not. */
+  flex: 0 0 auto;
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-3);
+}

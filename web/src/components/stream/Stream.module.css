@@ -66,12 +66,15 @@
 .tabs {
   position: relative;
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
+  align-items: center;
+  gap: var(--space-1);
   min-width: 0;
   flex: none;
-  padding: var(--space-1);
-  border-bottom: 1px solid var(--border);
+  padding: var(--space-2);
+  /* NO RULE UNDER THE STRIP (2026-09-20). The row already separates itself:
+     the create and close controls sit at the two ends of it with the session
+     title between them, and the transcript below starts with its own
+     whitespace. A hairline as well was a second separator for one seam. */
 }
 
 .selectedSession {
@@ -81,11 +84,18 @@
 
 .selectedSession [role="tab"] {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
   min-width: 0;
+  max-width: 100%;
 }
+
+.titleChevron {
+  flex: none;
+  color: var(--ink-muted);
+}
+.titleChevron::after { content: "⌄"; }
 
 .selectedSession [role="tab"][aria-selected="true"] {
   box-shadow: none;
@@ -119,31 +129,32 @@
   flex-shrink: 1;
 }
 
-/*
- * §7.1(b): the create is the strip's LAST ITEM, so it sits inside the tabs band
- * rather than in a band of its own. Switch, new and collapse share the selected
- * title's row; the rest of the thread tree is in the switcher's bounded menu.
- */
+/* The strip's two icon-only controls — `+` to open a session and `X` to close
+   the column — are the chrome an operator reaches for most and the only two
+   that carry no word beside them. At the shared 13px/1.5 they were the
+   faintest marks on the header (2026-09-20), so they are drawn a size up and a
+   quarter-weight heavier. Scoped to these two by attribute: this is a fix for
+   two specific unlabelled controls, not a new icon size for the app.
+
+   `stroke-width` is a presentation attribute on the sprite's `<svg>`, so a
+   stylesheet declaration overrides it without `!important`. */
+.tabsCreate :global([data-session-create]) svg,
+.tabsCreate :global([data-session-create-menu]) svg,
+:global([data-stream-toggle]) svg {
+  width: 17px;
+  height: 17px;
+  stroke-width: 1.9;
+}
+
+/* The new-conversation control leads the header; title and collapse follow. */
 .tabsCreate {
   display: flex;
   flex: none;
   align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-1);
+  justify-content: flex-start;
 }
 
 .srOnly { composes: srOnly from "./ModelPicker.module.css"; }
-
-/*
- * §4.1(h) C25: the collapse chevron is the strip's TRAILING item — after the
- * `+`, pushed to the row's far edge so it reads as column chrome rather than
- * as a create action, and the strip's last interactive element in every state.
- */
-.tabsCollapse {
-  display: flex;
-  align-items: center;
-  margin-left: auto;
-}
 
 /* The `+` anchors its menu; the menu is drawn only while open (§7.1(b)(2)). */
 .tabsCreateAnchor {
@@ -298,4 +309,12 @@
   composes: body from "../../system/type.module.css";
   margin: 0;
   color: var(--ink-base);
+}
+
+/* The column's close, at the strip's trailing edge (2026-09-20). */
+.tabsClose {
+  display: flex;
+  flex: none;
+  align-items: center;
+  margin-inline-start: auto;
 }

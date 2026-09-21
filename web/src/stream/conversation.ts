@@ -4,7 +4,7 @@
 // No automatic writes, retries, or scheduler.
 import { useSyncExternalStore } from "react";
 import { fetchSessions, fetchSessionModel, selectSessionModel, isSessionModelState, isExecutionSnapshot,
-  type SessionModelState, type ExecutionSnapshot, type PromptDocument, type LiveQuestions, type LiveQuestion } from "../api/sessions";
+  type SessionModelState, type ExecutionSnapshot, type PromptDocument, type LiveQuestions, type LiveQuestion, type ContextUsage } from "../api/sessions";
 import { WorkspaceError } from "../api/client";
 import type { ModelRef, ModelsDocument, ModelOption, ModelRevision } from "../api/providers";
 import { sameModel } from "./composerChrome";
@@ -51,6 +51,7 @@ export interface Conversation {
   readonly modelPending: boolean;
   readonly modelError: string | null;
   readonly modelBarrier: number;
+  readonly contextUsage: ContextUsage | null;
   /** Only used on the null-session record. Existing choices never update it. */
   readonly proposal: ModelOption | null;
   readonly proposalInitialized: boolean;
@@ -83,7 +84,7 @@ const EMPTY: Conversation = {
   attempt: null, execution: null,
   checking: true, stopRequested: null, stopDelivery: null, history: emptyHistory(),
   live: emptyLive("reconnecting"), barrier: 0,
-  model: null, modelChecking: true, modelPending: false, modelError: null, modelBarrier: 0,
+  model: null, modelChecking: true, modelPending: false, modelError: null, modelBarrier: 0, contextUsage: null,
   proposal: null, proposalInitialized: false, proposalIsDefault: true,
 };
 /** Historical event IDs stay in their namespace; only the prompt's explicit
@@ -283,7 +284,7 @@ export function createConversationStore() {
       update(sid, c => ({ ...c, modelPending: true, modelError: null, modelBarrier: ++clock, barrier: clock }));
       return revision;
     },
-    modelSnapshot(sid: string, model: SessionModelState, execution: ExecutionSnapshot | undefined, ticket: number, questions?: LiveQuestions) {
+    modelSnapshot(sid: string, model: SessionModelState, execution: ExecutionSnapshot | undefined, ticket: number, questions?: LiveQuestions, usage?: ContextUsage | null) {
       update(sid, c => {
         if (ticket < c.modelBarrier || ticket < c.barrier) return c;
         const prior = c.model?.revision;
@@ -297,6 +298,7 @@ export function createConversationStore() {
           if (!recovered.some(old => old.epoch === execution.epoch && old.run_id === q.run_id && old.question_id === q.question_id)) recovered.push({ ...q, epoch: execution.epoch });
         }
         return { ...c, model, modelChecking: false, modelBarrier: ticket,
+          ...(usage !== undefined ? { contextUsage: usage } : {}),
           ...(acceptExecution ? { execution, ...reconcileStop(c, execution), checking: false, barrier: ticket, recovered,
             liveQuestions: questions ? { ...questions, epoch: execution.epoch } : null,
             recoveryChecking: questions?.unavailable_reason != null,
@@ -422,7 +424,7 @@ export async function readSessionModel(sid: string, checking = false): Promise<v
   if (checking) conversationStore.update(sid, c => ({ ...c, modelChecking: true, recoveryChecking: true, modelBarrier: ticket }));
   try {
     const doc = await fetchSessionModel(sid);
-    conversationStore.modelSnapshot(sid, doc.model_state, doc.execution, ticket, doc.live_questions);
+    conversationStore.modelSnapshot(sid, doc.model_state, doc.execution, ticket, doc.live_questions, doc.context_usage);
     conversationStore.update(sid, c => c.modelBarrier !== ticket
       || !(c.modelError === copy.models.readFailed || (c.modelError === copy.models.lost && c.model?.state === "ready"))
       ? c : { ...c, modelError: null });

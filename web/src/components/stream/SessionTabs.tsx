@@ -26,10 +26,11 @@
 // create-control label. The UUID stays on `title` / `data-session-id`. History
 // omits prompts, so the first line is remembered on Send (`sessionPrompts.ts`).
 //
-// §4.1(h) C25 (amended 2026-09-02): `[data-stream-collapse]` is the strip's
-// TRAILING item, after the §7.1(b) `+` — the former `streamHeader` band above
-// this strip is struck, so in the steady state this strip is the one row of
-// chrome above the transcript.
+// §4.1(h) C25 (amended 2026-09-20): the strip is the one row of chrome above
+// the transcript, and it carries the column's two edge controls — the §7.1(b)
+// `+` that opens a conversation at its leading edge, and the `X` that closes
+// the whole column at its trailing one. The former `streamHeader` band above
+// this strip is struck.
 
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { copy } from "../../copy";
@@ -55,18 +56,20 @@ export interface SessionTabsProps {
   /** The transcript `tabpanel` this list controls (#68). */
   readonly panelId?: string | undefined;
   /**
-   * §7.1(b): the create affordance, as the strip's LAST ITEM rather than as a
-   * band under it. The panel decides whether it renders at all; the strip only
-   * decides where it sits. `undefined` is the state where the panel says no.
+   * The create affordance at the leading edge of the conversation header.
+   * The panel decides whether it renders at all; the strip only places it.
    */
   readonly create?: ReactNode;
   /**
-   * §4.1(h) C25: the stream collapse affordance, as the strip's trailing item —
-   * after the `+`, the strip's last interactive element in every state. The
-   * shell owns the open/closed state; the strip only decides where the control
-   * sits.
+   * The Agent column's close, as the strip's TRAILING item (2026-09-20).
+   *
+   * Not the struck in-column chevron returning: that one hid the column and
+   * left a docked strip to come back through. This is an `X` on the row that
+   * already opens conversations, so the row reads open-left / close-right, and
+   * the way BACK is the header's own control — which is always drawn, because
+   * the header never goes away.
    */
-  readonly collapse?: ReactNode;
+  readonly close?: ReactNode;
 }
 
 function labelFor(
@@ -93,17 +96,22 @@ export function SessionTabs({
   bounded,
   panelId,
   create,
-  collapse,
+  close,
 }: SessionTabsProps): React.JSX.Element {
   const [switchOpen, setSwitchOpen] = useState(false);
   const stripRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (switchOpen) {
-      stripRef.current?.querySelector<HTMLElement>('[data-session-option][aria-selected="true"]')?.focus();
-    }
-  }, [switchOpen]);
+  const hadOpen = useRef(false);
   const byId = new Map(sessions.map((row) => [row.session_id, row]));
   const selectedId = selected ?? tabs[0]?.session_id ?? "";
+  useEffect(() => {
+    if (switchOpen) {
+      hadOpen.current = true;
+      stripRef.current?.querySelector<HTMLElement>('[data-session-option][aria-selected="true"]')?.focus();
+    } else if (hadOpen.current) {
+      hadOpen.current = false;
+      stripRef.current?.querySelector<HTMLElement>("[data-session-switch]")?.focus();
+    }
+  }, [switchOpen, selectedId]);
   const firstPrompts = useSyncExternalStore(
     sessionPromptStore.subscribe,
     sessionPromptStore.getSnapshot,
@@ -150,6 +158,7 @@ export function SessionTabs({
 
   return (
     <div ref={stripRef} className={styles["tabs"]} data-session-strip="">
+      <div className={styles["tabsCreate"]}>{create}</div>
       <div className={styles["selectedSession"]}>
       <TabBar
         attr="data-session-tab"
@@ -164,30 +173,21 @@ export function SessionTabs({
           setSwitchOpen(true);
         }}
         tabs={choices.filter((choice) => choice.id === selectedId).map((choice) => ({
-          ...choice, style: { paddingLeft: "var(--space-2)" },
+          ...choice,
+          trailing: <span aria-hidden="true" className={styles["titleChevron"]} />,
+          expanded: switchOpen,
+          style: { paddingLeft: "var(--space-2)" },
+          attrs: { ...choice.attrs, "data-session-switch": "" },
         }))}
       />
-      <p className={styles["scope"]} data-conversation-scope="">
+      <span className={styles["srOnly"]} data-conversation-scope="">
         {selectedTab ? (byId.get(selectedId)?.part ?? originPart(selectedTab.origin)) != null
           ? `Part: ${byId.get(selectedId)?.part ?? originPart(selectedTab.origin)}`
           : byId.get(selectedId)?.profile === "orchestrator" ? "Project scope" : "Scope unavailable"
           : "No conversation selected"}
-      </p>
+      </span>
       </div>
-      <div className={styles["tabsCreate"]}>
-        {tabs.length > 0 ? (
-          <Button
-            variant="quiet"
-            icon="chevron-down"
-            iconLabel={copy.stream.switchSession}
-            expanded={switchOpen}
-            onClick={() => setSwitchOpen((open) => !open)}
-            data-session-switch=""
-          ><span aria-hidden="true">{copy.stream.switchAction}</span><span className={styles["srOnly"]}>{copy.stream.switchSession}</span></Button>
-        ) : null}
-        {create}
-        {collapse == null ? null : <div className={styles["tabsCollapse"]}>{collapse}</div>}
-      </div>
+      {close == null ? null : <div className={styles["tabsClose"]}>{close}</div>}
       <Popover
         open={switchOpen}
         onClose={() => setSwitchOpen(false)}
@@ -221,6 +221,14 @@ export interface SessionCreateActionProps {
   readonly part: string | null;
   readonly pending: boolean;
   readonly onCreate: (profile: "orchestrator" | "part", part: string | null) => void;
+  /**
+   * Why the create cannot act, when it cannot — a runtime fault or
+   * `agent_unavailable`. The control still MOUNTS in those states (§4.7, #43):
+   * the strip's leading `+` is the column's fixed landmark, and a header whose
+   * only content is the control that dismisses it is the furniture §0.2b
+   * measured. `null` while the create can act.
+   */
+  readonly blockedReason?: string | null | undefined;
 }
 
 /**
@@ -249,10 +257,10 @@ export function SessionCreateAction({
   part,
   pending,
   onCreate,
+  blockedReason = null,
 }: SessionCreateActionProps): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const orchestrator = profiles.find((row) => row.profile === "orchestrator");
-  const partProfile = profiles.find((row) => row.profile === "part");
   const newSessionWhy =
     orchestrator === undefined
       ? copy.composer.createOrchestrator
@@ -261,17 +269,12 @@ export function SessionCreateAction({
           orchestrator.can_delegate,
           orchestrator.part_scoped,
         );
-  const askWhy =
-    part === null
-      ? null
-      : partProfile === undefined
-        ? copy.composer.createPart(part)
-        : copy.composer.profileWhat(
-            partProfile.profile,
-            partProfile.can_delegate,
-            partProfile.part_scoped,
-          );
-  const disablement = pending
+  // A blocked runtime outranks a pending POST: with no runtime there is nothing
+  // for the POST to be pending on, and the operator needs the cause that tells
+  // them what to do next, not the one that tells them to wait.
+  const disablement = blockedReason !== null
+    ? ({ disabled: true as const, reason: blockedReason } as const)
+    : pending
     ? ({ disabled: true as const, reason: copy.composer.sending } as const)
     : ({} as const);
 
@@ -288,7 +291,7 @@ export function SessionCreateAction({
         data-session-create=""
         data-create-profile="orchestrator"
         {...disablement}
-      ><span aria-hidden="true">{copy.stream.newAction}</span><span className={styles["srOnly"]}>{copy.composer.createOrchestrator}</span></Button>
+       />
     );
   }
 
@@ -305,7 +308,7 @@ export function SessionCreateAction({
         }}
         data-session-create-menu=""
         {...disablement}
-      ><span aria-hidden="true">{copy.stream.newAction}</span><span className={styles["srOnly"]}>{copy.stream.createMenu}</span></Button>
+       />
       <Popover
         open={open}
         onClose={() => {
@@ -318,7 +321,6 @@ export function SessionCreateAction({
       >
         <Button
           variant="quiet"
-          title={newSessionWhy}
           onClick={() => {
             setOpen(false);
             onCreate("orchestrator", null);
@@ -331,7 +333,6 @@ export function SessionCreateAction({
         </Button>
         <Button
           variant="quiet"
-          title={askWhy ?? ""}
           onClick={() => {
             setOpen(false);
             onCreate("part", part);

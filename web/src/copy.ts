@@ -93,6 +93,8 @@ export const copy = {
 
   header: {
     project: "Project",
+    /** The unit readout doubles as the display-unit cycle (2026-09-20). */
+    unitCycle: (next: string): string => `Read lengths in ${next}`,
     /**
      * `branch` and `head` used to live here. §13.1 puts the git axis on the rail
      * and the artifact axis in the header, and the header was reporting both —
@@ -358,6 +360,15 @@ export const copy = {
 
   stage: {
     tabsLabel: "Stage view",
+    /**
+     * The Views bar (2026-09-20). The horizontal tab strip over the stage is
+     * struck; the same closed `STAGE_TABS` vocabulary is now a vertical bar in
+     * the shell's leading column, so switching a view never costs a row of the
+     * region it switches.
+     */
+    viewsLabel: "Views",
+    viewsCollapse: "Collapse the views bar",
+    viewsExpand: "Expand the views bar",
     tabs: {
       viewport: "Viewport",
       script: "Script",
@@ -503,12 +514,6 @@ export const copy = {
         label: "Wireframe",
         explain: "Hide the fill and keep the silhouette. Hidden solids still disappear with their outline.",
       },
-      fit: {
-        label: "Fit",
-        explain:
-          "Frame the pinned artifact the way the renderer frames this named view. Orbit and zoom return to that framing.",
-        disabled: "No pinned artifact is on the canvas, so there is nothing to frame.",
-      },
       ortho: {
         label: "Ortho",
         explain:
@@ -623,6 +628,9 @@ export const copy = {
   inspector: {
     /** §4.1(c): the drawer's height is explicit and the handle resizes it. */
     resize: "Resize the inspector",
+    /** The fold control's labels. Both name the RESULT of the click. */
+    collapse: "Collapse the inspector",
+    expand: "Expand the inspector",
     tabsLabel: "Inspector",
     tabs: {
       results: "Results",
@@ -967,17 +975,12 @@ export const copy = {
     connectionDetails: "Connection and history details",
     executionUnavailable: "Execution could not be confirmed. No message will be resent.",
     title: "Agent",
-    collapse: "Hide conversation",
-    expand: "Open conversation",
-    conversation: "Conversation",
-    open: "Open",
-    answerNeeded: "Answer needed",
+    collapse: "Hide the agent column",
+    expand: "Show the agent column",
     resize: "Resize the agent column",
     width: (pixels: number) => `${String(pixels)} pixels`,
     switchSession: "Switch conversation",
     switchAction: "Switch",
-    newAction: "New",
-    hideAction: "Hide",
     switchDone: "Done",
 
     /** §7.4's closed vocabulary on the Stream header, each with its reason. */
@@ -1672,14 +1675,41 @@ export const copy = {
      * `model` / `noModels` left with the chip. DFM copy below labels the two
      * §6.4 inspector actions; the composer does not host them.
      */
-    // `effort` / `effortOff` used to live here for a decision module that had
-    // no surface. §7A.10(e)(1) removes the effort vocabulary outright — "a
-    // closed vocabulary with no surface is a spec claim by implication" — so
-    // the two words went with it rather than waiting for a control no clause
-    // specifies.
+    // Turn controls are backed by the prompt contract. They describe model
+    // effort and interaction context; they never masquerade as DFM execution.
     addCurrentView: "Add current view",
+    removeCurrentView: "Remove current view",
     addCurrentViewWhy:
       "Include this page's view and selection in the context the agent is told.",
+    plan: "Plan",
+    /** The image attachment control and what it says when it holds files. */
+    attachImage: "Attach an image",
+    attachImageWhy:
+      "Send a photo, a screenshot or a sketch with this message, by picking a file or pasting one into the box.",
+    attachedImages: (count: number): string =>
+      count === 1 ? "1 image attached" : `${String(count)} images attached`,
+    removeImage: (name: string): string => `Remove ${name}`,
+    /** The two chat modes, on one control. `modeling` is the server's word. */
+    modeBuild: "Build",
+    modeSwitchToPlan: "Switch to Plan: the agent proposes and does not write.",
+    modeSwitchToBuild: "Switch to Build: the agent may change the model.",
+    planWhy: "Inspect and propose changes without modifying the project.",
+    modeling: "Modeling",
+    manufacturing: "Manufacturing context",
+    dfmGeneral: "DFM",
+    dfmAdditive: "DFM · 3D printing",
+    dfmSheetMetal: "DFM · Sheet metal",
+    dfmMachining: "DFM · Machining",
+    dfmCasting: "DFM · Casting",
+    contextDetails: "Message context",
+    contextButton: "Context",
+    contextSources: (count: number): string => count === 1 ? "1 context source" : `${count} context sources`,
+    effort: "Effort",
+    effortLow: "Low",
+    effortMedium: "Medium",
+    effortHigh: "High",
+    stopTurn: "Stop current turn",
+    sendMessage: "Send message",
     dfmAutoRun: "DFM auto-run",
     dfmRun: "Run DFM",
     dfmNoPart: "No part is selected, so design-for-manufacture has nothing to evaluate.",

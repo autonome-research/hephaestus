@@ -20,17 +20,18 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-  padding: var(--space-2) var(--space-3);
-  border-top: 1px solid var(--border);
+  padding: var(--space-2) var(--space-3) var(--space-3);
   flex: 0 0 auto;
   min-width: 0;
-  max-height: 55%;
-  overflow-y: auto;
+  max-height: 58%;
+  overflow: visible;
+  background: var(--surface-panel);
 }
 
 /* Core controls never shrink behind expanded metadata. Exceptional long
    refusals still have the form's fallback scroll rather than clipped actions. */
 .composer > * { flex-shrink: 0; }
+.composer:has([data-composer-refusal]) { overflow-y: auto; }
 .composer > .messageDetails {
   flex: 0 1 auto;
   min-height: 28px;
@@ -39,10 +40,15 @@
 }
 .messageDetails[data-expanded="true"] { min-height: 64px; }
 .preview { display: flex; flex-direction: column; gap: var(--space-1); }
-.hint {
-  composes: label from "../../system/type.module.css";
-  margin: 0;
-  color: var(--ink-muted);
+.hint, .srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 /* ---- the resting context line (§7A.3(a), 2026-09-01) ---------------- */
@@ -52,45 +58,22 @@
  * summary that clipped its own last member would be the opposite of what it is
  * for. The toggle is the last child and is part of the line (§7A.10(c)).
  */
-.contextRow {
+.composerShell {
+  position: relative;
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
+  flex-direction: column;
+  gap: var(--space-1);
   min-width: 0;
+  padding: var(--space-2);
+  border-radius: var(--radius-dialog);
+  background: var(--surface-raised);
+  box-shadow: inset 0 0 0 1px var(--border-control);
 }
 
 .summary {
-  composes: label from "../../system/type.module.css";
-  margin: 0;
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-1);
+  align-items: center;
   min-width: 0;
-  color: var(--ink-muted);
-}
-
-.summaryLabel {
-  color: var(--ink-muted);
-}
-
-.summaryToken {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  color: var(--ink-base);
-}
-
-/*
- * An excluded member, drawn struck — the same treatment a dropped chip gets in
- * the form below, for the same reason: §7A.3(e) keeps the exclusion visible
- * because it is a fact about what is being sent.
- */
-.summaryRemoved {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  color: var(--ink-muted);
-  text-decoration: line-through;
 }
 
 /* ---- the input row (§7A.10, C15) ------------------------------------ */
@@ -102,9 +85,172 @@
  */
 .inputRow {
   display: flex;
-  align-items: flex-end;
-  gap: var(--space-2);
+  align-items: stretch;
   min-width: 0;
+}
+
+
+
+
+
+
+
+
+
+.toolbarAnchor { position: relative; display: flex; }
+.toolbarMenu {
+  top: auto;
+  bottom: calc(100% + var(--space-2));
+  left: auto;
+  right: 0;
+  width: max-content;
+  max-width: min(18rem, calc(100vw - 2 * var(--pad-overlay)));
+  align-items: stretch;
+}
+.toolbarMenu button { justify-content: flex-start; }
+/*
+ * The message box's bottom row (2026-09-20).
+ *
+ * Send used to be ABSOLUTELY POSITIONED over the textarea's bottom-right
+ * corner, with `padding-inline-end: 3rem` on the textarea reserving the space.
+ * That worked for one control and could not take a second: a leading group
+ * would have needed a matching start padding, and the two reservations would
+ * have to be kept in step with the controls by hand. A real row sizes itself.
+ */
+.shellBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.shellBarLeading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  min-width: 0;
+  /* Four controls in one narrow column: let them wrap inside the box rather
+     than push Send off the row. The row grows; the box grows with it. */
+  flex: 1 1 auto;
+}
+
+/* SEND SPANS THE BOX AND CENTRES IN IT (2026-09-20).
+ *
+ * Asked for twice, and the first answer was wrong: `align-self: center` on
+ * the action centres it within the CONTROL ROW, which is the bottom strip —
+ * so it looked bottom-aligned against the message box as a whole. The box is
+ * `composerShell`, a column of [input row, control row]; centring against
+ * that means leaving the control row entirely.
+ *
+ * `composerShell` therefore becomes a two-column grid at its top level: the
+ * rows stack in column one, Send occupies column two and is centred across
+ * both rows. Nothing else moves.
+ */
+.composerShell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  /* The rows are DECLARED, not left implicit, and that is the whole reason
+     Send would not centre: `grid-row: 1 / -1` resolves `-1` against the
+     EXPLICIT grid, and with only columns declared the explicit grid has one
+     row line — so the span silently collapsed to row 1 and Send sat centred
+     in the text row instead of in the box. */
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: var(--space-2);
+}
+
+.composerShell > .inputRow,
+.composerShell > .shellBar {
+  grid-column: 1;
+}
+
+.composerShell > .inputAction {
+  /* Nudged down from the centre on request (~3.3mm at 96dpi = 12.5px). The
+     centre is still the anchor; this is a deliberate optical offset, because
+     the text row above is taller than the control row below and a true
+     geometric centre reads slightly high against them. */
+  transform: translateY(12.5px);
+  /* A DIRECT child of the box, which is the whole point: grid placement only
+     applies to a container's own children, so while this sat inside the
+     control row `grid-row: 1 / -1` did nothing and Send stayed on the bottom
+     strip. It is out of that row in the markup now. */
+  grid-column: 2;
+  grid-row: 1 / -1;
+  align-self: center;
+}
+
+/* SEND IS THE ONE DOMINANT CONTROL IN THIS BOX (2026-09-20).
+ *
+ * It was a 34px quiet square with a 16px arrow, sitting at the same weight as
+ * the four settings beside it — the act the whole box exists for, drawn like a
+ * preference. It is now larger than its row-mates and vertically centred
+ * against the box rather than against the control row, which is what
+ * `align-self: center` on a `stretch`-by-default flex item buys.
+ */
+.inputAction {
+  display: flex;
+  flex: none;
+  /* The element spans both rows; without this its flex line puts the button
+     at the top of that span, so the grid centring was correct and invisible. */
+  align-items: center;
+}
+/* `.shellBar .inputAction button`, not `.inputAction button`: `.shellBar
+   button` below sets the row's 34px floor at the SAME specificity and comes
+   later in the file, so the shorter selector lost and Send stayed 34px. */
+.composerShell .inputAction button {
+  min-width: 42px;
+  min-height: 42px;
+}
+.shellBar button {
+  min-height: 34px;
+}
+.shellBar button svg {
+  width: 16px;
+  height: 16px;
+}
+/* SEND READS AS A CONTROL (2026-09-20).
+ *
+ * These rules stripped the border and background off Send in every state,
+ * including hover — so the one act the box exists for was a bare glyph with
+ * no target edge and no feedback, while the four settings beside it all had
+ * both. That is backwards, and it is why it "barely showed".
+ *
+ * At rest it keeps the borderless look, because a filled button in the corner
+ * of a text box is loud. What it gains is the SAME rectangular hover every
+ * other control here has, plus a resting ink strong enough to see.
+ */
+button.sendButton[data-variant="primary"],
+button.sendButton[data-variant="secondary"] {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-strong);
+  border-radius: var(--radius-control);
+}
+
+button.sendButton[data-variant="primary"]:hover:not([aria-disabled="true"]),
+button.sendButton[data-variant="secondary"]:hover:not([aria-disabled="true"]) {
+  background: var(--surface-raised);
+  border-color: var(--border-control);
+}
+
+button.sendButton[aria-disabled="true"] {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-muted);
+}
+/* Bigger and heavier than the 16px/1.5 the row's other glyphs take. The
+   stroke is the presentation attribute the sprite sets, so a stylesheet
+   declaration overrides it without `!important`. */
+.composerShell .sendButton svg {
+  width: 22px;
+  height: 22px;
+  stroke-width: 2.2;
+}
+
+@media (max-width: 520px) {
+  .shellBarLeading button > span { max-width: 7rem; overflow: hidden; text-overflow: ellipsis; }
 }
 
 /* The TextInput's own root, told to take the row's remaining width. */
@@ -169,7 +315,12 @@
 }
 
 .note p { margin: 0; }
-.grow textarea { max-height: 8rem; resize: none; }
+.grow textarea {
+  max-height: 8rem;
+  resize: none;
+  border-color: transparent;
+  background: transparent;
+}
 
 /*
  * §7A.8's composed refusal. `stretch` — NOT `flex-start` (J-web-stream-3).
@@ -274,4 +425,35 @@
    colon. */
 .pathLabel {
   color: var(--ink-muted);
+}
+
+
+/*
+ * ONE BOX, NOT TWO (2026-09-20).
+ *
+ * `.composerShell` draws the message box — an inset 1px `--border-control` and
+ * a raised ground. The textarea inside it is a `TextInput`, which carries the
+ * SAME border and radius by default, so the composer showed a box inside a box
+ * and hovering the inner one lit a seam through the middle of the outer one.
+ * The outer box is the control surface here; the field is its interior.
+ */
+.composerShell .grow textarea {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding-inline: 0;
+}
+
+.composerShell .grow textarea:hover:not(:disabled) {
+  border: 0;
+  background: transparent;
+}
+
+/* Focus still reads — on the BOX, so the seam never comes back. */
+.composerShell:focus-within {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.composerShell .grow textarea:focus-visible {
+  outline: none;
 }

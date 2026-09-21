@@ -366,8 +366,6 @@ export function AskUserWidget({
           <span className={styles["fieldName"]}>{copy.stream.ask.answer}</span>
           <span>{readableAnswer(content.answer) ?? copy.stream.ask.answerInDetails}</span>
         </div>
-      ) : content.state === "answerable" ? (
-        <p className={styles["note"]}>{executionAllowed ? copy.stream.ask.pending : taskStatus ?? copy.composer.checking}</p>
       ) : null}
 
       {/* As in `ToolChip`: the result block carries the result event's own
