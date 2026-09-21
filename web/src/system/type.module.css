@@ -42,20 +42,6 @@
  * place.
  */
 
-.display {
-  font-family: var(--font-ui);
-  font-size: var(--p-size-xl);
-  font-weight: 600;
-  line-height: var(--line-tight);
-}
-
-.title {
-  font-family: var(--font-ui);
-  font-size: var(--p-size-lg);
-  font-weight: 600;
-  line-height: var(--line-tight);
-}
-
 .body {
   font-family: var(--font-ui);
   font-size: var(--p-size-md);
@@ -89,6 +75,48 @@
   line-height: var(--line-tight);
   word-break: break-all;
 }
+
+/*
+ * THE HEADING ROLES SIT LAST, and the order is load-bearing (2026-09-20).
+ *
+ * Roles are meant to be mutually exclusive — one element, one rung — and
+ * mostly they are. The exception is a `<Fact>`: it composes `.data` on
+ * itself, because almost every fact is a number, and a caller that wants a
+ * fact rendered as something else adds a second role. Two single-class rules
+ * have equal specificity, so DECLARATION ORDER decides, and while `.display`
+ * came first the header's product name silently rendered at `.data`'s 12px
+ * mono instead of 18px UI — the class was applied and simply lost.
+ *
+ * Putting the UI headings after the mono roles makes the override work the
+ * way a reader of `composes: display` would expect. It changes nothing for an
+ * element carrying one role, which is every other use.
+ */
+/*
+ * 700, not 600 (2026-09-20). `display` is the rung for the ONE string that
+ * names a whole surface — the product name in the header, the two dialog
+ * titles — and at 600 it was the same weight as `title`, which names a panel
+ * inside that surface. A rung that differs only in size from the one below it
+ * is doing half a job; the weight step is what makes the hierarchy read
+ * before the size does.
+ *
+ * The weight lives here rather than at the call site because
+ * `heph/no-raw-type` guards `font-weight` as well as `font-size`, and it is
+ * right to: a ramp whose weights drift per component is not a ramp.
+ */
+.display {
+  font-family: var(--font-ui);
+  font-size: var(--p-size-xl);
+  font-weight: 700;
+  line-height: var(--line-tight);
+}
+
+.title {
+  font-family: var(--font-ui);
+  font-size: var(--p-size-lg);
+  font-weight: 600;
+  line-height: var(--line-tight);
+}
+
 
 /* The one role that may be 11px, and the reason the tightening is checkable. */
 .eyebrow {

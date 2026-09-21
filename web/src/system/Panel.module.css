@@ -60,14 +60,42 @@
 
 .body {
   display: grid;
-  /* The three columns of §4.7's DataTable, declared ONCE per panel so every
-     table and field inside aligns down the whole drawer via `subgrid`. */
-  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  /*
+   * The three columns of §4.7's DataTable, declared ONCE per panel so every
+   * table and field inside aligns down the whole drawer via `subgrid`.
+   *
+   * THE VALUE TRACK IS BOUNDED (2026-09-20), and the middle number is the
+   * whole fix. It was `minmax(0, 1fr)`, so on a full-width drawer it measured
+   * 932px — and because values are right-aligned inside it (§4.7: a column of
+   * measurements whose digits do not line up cannot be scanned), every number
+   * sat at the far right of the screen with most of a monitor between it and
+   * its own label. The operator's words: "this much padding makes it hard to
+   * read". They are describing a real reading failure, not a taste.
+   *
+   * A ceiling keeps the digit alignment and kills the crossing: the columns
+   * pack to the left (`justify-content: start` below) and a row is about 450px
+   * at its widest instead of 1120. The floor keeps narrow drawers from
+   * collapsing the value against the label.
+   *
+   * 17rem rather than something generous, because the values are right-aligned
+   * INSIDE this track: every rem of ceiling is a rem of gap between a label
+   * and its own word. Long values wrap rather than widen the row.
+   *
+   * A FOURTH, EMPTY TRACK holds the slack. Bounding the value track alone
+   * made the whole grid only as wide as its content, and anything spanning
+   * `1 / -1` shrank with it — including the metrics table's container, whose
+   * two-column layout is a `@container (min-width: 640px)` query that then
+   * never fired. The slack track lets a full-width child be full width while
+   * the data columns stay bounded; a `DataTable` row simply leaves it empty.
+   */
+  grid-template-columns:
+    minmax(0, max-content) minmax(6rem, 17rem) max-content minmax(0, 1fr);
   align-content: start;
   gap: var(--gap-group);
   padding: var(--pad-panel);
   overflow: auto;
   min-height: 0;
+
 }
 
 /* Anything in the body that is not itself a three-column row spans all three. */
@@ -97,10 +125,29 @@
   min-width: 0;
 }
 
+/*
+ * ANNOTATION, NOT BODY COPY (2026-09-20).
+ *
+ * Every panel explains itself, and the explanations are good — they say why
+ * Export and Download are separate controls, why an old artifact can still be
+ * re-exported, what a check's scope is. The problem is WEIGHT, not content:
+ * at body ink and body measure they read as the panel's main text, so the
+ * Export tab opened onto four paragraphs of rationale with the controls
+ * somewhere below them. The operator called it "so noisy and unmanaged" and
+ * asked why it all needs to be there.
+ *
+ * Most of it does need to be there — these are honesty notes about how the
+ * workspace behaves, and deleting them would make the panel lie by omission.
+ * What they should not be is the loudest thing on it. Muted ink and a
+ * narrower measure put them a clear step below the controls and the values,
+ * which is where a footnote belongs.
+ *
+ * §3.9's retired defect is still respected: `--ink-muted` is a TEXT token
+ * that clears the contrast floor on every panel surface. The thing that
+ * failed there was `--ink-3`, which is not one.
+ */
 .note {
   margin: 0;
-  max-width: 68ch;
-  /* §3.9's retired defect: `--ink-3` on `--ground-1` measured 3.10:1 and was the
-     empty-state colour in four files. Base ink, and no italics. */
-  color: var(--ink-base);
+  max-width: 58ch;
+  color: var(--ink-muted);
 }

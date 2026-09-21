@@ -144,6 +144,22 @@
   --p-slate-400: #9aa5b6;
   --p-slate-600: #6b7484;
 
+  /* THE THREE AXIS HUES (2026-09-20), and why they are an exception.
+     
+     §3.9 spends ONE hue — the accent — and nothing else, because a second
+     hue in an instrument is almost always decoration. These three are not:
+     red-green-blue for X-Y-Z is the convention every CAD tool the operator
+     has used already encodes, and the orientation gizmo is the one surface
+     whose whole job is to say which way each axis points. Spelling it in
+     greys would make the reader learn a private code for a public one.
+     
+     They are used by the view cube's axes ALONE. Nothing else may reference
+     them: an axis hue on a control would read as a status, which is exactly
+     what `heph/system-owns-status` exists to stop. */
+  --p-axis-x: #e0584f;
+  --p-axis-y: #4cc27a;
+  --p-axis-z: #4ea3f0;
+
   /* Accent. One cool hue for interactive affordance, and nothing else. */
   --p-blue-500: #4ea3f0;
   --p-blue-300: #8cc8ff;
@@ -304,11 +320,44 @@
      its token. The floors above are therefore the authored decision; the
      measurement that settles §3.11.2 is the browser one in
      `e2e/design-system.spec.ts`. */
-  --viewport-ground: var(--p-slate-050);
-  --viewport-part: var(--p-part);
-  --viewport-edge: var(--p-graphite-950);
-  --viewport-grid: var(--p-slate-400);
-  --viewport-grid-axis: var(--p-slate-600);
+  /* A DARK WELL (2026-09-20), reversing the light one above.
+     
+     The comment above argues for a light modeling ground on the Fusion /
+     Onshape / SolidWorks precedent, and that argument was sound — it is being
+     overruled by the operator, who wants the build space dark with light
+     lines. The five still move as ONE decision and still spend no new hue:
+     the well is the app's own graphite, the part and the edge are existing
+     slates, and the two grid rungs are existing lines.
+     
+     The contrast floor moves the right way rather than the wrong one. §3.11.2
+     wants the geometry to clear 4.5:1 against the ground; a light part on
+     graphite measures ~11.8:1 where the dark-on-light pairing measured its
+     floor with less headroom. The browser measurement in
+     `e2e/design-system.spec.ts` is still the one that settles it. */
+  --viewport-ground: var(--p-graphite-900);
+  --viewport-part: var(--p-slate-200);
+  --viewport-edge: var(--p-slate-050);
+  /* The two grid rungs are BRIGHTER than the dark-well instinct suggests,
+     and the reason is in the comment above `--viewport-ground`: the clear
+     colour is not tone-mapped but everything DRAWN goes through ACES, so a
+     line authored at `--p-line-mid` lands far closer to the ground than its
+     token says and the grid disappeared entirely. The shader's own alphas do
+     the quietening instead, where they can be tuned per face. */
+  --viewport-grid: var(--p-line-hi);
+  --viewport-grid-axis: var(--p-slate-050);
+  /* The orientation gizmo's cube, shaded by facing. Three rungs of the same
+     graphite standing in for a light above the scene: a solid is read from
+     the brightness STEP between its faces, and with one fill for all six the
+     cube was a flat hexagon — a plain square at an axis-aligned camera. */
+  --viewport-cube-top: var(--p-graphite-600);
+  --viewport-cube-side: var(--p-graphite-800);
+  --viewport-cube-far: var(--p-graphite-950);
+
+  /* The orientation gizmo's three axes. See `--p-axis-*` for why the palette
+     spends three hues here and nowhere else. */
+  --viewport-axis-x: var(--p-axis-x);
+  --viewport-axis-y: var(--p-axis-y);
+  --viewport-axis-z: var(--p-axis-z);
 
   /* ---- type: the palette side. The roles are in `type.module.css`. ------ */
   --font-ui: var(--p-font-ui);
@@ -370,7 +419,14 @@
      420px is this default clamp's maximum. Explicit preference is supplied by
      the shell presentation store. Width never resets conversation intent. */
   --stream-width: clamp(360px, 30vw, 420px);
-  --header-height: 44px;
+  /* 52px since 2026-09-20, on request. §4.1 calls the header "the most
+     important element in the document" and it was the shortest bar on screen
+     — shorter than the session strip beside it. The extra eight pixels are
+     what let the product mark, the project name and the build chip sit on one
+     unhurried baseline. It is still a fixed height rather than a content one,
+     for the reason the drawer's is: a bar that changed height when a chip
+     mounted would move the canvas under it. */
+  --header-height: 52px;
   /* §4.1(c): the drawer is an EXPLICIT height, not a `minmax` floor. Height is
      then identical across inspector tabs BY CONSTRUCTION, which is what
      §3.14's e2e asserts and what retires the 76% canvas-height swing. */
