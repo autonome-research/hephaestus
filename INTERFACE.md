@@ -2098,13 +2098,17 @@ and no axis triad — despite `GridReadout`, which is a text box reading
    > dark build space with light lines and drawings. The 2026-08 reversal to a
    > light modeling ground — argued from Fusion / Onshape / SolidWorks and from
    > a light solid lost on near-black — is overruled, and `tokens.css` records
-   > both turns beside the five tokens that move as one decision. This clause
-   > itself is unchanged: DISTINCT is the requirement, and a ground equal to a
-   > chrome surface makes the well and the panels one field whichever way round
-   > the light runs. Clause 2's 4.5:1 floor moved the right way with it — a
-   > light part on graphite has more headroom than the dark-on-light pairing
-   > it replaced. Clause 5's readout and clause 6's triad are struck (§4.2);
-   > the grid they describe is drawn by `viewport/display.ts`.
+   > both turns beside the tokens that move as one decision. This clause itself
+   > is unchanged, and it BIT: the dark well was first given
+   > `--p-graphite-900`, which is `--surface-app` exactly, so the well and the
+   > application background were one undifferentiated field — the defect this
+   > clause names, arrived at from the other direction. All six graphite rungs
+   > are spoken for by `--surface-*`, so the ground cannot be distinct and be
+   > one of them; it has its own seventh rung now, recorded in `tokens.css`.
+   > Clause 2's 4.5:1 floor moved the right way with the reversal — a light
+   > part on graphite has more headroom than the dark-on-light pairing it
+   > replaced. Clause 5's readout and clause 6's triad are struck (§4.2); the
+   > grid they describe is drawn by `viewport/display.ts`.
 2. **The client authors the material.** Every loaded mesh is overridden with a
    `MeshStandardMaterial` at a specified part colour. **Floor: ≥ 4.5:1 part vs
    ground, exporter-independent**, measured in the browser (§3.14).

@@ -126,6 +126,18 @@
      is the design rather than a shortfall — the seam does the work. */
   --p-graphite-950: #080a0d;
   --p-graphite-900: #101318;
+  /* A SEVENTH RUNG, and it exists for one consumer (2026-09-20).
+     §3.11.1 requires the viewport ground to be "distinct from every chrome
+     surface", and when the well went dark it was given `--p-graphite-900` —
+     which IS `--surface-app`. The well and the application background were one
+     undifferentiated field, the exact defect the clause names, and the browser
+     measurement in `e2e/design-system.spec.ts` caught it. All six rungs are
+     spoken for by `--surface-*`, so the ground cannot be distinct and be one of
+     them. This sits between app and panel: a dark grey the operator asked for,
+     one step lighter than the chrome behind it so the well reads as the thing
+     the chrome surrounds rather than more of it. §3.9's "raw hue is a decision
+     recorded once" — this is the record. */
+  --p-graphite-850: #13171d;
   --p-graphite-800: #161a20;
   --p-graphite-700: #1e232b;
   --p-graphite-600: #272d38;
@@ -334,7 +346,7 @@
      graphite measures ~11.8:1 where the dark-on-light pairing measured its
      floor with less headroom. The browser measurement in
      `e2e/design-system.spec.ts` is still the one that settles it. */
-  --viewport-ground: var(--p-graphite-900);
+  --viewport-ground: var(--p-graphite-850);
   --viewport-part: var(--p-slate-200);
   --viewport-edge: var(--p-slate-050);
   /* The two grid rungs are BRIGHTER than the dark-well instinct suggests,

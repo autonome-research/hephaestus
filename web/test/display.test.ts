@@ -591,7 +591,20 @@ describe("the shipped modeling well is not the near-black void", () => {
     // flipping the ground without the part would put a graphite model on a
     // graphite well. Hex values live in `tokens.css` and are checked there by
     // `token-contrast`.
-    expect(tokens).toMatch(/--viewport-ground:\s*var\(--p-graphite-900\)/);
+    //
+    // The ground is the 850 rung, and it is 850 because §3.11.1 wants a well
+    // DISTINCT from every chrome surface: all six original rungs are spoken for
+    // by `--surface-*`, and the dark well was first given 900, which is
+    // `--surface-app` exactly. Well and application background were one field.
+    expect(tokens).toMatch(/--viewport-ground:\s*var\(--p-graphite-850\)/);
+    // …said as the rule rather than as the name, so a later rung shuffle that
+    // lands the ground back on a chrome surface fails here too.
+    const chrome = [...tokens.matchAll(/--surface-[a-z]+:\s*var\((--p-[a-z0-9-]+)\)/g)].map(
+      (match) => match[1],
+    );
+    const ground = /--viewport-ground:\s*var\((--p-[a-z0-9-]+)\)/.exec(tokens)?.[1];
+    expect(ground).toBeTruthy();
+    expect(chrome, "the viewport ground is one of the chrome surfaces").not.toContain(ground);
     expect(tokens).toMatch(/--viewport-part:\s*var\(--p-slate-200\)/);
     expect(tokens).toMatch(/--viewport-edge:\s*var\(--p-slate-050\)/);
     expect(tokens).toMatch(/--viewport-grid:\s*var\(--p-line-hi\)/);
