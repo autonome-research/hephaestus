@@ -301,6 +301,29 @@ export function Viewport(): React.JSX.Element {
     workspaceStore.update({ view: viewName });
   }, []);
 
+  /*
+   * RE-FIT, BACK ON THE CUBE (2026-09-20).
+   *
+   * §5.5's Fit — "re-applies `cameras.py`'s framing for the current named
+   * view" — was a button in the appearance cluster. When the cluster moved out
+   * to `StageViewRail`, Fit's HANDLER had to cross a sibling boundary that its
+   * presence never did, and it was dropped rather than threaded. Dropping it
+   * left no way back from a deliberate orbit except picking a DIFFERENT view,
+   * which is a worse answer than the one the operator wanted.
+   *
+   * It belongs on the cube, which lives here and needs nothing threaded:
+   * clicking the cell whose camera you are already on means "frame this view
+   * again", which is what every other view cube does and what the control is
+   * shaped like. A click that CHANGES the view re-frames through `framingKey`
+   * as before; this is only the unchanged case, which that key cannot see.
+   */
+  const refit = useCallback((): void => {
+    const live = engineRef.current;
+    if (live === null) return;
+    const state = workspaceStore.getSnapshot();
+    live.frame(state.view, state.explode_t > 0);
+  }, []);
+
   // -- the engine: one per canvas, for the canvas's life --------------------
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -607,7 +630,7 @@ export function Viewport(): React.JSX.Element {
               corner of a bevelled cube, and the drawn polygon IS the hit region
               (`viewport/cubeTargets.ts`); the axes share its projection, so the
               letters cannot point somewhere the cube does not. */}
-          {plateOwnsWell ? null : <ViewCube />}
+          {plateOwnsWell ? null : <ViewCube onRefit={refit} />}
           {/* §3.11's View / Scale / Grid readout is STRUCK (2026-09-20). It was
               a plate over the model reporting three facts the operator can see
               or does not need: the named view is in the URL, the grid's step is
