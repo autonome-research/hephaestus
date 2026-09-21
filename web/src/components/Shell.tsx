@@ -20,15 +20,12 @@ import { copy } from "../copy";
 import { useWorkspace } from "../state/react";
 import { shellStore, streamSizing } from "../state/shell";
 import { Button, useBreakpoint } from "../system";
-import { ConversationReturn } from "./stream/ConversationReturn";
 import { bindOverlayScrollTree } from "../system/overlayScroll";
 import roles from "../system/type.module.css";
 import { Header } from "./Header";
 import { RefusalBanner } from "./RefusalBanner";
-import { GitDirtyPanel } from "./rail/GitDirty";
-import { ProjectTree } from "./rail/ProjectTree";
-import { ProvidersPanel } from "./ProvidersPanel";
-import { VersionList } from "./rail/VersionList";
+import { PanelSections } from "./rail/PanelSections";
+import { ViewsBar } from "./views/ViewsBar";
 import { Stage } from "./stage/Stage";
 import { StreamPanel } from "./stream/StreamPanel";
 import styles from "./Shell.module.css";
@@ -135,11 +132,11 @@ export function Shell(): React.JSX.Element {
   const railOverlayOpen = shell.railOverlay && shell.railOpen;
 
   const skipTo = (destination: "stage" | "composer"): void => {
-    // Focus destinations are not workspace routes. Reveal before focusing,
-    // including when the existing conversation is currently unmounted.
+    // Focus destinations are not workspace routes. The rail can still be an
+    // overlay over the stage, so it is revealed before focusing; the Stream is
+    // always mounted and needs no reveal.
     flushSync(() => {
       if (railOverlayOpen) shellStore.setRailOpen(false);
-      if (destination === "composer") shellStore.setStreamOpen(true);
     });
     const target = destination === "composer"
       ? document.querySelector<HTMLElement>("[data-composer-input]:not(:disabled)") ?? document.querySelector<HTMLElement>("#composer")
@@ -193,23 +190,12 @@ export function Shell(): React.JSX.Element {
           {copy.skip.composer}
         </a>
       </nav>
-      <Header
-        railToggle={
-          shell.railOverlay ? (
-            <Button
-              variant="quiet"
-              icon="sidebar"
-              iconLabel={shell.railOpen ? copy.rail.close : copy.rail.open}
-              onClick={() => {
-                shellStore.setRailOpen(!shell.railOpen);
-              }}
-              aria-expanded={railOverlayOpen}
-              aria-controls="parts-navigation"
-              data-rail-toggle=""
-            ><span aria-hidden="true">{copy.rail.partsHeading}</span><span className={styles["srOnly"]}>{shell.railOpen ? copy.rail.close : copy.rail.open}</span></Button>
-          ) : undefined
-        }
-      />
+      {/* 2026-09-20: the header's Parts toggle is struck. `[data-rail-toggle]`
+          now lives in the Views bar and serves BOTH capacities — the overlay
+          below 1280px and the column above it — so the hook is on exactly one
+          element in every state, which is what `focusRailToggle` below and the
+          gates that address Parts by name both rely on. */}
+      <Header />
       <RefusalBanner
         error={project.error}
         onRetry={() => {
@@ -218,11 +204,34 @@ export function Shell(): React.JSX.Element {
       />
       <div
         className={styles["body"]}
-        style={{ "--stream-width": `${String(sizing.width)}px` } as CSSProperties}
+        // The Agent's track width, and the ONE place it is decided. A closed
+        // column is zero here rather than in a stylesheet: this is an inline
+        // custom property, so a `[data-stream="collapsed"]` rule could never
+        // have won against it.
+        style={
+          {
+            "--stream-width": `${String(shell.streamOpen ? sizing.width : 0)}px`,
+          } as CSSProperties
+        }
         data-stream={shell.streamOpen ? "open" : "collapsed"}
-        data-rail={shell.railOverlay ? (shell.railOpen ? "overlay" : "hidden") : "column"}
+        data-rail={
+          shell.railOverlay
+            ? shell.railOpen
+              ? "overlay"
+              : "hidden"
+            : shell.railOpen
+              ? "column"
+              : "closed"
+        }
         data-band={shell.band}
       >
+        {/* §4.1, amended 2026-09-20: the Views bar is the shell's LEADING
+            column — before Parts, before the Stage it switches. It keeps its
+            track in both states so a collapse does not change the grid
+            template; only `--views-width` changes, and the stage therefore
+            does not re-fit its camera on a toggle (§3.3 principle 4). */}
+        <ViewsBar />
+
         {railOverlayOpen ? (
           <div
             className={styles["scrim"]}
@@ -240,77 +249,70 @@ export function Shell(): React.JSX.Element {
           aria-label={copy.rail.title}
           id="parts-navigation"
           data-overlay-scroll=""
+          {...(shell.railOpen ? {} : { inert: "" })}
         >
-          {shell.railOverlay ? (
+          {/* THE HAMBURGER TRAVELS WITH THE PANEL (2026-09-20).
+              
+              Open, the control that closes the panel sits in the panel's own
+              top-right corner, which is where the thing it acts on is. Closed,
+              it is the task bar's single button — see `views/ViewsBar.tsx`.
+              One control, two homes, and never both at once: two hamburgers
+              for one panel is the duplicate-hook defect this shell has hit
+              before.
+
+              It keeps `[data-rail-toggle]` in both homes, so every gate that
+              addresses the panel toggle by name still finds exactly one. The
+              overlay's `[data-rail-close]` rides along on this element for the
+              same reason — the narrow band's close IS this control now. */}
+          {shell.railOpen ? (
             <div className={styles["railHead"]}>
               <Button
-                variant="quiet"
-                icon="close"
+                variant="toggle"
+                icon="menu"
                 iconLabel={copy.rail.close}
+                pressed
+                expanded
+                title={copy.rail.close}
                 onClick={() => {
                   shellStore.setRailOpen(false);
                   focusRailToggle();
                 }}
-                data-rail-close=""
+                data-rail-toggle=""
+                {...(shell.railOverlay ? { "data-rail-close": "" } : {})}
               />
             </div>
           ) : null}
-          <ProjectTree />
-          <GitDirtyPanel />
-          <VersionList />
-          {/*
-            §4.2's amended panel inventory (§23): `ProvidersPanel` sits on the
-            rail beside the project's other configuration, because "which model
-            is attached" is a project-level fact like the working tree and the
-            version list — not a property of whatever part is selected.
-
-            §23.0's success condition is what its placement has to serve: the
-            operator must be able to go from a refusing session route to a
-            running turn without leaving the page, so the panel is *on* the page
-            rather than behind a settings route the empty state links to.
-          */}
-          <ProvidersPanel
-            onAttached={() => {
-              shellStore.setRailOpen(false);
-              shellStore.setStreamOpen(true);
-              // Let the newly expanded agent column mount before moving
-              // keyboard focus. Never create a session or send a turn here.
-              requestAnimationFrame(() => {
-                document.querySelector<HTMLElement>(
-                  '[data-composer-input]:not(:disabled), [data-create-profile="orchestrator"]:not(:disabled)',
-                )?.focus();
-              });
-            }}
-          />
+          {/* §4.1, amended 2026-09-20: the rail is FOUR disclosures in one
+              shape — Geometry, Timeline, Parts, Working tree — rather than two
+              collapsible readouts stacked on three always-open panels. See
+              `rail/PanelSections.tsx` for the order and why. */}
+          <PanelSections />
         </nav>
 
         <main className={styles["stage"]} data-stage-focus="" tabIndex={-1} {...(railOverlayOpen ? { inert: "" } : {})}>
           <Stage />
         </main>
 
-        {shell.streamOpen && !railOverlayOpen ? <StreamResize sizing={sizing} viewportWidth={shell.viewportWidth} /> : null}
+        {railOverlayOpen || !shell.streamOpen ? null : (
+          <StreamResize sizing={sizing} viewportWidth={shell.viewportWidth} />
+        )}
 
-        <aside className={styles["stream"]} id="chat-column" aria-label={copy.stream.title} {...(railOverlayOpen ? { inert: "" } : {})}>
-          {shell.streamOpen ? (
-            /* §4.1(h), amended 2026-09-02 (C25): the eyebrow band is struck AS
-               A BAND. The collapse control renders as the trailing item of the
-               session tab strip inside `StreamPanel`, keeping its hook and its
-               `iconLabel` name; the `aside` keeps `copy.stream.title` as its
-               `aria-label` above. In the steady state exactly one row of chrome
-               renders above the transcript — the strip itself. */
-            <StreamPanel />
-          ) : (
-            <ConversationReturn onOpen={(questionId) => {
-              flushSync(() => shellStore.setStreamOpen(true));
-              // Return to the same live question if one is actually addressable;
-              // otherwise retain S1's session reading anchor and focus composer.
-              const question = questionId === null ? null : document.querySelector<HTMLElement>(`[data-question-id="${CSS.escape(questionId)}"]`);
-              if (question) {
-                question.scrollIntoView({ block: "nearest" });
-                question.focus();
-              } else skipTo("composer");
-            }} />
-          )}
+        {/* §4.1(h), amended 2026-09-20 (C25): the eyebrow band is struck AS A
+            BAND and the collapse affordance with it. The Stream is a PEER
+            COLUMN, not a drawer: it has one drawn state, so there is no
+            collapsed branch and no return strip to come back through. The
+            column is still resizable (`StreamResize`); what is gone is the
+            ability to reduce it to nothing. The `aside` keeps
+            `copy.stream.title` as its `aria-label`, and in the steady state
+            exactly one row of chrome renders above the transcript — the
+            session strip, whose only control starts a conversation. */}
+        <aside
+          className={styles["stream"]}
+          id="chat-column"
+          aria-label={copy.stream.title}
+          {...(railOverlayOpen || !shell.streamOpen ? { inert: "" } : {})}
+        >
+          <StreamPanel />
         </aside>
       </div>
     </div>

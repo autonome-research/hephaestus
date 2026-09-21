@@ -1,0 +1,105 @@
+/* Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0 */
+
+/*
+ * The Views bar occupies a grid track the shell sizes; it never sizes itself.
+ * One width — see `Shell.module.css`'s `--views-width`.
+ */
+.views {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: var(--space-2) 4px;
+  gap: 2px;
+  border-right: 1px solid var(--border);
+  background: var(--surface-panel);
+}
+
+.list {
+  flex: none;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/*
+ * NO BOX AROUND A MARK (2026-09-20).
+ *
+ * Every member drew its own `--border-control` rectangle, which in a 44px
+ * column turned two icons into two chips floating in a strip — the "not
+ * everything is a card" failure at its smallest scale. The BAR is the surface;
+ * these are marks on it. State is carried by a fill, which is what the same
+ * rail on the stage does.
+ */
+.views button {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  justify-content: center;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink-base);
+}
+
+.views button:hover:not([aria-disabled="true"]) {
+  background: var(--surface-raised);
+  color: var(--ink-strong);
+}
+
+/* `[data-variant]` is carried so this matches the pressed-toggle recipe's own
+   specificity — `.button[data-variant="toggle"][aria-pressed="true"]` sets an
+   accent BORDER, and a class-plus-attribute selector would lose to it and leave
+   the rectangle this bar exists without. */
+.views button[data-variant][aria-pressed="true"],
+.views button[data-variant][aria-selected="true"] {
+  background: var(--accent-quiet);
+  color: var(--ink-strong);
+  border-color: transparent;
+}
+
+/*
+ * The icons carry the bar on their own, so they are drawn LARGER and HEAVIER
+ * than the sprite's default. Weight is set here rather than in `icons.tsx`
+ * because it is a property of this surface — the same id inside a Badge stays
+ * at the sprite's own weight, which is what keeps one sprite serving both.
+ */
+.views button svg {
+  width: 19px;
+  height: 19px;
+  stroke-width: 2;
+}
+
+/* The entry is the icon; the word is its accessible name (`aria-label`). */
+.entry {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+
+.word {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowToggle {
+  flex: none;
+}
+
+/* Names live on `aria-label`; the bar draws icons. */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

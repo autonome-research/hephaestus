@@ -1,0 +1,43 @@
+/* Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0 */
+
+.section {
+  min-width: 0;
+  border-top: 1px solid var(--border);
+}
+
+/* The FIRST section has nothing above it to be separated from — the panel's
+   toggle row is chrome, not a section — so its rule was a line drawn between
+   a control and the list it opens (2026-09-20).
+   
+   `:first-of-type`, NOT `:first-child`: the toggle row is a `div` and the
+   panel's actual first child, so the leading `<section>` is its second.
+   `:first-child` matched nothing and the line stayed. */
+.section:first-of-type {
+  border-top: 0;
+}
+
+.heading {
+  margin: 0;
+  min-width: 0;
+}
+
+/* The whole row is the control, so the target is the width of the panel rather
+   than the width of a word (§3.13.6). */
+.disclosure {
+  width: 100%;
+  justify-content: flex-start;
+  gap: var(--space-2);
+}
+
+.body {
+  min-width: 0;
+  padding-bottom: var(--space-2);
+}
+
+/* A readout authored for the stage is a two-column grid; in a 280px column it
+   is one. The components are unchanged — only the room they are given is. */
+.body [data-metrics-grid],
+.body [data-results-grid] {
+  grid-template-columns: minmax(0, 1fr);
+}

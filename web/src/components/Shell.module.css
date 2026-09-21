@@ -78,7 +78,17 @@
 .body {
   position: relative;
   display: grid;
-  grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--stream-width);
+  /*
+   * Four tracks since 2026-09-20: Views | Parts | Stage | Agent.
+   *
+   * The Views track is one fixed width (2026-09-20) — there is no expanded
+   * state and nothing toggles it, so the template never changes shape and the
+   * stage never re-fits its camera because of this column. Furniture does not
+   * move (§3.3 principle 4).
+   */
+  --views-width: 44px;
+  grid-template-columns:
+    var(--views-width) var(--rail-width) minmax(0, 1fr) var(--stream-width);
   /* One definite row. An implicit `auto` row sizes to min-content and the
      shell (`overflow: hidden`) then clips the send row and the rail's
      sign-in controls — the 1280×800 measurement. */
@@ -93,30 +103,66 @@
   min-width: 0;
 }
 
-/* Explicit Hide frees the design column; return is horizontal, never a
-   narrowed transcript or a width-triggered task dismissal. */
-.body[data-stream="collapsed"] {
-  grid-template-columns: var(--rail-width) minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) auto;
+/*
+ * Parts closed as a COLUMN (2026-09-20). The track goes to zero rather than
+ * leaving the template, for the same reason the Views track never leaves it:
+ * a template that changes shape is a template two rules have to agree about.
+ */
+/*
+ * A CLOSED REGION KEEPS ITS GRID ITEM. `display: none` removes an item from
+ * auto-placement, so every region after it shifts one track left — measured:
+ * closing Parts put the Stage in the 0px rail track and handed the Stage's
+ * `1fr` to the Agent, 852px of chat beside a stage of nothing. So a closed
+ * region stays in flow at zero width with its content clipped, and `inert`
+ * (set in `Shell.tsx`) keeps it out of the tab order rather than out of the
+ * grid.
+ *
+ * `--stream-width` is NOT zeroed here. It is an inline custom property on
+ * `.body`, and inline wins over a stylesheet rule — the override looked right
+ * and did nothing, leaving a 420px empty track beside a stage that never grew.
+ * `Shell.tsx` emits the zero, which makes the inline value the single source
+ * rather than two rules that have to agree.
+ */
+.body[data-stream="collapsed"] .stream {
+  overflow: hidden;
+  border-left: 0;
 }
-.body[data-stream="collapsed"] .rail { grid-row: 1 / -1; }
-.body[data-stream="collapsed"] .stage { grid-column: 2; grid-row: 1; }
-.body[data-stream="collapsed"] .stream { grid-column: 2; grid-row: 2; border-top: 1px solid var(--border); }
 
-/* Below1280 Parts is an overlay; conversation intent stays independent. */
+.body[data-rail="closed"] { --rail-width: 0px; }
+
+/*
+ * THE VIEWS COLUMN EXISTS TO HOLD THE HAMBURGER (2026-09-20), and only while
+ * the panel is shut. Open, the same control sits in the panel's own top-right
+ * corner, so the 44px strip would be an empty track holding nothing — which
+ * is exactly the dead furniture this pass has been removing. The track KEEPS
+ * its place in the template and goes to zero, because removing a grid item
+ * shifts auto-placement for everything after it; this file has paid for that
+ * lesson twice already.
+ */
+.body[data-rail="column"],
+.body[data-rail="overlay"] { --views-width: 0px; }
+
+/* `:global([data-views-bar])`, not `.views`: that class is hashed inside
+   `views/ViewsBar.module.css` and is not in scope here. The attribute is the
+   bar's own published hook. */
+.body[data-rail="column"] :global([data-views-bar]),
+.body[data-rail="overlay"] :global([data-views-bar]) {
+  overflow: hidden;
+  border-right: 0;
+  /* The bar's own 4px side padding survives a zeroed track and leaves an 8px
+     sliver of panel surface against the rail. */
+  padding-inline: 0;
+}
+.body[data-rail="closed"] .rail {
+  overflow: hidden;
+  border-right: 0;
+}
+
+/* Below1280 Parts is an overlay; Views and the Stream keep their columns. */
 .body[data-rail="overlay"],
 .body[data-rail="hidden"] {
-  grid-template-columns: minmax(0, 1fr) var(--stream-width);
+  grid-template-columns: var(--views-width) minmax(0, 1fr) var(--stream-width);
 }
-
-.body[data-stream="collapsed"][data-rail="overlay"],
-.body[data-stream="collapsed"][data-rail="hidden"] {
-  grid-template-columns: minmax(0, 1fr);
-}
-.body[data-stream="collapsed"][data-rail="overlay"] .stage,
-.body[data-stream="collapsed"][data-rail="hidden"] .stage,
-.body[data-stream="collapsed"][data-rail="overlay"] .stream,
-.body[data-stream="collapsed"][data-rail="hidden"] .stream { grid-column: 1; }
 
 .rail {
   min-height: 0;
@@ -160,17 +206,15 @@
   min-width: 0;
   overflow: hidden;
   display: grid;
-  /* ONE definite row, because the aside holds exactly ONE child in BOTH of its
-     states — `StreamPanel` when open, the strip control when collapsed
-     (§4.1(h), amended 2026-09-02 (C25): the eyebrow band is struck AS A BAND).
-     The struck band's `auto` row outlived it: the one remaining child was
-     auto-placed into a CONTENT-sized first row and a second row absorbed the
-     other 780px with nothing in it, so `StreamPanel`'s `height: 100%` resolved
-     against a content-sized track, its flex column had no leftover height to
-     hand out, and the composer sat under the tab strip instead of at the
-     column's bottom edge. The collapsed override below already spelled the
-     correct single-row template; two rules that must agree is the shape this
-     bug came in, so there is now one. */
+  /* ONE definite row: the aside holds exactly one child, `StreamPanel`
+     (§4.1(h), amended 2026-09-20 (C25): the eyebrow band is struck AS A BAND
+     and so is the collapsed state). The struck band's `auto` row outlived it
+     once: the one remaining child was auto-placed into a CONTENT-sized first
+     row and a second row absorbed the other 780px with nothing in it, so
+     `StreamPanel`'s `height: 100%` resolved against a content-sized track, its
+     flex column had no leftover height to hand out, and the composer sat under
+     the tab strip instead of at the column's bottom edge. One rule, because two
+     rules that must agree is the shape that bug came in. */
   grid-template-rows: minmax(0, 1fr);
   border-left: 1px solid var(--border);
   background: var(--surface-panel);
@@ -189,15 +233,44 @@
   user-select: none;
 }
 
-.streamResize:hover,
-.streamResize:active {
+/*
+ * A HAIRLINE, ON AN 8px TARGET (2026-09-20).
+ *
+ * The strip used to paint its whole 8px width — `--border-strong` on hover,
+ * `--accent` plus a 2px outline on focus — so a column divider became a bright
+ * bar the moment it was touched, and stayed one while focused. The hit area is
+ * the part that has to be 8px (§3.13.6); the drawn line does not. So the strip
+ * is transparent and a 1px pseudo-element down its centre carries the state.
+ */
+.streamResize::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: transparent;
+  transition: background var(--dur-1) var(--ease), width var(--dur-1) var(--ease);
+}
+
+.streamResize:hover::before,
+.streamResize:active::before {
   background: var(--border-strong);
 }
 
+/* Keyboard focus still reads at a glance — the line takes the accent and
+   doubles, rather than the strip filling. */
 .streamResize:focus-visible {
+  outline: none;
+}
+
+.streamResize:focus-visible::before {
   background: var(--accent);
-  outline: 2px solid var(--ink-strong);
-  outline-offset: -2px;
+  width: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .streamResize::before { transition: none; }
 }
 
 /* ---- the rail overlay (§4.1(b)) ----------------------------------------- */
@@ -226,12 +299,61 @@
   background: rgb(0 0 0 / 45%);
 }
 
+/*
+ * The panel's own toggle row (2026-09-20).
+ *
+ * NO RULE UNDER IT. A hairline here separated the toggle from the first
+ * disclosure, which already has a border of its own — two lines for one seam,
+ * and the toggle is not a section anyway. The row is tight to the top so the
+ * control reads as chrome on the panel rather than as its first entry.
+ *
+ * The button inside takes the SAME shape it has in the collapsed strip: a
+ * 36px borderless square that fills on hover. It is one control with two
+ * homes, so it should not change appearance when it moves between them.
+ */
 .railHead {
   display: flex;
   justify-content: flex-end;
-  padding: var(--space-1) var(--space-2);
-  border-bottom: 1px solid var(--border);
+  padding: var(--space-1) var(--space-1) 0;
   flex: none;
+}
+
+.railHead button {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  justify-content: center;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink-base);
+}
+
+.railHead button:hover:not([aria-disabled="true"]) {
+  background: var(--surface-raised);
+  color: var(--ink-strong);
+}
+
+/* `[data-variant]` carried so this beats the pressed-toggle recipe's own
+   accent border and fill, exactly as the collapsed strip has to.
+   
+   AT REST IT LOOKS UNPRESSED, deliberately. The control is `aria-pressed` —
+   it has to be, the panel IS open and a screen reader should say so — but
+   drawing that state would make the same control look different in its two
+   homes, and the panel standing open beside it is not a fact the operator
+   needs a second carrier for. */
+.railHead button[data-variant][aria-pressed="true"] {
+  background: transparent;
+  color: var(--ink-base);
+  border-color: transparent;
+}
+
+.railHead button svg {
+  width: 19px;
+  height: 19px;
+  stroke-width: 2;
 }
 
 /* ---- the stream's two states -------------------------------------------- */
@@ -243,29 +365,3 @@
  * above the transcript is the strip itself.
  */
 
-.strip {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3);
-  width: 100%;
-  min-height: 44px;
-  text-align: left;
-  color: var(--ink-muted);
-  background: var(--surface-panel);
-  cursor: pointer;
-}
-
-.strip:hover {
-  color: var(--ink-strong);
-  background: var(--surface-raised);
-}
-
-.stripLabel {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}

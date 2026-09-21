@@ -1,0 +1,92 @@
+/* Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0 */
+
+/*
+ * The stage's trailing edge — ONE narrow column (2026-09-20).
+ *
+ * Absolutely positioned over the content rather than taking a grid track: a
+ * track would narrow the canvas, and §4.1(c)'s whole point is that the canvas
+ * does not change size when chrome appears.
+ *
+ * It reads as one object, not a stack of buttons. Each control drops its own
+ * border and ground inside the rail — the RAIL is the surface, the controls are
+ * marks on it — and hairlines separate the groups rather than boxing each
+ * member. A per-button border here made a 36px column look like a strip of
+ * nine chips, which is the "not everything is a card" failure.
+ */
+.rail {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  width: 36px;
+  padding: 3px;
+  border-radius: var(--radius-card);
+  border: 1px solid var(--border);
+  background: var(--surface-overlay);
+  box-shadow: var(--elev-popover);
+}
+
+/* One recipe for every member, whatever `variant` it carries for semantics. */
+.rail button {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+  justify-content: center;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink-base);
+}
+
+.rail button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.rail button:hover:not([aria-disabled="true"]) {
+  background: var(--surface-raised);
+  color: var(--ink-strong);
+}
+
+/* State still reads without a border: the pressed mark is a fill. */
+.rail button[aria-pressed="true"] {
+  background: var(--accent-quiet);
+  color: var(--ink-strong);
+}
+
+.rail button[aria-disabled="true"] {
+  color: var(--ink-muted);
+}
+
+/*
+ * The viewport's own controls dock below the views. The divider is on the SLOT,
+ * so it is drawn only when there is something under it — on Script and Diff the
+ * slot is empty and the rail is two icons with no trailing rule.
+ */
+.slot:not(:empty) {
+  display: flex;
+  flex-direction: column;
+  margin-top: 3px;
+  padding-top: 3px;
+  border-top: 1px solid var(--border);
+}
+
+/* Diff, at the foot of the column. `margin-top: auto` rather than a spacer
+   element: the rail is a flex column, so the gap belongs to the layout and not
+   to an empty div someone will later wonder about. The divider above it is the
+   same hairline the appearance slot carries, for the same reason — it marks a
+   change of kind, not a decoration. */
+.foot {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
+}

@@ -24,19 +24,68 @@ export function bandFor(width: number): Band {
   return "wide";
 }
 
+/**
+ * The readouts that expand IN THE SIDE PANEL rather than taking the stage
+ * (2026-09-20).
+ *
+ * ALL FOUR are disclosures, in one order, with one shape (2026-09-20). The rail
+ * used to be two kinds of thing stacked: two collapsible readouts, then three
+ * always-open panels with their own headings. One shape means the operator
+ * learns the row once.
+ *
+ * The order runs from the artifact outward: what this build MEASURES
+ * (Geometry), how it was BUILT (Timeline), what the project CONTAINS (Parts),
+ * and what git says about it (Working tree).
+ *
+ * `results` and `timeline` are also `stage_tab` ids, and the stage still
+ * renders whichever a URL names — `?tab=timeline` from before this change still
+ * opens the full-stage timeline. What moved is where a CLICK puts them.
+ */
+export const PANEL_SECTIONS = ["results", "timeline", "parts", "working_tree"] as const;
+export type PanelSection = (typeof PANEL_SECTIONS)[number];
+
 export interface ShellState {
   readonly band: Band;
   readonly viewportWidth: number;
-  /** Preferred expanded width; survives collapse and temporary viewport clamps, never serialized. */
+  /** Preferred width; survives temporary viewport clamps, never serialized. */
   readonly streamWidth: number | null;
-  /** Explicit open intent; false shows a horizontal state-bearing return control. */
+  /**
+   * Whether the Agent column is drawn (2026-09-20, second pass).
+   *
+   * The collapse was struck earlier the same day and is back by request, in a
+   * different shape: the control is the Views bar's chat toggle, which is
+   * ALWAYS VISIBLE, rather than a chevron inside the column plus a docked
+   * return strip to come back through. One control, both directions, and it
+   * cannot disappear with the thing it toggles.
+   *
+   * The panel stays MOUNTED when closed — the track goes to zero and the
+   * column is `display: none`. A draft, a scroll position and an unsent
+   * envelope therefore survive a close without the store having to re-hydrate
+   * them, which is what the old hide/reveal round-trip existed to prove.
+   */
   readonly streamOpen: boolean;
+  /**
+   * Which side-panel readouts are expanded. Several at once, like the rail's
+   * other sections — an accordion would close the thing you were reading to
+   * show the thing you just asked for.
+   */
+  readonly panelOpen: readonly PanelSection[];
   /** Whether the Rail is an overlay over the Stage rather than a column. */
   readonly railOverlay: boolean;
   /** While `railOverlay`, whether the overlay is up. Always true otherwise. */
   readonly railOpen: boolean;
   /** §4.1(c)'s explicit drawer height in px, or `null` for the token default. */
   readonly drawerHeight: number | null;
+  /**
+   * Whether the inspector drawer's BODY is drawn (2026-09-20).
+   *
+   * The tab strip never leaves — collapsing to nothing would take the control
+   * that reopens it, and a drawer you cannot find is worse than a drawer in
+   * the way. Closed, the strip stays on the stage's bottom edge and the
+   * canvas takes the height the body gave up; opening extends the body back
+   * up into the canvas, which is the direction the operator asked for.
+   */
+  readonly drawerOpen: boolean;
 }
 
 export const DEFAULT_SHELL: ShellState = {
@@ -44,14 +93,26 @@ export const DEFAULT_SHELL: ShellState = {
   viewportWidth: 1440,
   streamWidth: null,
   streamOpen: true,
+  panelOpen: ["parts"],
   railOverlay: false,
   railOpen: true,
   drawerHeight: null,
+  drawerOpen: true,
 };
 
 /** §4.1(c): the drawer's band. The token default is `clamp(200px, 32vh, 420px)`. */
 export const DRAWER_MIN = 200;
 export const DRAWER_MAX = 420;
+
+/**
+ * The Views bar's width.
+ *
+ * ONE WIDTH since 2026-09-20: the bar has no expanded state to toggle into.
+ * 44px clears §3.13.6's 24px hit area with room to spare, and the grid template
+ * therefore never changes shape — the stage does not re-fit its camera because
+ * of anything this column does (§3.3 principle 4: furniture does not move).
+ */
+export const VIEWS_RAIL_WIDTH = 44;
 
 export const STREAM_MIN = 360;
 export const STREAM_MAX = 640;
@@ -72,7 +133,6 @@ type Listener = () => void;
 export class ShellStore {
   #state: ShellState = DEFAULT_SHELL;
   /** Whether the operator has explicitly set intent, independent of capacity. */
-  #streamHeld = false;
   readonly #listeners = new Set<Listener>();
 
   subscribe = (listener: Listener): (() => void) => {
@@ -102,15 +162,16 @@ export class ShellStore {
       railOverlay,
       // Entering overlay capacity never auto-opens Parts. Within that capacity
       // retain explicit overlay intent, including the 1024 band transition.
-      railOpen: railOverlay ? previous.railOverlay && previous.railOpen : true,
+      //
+      // LEAVING overlay for a column opens it once — the operator did not
+      // choose "closed", the narrow capacity did. A close chosen while the rail
+      // was already a column is explicit and survives every width inside that
+      // capacity, because only the overlay transition rewrites it (2026-09-20,
+      // when the Views bar's Parts entry made closing a column possible at all).
+      railOpen: railOverlay
+        ? previous.railOverlay && previous.railOpen
+        : previous.railOverlay || previous.railOpen,
     });
-  }
-
-  /** Explicit Hide/Open (including focus-only Skip); width observations cannot undo it. */
-  setStreamOpen(open: boolean): void {
-    this.#streamHeld = true;
-    if (this.#state.streamOpen === open) return;
-    this.#commit({ ...this.#state, streamOpen: open });
   }
 
   /** Explicit resizing stores the achievable width, not an offscreen drag overshoot. */
@@ -122,19 +183,50 @@ export class ShellStore {
     this.#commit({ ...this.#state, streamWidth: next });
   }
 
-  /** Whether conversation intent has been explicitly set. */
-  streamHeld(): boolean {
-    return this.#streamHeld;
+  /** The Views bar's chat toggle. Presentation only; no session is touched. */
+  setStreamOpen(open: boolean): void {
+    if (this.#state.streamOpen === open) return;
+    this.#commit({ ...this.#state, streamOpen: open });
   }
 
-  /** Open or dismiss the rail overlay. A no-op while the rail is a column. */
+  /**
+   * Expand or collapse one side-panel readout, opening Parts if it is closed —
+   * a section cannot expand inside a column that is not drawn, and a click that
+   * appears to do nothing is worse than one that does too much.
+   */
+  togglePanelSection(section: PanelSection): void {
+    const open = this.#state.panelOpen.includes(section);
+    const panelOpen = open
+      ? this.#state.panelOpen.filter((name) => name !== section)
+      : [...this.#state.panelOpen, section];
+    this.#commit({ ...this.#state, panelOpen, railOpen: open ? this.#state.railOpen : true });
+  }
+
+  /**
+   * Open or dismiss Parts — the overlay below 1280px, the COLUMN above it.
+   *
+   * The column case is new (2026-09-20): the Views bar's Parts entry is the
+   * control, so a wide viewport can close Parts and give the width to the
+   * stage. The overlay guard that used to make this a no-op above 1280px is
+   * struck; the two capacities share one field because they are one question —
+   * "is Parts showing" — and two fields would need a rule for disagreeing.
+   */
   setRailOpen(open: boolean): void {
-    if (!this.#state.railOverlay) return;
     if (this.#state.railOpen === open) return;
     this.#commit({ ...this.#state, railOpen: open });
   }
 
   /** §4.1(c)'s drag handle. Clamped to the same band the token default clamps to. */
+  /** Fold the drawer's body away, or bring it back. The strip always stays. */
+  setDrawerOpen(open: boolean): void {
+    if (this.#state.drawerOpen === open) return;
+    this.#commit({ ...this.#state, drawerOpen: open });
+  }
+
+  toggleDrawer(): void {
+    this.setDrawerOpen(!this.#state.drawerOpen);
+  }
+
   setDrawerHeight(height: number | null): void {
     const next =
       height === null ? null : Math.round(Math.min(DRAWER_MAX, Math.max(DRAWER_MIN, height)));
@@ -144,7 +236,6 @@ export class ShellStore {
 
   /** Test seam. */
   reset(): void {
-    this.#streamHeld = false;
     this.#commit(DEFAULT_SHELL);
   }
 
