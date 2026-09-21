@@ -104,15 +104,13 @@ export const DEFAULT_SHELL: ShellState = {
 export const DRAWER_MIN = 200;
 export const DRAWER_MAX = 420;
 
-/**
- * The Views bar's width.
- *
- * ONE WIDTH since 2026-09-20: the bar has no expanded state to toggle into.
- * 44px clears §3.13.6's 24px hit area with room to spare, and the grid template
- * therefore never changes shape — the stage does not re-fit its camera because
- * of anything this column does (§3.3 principle 4: furniture does not move).
+/*
+ * The Views bar's width is NOT a constant here (2026-09-20). It was, and
+ * nothing read it: the column is sized by `--views-width` in
+ * `Shell.module.css`, which is also where it collapses to zero when the
+ * panel takes the toggle. An exported number that no layout consults is a
+ * second answer to a question the stylesheet already owns.
  */
-export const VIEWS_RAIL_WIDTH = 44;
 
 export const STREAM_MIN = 360;
 export const STREAM_MAX = 640;

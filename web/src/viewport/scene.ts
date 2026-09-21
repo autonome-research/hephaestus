@@ -266,20 +266,6 @@ export function applyFraming(camera: OrthographicCamera, framing: Framing): void
   camera.updateMatrixWorld(true);
 }
 
-/**
- * Vertical FOV that matches an orthographic `halfHeight` at `distance`.
- *
- * The named views and `heph render` stay orthographic. Perspective is a
- * viewing aid that keeps the same eye, target and vertical extent so Fit and
- * the view cube still mean one camera. Returns 0 when the pair is not a
- * positive finite framing — there is no sensible FOV for an unframed camera
- * and none is invented.
- */
-export function perspectiveFovDeg(halfHeight: number, distance: number): number {
-  if (!Number.isFinite(halfHeight) || !Number.isFinite(distance)) return 0;
-  if (halfHeight <= 0 || distance <= 0) return 0;
-  return (2 * Math.atan(halfHeight / distance) * 180) / Math.PI;
-}
 
 /**
  * Point a perspective camera at the same view `applyFraming` uses.

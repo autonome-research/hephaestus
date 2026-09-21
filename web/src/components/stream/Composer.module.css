@@ -39,7 +39,6 @@
   overflow: auto;
 }
 .messageDetails[data-expanded="true"] { min-height: 64px; }
-.preview { display: flex; flex-direction: column; gap: var(--space-1); }
 .hint, .srOnly {
   position: absolute;
   width: 1px;

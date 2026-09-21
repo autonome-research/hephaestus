@@ -613,21 +613,3 @@ export function cancelRun(runId: string): Promise<CancelDocument> {
   return apiJson<CancelDocument>(`/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" });
 }
 
-/**
- * `POST /context/preview` — §7A.3's "what will the agent be told?" disclosure.
- *
- * **Advisory.** The prompt route composes again, from the same server function,
- * at send time, and echoes the block it actually sent; saying this response were
- * authoritative would be a claim two separate calls cannot make good on.
- *
- * It starts no run and calls no tool, and it is deliberately **not** gated on
- * the agent runtime — a disclosure that went dark exactly when the composer is
- * disabled would be missing at the one moment the operator needs it.
- */
-export function previewContext(context: ContextEnvelope | null): Promise<ContextDocument> {
-  return apiJson<ContextDocument>("/context/preview", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ context }),
-  });
-}

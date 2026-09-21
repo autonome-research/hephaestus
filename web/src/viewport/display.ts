@@ -349,19 +349,24 @@ export function gridStep(span: number): number {
  * wanting the ground pixel from a top view needs a sample point chosen for it,
  * not a smaller grid.
  */
-export const GRID_MARGIN_STEPS = 2;
+/*
+ * The constant itself is gone (2026-09-20) — nothing has drawn a pad since
+ * the build space replaced it, and an exported number no code reads is dead
+ * weight. The argument above is kept because it is the record of WHY the
+ * frame corners used to be pure ground, which the two assertions that
+ * sampled them were built on.
+ */
 
 /*
  * THE FINITE PAD IS STRUCK (2026-09-20). `GroundGridSpec`, `groundGridSpec`,
  * `GroundGrid` and `buildGroundGrid` stood here: a whole-step rectangle of
- * `LineSegments` covering the part's footprint plus `GRID_MARGIN_STEPS`, and
+ * `LineSegments` covering the part's footprint plus a two-step margin, and
  * nothing else. The build space below replaces all four; see its header for
  * why the "pad is finite" decision was reversed and what survives of it.
  *
- * `GRID_MARGIN_STEPS` is kept just above, unused by any drawing code, because
- * its comment is the record of the argument that decision rested on and the
- * two assertions it constrained. Deleting the constant would delete the only
- * written account of why the frame corners used to be pure ground.
+ * The margin constant went with them; the comment above it stayed, because
+ * it is the only written account of why the frame corners used to be pure
+ * ground and what that constrained.
  */
 
 /**
@@ -422,7 +427,7 @@ export function applyAppearance(
 // ---------------------------------------------------------------------------
 // The build space (§3.11.5, rewritten 2026-09-20)
 //
-// THE PAD WAS FINITE AND IS NOT ANY MORE. `GRID_MARGIN_STEPS` above still
+// THE PAD WAS FINITE AND IS NOT ANY MORE. The note above still
 // documents why it was: an unbounded grid reaches the frame corners, and two
 // assertions read a frame corner as the ground. That reasoning was sound and
 // the decision has been REVERSED ON REQUEST — the operator asked for a
