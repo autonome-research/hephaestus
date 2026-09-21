@@ -32,19 +32,23 @@ import {
   Vector3,
   type Object3D,
 } from "three";
-import type { LineBasicMaterial, LineSegments } from "three";
+import type { LineSegments ,
+  Mesh as ThreeMesh,
+  ShaderMaterial} from "three";
 import type { GLTF } from "three/addons/loaders/GLTFLoader.js";
 import {
   AUTHORED_EDGES_KEY,
   EDGE_THRESHOLD_DEG,
-  GRID_MARGIN_STEPS,
   GRID_TARGET_DIVISIONS,
   SOURCE_MATERIAL_KEY,
   authorDisplay,
   applyAppearance,
-  buildGroundGrid,
+  buildBuildSpace,
   gridStep,
-  groundGridSpec,
+  buildSpaceSpec,
+  BUILD_SPACE_FADE_FAR,
+  BUILD_SPACE_FADE_NEAR,
+  BUILD_SPACE_MIN_PIXELS,
   readViewportPalette,
   type ViewportPalette,
 } from "../src/viewport/display";
@@ -339,58 +343,129 @@ describe("gridStep (§3.11.5)", () => {
   });
 });
 
-describe("groundGridSpec (§3.11.5)", () => {
-  const bounds = new Box3(new Vector3(-13, -7, 2), new Vector3(41, 19, 30));
+describe("buildSpaceSpec — the build space's ruling (§3.11.5, 2026-09-20)", () => {
+  const bounds = new Box3(new Vector3(-30, -10, 0), new Vector3(30, 10, 12));
 
-  it("lands lines on world multiples of the step and sits on the scene floor", () => {
-    const spec = groundGridSpec(bounds, 120);
-    expect(spec).not.toBeNull();
-    if (spec === null) return;
-    expect(spec.step).toBeCloseTo(10, 10);
-    // The floor is the scene's own, so the part stands on the grid rather than
-    // hovering over an arbitrary z.
-    expect(spec.z).toBe(2);
-    // Every edge is a whole number of steps from the origin, so the line
-    // through x = 0 is a line through x = 0.
-    for (const edge of [spec.minX, spec.maxX, spec.minY, spec.maxY]) {
-      expect(Math.abs(edge / spec.step - Math.round(edge / spec.step))).toBeLessThan(1e-9);
+  it("sits on the scene floor", () => {
+    expect(buildSpaceSpec(bounds, 120)!.z).toBeCloseTo(0, 10);
+    const raised = new Box3(new Vector3(-5, -5, 7.5), new Vector3(5, 5, 20));
+    expect(buildSpaceSpec(raised, 120)!.z).toBeCloseTo(7.5, 10);
+  });
+
+  it("rules TWO decades finer than the readout's step, leaving detail to reveal", () => {
+    // The shader only ever coarsens from this number — it climbs decades to
+    // keep lines apart — so the base has to start below the framing's step or
+    // zooming in would reveal nothing. Two decades rather than one since
+    // 2026-09-20: at one, a zoom bottomed out on the first step in and the
+    // ruling stopped getting finer.
+    for (const span of [1.2, 12, 120, 1200]) {
+      expect(buildSpaceSpec(bounds, span)!.step).toBeCloseTo(gridStep(span) / 100, 10);
     }
-    // And the pad covers the part plus the stated margin.
-    const pad = GRID_MARGIN_STEPS * spec.step;
-    expect(spec.minX).toBeLessThanOrEqual(bounds.min.x - pad);
-    expect(spec.maxX).toBeGreaterThanOrEqual(bounds.max.x + pad);
-    expect(spec.minY).toBeLessThanOrEqual(bounds.min.y - pad);
-    expect(spec.maxY).toBeGreaterThanOrEqual(bounds.max.y + pad);
   });
 
   it("refuses an empty scene and an unframed camera rather than guessing", () => {
-    expect(groundGridSpec(new Box3(), 120)).toBeNull();
-    expect(groundGridSpec(bounds, 0)).toBeNull();
+    expect(buildSpaceSpec(new Box3(), 120)).toBeNull();
+    expect(buildSpaceSpec(bounds, 0)).toBeNull();
   });
 });
 
-describe("buildGroundGrid (§3.11.5)", () => {
-  it("splits the datum lines from the ruler and gives each its own token", () => {
-    const spec = { step: 10, z: 0, minX: -20, maxX: 20, minY: -20, maxY: 20 };
-    const grid = buildGroundGrid(spec, PALETTE);
+describe("buildBuildSpace — one quad that follows the camera (§3.11.5)", () => {
+  const spec = { step: 1, z: 0 };
 
-    // Five columns and five rows; one of each passes through the origin.
-    expect(grid.lines).toBe(10);
-    expect(grid.object.children).toHaveLength(2);
-    const [minor, datum] = grid.object.children as [LineSegments, LineSegments];
-    expect(minor.geometry.getAttribute("position").count).toBe(16); // 8 lines
-    expect(datum.geometry.getAttribute("position").count).toBe(4); // 2 lines
-    expect((minor.material as LineBasicMaterial).color.getHex()).toBe(PALETTE.grid.getHex());
-    expect((datum.material as LineBasicMaterial).color.getHex()).toBe(PALETTE.gridAxis.getHex());
-    grid.dispose();
-    grid.dispose(); // idempotent
+  it("draws the whole floor in a single mesh", () => {
+    // The pad this replaced emitted two `LineSegments` whose vertex count grew
+    // with the framing, and was rebuilt on every reframe. This is one draw
+    // call at any extent and is never rebuilt.
+    const space = buildBuildSpace(spec, PALETTE);
+    expect(space.object.children).toHaveLength(1);
+    space.dispose();
+    space.dispose(); // idempotent
   });
 
-  it("emits only a ruler when the model origin is off the pad", () => {
-    const grid = buildGroundGrid({ step: 5, z: 0, minX: 100, maxX: 115, minY: 100, maxY: 115 }, PALETTE);
-    expect(grid.object.children).toHaveLength(1);
-    expect(grid.lines).toBe(8);
-    grid.dispose();
+  it("rides under the camera and scales past where the fade completes", () => {
+    // The quad is a canvas, not an extent. If it did not outreach the fade,
+    // the floor would end on a visible edge instead of dissolving.
+    const space = buildBuildSpace(spec, PALETTE);
+    const mesh = space.object.children[0] as ThreeMesh;
+    for (const [target, span] of [
+      [new Vector3(0, 0, 50), 60],
+      [new Vector3(400, -250, 900), 4000],
+    ] as const) {
+      space.follow(target, span);
+      expect(mesh.position.x).toBeCloseTo(target.x, 6);
+      expect(mesh.position.y).toBeCloseTo(target.y, 6);
+      // The box SITS ON the floor: its bottom face is the ground the part
+      // stands on, so the centre is half a box above `spec.z`.
+      expect(mesh.position.z).toBeCloseTo(spec.z + mesh.scale.z / 2, 6);
+      // The walls stand INSIDE the dissolve, which is the opposite of what a
+      // bare floor wanted and is the whole point of a room: at a reach that
+      // cleared the fade the walls were erased before they were drawn. What
+      // must hold is that they are far enough out to be scenery rather than
+      // a box around the part — past where the dissolve BEGINS.
+      const half = mesh.scale.x / 2;
+      expect(half).toBeGreaterThan(span * BUILD_SPACE_FADE_NEAR);
+      expect(half).toBeLessThan(span * BUILD_SPACE_FADE_FAR);
+    }
+    space.dispose();
+  });
+
+  it("tracks the VIEW SPAN, not the camera height — an ortho zoom moves only the former", () => {
+    // The defect this pins: an orthographic zoom changes `zoom` and leaves the
+    // camera exactly where it is, so a quad sized off camera height froze at
+    // one extent and left a hard-edged band across the well.
+    const space = buildBuildSpace(spec, PALETTE);
+    const mesh = space.object.children[0] as ThreeMesh;
+    const camera = new Vector3(0, 0, 100); // unmoved, as under an ortho zoom
+    space.follow(camera, 40);
+    const near = mesh.scale.x;
+    space.follow(camera, 4000);
+    expect(mesh.scale.x).toBeGreaterThan(near * 50);
+    const material = mesh.material as ShaderMaterial;
+    expect(material.uniforms["uFadeFar"]?.value).toBeCloseTo(4000 * BUILD_SPACE_FADE_FAR, 6);
+  });
+
+  it("keeps a usable quad for a degenerate span", () => {
+    const space = buildBuildSpace(spec, PALETTE);
+    const mesh = space.object.children[0] as ThreeMesh;
+    for (const span of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      space.follow(new Vector3(0, 0, 10), span);
+      expect(mesh.scale.x, String(span)).toBeGreaterThan(0);
+      expect(Number.isFinite(mesh.scale.x), String(span)).toBe(true);
+    }
+    space.dispose();
+  });
+
+  it("stops following once disposed", () => {
+    const space = buildBuildSpace(spec, PALETTE);
+    const mesh = space.object.children[0] as ThreeMesh;
+    space.follow(new Vector3(10, 10, 100), 80);
+    const held = mesh.position.clone();
+    space.dispose();
+    space.follow(new Vector3(-999, -999, 5), 80);
+    expect(mesh.position.x).toBeCloseTo(held.x, 10);
+  });
+
+  it("carries the ruling into the shader rather than baking it into geometry", () => {
+    const space = buildBuildSpace(spec, PALETTE);
+    const material = (space.object.children[0] as ThreeMesh).material as ShaderMaterial;
+    expect(material.uniforms["uStep"]?.value).toBeCloseTo(1, 10);
+    expect(material.uniforms["uMinPixels"]?.value).toBe(BUILD_SPACE_MIN_PIXELS);
+    expect(material.transparent).toBe(true);
+    // A reference mark must not occlude the part it is a reference for, but it
+    // must still be hidden BY it — so depth is tested and not written.
+    expect(material.depthWrite).toBe(false);
+    space.dispose();
+  });
+
+  it("is scenery: never culled, never a pick target", () => {
+    const space = buildBuildSpace(spec, PALETTE);
+    const mesh = space.object.children[0] as ThreeMesh;
+    // It moves every frame, so a stale bounding sphere must not cull it.
+    expect(mesh.frustumCulled).toBe(false);
+    const hits: unknown[] = [];
+    mesh.raycast(null as never, hits as never);
+    expect(hits).toHaveLength(0);
+    space.dispose();
   });
 });
 
@@ -501,39 +576,36 @@ describe("the shipped modeling well is not the near-black void", () => {
   const here = dirname(fileURLToPath(import.meta.url));
   const tokensRaw = readFileSync(join(here, "..", "src", "system", "tokens.css"), "utf8");
   const tokens = tokensRaw.replace(/\/\*[\s\S]*?\*\//g, "");
-  const triad = readFileSync(
-    join(here, "..", "src", "components", "stage", "viewport", "AxisTriad.module.css"),
-    "utf8",
-  );
   const viewport = readFileSync(
     join(here, "..", "src", "components", "stage", "viewport", "Viewport.module.css"),
     "utf8",
   );
 
-  it("authors a light CAD ground and a dark part, grid on by default", () => {
-    // Velvet: Fusion/Onshape-style well. Clear colour is `--p-slate-050`,
-    // not the previous `--p-graphite-950` void. Hex values live in
-    // `tokens.css` and are checked there by `token-contrast`.
-    expect(tokens).toMatch(/--viewport-ground:\s*var\(--p-slate-050\)/);
-    expect(tokens).not.toMatch(/--viewport-ground:\s*var\(--surface-canvas\)/);
-    expect(tokens).toMatch(/--viewport-part:\s*var\(--p-part\)/);
-    expect(tokens).toMatch(/--p-part:\s*var\(--p-graphite-500\)/);
-    expect(tokens).toMatch(/--viewport-edge:\s*var\(--p-graphite-950\)/);
-    expect(tokens).toMatch(/--viewport-grid:\s*var\(--p-slate-400\)/);
-    expect(tokens).toMatch(/--viewport-grid-axis:\s*var\(--p-slate-600\)/);
+  it("authors a DARK well and a light part, grid on by default", () => {
+    // REVERSED 2026-09-20. This asserted the Fusion/Onshape pairing — light
+    // ground, dark part — and the reasoning for it is still in `tokens.css`
+    // above the block it now contradicts. The operator asked for a dark build
+    // space with light lines, which is a look decision and theirs to make.
+    //
+    // The five move as ONE decision, which is why they are asserted together:
+    // flipping the ground without the part would put a graphite model on a
+    // graphite well. Hex values live in `tokens.css` and are checked there by
+    // `token-contrast`.
+    expect(tokens).toMatch(/--viewport-ground:\s*var\(--p-graphite-900\)/);
+    expect(tokens).toMatch(/--viewport-part:\s*var\(--p-slate-200\)/);
+    expect(tokens).toMatch(/--viewport-edge:\s*var\(--p-slate-050\)/);
+    expect(tokens).toMatch(/--viewport-grid:\s*var\(--p-line-hi\)/);
+    expect(tokens).toMatch(/--viewport-grid-axis:\s*var\(--p-slate-050\)/);
     expect(DEFAULT_APPEARANCE.grid).toBe(true);
   });
 
-  it("spends well-edge ink on the triad and plates absence copy, not chrome ink", () => {
-    // CI: three SVG `<text>` samples at 1.36:1 (`--ink-base` on
-    // `--viewport-ground`). The triad has no plate by design; chrome
-    // `--ink-*` is for the dark surfaces.
+  it("plates absence copy rather than spending chrome ink on the well", () => {
+    // The triad half of this is struck with the triad (2026-09-20). The
+    // permission it relied on stays in `tokens.css`: `--viewport-edge` on
+    // `--viewport-ground` is still the contrast pair anything drawn directly
+    // on the well must use, and removing the permission would silently allow
+    // the next such overlay to pick chrome ink.
     expect(tokensRaw).toMatch(/@permit text\s+--viewport-edge\s*:\s*viewport-ground/);
-    expect(triad).toMatch(/stroke:\s*var\(--viewport-edge\)/);
-    expect(triad).toMatch(/color:\s*var\(--viewport-edge\)/);
-    expect(triad).toMatch(/fill:\s*var\(--viewport-edge\)/);
-    expect(triad).not.toMatch(/var\(--ink-base\)/);
-    expect(triad).not.toMatch(/var\(--ink-strong\)/);
     expect(viewport).toMatch(/\.absencePlate[\s\S]*background:\s*var\(--surface-overlay\)/);
   });
 });

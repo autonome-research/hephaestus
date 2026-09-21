@@ -28,10 +28,32 @@ describe('resize preserves camera intent', () => {
       engine.frame('iso', false); engine.setOrtho(ortho);
       const pose = () => ({ eye: live.camera.position.toArray(), up: live.camera.up.toArray(), target: live.controls.target.toArray() });
       const fitPose = pose();
+      const target0 = new Vector3(...fitPose.target);
+      const dir0 = new Vector3(...fitPose.eye).sub(target0).normalize();
       for (const width of [740, 616, 664, 483, 664, 740]) {
         engine.resize(width, 430);
-        expect(pose()).toEqual(fitPose);
-        expect(engine.scale()).toBeCloseTo(framingFor(live.bounds, 'iso', width / 430)!.halfHeight, 8);
+        const half = framingFor(live.bounds, 'iso', width / 430)!.halfHeight;
+        if (ortho) {
+          // The orthographic camera never moves to fit: only its extents do.
+          expect(pose()).toEqual(fitPose);
+          expect(engine.scale()).toBeCloseTo(half, 8);
+        } else {
+          // A FIXED LENS fits by MOVING (2026-09-20). Requiring the eye to
+          // hold still under perspective is requiring the fov to change, and
+          // solving for a fov that matched the ortho half-height is exactly
+          // what magnified the near half of the model off the canvas. What
+          // still holds — and is what this case is protecting — is that the
+          // view DIRECTION, the target and the up are the framing's.
+          expect(pose().target).toEqual(fitPose.target);
+          expect(pose().up).toEqual(fitPose.up);
+          const dir = new Vector3(...pose().eye).sub(target0).normalize();
+          expect(dir.x).toBeCloseTo(dir0.x, 9);
+          expect(dir.y).toBeCloseTo(dir0.y, 9);
+          expect(dir.z).toBeCloseTo(dir0.z, 9);
+          // Stepping back to clear the bounding circle shows MORE than the
+          // orthographic half-height, never less.
+          expect(engine.scale()).toBeGreaterThanOrEqual(half);
+        }
       }
       live.controls.dispatchEvent({ type: 'start' });
       live.controls.dispatchEvent({ type: 'end' });
@@ -51,7 +73,13 @@ describe('resize preserves camera intent', () => {
       }
       expect(settled).toHaveBeenCalledOnce(); // resize is not a viewpoint/navigation write
       engine.frame('iso', false); engine.resize(483, 430);
-      expect(engine.scale()).toBeCloseTo(framingFor(live.bounds, 'iso', 483 / 430)!.halfHeight, 8);
+      const refit = framingFor(live.bounds, 'iso', 483 / 430)!.halfHeight;
+      // Orthographic re-fit lands exactly on the framing's half-height.
+      // Perspective steps back far enough to clear the bounding CIRCLE, so it
+      // necessarily shows more than the rectangle's half-height — that extra
+      // is the fit, not a drift.
+      if (ortho) expect(engine.scale()).toBeCloseTo(refit, 8);
+      else expect(engine.scale()).toBeGreaterThanOrEqual(refit);
     } finally { engine.dispose(); canvas.remove(); }
   });
 });

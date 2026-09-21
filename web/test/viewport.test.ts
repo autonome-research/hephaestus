@@ -415,21 +415,46 @@ describe("scene (§5.2, §5.4)", () => {
     expect(perspectiveFovDeg(Number.NaN, 10)).toBe(0);
   });
 
-  it("places a perspective camera on the same eye/target as the ortho framing", () => {
+  // REWRITTEN 2026-09-20. This asserted that the perspective camera sits on
+  // the ORTHO EYE and solves for a `fov` that reproduces `halfHeight` at the
+  // target plane. That is correct for one plane and wrong for a solid: on the
+  // fixture it put the eye 46.1 out with a 37° field, and the part's near
+  // corner sits ~22 closer where that field is only 8 units tall — so the
+  // near half of the model was magnified straight off the canvas.
+  //
+  // The lens is fixed and the CAMERA MOVES now. What must still hold is the
+  // half this case was really protecting: a named view still looks from the
+  // direction `cameras.py` says it looks.
+  it("keeps the framing's eye DIRECTION and steps back to fit the lens", () => {
     const bounds = new Box3(new Vector3(-5, -5, -5), new Vector3(5, 5, 5));
     const framing = framingFor(bounds, "iso", 1);
     expect(framing).not.toBeNull();
     if (framing === null) return;
     const camera = new PerspectiveCamera();
+    const lens = camera.fov;
     applyPerspectiveFraming(camera, framing);
-    expect(camera.position.toArray()).toEqual([...framing.eye]);
-    const distance = Math.hypot(
-      framing.eye[0] - framing.target[0],
-      framing.eye[1] - framing.target[1],
-      framing.eye[2] - framing.target[2],
-    );
-    expect(camera.fov).toBeCloseTo(perspectiveFovDeg(framing.halfHeight, distance), 10);
-    expect(camera.aspect).toBeCloseTo(framing.halfWidth / framing.halfHeight, 10);
+
+    // Same ray from the target, to within floating point.
+    const target = new Vector3(...framing.target);
+    const want = new Vector3(...framing.eye).sub(target).normalize();
+    const got = camera.position.clone().sub(target).normalize();
+    expect(got.x).toBeCloseTo(want.x, 9);
+    expect(got.y).toBeCloseTo(want.y, 9);
+    expect(got.z).toBeCloseTo(want.z, 9);
+
+    // The lens is untouched, and the standoff is the one that fits the
+    // framing's bounding circle into it: `r / sin(fov/2)`.
+    expect(camera.fov).toBe(lens);
+    const radius = Math.hypot(framing.halfWidth, framing.halfHeight) * 1.05;
+    const expected = radius / Math.sin((lens * Math.PI) / 360);
+    expect(camera.position.distanceTo(target)).toBeCloseTo(expected, 6);
+
+    // And it stands FURTHER OUT than the orthographic eye, which is the
+    // whole correction — the ortho distance is what over-magnified.
+    const orthoDistance = new Vector3(...framing.eye).distanceTo(target);
+    expect(camera.position.distanceTo(target)).toBeGreaterThan(orthoDistance);
+    // The far plane must reach the new standoff or the model is clipped away.
+    expect(camera.far).toBeGreaterThan(camera.position.distanceTo(target));
   });
 });
 

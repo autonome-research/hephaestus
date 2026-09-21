@@ -23,12 +23,15 @@ afterEach(() => {
 });
 
 describe("appearance defaults are §3.11's authored picture", () => {
-  it("starts shaded, orthographic, grid and triad on, override on", () => {
+  // PERSPECTIVE since 2026-09-20: the build space is a room, and a room only
+  // reads as one under perspective — in an ortho camera fitted to the part
+  // the walls fall outside the frame. The ortho toggle still restores the
+  // exact `heph render` projection in one click.
+  it("starts shaded, PERSPECTIVE, grid on, override on", () => {
     expect(DEFAULT_APPEARANCE).toEqual({
       wireframe: false,
-      ortho: true,
+      ortho: false,
       grid: true,
-      triad: true,
       materialOverride: true,
     });
     expect(new AppearanceStore().getSnapshot()).toEqual(DEFAULT_APPEARANCE);
@@ -39,7 +42,6 @@ describe("appearance defaults are §3.11's authored picture", () => {
       "wireframe",
       "ortho",
       "grid",
-      "triad",
       "materialOverride",
     ]);
     expect(APPEARANCE_TOGGLES).not.toContain("fit");
@@ -51,7 +53,7 @@ describe("the appearance store", () => {
     const store = new AppearanceStore();
     store.toggle("wireframe");
     expect(store.getSnapshot().wireframe).toBe(true);
-    expect(store.getSnapshot().ortho).toBe(true);
+    expect(store.getSnapshot().ortho).toBe(false);
     store.toggle("grid");
     expect(store.getSnapshot().grid).toBe(false);
     expect(store.getSnapshot().wireframe).toBe(true);
@@ -63,8 +65,8 @@ describe("the appearance store", () => {
     const stop = store.subscribe(() => {
       notifications += 1;
     });
-    store.toggle("triad");
-    store.toggle("triad");
+    store.toggle("wireframe");
+    store.toggle("wireframe");
     store.reset();
     expect(notifications).toBe(2);
     store.reset();
@@ -80,7 +82,7 @@ describe("the appearance store", () => {
     expect(url).not.toContain("ortho");
     expect(url).not.toContain("material");
     expect(url).not.toMatch(/[?&]grid=/);
-    expect(url).not.toContain("triad");
+    expect(url).not.toContain("triad"); // struck with the triad itself (2026-09-20)
   });
 });
 

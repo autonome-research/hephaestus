@@ -102,15 +102,21 @@
 // The treatment belongs with the surface that can feed it. See this item's
 // report.
 
+import type {
+  BufferGeometry} from "three";
 import {
-  BufferGeometry,
   Color,
+  BackSide,
+  BoxGeometry,
   EdgesGeometry,
-  Float32BufferAttribute,
   Group,
   LineBasicMaterial,
   LineSegments,
+  Mesh as ThreeMesh,
   MeshStandardMaterial,
+  ShaderMaterial,
+  Vector2,
+  Vector3,
   type Box3,
   type Mesh,
   type Object3D,
@@ -322,17 +328,6 @@ export function gridStep(span: number): number {
   return rung * decade;
 }
 
-/** A ground grid, in model units, resolved to whole steps. */
-export interface GroundGridSpec {
-  readonly step: number;
-  /** The plane the grid lies in: the scene's own floor. */
-  readonly z: number;
-  readonly minX: number;
-  readonly maxX: number;
-  readonly minY: number;
-  readonly maxY: number;
-}
-
 /**
  * How far past the part's own footprint the pad reaches, in steps.
  *
@@ -356,100 +351,18 @@ export interface GroundGridSpec {
  */
 export const GRID_MARGIN_STEPS = 2;
 
-/**
- * The grid for `bounds` at a camera span, or `null` when there is nothing to
- * stand on.
+/*
+ * THE FINITE PAD IS STRUCK (2026-09-20). `GroundGridSpec`, `groundGridSpec`,
+ * `GroundGrid` and `buildGroundGrid` stood here: a whole-step rectangle of
+ * `LineSegments` covering the part's footprint plus `GRID_MARGIN_STEPS`, and
+ * nothing else. The build space below replaces all four; see its header for
+ * why the "pad is finite" decision was reversed and what survives of it.
  *
- * Lines land on **world multiples of the step**, not on multiples measured from
- * the part's corner, so the line through `x = 0` is a line through `x = 0` and a
- * reader can count divisions off the model origin. The pad is then the smallest
- * whole-step rectangle that covers the part's XY footprint plus
- * `GRID_MARGIN_STEPS` on each side.
+ * `GRID_MARGIN_STEPS` is kept just above, unused by any drawing code, because
+ * its comment is the record of the argument that decision rested on and the
+ * two assertions it constrained. Deleting the constant would delete the only
+ * written account of why the frame corners used to be pure ground.
  */
-export function groundGridSpec(bounds: Box3, span: number): GroundGridSpec | null {
-  if (bounds.isEmpty()) return null;
-  const step = gridStep(span);
-  if (step <= 0) return null;
-  const pad = GRID_MARGIN_STEPS * step;
-  return {
-    step,
-    z: bounds.min.z,
-    minX: Math.floor((bounds.min.x - pad) / step) * step,
-    maxX: Math.ceil((bounds.max.x + pad) / step) * step,
-    minY: Math.floor((bounds.min.y - pad) / step) * step,
-    maxY: Math.ceil((bounds.max.y + pad) / step) * step,
-  };
-}
-
-/** A built grid, and the handle that releases its two geometries. */
-export interface GroundGrid {
-  readonly object: Group;
-  readonly lines: number;
-  dispose(): void;
-}
-
-/**
- * Build §3.11.5's ground grid as two draw calls.
- *
- * Two, because the grid says two different things: the **minor** lines are a
- * ruler, and the two lines through the model origin are a datum. They are
- * separate `LineSegments` so they can carry separate tokens, which is the same
- * split `--border` and `--border-strong` already make in CSS.
- *
- * `depthWrite: false` for the same reason as the silhouette: the grid is a
- * reference mark, and a mark that occludes the part it is a reference for has
- * the priority backwards. It still *tests* depth, so the part hides the grid
- * behind it — which is what makes the pad read as a floor rather than as an
- * overlay.
- */
-export function buildGroundGrid(spec: GroundGridSpec, palette: ViewportPalette): GroundGrid {
-  const minor: number[] = [];
-  const datum: number[] = [];
-  const { step, z, minX, maxX, minY, maxY } = spec;
-
-  // `Math.round` on the division index rather than accumulating `+= step`:
-  // accumulating floating-point steps across a hundred divisions drifts, and a
-  // grid whose last line is a third of a millimetre off is a grid that lies.
-  const columns = Math.round((maxX - minX) / step);
-  const rows = Math.round((maxY - minY) / step);
-  for (let i = 0; i <= columns; i += 1) {
-    const x = minX + i * step;
-    const into = Math.abs(x) < step / 2 ? datum : minor;
-    into.push(x, minY, z, x, maxY, z);
-  }
-  for (let j = 0; j <= rows; j += 1) {
-    const y = minY + j * step;
-    const into = Math.abs(y) < step / 2 ? datum : minor;
-    into.push(minX, y, z, maxX, y, z);
-  }
-
-  const object = new Group();
-  const geometries: BufferGeometry[] = [];
-  const materials: LineBasicMaterial[] = [];
-  const add = (points: readonly number[], colour: Color): void => {
-    if (points.length === 0) return;
-    const geometry = new BufferGeometry();
-    geometry.setAttribute("position", new Float32BufferAttribute(Array.from(points), 3));
-    const material = new LineBasicMaterial({ color: colour, depthWrite: false });
-    geometries.push(geometry);
-    materials.push(material);
-    object.add(new LineSegments(geometry, material));
-  };
-  add(minor, palette.grid);
-  add(datum, palette.gridAxis);
-
-  let disposed = false;
-  return {
-    object,
-    lines: (minor.length + datum.length) / 6,
-    dispose(): void {
-      if (disposed) return;
-      disposed = true;
-      for (const geometry of geometries) geometry.dispose();
-      for (const material of materials) material.dispose();
-    },
-  };
-}
 
 /**
  * The two display flags that mutate the loaded meshes. Grid, triad and ortho
@@ -504,4 +417,313 @@ export function applyAppearance(
     if (source === undefined || source === authored) continue;
     source.visible = !appearance.materialOverride && !appearance.wireframe;
   }
+}
+
+// ---------------------------------------------------------------------------
+// The build space (§3.11.5, rewritten 2026-09-20)
+//
+// THE PAD WAS FINITE AND IS NOT ANY MORE. `GRID_MARGIN_STEPS` above still
+// documents why it was: an unbounded grid reaches the frame corners, and two
+// assertions read a frame corner as the ground. That reasoning was sound and
+// the decision has been REVERSED ON REQUEST — the operator asked for a
+// complete 3-D build space rather than a mat the part stands on, and the two
+// assertions have been rewritten to sample what they were actually about.
+//
+// Its closing line was "a pad the part stands on says where the part is; an
+// infinite floor says where the camera is". Both are true; what the request
+// settles is which one this viewport is for. A CAD well is a space you build
+// IN, and the floor running past the part is what gives it depth, scale and a
+// horizon to read the camera against.
+//
+// ONE QUAD, NOT N LINE SEGMENTS. The pad drew `LineSegments` it had to rebuild
+// whenever the framing changed, and lines wide enough to see up close alias
+// into moiré at distance. This is a single huge quad whose fragment shader
+// computes the lines in WORLD space, so:
+//
+//   * it costs one draw call at any extent, and nothing is rebuilt on zoom;
+//   * `fwidth` gives every line the same apparent width at every distance,
+//     which is what kills the moiré — the line thickens in world units exactly
+//     as fast as the pixel grows in world units;
+//   * the lines stay on world multiples of the step, so the line through
+//     `x = 0` is still the line through `x = 0` and divisions are still
+//     countable off the model origin. That was the pad's rule and it survives.
+//
+// THE FADE IS WHAT MAKES IT A ROOM RATHER THAN A SHEET. Alpha falls off with
+// distance from the part, so the floor dissolves into `--viewport-ground`
+// instead of ending on a visible edge. A hard edge at the far end of a floor
+// reads as a table in a void; a fade reads as space continuing past the frame.
+
+/** A build-space floor: where it lies and how finely it is ruled. */
+export interface BuildSpaceSpec {
+  /** The FINEST spacing the floor will ever draw, in model units. */
+  readonly step: number;
+  /** The plane the floor lies in: the scene's own floor. */
+  readonly z: number;
+}
+
+/**
+ * The floor's finest spacing follows the framing's `gridStep`, one decade
+ * finer, because the shader only ever coarsens from here — it picks a decade
+ * multiple of this at draw time, so starting a decade below the readout's step
+ * leaves detail to reveal on the way in.
+ */
+export function buildSpaceSpec(bounds: Box3, span: number): BuildSpaceSpec | null {
+  if (bounds.isEmpty()) return null;
+  const step = gridStep(span);
+  if (step <= 0) return null;
+  // Two decades below the readout, so the shader has fine ruling to reveal
+  // on the way in rather than bottoming out at the first zoom.
+  return { step: step / 100, z: bounds.min.z };
+}
+
+/**
+ * How many screen pixels the finest drawn spacing is held at or above.
+ *
+ * SMALL, because density is the depth cue. At 7 the floor read as a handful
+ * of big cells and the eye had nothing to measure recession against; a
+ * reference CAD space rules finely enough that the cells themselves converge.
+ */
+export const BUILD_SPACE_MIN_PIXELS = 4;
+
+/**
+ * Where the floor starts and finishes dissolving, as fractions of the VIEW
+ * SPAN — the world-units height the viewport covers at the floor.
+ *
+ * Not the camera's height above the plane, which is the obvious choice and the
+ * wrong one: the default camera is ORTHOGRAPHIC, and an orthographic zoom
+ * changes the camera's `zoom` while leaving its position exactly where it was.
+ * Sizing anything off the camera's height therefore froze the floor at one
+ * extent no matter how far out the operator scrolled, which is what left a
+ * hard-edged band across the middle of the well. The view span is the one
+ * number that means the same thing under both projections.
+ *
+ * A 3:2 frame's half-diagonal is about 0.6 spans. The dissolve runs well past
+ * that so the floor is at full strength across the whole frame and only
+ * softens as it approaches the far walls.
+ *
+ * THE WALLS HAVE TO SIT INSIDE THE FADE, which is what `BUILD_SPACE_REACH`
+ * below is really for. At a reach of 3 the walls stood 1.5 spans out while
+ * the fade finished at 1.3, so they were erased before they were ever drawn
+ * and the "room" was a floor again. The two numbers are one decision.
+ */
+export const BUILD_SPACE_FADE_NEAR = 1.1;
+export const BUILD_SPACE_FADE_FAR = 2.9;
+
+/**
+ * The room's edge length, in view spans.
+ *
+ * Its walls stand at half this from the centre — 1.6 spans — which is inside
+ * the dissolve above, so they read as surfaces receding into the distance
+ * rather than as a box the camera is trapped in. A tighter room put the walls
+ * at about one span, where they crowd the model instead of framing it.
+ */
+export const BUILD_SPACE_REACH = 3.2;
+
+/** A built build space, and the handle that releases it. */
+export interface BuildSpace {
+  readonly object: Group;
+  /**
+   * Re-centre and re-scale the quad under what the camera is LOOKING AT.
+   * Call each frame.
+   *
+   * `target` is the orbit centre, not the camera position — an iso camera
+   * stands well off to the side of the thing it frames, and centring the
+   * floor on it drags the bright middle of the floor off with it.
+   *
+   * `viewSpan` is the world-units height the viewport covers at the floor —
+   * see `BUILD_SPACE_FADE_NEAR` for why it is that and not a camera height.
+   */
+  follow(target: Vector3, viewSpan: number): void;
+  dispose(): void;
+}
+
+const BUILD_SPACE_VERTEX = /* glsl */ `
+varying vec3 vWorld;
+varying vec3 vNormal;
+void main() {
+  vec4 world = modelMatrix * vec4(position, 1.0);
+  vWorld = world.xyz;
+  // The box is axis-aligned and only ever uniformly scaled, so the object
+  // normal IS the world normal up to sign; the fragment only uses its
+  // magnitude to pick a plane, so no normal matrix is needed.
+  vNormal = normal;
+  gl_Position = projectionMatrix * viewMatrix * world;
+}
+`;
+
+// Two ideas carry this shader, and both are about DENSITY rather than colour.
+//
+// 1. `fwidth(coord)` is how much a value changes across one pixel, so dividing
+//    a distance-to-a-line by it converts that distance into PIXELS. Clamping
+//    at 1 then draws every line exactly one pixel wide — up close and at the
+//    horizon alike. That is what stops lines thinning into aliasing as they
+//    recede.
+//
+// 2. One pixel wide does not help if the lines are half a pixel APART, which
+//    is what turned the first version of this floor into a moiré band at a
+//    wide zoom. So the spacing is chosen per fragment: `lod` is how many
+//    decades the base step must climb for its lines to sit at least
+//    `uMinPixels` apart, and the shader draws that decade and the two above
+//    it, cross-fading the finest one out as it approaches the limit. Zooming
+//    out therefore drops decades smoothly instead of collapsing into hatch,
+//    and zooming in reveals them the same way.
+const BUILD_SPACE_FRAGMENT = /* glsl */ `
+precision highp float;
+varying vec3 vWorld;
+varying vec3 vNormal;
+uniform float uStep;
+uniform vec3 uLineColor;
+uniform float uLineAlpha;
+uniform float uWallAlpha;
+uniform float uMinPixels;
+uniform float uFadeNear;
+uniform float uFadeFar;
+uniform vec2 uCentre;
+
+// One pixel wide at any distance: dividing the distance-to-a-line by
+// fwidth(coord) converts it into PIXELS, and clamping at 1 draws it one pixel
+// wide up close and at the horizon alike.
+float lineMask(vec2 p, float spacing) {
+  vec2 coord = p / spacing;
+  vec2 grid = abs(fract(coord - 0.5) - 0.5) / fwidth(coord);
+  return 1.0 - min(min(grid.x, grid.y), 1.0);
+}
+
+void main() {
+  // WHICH FACE AM I ON. The build space is a box seen from the inside, so the
+  // grid is drawn in the two axes lying IN this face — that is what makes the
+  // lines meet at the corners instead of sliding across them.
+  vec3 n = abs(vNormal);
+  vec2 p;
+  if (n.z > n.x && n.z > n.y) p = vWorld.xy;
+  else if (n.y > n.x) p = vWorld.xz;
+  else p = vWorld.yz;
+
+  float fade = 1.0 - smoothstep(uFadeNear, uFadeFar, distance(vWorld, vec3(uCentre, vWorld.z)));
+  if (fade <= 0.0) discard;
+
+  // ONE GRID, ONE WEIGHT (rewritten 2026-09-20).
+  //
+  // This drew three decades at two different strengths plus a highlighted
+  // datum line through the origin. Three things were wrong with that and all
+  // three were visible: the datum lines were bright enough to read as part of
+  // the MODEL and crossed straight through it; the major/minor split made the
+  // floor look like graph paper rather than a surface; and the decade
+  // hand-over was a visible change of pattern, so zooming out "degraded"
+  // instead of continuing.
+  //
+  // A reference CAD space draws one uniform ruling and lets DENSITY carry the
+  // depth. So: one spacing, one alpha, and the only thing the level of detail
+  // does is cross-fade between adjacent decades so the hand-over cannot be
+  // seen. fine is a decade above the pixel floor and fades OUT as it
+  // approaches it, while coarse — already on screen at full strength — takes
+  // over. At every moment the two sum to one grid.
+  float perPixel = max(fwidth(p.x), fwidth(p.y));
+  float lod = max(-1.0, log2(perPixel * uMinPixels / uStep) / log2(10.0));
+  float rung = floor(lod);
+  float climb = lod - rung;
+
+  float fine = uStep * pow(10.0, rung + 1.0);
+  float coarse = fine * 10.0;
+
+  float alpha = max(lineMask(p, fine) * (1.0 - climb), lineMask(p, coarse));
+  alpha *= uLineAlpha * fade * ((n.z > n.x && n.z > n.y) ? 1.0 : uWallAlpha);
+  if (alpha < 0.004) discard;
+  gl_FragColor = vec4(uLineColor, alpha);
+}
+`;
+
+/**
+ * Build the floor as one shaded quad that follows the camera.
+ *
+ * THE QUAD IS NOT THE FLOOR'S EXTENT. Its lines are computed from WORLD
+ * position, so sliding the quad under the camera does not slide the grid — the
+ * line through `x = 0` stays the line through `x = 0`. The quad is only a
+ * canvas big enough to cover the view, which is why `follow` may move and
+ * resize it freely and why the floor reads as unbounded without ever being a
+ * geometry large enough to lose float precision.
+ *
+ * `depthWrite: false` for the reason the pad it replaced had it: the floor is
+ * a reference mark, and a mark that occludes the part it is a reference for
+ * has the priority backwards. It still TESTS depth, so the part hides the
+ * floor behind it — which is what makes this read as a floor and not an
+ * overlay.
+ *
+ * `BackSide` because the space is a box seen from INSIDE: the near faces are
+ * culled, so every camera sees the three far ones and never the box itself.
+ * Orbiting under the part now means looking up at the ceiling, which is a
+ * room rather than a hole.
+ */
+export function buildBuildSpace(spec: BuildSpaceSpec, palette: ViewportPalette): BuildSpace {
+  // A BOX SEEN FROM THE INSIDE (2026-09-20), not a floor.
+  //
+  // The space was one quad in the ground plane, which is a mat: it gives the
+  // part something to stand on and tells you nothing about the volume around
+  // it. A room does — the walls converging behind the model are what make an
+  // orbit read as an orbit, and they are the difference between a drawing and
+  // a space. `BackSide` is the whole trick: the near faces are culled, so
+  // from any camera you see the three far ones and never the box itself.
+  const geometry = new BoxGeometry(1, 1, 1);
+  const material = new ShaderMaterial({
+    vertexShader: BUILD_SPACE_VERTEX,
+    fragmentShader: BUILD_SPACE_FRAGMENT,
+    uniforms: {
+      uStep: { value: spec.step },
+      uLineColor: { value: new Vector3(palette.grid.r, palette.grid.g, palette.grid.b) },
+      // One weight for the whole ruling. Low, because DENSITY is the depth
+      // cue here, not contrast — a grid you read line by line competes with
+      // the geometry standing on it.
+      uLineAlpha: { value: 0.5 },
+      uWallAlpha: { value: 0.6 },
+      uMinPixels: { value: BUILD_SPACE_MIN_PIXELS },
+      uFadeNear: { value: 0 },
+      uFadeFar: { value: 0 },
+      uCentre: { value: new Vector2() },
+    },
+    transparent: true,
+    depthWrite: false,
+    // Only the far faces. `FrontSide` would put a lid over the camera.
+    side: BackSide,
+  });
+
+  const mesh = new ThreeMesh(geometry, material);
+  mesh.position.set(0, 0, spec.z);
+  // Drawn before the part so its blend lands under the solid, and off the
+  // raycaster: the floor is scenery, never a pick target.
+  mesh.renderOrder = -1;
+  mesh.raycast = () => undefined;
+  // The quad moves every frame, so its own bounds are never a reason to cull
+  // it — three would otherwise test yesterday's sphere against today's camera.
+  mesh.frustumCulled = false;
+
+  const object = new Group();
+  object.add(mesh);
+
+  let disposed = false;
+  return {
+    object,
+    follow(target: Vector3, viewSpan: number): void {
+      if (disposed) return;
+      const span = Number.isFinite(viewSpan) && viewSpan > 0 ? viewSpan : spec.step;
+      const reach = span * BUILD_SPACE_REACH;
+      // The box SITS ON the scene floor rather than centring on the target:
+      // its bottom face is the ground the part stands on, so the centre is
+      // half a box above it. Horizontally it follows the target, which is
+      // what keeps the walls behind whatever the camera is looking at.
+      mesh.position.set(target.x, target.y, spec.z + reach / 2);
+      mesh.scale.set(reach, reach, reach);
+      const centre = material.uniforms["uCentre"]?.value as Vector2 | undefined;
+      centre?.set(target.x, target.y);
+      const near = material.uniforms["uFadeNear"];
+      const far = material.uniforms["uFadeFar"];
+      if (near !== undefined) near.value = span * BUILD_SPACE_FADE_NEAR;
+      if (far !== undefined) far.value = span * BUILD_SPACE_FADE_FAR;
+    },
+    dispose(): void {
+      if (disposed) return;
+      disposed = true;
+      geometry.dispose();
+      material.dispose();
+    },
+  };
 }

@@ -59,13 +59,13 @@ import { nameForDirection } from "./cameras";
 import {
   applyAppearance,
   authorDisplay,
-  buildGroundGrid,
+  buildBuildSpace,
+  buildSpaceSpec,
   gridStep,
-  groundGridSpec,
   readViewportPalette,
   type AuthoredDisplay,
   type DisplayAppearance,
-  type GroundGrid,
+  type BuildSpace,
   type ViewportPalette,
 } from "./display";
 import type { GlbGeometry } from "./glb";
@@ -78,7 +78,6 @@ import {
   boundsAt,
   framingFor,
   indexSolidNodes,
-  perspectiveFovDeg,
   type Framing,
   type SolidIndex,
 } from "./scene";
@@ -122,7 +121,7 @@ export class ViewportEngine {
   private display: AuthoredDisplay | null = null;
   private appearance: DisplayAppearance = { wireframe: false, materialOverride: true };
   private ortho = true;
-  private grid: GroundGrid | null = null;
+  private grid: BuildSpace | null = null;
   private step = 0;
   private index: SolidIndex | null = null;
   /** The plain scene bbox — the `rgb`/`mask`/`section` framing (`_framing`). */
@@ -133,6 +132,9 @@ export class ViewportEngine {
   private fit: { view: string; exploded: boolean } | null = null;
   private interacting = false;
   private frameRequest = 0;
+  private settling = false;
+  /** Multiplicative zoom still owed to the camera; 1 is "nothing pending". */
+  private zoomPending = 1;
   private disposed = false;
 
   constructor(canvas: HTMLCanvasElement, options: ViewportEngineOptions) {
@@ -200,7 +202,39 @@ export class ViewportEngine {
     this.scene.add(this.camera, new AmbientLight(0xffffff, 0.9));
 
     this.controls = new OrbitControls(this.camera, canvas);
-    this.controls.enableDamping = false;
+    // SMOOTH ZOOM AND ORBIT (2026-09-20). `enableDamping` was off and the
+    // wheel moved the camera in one hard step per tick, which reads as a jump
+    // rather than a zoom. Damping needs `controls.update()` driven every
+    // frame while the motion settles — this class has no animation loop by
+    // design ("a frame is drawn when something changed"), so `settleControls`
+    // below runs one only for as long as there is inertia left, and stops.
+    this.controls.enableDamping = true;
+    // 0.25, not 0.12. The factor is how much of the REMAINING motion is
+    // consumed each frame, so a small number is a long tail: at 0.12 the
+    // camera visibly trailed the pointer and an orbit felt like dragging
+    // something heavy. A quarter per frame settles in about five frames —
+    // still smoothed, no longer lagging.
+    this.controls.dampingFactor = 0.25;
+    // Slightly under 1 so a fast flick does not overshoot the face you were
+    // aiming for; the damping above is what makes this readable rather than
+    // sluggish.
+    this.controls.rotateSpeed = 0.9;
+    // A softer wheel: the default moves ~1 unit of zoom per tick, which at a
+    // dolly is a large jump in distance.
+    // 0.35, measured rather than guessed: at 0.7 a single notch took the
+    // camera 94.9 -> 143.8 units out, which is half the scene per tick and
+    // is why the zoom felt like a jump even once it was eased. This puts a
+    // standard notch at about 9% and a coarse one at about 23%.
+    this.controls.zoomSpeed = 0.35;
+    // THE WHEEL IS OURS (2026-09-20). `enableDamping` smooths ROTATE and PAN
+    // and nothing else — three's OrbitControls applies the dolly to the
+    // radius immediately, so a wheel tick jumped the camera in one frame no
+    // matter what the damping factor said. Measured: one tick took the
+    // distance 94.9 -> 103.4 with no frame in between. So the control's own
+    // zoom is off and `onWheel` below accumulates a TARGET that the settle
+    // loop eases toward, which is the only way to get an easing curve here.
+    this.controls.enableZoom = false;
+    canvas.addEventListener("wheel", this.onWheel, { passive: false });
     this.controls.addEventListener("change", this.requestFrame);
     this.controls.addEventListener("end", this.settleCamera);
     this.controls.addEventListener("start", this.holdCamera);
@@ -372,8 +406,22 @@ export class ViewportEngine {
       this.orthoCamera.zoom = 1;
       this.orthoCamera.updateProjectionMatrix();
     } else {
-      this.perspCamera.fov = (2 * Math.atan(halfHeight / distance) * 180) / Math.PI;
+      // The LENS does not change with the projection toggle — only which
+      // camera is drawing. Solving for a fov that matched the orthographic
+      // half-height at the current distance is what magnified the near half
+      // of the model off the canvas; see `applyPerspectiveFraming`. Stepping
+      // the camera back to where that fixed lens frames the same extent is
+      // the photographer's answer and the correct one.
+      // The direction is read BEFORE the position is written. `next` IS
+      // `perspCamera` here, so copying the target into it first and then
+      // reading `next.position` gave the zero vector — the camera ended up
+      // on a direction of (0,0,0) and the eye left the framing's ray.
+      const away = this.perspCamera.position.clone().sub(this.controls.target).normalize();
+      const standoff =
+        halfHeight / Math.max(Math.sin((this.perspCamera.fov * Math.PI) / 360), 1e-6);
+      this.perspCamera.position.copy(this.controls.target).addScaledVector(away, standoff);
       this.perspCamera.aspect = aspect;
+      this.perspCamera.lookAt(this.controls.target);
       this.perspCamera.updateProjectionMatrix();
     }
     this.controls.update();
@@ -406,7 +454,13 @@ export class ViewportEngine {
       this.framing = fitted;
       this.orthoCamera.top = fitted.halfHeight;
       this.orthoCamera.bottom = -fitted.halfHeight;
-      this.perspCamera.fov = perspectiveFovDeg(fitted.halfHeight, this.camera.position.distanceTo(this.controls.target));
+      // THE LENS IS FIXED; the camera MOVES to fit (2026-09-20). Deriving
+      // `fov` from the current distance here fed straight back into
+      // `applyPerspectiveFraming`, which now derives the distance from the
+      // fov — the two chased each other until the fov saturated at 180° and
+      // `scale()` returned 2.8e7. A perspective camera is re-fitted by
+      // re-applying the framing, which is the line below.
+      if (!this.ortho) applyPerspectiveFraming(this.perspCamera, fitted);
       this.rebuildGrid();
     }
     // Held mode keeps the actual vertical extent/zoom, not an old fit's scale.
@@ -447,6 +501,20 @@ export class ViewportEngine {
   /** Draw one frame now. Synchronous on purpose; see the header. */
   render(): void {
     if (this.disposed) return;
+    this.holdDepthRange();
+    // The floor's quad is a canvas, not an extent: it rides under the camera
+    // and is sized to the view, while its lines stay pinned to world
+    // coordinates. Following here rather than on `frame()` is what makes the
+    // floor survive a wheel zoom, which changes the camera and nothing else.
+    // The ORBIT TARGET, not the camera position: the floor fades outward from
+    // what the camera is looking AT. Centring it on the camera's own ground
+    // projection put the bright middle of the floor off to one side under any
+    // iso view, because that is where an iso camera stands.
+    //
+    // `scale()` is the camera's half-height in model units under BOTH
+    // projections, which is the one number an orthographic zoom actually
+    // moves — its `zoom`, not its position.
+    this.grid?.follow(this.controls.target, this.scale() * 2);
     this.renderer.render(this.scene, this.camera);
     for (const listener of this.frameListeners) listener();
   }
@@ -454,6 +522,7 @@ export class ViewportEngine {
   dispose(): void {
     this.disposed = true;
     if (this.frameRequest !== 0) cancelAnimationFrame(this.frameRequest);
+    this.canvas.removeEventListener("wheel", this.onWheel);
     this.controls.removeEventListener("change", this.requestFrame);
     this.controls.removeEventListener("end", this.settleCamera);
     this.controls.removeEventListener("start", this.holdCamera);
@@ -508,6 +577,34 @@ export class ViewportEngine {
     };
   }
 
+  /**
+   * Keep the perspective clip planes around wherever the camera now stands.
+   *
+   * THE DEFECT THIS CLOSES (2026-09-20): `near` and `far` were written once,
+   * by `applyPerspectiveFraming`, from the distance the camera was FITTED at.
+   * A wheel zoom in perspective DOLLIES — it moves the camera rather than
+   * changing a zoom factor — so scrolling out walked the model straight
+   * through the far plane and the viewport went black with a few stray grid
+   * lines left in it. That is the "not rendering complete" the operator saw.
+   *
+   * Orthographic is untouched: its clip planes do not depend on distance, and
+   * `applyFraming` owns them.
+   */
+  private holdDepthRange(): void {
+    if (this.ortho) return;
+    const distance = this.perspCamera.position.distanceTo(this.controls.target);
+    if (!Number.isFinite(distance) || distance <= 0) return;
+    // A decade either side of where the camera is: enough depth range to hold
+    // the room and the model at any dolly, and near enough to keep the depth
+    // buffer's precision where the geometry actually is.
+    const near = Math.max(distance / 1000, 1e-4);
+    const far = distance * 12;
+    if (this.perspCamera.near === near && this.perspCamera.far === far) return;
+    this.perspCamera.near = near;
+    this.perspCamera.far = far;
+    this.perspCamera.updateProjectionMatrix();
+  }
+
   private aspect(): number {
     const size = this.renderer.getSize(new Vector2());
     return size.y > 0 ? size.x / size.y : 1;
@@ -553,18 +650,88 @@ export class ViewportEngine {
     }
     const span = framing.halfHeight * 2;
     this.step = gridStep(span);
-    const spec = groundGridSpec(bounds, span);
+    const spec = buildSpaceSpec(bounds, span);
     if (spec === null) {
       this.step = 0;
       return;
     }
-    const grid = buildGroundGrid(spec, this.palette);
+    const grid = buildBuildSpace(spec, this.palette);
     this.grid = grid;
     this.gridRoot.add(grid.object);
   }
 
   /** A plain click is not a camera change; hold only on a controls change. */
   private readonly holdCamera = (): void => { this.interacting = true; };
+
+  /**
+   * Take a wheel tick as a zoom INTENT rather than a jump.
+   *
+   * The factor accumulates, so spinning the wheel fast compounds instead of
+   * queueing a backlog of equal steps, and the settle loop consumes it over
+   * several frames.
+   */
+  private readonly onWheel = (event: WheelEvent): void => {
+    if (this.disposed) return;
+    event.preventDefault();
+    // `deltaMode` 1 is lines and 2 is pages; normalise so a trackpad and a
+    // notched wheel do not differ by two orders of magnitude.
+    const lines = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 100 : 1;
+    const steps = (event.deltaY * lines) / 400;
+    this.zoomPending *= Math.exp(steps * this.controls.zoomSpeed);
+    this.interacting = true;
+    this.fit = null;
+    this.settleControls();
+  };
+
+  /** Consume a slice of the pending zoom. Returns true while any is left. */
+  private stepZoom(): boolean {
+    if (this.zoomPending === 1) return false;
+    // A fifth of what is left per frame: a short exponential ease-out that
+    // reaches the target in a handful of frames and never overshoots.
+    const slice = Math.pow(this.zoomPending, 0.2);
+    this.zoomPending /= slice;
+    if (Math.abs(Math.log(this.zoomPending)) < 1e-3) this.zoomPending = 1;
+
+    if (this.ortho) {
+      this.orthoCamera.zoom = Math.max(this.orthoCamera.zoom / slice, 1e-4);
+      this.orthoCamera.updateProjectionMatrix();
+    } else {
+      const away = this.perspCamera.position.clone().sub(this.controls.target);
+      const distance = Math.max(away.length() * slice, 1e-4);
+      this.perspCamera.position.copy(this.controls.target).addScaledVector(away.normalize(), distance);
+    }
+    return true;
+  }
+
+  /**
+   * Run the damping to rest.
+   *
+   * `OrbitControls.update()` returns true while the camera is still moving
+   * under inertia, so the loop asks it and stops the moment it says no. That
+   * keeps the engine's on-demand contract — there is still no perpetual
+   * animation loop — while giving the wheel and the drag a settle.
+   */
+  private settleControls(): void {
+    if (this.disposed || this.settling) return;
+    this.settling = true;
+    const step = (): void => {
+      if (this.disposed) { this.settling = false; return; }
+      const zooming = this.stepZoom();
+      const moving = this.controls.update();
+      this.holdDepthRange();
+      this.renderer.render(this.scene, this.camera);
+      for (const listener of this.frameListeners) listener();
+      if (zooming || moving) requestAnimationFrame(step);
+      else {
+        this.settling = false;
+        // The camera has come to rest, so this is where a free orbit or zoom
+        // gets its name — the same settle `controls`'s own `end` event gives
+        // a drag.
+        this.settleCamera();
+      }
+    };
+    requestAnimationFrame(step);
+  }
 
   /** A user drag: coalesce to one frame per animation frame. */
   private readonly requestFrame = (): void => {
@@ -573,6 +740,7 @@ export class ViewportEngine {
     this.frameRequest = requestAnimationFrame(() => {
       this.frameRequest = 0;
       this.render();
+      this.settleControls();
     });
   };
 

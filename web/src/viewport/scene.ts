@@ -281,20 +281,50 @@ export function perspectiveFovDeg(halfHeight: number, distance: number): number 
   return (2 * Math.atan(halfHeight / distance) * 180) / Math.PI;
 }
 
-/** Point a perspective camera at the same framing `applyFraming` uses. */
+/**
+ * Point a perspective camera at the same view `applyFraming` uses.
+ *
+ * FIT BY DISTANCE, NOT BY FIELD OF VIEW (corrected 2026-09-20).
+ *
+ * This used to keep the orthographic camera's eye exactly where it was and
+ * solve for the `fov` that reproduced `halfHeight` AT THE TARGET PLANE. That
+ * is correct for one plane and wrong for a solid: measured on the fixture, the
+ * ortho eye stood 46.1 units out with a half-height of 15.6, giving a 37°
+ * field — and the part's near corner sits ~22 units closer, where that same
+ * field is only 8 units tall. The near half of the model was therefore
+ * magnified straight off the canvas.
+ *
+ * A perspective camera is fitted by MOVING IT, which is what a photographer
+ * does: keep the lens, step back until the subject fits. The distance that
+ * fits a bounding sphere of radius `r` into a field `f` is `r / sin(f/2)`, and
+ * the sphere is the right bound because it is the one that does not depend on
+ * which way the camera is pointing.
+ *
+ * The EYE DIRECTION is the framing's, untouched — so a named view still looks
+ * from where `cameras.py` says it looks. Only how far along that ray the
+ * camera stands is this function's decision.
+ */
 export function applyPerspectiveFraming(camera: PerspectiveCamera, framing: Framing): void {
-  camera.position.set(framing.eye[0], framing.eye[1], framing.eye[2]);
+  const target = new Vector3(framing.target[0], framing.target[1], framing.target[2]);
+  const eye = new Vector3(framing.eye[0], framing.eye[1], framing.eye[2]);
+  const direction = eye.clone().sub(target);
+  const ray = direction.length();
+  if (ray > 0) direction.divideScalar(ray);
+
+  // The sphere that contains the framing's own rectangle, with a little air
+  // so the silhouette does not touch the frame edge.
+  const radius = Math.hypot(framing.halfWidth, framing.halfHeight) * 1.05;
+  const half = (camera.fov * Math.PI) / 360;
+  const sine = Math.max(Math.sin(half), 1e-6);
+  const distance = radius / sine;
+
+  camera.position.copy(target).addScaledVector(direction, distance);
   camera.up.set(framing.up[0], framing.up[1], framing.up[2]);
-  camera.near = framing.near;
-  camera.far = framing.far;
-  const distance = Math.hypot(
-    framing.eye[0] - framing.target[0],
-    framing.eye[1] - framing.target[1],
-    framing.eye[2] - framing.target[2],
-  );
-  camera.fov = perspectiveFovDeg(framing.halfHeight, distance);
-  camera.aspect = framing.halfHeight > 0 ? framing.halfWidth / framing.halfHeight : 1;
-  camera.lookAt(framing.target[0], framing.target[1], framing.target[2]);
+  // The far plane has to reach the new, longer standoff; `framing.far` was
+  // computed for the orthographic distance and would clip the model away.
+  camera.near = Math.max(framing.near, distance / 1000);
+  camera.far = Math.max(framing.far, distance + radius * 4);
+  camera.lookAt(target);
   camera.updateProjectionMatrix();
   camera.updateMatrixWorld(true);
 }
