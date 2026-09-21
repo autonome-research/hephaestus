@@ -83,3 +83,55 @@ describe('resize preserves camera intent', () => {
     } finally { engine.dispose(); canvas.remove(); }
   });
 });
+
+/*
+ * §5.5's projection toggle, and the size it must not change.
+ *
+ * "Toggling the projection must not steal an orbit" is the engine's rule, and
+ * for an ORBITED camera it is the whole rule. For a camera still on its
+ * framing it was implemented as a conversion — a fov and a distance into a
+ * half-height — which preserved the pose and changed the SIZE, because the
+ * perspective fit steps back far enough to clear the bounding CIRCLE while the
+ * orthographic one fits the rectangle. The part came out smaller than
+ * `heph render` draws it, which is the join G4.5 measures across.
+ */
+describe("the projection toggle", () => {
+  type Live = { bounds: Box3; camera: OrthographicCamera | PerspectiveCamera; controls: OrbitControls };
+
+  it("re-frames a camera that is still on its framing, and holds an orbited one", () => {
+    const canvas = document.createElement("canvas"); document.body.append(canvas);
+    const engine = new ViewportEngine(canvas, { onCameraSettled: () => undefined });
+    const live = engine as unknown as Live;
+    try {
+      live.bounds = new Box3(new Vector3(-600, -90, -20), new Vector3(600, 90, 20));
+      engine.resize(740, 430);
+      engine.setOrtho(false);
+      engine.frame("iso", false);
+      expect(engine.cameraSnapshot().fit).toBe(true);
+
+      // Still fitted: the orthographic camera lands on the framing's own
+      // half-height rather than on a half-height read off the fixed lens.
+      engine.setOrtho(true);
+      const half = framingFor(live.bounds, "iso", 740 / 430)!.halfHeight;
+      expect(engine.scale()).toBeCloseTo(half, 8);
+      expect(engine.cameraSnapshot().fit).toBe(true);
+
+      // Orbited: the pose is the operator's and the toggle leaves it alone.
+      live.controls.dispatchEvent({ type: "start" });
+      live.camera.position.add(new Vector3(31, -17, 9));
+      live.controls.update();
+      live.controls.dispatchEvent({ type: "end" });
+      expect(engine.cameraSnapshot().fit).toBe(false);
+      const held = live.camera.position.toArray();
+      engine.setOrtho(false);
+      const after = new Vector3(...live.camera.position.toArray());
+      const target = live.controls.target;
+      const before = new Vector3(...held).sub(target).normalize();
+      const now = after.clone().sub(target).normalize();
+      expect(now.x).toBeCloseTo(before.x, 9);
+      expect(now.y).toBeCloseTo(before.y, 9);
+      expect(now.z).toBeCloseTo(before.z, 9);
+      expect(engine.cameraSnapshot().fit).toBe(false);
+    } finally { engine.dispose(); canvas.remove(); }
+  });
+});

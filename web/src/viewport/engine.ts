@@ -390,6 +390,34 @@ export class ViewportEngine {
     this.scene.add(next);
     this.camera = next;
     this.controls.object = next;
+
+    /*
+     * A CAMERA STILL ON ITS FRAMING GETS THE FRAMING (2026-09-20).
+     *
+     * "Toggling the projection must not steal an orbit" is the rule below and
+     * it stands — but a camera nobody has orbited is not holding an orbit, it
+     * is holding `cameras.py`'s framing for a named view, and that framing is
+     * defined per projection. Converting it instead (a fov and a distance into
+     * a half-height, or back) preserved the pose and changed the SIZE: the
+     * perspective fit steps back far enough to clear the bounding CIRCLE, so
+     * reading that half-height into the orthographic camera drew the part
+     * smaller than `heph render` draws it.
+     *
+     * Measured, because it is what found this: with the browser converted
+     * rather than re-framed, hiding the fixture's tread changed 0.3136 of its
+     * own mask instead of 1.0000, and each 7957px cleat changed 0.0000 of
+     * theirs — their silhouettes had moved off their masks entirely. That is
+     * G4.5's join between a server pass and a browser screenshot, and this is
+     * the half of it the browser owes.
+     *
+     * `this.fit` is exactly "has not been orbited": `frame` sets it and every
+     * interaction clears it.
+     */
+    if (this.fit !== null) {
+      this.frame(this.fit.view, this.fit.exploded);
+      return;
+    }
+
     // Keep the current pose. Fit is the action that snaps back to the named
     // view; toggling the projection must not steal an orbit.
     const distance = Math.max(next.position.distanceTo(this.controls.target), 1e-6);
