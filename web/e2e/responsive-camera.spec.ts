@@ -78,14 +78,50 @@ test('Fit follows resized extents; deliberate orbit/zoom/pan and held artifact s
     await page.mouse.down({ button }); await page.mouse.move(box.x + box.width / 2 + 25, box.y + box.height / 2 + 15, { steps: 5 }); await page.mouse.up({ button });
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   }
-  const held = await snapshot(); expect(held.fit).toBe(false);
+  /*
+   * LET THE DAMPING FINISH before calling this the held pose.
+   *
+   * `OrbitControls` damps, so a drag leaves velocity that keeps decaying for a
+   * few frames after `mouse.up`. Sampling immediately captured a camera still
+   * in motion and then asserted that a resize had not moved it — measured drift
+   * of 0.07 in an eye component and 2.6e-5 in a target one, which is the tail
+   * of the drag and not the resize. Waiting for two identical consecutive
+   * samples is what makes the exact comparison below mean what it says; a
+   * tolerance here would have hidden a real nudge just as well as this noise.
+   */
+  const atRest = async (): Promise<Awaited<ReturnType<typeof snapshot>>> => {
+    let previous = JSON.stringify(await snapshot());
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      await page.waitForTimeout(50);
+      const current = JSON.stringify(await snapshot());
+      if (current === previous) return await snapshot();
+      previous = current;
+    }
+    throw new Error('the camera never came to rest');
+  };
+  const held = await atRest(); expect(held.fit).toBe(false);
   const pose = ({ size: _size, ...rest }: typeof held) => rest;
   for (const width of [1280, 1024, 843, 1024, 1440]) {
     await page.setViewportSize({ width, height: 800 });
     await expect.poll(async () => (await snapshot()).size[0]).toBe(await stageWidthFor(page, width));
     expect(pose(await snapshot())).toEqual(pose(held));
   }
-  await page.locator('[data-view-cube] [data-cube-current]').click();
+  /*
+   * THE WAY BACK IS THE CUBE, and after a free orbit it is a FACE.
+   *
+   * `[data-cube-current]` is the cell whose camera the workspace is on, and
+   * after an arbitrary orbit there is no such cell: the pose names itself
+   * `az<d>_el<d>` and only the twenty-six standard cameras have cells. That is
+   * correct — the cube draws cameras, not orbits — so this clicks a drawn face,
+   * which is what an operator reaches for and what every view cube does.
+   *
+   * Clicking the CURRENT cell re-fits without changing the camera, and that is
+   * the other half of the affordance (`ViewCube.tsx`); it is reachable after a
+   * zoom or a pan, which leave the direction alone and the cell current. This
+   * case orbits, so it takes the face.
+   */
+  await expect(page.locator('[data-view-cube] [data-cube-current]')).toHaveCount(0);
+  await page.locator('[data-view-cube] [data-cube-hit="face"]').first().click();
   await expect.poll(async () => (await snapshot()).fit).toBe(true);
   expect(writes).toEqual([]);
 });
