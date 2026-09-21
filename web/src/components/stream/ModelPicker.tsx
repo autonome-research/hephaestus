@@ -72,6 +72,27 @@ export function ModelPicker({ sessionId, creation, effort = "medium", onEffort }
     if (sessionId !== null) void readSessionModel(sessionId, true);
   };
 
+  /*
+   * §7A: "keyboard option navigation remain required". The handler hangs on the
+   * LISTBOX, where the option buttons bubble to it, AND on the search field,
+   * which is a sibling of the listbox and therefore bubbles nowhere near it.
+   * Attaching it only to the listbox left a filter box you could type into and
+   * not act on — Enter and the arrows were dead in the one control whose whole
+   * purpose is to narrow the list before you pick from it.
+   */
+  const navigate = (event: React.KeyboardEvent) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const option = options[activeIndex];
+      if (option) choose(option);
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const next = options.length === 0 ? 0 : (activeIndex + (event.key === "ArrowDown" ? 1 : options.length - 1)) % options.length;
+      setActive(next);
+      list.current?.querySelector<HTMLElement>(`[id="${listId}-${next}"]`)?.focus();
+    }
+  };
+
   return <div className={styles["control"]} data-model-control="">
     {creation ? <p className={styles["note"]}>{label}</p> : null}
     <Button
@@ -98,22 +119,12 @@ export function ModelPicker({ sessionId, creation, effort = "medium", onEffort }
           {options.length > 8 ? <input id={`${listId}-search`} className={styles["search"]} role="combobox"
             aria-label={copy.models.search} aria-autocomplete="list" aria-expanded="true" aria-controls={listId}
             aria-activedescendant={options.length > 0 ? `${listId}-${activeIndex}` : undefined}
-            value={search} onChange={event => { setSearch(event.target.value); setActive(0); }} /> : null}
+            value={search} onChange={event => { setSearch(event.target.value); setActive(0); }}
+            onKeyDown={navigate} /> : null}
           {catalog.isError ? <p role="status">{copy.models.catalogFailed}</p> : null}
           {catalog.isPending ? <p role="status">{copy.models.catalogLoading}</p> : null}
           <div id={listId} ref={list} role="listbox" aria-label={copy.models.choose} className={styles["options"]}
-            onKeyDown={event => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                const option = options[activeIndex];
-                if (option) choose(option);
-              } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-                event.preventDefault();
-                const next = options.length === 0 ? 0 : (activeIndex + (event.key === "ArrowDown" ? 1 : options.length - 1)) % options.length;
-                setActive(next);
-                list.current?.querySelector<HTMLElement>(`[id="${listId}-${next}"]`)?.focus();
-              }
-            }}>
+            onKeyDown={navigate}>
             {groups.map(provider => <div key={provider.provider_id} role="group" aria-label={`${provider.name} (${provider.provider_id})`}>
               {groups.length > 1 ? <h4 className={styles["provider"]}>{provider.name}</h4> : null}
               {provider.models.map(option => {
