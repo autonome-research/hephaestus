@@ -734,6 +734,14 @@ export function Composer(props: ComposerProps): React.JSX.Element {
       data-disabled-reason={disabledReason ?? "null"}
       data-cancel-state={cancellable ? "available" : "unavailable"}
       data-send-state={post.phase === "unknown" ? "unknown" : "ok"}
+      /* §0.2b: NOTHING LEAVES THE DOM. The envelope's member list was minted on
+         the context summary line, and when that readout was struck
+         (2026-09-20) the machine-readable half went with it — the browser went
+         on computing and sending the same envelope with nothing left to read it
+         from. The list belongs to the form, not to the sentence that used to
+         narrate it, so it is minted here: invisible, unchanged in meaning, and
+         addressable by every gate that asked what this message will carry. */
+      data-context-keys={summary.keys.join(" ")}
       onSubmit={(event) => {
         event.preventDefault();
         submit();
@@ -1045,8 +1053,9 @@ export function Composer(props: ComposerProps): React.JSX.Element {
           `toggleChip` is still the handler, but the view/selection pair is now
           the only thing with a control bound to it. Everything else the
           envelope carries is sent without a way to inspect or remove it from
-          this column. `previewContext` still exists and the route is
-          unchanged; nothing in the composer calls it any more. */}
+          this column. `previewContext` went with its only caller; the SERVER's
+          `POST /context/preview` is unchanged and still covered by the API
+          half of `e2e/composer.spec.ts`. */}
     </form>
   );
 }
