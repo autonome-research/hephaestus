@@ -183,6 +183,30 @@ async function awaitCanvasBox(page: Page, size: { width: number; height: number 
     .toMatchObject({ x: 0, y: 0, width: size.width, height: size.height });
 }
 
+/**
+ * Put the canvas on the projection the mask was rendered in.
+ *
+ * G4.5's method compares a SERVER render pass against BROWSER screenshots, and
+ * the join between them is the projection: `cameras.py` fits an orthographic
+ * camera per named view, and the mask's regions are that camera's silhouettes.
+ * The browser agreed by default until 2026-09-20, when `ortho` became a default
+ * of OFF on operator request — the build space reads as a room under
+ * perspective, and `state/appearance.ts` records the agreement as the thing that
+ * default trades away.
+ *
+ * So these cases engage it explicitly. That is not a workaround: the clause is
+ * about whether hiding a solid changes the solid's own region, and "its own
+ * region" is only a fact the two sides share while they share a projection.
+ * Measured with perspective on, one entry's silhouette had moved off its mask
+ * entirely and changed 0.0000 of it.
+ */
+async function withRenderProjection(page: Page): Promise<void> {
+  const ortho = page.locator('[data-appearance-control="ortho"]');
+  await expect(ortho).toBeVisible();
+  if ((await ortho.getAttribute("aria-pressed")) !== "true") await ortho.click();
+  await expect(ortho).toHaveAttribute("aria-pressed", "true");
+}
+
 // --------------------------------------------------------------------------
 // G4.5 — the visibility toggle, inside the mask and nowhere else
 
@@ -198,6 +222,7 @@ test("hiding a solid changes the viewport inside its mask and not outside (G4.5)
   //    map comes from the scene graph the server built, never from a guess.
   await open(page, route(PART, { tab: "viewport", itab: "results", t: "0" }));
   await awaitViewport(page);
+  await withRenderProjection(page);
   const scene = await solids(page);
   const target = scene.find((solid) => solid.label === "tread");
   expect(target, "the fixture's tread solid is missing from the scene").toBeDefined();
@@ -311,6 +336,7 @@ test("the G4.5 thresholds hold for EVERY solid, not only the named one (§3.11, 
 
   await open(page, route(PART, { tab: "viewport", itab: "results", t: "0" }));
   await awaitViewport(page);
+  await withRenderProjection(page);
   await awaitCanvasBox(page, passSize);
   const scene = await solids(page);
   const canvas = page.locator("[data-viewport-canvas]");
