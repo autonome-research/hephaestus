@@ -30,7 +30,8 @@ function render(element: ReactElement): Document {
   );
 }
 
-function chrome(
+/** The inspector's export view, rendered for one pinned part. */
+function exportView(
   overrides: Partial<Parameters<typeof ExportView>[0]> = {},
 ): Document {
   return render(
@@ -47,7 +48,7 @@ function chrome(
 
 describe("Export — bound to the pin", () => {
   it("renders its subject before any format button", () => {
-    const dom = chrome();
+    const dom = exportView();
     const subject = dom.querySelector("[data-source='workspace.artifact_ref']");
     const firstFormat = dom.querySelector("[data-export-format]");
     expect(subject).not.toBeNull();
@@ -58,7 +59,7 @@ describe("Export — bound to the pin", () => {
   });
 
   it("carries the pin and its mode as server values", () => {
-    const dom = chrome();
+    const dom = exportView();
     expect(dom.querySelector("[data-source='workspace.artifact_ref']")?.getAttribute("data-value")).toBe(
       "artifact:build:sha256:aaaa",
     );
@@ -68,14 +69,14 @@ describe("Export — bound to the pin", () => {
   });
 
   it("offers exactly the six formats export_part declares", () => {
-    const buttons = [...chrome().querySelectorAll("button[data-export-format]")].map((node) =>
+    const buttons = [...exportView().querySelectorAll("button[data-export-format]")].map((node) =>
       node.getAttribute("data-export-format"),
     );
     expect(buttons).toEqual([...EXPORT_FORMATS]);
   });
 
   it("disables the run control when there is no pin", () => {
-    const dom = chrome({ pinned: null });
+    const dom = exportView({ pinned: null });
     expect(dom.querySelector("[data-export-run]")?.getAttribute("aria-disabled")).toBe("true");
     expect(dom.querySelector("[data-export-blocked]")?.getAttribute("data-export-blocked")).toBe(
       "no_pin",
@@ -106,7 +107,7 @@ describe("sourcing field set — declared manufacturing identity only", () => {
     expect(block).not.toContain("description");
   });
 
-  it("names no vendor catalog in the sourcing or chrome modules", () => {
+  it("names no vendor catalog in the sourcing or export modules", () => {
     const files = [
       "src/components/inspector/SourcingPanel.tsx",
       "src/components/inspector/ExportPanel.tsx",
