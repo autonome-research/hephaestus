@@ -940,13 +940,27 @@ export function Composer(props: ComposerProps): React.JSX.Element {
             />
           </div>
         </div>
+        {/* CANCEL SITS BESIDE SEND, NOT INSTEAD OF IT (fixed 2026-09-20).
+            
+            These were a ternary — `cancellable ? Cancel : Send` — so while a
+            run was in flight `[data-composer-send]` left the DOM entirely.
+            That breaks §7A.10(a)/C15: Send is the input row's one target and
+            must be PRESENT AND DISABLED WITH A REASON, never absent, because
+            "why can't I send?" needs something to point at. It also made
+            `toBeDisabled()` fail against an element that did not exist, which
+            is how the regression surfaced.
+            
+            Cancel keeps C15's own rule: it mounts only while a run this tab
+            can cancel is in flight, so at rest this row is Send alone. */}
         <div className={styles["inputAction"]} data-composer-input-action="">
-          {cancellable ? <Button variant="secondary" icon="stop"
-            onClick={cancelTurn} data-composer-cancel=""
-            {...(turn.stopRequested && !turn.canRetryStop ? { disabled: true as const, reason: copy.composer.stopRequested } : {})}>
-            <span className={styles["srOnly"]}>{turn.canRetryStop ? copy.composer.retryStop : copy.composer.cancel}</span>
-          </Button>
-          : <Button
+          {cancellable ? (
+            <Button variant="secondary" icon="stop"
+              onClick={cancelTurn} data-composer-cancel=""
+              {...(turn.stopRequested && !turn.canRetryStop ? { disabled: true as const, reason: copy.composer.stopRequested } : {})}>
+              <span className={styles["srOnly"]}>{turn.canRetryStop ? copy.composer.retryStop : copy.composer.cancel}</span>
+            </Button>
+          ) : null}
+          <Button
             variant={signInPrimary(disabledReason) ? "secondary" : "primary"}
             type="button"
             icon="arrow-up"
@@ -957,7 +971,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
             onClick={submit}
             {...(sendDisabled ? { disabled: true as const, reason: sendReason,
               ...(sendDescribes ? { reasonElementId: unavailableReasonId } : {}) } : {})}
-          />}
+          />
         </div>
       </div>
       {/* §7A's composer toolbar is STRUCK (2026-09-20). Its last two members —
