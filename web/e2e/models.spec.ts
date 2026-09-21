@@ -31,8 +31,18 @@ test("actual picker preserves the session/draft and changes the next provider HT
   const input = composer.locator("[data-composer-input]");
   const send = composer.locator("[data-composer-send]");
   const picker = page.locator("[data-model-button]");
-  await expect(picker).toContainText(text.model_id);
-  await expect(picker).toContainText("Text only");
+  /*
+   * THE COMPOSER'S MODEL CONTROL IS ICON-ONLY (2026-09-20), and its menu is an
+   * anchored popover whose filter is conditional on a long catalog. The
+   * identity and the capability moved to the accessible name; the entries are
+   * named by the configured model name and are chosen from the listbox, which
+   * is where a keyboard user chooses them too. Nothing about what this case is
+   * for changed: the picker preserves the session and the draft, and the NEXT
+   * provider request carries the model that was picked.
+   */
+  const identity = () => picker.getAttribute("aria-label");
+  expect(await identity()).toContain(text.model_id);
+  expect(await identity()).toContain("Text only");
   await expect(page.locator('[data-testid="stream-panel"]')).toHaveAttribute("data-stream", "live");
 
   const beforeText = requests().length;
@@ -50,12 +60,11 @@ test("actual picker preserves the session/draft and changes the next provider HT
   const beforeSwitch = requests().length;
   await expect(picker).toBeEnabled();
   await picker.click();
-  await page.getByRole("combobox").fill(vision.model_id);
-  const option = page.getByRole("option").filter({ hasText: `${vision.provider_id}/${vision.model_id}` });
+  const option = page.getByRole("option").filter({ hasText: vision.name });
   await expect(option).toHaveAttribute("aria-disabled", "false");
   await option.click();
-  await expect(picker).toContainText(vision.model_id);
-  await expect(picker).toContainText("Text + images");
+  expect(await identity()).toContain(vision.model_id);
+  expect(await identity()).toContain("Text + images");
   await expect(input).toHaveValue(draft);
   await expect(composer).toHaveAttribute("data-session-id", sid);
   const selected = await api<SessionModelDocument>(`/sessions/${sid}/model`);
@@ -76,7 +85,8 @@ test("actual picker preserves the session/draft and changes the next provider HT
     await expect(picker).toBeEnabled();
     await page.screenshot({ path: `${shots}/picker-${width}-closed.png` });
     await picker.click();
-    await expect(page.getByRole("combobox")).toBeVisible();
+    // Two declared models is not a long catalog, so no filter is drawn (§7A).
+    await expect(page.getByRole("combobox")).toHaveCount(0);
     await expect(page.getByRole("option")).toHaveCount(2);
     for (const choice of await page.getByRole("option").all()) await expect(choice).toHaveAttribute("aria-disabled", "false");
     await page.screenshot({ path: `${shots}/picker-${width}-open.png` });
@@ -107,7 +117,7 @@ test("actual picker preserves the session/draft and changes the next provider HT
   // Reload is a new browser adoption, not a claim of sidecar restart coverage.
   await page.reload();
   await expect(page.locator(`[data-composer][data-session-id="${sid}"]`)).toBeVisible();
-  await expect(picker).toContainText(vision.model_id);
+  await expect(picker).toHaveAccessibleName(new RegExp(vision.model_id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   await expect(question).toHaveAttribute("data-ask-state", "answered");
   writeFileSync(`${shots}/packaged-evidence.json`, JSON.stringify({
     session_id: sid, initial: created.model_state, selected: selected.model_state,

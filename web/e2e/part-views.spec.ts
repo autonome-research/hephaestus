@@ -27,22 +27,47 @@ interface ParamsDocument {
   readonly state_hash: string;
 }
 
-test("Script / Timeline / Results are first-class stage tabs", async ({ page }, testInfo) => {
+/*
+ * REWRITTEN 2026-09-20. The stage's tab STRIP is struck. Script, Timeline and
+ * Results are all still first-class views of the part and all still routed by
+ * `tab=`; what changed is where each is reached from, and the split is by what
+ * the thing IS rather than by where it used to sit:
+ *
+ *   - EDITORS take the stage. Script is a toggle in the header, beside the pin
+ *     whose artifact its source produced; Diff sits at the foot of the view
+ *     rail. Both keep `[data-stage-tab]`, so a gate that addressed them by
+ *     name still finds them — as toggles, carrying `aria-pressed`, because a
+ *     tab that is the only member of its strip is a switch.
+ *   - READOUTS take a panel. Timeline is one of the side panel's four
+ *     disclosures now, not a stage view you have to leave the model to read.
+ *   - Results keeps both homes, and the rule that there is only ever ONE of it
+ *     is unchanged: the inspector must not mount a second list while the stage
+ *     is showing one.
+ */
+test("Script and Diff take the stage; Timeline reads in the panel; Results is never drawn twice", async ({
+  page,
+}, testInfo) => {
   await open(page, route(PART, { tab: "script" }));
-  await expect(page.locator('[data-stage-tab="script"]')).toHaveAttribute("aria-selected", "true");
+  const script = page.locator('[data-stage-tab="script"]');
+  await expect(script).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator('[data-panel="script"]')).toBeVisible();
-  await expect(page.locator('[data-stage-tab="timeline"]')).toBeVisible();
-  await expect(page.locator('[data-stage-tab="results"]')).toBeVisible();
+  await expect(page.locator('[data-stage-tab="diff"]')).toBeVisible();
+  // The strip is struck: Timeline and Results are not controls on the stage.
+  await expect(page.locator('[data-stage-tab="timeline"]')).toHaveCount(0);
+  await expect(page.locator('[data-stage-tab="results"]')).toHaveCount(0);
 
-  await page.locator('[data-stage-tab="timeline"]').click();
-  await expect(page.locator('[data-panel="timeline"]')).toBeVisible();
-  await expect(page).toHaveURL(/tab=timeline/);
+  // Timeline reads in the side panel, where the other readouts are.
+  await page.locator('[data-panel-toggle="timeline"]').click();
+  await expect(page.locator('[data-panel-body="timeline"] [data-panel="timeline"]')).toBeVisible();
+  // …and reading it does not navigate: the stage is still the script.
+  await expect(page).toHaveURL(/tab=script/);
+  await expect(page.locator('[data-panel="script"]')).toBeVisible();
 
-  await page.locator('[data-stage-tab="results"]').click();
+  // Results on the stage is the one ResultsPanel; the inspector must not also
+  // mount it — that was the duplicate list/metrics after #6.
+  await open(page, route(PART, { tab: "results" }));
   await expect(page.locator('[data-stage-panel="results"] [data-panel="results"]')).toBeVisible();
   await expect(page).toHaveURL(/tab=results/);
-  // Stage Results is the one ResultsPanel. The inspector must not also mount
-  // it — that was the duplicate list/metrics after #6.
   await expect(page.locator('[data-inspector-panel="results"]')).toHaveCount(0);
   await expect(page.locator('[data-inspector-tab="results"]')).toHaveCount(0);
 
