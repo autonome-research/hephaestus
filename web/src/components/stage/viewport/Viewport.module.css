@@ -70,10 +70,35 @@
    occupant is absolutely positioned over another: they are flex siblings, so
    they cannot stack. The legend is `flex: none` in its own module, the explode
    slider `flex: 1` with a 120px minimum track, the section control natural. */
+/*
+ * THE WELL'S OVERLAY GEOMETRY, declared where both readers can see it.
+ *
+ * `--viewport-cube-frame` and `viewport/cubeTargets.ts`'s `CUBE_SIZE` are the
+ * same number and must stay so — the gizmo's SVG viewBox is that number, and
+ * its frame clips to it. The footprint adds the gizmo's own padding, and is
+ * what the band below reserves so the two stop sharing the bottom-right
+ * corner.
+ */
+.viewport {
+  --viewport-cube-frame: 120px;
+  --viewport-cube-footprint: calc(var(--viewport-cube-frame) + 2 * var(--space-2));
+}
+
 .band {
   position: absolute;
   left: var(--space-3);
-  right: var(--space-3);
+  /* THE BAND STOPS BEFORE THE CUBE (2026-09-20). Both are seated on this edge
+     — the band across it, the gizmo in its right corner — and a full-width band
+     puts the section control underneath the cube: measured at 1280x800, 131px
+     of shared box, which is the §5.5 C18 collision the sweep exists to catch.
+     Reserving the gizmo's own footprint is the fix that keeps BOTH where they
+     belong. Reserved unconditionally, including behind a rendered plate where
+     the gizmo unmounts and the band's section control is the exit that stays:
+     a band whose width depended on which overlays happened to be up would move
+     the section control under the operator as they engaged a section. */
+  right: calc(
+    var(--space-3) + var(--viewport-cube-footprint, 0px) + var(--gap-inline)
+  );
   bottom: var(--space-3);
   display: flex;
   align-items: flex-end;

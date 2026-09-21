@@ -23,7 +23,16 @@
 .cube {
   position: absolute;
   /* BOTTOM-right since 2026-09-20: the stage's view rail took the top-right
-     corner, and two widgets in one corner is one widget covering the other. */
+     corner, and two widgets in one corner is one widget covering the other.
+     The bottom-right corner belonged to §5.5's overlay BAND, which is seated on
+     the same edge and ran the full width — measured at 1280x800, the cube's
+     748..884 box and the section control's 753..884 one shared 131px of it,
+     which is the C18 collision this move traded for. The band reserves this
+     gizmo's footprint now, and `Viewport.module.css` declares both
+     measurements on the WELL rather than here: a custom property inherits
+     downward and the band is this gizmo's sibling, so a declaration here would
+     be out of the band's reach — which is exactly how the two came to disagree
+     about the corner in the first place. */
   bottom: var(--space-3);
   right: var(--space-3);
   padding: var(--space-2);
@@ -46,14 +55,14 @@
   outline-offset: 2px;
 }
 
-/* The projection's own frame. 120px here and `CUBE_SIZE` there are the same
-   number and must stay so; `overflow: hidden` is the guarantee the gizmo can
-   never paint outside its own box, whatever the camera. It grew from 72 with
-   the axes: they reach past the cube now and were being clipped. */
+/* The projection's own frame. `--viewport-cube-frame` and `CUBE_SIZE` are the
+   same number and must stay so; `overflow: hidden` is the guarantee the gizmo
+   can never paint outside its own box, whatever the camera. It grew from 72
+   with the axes: they reach past the cube now and were being clipped. */
 .scene {
   position: relative;
-  width: 120px;
-  height: 120px;
+  width: var(--viewport-cube-frame);
+  height: var(--viewport-cube-frame);
   overflow: hidden;
 }
 
