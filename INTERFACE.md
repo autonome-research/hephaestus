@@ -2410,7 +2410,9 @@ fails this clause.
 `Shell.tsx`:179-190 renders a `streamHeader` band carrying a title node and the
 collapse button. **The title node does not render.** The band renders **only**
 when the Stream column is expanded, contains **only** the collapse affordance
-(`[data-stream-collapse]`, unchanged, keeping its `iconLabel` for
+(`[data-stream-collapse]`, struck 2026-09-20 with C25's collapsed state —
+the column is always mounted and the session strip's `X` closes it; the hook
+below survives only in this historical clause, keeping its `iconLabel` for
 `copy.stream.collapse` as the accessible name), and the column's name for
 assistive technology stays on the `aside`'s existing `aria-label`. **Testable:**
 with the Stream expanded, `[data-stream-collapse]` is present and the
@@ -2481,6 +2483,12 @@ controls have a visible text node equal to their accessible name; at 1200px
 neither has a visible text node, and both accessible names are unchanged.
 
 ### 4.2 Panel inventory (closed for Stage 4/5)
+
+> **AMENDED 2026-09-20.** `GridReadout` and `AxisTriad` are struck: the readout
+> reported a scale and a grid step the operator can see in the picture, and the
+> triad drew a second projection of the axes the view cube already draws — two
+> answers to "which way is +X" that drift the moment either is touched. Their
+> facts survive in the view cube and the grid itself.
 
 `ProjectTree`, `GitDirty`, `VersionList`, `Viewport`, `ViewCube`, `GridReadout`,
 `ExplodeSlider`, `SectionControl`, `SelectionPopover`, `MeasureHUD`,
@@ -4989,7 +4997,9 @@ query the **input row** (the row holding the textarea) for button-role
 elements in the resting state and the count is one, and it is
 `[data-composer-send]`. *The scope is the input row, not the form: (c)
 places `[data-context-disclose]` inside the same `<form>`, attached to the
-summary line, so a form-scoped query returns two at rest by design. The rule
+summary line, so a form-scoped query returns two at rest by design. *(AMENDED
+2026-09-20: the context readout and its disclosure are struck, so the form now
+holds one. The rule below is unchanged and is the half that mattered.)* The rule
 this clause states is that the row holding the send target holds exactly
 one.* Send keeps its existing disabled-with-reason behaviour when it
 cannot send — a *primary* action that vanishes would leave an operator with no
