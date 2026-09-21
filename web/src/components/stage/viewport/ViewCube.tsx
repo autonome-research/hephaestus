@@ -233,6 +233,7 @@ export function ViewCube({ onRefit }: ViewCubeProps = {}): React.JSX.Element {
               clipPath: clipOf(target),
             }}
             aria-label={cubeTargetLabel(target)}
+            {...(current === target.view ? { title: copy.viewport.viewCube.refit } : {})}
             data-view={target.view}
             data-cube-hit={target.kind}
             {...(current === target.view ? { "data-cube-current": "" } : {})}

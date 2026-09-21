@@ -564,6 +564,16 @@ export const copy = {
         top: "Top",
         bottom: "Bottom",
       },
+      /**
+       * The CURRENT cell's `title` — §5.5's Fit, said where it now lives.
+       *
+       * Clicking the cell whose camera you are already on re-applies that
+       * view's framing. Without a word for it the affordance reads as a no-op,
+       * which is how Fit came to look removable in the first place. The
+       * accessible NAME stays the camera's, because that is what the control
+       * selects; this is the hover sentence.
+       */
+      refit: "Frame this view again",
       free: "Free orbit",
       /** §5.5: an orbited camera is still nameable, and the name is shown. */
       freeExplain:
