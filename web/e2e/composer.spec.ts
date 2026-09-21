@@ -131,30 +131,29 @@ test.describe("§7A.12 case 1 — the blank canvas reaches the workspace", () =>
       inner.x >= outer.x - 1 &&
       inner.x + inner.width <= outer.x + outer.width + 1;
     expect(within(sendBox!, inputRowBox!)).toBe(true);
-    // Stable context/input core, visible keyboard hint, then bounded details.
-    // No empty action row/Stop without authority; chips mount only on Preview.
-    // Two children since the toolbar was struck (2026-09-20).
+    // Stable message box and visible keyboard hint. No empty action row and no
+    // Stop without authority. Two children since the toolbar was struck
+    // (2026-09-20).
     expect(await composer.evaluate((form) => form.children.length)).toBe(2);
     await expect(composer.locator("[data-composer-hint]")).toHaveText("Enter sends · Shift+Enter for a new line");
     await expect(composer.locator("[data-model-button]")).toHaveAttribute("title", /Current model/);
-    await expect(composer.locator("[data-composer-details] [data-composer-send]")).toHaveCount(0);
     await expect(composer).toHaveAttribute("data-cancel-state", "unavailable");
     await expect(composer.locator("[data-composer-cancel]")).toHaveCount(0);
-    await expect(composer.locator("[data-context-chips]")).toHaveCount(0);
-    await expect(composer.locator("[data-context-summary]")).toHaveCount(1);
 
-    // §7A.3, amended 2026-09-02 (§0.2c, C22): with no selection in workspace
-    // state, the RESTING line mounts no Add-current-view — the gap the line
-    // copy exists for is not this one. The disclosure's own copy remains the
-    // route on the blank canvas.
+    // THE CONTEXT READOUT IS STRUCK (2026-09-20): no summary line, no
+    // disclosure, no chip form. What it reported is unchanged and still sent —
+    // the form publishes the member keys on `data-context-keys` — and the one
+    // member with a control left is the view, on the message box's own row.
+    for (const gone of [
+      "[data-context-summary]",
+      "[data-context-disclose]",
+      "[data-context-chips]",
+      "[data-composer-details]",
+    ]) {
+      await expect(composer.locator(gone), `${gone} is back in the composer`).toHaveCount(0);
+    }
+    await expect(composer).toHaveAttribute("data-context-keys", /\S/);
     await expect(composer.locator("[data-composer-shell-bar] [data-context-add-view]")).toHaveCount(1);
-    await expect(composer.locator("[data-context-disclose]")).toHaveCount(1);
-    await composer.locator("[data-context-disclose]").click();
-    await expect(composer.locator("[data-context-add-view]")).toHaveCount(1);
-    // …and the other half: opening it mounts the editable form.
-    await expect(composer.locator("[data-context-chips]")).toHaveCount(1);
-    await composer.locator("[data-context-disclose]").click();
-    await expect(composer.locator("[data-context-chips]")).toHaveCount(0);
 
     await composer
       .locator("[data-composer-input]")
@@ -220,7 +219,20 @@ test.describe("§7A.12 case 1 — the blank canvas reaches the workspace", () =>
 });
 
 test.describe("§7A.12 case 2 — the context envelope", () => {
-  test("the chip row names the references, and each one is droppable", async ({ page }) => {
+  /*
+   * REWRITTEN 2026-09-20. The chip row and the disclosure that opened it are
+   * struck — the composer does not narrate the envelope it is about to send —
+   * and with them went the per-member drop control. What §7A.3(d) is actually
+   * for survives: the form PUBLISHES the member keys it would POST, and the
+   * one control still bound to a member moves that set when it is used.
+   *
+   * `data-context-keys` moved to the form when the line that carried it went
+   * (§0.2b: nothing leaves the DOM). The other half of §7A.3(d)'s testable —
+   * that the published set is the set the POST carries — is asserted in
+   * `e2e/synthetic/audit-corrections.spec.ts`, which can read a request body
+   * without standing up an agent turn to produce one.
+   */
+  test("the form publishes the members it would send, and the one live control moves them", async ({ page }) => {
     const created = await api<SessionDocument>("/sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -229,48 +241,17 @@ test.describe("§7A.12 case 2 — the context envelope", () => {
     await openSession(page, created.session_id);
     const composer = page.locator(`[data-composer][data-session-id="${created.session_id}"]`);
 
-    // §7A.3(a)(d), amended 2026-09-01: at rest the envelope is ONE line, and
-    // the line publishes the member keys the POST would send. The `part` is in
-    // the route, so it is on the line before anything is opened.
-    const summary = composer.locator("[data-context-summary]");
-    await expect(summary).toHaveCount(1);
-    await expect(summary).toContainText(PART);
-    expect(((await summary.getAttribute("data-context-keys")) ?? "").split(" ")).toContain("part");
-
-    // Context chips and Add current view fold into disclose. Open it so
-    // the row is in the DOM; the idle composer is one context line, the
-    // prompt, and Send.
-    await composer.locator("[data-context-disclose]").click();
-
-    // §7A.3(d)'s testable, against the running app: the published key set IS
-    // the chips' key set. A summary that named a member the form did not offer
-    // — or offered one it did not name — would be the line and the envelope
-    // disagreeing about what is being sent.
-    //
-    // Both halves are read in ONE DOM evaluation, after the disclosure is open.
-    // The product is same-render consistent (Composer derives chips, envelope
-    // and summary from one `state` in one pass), but `state.artifact_ref`
-    // arrives asynchronously, so sampling the line before the click and the
-    // chips after it compares two different states and fails on a correct
-    // build. One sample, one render, no retry.
-    const { published, chipKeys } = await composer.evaluate((host) => ({
-      published: (host.querySelector("[data-context-summary]")?.getAttribute("data-context-keys") ??
-        ""
-      )
+    const keysNow = async (): Promise<string[]> =>
+      ((await composer.getAttribute("data-context-keys")) ?? "")
         .split(" ")
-        .filter((key) => key !== ""),
-      chipKeys: [...host.querySelectorAll("[data-context-chips] [data-context-key]")].map(
-        (node) => node.getAttribute("data-context-key") ?? "",
-      ),
-    }));
-    expect([...chipKeys].sort()).toEqual([...published].sort());
+        .filter((key) => key !== "");
 
-    // The part is in the route, so the part chip is in the row. §7A.10's DOM
-    // contract: a chip carries `data-context-key` and its value, and NO
-    // `data-source`, because no chip is a fact.
-    const partChip = composer.locator('[data-context-key="part"]');
-    await expect(partChip).toHaveAttribute("data-context-value", PART);
-    await expect(composer.locator("[data-context-chips] [data-source]")).toHaveCount(0);
+    // The part is in the route, so it is in the envelope before anything is
+    // touched — and nothing about it is drawn, which is the point of the strike.
+    expect(await keysNow()).toContain("part");
+    await expect(composer.locator("[data-context-summary]")).toHaveCount(0);
+    await expect(composer.locator("[data-context-chips]")).toHaveCount(0);
+    await expect(composer.locator("[data-context-disclose]")).toHaveCount(0);
 
     // §6.4: the two DFM controls live on the inspector panel, not the
     // composer. The fixture starts `[dfm] auto_run = false`.
@@ -287,57 +268,41 @@ test.describe("§7A.12 case 2 — the context envelope", () => {
     );
     await expect(dfmPanel.locator("[data-dfm-run]")).toHaveCount(1);
 
-    // Every member is opt-out (§7A.3).
-    await partChip.locator('[data-context-drop="part"]').click();
-    await expect(partChip).toHaveAttribute("data-context-dropped", "");
-
-    // §7A.3(e): an EXCLUDED member stays visible on the resting line. "The
-    // agent will not be told about the part" is a fact about what is being
-    // sent, so it is drawn rather than left to the absence of a token — and it
-    // survives collapsing the form that removed it.
-    await composer.locator("[data-context-disclose]").click();
-    await expect(composer.locator("[data-context-chips]")).toHaveCount(0);
-    await expect(summary.locator('[data-context-removed="part"]')).toHaveCount(1);
-    await expect(summary).not.toContainText(PART);
-    await composer.locator("[data-context-disclose]").click();
-
-    // The compact view control is a toggle: first remove the included view,
-    // then add it back before checking the server-composed preview.
+    // The view toggle is the one member the operator can still take out and put
+    // back, and the published set follows it in both directions.
     const viewControl = composer.locator("[data-context-add-view]");
+    const before = await keysNow();
+    expect(before).toContain("view");
     await viewControl.click();
-    const viewChip = composer.locator('[data-context-key="view"]');
-    await expect(viewChip).toHaveAttribute("data-context-dropped", "");
+    await expect(viewControl).toHaveAttribute("aria-pressed", "false");
+    expect(await keysNow()).not.toContain("view");
     await viewControl.click();
-    await expect(viewChip).not.toHaveAttribute("data-context-dropped", "");
-    await expect(composer.locator("[data-context-preview]")).toBeVisible();
-    await expect(composer.locator("[data-context-block]")).toContainText("camera view:");
+    await expect(viewControl).toHaveAttribute("aria-pressed", "true");
+    expect(await keysNow()).toEqual(before);
   });
 
-  test("the disclosure renders the server's block, and says it is advisory", async ({ page }) => {
-    const created = await api<SessionDocument>("/sessions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ profile: "orchestrator", model: await proposedModel() }),
-    });
-    await openSession(page, created.session_id);
-    const composer = page.locator(`[data-composer][data-session-id="${created.session_id}"]`);
-    await composer.locator("[data-context-disclose]").click();
-
-    const block = composer.locator("[data-context-block]");
-    await expect(block).toBeVisible();
-
-    // DOM versus SERVER, never DOM versus a string typed into a test: the same
-    // route the app calls answers here, and the two must agree byte for byte.
+  /*
+   * REWRITTEN 2026-09-20. This compared the DISCLOSURE's rendering of
+   * `POST /context/preview` against the route's own answer. The disclosure is
+   * struck and the browser no longer calls the route, so there is no DOM half
+   * left to compare — but the route is unchanged and is still the only place
+   * the composed block can be read before a turn, so what it answers is worth
+   * pinning exactly as before. This and the case below are what remain of the
+   * clause: the block is composed from the workspace, and it is ADVISORY.
+   */
+  test("the preview composes the workspace's own block, and says it is advisory", async () => {
+    // SERVER, never a string typed into a test: the route the clause is about
+    // answers here, and the fixture's own part is the subject.
     const preview = await api<ContextDocument>("/context/preview", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ context: { part: PART, stage_tab: "viewport" } }),
     });
     expect(preview.block).toContain(`## Part: ${PART}`);
-    await expect(block).toContainText(`## Part: ${PART}`);
 
     // §7A.3: "The preview is **advisory**." The composed block the model is
-    // handed comes back on the turn, not from here.
+    // handed comes back on the turn, not from here — so this names the reads it
+    // was composed from rather than claiming to be what was sent.
     expect(preview.sources).toContain(`/parts/${PART}/build`);
   });
 
@@ -571,9 +536,13 @@ test.describe("§7A.12 case 6 — no agent runtime", () => {
 
     // Named absence: do not render a model picker that reads as a signed-in agent.
     await expect(composer.locator("[data-composer-model]")).toHaveCount(0);
-    await expect(composer.locator("[data-context-disclose]")).toHaveCount(1);
-    await composer.locator("[data-context-disclose]").click();
+    // The context controls are not gated on the runtime, and the one left is
+    // the view toggle: a control that went dark exactly when the composer is
+    // disabled would be missing at the one moment the operator is trying to
+    // understand why. The disclosure it used to open is struck (2026-09-20).
+    await expect(composer.locator("[data-context-disclose]")).toHaveCount(0);
     await expect(composer.locator("[data-context-add-view]")).toHaveCount(1);
+    await expect(composer).toHaveAttribute("data-context-keys", /\S/);
 
     // The serve still answers every read route: `agent_unavailable` is about
     // sessions, not about the project.
@@ -583,10 +552,11 @@ test.describe("§7A.12 case 6 — no agent runtime", () => {
     expect(project.status).toBe(200);
   });
 
-  test("the composer's own disclosure still works with no runtime", async ({ page }) => {
-    // §7A.3's route is deliberately not gated on the runtime. A disclosure that
-    // went dark exactly when the composer is disabled would be missing at the
-    // one moment the operator is trying to understand why.
+  test("the context preview route still answers with no runtime", async ({ page }) => {
+    // §7A.3's route is deliberately not gated on the runtime, and that is a
+    // fact about the SERVER — the browser's own caller of it is struck, but a
+    // route that went dark exactly when the agent is unavailable would be the
+    // defect this case names, whoever calls it.
     const response = await fetch(`${baseUrl}/api/v1/context/preview`, {
       method: "POST",
       headers: {
