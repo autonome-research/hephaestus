@@ -2093,6 +2093,18 @@ and no axis triad — despite `GridReadout`, which is a text box reading
 
 1. A viewport ground distinct from every chrome surface, on both
    `setClearColor` and `scene.background`.
+
+   > **AMENDED 2026-09-20.** The well is DARK again, on operator request: a
+   > dark build space with light lines and drawings. The 2026-08 reversal to a
+   > light modeling ground — argued from Fusion / Onshape / SolidWorks and from
+   > a light solid lost on near-black — is overruled, and `tokens.css` records
+   > both turns beside the five tokens that move as one decision. This clause
+   > itself is unchanged: DISTINCT is the requirement, and a ground equal to a
+   > chrome surface makes the well and the panels one field whichever way round
+   > the light runs. Clause 2's 4.5:1 floor moved the right way with it — a
+   > light part on graphite has more headroom than the dark-on-light pairing
+   > it replaced. Clause 5's readout and clause 6's triad are struck (§4.2);
+   > the grid they describe is drawn by `viewport/display.ts`.
 2. **The client authors the material.** Every loaded mesh is overridden with a
    `MeshStandardMaterial` at a specified part colour. **Floor: ≥ 4.5:1 part vs
    ground, exporter-independent**, measured in the browser (§3.14).
@@ -3120,7 +3132,23 @@ set at every azimuth, and `Front / Top` collecting pixels that belonged to
 the cube is the thing that changed, and the overlay-crowding rule above it is
 what stands.
 
-**Appearance cluster — operator chrome, bound to the pin.** A small control
+**Appearance cluster — operator chrome, bound to the pin.**
+
+> **AMENDED 2026-09-20.** The cluster is FOUR flags: wireframe, ortho, grid,
+> material override. `triad` went with the axis triad and `fit` with the
+> framing action it was the only caller of (§4.2). And the ortho default is
+> **off** — perspective — on operator request. That default was not arbitrary:
+> `cameras.py` fits an ortho camera per named view, so an ortho canvas and
+> `heph render` agree pixel for pixel, and that agreement is what the default
+> now trades away. The build space is a room, and a room only reads as one
+> under perspective; in an ortho camera fitted to the part its converging walls
+> fall outside the frame entirely. What is not traded: the eye direction is
+> still the framing's, so a named view still looks from where the server says
+> it looks, and one click restores the render projection. The sentence below
+> about named views and `heph render` staying orthographic is unchanged and is
+> why this is a default rather than a removal.
+
+A small control
 strip on the viewport drives the display authorship §3.11 already specified:
 wireframe, fit, ortho, grid, axis triad, material override. Defaults match the
 authored picture (shaded, orthographic, grid and triad on, material at

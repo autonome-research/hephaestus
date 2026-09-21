@@ -134,8 +134,18 @@ test("the viewport ground is a token and is distinct from every chrome surface (
   // The well is `--viewport-ground`, not `--surface-canvas` (that rung stays
   // the dark chrome-adjacent fill). §3.11.1 asks for "a viewport ground
   // distinct from every chrome surface, on both `setClearColor` and
-  // `scene.background`". Velvet overrode the draft "ground darker than the
-  // part" clause: the previous near-black void hid a light solid.
+  // `scene.background`".
+  //
+  // THE WELL IS DARK AGAIN (2026-09-20), on operator request: a dark build
+  // space with light lines and drawings. The DISTINCTNESS is the clause and it
+  // is unchanged — a ground that equalled a chrome surface would make the well
+  // and the panels one undifferentiated field whichever way round they are.
+  // What flipped is which side of the pairing carries the light, so the floors
+  // below are stated as an ORDER rather than as two absolute luminances: the
+  // ground is darker than nothing in the chrome, and the chrome canvas is the
+  // darker rung of the two. §3.11.2's part-vs-ground floor, the one that is
+  // actually about legibility, is measured in the next case and moved the
+  // right way — a light part on graphite has more headroom, not less.
   const surfaces = await page.evaluate(() => {
     const root = getComputedStyle(document.documentElement);
     const read = (name: string): string => root.getPropertyValue(name).trim();
@@ -162,10 +172,12 @@ test("the viewport ground is a token and is distinct from every chrome surface (
   expect(surfaces.ground, "--viewport-ground did not resolve").not.toBe("");
   expect(surfaces.ground).not.toBe(surfaces.canvas);
   expect(surfaces.chrome).not.toContain(surfaces.ground);
-  // Light modeling well, not the previous near-black void. Thresholds are
-  // luminance, not a copied hex — `no-palette-token` forbids the latter here.
-  expect(luminanceOf(surfaces.groundRgb)).toBeGreaterThan(0.7);
-  expect(luminanceOf(surfaces.canvasRgb)).toBeLessThan(0.1);
+  // Comparisons, not copied hexes — `no-palette-token` forbids the latter here,
+  // and an absolute threshold is exactly what had to be rewritten when the well
+  // flipped. The well is lifted off the chrome-adjacent rung it sits beside, so
+  // the two read as different materials rather than one dark field.
+  expect(luminanceOf(surfaces.groundRgb)).toBeGreaterThan(luminanceOf(surfaces.canvasRgb));
+  expect(luminanceOf(surfaces.groundRgb)).toBeLessThan(0.3);
 
   // And the WebGL clear colour is that same value, sampled out of the drawing
   // buffer at a corner the geometry does not reach.
@@ -287,10 +299,18 @@ test("the view cube names its axes in words, and the appearance cluster rests at
   }
 
   // §5.5's operator cluster: present, defaults matching the authored picture.
+  //
+  // `ortho` is FALSE by default since 2026-09-20, on operator request. The
+  // orthographic default was not arbitrary — `cameras.py` fits an ortho camera
+  // per named view, so an ortho canvas and `heph render` agree pixel for pixel
+  // — and that agreement is what the default now trades away: the build space
+  // is a room, and a room only reads as one under perspective. The toggle
+  // restores the render projection in one click, which is why this is a
+  // default and not a removal.
   await expect(page.locator("[data-appearance]")).toBeVisible();
   for (const [control, pressed] of [
     ["wireframe", "false"],
-    ["ortho", "true"],
+    ["ortho", "false"],
     ["grid", "true"],
     ["materialOverride", "true"],
   ] as const) {
@@ -350,26 +370,32 @@ test("the shell grid matches §4.1's table at five widths and never overflows", 
   }
   await archive(page, testInfo, "design-breakpoints");
 
-  // Above 1280: three columns. §4.1(g), amended 2026-09-02 (C12): the expanded
-  // track is `clamp(360px, 30vw, 420px)` — at ≥1400px it measures the 420px
-  // maximum, at the 1280px boundary it measures 30vw = 384px, and at every
-  // expanded width it is ≥360px, with no horizontal body scroll (asserted for
-  // all five widths below).
-  expect(measured[1440]?.columns).toBe(3);
-  expect(measured[1280]?.columns).toBe(3);
+  // Above 1280: FOUR columns since 2026-09-20 — Views leads the shell, ahead of
+  // Parts, and keeps its 44px track in every band, so a toggle never changes
+  // the template and the stage never re-fits its camera because of it
+  // (§3.3 principle 4). The count below each band is therefore one more than
+  // the peers it names; what the numbers are FOR is unchanged.
+  //
+  // §4.1(g), amended 2026-09-02 (C12): the expanded track is
+  // `clamp(360px, 30vw, 420px)` — at ≥1400px it measures the 420px maximum, at
+  // the 1280px boundary it measures 30vw = 384px, and at every expanded width
+  // it is ≥360px, with no horizontal body scroll (asserted for all five widths
+  // below).
+  expect(measured[1440]?.columns).toBe(4);
+  expect(measured[1280]?.columns).toBe(4);
   expect(measured[1440]?.stream).toBe(420);
   expect(measured[1280]?.stream).toBe(384);
   expect(measured[1440]?.stream).toBeGreaterThanOrEqual(360);
   expect(measured[1280]?.stream).toBeGreaterThanOrEqual(360);
 
-  // Below1280 Parts leaves the grid; conversation intent remains open.
-  expect(measured[1279]?.columns).toBe(2);
-  expect(measured[1024]?.columns).toBe(2);
+  // Below1280 Parts leaves the grid; Views and the Stream keep their columns.
+  expect(measured[1279]?.columns).toBe(3);
+  expect(measured[1024]?.columns).toBe(3);
   expect(measured[1279]?.stream).toBeGreaterThanOrEqual(360);
   expect(measured[1024]?.stream).toBeGreaterThanOrEqual(360);
 
-  // Narrow desktop uses the same two peers.
-  expect(measured[1023]?.columns).toBe(2);
+  // Narrow desktop uses the same peers.
+  expect(measured[1023]?.columns).toBe(3);
 
   for (const width of WIDTHS) {
     expect(measured[width]?.overflow, `body overflows at ${String(width)}px`).toBe(false);
@@ -432,10 +458,12 @@ test("the Rail-hidden Stream is a full peer column at a narrow viewport", async 
   // `--stream-width` resolves to the clamp's 360px floor at a 1000px viewport.
   // The broken rule left this at the 44px strip width even after React had set
   // `data-stream="open"`, squeezing the mounted panel into a one-word ribbon.
-  expect(openGeometry.columns).toBe(2);
+  // THREE columns since 2026-09-20: Views (44px) leads, then the Stage, then
+  // the Stream. The stage is the 1000px viewport less those two fixed tracks.
+  expect(openGeometry.columns).toBe(3);
   expect(openGeometry.streamWidth).toBeCloseTo(360, 0);
-  expect(openGeometry.stageWidth).toBeCloseTo(640, 0);
-  expect(openGeometry.stageWidth + openGeometry.streamWidth).toBeCloseTo(
+  expect(openGeometry.stageWidth).toBeCloseTo(596, 0);
+  expect(openGeometry.stageWidth + openGeometry.streamWidth + 44).toBeCloseTo(
     openGeometry.bodyWidth,
     0,
   );
@@ -449,7 +477,7 @@ test("the Rail-hidden Stream is a full peer column at a narrow viewport", async 
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.setViewportSize({ width: 1000, height: 900 });
   const restored = await geometry();
-  expect(restored.columns).toBe(2);
+  expect(restored.columns).toBe(3);
   expect(restored.streamWidth).toBeCloseTo(openGeometry.streamWidth, 0);
   expect(restored.stageWidth).toBeCloseTo(openGeometry.stageWidth, 0);
   expect(restored.panelWidth).not.toBeNull();
