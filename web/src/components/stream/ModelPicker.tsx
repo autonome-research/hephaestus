@@ -160,7 +160,27 @@ export function ModelPicker({ sessionId, creation, effort = "medium", onEffort }
       </div>
     </Popover>
     {sessionId !== null && c.model?.state === "uncertain" ? <p className={styles["note"]} role="status">{copy.models.uncertain}</p> : null}
-    {sessionId !== null && c.model?.reason ? <p className={styles["note"]} role="status">{modelUnavailableReason(c.model.reason)}</p> : null}
+    {/* WHY A CHOICE IS REFUSED, ON BOTH SIDES (restored 2026-09-20). The
+        session arm survived the picker rework and the CREATION arm did not, so
+        a proposed-but-ineligible default left Create disabled with nothing
+        saying why — the exact shape §7A.8 forbids for the send path, on the
+        one dialog where the operator cannot simply pick something else and
+        move on. `creation.choice` is the dialog's own selection;
+        `c.proposal` is the server's default when nothing has been chosen. */}
+    {(sessionId === null && model !== null && "available" in model && !model.available)
+      || (sessionId !== null && c.model?.reason) ? (
+      <p className={styles["note"]} role="status">
+        {modelUnavailableReason((sessionId === null
+          ? creation ? creation.choice?.unavailable_reason : c.proposal?.unavailable_reason
+          : c.model?.reason) ?? null)}
+      </p>
+    ) : null}
     {sessionId !== null && c.modelError ? <p className={styles["note"]} role="status">{c.modelError}</p> : null}
+    {/* The read can be retried by hand (restored 2026-09-20). A model state
+        stuck on "checking" is the one state polling cannot end on its own, and
+        without this the operator's only move is a page reload. */}
+    {sessionId !== null && c.modelChecking ? (
+      <Button variant="quiet" onClick={() => { void readSessionModel(sessionId, true); }}>{copy.models.retry}</Button>
+    ) : null}
   </div>;
 }
