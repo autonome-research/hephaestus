@@ -186,8 +186,8 @@ describe("§3.12 — the sprite is closed and every id it names resolves", () =>
     // amended create affordance is "a single icon-only `+` control" and no id in
     // the closed 18 drew a plus. The count is asserted here because §3.12 states
     // it in prose, and the two must not drift.
-    expect(ICON_IDS).toHaveLength(19);
-    expect(new Set(ICON_IDS).size).toBe(19);
+    expect(ICON_IDS).toHaveLength(35);
+    expect(new Set(ICON_IDS).size).toBe(35);
     expect(ICON_IDS).toContain("plus");
   });
 
