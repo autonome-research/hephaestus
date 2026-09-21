@@ -4,6 +4,11 @@ import { expect, test } from '@playwright/test';
 import { open, route } from './harness/world';
 import type { ViewportHandle } from '../src/viewport/testHook';
 
+// The Views bar leads the shell in EVERY band (2026-09-20) and keeps its track
+// at a fixed width, so the stage is the viewport less Views, less Parts where
+// Parts has a column, less the Stream.
+const VIEWS = 44;
+
 test('Fit follows resized extents; deliberate orbit/zoom/pan and held artifact survive every capacity band', async ({ page }) => {
   const writes: string[] = [];
   await page.route('**/api/v1/**', async route => {
@@ -13,7 +18,10 @@ test('Fit follows resized extents; deliberate orbit/zoom/pan and held artifact s
   await page.setViewportSize({ width: 1440, height: 800 }); await open(page, route('tread'));
   await expect(page.locator('[data-glb-state="ready"]')).toBeVisible();
   await page.getByRole('button', { name: 'Hold', exact: true }).click();
-  await page.getByRole('button', { name: 'Fit', exact: true }).click();
+  // FIT IS THE CUBE'S NOW (2026-09-20). The appearance cluster's Fit button is
+  // struck; clicking the cell whose camera the workspace is already on re-frames
+  // that view, which is the same action on the control it belongs to. A fresh
+  // load is already framed, so the first press is the polled `fit` below.
   const snapshot = () => page.evaluate(() => {
     const handle = (window as unknown as { __hephaestus_viewport__: ViewportHandle }).__hephaestus_viewport__;
     return { pin: handle.artifact_ref, ...handle.camera()! };
@@ -23,7 +31,7 @@ test('Fit follows resized extents; deliberate orbit/zoom/pan and held artifact s
   expect(initial.pin).not.toBeNull();
   for (const width of [1440, 1280, 1024, 843, 1024, 1440]) {
     await page.setViewportSize({ width, height: 800 });
-    await expect.poll(async () => (await snapshot()).size[0]).toBe(width - (width < 1280 ? 0 : 280) - Math.round(Math.max(360, Math.min(420, width * 0.3))));
+    await expect.poll(async () => (await snapshot()).size[0]).toBe(width - VIEWS - (width < 1280 ? 0 : 280) - Math.round(Math.max(360, Math.min(420, width * 0.3))));
     const state = await snapshot();
     expect(state.fit).toBe(true); expect(state.eye).toEqual(initial.eye); expect(state.target).toEqual(initial.target); expect(state.up).toEqual(initial.up); expect(state.pin).toBe(initial.pin);
     if (width === 843) expect(state.scale).toBeGreaterThan(initial.scale);
@@ -38,9 +46,10 @@ test('Fit follows resized extents; deliberate orbit/zoom/pan and held artifact s
   const pose = ({ size: _size, ...rest }: typeof held) => rest;
   for (const width of [1280, 1024, 843, 1024, 1440]) {
     await page.setViewportSize({ width, height: 800 });
-    await expect.poll(async () => (await snapshot()).size[0]).toBe(width - (width < 1280 ? 0 : 280) - Math.round(Math.max(360, Math.min(420, width * 0.3))));
+    await expect.poll(async () => (await snapshot()).size[0]).toBe(width - VIEWS - (width < 1280 ? 0 : 280) - Math.round(Math.max(360, Math.min(420, width * 0.3))));
     expect(pose(await snapshot())).toEqual(pose(held));
   }
-  await page.getByRole('button', { name: 'Fit', exact: true }).click(); expect((await snapshot()).fit).toBe(true);
+  await page.locator('[data-view-cube] [data-cube-current]').click();
+  await expect.poll(async () => (await snapshot()).fit).toBe(true);
   expect(writes).toEqual([]);
 });
