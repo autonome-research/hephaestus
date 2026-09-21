@@ -88,7 +88,12 @@ function clipOf(target: ProjectedTarget): string {
   return `polygon(${points})`;
 }
 
-export function ViewCube(): React.JSX.Element {
+export interface ViewCubeProps {
+  /** Re-apply the current view's framing — see `Viewport`'s `refit`. */
+  readonly onRefit?: (() => void) | undefined;
+}
+
+export function ViewCube({ onRefit }: ViewCubeProps = {}): React.JSX.Element {
   // THE LIVE CAMERA, not the named view (2026-09-20). `workspace.view` is
   // written when a drag SETTLES, so reading it left the cube motionless
   // through an orbit and then snapping between eight poses — which is what
@@ -103,10 +108,22 @@ export function ViewCube(): React.JSX.Element {
   const elevation = pose.elevation_deg;
   const [focused, setFocused] = useState<string | null>(null);
 
+  // THE INVENTORY IS CLOSED AT TWENTY-SIX (§5.2, restored 2026-09-20). A pass
+  // that was after the reference's solid-block LOOK filtered the cells to the
+  // six faces, which is not a styling choice: it took the twelve edges and
+  // eight corners out of the hit map, out of the tab order and out of the
+  // accessibility tree, so the only cameras the cube could still reach were the
+  // six axis views — `iso` among the casualties, on the control whose whole job
+  // is to be the way back to it. The look is the fills' business (`.cellEdge` /
+  // `.cellCorner` below); the inventory is not.
+  //
+  // `visible` stays: §5.2's negative half is that the hit regions ARE the
+  // projection, so a cell turned away from the viewer is not drawn, not
+  // hittable and not in the tree, and is reached by turning the cube.
   const targets = useMemo(
     () =>
       projectTargets(azimuth, elevation)
-        .filter((target) => target.visible && target.kind === "face")
+        .filter((target) => target.visible)
         // Nearest last. The cells tile the silhouette and never overlap, so
         // this is order for its own sake rather than a fix for one — but it
         // keeps the DOM order the depth order a reader would expect.
@@ -226,7 +243,13 @@ export function ViewCube(): React.JSX.Element {
               setFocused(null);
             }}
             onClick={() => {
-              workspaceStore.update({ view: target.view });
+              // Clicking the cell you are already on means "frame this view
+              // again" (§5.5's Fit): the workspace write is a no-op, so
+              // `framingKey` cannot see it and the camera would sit where the
+              // operator orbited it to. Every other cell re-frames through
+              // that key as usual.
+              if (current === target.view) onRefit?.();
+              else workspaceStore.update({ view: target.view });
             }}
           />
         ))}

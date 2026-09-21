@@ -170,3 +170,50 @@ describe("projectTargets — visibility and depth (B-7 fix step 1)", () => {
     }
   });
 });
+
+/*
+ * THE COMPONENT'S OWN HIT MAP, not just the module's inventory.
+ *
+ * `CUBE_TARGETS` being 26 says nothing about what `ViewCube` DRAWS, and the
+ * gap is not theoretical: a pass after the reference's solid-block look
+ * filtered the rendered cells to `kind === "face"`, which took the twelve
+ * edges and eight corners out of the hit map, the tab order and the
+ * accessibility tree — `iso` among them, on the control whose job is to be the
+ * way back to it. Every assertion in this file passed throughout, because none
+ * of them rendered anything.
+ *
+ * §5.2's negative half is what makes this checkable from one camera: the hit
+ * regions ARE the projection, so the cells drawn at a given camera are exactly
+ * the ones facing it — half the inventory, and never a kind's worth less.
+ */
+describe("ViewCube — the drawn cells are the visible inventory (§5.2)", () => {
+  it("draws every kind at an isometric camera, and only cells facing the eye", async () => {
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { ViewCube } = await import("../src/components/stage/viewport/ViewCube");
+    const dom = new DOMParser().parseFromString(
+      `<!doctype html><body>${renderToStaticMarkup(<ViewCube />)}</body>`,
+      "text/html",
+    );
+
+    const hits = [...dom.querySelectorAll("[data-cube-hit]")];
+    const byKind = { face: 0, edge: 0, corner: 0 } as Record<CubeTarget["kind"], number>;
+    for (const hit of hits) {
+      byKind[(hit.getAttribute("data-cube-hit") ?? "face") as CubeTarget["kind"]] += 1;
+    }
+    // Every kind is represented; a filtered inventory shows up as a zero.
+    expect(byKind.face, "no faces drawn").toBeGreaterThan(0);
+    expect(byKind.edge, "no EDGES drawn — the inventory was filtered").toBeGreaterThan(0);
+    expect(byKind.corner, "no CORNERS drawn — the inventory was filtered").toBeGreaterThan(0);
+
+    // And the drawn set is exactly the projection's visible set at this camera,
+    // which is the rule that keeps "drawn" and "hittable" the same word.
+    const pose = viewAngles("iso")!;
+    const visible = projectTargets(pose.azimuth_deg, pose.elevation_deg).filter(
+      (target) => target.visible,
+    );
+    expect(hits).toHaveLength(visible.length);
+    expect([...hits].map((hit) => hit.getAttribute("data-view")).sort()).toEqual(
+      visible.map((target) => target.view).sort(),
+    );
+  });
+});
