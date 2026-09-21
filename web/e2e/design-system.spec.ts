@@ -20,7 +20,7 @@
 //   3. grid columns at 1440 / 1280 / **1279** / 1024 / 1023 matching §4.1's
 //      table, with `document.body.scrollWidth === clientWidth` at all five, and
 //      the narrow Rail-hidden Stream opening to its full-width track;
-//   4. the inspector canvas height identical across all five inspector tabs.
+//   4. the inspector canvas height identical across every inspector tab.
 //
 // `not_run`'s distinctness lives in `test/system/badge.test.tsx`, which renders
 // all six statuses directly. That is not a weaker test — it is the only one that
@@ -305,8 +305,11 @@ test("the view cube names its axes in words, and the appearance cluster rests at
   for (const gone of ["triad", "fit"]) {
     await expect(page.locator(`[data-appearance-control="${gone}"]`)).toHaveCount(0);
   }
-  await expect(page.locator("[data-readout-grid]")).toHaveCount(0);
-  await expect(page.locator("[data-axis-triad]")).toHaveCount(0);
+  // `GridReadout` and `AxisTriad` are struck outright (§4.2, 2026-09-20), so
+  // asserting they are absent from the appearance block would pass on any page
+  // at all. The appearance CONTROLS that went with them — `triad` and `fit` —
+  // are the operands this clause still has, and they are counted above.
+
 });
 
 // ---------------------------------------------------------------------------
@@ -497,9 +500,11 @@ test("the rail overlay below1280px can be dismissed (§4.1(b), §3.13.4)", async
 // ---------------------------------------------------------------------------
 // §4.1(c) / §3.3 principle 4 — furniture does not move
 
-const TABS = ["results", "properties", "provenance", "checks", "dfm"] as const;
+// `provenance` left the strip (2026-09-20): `inspectorTabsFor` filters it out,
+// so a click on its tab would wait on an element that never mounts.
+const TABS = ["results", "properties", "checks", "dfm"] as const;
 
-test("the viewport canvas is the same height on all five inspector tabs (§4.1(c))", async ({
+test("the viewport canvas is the same height on every inspector tab (§4.1(c))", async ({
   page,
 }, testInfo) => {
   await open(page, route(PART, { tab: "viewport" }));

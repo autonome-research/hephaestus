@@ -2473,7 +2473,25 @@ and actionable question use the same evidence; history failure preserves held
 rows and gaps rather than replacing them with diagnostics.
 
 **(i) C26 — Export and BOM are icon+word at full width, icon-only under
-pressure.** At viewport widths **≥1280px** `[data-chrome-export]` and
+pressure.**
+
+> **STRUCK 2026-09-20.** The header's Export and BOM are gone, and
+> `PartChrome`/`ExportChrome` with them. Neither did anything the inspector
+> drawer does not: BOM mounted `SourcingPanel`, the very component the Sourcing
+> tab mounts, and Export ran the same shared submission state machine as the
+> Export tab over a strict subset of its surface — no drawings, no documents,
+> no nested-sheet blanks, no kerf readout, no history. Two entry points to one
+> capability is two places to keep true, and the smaller one was the one that
+> drifted. The capability is unchanged and reached through
+> `[data-inspector-tab="export"]` and `[data-inspector-tab="sourcing"]`.
+>
+> The icon+word/icon-only rule below goes with them. It named these two
+> controls and no others, and every control the header kept — Hold, the unit
+> readout, Script, the Agent reopen — is icon-only or a readout at every band.
+> §4.1(a) remains the one breakpoint authority for anything that grows a
+> worded form later.
+
+At viewport widths **≥1280px** `[data-chrome-export]` and
 `[data-chrome-bom]` each render the sprite icon **and** the visible word;
 **below 1280px** they render icon-only, word on `aria-label`/`title` — the
 labels collapse at the same boundary Parts becomes an overlay, one breakpoint authority

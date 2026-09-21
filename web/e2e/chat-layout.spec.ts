@@ -130,19 +130,24 @@ test("selected title stays compact while switcher exposes the session tree", asy
   const height = (await strip.boundingBox())!.height;
   expect(height).toBeLessThanOrEqual(96); // title/scope plus readable action row
   const titleBox = (await strip.locator("[data-session-tab]").boundingBox())!;
-  // 2026-09-20, CORRECTED: both are icon-only now, so each keeps its name on
-  // `aria-label` rather than in a visible span. The claim that "the switcher
-  // still carries its word" was written without checking the component: the
-  // switcher merged into the session title tab, and its `aria-hidden` span is
-  // the chevron, drawn with CSS `content` and so carrying no text.
+  // 2026-09-20, CORRECTED TWICE. The switcher MERGED INTO the session title
+  // tab: `[data-session-switch]` and `[data-session-tab]` are one element, and
+  // its `aria-hidden` span is the chevron, drawn with CSS `content` and so
+  // carrying no text. The first correction said that and then kept asserting
+  // the two-row shape the strip no longer has — that the actions sit BELOW the
+  // title — which, for the switcher, compared an element to itself.
+  //
+  // The strip is ONE row: create, then the title, then close. What the clause
+  // is for survives as written here — the title stays compact, the actions
+  // carry their names without spending width on words, and the create leads.
   await expect(strip.locator("[data-session-switch]")).toHaveAccessibleName(/./);
   await expect(strip.locator("[data-session-switch]").locator('span[aria-hidden="true"]')).toHaveText("");
   await expect(strip.locator("[data-session-create-menu]")).toHaveAccessibleName(/./);
   await expect(strip.locator("[data-session-create-menu]")).toHaveText("");
-  for (const selector of ["[data-session-switch]", "[data-session-create-menu]"]) {
-    const action = strip.locator(selector);
-    expect((await action.boundingBox())!.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
-  }
+  const createBox = (await strip.locator("[data-session-create-menu]").boundingBox())!;
+  expect(createBox.x + createBox.width).toBeLessThanOrEqual(titleBox.x + 1);
+  expect(createBox.y).toBeLessThan(titleBox.y + titleBox.height);
+  expect(titleBox.height).toBeLessThanOrEqual(height);
   await page.locator("[data-session-switch]").focus();
   await page.locator("[data-session-switch]").press("Enter");
   await expect(page.locator("[data-session-switch-open]")).toBeVisible();

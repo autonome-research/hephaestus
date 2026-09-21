@@ -523,10 +523,13 @@ function intersects(a: Box, b: Box): boolean {
  * skipped it. A gate that has never run against the state it governs asserts
  * nothing (RC-10).
  */
+// `[data-grid-readout]` left this list with `GridReadout` (§4.2, 2026-09-20).
+// A selector that can never match does not widen a sweep whose helper skips
+// what it does not find — it narrows it silently, which is the RC-10 defect
+// this block's own comment names.
 const OVERLAY_SURFACES = [
   "[data-view-cube]",
   "[data-appearance]",
-  "[data-grid-readout]",
   "[data-explode-t]",
   "[data-section-control]",
   "[data-plate-header]",
@@ -645,12 +648,12 @@ test("with a rendered plate the plate owns the well, and the header is readable 
   const header = page.locator("[data-plate-header]");
   await expect(header).toHaveCount(1, { timeout: 120_000 });
 
-  // The four that unmount, and the one that must not.
+  // The two that unmount for a plate, and the one that must not. The triad and
+  // the grid readout are struck outright (§4.2, 2026-09-20), so asserting they
+  // are absent HERE would pass on every page and prove nothing about a plate.
   for (const gone of [
     "[data-view-cube]",
     "[data-appearance]",
-    "[data-axis-triad]",
-    "[data-grid-readout]",
   ]) {
     await expect(page.locator(gone), `${gone} is painted over a rendered plate`).toHaveCount(0);
   }

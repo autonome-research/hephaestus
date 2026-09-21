@@ -1,8 +1,16 @@
 // Copyright 2026 The Hephaestus Authors
 // SPDX-License-Identifier: Apache-2.0
 //
-// Export / BOM chrome bound to the on-screen pin (issue #12). Expected values
-// come from the server in the same run. No assertion is on UI copy.
+// Export / BOM bound to the on-screen pin (issue #12). Expected values come
+// from the server in the same run. No assertion is on UI copy.
+//
+// REWRITTEN 2026-09-20. These cases drove the HEADER's Export and BOM, which
+// are struck (§4.1(i)) along with `PartChrome`/`ExportChrome`: the dialog ran
+// the same submission hook as the Export tab over a strict subset of its
+// surface, and BOM mounted the very component the Sourcing tab mounts. Every
+// clause below is the same clause, addressed to the drawer that kept the
+// capability — pin-bound formats, the declared sourcing field set, on-screen
+// containment and a body that scrolls instead of a panel that overflows.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -24,71 +32,53 @@ interface BuildDocument {
   readonly artifact_ref: string;
 }
 
-test("Export and BOM sit in header chrome, not only the inspector", async ({ page }, testInfo) => {
+/** Open one inspector tab and return its panel. */
+async function inspectorTab(page: Page, tab: "export" | "sourcing"): Promise<Locator> {
+  await page.locator(`[data-inspector-tab="${tab}"]`).click();
+  const panel = page.locator(`[data-inspector-panel="${tab}"]`);
+  await expect(panel).toBeVisible();
+  return panel;
+}
+
+test("Export and BOM are the drawer's, and the header grows no second door to them", async ({
+  page,
+}, testInfo) => {
   await open(page, route(PART, { tab: "viewport" }));
-  await expect(page.locator("[data-part-chrome]")).toBeVisible();
-  await expect(page.locator("[data-chrome-export]")).toBeVisible();
-  await expect(page.locator("[data-chrome-bom]")).toBeVisible();
+  // The strike is the assertion: neither control, and no chrome to hold them.
+  for (const gone of ["[data-part-chrome]", "[data-chrome-export]", "[data-chrome-bom]"]) {
+    await expect(page.locator(gone), `${gone} is back in the header`).toHaveCount(0);
+  }
   // Signed-in header: the token is the fragment / sessionStorage, not a chip.
   await expect(page.locator("header [data-token-state]")).toHaveCount(0);
-  // The inspector export tab still exists; chrome is in addition to it.
+  // And the capability is reachable, on one surface each.
   await expect(page.locator('[data-inspector-tab="export"]')).toBeVisible();
   await expect(page.locator('[data-inspector-tab="sourcing"]')).toBeVisible();
-  await archive(page, testInfo, "export-bom-chrome");
+  await expect((await inspectorTab(page, "export")).locator("[data-panel='export']")).toBeVisible();
+  await expect((await inspectorTab(page, "sourcing")).locator("[data-panel='sourcing']")).toBeVisible();
+  await archive(page, testInfo, "export-bom-drawer");
 });
 
-test("Export and BOM are icon+word at ≥1280px, icon-only below, same name (§4.1(i) C26)", async ({
-  page,
-}) => {
-  await open(page, route(PART, { tab: "viewport" }));
-  const controls = ["[data-chrome-export]", "[data-chrome-bom]"] as const;
-
-  await page.setViewportSize({ width: 1440, height: 800 });
-  const wordedNames: string[] = [];
-  for (const selector of controls) {
-    const control = page.locator(selector);
-    await expect(control).toBeVisible();
-    await expect(control.locator("svg[data-icon]")).toHaveCount(1);
-    // A visible text node equal to the control's accessible name.
-    const word = ((await control.textContent()) ?? "").trim();
-    expect(word).not.toBe("");
-    expect(await control.getAttribute("aria-label")).toBeNull();
-    wordedNames.push(word);
-  }
-
-  await page.setViewportSize({ width: 1200, height: 800 });
-  for (const [index, selector] of controls.entries()) {
-    const control = page.locator(selector);
-    // Still visible, unmoved behind no overflow — icon-only, word on the name.
-    await expect(control).toBeVisible();
-    await expect(control.locator("svg[data-icon]")).toHaveCount(1);
-    expect(((await control.textContent()) ?? "").trim()).toBe("");
-    // C26's testable: the accessible name is identical in both forms.
-    expect(await control.getAttribute("aria-label")).toBe(wordedNames[index]);
-  }
-});
-
-test("chrome Export is bound to the pin the server named", async ({ page }, testInfo) => {
+test("Export is bound to the pin the server named", async ({ page }, testInfo) => {
   const build = await api<BuildDocument>(`/parts/${PART}/build`);
   expect(build.artifact_ref).toMatch(/^artifact:build:/);
 
   await open(page, route(PART, { tab: "viewport" }));
-  await page.locator("[data-chrome-export]").click();
-  await expect(page.locator("[data-panel='export-chrome']")).toBeVisible();
+  const panel = await inspectorTab(page, "export");
 
-  await expect(
-    page.locator("[data-panel='export-chrome'] [data-source='workspace.artifact_ref']"),
-  ).toHaveAttribute("data-value", build.artifact_ref);
+  await expect(panel.locator("[data-source='workspace.artifact_ref']")).toHaveAttribute(
+    "data-value",
+    build.artifact_ref,
+  );
 
-  const formats = await page
-    .locator("[data-panel='export-chrome'] button[data-export-format]")
+  const formats = await panel
+    .locator("button[data-export-format]")
     .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-export-format")));
   expect(formats).toEqual(["step", "dxf", "svg", "gltf", "3mf", "stl"]);
 
-  await archive(page, testInfo, "export-chrome-pin");
+  await archive(page, testInfo, "export-pin");
 });
 
-test("chrome BOM shows declared process / stock / material spec from GET properties", async ({
+test("BOM shows declared process / stock / material spec from GET properties", async ({
   page,
 }, testInfo) => {
   const document = await api<PropertiesDocument>(`/parts/${PART}/properties`);
@@ -96,35 +86,36 @@ test("chrome BOM shows declared process / stock / material spec from GET propert
   const declared = sourcing.filter((field) => field in document.properties);
 
   await open(page, route(PART, { tab: "viewport" }));
-  await page.locator("[data-chrome-bom]").click();
-  await expect(page.locator("[data-chrome-dialog='sourcing'] [data-panel='sourcing']")).toBeVisible();
+  const panel = await inspectorTab(page, "sourcing");
 
-  const fields = await page
-    .locator("[data-chrome-dialog='sourcing'] [data-field]")
+  const fields = await panel
+    .locator("[data-field]")
     .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-field")));
   expect([...fields].sort()).toEqual([...declared].sort());
   expect(fields).not.toContain("description");
   expect(fields).not.toContain("finish");
 
   for (const field of declared) {
-    const fact = page.locator(
-      `[data-chrome-dialog='sourcing'] [data-source="properties.${field}"]`,
+    await expect(panel.locator(`[data-source="properties.${field}"]`)).toHaveAttribute(
+      "data-value",
+      document.properties[field] ?? "",
     );
-    await expect(fact).toHaveAttribute("data-value", document.properties[field] ?? "");
   }
 
   await expect(page.locator("[data-sourcing-catalog='none']").first()).toBeVisible();
-  await archive(page, testInfo, "sourcing-chrome");
+  await archive(page, testInfo, "sourcing-drawer");
 });
 
 // --------------------------------------------------------------------------
-// B-8 — the BOM dialog fits the viewport, with scrolling, and its value
+// B-8 — the sourcing surface fits the viewport, with scrolling, and its value
 // column is readable (audit-2026-09-04-broken.md B-8).
 //
-// The pre-existing sourcing-chrome case above already asserts the dialog is
-// "visible" — and a box at y=-919 satisfies a visibility check. These cases
-// assert the two facts that check missed: the box is actually ON screen, and
-// its value cells actually have width.
+// The case above already asserts the surface is "visible" — and a box at
+// y=-919 satisfies a visibility check. These cases assert the two facts that
+// check missed: the box is actually ON screen, and its value cells actually
+// have width. The subject moved from the struck BOM dialog to the drawer panel
+// that replaced it; the defect class is the same one, and a drawer is exactly
+// as able to render its body taller than the window.
 
 interface Box {
   readonly x: number;
@@ -140,34 +131,32 @@ async function requireBox(locator: Locator): Promise<Box> {
 }
 
 /** The `[data-field]`/`[data-metric]` row's VALUE cell — DataTable's 2nd child. */
-function valueCells(dialog: Locator): Locator {
-  return dialog.locator("[data-field] > *:nth-child(2), [data-metric] > *:nth-child(2)");
+function valueCells(host: Locator): Locator {
+  return host.locator("[data-field] > *:nth-child(2), [data-metric] > *:nth-child(2)");
 }
 
-async function assertContained(page: Page, dialog: Locator, label: string): Promise<Box> {
+async function assertContained(page: Page, host: Locator, label: string): Promise<Box> {
   const viewport = page.viewportSize();
   if (viewport === null) throw new Error("no viewport size");
-  const box = await requireBox(dialog);
-  expect(box.y, `${label}: dialog top is off-screen (${JSON.stringify(box)})`).toBeGreaterThanOrEqual(0);
+  const box = await requireBox(host);
+  expect(box.y, `${label}: top is off-screen (${JSON.stringify(box)})`).toBeGreaterThanOrEqual(0);
   expect(
     box.y + box.height,
-    `${label}: dialog bottom exceeds the ${String(viewport.height)}px viewport (${JSON.stringify(box)})`,
+    `${label}: bottom exceeds the ${String(viewport.height)}px viewport (${JSON.stringify(box)})`,
   ).toBeLessThanOrEqual(viewport.height);
   return box;
 }
 
-test("the BOM dialog stays on screen and its value column is readable, at 1280 and 1920 (B-8)", async ({
+test("the sourcing panel stays on screen and its value column is readable, at 1280 and 1920 (B-8)", async ({
   page,
 }, testInfo) => {
   for (const width of [1280, 1920]) {
     await page.setViewportSize({ width, height: 900 });
     await open(page, route(PART, { tab: "viewport" }));
-    await page.locator("[data-chrome-bom]").click();
-    const dialog = page.locator("[data-chrome-dialog='sourcing']");
-    await expect(dialog).toBeVisible();
-    const dialogBox = await assertContained(page, dialog, `BOM @ ${String(width)}px`);
+    const panel = await inspectorTab(page, "sourcing");
+    const panelBox = await assertContained(page, panel, `Sourcing @ ${String(width)}px`);
 
-    const cells = valueCells(dialog);
+    const cells = valueCells(panel);
     const count = await cells.count();
     expect(count, `${String(width)}px: no value cells rendered at all`).toBeGreaterThan(0);
     for (let i = 0; i < count; i += 1) {
@@ -175,39 +164,33 @@ test("the BOM dialog stays on screen and its value column is readable, at 1280 a
       expect(cellBox.width, `${String(width)}px: value cell ${String(i)} is zero-width`).toBeGreaterThan(0);
       expect(
         cellBox.x,
-        `${String(width)}px: value cell ${String(i)} starts left of the dialog`,
-      ).toBeGreaterThanOrEqual(dialogBox.x);
+        `${String(width)}px: value cell ${String(i)} starts left of the panel`,
+      ).toBeGreaterThanOrEqual(panelBox.x);
       expect(
         cellBox.x + cellBox.width,
-        `${String(width)}px: value cell ${String(i)} extends past the dialog's right edge`,
-      ).toBeLessThanOrEqual(dialogBox.x + dialogBox.width + 1);
+        `${String(width)}px: value cell ${String(i)} extends past the panel's right edge`,
+      ).toBeLessThanOrEqual(panelBox.x + panelBox.width + 1);
     }
-    await page.keyboard.press("Escape");
   }
-  await archive(page, testInfo, "bom-dialog-contained");
+  await archive(page, testInfo, "sourcing-contained");
 });
 
-test("the containment contract holds for the Export dialog too, not only the one that broke (B-8)", async ({
+test("the containment contract holds for the Export panel too, not only the one that broke (B-8)", async ({
   page,
 }) => {
   await open(page, route(PART, { tab: "viewport" }));
-  await page.locator("[data-chrome-export]").click();
-  const dialog = page.locator("[data-panel='export-chrome']");
-  await expect(dialog).toBeVisible();
-  await assertContained(page, dialog, "Export");
+  await assertContained(page, await inspectorTab(page, "export"), "Export");
 });
 
-test("at a deliberately short viewport, the BOM dialog's body scrolls rather than the dialog overflowing (B-8)", async ({
+test("at a deliberately short viewport, the sourcing body scrolls rather than the panel overflowing (B-8)", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 420 });
   await open(page, route(PART, { tab: "viewport" }));
-  await page.locator("[data-chrome-bom]").click();
-  const dialog = page.locator("[data-chrome-dialog='sourcing']");
-  await expect(dialog).toBeVisible();
-  await assertContained(page, dialog, "BOM @ 420px tall");
+  const panel = await inspectorTab(page, "sourcing");
+  await assertContained(page, panel, "Sourcing @ 420px tall");
 
-  const body = page.locator("[data-chrome-dialog='sourcing'] [data-overlay-scroll]").first();
+  const body = panel.locator("[data-overlay-scroll]").first();
   const overflow = await body.evaluate((el) => ({
     scrollHeight: el.scrollHeight,
     clientHeight: el.clientHeight,
@@ -223,7 +206,9 @@ test("no inspector tab's first grid track eats the value column (B-8, the seven-
   page,
 }, testInfo) => {
   await open(page, route(PART, { tab: "viewport" }));
-  const tabs = ["properties", "provenance", "checks", "sourcing"] as const;
+  // `provenance` left the strip (2026-09-20): the tab is filtered out of
+  // `inspectorTabsFor`, so clicking it here would wait on nothing.
+  const tabs = ["properties", "checks", "sourcing"] as const;
   const rows: string[] = [];
   let checkedAny = false;
 
