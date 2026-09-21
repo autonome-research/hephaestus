@@ -181,6 +181,19 @@ test("the viewport ground is a token and is distinct from every chrome surface (
 
   // And the WebGL clear colour is that same value, sampled out of the drawing
   // buffer at a corner the geometry does not reach.
+  //
+  // WITH THE ROOM OFF (2026-09-20). The build space stopped being a quad in
+  // the ground plane and became a box drawn around the camera — walls that
+  // converge behind the model, which is what makes an orbit read as an orbit —
+  // and it is `transparent` at 0.6, so it blends over the clear colour at
+  // EVERY pixel including the corners. There is no longer a pixel of pure
+  // ground anywhere while it is drawn. The clause is about `setClearColor`
+  // carrying the token, so it is measured where the clear colour is what you
+  // see: the room is an appearance flag, and this turns it off and back on.
+  const grid = page.locator('[data-appearance-control="grid"]');
+  await expect(grid).toHaveAttribute("aria-pressed", "true");
+  await grid.click();
+  await expect(grid).toHaveAttribute("aria-pressed", "false");
   const corner = await page.evaluate(() => {
     const canvas = document.querySelector<HTMLCanvasElement>("[data-viewport-canvas]");
     if (canvas === null) return null;
@@ -196,6 +209,8 @@ test("the viewport ground is a token and is distinct from every chrome surface (
   expect(corner).not.toBeNull();
   if (corner === null) return;
   expect(corner).toEqual(surfaces.groundRgb);
+  await grid.click();
+  await expect(grid).toHaveAttribute("aria-pressed", "true");
 });
 
 // §3.11.2's part-vs-ground floor. **LANDED 2026-08-28 WITH PLAN ITEM 6.**
@@ -417,8 +432,16 @@ test("the Rail-hidden Stream is a full peer column at a narrow viewport", async 
   await expect(body).toHaveAttribute("data-band", "narrow");
   await expect(body).toHaveAttribute("data-rail", "hidden");
   await expect(body).toHaveAttribute("data-stream", "open");
-  await expect(body.locator(":scope > nav")).toHaveCount(1);
-  await expect(body.locator(":scope > nav")).toBeHidden();
+  // THE SHELL HAS TWO NAVS since 2026-09-20: the Views bar leads the body and
+  // the Parts rail follows it, so `:scope > nav` is no longer a name for one of
+  // them. The rail is addressed by the id the skip link and `aria-controls`
+  // already use.
+  const parts = body.locator(":scope > nav#parts-navigation");
+  await expect(parts).toHaveCount(1);
+  await expect(parts).toBeHidden();
+  // …and the Views bar is the one that stays, which is why the stage is short
+  // by its track and not by the rail's.
+  await expect(body.locator(":scope > nav[data-views-bar]")).toBeVisible();
 
   const geometry = async (): Promise<{
     readonly bodyWidth: number;

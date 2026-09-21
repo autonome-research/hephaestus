@@ -848,7 +848,13 @@ export function Composer(props: ComposerProps): React.JSX.Element {
           </Button>
         </p> : null}
 
-      <div className={styles["composerShell"]}>
+      {/* THE MESSAGE BOX ITSELF gets a name (2026-09-20). Send is a direct grid
+          child of this box, in column two, centred across both of its rows —
+          deliberately NOT inside the settings row it sits beside — so "Send is
+          on the message box's trailing edge" needs the box to be addressable.
+          Without it a gate could only compare Send against a row it is not in
+          and conclude, correctly and uselessly, that it is outside. */}
+      <div className={styles["composerShell"]} data-composer-box="">
         {/* Paste and drop land here as well as on the button: an operator with
             a screenshot will try all three, and two of them targeting the box
             rather than a 34px control is the whole point. `preventDefault` on

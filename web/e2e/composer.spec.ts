@@ -117,9 +117,14 @@ test.describe("§7A.12 case 1 — the blank canvas reaches the workspace", () =>
       await composer.locator("[data-composer-input-row] button, [data-composer-input-row] [role='button']").count(),
     ).toBe(0);
     const sendBox = await composer.locator("[data-composer-send]").boundingBox();
-    // 2026-09-20: the outer toolbar is struck and every message control sits on
-    // the message box's own bottom row, so THAT is the box Send must be inside.
-    const inputRowBox = await composer.locator("[data-composer-shell-bar]").boundingBox();
+    // 2026-09-20, CORRECTED. The outer toolbar is struck and every message
+    // control moved into the message box — but Send is not on the settings ROW
+    // with them: it is a direct grid child of the BOX, in column two, centred
+    // across both of its rows, so that the act the box exists for is not drawn
+    // at the weight of a preference. Comparing it against the settings row
+    // asks whether it is inside a row it is deliberately outside. The box is
+    // the enclosure the clause is about.
+    const inputRowBox = await composer.locator("[data-composer-box]").boundingBox();
     expect(sendBox).not.toBeNull();
     expect(inputRowBox).not.toBeNull();
     const within = (
