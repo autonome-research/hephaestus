@@ -1,13 +1,28 @@
 // Copyright 2026 The Hephaestus Authors
 // SPDX-License-Identifier: Apache-2.0
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { open, route } from './harness/world';
 import type { ViewportHandle } from '../src/viewport/testHook';
 
-// The Views bar leads the shell in EVERY band (2026-09-20) and keeps its track
-// at a fixed width, so the stage is the viewport less Views, less Parts where
-// Parts has a column, less the Stream.
-const VIEWS = 44;
+/*
+ * The stage is the viewport less the tracks beside it (2026-09-20).
+ *
+ * The Views bar leads the shell and keeps its place in the template at every
+ * band — removing a grid item shifts auto-placement for everything after it —
+ * but its WIDTH is 44px only while the Parts panel is shut. Open, as a column
+ * or as an overlay, the same hamburger sits in the panel's own corner and the
+ * strip would be an empty track, so it goes to zero. `data-rail` is where the
+ * shell says which of the four it is in, so the expectation reads it rather
+ * than assuming one.
+ */
+const VIEWS_WIDTH = 44;
+async function stageWidthFor(page: Page, width: number): Promise<number> {
+  const rail = await page.locator('[data-band]').getAttribute('data-rail');
+  const views = rail === 'closed' || rail === 'hidden' ? VIEWS_WIDTH : 0;
+  const parts = width < 1280 ? 0 : 280;
+  const stream = Math.round(Math.max(360, Math.min(420, width * 0.3)));
+  return width - views - parts - stream;
+}
 
 test('Fit follows resized extents; deliberate orbit/zoom/pan and held artifact survive every capacity band', async ({ page }) => {
   const writes: string[] = [];
@@ -31,7 +46,7 @@ test('Fit follows resized extents; deliberate orbit/zoom/pan and held artifact s
   expect(initial.pin).not.toBeNull();
   for (const width of [1440, 1280, 1024, 843, 1024, 1440]) {
     await page.setViewportSize({ width, height: 800 });
-    await expect.poll(async () => (await snapshot()).size[0]).toBe(width - VIEWS - (width < 1280 ? 0 : 280) - Math.round(Math.max(360, Math.min(420, width * 0.3))));
+    await expect.poll(async () => (await snapshot()).size[0]).toBe(await stageWidthFor(page, width));
     const state = await snapshot();
     expect(state.fit).toBe(true); expect(state.eye).toEqual(initial.eye); expect(state.target).toEqual(initial.target); expect(state.up).toEqual(initial.up); expect(state.pin).toBe(initial.pin);
     if (width === 843) expect(state.scale).toBeGreaterThan(initial.scale);
@@ -46,7 +61,7 @@ test('Fit follows resized extents; deliberate orbit/zoom/pan and held artifact s
   const pose = ({ size: _size, ...rest }: typeof held) => rest;
   for (const width of [1280, 1024, 843, 1024, 1440]) {
     await page.setViewportSize({ width, height: 800 });
-    await expect.poll(async () => (await snapshot()).size[0]).toBe(width - VIEWS - (width < 1280 ? 0 : 280) - Math.round(Math.max(360, Math.min(420, width * 0.3))));
+    await expect.poll(async () => (await snapshot()).size[0]).toBe(await stageWidthFor(page, width));
     expect(pose(await snapshot())).toEqual(pose(held));
   }
   await page.locator('[data-view-cube] [data-cube-current]').click();
