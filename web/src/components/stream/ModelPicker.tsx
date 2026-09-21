@@ -112,7 +112,8 @@ export function ModelPicker({ sessionId, creation, effort = "medium", onEffort }
         <span className={styles["badge"]}>{capability}</span>
       </> : undefined}
     </Button>
-    <Popover open={open} onClose={() => setOpen(false)} label={copy.models.choose} className={styles["picker"]}>
+    <Popover open={open} onClose={() => setOpen(false)} label={copy.models.choose}
+      className={creation ? `${styles["picker"]} ${styles["pickerBelow"]}` : styles["picker"]}>
       <div className={styles["pickerGrid"]}>
         <section className={styles["modelColumn"]}>
           <h3 className={styles["heading"]}>{copy.models.label}</h3>

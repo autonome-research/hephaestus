@@ -30,6 +30,7 @@
  */
 .picker {
   bottom: calc(100% + var(--space-2));
+  top: auto;
   /* LEFT-ANCHORED AND SIZED TO FIT (2026-09-20). The model button sits at the
      LEFT end of the composer's control row, so the card opens rightward from
      there and must fit in what remains of the window.
@@ -39,7 +40,6 @@
      the canvas. Staying inside the column it belongs to avoids the question. */
   left: 0;
   right: auto;
-  top: auto;
   /* 21rem, not 26: the anchor sits ~930px into a 1280px window, so anything
      wider than about 340px runs off the right edge. */
   width: min(21rem, calc(100vw - 2 * var(--pad-overlay)));
@@ -47,6 +47,20 @@
   max-height: min(32rem, 72vh);
   overflow: auto;
   box-sizing: border-box;
+}
+
+/*
+ * FLIPPED FOR THE CREATION DIALOG (2026-09-20). §4.7 asks a popover to be
+ * "anchored and flipped to stay in the viewport". The rule above opens the
+ * card UPWARD, which is right for the composer — its control sits a row above
+ * the window's bottom edge. The creation dialog's copy of the same control
+ * sits near the TOP of a centred dialog, and opening upward put the card at
+ * y = -21: its first entries were off the screen, and every click on one
+ * landed on the popover scrim instead. Same anchor, other direction.
+ */
+.pickerBelow {
+  top: calc(100% + var(--space-2));
+  bottom: auto;
 }
 
 /* ONE COLUMN, THREE SECTIONS (2026-09-20). The card was a two-column grid with
