@@ -12,42 +12,64 @@ for (const width of [843, 1440]) {
     const control = page.locator("[data-model-button]");
     await expect(control).toHaveAccessibleName(/local\/fake\/spark.*Text only/);
     await expect(control).toBeEnabled();
-    const details = page.getByRole("region", { name: "Message details" }).locator("details");
-    await details.locator("summary").press("Enter");
-    await expect(details).toContainText("local/fake/spark");
-    await details.locator("summary").click(); // touch/click-accessible disclosure as well
+    /*
+     * REWRITTEN 2026-09-20. The bounded "Message details" region is struck
+     * along with the rest of the composer's narration of itself, and the
+     * composer's model control is icon-only. FULL IDENTITY did not go with
+     * them — it is on the control's accessible name (asserted above) and its
+     * `title`, and the creation dialog still spells it out inline. What this
+     * case checks is unchanged: the complete provider/model identity is
+     * readable without opening anything, the catalog is navigable from the
+     * keyboard alone, and choosing costs the draft and the transcript nothing.
+     */
+    await expect(control).toHaveAttribute("title", /local\/fake\/spark/);
     await input(page).fill("Draft survives model choice");
     const recorded = page.locator('[data-tool-call-id="recorded-call"] details');
     await recorded.locator("summary").click();
     await control.press("Enter");
-    const dialog = page.getByRole("dialog", { name: "Choose model" });
-    const search = dialog.getByRole("combobox", { name: "Search provider or model" });
-    await expect(search).toBeFocused();
-    await expect(dialog.getByRole("option", { name: /local\/fake\/spark/ })).toHaveAttribute("aria-selected", "true");
-    await search.press("ArrowDown");
+    // An anchored popover, not a modal: `variant="popover"` is `role="group"`.
+    const picker = page.getByRole("group", { name: "Choose model" });
+    // §7A: "Search is conditional on a long catalog". Three declared models is
+    // not a long catalog, so the first focusable in the panel — and where the
+    // trap puts the caret — is the first OPTION.
+    await expect(picker.getByRole("combobox")).toHaveCount(0);
+    const options = picker.getByRole("option");
+    await expect(options.filter({ hasText: "Spark" })).toHaveAttribute("aria-selected", "true");
+    await expect(options.first()).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(options.nth(1)).toBeFocused();
     expect(c.mutations).toEqual([]);
-    await search.press("Escape");
+    await page.keyboard.press("Escape");
     await expect(control).toBeFocused();
+    // The declared-but-unknown model is offered and refused, with its reason.
     await control.press("Enter");
-    await search.fill("unknown");
-    await expect(dialog.getByRole("option")).toHaveAttribute("aria-disabled", "true");
-    await expect(dialog).toContainText("model_unknown");
-    await search.press("Enter");
+    await expect(options.filter({ hasText: "Unknown declaration" })).toHaveAttribute("aria-disabled", "true");
+    await expect(picker).toContainText("model_unknown");
+    // Walk onto the unavailable entry and try to take it. The refusal lives in
+    // `choose`, so the keyboard path has to be refused exactly as a click is —
+    // and it is not clicked here on purpose: `aria-disabled` makes the element
+    // unactionable for a pointer, which would prove nothing about the guard.
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    await expect(options.nth(2)).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(picker).toBeVisible();
     expect(c.mutations).toEqual([]);
-    await search.fill("vision/image");
-    await expect(dialog.getByRole("option")).toContainText("Text + images");
-    await expect(dialog.getByRole("option")).toHaveAttribute("aria-disabled", "false");
-    await search.press("Enter");
-    await expect(dialog).toHaveCount(0);
+    // Vision is the one with images, and choosing it is one keystroke away.
+    await page.keyboard.press("ArrowDown");
+    await expect(options.first()).toBeFocused();
+    await expect(options.first()).toContainText("Vision");
+    await page.keyboard.press("Enter");
+    await expect(picker).toHaveCount(0);
     await expect(control).toHaveAccessibleName(/local\/fake\/vision\/image.*Text \+ images/);
     await expect(control).toBeFocused();
     await expect(input(page)).toHaveValue("Draft survives model choice");
     await expect(recorded).toHaveAttribute("open", "");
     await expect(page.locator("[data-composer]")).toHaveAttribute("data-session-id", SID);
     expect(c.mutations).toEqual([{ path: `/sessions/${SID}/model`, body: { model: { provider_id: vision.provider_id, model_id: vision.model_id }, expected_model_revision: { epoch: "models-1", version: 0 } } }]);
-    const badge = control.locator('span[aria-hidden="true"]').last();
-    await expect(badge).toBeVisible();
-    const bounds = (await badge.boundingBox())!;
+    // The control itself is what must stay inside the chat column now that the
+    // capability badge it used to carry lives on the accessible name.
+    const bounds = (await control.boundingBox())!;
     const column = (await page.locator("#chat-column").boundingBox())!;
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(column.x + column.width);
     expect(c.faults).toEqual([]);
@@ -79,10 +101,10 @@ test("pending selection gates all Send paths; lost response reconciles without r
   await input(page).fill("Do not implicitly send me");
   const control = page.locator("[data-model-button]");
   await expect(control).toBeEnabled(); await control.click();
-  const search = page.getByRole("combobox", { name: "Search provider or model" });
-  await search.fill("vision");
-  await expect(page.getByRole("option")).toHaveAttribute("aria-disabled", "false");
-  await search.press("Enter");
+  // No search field for a three-model catalog (§7A); pick from the listbox.
+  const choice = page.getByRole("option").filter({ hasText: "Vision" });
+  await expect(choice).toHaveAttribute("aria-disabled", "false");
+  await choice.click();
   await expect.poll(() => c.pendingModel !== null).toBe(true);
   await expect(control).toBeDisabled(); await expect(send(page)).toBeDisabled();
   await input(page).press("Enter");
