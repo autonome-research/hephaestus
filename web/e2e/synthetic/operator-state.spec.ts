@@ -32,7 +32,13 @@ test("one answer reservation survives remount; accepted same-page answer survive
   await c.frame("question", question, 1, RUN, "ask-call");
   await expect(status(page)).toHaveAttribute("data-current-turn", "Waiting for your answer");
   await expect(input(page)).toHaveValue("");
-  await expect(send(page)).toHaveText("Send");
+  // Send is ICON-ONLY (2026-09-20) — its word moved to the accessible name.
+  // What this line is for is that an open question does not REPLACE Send with
+  // some answer/queue control: it is still the send action, present, and inert
+  // with the waiting reason spelled on it.
+  await expect(send(page)).toHaveAccessibleName("Send message");
+  await expect(send(page)).toHaveAttribute("aria-disabled", "true");
+  await expect(send(page)).toHaveAttribute("title", /Waiting for your answer/);
   await expect(page.locator('[data-widget-source]')).not.toContainText("No result");
   await page.getByRole("button", { name: "Go to question" }).click();
   await expect(page.locator('[data-question-id="question-1"]')).toBeFocused();

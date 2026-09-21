@@ -1,7 +1,7 @@
 // Copyright 2026 The Hephaestus Authors
 // SPDX-License-Identifier: Apache-2.0
 import { expect, test, type Page } from "@playwright/test";
-import { execution, input, OTHER, RUN, setup, SID } from "./fixture";
+import { execution, input, modelName, OTHER, RUN, setup, SID } from "./fixture";
 
 const scroll = (page: Page) => page.locator("[data-transcript-scroll]");
 const metrics = (page: Page) => scroll(page).evaluate(el => ({ top: el.scrollTop, height: el.scrollHeight,
@@ -84,7 +84,10 @@ for (const width of [843, 1440]) test(`focus-only hidden composer/stage and hist
   const c = await setup(page);
   await input(page).fill("Unsent session-owned draft");
   const hash = await page.evaluate(() => location.hash);
-  const model = await page.locator("[data-model-button]").textContent();
+  // The identity moved to the accessible name; `modelName` is where that is
+  // written down once. What this case is about — that it SURVIVES a focus
+  // round-trip — is unchanged.
+  const model = await modelName(page);
   expect(model).toContain("Current model:");
   // C25 (2026-09-20): the second arm hid the column first. There is no hidden
   // state left, so what survives is the half that was never about hiding —
@@ -98,7 +101,7 @@ for (const width of [843, 1440]) test(`focus-only hidden composer/stage and hist
     await page.locator('[data-skip="composer"]').focus(); await page.keyboard.press("Enter");
     await expect(input(page)).toBeFocused(); await expect(input(page)).toHaveValue("Unsent session-owned draft");
     expect(await page.evaluate(() => location.hash)).toBe(hash);
-    expect(await page.locator("[data-model-button]").textContent()).toBe(model);
+    expect(await modelName(page)).toBe(model);
     await page.locator('[data-skip="stage"]').focus(); await page.keyboard.press("Enter");
     await expect(page.locator("#stage")).toBeFocused();
     expect(await page.evaluate(() => location.hash)).toBe(hash);

@@ -168,3 +168,18 @@ export const input = (page: Page) => page.locator("[data-composer-input]");
 export const send = (page: Page) => page.locator("[data-composer-send]");
 export const stop = (page: Page) => page.locator("[data-composer-cancel]");
 export const status = (page: Page) => page.locator("[data-current-turn]");
+
+/*
+ * The composer's model control is ICON-ONLY (2026-09-20). Every per-message
+ * setting moved inside the message box, and the sentence the button used to
+ * print — "Model for this conversation. Current model: <id> · <capability>.
+ * Effort: <level>" — is now its accessible name, not its text. The creation
+ * dialog's copy of the control still spells the identity out, because there
+ * the choice IS the subject of the surface rather than a setting on it.
+ *
+ * Cases that assert the identity SURVIVES something — a remount, a dialog
+ * round-trip, a capacity change — read it from here, so the clause keeps
+ * addressing the identity and not the typography that happened to carry it.
+ */
+export const modelName = (page: Page) =>
+  page.locator("[data-model-button]").getAttribute("aria-label");

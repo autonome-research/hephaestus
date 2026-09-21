@@ -1,7 +1,7 @@
 // Copyright 2026 The Hephaestus Authors
 // SPDX-License-Identifier: Apache-2.0
 import { expect, test, type Page } from "@playwright/test";
-import { execution, input, RUN, setup, SID, send, status, stop } from "./fixture";
+import { execution, input, modelName, RUN, setup, SID, send, status, stop } from "./fixture";
 const widths = [1440, 1280, 1024, 843, 1024, 1440];
 async function resize(page: Page, width: number) {
   await page.setViewportSize({ width, height: 800 });
@@ -33,7 +33,9 @@ test('active question, attempt, next draft and historical disclosure survive ful
   await c.frame('question', question, 0);
   await expect(status(page)).toHaveAttribute('data-current-turn', 'Waiting for your answer');
   await input(page).fill('Editable next draft, never queued');
-  const model = await page.locator('[data-model-button]').textContent();
+  // The model control is icon-only now; `modelName` reads the identity off the
+  // accessible name, which is where it moved. See `fixture.ts`.
+  const model = await modelName(page);
   const hash = await page.evaluate(() => location.hash);
   const scroll = page.locator('[data-transcript-scroll]');
   await tool.scrollIntoViewIfNeeded();
@@ -47,7 +49,7 @@ test('active question, attempt, next draft and historical disclosure survive ful
     await resize(page, width);
     await expect(input(page)).toHaveValue('Editable next draft, never queued');
     await expect(status(page)).toHaveAttribute('data-current-turn', 'Waiting for your answer');
-    expect(await page.locator('[data-model-button]').textContent()).toBe(model);
+    expect(await modelName(page)).toBe(model);
     expect(await page.evaluate(() => location.hash)).toBe(hash);
     await expect(tool).toHaveAttribute('open', '');
     await expect.poll(() => scroll.evaluate((el, anchor) => {
