@@ -1,7 +1,7 @@
 // Copyright 2026 The Hephaestus Authors
 // SPDX-License-Identifier: Apache-2.0
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { setup, SID, OTHER, RUN, execution, input, send } from "./fixture";
+import { setup, SID, OTHER, RUN, execution, input, modelName, send } from "./fixture";
 
 /*
  * REWRITTEN 2026-09-20, because its operands were struck and its clause was
@@ -122,73 +122,105 @@ for (const width of [1440, 1024, 843]) test(`audit: complete scope choices and f
   expect(c.faults).toEqual([]);
 });
 
-for (const width of [1440, 843]) test(`audit: session-owned exclusions survive Hide/Open and keyboard reveal before one explicit send at ${width}`, async ({ page }) => {
+/*
+ * REWRITTEN 2026-09-20. The per-member exclusion UI is struck: there is no
+ * context disclosure and no `[data-context-drop]` chip, because the composer
+ * no longer narrates the envelope it is about to send. ONE exclusion control
+ * survives, and it is the one that changes what the agent is told about the
+ * picture — `[data-context-add-view]`, which drops `view` (and `selection`
+ * with it) when it is switched off and puts them back when it is switched on.
+ *
+ * Everything this case was protecting is unchanged and is asserted against
+ * that control: an exclusion is SESSION-OWNED, it survives a keyboard reveal
+ * and a route round-trip, it costs no mutation, and one explicit Send writes
+ * exactly one prompt whose body no later edit can rewrite. The envelope's
+ * member list is read from `[data-composer]`, which is where
+ * `data-context-keys` is minted now that the line that carried it is gone.
+ */
+const keysOf = (page: Page) => page.locator("[data-composer]").getAttribute("data-context-keys");
+const viewToggle = (page: Page) => page.locator("[data-context-add-view]");
+
+for (const width of [1440, 843]) test(`audit: a session-owned exclusion survives a keyboard reveal and one explicit send at ${width}`, async ({ page }) => {
   await page.setViewportSize({ width, height: 800 });
   const c = await setup(page);
-  await expect(page.locator("[data-model-button]")).toContainText("Current model");
+  await expect(page.locator("[data-model-button]")).toHaveAccessibleName(/Current model/);
   await input(page).fill("Retain session A draft");
-  const model = await page.locator("[data-model-button]").textContent();
+  const model = await modelName(page);
   const route = new URL(page.url()).hash;
-  await page.locator("[data-context-disclose]").click();
-  for (const key of ["view", "part"]) await page.locator(`[data-context-drop="${key}"]`).click();
-  await page.locator("[data-context-disclose]").click();
-  const keys = await page.locator("[data-context-summary]").getAttribute("data-context-keys");
+  await expect(viewToggle(page)).toHaveAttribute("aria-pressed", "true");
+  await viewToggle(page).click();
+  await expect(viewToggle(page)).toHaveAttribute("aria-pressed", "false");
+  const keys = (await keysOf(page))!;
+  expect(keys).not.toContain("view");
   // C25 (2026-09-20): the "open" arm revealed a collapsed column and is struck
   // with it. Skip remains, and is now the only way focus is moved into the
   // composer without a route edit — which is the half this loop was for.
-  for (const reveal of ["skip"]) {
-    void reveal;
-    // Tab to the actual skip link, not a route edit or a programmatic reveal.
-    for (let n = 0; n < 30; n++) {
-      await page.keyboard.press("Tab");
-      if (await page.getByRole("link", { name: "Skip to composer" }).evaluate(el => el === document.activeElement)) break;
-    }
-    await expect(page.getByRole("link", { name: "Skip to composer" })).toBeFocused();
-    await page.keyboard.press("Enter");
-    await expect(input(page)).toBeFocused();
-    await expect(input(page)).toHaveValue("Retain session A draft");
-    await expect(page.locator("[data-context-summary]")).toHaveAttribute("data-context-keys", keys!);
-    await expect(page.locator('[data-context-removed="view"]')).toBeVisible();
-    await expect(page.locator('[data-context-removed="part"]')).toBeVisible();
-    await expect(page.locator("[data-model-button]")).toHaveText(model!);
-    expect(new URL(page.url()).hash).toBe(route);
+  // Tab to the actual skip link, not a route edit or a programmatic reveal.
+  for (let n = 0; n < 30; n++) {
+    await page.keyboard.press("Tab");
+    if (await page.getByRole("link", { name: "Skip to composer" }).evaluate(el => el === document.activeElement)) break;
   }
-  await switchTo(page, OTHER);
-  await expect(page.locator("[data-context-removed]")).toHaveCount(0);
-  await input(page).fill("Independent session B draft");
-  await page.locator("[data-context-disclose]").click();
-  await page.locator('[data-context-drop="stage_tab"]').click();
-  await page.locator("[data-context-disclose]").click();
-  await switchTo(page, SID);
-  await expect(page.locator("[data-context-summary]")).toHaveAttribute("data-context-keys", keys!);
+  await expect(page.getByRole("link", { name: "Skip to composer" })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(input(page)).toBeFocused();
   await expect(input(page)).toHaveValue("Retain session A draft");
-  expect(c.mutations.filter(r => r.path !== "/context/preview")).toEqual([]);
+  expect(await keysOf(page)).toBe(keys);
+  await expect(viewToggle(page)).toHaveAttribute("aria-pressed", "false");
+  expect(await modelName(page)).toBe(model);
+  expect(new URL(page.url()).hash).toBe(route);
+
+  await switchTo(page, OTHER);
+  // The exclusion belongs to session A, not to the tab.
+  await expect(viewToggle(page)).toHaveAttribute("aria-pressed", "true");
+  expect(await keysOf(page)).toContain("view");
+  await input(page).fill("Independent session B draft");
+  await viewToggle(page).click();
+  await expect(viewToggle(page)).toHaveAttribute("aria-pressed", "false");
+  await switchTo(page, SID);
+  expect(await keysOf(page)).toBe(keys);
+  await expect(input(page)).toHaveValue("Retain session A draft");
+  expect(c.mutations).toEqual([]);
 
   await expect(send(page)).toBeEnabled();
   await send(page).click();
   await expect.poll(() => c.pending !== null).toBe(true);
-  const writes = c.mutations.filter(r => r.path !== "/context/preview");
+  const writes = c.mutations;
   expect(writes).toHaveLength(1);
   expect(writes[0]!.path).toBe(`/sessions/${SID}/prompt`);
-  expect(writes[0]!.body).toEqual({ text: "Retain session A draft", context: null, expected_model_revision: c.model.revision });
+  // The exclusion is on the wire, not just on the screen: an operator who has
+  // shaped the envelope gets an EXPLICIT context — `view` absent because they
+  // switched it off — rather than the `null` that means "whatever the
+  // workspace implies". The three per-message settings ride with it
+  // (2026-09-20); they are explicit prompt members, so a body that omitted
+  // them would be a body the server had to guess at.
+  expect(writes[0]!.body).toEqual({ text: "Retain session A draft",
+    context: { part: "bracket", stage_tab: "viewport", inspector_tab: "results" },
+    expected_model_revision: c.model.revision,
+    interaction_mode: "modeling", dfm_mode: "off", thinking_level: "medium" });
   await input(page).fill("Newer unsent draft");
-  await page.locator("[data-context-disclose]").click();
-  await page.locator('[data-context-drop="view"]').click();
-  await page.locator("[data-context-disclose]").click();
+  await viewToggle(page).click(); // put the view back, AFTER the send
+  await expect(viewToggle(page)).toHaveAttribute("aria-pressed", "true");
   await switchTo(page, OTHER);
-  await expect(page.locator('[data-context-removed="stage_tab"]')).toBeVisible();
-  await expect(page.locator('[data-context-removed="view"]')).toHaveCount(0);
+  await expect(viewToggle(page)).toHaveAttribute("aria-pressed", "false");
   await expect(input(page)).toHaveValue("Independent session B draft");
   // Later context edits and switching cannot rewrite the already submitted body.
   expect(c.pending!.request().postDataJSON()).toEqual(writes[0]!.body);
   await c.release();
   await switchTo(page, SID);
   await expect(input(page)).toHaveValue("Newer unsent draft");
-  expect(c.mutations.filter(r => r.path !== "/context/preview")).toEqual(writes);
+  expect(c.mutations).toEqual(writes);
   expect(c.faults).toEqual([]);
 });
 
-test("audit: explicit added view survives no-session remount and first-send creation without leaking to another session", async ({ page }) => {
+/*
+ * REWRITTEN 2026-09-20, same strike as the case above. The `part` drop and the
+ * disclosure it was made through are gone; what made the envelope EXPLICIT is
+ * not. Switching the view toggle off and on again puts `view` in the `added`
+ * set — the operator asked for it rather than inheriting it — which is the
+ * state this case exists to follow through a session-less draft into the
+ * session its first Send creates.
+ */
+test("audit: an explicitly added view survives the first-send creation without leaking to another session", async ({ page }) => {
   const c = await setup(page);
   await page.route("**/api/v1/sessions", route => route.request().method() === "GET" && c.created === null
     ? route.fulfill({ json: { status: "ok", sessions: [], profiles: [] } }) : route.fallback());
@@ -196,13 +228,12 @@ test("audit: explicit added view survives no-session remount and first-send crea
   await page.goto("/#/p/bracket");
   await expect(page.locator("[data-composer]")).toHaveAttribute("data-session-id", "");
   await input(page).fill("Explicit view-only first request");
-  await page.locator("[data-context-disclose]").click();
-  await page.locator('[data-context-drop="part"]').click();
-  await page.locator('[data-context-drop="view"]').click();
-  await page.locator("[data-context-add-view]").click();
-  await page.locator("[data-context-disclose]").click();
-  const keys = "stage_tab inspector_tab view";
-  await expect(page.locator("[data-context-summary]")).toHaveAttribute("data-context-keys", keys);
+  await viewToggle(page).click();
+  await expect(viewToggle(page)).toHaveAttribute("aria-pressed", "false");
+  await viewToggle(page).click();
+  await expect(viewToggle(page)).toHaveAttribute("aria-pressed", "true");
+  const keys = "part stage_tab inspector_tab view";
+  expect(await keysOf(page)).toBe(keys);
   // C25 (2026-09-20) — COVERAGE LOST, recorded rather than quietly dropped.
   //
   // This step used to hide and reveal the Stream, which unmounted `StreamPanel`
@@ -216,18 +247,22 @@ test("audit: explicit added view survives no-session remount and first-send crea
   // assert the opposite. What survives is the envelope's stability across the
   // steps that remain, and the first-send assertions below, which are the ones
   // that actually catch leakage into another session.
-  await expect(page.locator("[data-context-summary]")).toHaveAttribute("data-context-keys", keys);
-  expect(c.mutations.filter(r => r.path !== "/context/preview")).toEqual([]);
+  expect(await keysOf(page)).toBe(keys);
+  expect(c.mutations).toEqual([]);
   await expect(send(page)).toBeEnabled();
   await send(page).click();
   await expect.poll(() => c.pending !== null).toBe(true);
   await expect(page.locator("[data-composer]")).toHaveAttribute("data-session-id", "synthetic-created");
-  await expect(page.locator("[data-context-summary]")).toHaveAttribute("data-context-keys", keys);
-  expect(c.mutations.filter(r => r.path !== "/context/preview").map(r => r.path)).toEqual(["/sessions", "/sessions/synthetic-created/prompt"]);
-  expect(c.pending!.request().postDataJSON()).toEqual({ text: "Explicit view-only first request", context: { stage_tab: "viewport", inspector_tab: "results", view: "iso" }, expected_model_revision: c.created!.model_state.revision });
+  expect(await keysOf(page)).toBe(keys);
+  expect(c.mutations.map(r => r.path)).toEqual(["/sessions", "/sessions/synthetic-created/prompt"]);
+  expect(c.pending!.request().postDataJSON()).toEqual({ text: "Explicit view-only first request",
+    context: { part: "bracket", stage_tab: "viewport", inspector_tab: "results", view: "iso" },
+    expected_model_revision: c.created!.model_state.revision,
+    interaction_mode: "modeling", dfm_mode: "off", thinking_level: "medium" });
   await c.release();
   await switchTo(page, SID);
-  await expect(page.locator("[data-context-removed]")).toHaveCount(0);
-  await expect(page.locator("[data-context-summary]")).toHaveAttribute("data-context-keys", "part stage_tab inspector_tab view");
+  // The other session never saw the toggle: its envelope is the implied one.
+  await expect(viewToggle(page)).toHaveAttribute("aria-pressed", "true");
+  expect(await keysOf(page)).toBe("part stage_tab inspector_tab view");
   expect(c.faults).toEqual([]);
 });

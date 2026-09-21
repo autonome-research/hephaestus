@@ -96,7 +96,11 @@ for (const width of [843, 1000, 1024, 1279, 1440]) {
     const composer = (await page.locator("[data-composer]").boundingBox())!;
     const panel = (await page.locator('[data-testid="stream-panel"]').boundingBox())!;
     expect(composer.height).toBeLessThanOrEqual(panel.height * 0.55);
-    for (const selector of ["[data-model-button]", "[data-context-summary]", "[data-composer-input-row]", "[data-composer-hint]"]) {
+    // `[data-context-summary]` is struck (2026-09-20) — the composer no longer
+    // narrates the envelope it sends. Its slot on this row is held by
+    // `[data-composer-shell-bar]`, the message box's own settings row, so the
+    // clause still counts every row of composer chrome and not one fewer.
+    for (const selector of ["[data-model-button]", "[data-composer-shell-bar]", "[data-composer-input-row]", "[data-composer-hint]"]) {
       const box = (await page.locator(selector).boundingBox())!;
       expect(box.y).toBeGreaterThanOrEqual(composer.y);
       expect(box.y + box.height).toBeLessThanOrEqual(composer.y + composer.height);
