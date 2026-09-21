@@ -35,6 +35,23 @@ const UNIT_SUFFIXES: readonly (readonly [string, string])[] = [
 ];
 
 /**
+ * How many length dimensions a metric key declares: 1, 2, 3 — or `null` when
+ * it is not a length at all.
+ *
+ * Only lengths are convertible. An angle, a mass and a time each declare a unit
+ * that a LENGTH unit has nothing to say about, and a converter that touched
+ * every number because most of them were millimetres would be the
+ * fabricated-unit failure in a different column (see `state/displayUnit.ts`).
+ */
+export function metricDimension(key: string): 1 | 2 | 3 | null {
+  const upper = key.toUpperCase();
+  if (upper.endsWith("_MM3")) return 3;
+  if (upper.endsWith("_MM2")) return 2;
+  if (upper.endsWith("_MM")) return 1;
+  return null;
+}
+
+/**
  * The unit a metric key declares, or `null`.
  *
  * `null` is a real answer and is rendered as an empty unit cell, not as a
@@ -220,7 +237,9 @@ export function formatRef(ref: string, width = 34): string {
     const kind = artifact[1] ?? "";
     const digest = artifact[3] ?? "";
     const prefix = digest.slice(0, 8);
-    const compact = `${kind} · ${prefix}`;
+    // A COLON, not a middle dot (2026-09-20). `build · d266f257` reads as two
+    // peers; `build: d266f257` reads as a labelled value, which is what it is.
+    const compact = `${kind}: ${prefix}`;
     if (compact.length <= width) return compact;
     // A long kind (build-checkpoint) still yields the digest, not the scheme.
     if (prefix.length > 0 && prefix.length <= width) return prefix;

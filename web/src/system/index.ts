@@ -69,7 +69,7 @@ export {
   formatRef,
   formatValue,
   metricLabel,
-  metricUnit,
+  metricUnit, metricDimension,
   readErrorEnvelope,
   readFactMap,
 } from "./format";

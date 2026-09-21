@@ -30,7 +30,7 @@
 // so the e2e's DOM-vs-JSON comparison reads exactly what it read before.
 
 import type { BuildDocument } from "../../api/types";
-import { useBuild } from "../../api/queries";
+import { useBuild, useProject } from "../../api/queries";
 import { copy } from "../../copy";
 import {
   Button,
@@ -44,12 +44,20 @@ import {
   PanelSection,
   metricLabel,
   metricUnit,
+  metricDimension,
 } from "../../system";
 import { formatSolids } from "../../system/format";
 import { Fact } from "../Fact";
 import { MeasuredText, readMeasured } from "./MeasuredValue";
 import { useWorkspace } from "../../state/react";
 import { visibilityKey, visibilityStore } from "../../state/visibility";
+import {
+  asDisplayUnit,
+  convertedText,
+  displayUnitStore,
+  unitLabel,
+  type DisplayUnit,
+} from "../../state/displayUnit";
 import { useSyncExternalStore } from "react";
 import styles from "./panels.module.css";
 
@@ -57,12 +65,30 @@ import styles from "./panels.module.css";
  * A metric's value as the server sent it, in a form `data-value` can carry.
  *
  * Serialization, never computation: a `bbox_mm` triple becomes its JSON text and
- * a number stays the number. Nothing here rounds, converts units, or combines
- * two metrics — §1's closed list names distances and volumes explicitly, and a
- * client that reformatted a measurement into a different number would be
- * computing one. `formatValue` decides only what a human SEES; `data-value`
- * keeps the server's own bytes.
+ * a number stays the number. Nothing here rounds or combines two metrics —
+ * §1's closed list names distances and volumes explicitly, and a client that
+ * re-counted or merged measurements would be computing one.
+ *
+ * UNIT CONVERSION IS THE ONE EXCEPTION (2026-09-20), and it lands on the far
+ * side of the line this comment already drew: `formatValue` decides only what a
+ * human SEES; `data-value` keeps the server's own bytes. A converted metric is
+ * the SAME measurement said in another unit, and the millimetre value the
+ * server sent is still what `data-value` carries — which is what the e2e's
+ * DOM-versus-JSON comparison reads. See `state/displayUnit.ts`.
  */
+/** The unit column's text: the declared one, or the chosen one for a length. */
+function metricUnitFor(key: string, unit: DisplayUnit): string | null {
+  const dimension = metricDimension(key);
+  return dimension === null ? metricUnit(key) : unitLabel(unit, dimension);
+}
+
+/** The drawn text for a length metric said in `unit`, or `null` to leave it. */
+function convertedMetric(value: unknown, key: string, unit: DisplayUnit): string | null {
+  const dimension = metricDimension(key);
+  if (dimension === null || unit === "mm") return null;
+  return convertedText(value, unit, dimension);
+}
+
 function metricValue(value: unknown): string | number | boolean | null {
   if (value === null || value === undefined) return null;
   if (typeof value === "number" || typeof value === "boolean" || typeof value === "string") {
@@ -77,10 +103,22 @@ export interface ResultsViewProps {
   /** Labels hidden from the viewport scene graph, from `state/visibility.ts`. */
   readonly hidden: ReadonlySet<string>;
   readonly onToggle?: ((label: string) => void) | undefined;
+  /**
+   * The unit LENGTHS are read in. A prop, not a subscription: this component is
+   * a pure function of one build document, and a hook here would make every
+   * caller that renders it standalone provide a query client.
+   */
+  readonly unit?: DisplayUnit | undefined;
 }
 
 /** The panel's rendering half: a pure function of one build document. */
-export function ResultsView({ part, build, hidden, onToggle }: ResultsViewProps): React.JSX.Element {
+export function ResultsView({
+  part,
+  build,
+  hidden,
+  onToggle,
+  unit = "mm",
+}: ResultsViewProps): React.JSX.Element {
   const metrics = build.metrics ?? null;
   /**
    * How many of THIS part's entries are hidden.
@@ -226,10 +264,16 @@ export function ResultsView({ part, build, hidden, onToggle }: ResultsViewProps)
                               this table has no column shape for. It is said,
                               not stringified; the raw value stays on
                               `data-value` either way. */}
-                          <MeasuredText shape={readMeasured(metrics[name])} />
+                          {/* Converted only when this metric IS a length and
+                              the operator has chosen another unit; otherwise
+                              the server's own rendering stands. `data-value`
+                              above is the millimetre value either way. */}
+                          {convertedMetric(metrics[name], name, unit) ?? (
+                            <MeasuredText shape={readMeasured(metrics[name])} />
+                          )}
                         </Fact>
                       ),
-                      unit: metricUnit(name) ?? "",
+                      unit: metricUnitFor(name, unit) ?? "",
                       attrs: { "data-metric": name },
                     }))}
                   />
@@ -252,6 +296,14 @@ export function ResultsPanel(): React.JSX.Element {
     visibilityStore.getSnapshot,
     visibilityStore.getSnapshot,
   );
+  // The container resolves the display unit; the view takes it as a prop and
+  // stays a pure function of one build document.
+  const chosen = useSyncExternalStore(
+    displayUnitStore.subscribe,
+    displayUnitStore.getSnapshot,
+    displayUnitStore.getSnapshot,
+  );
+  const project = useProject();
 
   if (part === null) {
     return <EmptyState icon="cube" title={copy.inspector.noPartTitle} body={copy.inspector.selectPart} />;
@@ -262,6 +314,7 @@ export function ResultsPanel(): React.JSX.Element {
       part={part}
       build={build.data}
       hidden={hidden}
+      unit={chosen ?? asDisplayUnit(project.data?.units)}
       onToggle={(label) => {
         visibilityStore.toggle(part, label);
       }}
