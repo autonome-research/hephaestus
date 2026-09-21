@@ -78,10 +78,15 @@ export function Stage(): React.JSX.Element {
   // The handle is keyboard-operable too (§3.13.4): a drag-only affordance is a
   // control a keyboard user cannot reach at all.
   const onHandleKey = (event: React.KeyboardEvent<HTMLDivElement>): void => {
-    const current = shell.drawerHeight ?? 0;
-    const host = hostRef.current;
-    const fallback = host === null ? 300 : host.getBoundingClientRect().height * 0.32;
-    const base = current === 0 ? Math.round(fallback) : current;
+    // MEASURE THE DRAWER; DO NOT RE-DERIVE IT (fixed 2026-09-20). Until the
+    // operator sets a height, the row is the CSS token
+    // `clamp(200px, 32vh, 420px)` — 32% of the VIEWPORT. This read it back as
+    // 32% of the STAGE, which is the viewport minus the header, so at 843x800
+    // the first ArrowUp stepped from 239 to 255 against a drawer that was
+    // drawn at 256: "make it taller" made it a pixel shorter. The drawer's own
+    // box is the only base that cannot disagree with what is on screen.
+    const drawn = hostRef.current?.querySelector("[data-drawer-open]")?.getBoundingClientRect().height ?? 0;
+    const base = shell.drawerHeight ?? (drawn > 0 ? Math.round(drawn) : 300);
     if (event.key === "ArrowUp") shellStore.setDrawerHeight(base + 16);
     else if (event.key === "ArrowDown") shellStore.setDrawerHeight(base - 16);
     else return;
