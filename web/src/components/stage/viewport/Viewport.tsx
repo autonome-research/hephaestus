@@ -45,8 +45,6 @@
 // measured on a `ready` canvas, where every overlay is exactly where it was.
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { flushSync } from "react-dom";
-import { shellStore } from "../../../state/shell";
 import { WorkspaceError } from "../../../api/client";
 import { copy } from "../../../copy";
 import { useBuild } from "../../../api/queries";
@@ -60,12 +58,9 @@ import { Badge, Button, Chip, EmptyState, type IconId } from "../../../system";
 import type { SolidIndex } from "../../../viewport/scene";
 import { appearanceStore } from "../../../state/appearance";
 import { AppearanceControls } from "./AppearanceControls";
-import { AxisTriad } from "./AxisTriad";
 import { ExplodeSlider } from "./ExplodeSlider";
-import { GridReadout } from "./GridReadout";
 import { SectionControl, type SceneBounds } from "./SectionControl";
 import { SectionPlate } from "./SectionPlate";
-import { ViewCube } from "./ViewCube";
 import styles from "./Viewport.module.css";
 
 type GlbState =
@@ -120,7 +115,6 @@ export function emptyPinAbsence(
  */
 export const BAND_YIELD_WIDTH = 560;
 const SECTION_YIELD_WIDTH = 450;
-const LEGEND_YIELD_WIDTH = 330;
 
 /**
  * The states whose TITLE is the whole fact, so the plate prints no sentence.
@@ -161,7 +155,7 @@ export function ViewportAbsence({
             icon={ABSENCE_ICON[state]}
             title={copy.viewport.notBuilt.title(name)}
             action={<Button variant="secondary" data-unbuilt-conversation="" onClick={() => {
-              flushSync(() => shellStore.setStreamOpen(true));
+              // The Stream is always mounted, so this only moves focus.
               const target = document.querySelector<HTMLElement>("[data-composer-input]:not(:disabled)")
                 ?? document.querySelector<HTMLElement>("#composer");
               target?.focus({ preventScroll: true });
@@ -254,15 +248,15 @@ export function Viewport(): React.JSX.Element {
   const framedRef = useRef<string | null>(null);
   const framingKey = `${view}|${explodeT > 0 ? "exploded" : "collapsed"}`;
   const [engineReady, setEngineReady] = useState(false);
-  // The engine as *state* as well as a ref, for the one child that needs the
-  // object rather than the fact of it: `AxisTriad` subscribes to the engine's
-  // frame signal, and a subscription cannot be built from a ref that React never
-  // tells it changed. Written and cleared in the same effect that owns the ref.
-  const [engine, setEngine] = useState<ViewportEngine | null>(null);
+  // The engine as *state* as well as a ref. Its one consumer was `AxisTriad`,
+  // which subscribed to the engine's frame signal; the triad is struck, so the
+  // setter is kept (the effect that owns the ref writes it) and the value is
+  // not read. Left as state rather than collapsed to a ref because the effect
+  // below clears it on teardown and a ref would hide that from React.
+  const [, setEngine] = useState<ViewportEngine | null>(null);
   const [webglError, setWebglError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [bounds, setBounds] = useState<SceneBounds | null>(null);
-  const [scale, setScale] = useState(0);
   /** §5.5 C18: the stage column's width, for the bottom band's yield ladder. */
   const [stageWidth, setStageWidth] = useState<number | null>(null);
   const bandRef = useRef<HTMLDivElement | null>(null);
@@ -293,7 +287,6 @@ export function Viewport(): React.JSX.Element {
     width: 0,
   });
   /** §3.11.5's grid spacing, so the readout describes the grid it is next to. */
-  const [step, setStep] = useState(0);
   // The ref whose geometry the engine last finished loading. It is written only
   // from the load callback; with no pin at all there is nothing on the canvas,
   // which `displayedRef` below expresses without a second write.
@@ -304,8 +297,6 @@ export function Viewport(): React.JSX.Element {
     // its pose. Explicit view navigation and Fit still frame normally.
     framedRef.current = `${viewName}|${workspaceStore.getSnapshot().explode_t > 0 ? "exploded" : "collapsed"}`;
     workspaceStore.update({ view: viewName });
-    setScale(engineRef.current?.scale() ?? 0);
-    setStep(engineRef.current?.gridStep() ?? 0);
   }, []);
 
   const onFit = useCallback((): void => {
@@ -315,8 +306,6 @@ export function Viewport(): React.JSX.Element {
     // an orbit: `framedRef` would otherwise skip `frame()` for the same key.
     live.frame(view, explodeT > 0);
     framedRef.current = framingKey;
-    setScale(live.scale());
-    setStep(live.gridStep());
   }, [view, explodeT, framingKey]);
 
   // -- the engine: one per canvas, for the canvas's life --------------------
@@ -359,8 +348,6 @@ export function Viewport(): React.JSX.Element {
     const observer = new ResizeObserver(() => {
       const rect = host.getBoundingClientRect();
       engineRef.current?.resize(rect.width, rect.height);
-      setScale(engineRef.current?.scale() ?? 0);
-      setStep(engineRef.current?.gridStep() ?? 0);
       setStageWidth(rect.width);
     });
     observer.observe(host);
@@ -407,8 +394,6 @@ export function Viewport(): React.JSX.Element {
         engine.setHidden(hidden);
         engine.frame(view, explodeT > 0);
         framedRef.current = framingKey;
-        setScale(engine.scale());
-        setStep(engine.gridStep());
       })
       .catch((error: unknown) => {
         if (!cancelled) setLoadError(String(error));
@@ -432,8 +417,6 @@ export function Viewport(): React.JSX.Element {
     if (!engineReady || framedRef.current === framingKey) return;
     engineRef.current?.frame(view, explodeT > 0);
     framedRef.current = framingKey;
-    setScale(engineRef.current?.scale() ?? 0);
-    setStep(engineRef.current?.gridStep() ?? 0);
   }, [framingKey, view, explodeT, engineReady]);
 
   // -- visibility: a scene-graph property (§5.4) ----------------------------
@@ -605,19 +588,18 @@ export function Viewport(): React.JSX.Element {
 
       {!hasGeometry ? null : (
         <>
-          {plateOwnsWell ? null : <ViewCube />}
-          {/* §3.11.6. Bottom-left with the readout, and — like the readout — an
-              overlay that never changes size, because a Playwright element
-              screenshot composites what is painted over the canvas and G4.5's
-              control region is exactly that frame (see `GridReadout`'s header). */}
-          {plateOwnsWell ? null : <AxisTriad engine={engine} visible={appearance.triad} />}
-          {/* The grid step is a fact about a grid, so it is reported only while
-              there is one. Derived at render rather than cleared from the load
-              effect: an effect that calls `setState` in its own body is the
-              cascading render `react-hooks/set-state-in-effect` refuses, and the
-              answer is a pure function of state we already hold. Off is the same
-              as "no framing": the readout must not describe a grid the operator
-              has hidden. */}
+          {/* §5.5's view cube and §3.11.6's axis triad are STRUCK (2026-09-20).
+              Both were persistent overlays painted over the model itself, which
+              is the one surface the operator came to look at. The cube was also
+              the only control that SET a named view — orbit and the `?view=`
+              route are what remain, and `onCameraSettled` still records the
+              nearest name after an orbit, so the route keeps working and a
+              shared link still reopens on its view. */}
+          {/* §3.11's View / Scale / Grid readout is STRUCK (2026-09-20). It was
+              a plate over the model reporting three facts the operator can see
+              or does not need: the named view is in the URL, the grid's step is
+              visible in the grid, and the scale changes as they zoom. The
+              camera-scale and grid-step state it read is gone with it. */}
           {plateOwnsWell ? null : (
             <AppearanceControls canFit={displayedRef !== null && state === "ready"} onFit={onFit} />
           )}
@@ -629,12 +611,6 @@ export function Viewport(): React.JSX.Element {
               control, the legend last — and no bottom overlay is ever
               absolutely positioned over another. */}
           <div className={styles["band"]} data-viewport-band="" ref={bandRef}>
-            {bandWidth < LEGEND_YIELD_WIDTH || plateOwnsWell ? null : (
-              <GridReadout
-                scale={scale}
-                step={displayedRef === null || !appearance.grid ? 0 : step}
-              />
-            )}
             {/* Under a plate the explode card mounts only while engaged: an
                 explode of 0 authors nothing and the plate is not showing it,
                 but an engaged `t` must stay returnable to 0 (§5.2). */}

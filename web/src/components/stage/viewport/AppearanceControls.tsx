@@ -4,7 +4,7 @@
 // Operator appearance cluster (INTERFACE.md §3.11, §5.5).
 //
 // §3.11 already authors the picture. This strip is the operator chrome that
-// drives it: wireframe, fit, ortho, grid, axis triad, material override. It is
+// drives it: wireframe, fit, ortho, grid, material override. It is
 // a small cluster on the viewport that loads the pinned GLB — not a second
 // inspector, and not a second toolbar.
 //
@@ -38,12 +38,13 @@ const TOGGLE_COPY: Readonly<Record<AppearanceToggle, { label: string; explain: s
   wireframe: copy.viewport.appearance.wireframe,
   ortho: copy.viewport.appearance.ortho,
   grid: copy.viewport.appearance.grid,
-  triad: copy.viewport.appearance.triad,
   materialOverride: copy.viewport.appearance.material,
 };
 
 /** Fit and grid stay on the stage; the rest live behind View (#60). */
-const BEHIND_VIEW = ["wireframe", "ortho", "triad", "materialOverride"] as const;
+// `triad` left this list on 2026-09-20 with the axis triad itself. A toggle
+// whose flag nothing reads is a control that lies about having an effect.
+const BEHIND_VIEW = ["wireframe", "ortho", "materialOverride"] as const;
 
 function FitButton({ canFit, onFit }: AppearanceControlsProps): React.JSX.Element {
   return canFit ? (
