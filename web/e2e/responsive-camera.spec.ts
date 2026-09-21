@@ -48,7 +48,28 @@ test('Fit follows resized extents; deliberate orbit/zoom/pan and held artifact s
     await page.setViewportSize({ width, height: 800 });
     await expect.poll(async () => (await snapshot()).size[0]).toBe(await stageWidthFor(page, width));
     const state = await snapshot();
-    expect(state.fit).toBe(true); expect(state.eye).toEqual(initial.eye); expect(state.target).toEqual(initial.target); expect(state.up).toEqual(initial.up); expect(state.pin).toBe(initial.pin);
+    /*
+     * A FIXED LENS FITS BY MOVING (2026-09-20). This asserted the EYE was
+     * identical across every band, which was true while the default projection
+     * was orthographic: an ortho camera fits by changing its extents and never
+     * its position. Under perspective the lens is fixed and the fit is a
+     * standoff, so a narrower canvas steps the camera back — measured here at
+     * 363.52 to 387.03 per axis. Requiring the eye to hold still is requiring
+     * the fov to change, which is what magnified the near half of the model off
+     * the canvas (`viewport/scene.ts::applyPerspectiveFraming`).
+     *
+     * What the clause is for is unchanged and is asserted as such: a resize
+     * re-fits without becoming a NAVIGATION. The view direction, the target,
+     * the up and the held artifact are the framing's at every band, and the
+     * camera is still reported as fitted.
+     */
+    expect(state.fit).toBe(true); expect(state.target).toEqual(initial.target); expect(state.up).toEqual(initial.up); expect(state.pin).toBe(initial.pin);
+    const ray = (eye: readonly number[], target: readonly number[]): number[] => {
+      const away = eye.map((value, axis) => value - (target[axis] ?? 0));
+      const length = Math.hypot(...away) || 1;
+      return away.map(value => Number((value / length).toFixed(9)));
+    };
+    expect(ray(state.eye, state.target)).toEqual(ray(initial.eye, initial.target));
     if (width === 843) expect(state.scale).toBeGreaterThan(initial.scale);
   }
   const canvas = page.locator('[data-viewport-canvas]'); const box = (await canvas.boundingBox())!;
