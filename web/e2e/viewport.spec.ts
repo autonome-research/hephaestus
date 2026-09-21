@@ -586,10 +586,15 @@ test("viewport overlays are pairwise non-intersecting at 1280x800 and at the yie
   }
 
   const steady = await overlayBoxes(page);
+  // FOUR, not five, since 2026-09-20: `GridReadout` is struck (§4.2) and the
+  // plate header only mounts behind a rendered section. The floor moves with
+  // the inventory rather than being left where a passing count used to be —
+  // a floor above what can mount would fail every run, and one below it stops
+  // being a floor at all.
   expect(
     steady.length,
     `expected the resting overlay set, saw ${steady.map((entry) => entry.selector).join(", ")}`,
-  ).toBeGreaterThanOrEqual(5);
+  ).toBeGreaterThanOrEqual(4);
   assertPairwiseDisjoint(steady);
 
   // C18's yield width: shrink the window until the stage column measures below
@@ -623,10 +628,12 @@ test("viewport overlays are pairwise non-intersecting at 1280x800 and at the yie
 // The sweep above has never run against a mounted plate: this test is the one
 // that engages a section, waits for the server's rendered plate, and only then
 // measures. With the plate up, §5.3 says the plate owns the well
-// (J-web-viewport-2), so the four CANVAS-AUTHORING overlays unmount — a view
-// cube, an appearance cluster, an axis triad and a grid readout all address or
-// describe a live camera the reader is no longer looking at — and the section
-// control stays, because it is the exit.
+// (J-web-viewport-2), so the CANVAS-AUTHORING overlays unmount — a view cube
+// and an appearance cluster both address a live camera the reader is no longer
+// looking at — and the section control stays, because it is the exit. The axis
+// triad and the grid readout were two more of them until both were struck
+// outright (§4.2, 2026-09-20), which is why the list below is two names
+// shorter: an overlay that never mounts cannot demonstrate unmounting.
 //
 // THE SURFACE FLOOR IS THE POINT. `overlayBoxes` skips a selector that matches
 // nothing, so a plate that fails to mount would shrink the set to the surfaces

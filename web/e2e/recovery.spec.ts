@@ -25,10 +25,12 @@ async function startFromUI(page: Page): Promise<string> {
   await dialog.getByRole("button", { name: "Create conversation", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await input(page).fill(`${world().ask.sentinel}: ask which wall thickness before changing anything`);
+  // Send is ICON-ONLY (2026-09-20) — its accessible name is "Send message" now,
+  // so it is addressed by its DOM hook rather than by a word that moved.
   await expect(page.locator("[data-composer-send]")).not.toHaveAttribute("aria-disabled", "true");
   const sid = await page.locator("[data-composer]").getAttribute("data-session-id");
   expect(sid).toBeTruthy();
-  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await page.locator("[data-composer-send]").click();
   await expect(ask(page)).toHaveAttribute("data-ask-state", "answerable");
   await expect(page.locator('[data-current-turn="Waiting for your answer"]')).toBeVisible();
   return sid!;

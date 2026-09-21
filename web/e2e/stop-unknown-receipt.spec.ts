@@ -44,7 +44,7 @@ test("lost browser prompt response plus dropped Stop must allow same-run explici
   let runId: string | null = null;
   try {
     await page.locator("[data-composer-input]").fill(world().ask.sentinel);
-    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await page.locator("[data-composer-send]").click();
     await expect(page.locator('[data-current-turn="Waiting for your answer"]')).toBeVisible();
     const waiting = await api<SessionModelDocument>(`/sessions/${sid}/model`);
     runId = waiting.execution.active_run_id;
@@ -72,7 +72,7 @@ test("lost browser prompt response plus dropped Stop must allow same-run explici
     await expectReadyGeometry(page, build.artifact_ref);
     await page.screenshot({ path: info.outputPath("same-run-retry.png") });
     await expect(page.getByRole("button", { name: "Retry Stop", exact: true })).toBeEnabled();
-    await expect(page.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
+    await expect(page.locator("[data-composer-send]")).toBeDisabled();
     await page.getByRole("button", { name: "Retry Stop", exact: true }).click();
     await expect(page.locator("[data-composer-cancel]")).toHaveCount(0);
     const terminal = await api<SessionModelDocument>(`/sessions/${sid}/model`);

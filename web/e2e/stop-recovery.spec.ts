@@ -63,7 +63,7 @@ for (const scenario of ["dropped request with explicit retry", "dropped request 
       turn = page.waitForResponse(r => r.url().endsWith(`/sessions/${sid}/prompt`), { timeout: 150_000 })
         .then(async response => await response.json() as PromptDocument);
       await page.locator("[data-composer-input]").fill(world().ask.sentinel);
-      await page.getByRole("button", { name: "Send", exact: true }).click();
+      await page.locator("[data-composer-send]").click();
     } else turn = api<PromptDocument>(`/sessions/${sid}/prompt`, { method: "POST", signal: AbortSignal.timeout(150_000),
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: world().ask.sentinel,
         expected_model_revision: created.model_state.revision }) });
