@@ -138,6 +138,28 @@ function providersJson(): string {
   return readFileSync(join(serve.projectRoot, ".heph", "providers.json"), "utf8");
 }
 
+/**
+ * Open the workspace and reveal the providers surface.
+ *
+ * §23's panel MOVED 2026-09-20: it is inside the composer's model menu rather
+ * than a section of the side rail. The two belong behind one control — the
+ * list above it chooses among models a credential already makes available, and
+ * this is the only place that signs in, adopts a discovered credential and
+ * names the egress hosts — so "choose a model" and "get a model to choose" are
+ * one door instead of two surfaces that can disagree about what is configured.
+ *
+ * Nothing about §23's contracts moved with it: every hook below is the same
+ * hook on the same element, and every route is unchanged. What the cases need
+ * is one more click to get to it, which is what this is.
+ */
+async function openProviders(page: Page, on: Serve = serve): Promise<void> {
+  await page.goto(`${on.baseUrl}/#t=${on.token}`);
+  const control = page.locator("[data-model-button]");
+  await expect(control).toBeVisible({ timeout: 90_000 });
+  await control.click();
+  await expect(page.getByRole("group", { name: "Choose model" })).toBeVisible();
+}
+
 test.describe.configure({ mode: "serial" });
 
 test.beforeAll(async () => {
@@ -153,7 +175,7 @@ test.afterAll(() => {
 // ---------------------------------------------------------------------------
 
 test("the panel renders the zero-config state and names agent_unavailable", async ({ page }) => {
-  await page.goto(`${serve.baseUrl}/#t=${serve.token}`);
+  await openProviders(page);
 
   // §23.0: "Today a project with no `.heph/providers.json` serves every read
   // route and refuses every session route with `agent_unavailable`. That
@@ -178,7 +200,7 @@ test("the panel renders the zero-config state and names agent_unavailable", asyn
 // ---------------------------------------------------------------------------
 
 test("discovery lists what exists, by four fields and no secret", async ({ page }) => {
-  await page.goto(`${serve.baseUrl}/#t=${serve.token}`);
+  await openProviders(page);
   const run = page.locator("[data-discovery-run]");
   await expect(run).toHaveCount(1, { timeout: 90_000 });
 
@@ -239,7 +261,7 @@ test("a discovered but unadopted source leaves sessions refusing exactly as befo
 });
 
 test("one explicit adoption names the source in providers.json at 0600", async ({ page }) => {
-  await page.goto(`${serve.baseUrl}/#t=${serve.token}`);
+  await openProviders(page);
   await page.locator("[data-discovery-run]").click();
 
   const local = page.locator('[data-discovery-kind="local_endpoint"]');
@@ -350,7 +372,7 @@ test("a remote endpoint needs a typed acknowledgement and then is listed permane
   // §23.13: "A silent redirection is not available; a loud one is." The record
   // is on disk AND on screen, permanently.
   expect(providersJson()).toContain(host);
-  await page.goto(`${serve.baseUrl}/#t=${serve.token}`);
+  await openProviders(page);
   await expect(page.locator(`[data-egress-host="${host}"]`)).toHaveCount(1, { timeout: 90_000 });
 });
 
@@ -361,7 +383,7 @@ test("a remote endpoint needs a typed acknowledgement and then is listed permane
 test("the key field is a password field with no name, and the scope is not defaulted", async ({
   page,
 }) => {
-  await page.goto(`${serve.baseUrl}/#t=${serve.token}`);
+  await openProviders(page);
   const signIn = page.locator("[data-provider-signin]").first();
   await expect(signIn).toBeVisible({ timeout: 90_000 });
   await signIn.click();
@@ -449,7 +471,7 @@ async function runArc(page: Page, serve: Serve): Promise<void> {
     body?: unknown,
     headers: Record<string, string> = {},
   ) => callOn(serve, method, path, body, headers);
-  await page.goto(`${serve.baseUrl}/#t=${serve.token}`);
+  await openProviders(page, serve);
 
   // The process that refuses is the process that will serve: pinned before the
   // attach, so "without restarting" is measured rather than assumed (§23.0).

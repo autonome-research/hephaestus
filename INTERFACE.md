@@ -8087,6 +8087,19 @@ same way: its read side returns `CredentialInfo`, never `Credential`.
 **AMENDED 2026-09-02 (§0.2c) — one section, one eyebrow, and the privacy fact
 where the finger hovers.**
 
+> **AMENDED 2026-09-20 — the panel is not in the rail.** `ProvidersPanel`
+> moved into the composer's model menu. The two belong behind one control: the
+> list above it CHOOSES among models a credential already makes available, and
+> this panel is the only place that signs in, adopts a discovered credential
+> and names the egress hosts — so "choose a model" and "get a model to choose"
+> are one door rather than two surfaces that can disagree about what is
+> configured. Every clause below is unchanged and every hook is on the same
+> element; read "the rail" as "the panel, wherever it is mounted". The one
+> consequence worth stating: the zero-config surface §23.0 promises to someone
+> who is not at a terminal now costs one click to reach, and it is the click
+> they were already going to make, since with no credential there is no model
+> to pick.
+
 **(C13) The provider rail is ONE `MODEL PROVIDERS` section.** The shipped panel
 rendered the providers heading, then a separate `SIGN IN` eyebrow with its own
 duplicate heading, then the discovery section under a third eyebrow — the
