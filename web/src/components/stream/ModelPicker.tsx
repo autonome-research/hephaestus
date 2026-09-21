@@ -26,8 +26,6 @@ const effortLabel = (effort: ThinkingLevel): string => effort === "low" ? copy.c
 export function ModelPicker({ sessionId, creation, effort = "medium", onEffort }: {
   readonly sessionId: string | null;
   readonly creation?: CreationModelChoice;
-  /** Accepted for source compatibility; metadata now lives in the picker. */
-  readonly detailsContainer?: HTMLElement | null;
   readonly effort?: ThinkingLevel;
   readonly onEffort?: ((effort: ThinkingLevel) => void) | undefined;
 }): React.JSX.Element {

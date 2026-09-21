@@ -24,7 +24,7 @@ export const copy = {
     proposed: "Proposed default", choice: "New-session choice", current: "Current model",
     saved: "Saved selection (not active)", none: "Selection required",
     text: "Text only", images: "Text + images", unknownCapability: "Capability unknown",
-    details: "Full model identity", checking: "Checking session model…",
+    checking: "Checking session model…",
     changing: "Changing model — Send is blocked until confirmed.",
     busy: "Model selection is disabled until the current turn and cleanup finish.",
     uncertain: "Model selection is uncertain. Choose explicitly to reconcile before sending.",
@@ -1553,7 +1553,6 @@ export const copy = {
      * and it is announced, because an unannounced one is indistinguishable from
      * a text box that loses your newline.
      */
-    messageDetails: "Message details",
     sendHint: "Enter sends · Shift+Enter for a new line",
     /**
      * Mid-turn the box stays typable (#63) so the next message can be written,
