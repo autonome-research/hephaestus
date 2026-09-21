@@ -100,9 +100,29 @@
   fill: var(--viewport-cube-side);
 }
 
+/* THE BEVELS ARE THE SOLID'S OWN CHAMFER (2026-09-20), not chrome showing
+   through. They were `--surface-raised` — a panel colour — which read as a gap
+   between three floating plates rather than as the cube's edges, and that
+   reading is what got the twenty edge and corner cells filtered out of the
+   drawing entirely. Shaded from the cube's palette they close the block up:
+   one step lighter than the side face, which is where a chamfer catches light
+   between a lit top and a turned-away side. */
 .cellEdge,
 .cellCorner {
-  fill: var(--surface-raised);
+  fill: var(--viewport-cube-side);
+}
+
+/* A chamfer that meets the top catches what the top catches, a little less. */
+.cellEdge[data-cube-facing="z"],
+.cellCorner[data-cube-facing="z"] {
+  fill: var(--viewport-cube-top);
+  opacity: 0.82;
+}
+
+/* …and one that meets the far side stays with it. */
+.cellEdge[data-cube-facing="y"],
+.cellCorner[data-cube-facing="y"] {
+  fill: var(--viewport-cube-far);
 }
 
 /* A face word, painted ONTO its face by the cell's own affine (see

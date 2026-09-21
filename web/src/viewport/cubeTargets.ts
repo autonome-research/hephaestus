@@ -77,21 +77,25 @@ const SCALE = 20;
 /**
  * How much of a half-edge a face cell keeps; the rest is bevel.
  *
- * ONE (2026-09-20), which is to say NO BEVEL: a face cell is the whole face
- * and the edge and corner cells collapse to nothing.
+ * 0.5 (restored 2026-09-20): half the face, a quarter of the half-edge to each
+ * neighbouring bevel. §5.2 closes the inventory at twenty-six, and this number
+ * is what gives twenty of them any area at all — at 1 the edge and corner
+ * cells collapse to nothing, which is a way of deleting them that leaves the
+ * array the right length and every assertion about it passing.
  *
- * It was 0.5 — half the face, with the edge and corner cells taking a quarter
- * each — which gave a bevelled ball of twenty-six targets. The gizmo is a
- * plain cube now: `ViewCube.tsx` draws and hits the six faces alone, and with
- * an inset the three visible ones stood apart as separate plates with gaps
- * between them instead of meeting at the cube's own edges.
+ * It WAS set to 1 for a reason, and the reason is answered rather than
+ * dismissed. The complaint was that the three visible faces stood apart as
+ * separate plates with gaps between them instead of meeting at the cube's own
+ * edges — but the gap was the FILL, not the geometry: the bevel cells were
+ * painted `--surface-raised`, a panel colour, so the chamfer read as chrome
+ * showing through. `ViewCube.module.css` shades them from the cube's own
+ * palette now and the block closes up.
  *
- * The edge and corner geometry is left in place rather than deleted. It is
- * the projection's own construction — `targetName` and `cameras.ts` still
- * name every direction it can produce — and degenerate cells simply never
- * reach the component, which filters to faces.
+ * The sizing note above is written for this value: the tightest visible cell
+ * keeps a bounding-box side of about 5px at the current scale, which is a
+ * target a pointer can find rather than a hairline.
  */
-const INSET = 1;
+const INSET = 0.5;
 
 /** Facing-the-eye test. Above float noise, below any real cell (§5.5). */
 const FACING = 1e-6;

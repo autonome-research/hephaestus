@@ -205,6 +205,18 @@ describe("ViewCube — the drawn cells are the visible inventory (§5.2)", () =>
     expect(byKind.edge, "no EDGES drawn — the inventory was filtered").toBeGreaterThan(0);
     expect(byKind.corner, "no CORNERS drawn — the inventory was filtered").toBeGreaterThan(0);
 
+    // …and each one has AREA. `INSET` is what gives the bevel cells any, and at
+    // 1 they collapse to nothing — twenty targets that are present in the DOM,
+    // counted by the assertions above, and impossible to hit. A target that
+    // cannot be pressed is not a target (§5.2).
+    for (const hit of hits) {
+      const box = hit.getAttribute("style") ?? "";
+      const width = Number(/width:\s*([\d.]+)px/.exec(box)?.[1] ?? 0);
+      const height = Number(/height:\s*([\d.]+)px/.exec(box)?.[1] ?? 0);
+      const label = `${hit.getAttribute("data-cube-hit") ?? "?"} ${hit.getAttribute("data-view") ?? "?"}`;
+      expect(Math.min(width, height), `${label} is a hairline (${width}x${height})`).toBeGreaterThanOrEqual(3);
+    }
+
     // And the drawn set is exactly the projection's visible set at this camera,
     // which is the rule that keeps "drawn" and "hittable" the same word.
     const pose = viewAngles("iso")!;
