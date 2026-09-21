@@ -56,7 +56,7 @@ the built assets ship inside the wheel and `--web` serves them from
 | `src/stream/` | §7/§8 transcript model plus composer context, gating, socket resync, history paging, and threading |
 | `src/components/stream/` | Session tabs, Composer, tool chips, thoughts, images, interactive `ask_user`, and transcript rendering |
 | `src/components/ProvidersPanel.tsx`, `src/components/SignInDialog.tsx` | Runtime attachment, provider selection, and credential flows |
-| `src/components/chrome/ExportChrome.tsx`, `src/api/exports.ts` | Export selection, admission, and download flows |
+| `src/components/inspector/ExportPanel.tsx`, `src/api/exports.ts` | Export selection, admission, and download flows |
 | `eslint-rules/no-derived-fact.js` | §1's boundary, made mechanical |
 | `test/fixtures/record-normalized-events.mjs` | Records `normalized-events.json` by running the sidecar's own normalizers; see below |
 
