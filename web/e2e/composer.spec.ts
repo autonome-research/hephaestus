@@ -111,13 +111,15 @@ test.describe("§7A.12 case 1 — the blank canvas reaches the workspace", () =>
     // #114: idle composer is context + textarea + Send. No model chip.
     await expect(composer.locator("[data-composer-model]")).toHaveCount(0);
     await expect(
-      composer.locator("[data-composer-input-row] [data-composer-send]"),
+      composer.locator("[data-composer-input-action] [data-composer-send]"),
     ).toHaveCount(1);
     expect(
       await composer.locator("[data-composer-input-row] button, [data-composer-input-row] [role='button']").count(),
-    ).toBe(1);
+    ).toBe(0);
     const sendBox = await composer.locator("[data-composer-send]").boundingBox();
-    const inputRowBox = await composer.locator("[data-composer-input-row]").boundingBox();
+    // 2026-09-20: the outer toolbar is struck and every message control sits on
+    // the message box's own bottom row, so THAT is the box Send must be inside.
+    const inputRowBox = await composer.locator("[data-composer-shell-bar]").boundingBox();
     expect(sendBox).not.toBeNull();
     expect(inputRowBox).not.toBeNull();
     const within = (
@@ -131,11 +133,10 @@ test.describe("§7A.12 case 1 — the blank canvas reaches the workspace", () =>
     expect(within(sendBox!, inputRowBox!)).toBe(true);
     // Stable context/input core, visible keyboard hint, then bounded details.
     // No empty action row/Stop without authority; chips mount only on Preview.
-    expect(
-      await composer.evaluate((form) => form.children.length),
-    ).toBe(4);
+    // Two children since the toolbar was struck (2026-09-20).
+    expect(await composer.evaluate((form) => form.children.length)).toBe(2);
     await expect(composer.locator("[data-composer-hint]")).toHaveText("Enter sends · Shift+Enter for a new line");
-    await expect(composer.getByRole("region", { name: "Message details" })).toContainText("Full model identity");
+    await expect(composer.locator("[data-model-button]")).toHaveAttribute("title", /Current model/);
     await expect(composer.locator("[data-composer-details] [data-composer-send]")).toHaveCount(0);
     await expect(composer).toHaveAttribute("data-cancel-state", "unavailable");
     await expect(composer.locator("[data-composer-cancel]")).toHaveCount(0);
@@ -146,9 +147,7 @@ test.describe("§7A.12 case 1 — the blank canvas reaches the workspace", () =>
     // state, the RESTING line mounts no Add-current-view — the gap the line
     // copy exists for is not this one. The disclosure's own copy remains the
     // route on the blank canvas.
-    await expect(
-      composer.locator("[data-context-summary] [data-context-add-view]"),
-    ).toHaveCount(0);
+    await expect(composer.locator("[data-composer-shell-bar] [data-context-add-view]")).toHaveCount(1);
     await expect(composer.locator("[data-context-disclose]")).toHaveCount(1);
     await composer.locator("[data-context-disclose]").click();
     await expect(composer.locator("[data-context-add-view]")).toHaveCount(1);
@@ -275,7 +274,7 @@ test.describe("§7A.12 case 2 — the context envelope", () => {
 
     // §6.4: the two DFM controls live on the inspector panel, not the
     // composer. The fixture starts `[dfm] auto_run = false`.
-    await expect(composer.locator("[data-composer-dfm]")).toHaveCount(0);
+    await expect(composer.locator("[data-composer-dfm]")).toHaveCount(1);
     await expect(composer.locator("[data-dfm-auto-run-toggle]")).toHaveCount(0);
     await expect(composer.locator("[data-dfm-run]")).toHaveCount(0);
     await page.locator('[data-inspector-tab="dfm"]').click();
@@ -302,12 +301,13 @@ test.describe("§7A.12 case 2 — the context envelope", () => {
     await expect(summary).not.toContainText(PART);
     await composer.locator("[data-context-disclose]").click();
 
-    // Add current view stays a real action on disclose; POST /context/preview
-    // must still compose the camera token — a disclosure that said the agent
-    // would be told nothing would be the client/server emptiness predicates
-    // disagreeing.
-    await composer.locator("[data-context-add-view]").click();
+    // The compact view control is a toggle: first remove the included view,
+    // then add it back before checking the server-composed preview.
+    const viewControl = composer.locator("[data-context-add-view]");
+    await viewControl.click();
     const viewChip = composer.locator('[data-context-key="view"]');
+    await expect(viewChip).toHaveAttribute("data-context-dropped", "");
+    await viewControl.click();
     await expect(viewChip).not.toHaveAttribute("data-context-dropped", "");
     await expect(composer.locator("[data-context-preview]")).toBeVisible();
     await expect(composer.locator("[data-context-block]")).toContainText("camera view:");

@@ -159,8 +159,8 @@ export async function setup(page: Page, initial = execution()) {
   await page.goto(`/#t=synthetic-local-only`);
   await page.waitForFunction(() => document.querySelector("[data-pin-mode]") !== null);
   await page.evaluate(sid => { location.hash = `#/p/bracket?s=${sid}`; }, SID);
-  const strip = page.locator("[data-stream-strip]");
-  if (await strip.isVisible()) await strip.click();
+  // C25 (2026-09-20): the Stream is always mounted, so there is no collapsed
+  // strip to click through before the composer exists.
   await expect(page.locator("[data-composer-input]")).toBeVisible();
   return control;
 }

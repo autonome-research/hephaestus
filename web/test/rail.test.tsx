@@ -176,12 +176,23 @@ describe("GitDirty — a long path outside parts/ stays one fact, one line", () 
     expect(dirtySideWord({ path: "parts/a.py", part: "a", index: "M", worktree: "." })).toBe(
       copy.gitStatus.index,
     );
-    const stage = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), "../src/components/stage/Stage.tsx"),
+    // §13.1's marking travels with the Script control, and that control has
+    // now moved twice in one day: the struck tab strip -> the Views bar ->
+    // the header, beside the build chip (`components/ScriptToggle.tsx`). What
+    // this assertion is actually about is that the marking is WHEREVER the
+    // control is, so it names the control's own file rather than a location.
+    const script = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../src/components/ScriptToggle.tsx"),
       "utf8",
     );
-    expect(stage).toContain("dirtySideWord");
-    expect(stage).not.toContain("copy.rail.dirtyShort");
+    expect(script).toContain("dirtySideWord");
+    expect(script).not.toContain("copy.rail.dirtyShort");
+    // And it did not stay behind on the bar it left.
+    const views = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../src/components/views/ViewsBar.tsx"),
+      "utf8",
+    );
+    expect(views).not.toContain("dirtySideWord");
   });
 });
 

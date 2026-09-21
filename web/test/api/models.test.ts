@@ -35,13 +35,20 @@ describe("model HTTP contract", () => {
     await expect(selectSessionModel("a/b", selection)).rejects.toThrow("lost write");
     expect(apiJson).toHaveBeenCalledTimes(2);
   });
-  it("fresh create submits the exact explicit choice; prompt carries only a concurrency precondition", async () => {
+  it("fresh create submits the explicit choice; prompt carries reviewed turn controls", async () => {
     vi.mocked(apiJson).mockResolvedValue({ ...modelDoc("new"), profile: "part", part: "part", resumed: false });
     await createSession("part", "part", vision);
     expect(request().body).toEqual({ profile: "part", part: "part", model: { provider_id: vision.provider_id, model_id: vision.model_id } });
     expect(request().headers.has("Idempotency-Key")).toBe(false);
     await sendPrompt("new", "explicit text", null, modelState.revision);
-    expect(request().body).toEqual({ text: "explicit text", context: null, expected_model_revision: modelState.revision });
+    expect(request().body).toEqual({
+      text: "explicit text",
+      context: null,
+      expected_model_revision: modelState.revision,
+      interaction_mode: "modeling",
+      dfm_mode: "off",
+      thinking_level: "medium",
+    });
     expect(request().headers.has("Idempotency-Key")).toBe(false);
   });
 });

@@ -6,7 +6,7 @@
 // columns must be able to sit in 1280px, and nothing in the stream may force
 // a min-content wider than `--stream-width`.
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -45,8 +45,10 @@ describe("shell layout — usable at 1280px, not a 2400px desk", () => {
     // "no media query that changes `grid-template-columns`" survives verbatim,
     // and the grid rule still reads the one token the clamp lives in.
     expect(shell).not.toMatch(/@media[^{]*\{[^}]*grid-template-columns/);
+    // Four tracks since 2026-09-20 (Views | Parts | Stage | Agent); the rule
+    // still reads tokens rather than literals, which is what §4.1(g) is about.
     expect(shell).toMatch(
-      /grid-template-columns:\s*var\(--rail-width\)\s+minmax\(0,\s*1fr\)\s+var\(--stream-width\)/,
+      /grid-template-columns:\s*var\(--views-width\)\s+var\(--rail-width\)\s+minmax\(0,\s*1fr\)\s+var\(--stream-width\)/,
     );
     expect(tokens).not.toMatch(/--stream-width:\s*420px/);
   });
@@ -63,26 +65,27 @@ describe("shell layout — usable at 1280px, not a 2400px desk", () => {
     expect(shell).not.toMatch(/@media[^{]*\{[^}]*grid-template-columns/);
   });
 
-  it("keeps the Stream's open/collapsed track independent when the Rail is hidden", () => {
+  it("keeps the Stream a full column when the Rail is hidden", () => {
     const railHidden =
       /\.body\[data-rail="overlay"\],\s*\.body\[data-rail="hidden"\]\s*\{([^}]*)\}/.exec(
         shell,
       )?.[1] ?? "";
-    const railHiddenCollapsed =
-      /\.body\[data-stream="collapsed"\]\[data-rail="overlay"\],\s*\.body\[data-stream="collapsed"\]\[data-rail="hidden"\]\s*\{([^}]*)\}/.exec(
-        shell,
-      )?.[1] ?? "";
 
-    // The narrow-viewport regression rendered StreamPanel after the state had
-    // opened it, but the later `[data-rail]` rule kept its track at 44px. Both
-    // attributes must participate: hidden Rail + open Stream gets the full
-    // column, while hidden Rail + collapsed Stream keeps only the control.
+    // The narrow-viewport regression rendered StreamPanel while a later
+    // `[data-rail]` rule kept its track at 44px. A hidden Rail must still give
+    // the Stream the full `--stream-width` column.
+    // Views keeps its track when Parts becomes an overlay (2026-09-20).
     expect(railHidden).toMatch(
-      /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+var\(--stream-width\)/,
+      /grid-template-columns:\s*var\(--views-width\)\s+minmax\(0,\s*1fr\)\s+var\(--stream-width\)/,
     );
     expect(railHidden).not.toContain("var(--stream-strip-width)");
-    expect(railHiddenCollapsed).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\);/);
-    expect(shell).toMatch(/\.strip\s*\{[^}]*flex-direction:\s*row/);
+    // A collapsed Agent zeroes its width INLINE (`Shell.tsx`), not here: the
+    // token is an inline custom property and no stylesheet rule can beat one.
+    // The template is untouched either way, so two rules cannot disagree about
+    // the shape (2026-09-20).
+    expect(shell).not.toMatch(/\[data-stream="collapsed"\]\s*\{[^}]*--stream-width/);
+    expect(shell).toMatch(/\[data-stream="collapsed"\]\s*\.stream\s*\{[^}]*overflow:\s*hidden/);
+    expect(shell).not.toContain("--stream-strip-width");
     expect(shell).not.toContain("writing-mode: vertical-rl");
   });
 
@@ -91,9 +94,11 @@ describe("shell layout — usable at 1280px, not a 2400px desk", () => {
       "artifact:build:sha256:83f4822a7943a7baf11b29d15c8af23c341fb4c0bfff352ac44a3f67d4bac82b";
     expect(formatRef(ref).length).toBeLessThan(ref.length);
     expect(formatRef(ref).length).toBeLessThanOrEqual(34);
-    const composer = readFileSync(join(webSrc, "components/stream/Composer.tsx"), "utf8");
-    expect(composer).toMatch(/formatRef\(chip\.value/);
-    expect(composer).toMatch(/CHIP_REF_WIDTH/);
+    // 2026-09-20: the composer's context chips were struck with the readout,
+    // so the pin is the only place a ref is abbreviated for a narrow column.
+    // `formatRef`'s own bound above is what this case is actually about.
+    const pin = readFileSync(join(webSrc, "components/ArtifactPin.tsx"), "utf8");
+    expect(pin).toMatch(/CHIP_REF_WIDTH/);
   });
 
   it("gives the body one definite row so an 800px shell cannot grow", () => {
@@ -145,26 +150,30 @@ describe("stream aside — one child, one row (J-web-stream-1)", () => {
     expect(occurrences.length).toBe(1);
   });
 
-  it("renders exactly one child of the aside in each branch (open and collapsed)", () => {
+  it("renders exactly one child of the aside, unconditionally", () => {
     // A source-level companion to the CSS assertion above: the row template is
-    // only safe to be a single definite row if the aside truly holds one child
-    // per branch. `styles["stream"]` is applied to the <aside> once; below it
-    // the ternary must yield exactly one element per branch.
-    const asideMatch = /<aside className=\{styles\["stream"\]\}[^>]*>([\s\S]*?)<\/aside>/.exec(
+    // only safe to be a single definite row if the aside truly holds ONE child.
+    // Since C25 (2026-09-20) there is no second branch to keep in step — the
+    // Stream has one drawn state — so the assertion is that the child is
+    // `<StreamPanel />` and that nothing branches around it.
+    const asideMatch = /<aside\s+className=\{styles\["stream"\]\}[^>]*>([\s\S]*?)<\/aside>/.exec(
       shellSrc,
     );
     expect(asideMatch, "could not find the stream <aside> in Shell.tsx").not.toBeNull();
-    const body = asideMatch?.[1] ?? "";
-    // Exactly one ternary branching the aside's single child, and it must not
-    // itself contain a sibling element at the top level (a second child would
-    // reintroduce the two-row need this fix removed).
-    expect(body).toMatch(/shell\.streamOpen\s*\?/);
-    // Lazy match past any comment block between `? (` and the first element,
-    // since the open branch is documented in place (§4.1(h)/C25).
-    const openBranch = /shell\.streamOpen\s*\?\s*\([\s\S]*?<StreamPanel\s*\/>/.exec(body);
-    const collapsedBranch = /<ConversationReturn/.exec(body);
-    expect(openBranch, "open branch must render exactly <StreamPanel />").not.toBeNull();
-    expect(collapsedBranch, "collapsed branch must render the strip control").not.toBeNull();
+    const body = (asideMatch?.[1] ?? "").trim();
+    expect(body).toBe("<StreamPanel />");
+  });
+
+  it("keeps a closed region in the grid rather than removing it", () => {
+    // Measured, not inferred: `display: none` drops a grid item from
+    // auto-placement, so closing Parts moved the Stage into the 0px rail track
+    // and handed its `1fr` to the Agent — 852px of chat beside a stage of
+    // nothing. Both closed regions clip instead, and `inert` (not `display`)
+    // is what takes them out of the tab order.
+    expect(shell).not.toMatch(/\[data-(rail="closed"|stream="collapsed")\][^{]*\{[^}]*display:\s*none/);
+    expect(shell).toMatch(/\[data-rail="closed"\]\s*\.rail\s*\{[^}]*overflow:\s*hidden/);
+    expect(shellSrc).toMatch(/shell\.railOpen \? \{\} : \{ inert: "" \}/);
+    expect(shellSrc).toMatch(/!shell\.streamOpen \? \{ inert: "" \}/);
   });
 });
 
@@ -186,55 +195,33 @@ describe("left rail — no dead band between the section list and Working tree",
 });
 
 /*
- * §4.1(f) + §19 item 42, amended 2026-09-01 — repair (b).
+ * §4.1(f) + §19 item 42, amended 2026-09-01, WITHDRAWN 2026-09-20.
  *
  * The breakpoint prose promised "a docked strip with an unread count" and
- * nothing ever built one. The amendment does not build it either: it WITHDRAWS
- * the clause, for two stated reasons — the strip is a control that expands on
- * focus (§4.1(a), §7A.1), so a badge on it would be a number on a thing whose
- * only job is to stop existing; and "unread" is not a fact this product has,
- * since live events are keyed `(run_id, seq)` and historical ones
- * `(session_id, ordinal)` with no read watermark on either side, so a count
- * would be client-side derived state (§1).
+ * nothing ever built one. The 2026-09-01 amendment withdrew the count; C25
+ * has now withdrawn the strip itself, because the Stream is a peer column
+ * with one drawn state and there is nothing to dock or return from.
  *
- * "Normative now: the collapsed Stream strip renders the collapsed strip and
- * nothing else — no count, no dot, no badge." A deferral with no assertion is
- * how the original clause rotted, so the deferral gets one: this is the test
- * that fails when someone adds the badge back without re-entering §19.42.
+ * What survives is the half that was never about the strip: "unread" is not a
+ * fact this product has. Live events are keyed `(run_id, seq)` and historical
+ * ones `(session_id, ordinal)` with no read watermark on either side, so a
+ * count would be client-side derived state (§1). A deferral with no assertion
+ * is how the original clause rotted, so the deferral keeps one.
  */
-describe("§4.1(f) — the collapsed strip renders no count", () => {
-  function source(relative: string): string {
-    return readFileSync(join(webSrc, relative), "utf8");
-  }
-
-  const strip = source("components/stream/ConversationReturn.tsx");
-
-  it("draws the control and its name, and nothing that reports a number", () => {
-    expect(strip).toContain("data-return-state");
-    expect(strip).toContain("currentTurn(conversation");
-    expect(strip).toContain("stripLabel");
-    // No Badge, no count, no unread vocabulary. The strip's whole content is
-    // the icon and the vertical name of the column it expands.
-    expect(strip).not.toMatch(/<Badge/);
-    expect(strip).not.toMatch(/unread/i);
-    expect(strip).not.toMatch(/data-(unread|stream-count|stream-unread)/);
-    expect(strip).not.toMatch(/\.length\b/);
-  });
-
-  it("has no dot or badge in the strip's own stylesheet", () => {
-    // A count does not have to be a number to be a count: §4.1(f) forbids the
-    // dot too, which is the shape this would come back as.
-    const styles = css("components/Shell.module.css");
-    const block = styles.slice(styles.indexOf(".strip"), styles.indexOf(".stripLabel"));
-    expect(block).not.toMatch(/::(before|after)/);
-    expect(block).not.toMatch(/border-radius:\s*50%/);
-  });
-
-  it("keeps no unread copy for it to draw", () => {
-    // The withdrawn clause left no string behind either — a copy key waiting
-    // for a control is the dead surface §0.2b's repair (c) is about. (The
-    // word itself survives in `unknownKind`, where "shown unread" describes an
-    // event outside the vocabulary; it is the KEY that would be the surface.)
+describe("§4.1(f) — no unread count, and nothing left to draw one on", () => {
+  it("keeps no unread copy for a control to draw", () => {
+    // A copy key waiting for a control is the dead surface §0.2b's repair (c)
+    // is about. (The word itself survives in `unknownKind`, where "shown
+    // unread" describes an event outside the vocabulary; it is the KEY that
+    // would be the surface.)
     expect(Object.keys(copy.stream).filter((key) => /unread/i.test(key))).toEqual([]);
+  });
+
+  it("has no return strip left to badge", () => {
+    // The negative half of C25's removal, on disk rather than in prose.
+    expect(existsSync(join(webSrc, "components/stream/ConversationReturn.tsx"))).toBe(false);
+    const styles = css("components/Shell.module.css");
+    expect(styles).not.toContain(".strip");
+    expect(styles).not.toContain(".stripLabel");
   });
 });

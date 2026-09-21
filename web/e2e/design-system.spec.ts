@@ -249,16 +249,26 @@ test("the loaded part clears 4.5:1 against the viewport ground (§3.11.2)", asyn
   expect(ratio).toBeGreaterThanOrEqual(4.5);
 });
 
-// §3.11.5/§3.11.6 — the two overlays that used to describe nothing.
+// §3.11.5/§3.11.6 — the overlays that used to describe nothing.
 //
-// §3.11 opened its list of absences with "no grid and no axis triad — despite
-// `GridReadout`, which is a text box reading `View iso / Scale 172 mm` **about a
-// grid that does not exist**". Both exist now, and this case is the one that
-// keeps the readout honest: the step it prints comes from `engine.gridStep()`,
-// which is the number `display.ts` built the grid from, so a grid drawn at a
-// different spacing than the one reported is a failing test rather than a
-// picture nobody checks.
-test("the grid readout reports the grid that exists, and the triad names its axes (§3.11.5, §3.11.6)", async ({
+// REWRITTEN 2026-09-20, because its subject was struck. §3.11 opened its list
+// of absences with "no grid and no axis triad — despite `GridReadout`, which is
+// a text box reading `View iso / Scale 172 mm` **about a grid that does not
+// exist**". The answer to that was a readout that reported the real
+// `engine.gridStep()` and a triad beside it. Both are now gone from the canvas:
+// the readout because every fact on it is visible in the picture or already in
+// the URL, and the triad because the VIEW CUBE draws the same three axes in the
+// same projection, and an indicator with its own projection is a second answer
+// to "which way is +X" that drifts the moment either is touched.
+//
+// LOST COVERAGE, recorded rather than quietly dropped: this case used to prove
+// the printed step sat on `display.ts::gridStep`'s 1-2-5 ladder and matched the
+// grid actually drawn. With nothing displaying the step there is no surface
+// left to assert it against, so a grid drawn at a spacing other than the one
+// computed would no longer fail here. What survives is the half that is still
+// on screen — the axes name themselves in WORDS, so colour never has to carry
+// the meaning alone (§3.12 one layer down).
+test("the view cube names its axes in words, and the appearance cluster rests at the authored picture (§3.11.6)", async ({
   page,
 }) => {
   await open(page, route(PART, { tab: "viewport" }));
@@ -268,26 +278,20 @@ test("the grid readout reports the grid that exists, and the triad names its axe
     { timeout: 120_000 },
   );
 
-  // A real step, on the 1-2-5 ladder `display.ts::gridStep` walks — never the
-  // em-dash the readout shows before a framing.
-  const step = await page.locator("[data-readout-grid]").innerText();
-  const value = Number.parseFloat(step);
-  expect(Number.isFinite(value) && value > 0, `the readout reports "${step}"`).toBe(true);
-  const decade = 10 ** Math.floor(Math.log10(value) + 1e-9);
-  expect([1, 2, 5, 10]).toContain(Math.round(value / decade));
+  // The axes are drawn inside the cube, in the cube's own basis.
+  await expect(page.locator("[data-view-cube]")).toBeVisible();
+  for (const axis of ["X", "Y", "Z"]) {
+    const drawn = page.locator(`[data-view-cube] [data-axis="${axis}"]`);
+    await expect(drawn).toHaveAttribute("data-axis-facing", /toward|away/);
+    await expect(drawn.locator("text")).toHaveText(axis);
+  }
 
-  // The triad is three lines and three letters. §3.12's rule one layer down:
-  // colour never replaces the letter, so all three axes are named in words a
-  // screen reader and a monochrome print both keep.
-  await expect(page.locator("[data-axis-triad]")).toBeVisible();
   // §5.5's operator cluster: present, defaults matching the authored picture.
-  // Existing selectors above are unchanged; this only adds the new strip.
   await expect(page.locator("[data-appearance]")).toBeVisible();
   for (const [control, pressed] of [
     ["wireframe", "false"],
     ["ortho", "true"],
     ["grid", "true"],
-    ["triad", "true"],
     ["materialOverride", "true"],
   ] as const) {
     await expect(page.locator(`[data-appearance-control="${control}"]`)).toHaveAttribute(
@@ -295,14 +299,14 @@ test("the grid readout reports the grid that exists, and the triad names its axe
       pressed,
     );
   }
-  await expect(page.locator('[data-appearance-control="fit"]')).toBeEnabled();
-  for (const axis of ["x", "y", "z"]) {
-    await expect(page.locator(`[data-axis-label="${axis}"]`)).toHaveText(axis.toUpperCase());
-    await expect(page.locator(`[data-axis="${axis}"]`)).toHaveAttribute(
-      "data-axis-facing",
-      /toward|away/,
-    );
+  // Four flags and nothing else. `triad` left with the axis triad and `fit`
+  // with the framing action it was the only caller of — both 2026-09-20.
+  await expect(page.locator("[data-appearance-control]")).toHaveCount(4);
+  for (const gone of ["triad", "fit"]) {
+    await expect(page.locator(`[data-appearance-control="${gone}"]`)).toHaveCount(0);
   }
+  await expect(page.locator("[data-readout-grid]")).toHaveCount(0);
+  await expect(page.locator("[data-axis-triad]")).toHaveCount(0);
 });
 
 // ---------------------------------------------------------------------------
@@ -369,9 +373,14 @@ test("the shell grid matches §4.1's table at five widths and never overflows", 
   }
 });
 
-test("the Rail-hidden Stream opens as a full peer column and recollapses at a narrow viewport", async ({
+test("the Rail-hidden Stream is a full peer column at a narrow viewport", async ({
   page,
 }) => {
+  // C25 (2026-09-20): the Stream has no collapsed state, so this no longer
+  // round-trips through one. What it still measures is the regression the test
+  // was written for — a later `[data-rail]` rule pinning the Stream's track to
+  // the 44px strip width while the panel was mounted, squeezing it into a
+  // one-word ribbon.
   await open(page, route(PART));
   await page.setViewportSize({ width: 1000, height: 900 });
 
@@ -379,8 +388,6 @@ test("the Rail-hidden Stream opens as a full peer column and recollapses at a na
   await expect(body).toHaveAttribute("data-band", "narrow");
   await expect(body).toHaveAttribute("data-rail", "hidden");
   await expect(body).toHaveAttribute("data-stream", "open");
-  await page.locator('[data-stream-collapse]').click();
-  await expect(body).toHaveAttribute("data-stream", "collapsed");
   await expect(body.locator(":scope > nav")).toHaveCount(1);
   await expect(body.locator(":scope > nav")).toBeHidden();
 
@@ -416,17 +423,6 @@ test("the Rail-hidden Stream opens as a full peer column and recollapses at a na
       };
     });
 
-  const collapsed = await geometry();
-  expect(collapsed.columns).toBe(1);
-  expect(collapsed.streamWidth).toBeCloseTo(collapsed.bodyWidth, 0);
-  expect(collapsed.stageWidth).toBeCloseTo(collapsed.bodyWidth, 0);
-  expect(collapsed.streamRight).toBeCloseTo(collapsed.bodyRight, 0);
-  expect(collapsed.panelWidth).toBeNull();
-  expect(collapsed.overflow).toBe(false);
-
-  await page.locator("[data-stream-strip]").click();
-  await expect(body).toHaveAttribute("data-stream", "open");
-  await expect(body).toHaveAttribute("data-rail", "hidden");
   await expect(page.locator('[data-testid="stream-panel"]')).toBeVisible();
 
   const openGeometry = await geometry();
@@ -445,16 +441,16 @@ test("the Rail-hidden Stream opens as a full peer column and recollapses at a na
   expect(openGeometry.panelWidth ?? 0).toBeGreaterThanOrEqual(openGeometry.streamWidth - 1);
   expect(openGeometry.overflow).toBe(false);
 
-  await page.locator("[data-stream-collapse]").click();
-  await expect(body).toHaveAttribute("data-stream", "collapsed");
-  await expect(body).toHaveAttribute("data-rail", "hidden");
-  await expect(page.locator("[data-stream-strip]")).toBeVisible();
-
-  const recollapsed = await geometry();
-  expect(recollapsed.streamWidth).toBeCloseTo(collapsed.streamWidth, 0);
-  expect(recollapsed.stageWidth).toBeCloseTo(collapsed.stageWidth, 0);
-  expect(recollapsed.panelWidth).toBeNull();
-  expect(recollapsed.overflow).toBe(false);
+  // The same geometry must survive a band change and its restoration, which is
+  // what the collapse/recollapse round-trip used to establish.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.setViewportSize({ width: 1000, height: 900 });
+  const restored = await geometry();
+  expect(restored.columns).toBe(2);
+  expect(restored.streamWidth).toBeCloseTo(openGeometry.streamWidth, 0);
+  expect(restored.stageWidth).toBeCloseTo(openGeometry.stageWidth, 0);
+  expect(restored.panelWidth).not.toBeNull();
+  expect(restored.overflow).toBe(false);
 });
 
 // ---------------------------------------------------------------------------
@@ -478,23 +474,10 @@ test("the header draws one build-state chip, and it is the pin (§4.1(d))", asyn
   await expect(page.locator("[data-pin-mode]").first()).toHaveAttribute("data-pin-mode", /.+/);
 });
 
-test("hidden return carries session/task state, not an invented unread count (§4.1(f))", async ({ page }) => {
-  await open(page, route(PART));
-  await expect(page.locator("[data-testid='artifact-pin']")).toBeVisible();
-  await page.setViewportSize({ width: 1279, height: 1000 });
-  await expect(page.locator("[data-band]")).toHaveAttribute("data-band", "medium");
-
-  await page.locator('[data-stream-collapse]').click();
-  const strip = page.locator("[data-stream-strip]");
-  await expect(strip).toHaveCount(1);
-  await expect(strip.locator('[data-return-state]')).toHaveCount(1);
-  await expect(strip).toContainText('Conversation');
-  await expect(strip.locator("[data-resync-count]")).toHaveCount(0);
-  await expect(strip.locator("[data-stream-state]")).toHaveCount(0);
-  await expect(strip.locator("[role='status']")).toHaveCount(0);
-  // Human session titles may contain numbers; an unread counter may not exist.
-  await expect(strip.locator('[data-unread], [data-stream-count], [data-stream-unread]')).toHaveCount(0);
-});
+// C25 (2026-09-20) struck the collapsed Stream, and with it the return strip
+// §4.1(f) forbade putting an unread count on. The prohibition survives in
+// `test/shell-layout.test.ts`, which asserts no unread copy key exists and no
+// strip is left to draw one on.
 
 test("the rail overlay below1280px can be dismissed (§4.1(b), §3.13.4)", async ({ page }) => {
   await open(page, route(PART));

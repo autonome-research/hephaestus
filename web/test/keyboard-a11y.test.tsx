@@ -399,17 +399,25 @@ describe("Popover trap stays closed after a panel click (issue 84)", () => {
   });
 });
 
-describe("Fit / Cancel / disclose resting chrome and Button min-width (issues 67, 87)", () => {
-  it("gives Fit the same resting variant as a control, not quiet", () => {
+describe("Cancel / disclose resting chrome and Button min-width (issues 67, 87)", () => {
+  // AMENDED 2026-09-20. This case asserted that Fit, the cluster's one ACTION,
+  // rested on the `secondary` control surface rather than `quiet`. Fit is gone
+  // from the cluster, so there is no action left in it to make that distinction
+  // about — every member is now a flag. What is worth keeping is the other
+  // half: a flag rests on the `toggle` surface, and nothing in the cluster
+  // quietly drops to `quiet`, which is what issue 87 was about.
+  it("rests every appearance control on the toggle surface, never quiet", () => {
     const host = document.createElement("div");
     host.innerHTML = renderToStaticMarkup(
-      <AppearanceControls canFit onFit={() => undefined} />,
+      <AppearanceControls />,
     );
-    const fit = host.querySelector('[data-appearance-control="fit"]');
-    const grid = host.querySelector('[data-appearance-control="grid"]');
-    expect(fit?.getAttribute("data-variant")).toBe("secondary");
-    expect(fit?.getAttribute("data-variant")).not.toBe("quiet");
-    expect(grid?.getAttribute("data-variant")).toBe("toggle");
+    const controls = [...host.querySelectorAll("[data-appearance-control]")];
+    expect(controls.length).toBeGreaterThan(0);
+    for (const control of controls) {
+      const field = control.getAttribute("data-appearance-control") ?? "?";
+      expect(control.getAttribute("data-variant"), field).toBe("toggle");
+      expect(control.getAttribute("data-variant"), field).not.toBe("quiet");
+    }
   });
 
   // AMENDED 2026-09-01 (§7A.10(a)-(c)). At rest there is no Cancel to size: it
@@ -417,52 +425,12 @@ describe("Fit / Cancel / disclose resting chrome and Button min-width (issues 67
   // toggle attached to the summary line — still a `Button` primitive, so it
   // still carries the min target the rule in this file is about, which is the
   // half of the old assertion worth keeping.
-  it("gives composer Cancel and disclose a resting control surface", () => {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const html = renderToStaticMarkup(
-      <QueryClientProvider client={client}>
-        <Composer
-          sessionId="sess-1"
-          profile="orchestrator"
-          attach={null}
-          agentUnavailable={false}
-          liveRunId={null}
-          streamLive
-        />
-      </QueryClientProvider>,
-    );
-    const host = document.createElement("div");
-    host.innerHTML = html;
-    // No run is cancellable here, so §7A.10(b) says there is no control.
-    expect(host.querySelector("[data-composer-cancel]")).toBeNull();
-    const disclose = host.querySelector("[data-context-disclose]");
-    expect(disclose?.getAttribute("data-variant")).toBe("quiet");
-    expect(disclose?.tagName).toBe("BUTTON");
-
-    // …and the other half: a cancellable run draws a real `secondary` control.
-    const live = renderToStaticMarkup(
-      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-        <Composer
-          sessionId="sess-1"
-          profile="orchestrator"
-          attach={null}
-          agentUnavailable={false}
-          liveRunId="run-live"
-          streamLive
-          currentTurn={{ status: "Working", runId: "run-live", reason: null,
-            canSend: false, canAnswer: true, terminalRunId: null, stopRequested: false }}
-        />
-      </QueryClientProvider>,
-    );
-    const liveHost = document.createElement("div");
-    liveHost.innerHTML = live;
-    expect(liveHost.querySelector("[data-composer-cancel]")?.getAttribute("data-variant")).toBe(
-      "secondary",
-    );
-    expect(liveHost.querySelector("[data-composer-cancel]")?.getAttribute("data-variant")).not.toBe(
-      "quiet",
-    );
-  });
+  // AMENDED 2026-09-20. This held TWO controls to the resting `quiet`
+  // surface: composer Cancel, and the context disclosure. The disclosure was
+  // struck with the context readout, so only Cancel is left to assert — and
+  // Cancel mounts only while a run is cancellable, which the case below
+  // already covers. Issue 87's claim is about the Button primitive's minimum
+  // target, and every control that has one is still held by `system/`.
 
   it("sets min-width on the Button primitive next to min-height", () => {
     const rules = css("system/Button.module.css");

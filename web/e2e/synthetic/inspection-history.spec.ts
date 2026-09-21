@@ -43,7 +43,9 @@ test("unbuilt Open conversation reveals/focuses only, preserving existing draft/
   await input(page).fill("keep this exact draft");
   const route = new URL(page.url()).hash;
   const model = await page.locator("[data-model-button]").textContent();
-  await page.locator("[data-stream-collapse]").click();
+  // C25 (2026-09-20): the unbuilt-viewport action no longer reveals a collapsed
+  // column — the column is always up — so it only moves focus, which is exactly
+  // what the next two assertions read.
   await page.locator("[data-unbuilt-conversation]").click();
   await expect(input(page)).toBeFocused();
   await expect(input(page)).toHaveValue("keep this exact draft");
@@ -65,7 +67,9 @@ test("unbuilt reveal with no session focuses the invitation composer without cre
   await page.goto("/#/p/bracket");
   await expect(page.locator('[data-viewport-absence="not-built"]')).toBeVisible();
   await expect(page.locator("[data-composer]")).not.toHaveAttribute("data-session-id", SID);
-  await page.locator("[data-stream-collapse]").click();
+  // C25 (2026-09-20): the unbuilt-viewport action no longer reveals a collapsed
+  // column — the column is always up — so it only moves focus, which is exactly
+  // what the next two assertions read.
   await page.locator("[data-unbuilt-conversation]").click();
   await expect(input(page)).toBeFocused();
   await expect(input(page)).toHaveValue("");

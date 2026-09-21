@@ -8,9 +8,17 @@ async function select(page: Page, sid: string) {
   await page.locator("[data-session-switch]").click();
   await page.locator(`[data-session-option="${sid}"]`).click();
 }
+/**
+ * Remount the transcript and composer.
+ *
+ * C25 (2026-09-20) struck the Stream's collapsed state, so this is no longer
+ * "hide and reveal". A session round-trip unmounts and remounts the same
+ * subtree, which is the property every call site is actually asserting: the
+ * recorded state survives a remount rather than living in component state.
+ */
 async function reopen(page: Page) {
-  await page.locator("[data-stream-collapse]").click();
-  await page.locator('[data-skip="composer"]').focus(); await page.keyboard.press("Enter");
+  await select(page, OTHER);
+  await select(page, SID);
 }
 
 test("one answer reservation survives remount; accepted same-page answer survives navigation and recorded reload", async ({ page }) => {

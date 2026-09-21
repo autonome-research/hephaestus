@@ -12,10 +12,9 @@ vi.mock("../src/components/stage/Stage", () => ({ Stage: () => null }));
 const WIDTHS = [843, 1000, 1024, 1279, 1440];
 
 describe("chat width is local shell preference, bounded by current rail and viewport", () => {
-  it.each(WIDTHS)("keeps useful chat and stage at %ipx; collapse/reopen retains width", (width) => {
+  it.each(WIDTHS)("keeps useful chat and stage at %ipx", (width) => {
     const store = new ShellStore();
     store.applyWidth(width);
-    store.setStreamOpen(true);
     for (const request of [0, 400, 10000]) {
       store.setStreamWidth(request);
       const state = store.getSnapshot();
@@ -24,10 +23,6 @@ describe("chat width is local shell preference, bounded by current rail and view
       expect(sizing.width).toBeLessThanOrEqual(640);
       const rail = state.railOverlay ? 0 : RAIL_WIDTH;
       expect(width - rail - sizing.width).toBeGreaterThanOrEqual(STAGE_MIN);
-      store.setStreamOpen(false);
-      expect(store.getSnapshot().streamOpen).toBe(false);
-      store.setStreamOpen(true);
-      expect(streamSizing(store.getSnapshot())).toEqual(sizing);
       store.setRailOpen(true);
       expect(streamSizing(store.getSnapshot())).toEqual(sizing);
     }
@@ -46,13 +41,11 @@ describe("chat width is local shell preference, bounded by current rail and view
     expect(streamSizing(store.getSnapshot()).width).toBe(600);
   });
 
-  it("reclamps inside a band without resetting explicit expansion", () => {
+  it("reclamps inside a band without resetting the preferred width", () => {
     const store = new ShellStore();
     store.applyWidth(1279);
-    store.setStreamOpen(true);
     store.setStreamWidth(600);
     store.applyWidth(1024);
-    expect(store.getSnapshot().streamOpen).toBe(true);
     expect(streamSizing(store.getSnapshot()).width).toBe(600);
     store.applyWidth(1279);
     expect(streamSizing(store.getSnapshot()).width).toBe(600);
@@ -87,12 +80,11 @@ afterEach(() => {
 
 function Harness(): React.JSX.Element {
   const shell = useSyncExternalStore(shellStore.subscribe, shellStore.getSnapshot);
-  return shell.streamOpen ? <StreamResize sizing={streamSizing(shell)} viewportWidth={shell.viewportWidth} /> : <button onClick={() => shellStore.setStreamOpen(true)}>Reopen</button>;
+  return <StreamResize sizing={streamSizing(shell)} viewportWidth={shell.viewportWidth} />;
 }
 
 function mount(width: number): HTMLDivElement {
   shellStore.applyWidth(width);
-  shellStore.setStreamOpen(true);
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -122,7 +114,7 @@ function key(el: HTMLElement, name: string): void {
 }
 
 describe("captured pointer and accessible keyboard separator", () => {
-  it.each(WIDTHS)("resizes with pointer and keyboard at %ipx, then survives collapse/reopen", (width) => {
+  it.each(WIDTHS)("resizes with pointer and keyboard at %ipx, and remembers the width", (width) => {
     const el = mount(width);
     const captured = capture(el);
     expect(el.getAttribute("aria-orientation")).toBe("vertical");
@@ -148,22 +140,22 @@ describe("captured pointer and accessible keyboard separator", () => {
     expect(Number(el.getAttribute("aria-valuenow"))).toBe(370);
     key(el, "ArrowRight");
     expect(Number(el.getAttribute("aria-valuenow"))).toBe(360);
+    // The preferred width survives a viewport clamp and its restoration; the
+    // column itself has no collapsed state to survive (C25, 2026-09-20).
     const preferred = shellStore.getSnapshot().streamWidth;
-    act(() => shellStore.setStreamOpen(false));
-    expect(host?.querySelector("[role=separator]")).toBeNull();
-    act(() => host?.querySelector("button")?.click());
+    act(() => shellStore.applyWidth(720));
+    act(() => shellStore.applyWidth(width));
     expect(shellStore.getSnapshot().streamWidth).toBe(preferred);
     expect(host?.querySelector("[role=separator]")?.getAttribute("aria-valuenow")).toBe("360");
   });
 
-  it.each(["pointercancel", "lostpointercapture", "blur", "viewport", "collapse", "unmount"])("cleans capture on %s and ignores later moves", (reason) => {
+  it.each(["pointercancel", "lostpointercapture", "blur", "viewport", "unmount"])("cleans capture on %s and ignores later moves", (reason) => {
     const el = mount(1440);
     const captured = capture(el);
     pointer(el, "pointerdown", 500);
     pointer(el, "pointermove", 470);
     const preferred = shellStore.getSnapshot().streamWidth;
     if (reason === "viewport") act(() => shellStore.applyWidth(1400));
-    else if (reason === "collapse") act(() => shellStore.setStreamOpen(false));
     else if (reason === "unmount") { act(() => root?.unmount()); root = null; }
     else if (reason === "blur") act(() => { window.dispatchEvent(new Event("blur")); });
     else pointer(el, reason, 470);

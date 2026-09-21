@@ -70,7 +70,7 @@ test("actual picker preserves the session/draft and changes the next provider HT
   mkdirSync(shots, { recursive: true });
   for (const width of [843, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
-    await expect(page.locator('[data-stream-collapse]')).toBeVisible(); // open intent survives width
+    await expect(page.locator('[data-composer-input]')).toBeVisible(); // the column is a peer at every width (C25)
     expect(page.url()).not.toContain(world().token);
     expect(await page.locator("body").innerText()).not.toContain(world().token);
     await expect(picker).toBeEnabled();

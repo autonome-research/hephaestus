@@ -57,19 +57,17 @@ test('active question, attempt, next draft and historical disclosure survive ful
     await reachable(page, '[data-composer-cancel]');
     await reachable(page, '[data-current-turn] button');
   }
-  await page.locator('[data-stream-collapse]').click();
-  const back = page.locator('[data-stream-strip]');
-  await expect(back).toBeFocused();
+  // C25 (2026-09-20): the Stream has no collapsed state. The column stays a
+  // peer at every supported width, so the question stays addressable without a
+  // reveal — which is what the collapsed-return loop used to establish the long
+  // way round.
   for (const width of widths) {
     await resize(page, width);
-    await expect(back).toContainText('Answer needed');
-    await expect(back).toHaveAttribute('data-return-session', SID);
-    await expect(back).toBeFocused();
-    await expect(input(page)).toHaveCount(0);
-    await reachable(page, '[data-stream-strip]');
-    const box = await back.boundingBox(); expect(box!.width).toBeGreaterThan(box!.height * 3);
+    await expect(page.locator('[data-question-id="resize-question"]')).toBeVisible();
+    await reachable(page, '[data-composer-input]');
   }
-  await resize(page, 843); await back.press('Enter');
+  await resize(page, 843);
+  await page.locator('[data-question-id="resize-question"]').focus();
   await expect(page.locator('[data-question-id="resize-question"]')).toBeFocused();
   await expect(page.locator('[data-ask-option="Use 6 mm stock"]')).not.toHaveAttribute('aria-disabled', 'true');
   await expect(input(page)).toHaveValue('Editable next draft, never queued');
@@ -111,19 +109,23 @@ test('Parts contains keyboard focus, dismisses with return, and never replaces c
   await page.keyboard.press('Escape');
   await expect(page.locator('[data-composer]')).toHaveAttribute('data-session-id', SID);
   await expect(input(page)).toHaveValue('Draft while Parts is open');
-  // A reveal made around an asynchronous resize must not be overridden later.
-  await page.locator('[data-stream-collapse]').click();
+  // A focus move made around an asynchronous resize must not be overridden
+  // later. (C25: Skip no longer reveals anything — the column is always up —
+  // so this now asserts only that focus lands and survives the resize.)
   await page.setViewportSize({ width: 1440, height: 800 });
   await page.locator('[data-skip="composer"]').focus(); await page.keyboard.press('Enter');
   await expect(input(page)).toBeFocused(); await resize(page, 843); await expect(input(page)).toBeVisible();
   expect(c.mutations).toEqual([]); expect(c.faults).toEqual([]);
 });
 
-for (const state of ['Working', 'Request failed', 'Checking'] as const) test(`hidden return updates from authority: ${state}, without writes or focus theft`, async ({ page }) => {
+for (const state of ['Working', 'Request failed', 'Checking'] as const) test(`turn state updates from authority: ${state}, without writes`, async ({ page }) => {
+  // Was "hidden return updates from authority". C25 struck the return strip, so
+  // the readout under test is the composer's own `[data-current-turn]` — the
+  // same projection the strip mirrored, read where it is now drawn. The
+  // no-writes half is what this test was always for.
   const c = await setup(page, execution(RUN));
-  await page.locator('[data-stream-collapse]').click(); const back = page.locator('[data-stream-strip]');
   if (state === 'Request failed') { c.execution = execution(RUN, 'failed'); await c.frame('terminal', { state: 'failed', error: 'Fixture refused the request' }, 0); }
   if (state === 'Checking') { c.sessionsFail = true; await page.evaluate(() => window.dispatchEvent(new Event('focus'))); }
-  await expect(back.locator('[data-return-state]')).toHaveText(state);
-  await expect(back).toBeFocused(); expect(c.mutations).toEqual([]); expect(c.faults).toEqual([]);
+  await expect(status(page)).toHaveAttribute('data-current-turn', state);
+  expect(c.mutations).toEqual([]); expect(c.faults).toEqual([]);
 });

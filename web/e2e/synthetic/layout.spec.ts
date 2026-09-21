@@ -22,17 +22,38 @@ for (const width of [843, 1000, 1024, 1279, 1440]) {
     await budget(page, width);
     const header = page.locator("[data-session-strip]");
     const height = (await header.boundingBox())!.height;
-    // Title/scope and readable actions now have separate lines, not icon-only
-    // targets sharing a truncated title. Preserve a bounded header budget.
+    // ONE ROW (2026-09-20, corrected twice). This block was written for a
+    // two-line strip — title and scope above, readable word-buttons below —
+    // and then patched to keep that shape. The strip is a single flex row now:
+    // create, then the session title, then close. Both corrections below are
+    // of assertions this file made about a header that no longer exists.
     expect(height).toBeLessThanOrEqual(96);
     const title = (await header.locator("[data-session-tab]").boundingBox())!;
-    for (const [selector, label] of [["[data-session-switch]", "Switch"], ["[data-session-create-menu]", "New"], ["[data-stream-collapse]", "Hide"]]) {
-      const action = header.locator(selector!);
-      await expect(action.locator('span[aria-hidden="true"]')).toHaveText(label!);
-      const box = (await action.boundingBox())!;
-      expect(box.y).toBeGreaterThanOrEqual(title.y + title.height);
-      expect(box.y + box.height).toBeLessThanOrEqual((await header.boundingBox())!.y + height);
-      expect(box.height).toBeGreaterThanOrEqual(24);
+
+    // (1) The switcher does not print the word "Switch" in a decorative span.
+    // It merged INTO the title tab, so `[data-session-switch]` and
+    // `[data-session-tab]` are one element, and its `aria-hidden` span is the
+    // chevron — drawn with CSS `content`, so it carries no text at all. The
+    // word was never the contract; a control with no visible label keeping an
+    // accessible name is.
+    await expect(header.locator("[data-session-switch]")).toHaveAccessibleName(/./);
+    await expect(header.locator("[data-session-switch]").locator('span[aria-hidden="true"]')).toHaveText("");
+    await expect(header.locator("[data-session-create-menu]")).toHaveAccessibleName(/./);
+    await expect(header.locator("[data-session-create-menu]")).toHaveText("");
+    const switcher = (await header.locator("[data-session-switch]").boundingBox())!;
+    expect(switcher, "the switcher is the title tab, not a control beneath it").toEqual(title);
+
+    // (2) The create is not on a second line below the title — it LEADS the
+    // row, with close at the far end, which is the arrangement the strip was
+    // rebuilt for. So the contract is that the three share one row and none of
+    // them overflows the strip, not that any of them sits under the title.
+    const create = (await header.locator("[data-session-create-menu]").boundingBox())!;
+    const strip = (await header.boundingBox())!;
+    expect(create.x + create.width).toBeLessThanOrEqual(title.x + 1);
+    for (const [box, name] of [[switcher, "switcher"], [create, "create"]] as const) {
+      expect(box.y, name).toBeGreaterThanOrEqual(strip.y - 1);
+      expect(box.y + box.height, name).toBeLessThanOrEqual(strip.y + height + 1);
+      expect(box.height, name).toBeGreaterThanOrEqual(24);
     }
     await expect(header.locator("[data-session-tab]")).toHaveCount(1);
     await page.locator("[data-session-switch]").press("Enter");
@@ -50,7 +71,20 @@ for (const width of [843, 1000, 1024, 1279, 1440]) {
     await expect(separator).toHaveAttribute("aria-valuenow", "370");
     await separator.press("ArrowRight");
     await expect(separator).toHaveAttribute("aria-valuenow", "360");
-    expect(await separator.evaluate(el => getComputedStyle(el).outlineStyle)).not.toBe("none");
+    // 2026-09-20, CORRECTED: this read `outlineStyle` on the separator, and the
+    // separator now sets `outline: none` deliberately. The indicator was not
+    // removed, it MOVED: the strip is an 8px hit area drawing a 1px hairline
+    // through its middle as a `::before`, and on `:focus-visible` that hairline
+    // takes the accent and doubles to 2px. An outline around the hit area would
+    // have drawn an 8px-wide box around a 1px line. `getComputedStyle(el)` can
+    // never see that, so the check has to name the pseudo-element.
+    const seamFocus = await separator.evaluate((el) => {
+      const before = getComputedStyle(el, "::before");
+      return { width: before.width, background: before.backgroundColor, outline: getComputedStyle(el).outlineStyle };
+    });
+    expect(seamFocus.width, "the focused seam does not thicken").toBe("2px");
+    expect(seamFocus.background, "the focused seam is not painted").not.toBe("rgba(0, 0, 0, 0)");
+    expect(seamFocus.background).not.toBe("transparent");
     const seam = (await separator.boundingBox())!;
     await page.mouse.move(seam.x + seam.width / 2, seam.y + 100);
     await page.mouse.down();
@@ -67,10 +101,10 @@ for (const width of [843, 1000, 1024, 1279, 1440]) {
       expect(box.y).toBeGreaterThanOrEqual(composer.y);
       expect(box.y + box.height).toBeLessThanOrEqual(composer.y + composer.height);
     }
-    await page.locator("[data-stream-collapse]").click();
-    const hidden = (await page.locator('[data-stream-strip]').boundingBox())!;
-    expect(hidden.width).toBeGreaterThan(hidden.height * 3);
-    await page.locator("[data-stream-strip]").press('Enter');
+    // C25 (2026-09-20): no collapsed state. The width and the draft must
+    // survive a viewport clamp and its restoration instead.
+    await page.setViewportSize({ width: 720, height: 900 });
+    await page.setViewportSize({ width, height: 900 });
     await expect(separator).toHaveAttribute("aria-valuenow", chosen);
     await expect(input(page)).toHaveValue("Synthetic editable draft\nSecond line");
     if (width < 1280) {
@@ -139,7 +173,8 @@ test("explicit width survives viewport clamping", async ({ page }) => {
   for (const width of [843, 1000, 1024, 1279, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     await expect(page.locator("[data-band]")).toHaveAttribute("data-band", width < 1024 ? "narrow" : width < 1280 ? "medium" : "wide");
-    await expect(page.locator('[data-stream-strip]')).toHaveCount(0);
+    // The Stream is a peer column in every band; nothing docks it (C25).
+    await expect(page.locator('#chat-column [data-testid="stream-panel"]')).toBeVisible();
     await expect(separator).toBeVisible();
     await budget(page, width);
   }

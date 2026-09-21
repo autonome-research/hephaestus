@@ -92,7 +92,7 @@ function pin(state: Partial<WorkspaceState>, document: BuildDocument | undefined
 describe("formatRef — hash prefix, not the scheme (#57)", () => {
   it("does not spend its width on artifact:build:", () => {
     const shown = formatRef(JIG, CHIP_REF_WIDTH);
-    expect(shown).toBe("build · 1c657297");
+    expect(shown).toBe("build: 1c657297");
     expect(shown).not.toContain("artifact:");
     expect(shown).not.toMatch(/buil…/);
     expect(shown.length).toBeLessThanOrEqual(CHIP_REF_WIDTH);
@@ -103,8 +103,10 @@ describe("formatRef — hash prefix, not the scheme (#57)", () => {
     const a = "artifact:build:sha256:" + "a".repeat(54) + tail;
     const b = "artifact:render:sha256:" + "b".repeat(54) + tail;
     expect(a.slice(-10)).toBe(b.slice(-10));
-    expect(formatRef(a)).toBe("build · aaaaaaaa");
-    expect(formatRef(b)).toBe("render · bbbbbbbb");
+    // 2026-09-20: the separator is a colon, so the compact ref reads as a
+    // labelled value rather than as two peers.
+    expect(formatRef(a)).toBe("build: aaaaaaaa");
+    expect(formatRef(b)).toBe("render: bbbbbbbb");
   });
 });
 
@@ -154,7 +156,7 @@ describe("build.current — no bare true/false (#96)", () => {
 });
 
 describe("header chips — labelled group (#83)", () => {
-  it("puts role=group and an aria-label on the pin/export/BOM cluster", () => {
+  it("puts role=group and an aria-label on the pin cluster", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     client.setQueryData(keys.project(), {
       status: "ok",
@@ -169,11 +171,15 @@ describe("header chips — labelled group (#83)", () => {
         <Header />
       </QueryClientProvider>,
     );
+    // 2026-09-20: Export and BOM left the header for the inspector drawer that
+    // already did both. The labelled group remains — it is what names the pin
+    // cluster for a screen reader — and the assertion is now that the pin is in
+    // it and that no second export/sourcing route came back beside it.
     const group = host.querySelector('[role="group"][aria-label]');
     expect(group).not.toBeNull();
     expect(group?.querySelector('[data-testid="artifact-pin"]')).not.toBeNull();
-    expect(group?.querySelector("[data-chrome-export]")).not.toBeNull();
-    expect(group?.querySelector("[data-chrome-bom]")).not.toBeNull();
+    expect(group?.querySelector("[data-chrome-export]")).toBeNull();
+    expect(group?.querySelector("[data-chrome-bom]")).toBeNull();
     expect(group?.getAttribute("aria-label")).toBe(copy.header.chromeGroup);
   });
 });
@@ -460,7 +466,7 @@ describe("PinSplitMarker — the marking is words, per region (J-web-viewport-9)
     // Visible text, not only the attribute — a screen reader with CSS off and
     // a sighted reader both need to meet the fact.
     expect(node?.textContent ?? "").toContain("bracket");
-    expect(node?.textContent ?? "").toContain(formatRef(JIG, CHIP_REF_WIDTH).split(" · ")[1] ?? "nomatch");
+    expect(node?.textContent ?? "").toContain(formatRef(JIG, CHIP_REF_WIDTH).split(": ")[1] ?? "nomatch");
   });
 
   it("names the selected part as visible text on the inspector region, with no ref attribution", () => {

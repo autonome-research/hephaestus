@@ -522,21 +522,23 @@ test("the compact session header switches through the session dropdown (§7.1)",
   // bare accent glyph.
   await expect(create).toHaveAttribute("data-variant", "quiet");
   await expect(create).toHaveAccessibleName("New conversation");
-  await expect(create.locator('span[aria-hidden="true"]')).toHaveText("New");
+  // 2026-09-20: icon-only. The NAME survives on `aria-label`; the visible word
+  // beside the glyph is struck, and its absence is the assertion.
+  await expect(create).toHaveText("");
+  await expect(create.locator('span[aria-hidden="true"]')).toHaveCount(0);
 
-  // §4.1(h), amended 2026-09-02 (C25): the eyebrow band is struck as a band.
-  // The collapse control is a descendant of the session tab strip and its last
-  // interactive element; the column's name stays on the `aside`.
-  const collapse = page.locator("[data-stream-collapse]");
-  await expect(collapse).toHaveCount(1);
+  // §4.1(h), amended 2026-09-20 (C25): the eyebrow band is struck as a band and
+  // the collapse control with it. The strip's only added control is the `+` at
+  // its LEADING edge; the column's name stays on the `aside`.
+  await expect(page.locator("[data-stream-collapse]")).toHaveCount(0);
   await expect(column).toHaveAttribute("aria-label", "Agent");
-  const placement = await collapse.evaluate((node) => {
+  const placement = await create.evaluate((node) => {
     const strip = node.closest("[data-session-strip]");
     if (strip === null) return null;
     const interactive = [...strip.querySelectorAll("button, a[href], [tabindex]")];
-    return { last: interactive[interactive.length - 1] === node };
+    return { first: interactive[0] === node };
   });
-  expect(placement).toEqual({ last: true });
+  expect(placement).toEqual({ first: true });
 
   // Successful connection/history details are optional diagnostics, collapsed
   // behind one native disclosure instead of occupying a prominent status row.

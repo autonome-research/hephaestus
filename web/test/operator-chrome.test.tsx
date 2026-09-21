@@ -466,10 +466,19 @@ describe("artifact pin — one chip, one state word", () => {
   it("prints the build state and a hold VERB while following current", () => {
     const node = pin({ artifact_ref: REF_A, pin_mode: "current" }, build());
     expect(node.getAttribute("data-build-state")).toBe("current");
-    expect(node.querySelector('[data-pin-action="hold"]')?.textContent).toBe(copy.header.hold);
-    // The pin vocabulary's own word is not also printed: one axis at a time.
+    // 2026-09-20: Hold is icon-only and the build state is a 9px mark, so
+    // NEITHER prints a word any more. The contract the two assertions were
+    // about survives on the accessible name, which is the trade every
+    // icon-only control in this workspace makes — and is the only carrier a
+    // screen reader ever had for the hold VERB anyway.
+    const hold = node.querySelector('[data-pin-action="hold"]');
+    expect(hold?.getAttribute("aria-label")).toBe(copy.header.hold);
+    expect(hold?.textContent).toBe("");
+    expect(node.querySelector("[data-build-mark]")?.getAttribute("aria-label")).toBe(
+      copy.buildState.current,
+    );
+    // The pin vocabulary's own word is not printed either: one axis at a time.
     expect(node.textContent).not.toContain(copy.pinMode.current);
-    expect(node.textContent).toContain(copy.buildState.current);
   });
 
   it("prints `held` and the discard action while held, and no second state word", () => {
@@ -536,11 +545,17 @@ describe("artifact pin — one chip, one state word", () => {
       build({ status: "not_built", current: false, artifact_ref: null, geometry_count: 0 }),
     );
     expect(node.getAttribute("data-build-state")).toBe("not_built");
-    // One visible word. `build.current`'s clipped 1px mirror stays attributed
-    // and is silent in the accessibility tree (#96).
-    expect(node.querySelector('[data-source="build.status"]')?.textContent).toBe(
+    // ONE state, named once. The word moved to the mark's accessible name
+    // when the badge became a 9px dot (2026-09-20); `build.status` still
+    // carries the server's own value, which is what the gate reads.
+    expect(node.querySelector('[data-source="build.status"]')?.getAttribute("data-value")).toBe(
+      "not_built",
+    );
+    expect(node.querySelector("[data-build-mark]")?.getAttribute("aria-label")).toBe(
       copy.buildState.not_built,
     );
+    // `build.current`'s clipped 1px mirror stays attributed and is silent in
+    // the accessibility tree (#96).
     expect(node.querySelector('[data-source="build.current"]')?.getAttribute("aria-hidden")).toBe(
       "true",
     );
@@ -563,12 +578,13 @@ describe("artifact pin — chip width that fits the 1280 header", () => {
     expect(CHIP_REF_WIDTH).toBeLessThanOrEqual(22);
     expect(formatRef(REF, CHIP_REF_WIDTH).length).toBeLessThanOrEqual(CHIP_REF_WIDTH);
     expect(formatRef(REF, CHIP_REF_WIDTH)).not.toBe(REF);
-    expect(formatRef(REF, CHIP_REF_WIDTH)).toMatch(/^build · [0-9a-f]{8}$/);
+    expect(formatRef(REF, CHIP_REF_WIDTH)).toMatch(/^build: [0-9a-f]{8}$/);
     expect(formatRef(REF, CHIP_REF_WIDTH)).not.toContain("artifact:");
     const pin = readFileSync(join(webSrc, "components/ArtifactPin.tsx"), "utf8");
     expect(pin).toMatch(/formatRef\(ref,\s*CHIP_REF_WIDTH\)/);
-    const composer = readFileSync(join(webSrc, "components/stream/Composer.tsx"), "utf8");
-    expect(composer).toMatch(/formatRef\(chip\.value[^)]*CHIP_REF_WIDTH/);
+    // 2026-09-20: the composer's context CHIPS were struck with the readout,
+    // so it no longer abbreviates a chip's ref. The pin above is now the only
+    // caller, and it is the one this case is named for.
   });
 });
 
@@ -588,16 +604,17 @@ describe("composer chrome — talking surface, not a Plan/DFM toolbar", () => {
     expect(composer).toContain("const promptRows = 2;");
     expect(composer).toContain("data-composer-send");
     expect(composer).toContain("data-composer-cancel");
-    expect(composer).toContain("data-context-disclose");
     expect(composer).toContain("data-context-add-view");
-    expect(composer.indexOf("data-context-add-view")).toBeGreaterThan(
-      composer.indexOf("data-context-disclose"),
-    );
-    // AMENDED 2026-09-01 (§7A.10(a)): and the row Send sits in holds nothing
-    // else at rest. The model moved to the meta line, the disclosure to the
-    // summary line, and Cancel mounts only while a run is cancellable.
-    expect(composer).toContain("data-context-summary");
+    // The hook is emitted by `ImageAttach.tsx`, which the composer renders;
+    // this file reads the composer's own source, so it checks the call site.
+    expect(composer).toContain("<ImageAttach");
+    // AMENDED 2026-09-20: the context disclosure and its summary line were
+    // struck, so the ordering assertion between them has no operands left.
+    // What survives is the clause it served — the row Send sits in holds
+    // nothing else at rest, the model is not duplicated into it, and Cancel
+    // mounts only while a run is cancellable.
     expect(composer).not.toContain("data-composer-model");
+    expect(composer).not.toContain("data-context-disclose");
   });
 });
 
@@ -735,12 +752,18 @@ describe("header — one row of facts on the artifact axis", () => {
     expect(header).not.toContain("copy.header.token");
   });
 
-  it("keeps Export and BOM as two addressable header controls next to the pin", () => {
+  it("draws the pin and NO second route to export or sourcing (2026-09-20)", () => {
+    // Both header controls are struck. Neither did anything the inspector
+    // drawer does not: BOM mounted `SourcingPanel`, the same component the
+    // Sourcing tab mounts, and Export ran the same shared submission state
+    // machine as the Export tab over a strict subset of its surface. Two entry
+    // points to one behaviour is two places to keep true — and these two had
+    // already diverged once (J-web-stream-11).
     const markup = headerMarkup(gitDocument());
-    expect(markup).toContain("data-chrome-export");
-    expect(markup).toContain("data-chrome-bom");
-    expect(markup).toContain("data-part-chrome");
     expect(markup).toContain("data-testid=\"artifact-pin\"");
+    expect(markup).not.toContain("data-chrome-export");
+    expect(markup).not.toContain("data-chrome-bom");
+    expect(markup).not.toContain("data-part-chrome");
   });
 });
 

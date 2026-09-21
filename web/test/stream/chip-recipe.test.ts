@@ -81,7 +81,16 @@ describe("§3.9 (C28) — the reference-field name is inert text and draws no ac
   it("keeps the product mark off the accent fill (Header)", () => {
     const header = css("components/Header.module.css");
     const mark = /\.mark\s*\{([^}]*)\}/.exec(header);
-    expect(mark?.[1]).toMatch(/background:\s*var\(--ink-strong\)/);
+    // 2026-09-20: the mark became an SVG (`components/Logo.tsx`), so the ink
+    // arrives as `color` for `currentColor` to pick up rather than as the
+    // `background` behind a `clip-path`. C28 is about WHICH ink the inert
+    // product glyph may take, not about the property that carries it, so the
+    // assertion moved with the mechanism and the negative below is unchanged.
+    expect(mark?.[1]).toMatch(/color:\s*var\(--ink-strong\)/);
     expect(mark?.[1]).not.toMatch(/--accent/);
+    // The glyph itself must name no colour of its own — it inherits, which is
+    // what makes one declaration serve both themes.
+    const logo = readFileSync(join(webSrc, "components/Logo.tsx"), "utf8");
+    expect(logo).not.toMatch(/--accent|#[0-9a-fA-F]{3,8}|rgb\(/);
   });
 });

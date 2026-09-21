@@ -12,8 +12,9 @@ test("zero-frame ownership guards every send path, drafts survive switch/collaps
   await page.locator("[data-composer]").evaluate(form => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
   await send(page).dispatchEvent("click");
   expect(c.mutations).toEqual([]);
-  await page.locator("[data-stream-collapse]").click();
-  await page.locator("[data-stream-strip]").press("Enter");
+  // C25 (2026-09-20): no collapsed state to hide and reveal through. The
+  // session round-trip below is the remount, and it was always the stronger
+  // half of this assertion — it crosses two subtrees rather than one.
   await expect(input(page)).toHaveValue("Editable next draft");
   await page.locator("[data-session-switch]").click();
   await page.locator(`[data-session-option="${OTHER}"]`).click();

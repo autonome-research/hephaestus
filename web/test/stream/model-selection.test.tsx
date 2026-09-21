@@ -115,8 +115,11 @@ describe("model wire and shared state", () => {
     conversationStore.modelSnapshot("a", state, { ...idleExecution, admission_available: false }, conversationStore.ticket());
     expect(currentTurn(conversationStore.get("a")).canSend).toBe(false);
     expect(canSelectModel(conversationStore.get("a"))).toBe(true);
-    const host = mount(); expect(host.textContent).toContain("Saved selection (not active): local/fake/spark");
-    expect(host.textContent).toContain("Capability unknown"); expect(host.textContent).toContain("model_unknown");
+    const host = mount();
+    const button = host.querySelector("[data-model-button]");
+    expect(button?.getAttribute("aria-label")).toContain("Saved selection (not active): local/fake/spark");
+    expect(button?.getAttribute("aria-label")).toContain("Capability unknown");
+    expect(host.textContent).toContain("model_unknown");
   });
   it("does not confuse unavailable-model repair with unresolved execution ownership", () => {
     const unavailable = { ...modelState, current: null, state: "unavailable" as const, reason: "model_unknown" };
@@ -162,18 +165,19 @@ describe("model control interaction", () => {
   it("shows Spark even when vision is first; arrows do not mutate, Enter confirms, Escape restores focus", async () => {
     ready(); const host = mount(); await act(async () => {});
     const button = host.querySelector<HTMLElement>("[data-model-button]")!;
-    expect(button.textContent).toContain("local/fake/spark"); expect(button.textContent).toContain("Text only");
+    expect(button.textContent).toBe("");
+    expect(button.getAttribute("aria-label")).toContain("local/fake/spark");
+    expect(button.getAttribute("aria-label")).toContain("Text only");
     button.focus(); click(button); await act(async () => {});
-    const search = host.querySelector<HTMLInputElement>('[role="combobox"]')!;
-    expect(document.activeElement).toBe(search); expect(search.labels?.[0]?.textContent).toContain("Search provider");
-    expect(host.querySelector('[role="option"][aria-selected="true"]')?.textContent).toContain("spark");
-    key(search, "ArrowDown"); expect(selectSessionModel).not.toHaveBeenCalled();
-    key(search, "Escape"); expect(host.querySelector('[role="dialog"]')).toBeNull(); expect(document.activeElement).toBe(button);
+    expect(document.activeElement?.getAttribute("role")).toBe("option");
+    expect(host.querySelector('[role="option"][aria-selected="true"]')?.textContent).toContain("Spark");
+    key(document.activeElement!, "ArrowDown"); expect(selectSessionModel).not.toHaveBeenCalled();
+    key(document.activeElement!, "Escape"); expect(host.querySelector('[data-model-control] [role="group"]')).toBeNull(); expect(document.activeElement).toBe(button);
     click(button); await act(async () => {});
     vi.mocked(selectSessionModel).mockResolvedValue(switched);
-    key(host.querySelector('[role="combobox"]')!, "Enter"); await act(async () => {});
+    key(document.activeElement!, "Enter"); await act(async () => {});
     expect(selectSessionModel).toHaveBeenCalledWith("a", { model: { provider_id: vision.provider_id, model_id: vision.model_id }, expected_model_revision: modelState.revision });
-    expect(button.textContent).toContain("Text + images"); expect(createSession).not.toHaveBeenCalled(); expect(sendPrompt).not.toHaveBeenCalled();
+    expect(button.getAttribute("aria-label")).toContain("Text + images"); expect(createSession).not.toHaveBeenCalled(); expect(sendPrompt).not.toHaveBeenCalled();
   });
   it("blocks Enter and form submit synchronously during the selection without erasing text", async () => {
     ready(); conversationStore.draft("a", "retain draft"); const host = mount(true);
@@ -185,7 +189,9 @@ describe("model control interaction", () => {
     await act(async () => { wait.resolve(switched); await change; });
     vi.mocked(sendPrompt).mockReturnValue(new Promise(() => {}));
     key(host.querySelector("textarea")!, "Enter");
-    expect(sendPrompt).toHaveBeenCalledWith("a", "retain draft", null, switched.model_state.revision);
+    expect(sendPrompt).toHaveBeenCalledWith("a", "retain draft", null, switched.model_state.revision, {
+      interaction_mode: "modeling", dfm_mode: "off", thinking_level: "medium",
+    });
   });
   it("never first-sends under a creation response that substituted another model", async () => {
     conversationStore.catalog(models); conversationStore.draft(null, "keep the proposed pair");
@@ -199,9 +205,11 @@ describe("model control interaction", () => {
   });
   it("selects a fresh choice locally with the server default visible, without creating or sending", async () => {
     const host = mount(false, null); await act(async () => {});
-    expect(host.textContent).toContain("Proposed default"); expect(host.textContent).toContain("Text + images");
+    const button = host.querySelector("[data-model-button]");
+    expect(button?.getAttribute("aria-label")).toContain("Proposed default");
+    expect(button?.getAttribute("aria-label")).toContain("Text + images");
     click(host.querySelector("[data-model-button]")); await act(async () => {});
-    click([...host.querySelectorAll('[role="option"]')].find(el => el.textContent?.includes("/spark"))!);
+    click([...host.querySelectorAll('[role="option"]')].find(el => el.textContent?.includes("Spark"))!);
     expect(conversationStore.get(null).proposal?.model_id).toBe("spark");
     expect(createSession).not.toHaveBeenCalled(); expect(selectSessionModel).not.toHaveBeenCalled(); expect(sendPrompt).not.toHaveBeenCalled();
   });

@@ -171,17 +171,33 @@ describe("URL serialization", () => {
   });
 
   it("omits the inspector Results tab when the stage is already Results", () => {
-    expect(inspectorTabsFor("viewport")).toEqual(INSPECTOR_TABS);
-    expect(inspectorTabsFor("script")).toEqual(INSPECTOR_TABS);
+    // PROVENANCE LEFT THE STRIP 2026-09-20 and stayed in the VOCABULARY, so
+    // this case can no longer compare the listing to `INSPECTOR_TABS` whole.
+    // The distinction is the point and is asserted directly below: the member
+    // survives for URL and envelope validation (the server mirrors this list
+    // in `http/context.py`) while the drawer stops offering it.
+    const listed = INSPECTOR_TABS.filter((tab) => tab !== "provenance");
+    expect(inspectorTabsFor("viewport")).toEqual(listed);
+    expect(inspectorTabsFor("script")).toEqual(listed);
     expect(inspectorTabsFor("results")).toEqual([
       "properties",
-      "provenance",
       "checks",
       "dfm",
       "export",
       "sourcing",
     ]);
     expect(inspectorTabsFor("results")).not.toContain("results");
+  });
+
+  it("keeps `provenance` a valid member though no tab offers it", () => {
+    // Dropping it from the vocabulary would break a URL the client itself
+    // wrote and an envelope a live session already carries.
+    expect(INSPECTOR_TABS).toContain("provenance");
+    expect(inspectorTabsFor("viewport")).not.toContain("provenance");
+    expect(inspectorTabsFor("results")).not.toContain("provenance");
+    // And it still MOUNTS when something navigates to it — DFM's "resolve
+    // this descriptor" is the one caller left.
+    expect(effectiveInspectorTab("viewport", "provenance")).toBe("provenance");
   });
 
   it("does not mount inspector Results when the stage tab is Results", () => {

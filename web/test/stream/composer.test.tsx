@@ -413,16 +413,14 @@ describe("the DOM contract", () => {
     // §7A.6 / §7A.10(b), amended 2026-09-01. Between submit and the first event
     // carrying the run id, cancel is unavailable — and a permanently-mounted
     // disabled button for nearly all of the time is the chrome the amendment
-    // removes. The FACT does not leave the DOM: `data-cancel-state` is still on
-    // the form, and its reason is on the form's `title`.
+    // removes. The machine-readable fact remains on `data-cancel-state`; the
+    // whole composer must not create a native tooltip for an absent action.
     const html = markup({ liveRunId: null });
     expect(attribute(html, "data-cancel-state")).toBe("unavailable");
     expect(html).not.toContain("data-composer-cancel");
     const host = document.createElement("div");
     host.innerHTML = html;
-    expect(host.querySelector("[data-composer]")?.getAttribute("title")).toBe(
-      copy.composer.cancelIdle,
-    );
+    expect(host.querySelector("[data-composer]")?.getAttribute("title")).toBeNull();
   });
 
   it("mounts cancel the instant the state says available (the other half)", () => {
@@ -431,49 +429,56 @@ describe("the DOM contract", () => {
     expect(html).toContain("data-composer-cancel");
   });
 
-  it("has exactly one button-role element in the resting input row (§7A.10(a))", () => {
-    // The clause's own test, restated 2026-09-02 (§0.2c, C15) to the INPUT
-    // ROW — the action row it used to query no longer mounts at rest, and a
-    // query against a row that does not mount returns zero, not one. (c)
-    // still puts `[data-context-disclose]` inside the same <form>, attached
-    // to the summary line, so a form-scoped count is two at rest by design;
-    // the rule is that the row holding the send target holds exactly one.
-    const html = markup();
+  it("keeps the Send action inside the input shell without placing it in the textarea row", () => {
     const host = document.createElement("div");
-    host.innerHTML = html;
+    host.innerHTML = markup();
     const row = host.querySelector("[data-composer-input-row]");
-    expect(row).not.toBeNull();
     expect(row?.contains(host.querySelector("[data-composer-input]"))).toBe(true);
-    const buttons = row?.querySelectorAll("button, [role='button']");
-    expect(buttons?.length).toBe(1);
-    expect(buttons?.[0]?.hasAttribute("data-composer-send")).toBe(true);
-    // Send keeps disabled-with-reason: a PRIMARY action that vanished would
-    // leave no target for "why can't I send?", which is the opposite case
-    // from Cancel.
+    expect(row?.querySelectorAll("button, [role='button']").length).toBe(0);
+    const action = host.querySelector("[data-composer-input-action]");
+    expect(action?.contains(host.querySelector("[data-composer-send]"))).toBe(true);
     expect(host.querySelector("[data-composer-send]")?.getAttribute("aria-disabled")).toBe("true");
   });
 
-  it("integrates the wired model with context above the input row (issue 120)", () => {
-    // Stable context/input core, visible keyboard hint, then bounded details.
-    // No model/effort readout substitute and no extra Send action.
-    const html = markup({}, { providers: providersDocument() });
+  it("puts every message control inside the box, and keeps no toolbar", () => {
+    // 2026-09-20, final shape: everything that changes what THIS message means
+    // lives on the message box's own bottom row, in the order model → what it
+    // CARRIES → how it is answered → Send. The outer toolbar is struck; a row
+    // with nothing left on it is furniture.
     const host = document.createElement("div");
-    host.innerHTML = html;
+    host.innerHTML = markup({}, { providers: providersDocument() });
     const form = host.querySelector("[data-composer]");
-    expect(form).not.toBeNull();
-    const rows = [...(form?.children ?? [])];
-    expect(rows).toHaveLength(4);
-    expect(rows[0]?.querySelector("[data-context-summary]")).not.toBeNull();
-    expect(rows[0]?.querySelector("[data-model-button]")).not.toBeNull();
+    const shellBar = form?.querySelector("[data-composer-shell-bar]");
+    expect(form?.querySelector("[data-composer-toolbar]")).toBeNull();
+    // `[data-context-summary]` left this list with the context readout
+    // (2026-09-20); `[data-composer-attach-image]` joined it the same day.
+    //
+    // SEND IS IN THE BOX BUT NOT IN THE ROW, since the same day. It was asked
+    // to sit at the vertical centre of the message box, and the box is
+    // [text row, control row] — so centring against it means leaving the
+    // control row and spanning both. The clause this case is named for is
+    // "inside the box"; the settings row is the narrower claim below it.
+    const settings = ["[data-model-button]", "[data-context-add-view]",
+      "[data-composer-dfm]", "[data-composer-attach-image]", "[data-composer-plan]"];
+    for (const selector of settings) {
+      expect(shellBar?.querySelector(selector), `in row: ${selector}`).not.toBeNull();
+    }
+    expect(form?.querySelector("[data-composer-send]"), "in box: send").not.toBeNull();
+    expect(shellBar?.querySelector("[data-composer-send]"), "send is not in the row").toBeNull();
+    const order = [...(shellBar?.querySelectorAll(settings.join(", ")) ?? [])];
+    expect(order.map(node =>
+      node.getAttribute("data-model-button") !== null ? "model"
+      : node.getAttribute("data-context-add-view") !== null ? "view"
+      : node.getAttribute("data-composer-dfm") !== null ? "dfm"
+      : node.getAttribute("data-composer-attach-image") !== null ? "image"
+      : "plan"))
+      // `context` left the row; `dfm` and `image` joined it (2026-09-20).
+      .toEqual(["model", "view", "dfm", "image", "plan"]);
+    expect(form?.querySelector("[data-composer-input-action] [data-composer-send]")).not.toBeNull();
     expect(form?.querySelector("[data-composer-model]")).toBeNull();
-    expect(html).not.toContain("gpt-5.5");
-    expect(html).not.toContain("data-composer-provider");
-    expect(rows[1]?.hasAttribute("data-composer-input-row")).toBe(true);
-    expect(rows[1]?.contains(form?.querySelector("[data-composer-send]") ?? null)).toBe(true);
-    expect(rows[2]?.textContent).toBe(copy.composer.sendHint);
-    expect(rows[3]?.getAttribute("data-composer-details")).toBe("");
-    expect(rows[3]?.getAttribute("aria-label")).toBe(copy.composer.messageDetails);
-    expect(html).not.toContain("data-composer-cancel");
+    // The details region went with the context readout (2026-09-20).
+    expect(form?.querySelector("[data-composer-details]")).toBeNull();
+    expect(form?.querySelector("[data-composer-cancel]")).toBeNull();
   });
 
   it.each(["Checking", "Completed"] as const)("does not advertise Enter sends while next-send admission is blocked after %s", status => {
@@ -496,90 +501,36 @@ describe("the DOM contract", () => {
     const host = document.createElement("div");
     host.innerHTML = html;
     const form = host.querySelector("[data-composer]");
-    expect([...(form?.children ?? [])].length).toBe(6);
-    expect(form?.querySelector("[data-composer-details]")?.contains(form.querySelector("[data-composer-send]"))).toBe(false);
+    expect(form?.querySelector("[data-composer-details]")).toBeNull();
     const cancel = form?.querySelector("[data-composer-cancel]");
     expect(cancel).not.toBeNull();
-    expect(host.querySelector("[data-task-action]")?.contains(cancel ?? null)).toBe(true);
+    expect(host.querySelector("[data-composer-input-action]")?.contains(cancel ?? null)).toBe(true);
     expect(host.querySelector("[data-task-action]")?.textContent).toContain("Working");
-    expect(host.querySelector("[data-next-draft]")?.textContent).toContain("Not sent or queued");
-    const row = host.querySelector("[data-composer-input-row]");
-    expect(row?.contains(cancel ?? null)).toBe(false);
-    expect(row?.querySelectorAll("button, [role='button']").length).toBe(1);
+    expect(form?.querySelector("[data-composer-send]")).toBeNull();
+    expect(host.querySelector("[data-composer-input-row]")?.querySelectorAll("button, [role='button']").length).toBe(0);
   });
 
-  it("puts no data-source on any context chip", () => {
-    // §7A.10: "no chip carries a `data-source`, because no chip is a fact
-    // (§4.6)". An empty envelope mounts no row; the row template itself
-    // must still not mint a `data-source`.
-    const html = markup();
-    expect(html).not.toContain("data-context-chips");
-    const source = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), "../../src/components/stream/Composer.tsx"),
-      "utf8",
-    );
-    const row = source.slice(
-      source.indexOf("function ContextChipRow"),
-      source.indexOf("export function NewSessionAction"),
-    );
-    expect(row).toContain("data-context-key");
-    expect(row).not.toContain("data-source");
-    expect(row).toContain('variant="toggle"');
-    expect(row).toContain("pressed={dropped}");
-  });
 
-  it("uses expanded on disclosures and toggle on context-drop (pressed discriminant)", () => {
-    const source = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), "../../src/components/stream/Composer.tsx"),
-      "utf8",
-    );
-    // The JSX occurrence, not the header comment's mention of the hook.
-    const hook = source.indexOf('data-context-disclose=""');
-    const discloseBtn = source.slice(source.lastIndexOf("<Button", hook), hook + 40);
-    expect(discloseBtn).toContain("expanded={disclosed}");
-    expect(discloseBtn).not.toContain("pressed={disclosed}");
-    const providers = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), "../../src/components/ProvidersPanel.tsx"),
-      "utf8",
-    );
-    const details = providers.slice(
-      providers.lastIndexOf("<Button", providers.indexOf("data-providers-details")),
-      providers.indexOf("data-providers-details") + 40,
-    );
-    expect(details).toContain("expanded={detailsOpen}");
-    expect(details).not.toContain("pressed={detailsOpen}");
-  });
+  // STRUCK (2026-09-20). This read the composer's SOURCE for
+  // `expanded={disclosed}` on the context disclosure and `pressed=` on the
+  // drop chips, to hold §3.13's expanded-vs-pressed discriminant. Both
+  // controls went with the context readout, so the file no longer contains
+  // the strings it grepped for. The discriminant itself is unchanged and is
+  // still held by the same assertion in `test/system/` for every control
+  // that has one.
 
   it("keeps the existing composer selectors when chrome is present", () => {
     const html = markup({}, { providers: providersDocument() });
     expect(html).toContain("data-composer=\"\"");
     expect(html).toContain("data-composer-input");
     expect(html).toContain("data-composer-send");
-    expect(html).toContain("data-context-disclose");
-    expect(html).toContain("data-context-summary");
+  // 2026-09-20: the context readout was struck; see `composerContext.test.ts`.
     expect(html).toMatch(/<textarea[^>]*rows="2"/);
     expect(html).not.toMatch(/<textarea[^>]*rows="3"/);
     expect(html).not.toContain("data-context-chips");
-    expect(html).not.toContain("data-context-add-view");
+    expect(html).toContain("data-context-add-view");
   });
 
-  it("labels disclose in one word, attached to the summary line (§7A.10(c))", () => {
-    const html = markup();
-    expect(html).toContain(copy.composer.disclose);
-    expect(html).not.toContain("What will the agent be told?");
-    // One word each, and the hook and both strings survive the shortening.
-    expect(copy.composer.disclose.split(" ")).toHaveLength(1);
-    expect(copy.composer.discloseHide.split(" ")).toHaveLength(1);
-    expect(copy.composer.discloseAdvisory.length).toBeGreaterThan(20);
-    const host = document.createElement("div");
-    host.innerHTML = html;
-    const toggle = host.querySelector("[data-context-disclose]");
-    // The line and the toggle are ONE affordance: the toggle is a child of the
-    // summary line, quiet rather than a full `secondary` button in the actions.
-    expect(toggle?.getAttribute("data-variant")).toBe("quiet");
-    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
-    expect(toggle?.closest("[data-context-summary]")).not.toBeNull();
-  });
 
   it("mounts no model chip at rest, even when a runtime is attached (issue 114)", () => {
     const html = markup({}, { providers: providersDocument() });
@@ -591,7 +542,6 @@ describe("the DOM contract", () => {
     expect(html).not.toMatch(/<select\b/i);
     expect(host.querySelector("[data-composer-input]")).not.toBeNull();
     expect(host.querySelector("[data-composer-send]")).not.toBeNull();
-    expect(host.querySelector("[data-context-summary]")).not.toBeNull();
   });
 });
 
@@ -849,9 +799,10 @@ describe("the resting line's Add current view predicate", () => {
 describe("authoritative session model chrome (issue 120)", () => {
   it("shows live Spark, not the first configured model", () => {
     expect(models.providers[0]?.models[0]?.model_id).toBe(vision.model_id);
-    const html = mount().textContent ?? "";
-    expect(html).toContain("local/fake/spark");
-    expect(html).toContain("Text only");
+    const button = mount().querySelector("[data-model-button]");
+    expect(button?.textContent).toBe("");
+    expect(button?.getAttribute("aria-label")).toContain("local/fake/spark");
+    expect(button?.getAttribute("aria-label")).toContain("Text only");
     expect(modelIdentity(vision)).toBe("local/fake/vision/image");
   });
 
@@ -879,8 +830,8 @@ describe("authoritative session model chrome (issue 120)", () => {
     );
     expect(attribute(html, "data-disabled-reason")).toBe("agent_unavailable");
     expect(html).not.toContain("data-composer-model");
-    expect(html).toContain("data-context-disclose");
-    expect(html).not.toContain("data-context-add-view");
+  // 2026-09-20: the context readout was struck; see `composerContext.test.ts`.
+    expect(html).toContain("data-context-add-view");
   });
 
   it("restores a wired model control, not the retired decorative chip", () => {
@@ -892,7 +843,7 @@ describe("authoritative session model chrome (issue 120)", () => {
     expect(html).not.toMatch(/<select\b/i);
   });
 
-  it("mints no effort control and no effort vocabulary (§7A.10(e)(1))", () => {
+  it("offers a compact effort selector backed by the prompt contract", () => {
     const html = markup(
       {},
       {
@@ -913,24 +864,10 @@ describe("authoritative session model chrome (issue 120)", () => {
         }),
       },
     );
-    // Effort is not a prompt field. The strip used to project a bare "off"
-    // with no accessible name; that control is gone — and so, now, is the
-    // vocabulary behind it: §7A.10(e)(1) removed `EFFORT_LEVELS` /
-    // `isEffortLevel` outright, because "a closed vocabulary with no surface is
-    // a spec claim by implication".
-    expect(html).not.toContain("data-composer-effort");
-    expect(html).not.toContain("data-composer-effort-absent");
-    const chrome = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), "../../src/stream/composerChrome.ts"),
-      "utf8",
-    );
-    expect(chrome).not.toContain("EFFORT_LEVELS");
-    expect(chrome).not.toContain("isEffortLevel");
-    expect(chrome).not.toContain("parseModelKey");
-    expect(copy.composer).not.toHaveProperty("effort");
-    expect(copy.composer).not.toHaveProperty("effortOff");
-    expect(copy.composer).not.toHaveProperty("model");
-    expect(copy.composer).not.toHaveProperty("noModels");
+    expect(html).toContain("Effort: Medium");
+    expect(copy.composer).toHaveProperty("effort");
+    expect(copy.composer).toHaveProperty("effortLow");
+    expect(copy.composer).toHaveProperty("effortHigh");
   });
 
   // §7A.10(e)(1), amended 2026-09-03 (issue 114): the idle composer no longer
@@ -980,12 +917,20 @@ describe("authoritative session model chrome (issue 120)", () => {
   });
 });
 
-describe("the idle composer does not host DFM chrome", () => {
+describe("the composer DFM context control", () => {
 
-  it("does not put auto_run or Run DFM on the idle composer", () => {
+  it("hosts the CONTEXT control and never the Inspector's run controls", () => {
+    // RESTORED 2026-09-20. The manufacturing-context control was split onto an
+    // outer toolbar, and then the toolbar was struck — which left
+    // `ComposerControls` with no caller and no way to say which process a
+    // request is about. It is back beside the other three message settings.
+    //
+    // The half of this case that always mattered is unchanged and is the
+    // reason the two must not be confused: CHOOSING a manufacturing context
+    // is not RUNNING a DFM check. The composer carries the former and must
+    // never grow the latter, which belongs to the Inspector.
     const html = markup();
-    expect(html).not.toContain("data-composer-dfm");
-    expect(html).not.toContain("data-composer-dfm-absent");
+    expect(html).toContain("data-composer-dfm");
     expect(html).not.toContain("data-dfm-auto-run-toggle");
     expect(html).not.toContain("data-dfm-run");
     expect(html).toMatch(/<textarea[^>]*rows="2"/);
@@ -1004,7 +949,7 @@ describe("the idle composer does not host DFM chrome", () => {
     expect(html).not.toContain("data-composer-dfm-absent");
     expect(html).not.toContain("data-dfm-auto-run-toggle");
     expect(html).not.toContain("data-dfm-run");
-    expect(html).toContain("data-context-disclose");
+  // 2026-09-20: the context readout was struck; see `composerContext.test.ts`.
   });
 });
 
@@ -1217,7 +1162,9 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     type(root, "edited while creating");
     await act(async () => created({ status: "ok", session_id: "sess-new", profile: "orchestrator", part: null, resumed: false, model_state: createdModelState, execution: IDLE_EXECUTION }));
     expect(sendPrompt).toHaveBeenCalledTimes(1);
-    expect(sendPrompt).toHaveBeenCalledWith("sess-new", "first submission", null, modelState.revision);
+    expect(sendPrompt).toHaveBeenCalledWith("sess-new", "first submission", null, modelState.revision, {
+      interaction_mode: "modeling", dfm_mode: "off", thinking_level: "medium",
+    });
     expect(conversationStore.get("sess-new").draft.text).toBe("edited while creating");
     expect(conversationStore.get("sess-new").attempt).toMatchObject({
       submitted: { text: "first submission" }, sessionId: "sess-new", modelRevision: createdModelState.revision,
@@ -1230,6 +1177,26 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     expect(input(root).value).toBe("Bump the kerf to 0.25 mm.");
     expect(currentTurn(conversationStore.get("sess-1")).runId).toBeNull();
     expect(root.querySelector("[data-composer-cancel]")).toBeNull();
+  });
+
+  it("sends the reviewed Plan and effort controls, DFM at its default", async () => {
+    // `dfm_mode` is a PROMPT FIELD and travels on every turn whatever the
+    // control does. Asserting its DEFAULT explicitly is the point: this case
+    // exercises Plan and effort, leaves the manufacturing context alone, and
+    // holds that an untouched control still sends its default rather than
+    // dropping the field from the request shape.
+    vi.mocked(sendPrompt).mockReturnValue(new Promise(() => {}));
+    const root = mount();
+    act(() => { root.querySelector<HTMLButtonElement>("[data-composer-plan]")?.click(); });
+    expect(root.querySelector("[data-composer-dfm]")?.getAttribute("data-composer-dfm")).toBe("off");
+    act(() => { root.querySelector<HTMLButtonElement>("[data-model-button]")?.click(); });
+    await act(async () => undefined);
+    act(() => { root.querySelector<HTMLButtonElement>('[data-effort-option="high"]')?.click(); });
+    type(root, "Plan this machined part.");
+    pressEnter(root);
+    expect(sendPrompt).toHaveBeenCalledWith("sess-1", "Plan this machined part.", null, modelState.revision, {
+      interaction_mode: "plan", dfm_mode: "off", thinking_level: "high",
+    });
   });
 
   it("sends on Enter when nothing refuses it", async () => {
@@ -1405,6 +1372,7 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
       "Ask about this plate.",
       expect.anything(),
       modelState.revision,
+      { interaction_mode: "modeling", dfm_mode: "off", thinking_level: "medium" },
     );
     expect(workspaceStore.getSnapshot().session).toBe("sess-new");
     workspaceStore.reset(DEFAULT_STATE);
@@ -1493,183 +1461,39 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     void root;
   });
 
-  it("summarises the envelope at rest and mounts NO chip row (§7A.3(a)(c))", () => {
-    workspaceStore.reset({ ...DEFAULT_STATE, part: "kerf_card" });
-    const root = mount();
-    // The resting height is one line of context, whatever the envelope carries.
-    expect(root.querySelector("[data-context-chips]")).toBeNull();
-    const line = root.querySelector("[data-context-summary]");
-    expect(line).not.toBeNull();
-    expect(line?.textContent ?? "").toContain(copy.composer.contextSummary);
-    expect(line?.textContent ?? "").toContain("kerf_card");
-    expect((line?.getAttribute("data-context-keys") ?? "").split(" ")).toContain("part");
-    // Disclose still hides the composed preview; nothing about the route moved.
-    expect(root.querySelector("[data-context-preview]")).toBeNull();
-    expect(root.querySelector("[data-context-block]")).toBeNull();
-  });
 
-  it("expands the editable chip form on the summary toggle, and collapses again", () => {
-    workspaceStore.reset({ ...DEFAULT_STATE, part: "kerf_card" });
-    const root = mount();
-    const toggle = root.querySelector<HTMLButtonElement>("[data-context-disclose]");
-    expect(toggle).not.toBeNull();
-    act(() => {
-      toggle?.click();
-    });
-    // The chips are COMPLETE when shown — `chipsFor` still enumerates every
-    // member; what changed is when the list mounts.
-    expect(root.querySelector("[data-context-chips]")).not.toBeNull();
-    expect(
-      root.querySelector('[data-context-key="part"]')?.getAttribute("data-context-value"),
-    ).toBe("kerf_card");
-    // §7A.3(d)'s testable, against the live DOM: the published key set is the
-    // chips' key set.
-    const published = (
-      root.querySelector("[data-context-summary]")?.getAttribute("data-context-keys") ?? ""
-    ).split(" ");
-    const chipKeys = [...root.querySelectorAll("[data-context-chips] [data-context-key]")].map(
-      (node) => node.getAttribute("data-context-key") ?? "",
-    );
-    expect([...published].sort()).toEqual([...chipKeys].sort());
-    act(() => {
-      root.querySelector<HTMLButtonElement>("[data-context-disclose]")?.click();
-    });
-    expect(root.querySelector("[data-context-chips]")).toBeNull();
-  });
 
-  it("draws an excluded member on the resting line (§7A.3(e))", () => {
-    workspaceStore.reset({ ...DEFAULT_STATE, part: "kerf_card" });
-    const root = mount();
-    act(() => {
-      root.querySelector<HTMLButtonElement>("[data-context-disclose]")?.click();
-    });
-    act(() => {
-      root.querySelector<HTMLButtonElement>('[data-context-drop="part"]')?.click();
-    });
-    act(() => {
-      root.querySelector<HTMLButtonElement>("[data-context-disclose]")?.click();
-    });
-    const line = root.querySelector("[data-context-summary]");
-    expect(line?.querySelector('[data-context-removed="part"]')).not.toBeNull();
-    expect(line?.textContent ?? "").toContain(copy.composer.contextKey.part);
-    expect(line?.getAttribute("data-context-keys")).toBe("");
-  });
 
-  it("holds §7A.3(d)'s halves with a member dropped, superset and all", () => {
-    // The amended (d). `data-context-keys` names exactly what the POST would
-    // send; the chips are a SUPERSET by construction, because a chip is the
-    // control a member is un-excluded from and one that vanished with its
-    // member would take that control away. Halves (2), (3) and (4) here; half
-    // (1) — published == envelope — is `summaryFor`'s own unit above.
-    workspaceStore.reset({ ...DEFAULT_STATE, part: "kerf_card" });
-    const root = mount();
-    act(() => {
-      root.querySelector<HTMLButtonElement>("[data-context-disclose]")?.click();
-    });
-    const keysNow = (): string[] =>
-      (root.querySelector("[data-context-summary]")?.getAttribute("data-context-keys") ?? "")
-        .split(" ")
-        .filter((key) => key !== "");
-    const chipKeys = (selector: string): string[] =>
-      [...root.querySelectorAll(`[data-context-chips] ${selector}`)].map(
-        (node) => node.getAttribute("data-context-key") ?? "",
-      );
 
-    // (4), nothing dropped and the envelope non-null: published == chips.
-    expect(keysNow().sort()).toEqual(chipKeys("[data-context-key]").sort());
-    expect(chipKeys("[data-context-key][data-context-dropped]")).toEqual([]);
-
-    act(() => {
-      root.querySelector<HTMLButtonElement>('[data-context-drop="view"]')?.click();
-    });
-
-    // (3): `view` leaves the published set and the envelope, and its chip stays
-    // in the row wearing `data-context-dropped` — no fact left the DOM (§0.2b).
-    expect(keysNow()).not.toContain("view");
-    expect(chipKeys("[data-context-key][data-context-dropped]")).toEqual(["view"]);
-    // (4) again, with the exclusion: published == chips minus the dropped ones.
-    expect(keysNow().sort()).toEqual(
-      chipKeys("[data-context-key]:not([data-context-dropped])").sort(),
-    );
-    // (2): the line never names a member the form does not offer, even now.
-    for (const key of keysNow()) expect(chipKeys("[data-context-key]")).toContain(key);
-
-    // Drop the only member that names a reference: the envelope goes away
-    // entirely, so the published set is empty while the chips still OFFER the
-    // three navigation members. Superset, not equality — this is the case the
-    // struck three-way equality got wrong.
-    act(() => {
-      root.querySelector<HTMLButtonElement>('[data-context-drop="part"]')?.click();
-    });
-    expect(keysNow()).toEqual([]);
-    expect(chipKeys("[data-context-key]")).toContain("stage_tab");
-    // And both exclusions are visible on the resting line, not quiet (§7A.3(e)).
-    act(() => {
-      root.querySelector<HTMLButtonElement>("[data-context-disclose]")?.click();
-    });
-    const line = root.querySelector("[data-context-summary]");
-    expect(line?.querySelector('[data-context-removed="part"]')).not.toBeNull();
-    expect(line?.querySelector('[data-context-removed="view"]')).not.toBeNull();
-  });
-
-  it("surfaces Add current view on the resting line exactly while the gap is visible (C22)", () => {
-    // §7A.3, amended 2026-09-02 (§0.2c, C22), against the live DOM: all three
-    // negative halves and the positive, in the order an operator reaches them.
+  it("keeps Add current view in the message box and reflects its included state", () => {
     workspaceStore.reset({
       ...DEFAULT_STATE,
       part: "kerf_card",
       selection: { selection_id: "12", kind: "face", bundle_ref: "artifact:selection-bundle:x" },
     });
     const root = mount();
-    const lineAdd = (): HTMLButtonElement | null =>
-      root.querySelector<HTMLButtonElement>("[data-context-summary] [data-context-add-view]");
-    const keysNow = (): string[] =>
-      (root.querySelector("[data-context-summary]")?.getAttribute("data-context-keys") ?? "")
-        .split(" ")
-        .filter((key) => key !== "");
-
-    // SATISFIED: a live selection rides in the envelope with `view`, so there
-    // is no gap and the line mounts no control.
-    expect(keysNow()).toContain("selection");
-    expect(lineAdd()).toBeNull();
-
-    // Exclude both members through the form. While the disclosure is OPEN the
-    // line still mounts nothing — the form's copy of the control is showing,
-    // and two live copies of one affordance is the same control twice.
-    act(() => {
-      root.querySelector<HTMLButtonElement>("[data-context-disclose]")?.click();
-    });
-    act(() => {
-      root.querySelector<HTMLButtonElement>('[data-context-drop="view"]')?.click();
-    });
-    act(() => {
-      root.querySelector<HTMLButtonElement>('[data-context-drop="selection"]')?.click();
-    });
-    expect(lineAdd()).toBeNull();
-    expect(root.querySelector("[data-context-preview] [data-context-add-view]")).not.toBeNull();
-
-    // Close the disclosure: the gap is visible at rest and the affordance
-    // surfaces on the resting line, quiet, at the line's end.
-    act(() => {
-      root.querySelector<HTMLButtonElement>("[data-context-disclose]")?.click();
-    });
-    const control = lineAdd();
+    const control = root.querySelector<HTMLButtonElement>("[data-composer-shell-bar] [data-context-add-view]");
     expect(control).not.toBeNull();
-    expect(control?.getAttribute("data-variant")).toBe("quiet");
-    expect(keysNow()).not.toContain("view");
-    expect(keysNow()).not.toContain("selection");
-
-    // ACTIVATE: exactly what the form's copy does — the members join the
-    // `added` set and hence `data-context-keys` — and the affordance unmounts
-    // from the line because the gap it closed is gone. The (d) equality is
-    // untouched: the keys name exactly what would be sent, before and after.
-    act(() => {
-      control?.click();
-    });
-    expect(lineAdd()).toBeNull();
-    expect(keysNow()).toContain("view");
-    expect(keysNow()).toContain("selection");
+    expect(control?.getAttribute("aria-pressed")).toBe("true");
+    act(() => { control?.click(); });
+    // The control's OWN pressed state is the readback now: the summary line
+    // that used to publish `data-context-keys` was struck, and
+    // `composerContext.test.ts` holds the envelope side directly.
+    expect(control?.getAttribute("aria-pressed")).toBe("false");
+    act(() => { control?.click(); });
+    expect(control?.getAttribute("aria-pressed")).toBe("true");
   });
+
+  // STRUCK WITH THE CONTEXT READOUT (2026-09-20). These asserted the
+  // composer's context SURFACE — the summary line, the chip list, the
+  // disclosure's expanded state. That surface was removed on request; the
+  // envelope it described is unchanged and still sent with every turn.
+  //
+  // The coverage did not go with it. `test/stream/composerContext.test.ts`
+  // now asserts the same semantics — what is offered, what survives a drop,
+  // and §7A.3(d)'s "published keys are the envelope's keys" — against the
+  // functions the composer calls, where they do not depend on a control
+  // being drawn.
 
   it("says the blank canvas in one word, and mounts no chip row (#79)", () => {
     workspaceStore.reset(DEFAULT_STATE);
@@ -1677,11 +1501,12 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     expect(root.querySelector("[data-context-chips]")).toBeNull();
     // The long paragraph is not the resting rendering; one word is.
     expect(root.textContent ?? "").not.toContain(copy.composer.contextNone);
-    const line = root.querySelector("[data-context-summary]");
-    expect(line?.getAttribute("data-context-keys")).toBe("");
-    expect(line?.textContent ?? "").toContain(copy.composer.contextEmpty);
-    // The long form is not gone, it is on `title` (§7.4(d)'s rule).
-    expect(line?.getAttribute("title")).toBe(copy.composer.contextNone);
+    // The resting line is struck; the blank-canvas RULE it printed is held
+    // directly in `composerContext.test.ts` ("is null on a blank canvas").
+    expect(root.querySelector("[data-context-summary]")).toBeNull();
+    // The long form went with the line it was a `title` on. What the case is
+    // really about — that a blank canvas sends NO envelope rather than an
+    // empty one — is held directly in `composerContext.test.ts`.
   });
 
   it("focuses the composer input when the create nonce ticks (#61)", () => {
@@ -1700,7 +1525,7 @@ describe("the paths that bypass Send are gated where Send's gate is decided", ()
     expect(composer(root).getAttribute("data-cancel-state")).toBe("unavailable");
     // §7A.10(b): the control is not there to click. The fact is still readable.
     expect(root.querySelector("[data-composer-cancel]")).toBeNull();
-    expect(composer(root).getAttribute("title")).toBe(copy.composer.cancelIdle);
+    expect(composer(root).getAttribute("title")).toBeNull();
     await act(async () => undefined);
     expect(vi.mocked(cancelRun)).not.toHaveBeenCalled();
     expect(root.querySelector("[data-cancel-note]")).toBeNull();

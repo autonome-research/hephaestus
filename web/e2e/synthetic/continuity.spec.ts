@@ -86,12 +86,13 @@ for (const width of [843, 1440]) test(`focus-only hidden composer/stage and hist
   const hash = await page.evaluate(() => location.hash);
   const model = await page.locator("[data-model-button]").textContent();
   expect(model).toContain("Current model:");
-  for (const hidden of [false, true]) {
-    if (hidden) {
-      await page.locator("[data-stream-collapse]").click();
+  // C25 (2026-09-20): the second arm hid the column first. There is no hidden
+  // state left, so what survives is the half that was never about hiding —
+  // Skip moves focus to the stage and back without touching the route.
+  for (const viaStage of [false, true]) {
+    if (viaStage) {
       await page.locator('[data-skip="stage"]').focus(); await page.keyboard.press("Enter");
       await expect(page.locator("#stage")).toBeFocused();
-      await expect(page.locator("[data-stream-strip]")).toBeVisible();
       expect(await page.evaluate(() => location.hash)).toBe(hash);
     }
     await page.locator('[data-skip="composer"]').focus(); await page.keyboard.press("Enter");

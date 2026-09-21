@@ -271,8 +271,10 @@ a gate cannot read a row that is not mounted (§7.4(b), §8(c)) —
 `[data-testid="transcript"]`, `[data-history-bar]` and `[data-stream-state]`
 (the two DRAWN exceptions, absent in the steady state),
 `[data-session-create]` / `[data-session-ask]` / `[data-session-create-menu]`,
-`[data-session-strip]` with `[data-stream-collapse]` as its last interactive
-element (§4.1(h) C25 — the former `streamHeader` band is struck),
+`[data-session-strip]` with `[data-session-create-menu]` / `[data-session-create]`
+as its LEADING interactive element and no collapse control at all (§4.1(h) C25,
+amended 2026-09-20 — the former `streamHeader` band is struck, and so is the
+Stream's collapsed state: the column has one drawn state),
 `[data-jump-latest]` horizontal outside the transcript scroller (§7.4 C20),
 `[data-session-tab]` with
 `data-thread-depth` / `data-thread-kind`, `[data-event-id]`+`data-surface`,

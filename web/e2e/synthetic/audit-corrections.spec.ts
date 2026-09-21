@@ -38,8 +38,8 @@ for (const width of [1440, 1280, 1024, 843]) test(`refinement: expanded details 
   await page.keyboard.press("Enter");
   await expect(input(page)).toHaveValue(draft);
   await expect(page.locator("[data-composer-cancel]")).toBeVisible();
-  await page.locator("[data-stream-collapse]").click();
-  await page.locator("[data-stream-strip]").click();
+  // C25 (2026-09-20): no collapse to hide and reveal through. The draft must
+  // still be the composer's own state rather than something a reveal restores.
   await expect(input(page)).toHaveValue(draft);
   await expect(page.locator("[data-context-summary]")).toContainText("Next message includes");
   expect(c.mutations.filter(r => r.path !== "/context/preview")).toEqual([]);
@@ -113,18 +113,18 @@ for (const width of [1440, 843]) test(`audit: session-owned exclusions survive H
   for (const key of ["view", "part"]) await page.locator(`[data-context-drop="${key}"]`).click();
   await page.locator("[data-context-disclose]").click();
   const keys = await page.locator("[data-context-summary]").getAttribute("data-context-keys");
-  for (const reveal of ["open", "skip"]) {
-    await page.locator("[data-stream-collapse]").click();
-    if (reveal === "open") await page.locator("[data-stream-strip]").click();
-    else {
-      // Tab to the actual skip link, not a route edit or a programmatic reveal.
-      for (let n = 0; n < 30; n++) {
-        await page.keyboard.press("Tab");
-        if (await page.getByRole("link", { name: "Skip to composer" }).evaluate(el => el === document.activeElement)) break;
-      }
-      await expect(page.getByRole("link", { name: "Skip to composer" })).toBeFocused();
-      await page.keyboard.press("Enter");
+  // C25 (2026-09-20): the "open" arm revealed a collapsed column and is struck
+  // with it. Skip remains, and is now the only way focus is moved into the
+  // composer without a route edit — which is the half this loop was for.
+  for (const reveal of ["skip"]) {
+    void reveal;
+    // Tab to the actual skip link, not a route edit or a programmatic reveal.
+    for (let n = 0; n < 30; n++) {
+      await page.keyboard.press("Tab");
+      if (await page.getByRole("link", { name: "Skip to composer" }).evaluate(el => el === document.activeElement)) break;
     }
+    await expect(page.getByRole("link", { name: "Skip to composer" })).toBeFocused();
+    await page.keyboard.press("Enter");
     await expect(input(page)).toBeFocused();
     await expect(input(page)).toHaveValue("Retain session A draft");
     await expect(page.locator("[data-context-summary]")).toHaveAttribute("data-context-keys", keys!);
@@ -183,8 +183,19 @@ test("audit: explicit added view survives no-session remount and first-send crea
   await page.locator("[data-context-disclose]").click();
   const keys = "stage_tab inspector_tab view";
   await expect(page.locator("[data-context-summary]")).toHaveAttribute("data-context-keys", keys);
-  await page.locator("[data-stream-collapse]").click();
-  await page.locator("[data-stream-strip]").click();
+  // C25 (2026-09-20) — COVERAGE LOST, recorded rather than quietly dropped.
+  //
+  // This step used to hide and reveal the Stream, which unmounted `StreamPanel`
+  // while the module-level conversation store survived, proving the envelope
+  // was STORE state and not component state. With the collapse struck there is
+  // no UI path that unmounts the composer for a session-less draft: the aside
+  // always renders `<StreamPanel />`, and the session round-trip that replaces
+  // this elsewhere needs a switcher, which a no-session page does not draw.
+  //
+  // A full reload is not a substitute — the store is in-memory, so it would
+  // assert the opposite. What survives is the envelope's stability across the
+  // steps that remain, and the first-send assertions below, which are the ones
+  // that actually catch leakage into another session.
   await expect(page.locator("[data-context-summary]")).toHaveAttribute("data-context-keys", keys);
   expect(c.mutations.filter(r => r.path !== "/context/preview")).toEqual([]);
   await expect(send(page)).toBeEnabled();

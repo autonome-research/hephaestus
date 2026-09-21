@@ -157,12 +157,10 @@ describe("§4.1(a) — one breakpoint authority, and the band it got wrong", () 
     expect(bandFor(1023)).toBe("narrow");
   });
 
-  it("retains open conversation and hides Parts overlay in the middle band", () => {
+  it("hides Parts overlay in the middle band and leaves the Stream alone", () => {
     shellStore.applyWidth(1279);
     const state = shellStore.getSnapshot();
     expect(state.band).toBe("medium");
-    // The two facts that used to have two owners now have one, and they agree.
-    expect(state.streamOpen).toBe(true);
     expect(state.railOverlay).toBe(true);
     expect(state.railOpen).toBe(false);
   });
@@ -177,51 +175,37 @@ describe("§4.1(a) — one breakpoint authority, and the band it got wrong", () 
     expect(shellStore.getSnapshot().railOpen).toBe(false);
   });
 
-  it("opens and recollapses the Stream while the narrow Rail stays hidden", () => {
-    shellStore.applyWidth(900);
-    expect(shellStore.getSnapshot()).toMatchObject({
-      band: "narrow",
-      railOverlay: true,
-      railOpen: false,
-      streamOpen: true,
-    });
-
-    shellStore.setStreamOpen(true);
-    expect(shellStore.getSnapshot()).toMatchObject({
-      railOverlay: true,
-      railOpen: false,
-      streamOpen: true,
-    });
-
-    shellStore.setStreamOpen(false);
-    expect(shellStore.getSnapshot()).toMatchObject({
-      railOverlay: true,
-      railOpen: false,
-      streamOpen: false,
-    });
-  });
-
-  it("keeps an explicit collapse across a resize INSIDE a band", () => {
-    // Capacity never overrides explicit intent.
-    shellStore.applyWidth(1440);
-    expect(shellStore.getSnapshot().streamOpen).toBe(true);
-    shellStore.setStreamOpen(false);
-    shellStore.applyWidth(1600);
-    expect(shellStore.getSnapshot().streamOpen).toBe(false);
-    expect(shellStore.streamHeld()).toBe(true);
-  });
-
-  it.each([true, false])("preserves explicit intent %s through every band and late resize observation", open => {
-    shellStore.setStreamOpen(open);
-    for (const width of [1440, 1280, 1024, 843, 1024, 1440]) {
-      shellStore.applyWidth(width);
-      expect(shellStore.streamHeld()).toBe(true);
-      expect(shellStore.getSnapshot().streamOpen).toBe(open);
-      expect(shellStore.getSnapshot().railOverlay).toBe(width < 1280);
+  it("never lets a capacity band dismiss the Stream — only the operator can", () => {
+    // The collapse is a CONTROL, not a breakpoint. No width changes
+    // `streamOpen`, in either direction, so resizing can never take the agent
+    // column away or hand it back; `setStreamOpen` is the one writer.
+    for (const open of [true, false]) {
+      shellStore.setStreamOpen(open);
+      for (const width of [1600, 1440, 1280, 1024, 843, 720]) {
+        shellStore.applyWidth(width);
+        const state = shellStore.getSnapshot();
+        expect(state.streamOpen, `${String(width)}px`).toBe(open);
+        expect(state.railOverlay).toBe(width < 1280);
+      }
     }
-    shellStore.setStreamOpen(true); // Skip before a pending resize callback
-    shellStore.applyWidth(843);
-    expect(shellStore.getSnapshot().streamOpen).toBe(true);
+    // The struck machinery stays struck: no held-intent flag came back with it.
+    expect(shellStore).not.toHaveProperty("streamHeld");
+  });
+
+  it("closes Parts as a column, and reopens it once when the overlay ends", () => {
+    // 2026-09-20: the Views bar's Parts entry can close the rail at any width.
+    // A close chosen while it was a COLUMN is explicit and survives widths in
+    // that capacity; leaving the overlay opens it once, because the narrow
+    // capacity chose that close, not the operator.
+    shellStore.applyWidth(1440);
+    shellStore.setRailOpen(false);
+    shellStore.applyWidth(1600);
+    expect(shellStore.getSnapshot().railOpen).toBe(false);
+    shellStore.applyWidth(900);
+    expect(shellStore.getSnapshot().railOverlay).toBe(true);
+    expect(shellStore.getSnapshot().railOpen).toBe(false);
+    shellStore.applyWidth(1440);
+    expect(shellStore.getSnapshot().railOpen).toBe(true);
   });
 
   it("clamps the drawer to the band its token default clamps to (§4.1(c))", () => {

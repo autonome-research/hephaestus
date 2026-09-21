@@ -213,17 +213,34 @@ describe("the well spends its height on the transcript", () => {
   });
 
   it("keeps a create reachable after the first session exists (#70, §7.1(b))", () => {
-    // §7A.2's create stays reachable after the first session — but beside a
-    // drawn tab strip it is the strip's `+`, not a second worded band. The
-    // worded pair survives on the two surfaces §7.1(b)(1) leaves it on: the
-    // empty-list invitation and the runtime-fault band.
+    // The leading `+` stays reachable before and after the first session; the
+    // worded recovery action remains available for runtime faults.
     expect(panel).toContain("const createAction");
-    expect(panel).toContain("action={createAction}");
     expect(panel).toContain("const stripCreate");
-    expect(panel).toMatch(/fault === null && \(cannotPrompt \|\| rows\.length > 0\)/);
     expect(panel).toContain("create={stripCreate}");
     const tabsRegion = panel.slice(panel.indexOf("<SessionTabs"), panel.indexOf("<StreamHeader"));
     expect(tabsRegion).not.toContain("{createAction}");
+  });
+
+  it("mounts the leading `+` in every state, disabled with a reason (§4.7, #43)", () => {
+    // The `+` is the strip's leading landmark and no longer disappears with the
+    // runtime. Suppressing it left the strip holding one right-aligned control
+    // and nothing else. Both halves are asserted: the create is unconditional,
+    // and each blocked state hands it a SENTENCE rather than dropping it.
+    expect(panel).toMatch(/const stripCreate = \(\s*\n\s*<SessionCreateAction/);
+    expect(panel).not.toMatch(/stripCreate\s*=\s*\n?\s*fault === null/);
+    expect(panel).toContain("blockedReason={createBlocked}");
+    expect(panel).toContain("copy.stream.runtimeFaultWhy[fault]");
+    expect(panel).toContain("copy.composer.disabled.agent_unavailable");
+
+    // `Button`'s disabled half is a discriminated union, so a blocked create
+    // cannot compile without its reason — but the PRECEDENCE is a choice, and
+    // an unattached runtime must outrank a pending POST.
+    const tabs = source("components/stream/SessionTabs.tsx");
+    expect(tabs).toContain("blockedReason");
+    expect(tabs).toMatch(
+      /const disablement = blockedReason !== null[\s\S]{0,200}?:\s*pending\s*\n?\s*\?/,
+    );
   });
 
   it("focuses the composer after New session (#61)", () => {
@@ -348,9 +365,8 @@ describe("the session tab row is a name, not three metadata strings", () => {
     const button = root.querySelector("[data-session-tab]");
     expect(button?.getAttribute("data-thread-state")).toBe("unlinked");
     expect(button?.textContent ?? "").not.toMatch(/no parent/i);
-    expect(button?.textContent ?? "").toContain(copy.stream.projectSession);
-    // §7.1 C6: the fallback title is the profile word, never the create
-    // affordance's wording.
+    expect(root.querySelector("[data-conversation-scope]")?.textContent).toContain("Project scope");
+    // The compact title keeps the profile word; scope lives in hidden metadata.
     expect(button?.textContent ?? "").toContain(copy.stream.profile.orchestrator);
     expect(button?.textContent ?? "").not.toContain(copy.composer.createOrchestrator);
     expect(button?.getAttribute("title") ?? "").toContain("cannot be recovered");
@@ -376,13 +392,13 @@ describe("the composer is usable, and says how it is used", () => {
   // AMENDED 2026-09-01 (§7A.6, §7A.10(b)): Cancel MOUNTS rather than dims. The
   // old reading — "rendered whether or not it is available" — was the shipped
   // behaviour the amendment names as the defect: a disabled button standing in
-  // the action row for nearly all of the time. The fact stays: the state
-  // attribute is unconditional and its reason moved to the form's `title`.
+  // the action row for nearly all of the time. The fact stays as an unconditional
+  // state attribute without turning the entire composer into a tooltip target.
   it("mounts Cancel iff the state is available, and keeps the attribute (§7A.6)", () => {
     expect(composer).toContain('data-composer-cancel=""');
-    expect(composer).toMatch(/\{cancellable \? \(/);
+    expect(composer).toMatch(/\{cancellable \? <Button/);
     expect(composer).toContain('data-cancel-state={cancellable ? "available" : "unavailable"}');
-    expect(composer).toMatch(/cancelWhy !== null \? \{ title: cancelWhy \}/);
+    expect(composer).not.toContain("cancelWhy");
     // Pending/acknowledged Stop stays disabled; only fresh same-run authority
     // after delivery failure permits the explicit retry (stopRecovery.test.ts).
     expect(composer).toMatch(/turn\.stopRequested && !turn\.canRetryStop \? \{ disabled: true as const, reason: copy\.composer\.stopRequested \}/);
@@ -402,7 +418,8 @@ describe("the composer is usable, and says how it is used", () => {
     expect(composer).toContain("const promptRows = 2;");
     expect(composer).toContain("4 * line + edges");
     expect(composer).toContain("data-composer-hint");
-    expect(composer).toContain("data-composer-details");
+    // The message-details region went with the context readout (2026-09-20).
+    expect(composer).not.toContain("data-composer-details");
     expect(composer).toMatch(/title=\{sendHint\}/);
   });
 });
@@ -669,12 +686,18 @@ describe("the create affordance is one `+` in the strip (§7.1(b))", () => {
     );
   }
 
-  it("shows New with its full accessible name, keeping scope choices behind the menu", () => {
+  it("is icon-only, keeping its name and its scope choices out of the strip", () => {
+    // 2026-09-20: the visible word beside the `+` is struck. The strip is one
+    // row of chrome and the create is a glyph in it; the NAME is unchanged and
+    // moves to `aria-label`, which is the half that must not be lost.
     for (const part of [null, "kerf_card"]) {
       const drawn = strip(part);
       const button = drawn.querySelector("button");
-      expect(button?.querySelector('span[aria-hidden="true"]')?.textContent).toBe(copy.stream.newAction);
-      expect(button?.querySelector('span[class*="srOnly"]')?.textContent).toBe(copy.stream.createMenu);
+      expect(button?.querySelector('span[aria-hidden="true"]')).toBeNull();
+      expect(button?.textContent, String(part)).toBe("");
+      expect(button?.getAttribute("aria-label"), String(part)).toBe(
+        part === null ? copy.composer.createOrchestrator : copy.stream.createMenu,
+      );
       expect(drawn.querySelector("[data-session-create-open]")).toBeNull();
       expect(drawn.body.textContent).not.toContain(copy.composer.createPart("kerf_card"));
     }
@@ -688,7 +711,7 @@ describe("the create affordance is one `+` in the strip (§7.1(b))", () => {
       const drawn = strip(part);
       const button = drawn.querySelector("button");
       expect(button?.getAttribute("data-variant"), String(part)).toBe("quiet");
-      const name = button?.querySelector('span[class*="srOnly"]')?.textContent ?? "";
+      const name = button?.getAttribute("aria-label") ?? "";
       expect(name, String(part)).not.toBe("");
       expect(name, String(part)).not.toBe("+");
       // No unbordered accent glyph: the `+` is an Icon inside a Button, not a
@@ -782,29 +805,56 @@ describe("the create affordance is one `+` in the strip (§7.1(b))", () => {
   });
 });
 
-describe("§4.1(h) C25 — the eyebrow band is struck; the chevron joins the strip", () => {
+describe("§4.1(h) C25 — the eyebrow band is struck, and so is the collapse", () => {
   const shell = source("components/Shell.tsx");
   const panel = source("components/stream/StreamPanel.tsx");
 
-  it("renders no streamHeader band and no collapse control in the shell", () => {
+  it("renders no streamHeader band and no collapse control anywhere", () => {
     // The negative half: no element above the transcript matches the former
-    // `streamHeader`, in source or stylesheet, and the shell no longer mounts
-    // the chevron — the strip does.
+    // `streamHeader`, in source or stylesheet, and NOTHING mounts a collapse
+    // — not the shell, not the strip. The Stream is a peer column with one
+    // drawn state.
     expect(shell).not.toContain("streamHeader");
     expect(shell).not.toContain("data-stream-collapse");
     expect(shell).not.toContain("streamTitle");
     expect(shell).toContain('aria-label={copy.stream.title}');
     expect(css("components/Shell.module.css")).not.toContain(".streamHeader");
     expect(css("components/Shell.module.css")).not.toContain(".streamTitle");
+    expect(panel).not.toContain("data-stream-collapse");
+    expect(panel).not.toContain("collapseControl");
   });
 
-  it("mounts the chevron from the panel, as the strip's trailing item", () => {
-    // The hook, the recipe and the accessible name survive the move verbatim.
-    expect(panel).toContain('data-stream-collapse=""');
-    expect(panel).toContain("iconLabel={copy.stream.collapse}");
-    expect(panel).toContain('icon="chevron-right"');
-    expect(panel).toContain("collapse={collapseControl}");
-    expect(panel.match(/data-stream-collapse/g) ?? []).toHaveLength(1);
+  it("closes from the strip, reopens from the header, and stays mounted", () => {
+    // The Agent column's two edge controls sit ON the column and on the bar
+    // above it — never in the task bar, which has no entry for it at all:
+    //
+    //  * `X` at the session strip's TRAILING edge closes it, so the row reads
+    //    open-left (`+`) / close-right;
+    //  * the header's trailing corner reopens it, because the header never
+    //    goes away and a control inside a hidden column cannot be clicked;
+    //  * there is NO return strip — `ConversationReturn` stays deleted;
+    //  * the panel stays MOUNTED when closed — the track goes to zero and the
+    //    column CLIPS rather than being `display: none`, which would drop it
+    //    from grid auto-placement and shift every region after it. A draft
+    //    survives with nothing to re-hydrate.
+    expect(source("components/stream/StreamPanel.tsx")).toContain('data-stream-toggle=""');
+    expect(source("components/stream/StreamPanel.tsx")).toContain("setStreamOpen(false)");
+    expect(source("components/stream/SessionTabs.tsx")).toContain("tabsClose");
+    expect(source("components/Header.tsx")).toContain('data-stream-toggle=""');
+    expect(source("components/views/ViewsBar.tsx")).not.toContain("data-stream-toggle");
+    expect(shell).not.toContain("ConversationReturn");
+    expect(shell).not.toContain("data-stream-collapse");
+
+    const shellCss = css("components/Shell.module.css");
+    expect(shellCss).toContain('.body[data-stream="collapsed"] .stream');
+    expect(shellCss).toMatch(/\[data-stream="collapsed"\]\s*\.stream\s*\{[^}]*overflow:\s*hidden/);
+    expect(shellCss).not.toMatch(/\[data-stream="collapsed"\]\s*\.stream\s*\{[^}]*display:\s*none/);
+    expect(shellCss).not.toMatch(/\[data-stream="collapsed"\]\s*\{[^}]*--stream-width/);
+    expect(shell).toMatch(/"--stream-width":[^,]*shell\.streamOpen/);
+
+    const aside = shell.slice(shell.indexOf("<aside"), shell.indexOf("</aside>"));
+    expect(aside).toContain("<StreamPanel />");
+    expect(aside).not.toMatch(/\{\s*\w+\s*\?\s*\(?\s*<StreamPanel/);
   });
 
   it("mounts the strip first and the exception row directly below it", () => {
@@ -818,12 +868,9 @@ describe("§4.1(h) C25 — the eyebrow band is struck; the chevron joins the str
     expect(mainAt).toBeGreaterThan(exceptionAt);
   });
 
-  it("places the chevron inside the strip, as its last interactive element", () => {
-    const collapseNode = (
-      <button type="button" data-stream-collapse="" aria-label={copy.stream.collapse} />
-    );
-    // Both sides: with and without the `+`, the chevron is a descendant of the
-    // strip and the last interactive element in it.
+  it("places the `+` inside the strip, as its only interactive element", () => {
+    // The strip's one control starts a conversation. With no create passed the
+    // strip holds no button at all rather than holding a dismissal.
     for (const create of [
       undefined,
       <SessionCreateAction
@@ -843,23 +890,23 @@ describe("§4.1(h) C25 — the eyebrow band is struck; the chevron joins the str
             onSelect={() => undefined}
             bounded={false}
             create={create}
-            collapse={collapseNode}
           />,
         ),
       );
       const strip = drawn.querySelector("[data-session-strip]");
-      const chevron = drawn.querySelector("[data-stream-collapse]");
-      expect(chevron).not.toBeNull();
-      expect(chevron?.closest("[data-session-strip]")).toBe(strip);
+      // Nothing trails the tabs any more: the strip's only controls are the
+      // create and the session switcher the tab itself is.
+      expect(drawn.querySelector("[data-stream-collapse]")).toBeNull();
       const interactive = [...(strip?.querySelectorAll("button") ?? [])];
-      expect(interactive[interactive.length - 1]).toBe(chevron);
-      if (create !== undefined) {
-        // After the `+` (§7.1(b)): the create precedes the chevron.
+      const switcher = drawn.querySelector("[data-session-switch]");
+      expect(interactive[interactive.length - 1]).toBe(switcher);
+      if (create === undefined) {
+        expect(interactive).toHaveLength(1);
+      } else {
         const plus = drawn.querySelector("[data-session-create]");
         expect(plus).not.toBeNull();
-        expect(interactive.indexOf(plus as HTMLButtonElement)).toBeLessThan(
-          interactive.indexOf(chevron as HTMLButtonElement),
-        );
+        expect(plus?.closest("[data-session-strip]")).toBe(strip);
+        expect(interactive[0]).toBe(plus);
       }
     }
   });
@@ -879,8 +926,13 @@ describe("§4.1(h) C25 — the eyebrow band is struck; the chevron joins the str
     expect(barAt).toBeGreaterThan(badgeAt);
   });
 
-  it("renders the panel only while the column is expanded", () => {
-    expect(shell).toMatch(/\{shell\.streamOpen \? \(/);
+  it("renders the panel unconditionally — the column has one state", () => {
+    const aside = shell.slice(shell.indexOf("<aside"), shell.indexOf("</aside>"));
+    expect(aside).toContain("<StreamPanel />");
+    // No conditional around the panel itself. `inert` still varies with the
+    // rail overlay, so the assertion is on the child, not on the whole element.
+    expect(aside).not.toMatch(/\{\s*\w+\s*\?\s*\(?\s*<StreamPanel/);
+    expect(aside).not.toContain("ConversationReturn");
   });
 
   it("renders no unread count, dot or badge on the collapsed strip (§4.1(f))", () => {
