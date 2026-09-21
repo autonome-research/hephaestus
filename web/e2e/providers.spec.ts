@@ -154,6 +154,18 @@ function providersJson(): string {
  */
 async function openProviders(page: Page, on: Serve = serve): Promise<void> {
   await page.goto(`${on.baseUrl}/#t=${on.token}`);
+  await revealProviders(page);
+}
+
+/**
+ * Re-open the panel on a page that is already loaded.
+ *
+ * A popover does not survive a reload, and a reload is how several of these
+ * cases observe state the API changed out of band. Before the move the panel
+ * was a rail section and came back with the document; now it comes back when
+ * the control is pressed.
+ */
+async function revealProviders(page: Page): Promise<void> {
   const control = page.locator("[data-model-button]");
   await expect(control).toBeVisible({ timeout: 90_000 });
   await control.click();
@@ -518,9 +530,15 @@ async function runArc(page: Page, serve: Serve): Promise<void> {
   // boundary governs a session's OWN turn, not a provider written out of band
   // by this test through the API.
   await page.reload();
+  await revealProviders(page);
   await expect(page.locator('[data-provider-available="true"]').first()).toBeVisible({
     timeout: 120_000,
   });
+  // …and then get out of the way. The panel is inside a popover now, and a
+  // popover has a scrim: leaving it open would block every pointer action on
+  // the composer below for the rest of this arc.
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("group", { name: "Choose model" })).toHaveCount(0);
 
   // (3) a session now runs and STREAMS INTO THE PANEL. The reply is a sentinel
   // the harness scripts, so a panel that rendered without a turn having run
@@ -563,6 +581,7 @@ async function runArc(page: Page, serve: Serve): Promise<void> {
   const out = await call("POST", "/providers/e2e-scripted/auth/signout", {});
   expect(out.status).toBe(200);
   await page.reload();
+  await revealProviders(page);
   // "returns the panel to `none`" is the SOURCE axis: ProvidersPanel derives
   // signedIn as `row.source !== "none"`, so `none` is the rendered fact that a
   // credential is gone. The health/available axis is about reachability and is
