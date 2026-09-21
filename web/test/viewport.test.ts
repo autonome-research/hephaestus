@@ -205,6 +205,25 @@ describe("cameras (§5.5)", () => {
     // vocabulary order wins, deterministically.
     expect(nameForDirection(eyeDirection(VIEW_ANGLES["front"]))).toBe("-Y");
   });
+
+  it("names the poles by elevation, where the azimuth is not a fact", () => {
+    // Straight down and straight up, the eye is (0, 0, ±1) and `atan2(y, x)`
+    // reads float noise: the same top view reports 0° one frame and 135° the
+    // next. Requiring the azimuth to match `VIEW_ANGLES`'s 0° made `+Z` and
+    // `-Z` unnameable almost always — the name fell through to the free-orbit
+    // grammar, and the view cube could not find the camera it was looking
+    // from, so it marked nothing current at those two views.
+    expect(nameForDirection(eyeDirection(VIEW_ANGLES["+Z"]))).toBe("+Z");
+    expect(nameForDirection(eyeDirection(VIEW_ANGLES["-Z"]))).toBe("-Z");
+    // …from ANY azimuth, which is the half that was broken. These are the same
+    // two cameras, reached the way an orbit reaches them.
+    for (const azimuth of [0, 90, 135, 180, 270, 359]) {
+      expect(nameForDirection(eyeDirection({ azimuth_deg: azimuth, elevation_deg: 90 })), `az${String(azimuth)} up`).toBe("+Z");
+      expect(nameForDirection(eyeDirection({ azimuth_deg: azimuth, elevation_deg: -90 })), `az${String(azimuth)} down`).toBe("-Z");
+    }
+    // And a camera that is NOT at a pole still carries its azimuth.
+    expect(nameForDirection(eyeDirection({ azimuth_deg: 135, elevation_deg: 89 }))).toBe("az135_el89");
+  });
 });
 
 // ---------------------------------------------------------------------------

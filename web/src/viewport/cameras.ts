@@ -118,11 +118,22 @@ export function anglesFromDirection(
  * the first in `STANDARD_VIEWS` order — `-Y` — deterministically rather than
  * guessing at intent; both names still resolve to that camera on the way in, so
  * a URL saying `front` keeps saying `front` until the user orbits away from it.
+ *
+ * AT THE TWO POLES THE AZIMUTH IS NOT A FACT (fixed 2026-09-20). Looking
+ * straight down or straight up, the eye is `(0, 0, ±1)` and `atan2(y, x)` is
+ * reading float noise: the same top view reports 0° one frame and 135° the
+ * next. Requiring the azimuth to match `VIEW_ANGLES`'s 0° therefore failed for
+ * `+Z` and `-Z` almost always, and the name fell through to the free-orbit
+ * grammar — so the view cube, whose own `+Z` cell IS named `+Z`, could not
+ * find the camera it was looking from and marked nothing current. Elevation
+ * alone decides at ±90°, which is the same rule said correctly.
  */
 export function nameForDirection(direction: readonly [number, number, number]): string {
   const angles = anglesFromDirection(direction);
   const azimuth = normalizeAzimuth(Math.round(angles.azimuth_deg));
   const elevation = Math.round(angles.elevation_deg);
+  if (elevation === 90) return "+Z";
+  if (elevation === -90) return "-Z";
   for (const name of STANDARD_VIEWS) {
     const standard = VIEW_ANGLES[name];
     if (
