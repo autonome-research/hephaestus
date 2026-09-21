@@ -33,15 +33,18 @@
 // clickable, the way it is on any orientation cube; it is reached by turning
 // the cube, which is what the edge and corner targets are for.
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { copy } from "../../../copy";
-import { useWorkspace, workspaceStore } from "../../../state/react";
-import { eyeDirection, VIEW_ANGLES, viewAngles } from "../../../viewport/cameras";
+import { workspaceStore } from "../../../state/react";
+import { cameraPoseStore } from "../../../state/cameraPose";
+import { eyeDirection } from "../../../viewport/cameras";
 import {
   CUBE_SIZE,
+  projectAxes,
   projectTargets,
   targetName,
   type CubeTarget,
+  type ProjectedAxis,
   type ProjectedTarget,
 } from "../../../viewport/cubeTargets";
 import { cx } from "../../../system/dataAttrs";
@@ -86,18 +89,24 @@ function clipOf(target: ProjectedTarget): string {
 }
 
 export function ViewCube(): React.JSX.Element {
-  const view = useWorkspace((s) => s.view);
-  // An unparseable `view` cannot happen through the store's own validator; the
-  // iso fallback is here so a hand-edited URL draws a cube rather than nothing.
-  const angles = viewAngles(view) ?? VIEW_ANGLES.iso;
-  const azimuth = angles.azimuth_deg;
-  const elevation = angles.elevation_deg;
+  // THE LIVE CAMERA, not the named view (2026-09-20). `workspace.view` is
+  // written when a drag SETTLES, so reading it left the cube motionless
+  // through an orbit and then snapping between eight poses — which is what
+  // "rotates as a rectangle, slow and janky" was. `state/cameraPose.ts` is
+  // published from the viewport's frame callback and follows the pointer.
+  const pose = useSyncExternalStore(
+    cameraPoseStore.subscribe,
+    cameraPoseStore.getSnapshot,
+    cameraPoseStore.getSnapshot,
+  );
+  const azimuth = pose.azimuth_deg;
+  const elevation = pose.elevation_deg;
   const [focused, setFocused] = useState<string | null>(null);
 
   const targets = useMemo(
     () =>
       projectTargets(azimuth, elevation)
-        .filter((target) => target.visible)
+        .filter((target) => target.visible && target.kind === "face")
         // Nearest last. The cells tile the silhouette and never overlap, so
         // this is order for its own sake rather than a fix for one — but it
         // keeps the DOM order the depth order a reader would expect.
@@ -111,6 +120,18 @@ export function ViewCube(): React.JSX.Element {
   const current = targetName(eyeDirection({ azimuth_deg: azimuth, elevation_deg: elevation }));
   const focusedTarget = targets.find((target) => target.key === focused);
   const viewBox = `${String(-HALF)} ${String(-HALF)} ${String(CUBE_SIZE)} ${String(CUBE_SIZE)}`;
+  // 0.5 of the half-cube: long enough to read as an axis, short enough that the
+  // letter lands inside the FRONT faces at every camera rather than out on the
+  // silhouette where the face words are. At 0.62 the X and Y tips sat on top of
+  // "Right" and "Back" (2026-09-20).
+  // 2.6 of the half-cube, and the number has to be this large because the
+  // PROJECTION FORESHORTENS EACH AXIS DIFFERENTLY. An isometric cube projects
+  // about 1.22 half-edges to its silhouette, but a world axis pointing at a
+  // cube corner projects at about 0.707 of its length — so at 1.8 the +X arm
+  // came out SHORTER than the outline it had to clear and was swallowed
+  // whole, while +Z (0.816) just peeked out. 2.6 puts the most foreshortened
+  // arm clear of the silhouette, which is what makes all three visible.
+  const axes = useMemo(() => projectAxes(azimuth, elevation, 3.15), [azimuth, elevation]);
 
   return (
     <div
@@ -121,10 +142,57 @@ export function ViewCube(): React.JSX.Element {
       aria-label={copy.viewport.viewCube.label}
     >
       <div className={styles["scene"]}>
+        {/* The axes, FIRST so they paint UNDER the cube (2026-09-20): the
+            arms that reach past the silhouette are all that shows, which is
+            the reference's arrangement — three coloured stubs on a solid
+            block, not a triad drawn through its middle.
+
+            They are in the SAME basis as the cells — an indicator with
+            its own projection is a second answer to "which way is +X", and the
+            two drift the moment either is touched. Drawn behind the labels so a
+            face word is never crossed by a line, and monochrome because the
+            viewport does not spend a status colour on decoration (§3.11.6). */}
+        <svg className={styles["axes"]} viewBox={viewBox} aria-hidden="true" focusable="false">
+          {axes.map((axis: ProjectedAxis) => (
+            <g
+              key={axis.label}
+              className={styles[`axis${axis.label}`]}
+              data-axis={axis.label}
+              data-axis-facing={axis.depth >= 0 ? "toward" : "away"}
+            >
+              <line className={styles["axisLine"]} x1={0} y1={0} x2={axis.tip[0]} y2={axis.tip[1]} />
+              {/* Scaled by a TRANSFORM rather than a font size. The axis
+                  letter and the face word take the same type role (§3.8 owns
+                  the ramp; `heph/no-raw-type` is why neither names a size),
+                  but a 72-unit cube renders that role at the same pixels as
+                  the face words — so the triad read as loud as the faces it
+                  annotates. The face words already solve this: they are drawn
+                  at the origin inside a `matrix(...)` that carries their size.
+                  This does the same, one transform instead of a second ramp. */}
+              <g transform={`translate(${String(axis.text[0])} ${String(axis.text[1])}) scale(0.62)`}>
+                <text
+                  className={styles["axisWord"]}
+                  x={0}
+                  y={0}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                >
+                  {axis.label}
+                </text>
+              </g>
+            </g>
+          ))}
+        </svg>
         <svg className={styles["art"]} viewBox={viewBox} aria-hidden="true" focusable="false">
           {targets.map((target) => (
             <polygon
               key={target.key}
+              // Which world axis this face looks along, so the stylesheet can
+              // shade it. `axis` is the direction vector: exactly one
+              // component is non-zero for a face.
+              data-cube-facing={
+                target.axis[2] !== 0 ? "z" : target.axis[1] !== 0 ? "y" : "x"
+              }
               className={cx(
                 styles["cell"],
                 styles[

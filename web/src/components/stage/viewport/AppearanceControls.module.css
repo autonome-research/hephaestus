@@ -26,13 +26,22 @@
   box-shadow: var(--elev-popover);
 }
 
-.more {
+
+
+
+/*
+ * Inside the stage rail (2026-09-20): layout only. The rail supplies the plate,
+ * the border, the shadow and every control's own chrome, so this cluster keeps
+ * nothing but its stacking order.
+ */
+[data-appearance-slot] .cluster {
+  position: static;
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 2px;
+  flex-direction: column;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
 }
 
-.more[hidden] {
-  display: none;
-}
+

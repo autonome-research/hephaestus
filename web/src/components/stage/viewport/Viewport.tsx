@@ -50,15 +50,17 @@ import { copy } from "../../../copy";
 import { useBuild } from "../../../api/queries";
 import { useWorkspace, workspaceStore } from "../../../state/react";
 import { NoWebglError, ViewportEngine } from "../../../viewport/engine";
-import { parseSectionPlane } from "../../../viewport/section";
+import { plateOwnsWell as plateOwnsWellFor, parseSectionPlane } from "../../../viewport/section";
 import { installViewportHandle } from "../../../viewport/testHook";
+import { cameraPoseStore } from "../../../state/cameraPose";
+import { anglesFromDirection } from "../../../viewport/cameras";
 import { useGlb } from "../../../viewport/useGlb";
 import { labelsForPart, visibilityStore } from "../../../state/visibility";
 import { Badge, Button, Chip, EmptyState, type IconId } from "../../../system";
 import type { SolidIndex } from "../../../viewport/scene";
 import { appearanceStore } from "../../../state/appearance";
-import { AppearanceControls } from "./AppearanceControls";
 import { ExplodeSlider } from "./ExplodeSlider";
+import { ViewCube } from "./ViewCube";
 import { SectionControl, type SceneBounds } from "./SectionControl";
 import { SectionPlate } from "./SectionPlate";
 import styles from "./Viewport.module.css";
@@ -299,15 +301,6 @@ export function Viewport(): React.JSX.Element {
     workspaceStore.update({ view: viewName });
   }, []);
 
-  const onFit = useCallback((): void => {
-    const live = engineRef.current;
-    if (live === null) return;
-    // Fit is an explicit re-frame of the *current* named view, including after
-    // an orbit: `framedRef` would otherwise skip `frame()` for the same key.
-    live.frame(view, explodeT > 0);
-    framedRef.current = framingKey;
-  }, [view, explodeT, framingKey]);
-
   // -- the engine: one per canvas, for the canvas's life --------------------
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -329,8 +322,25 @@ export function Viewport(): React.JSX.Element {
       artifactRef: loadedRefRef.current,
       camera: engineRef.current?.cameraSnapshot() ?? null,
     }));
+    // PUBLISH THE LIVE POSE for the orientation gizmo (2026-09-20). The cube
+    // used to read `workspace.view`, which is written once when a drag SETTLES
+    // — so it stood still through an orbit and then snapped to the nearest
+    // named view. `onFrame` fires after every drawn frame, which is exactly
+    // the rate the gizmo needs to track the camera.
+    const removePose = engine.onFrame(() => {
+      const live = engineRef.current?.cameraSnapshot();
+      if (live === undefined) return;
+      cameraPoseStore.set(
+        anglesFromDirection([
+          live.eye[0] - live.target[0],
+          live.eye[1] - live.target[1],
+          live.eye[2] - live.target[2],
+        ]),
+      );
+    });
     const created = engine;
     return () => {
+      removePose();
       removeHandle();
       engineRef.current = null;
       indexRef.current = null;
@@ -452,6 +462,7 @@ export function Viewport(): React.JSX.Element {
   /** What is actually drawn: the last completed artifact, or nothing at all. */
   const displayedRef = artifactRef === null ? null : loadedIntoScene;
 
+
   const state: GlbState =
     webglError !== null
       ? "no-webgl"
@@ -509,7 +520,7 @@ export function Viewport(): React.JSX.Element {
    * The surface set under a plate is then the header, the section control and
    * (sometimes) the explode card: disjoint by construction.
    */
-  const plateOwnsWell = overlay === "section" && plane !== null;
+  const plateOwnsWell = plateOwnsWellFor(overlay, sectionPlane);
 
   // -- the bottom band: does it fit? (§5.5 C18, J-web-viewport-3) -----------
   //
@@ -588,21 +599,28 @@ export function Viewport(): React.JSX.Element {
 
       {!hasGeometry ? null : (
         <>
-          {/* §5.5's view cube and §3.11.6's axis triad are STRUCK (2026-09-20).
-              Both were persistent overlays painted over the model itself, which
-              is the one surface the operator came to look at. The cube was also
-              the only control that SET a named view — orbit and the `?view=`
-              route are what remain, and `onCameraSettled` still records the
-              nearest name after an orbit, so the route keeps working and a
-              shared link still reopens on its view. */}
+          {/* The view cube, restored 2026-09-20 with the axes drawn INSIDE it.
+              It was struck earlier the same day as one of two overlays painted
+              over the model; what came back is one widget, not two, in the
+              corner furthest from the controls — and it is again the only thing
+              that SETS a named view by click. Every cell is a face, edge or
+              corner of a bevelled cube, and the drawn polygon IS the hit region
+              (`viewport/cubeTargets.ts`); the axes share its projection, so the
+              letters cannot point somewhere the cube does not. */}
+          {plateOwnsWell ? null : <ViewCube />}
           {/* §3.11's View / Scale / Grid readout is STRUCK (2026-09-20). It was
               a plate over the model reporting three facts the operator can see
               or does not need: the named view is in the URL, the grid's step is
               visible in the grid, and the scale changes as they zoom. The
               camera-scale and grid-step state it read is gone with it. */}
-          {plateOwnsWell ? null : (
-            <AppearanceControls canFit={displayedRef !== null && state === "ready"} onFit={onFit} />
-          )}
+          {/* The appearance cluster is DRAWN BY THE STAGE RAIL since
+              2026-09-20 — the same edge the view switches sit on, so every
+              control that changes what you are looking at is one column rather
+              than two corners of the canvas. This component publishes nothing
+              to it: the cluster is four `appearanceStore` flags, and the rail
+              gates them on the stage tab it already reads. Fit was the one
+              control that needed a handler across that boundary, and Fit was
+              struck later the same day. */}
           {/* §5.5 C18: the bottom overlays share ONE flex band — the legend at
               `flex: none` (a readout never stretches), the explode slider at
               `flex: 1` with a 120px minimum track, the section control at its

@@ -22,13 +22,18 @@
 
 .cube {
   position: absolute;
-  top: var(--space-3);
+  /* BOTTOM-right since 2026-09-20: the stage's view rail took the top-right
+     corner, and two widgets in one corner is one widget covering the other. */
+  bottom: var(--space-3);
   right: var(--space-3);
   padding: var(--space-2);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-card);
-  background: var(--surface-overlay);
-  box-shadow: var(--elev-popover);
+  /* NO PLATE (2026-09-20). The gizmo sits directly on the well now: a
+     bordered, shadowed card around a small dark cube on a dark ground is a
+     box drawn around a box. §3.10's plate exists to separate a surface from
+     what is behind it, and here there is nothing to separate. */
+  border: 0;
+  background: none;
+  box-shadow: none;
   /* §3.9: `--accent-ink` is permitted only on `--accent`. Cube words are words,
      so they spend `--ink-strong` — the same pairing the pressed toggle recipe
      uses on `--accent-quiet`. `--accent-ink` on `--accent-quiet` is 1.56:1 and
@@ -41,13 +46,14 @@
   outline-offset: 2px;
 }
 
-/* The projection's own frame. 72px here and `CUBE_SIZE` there are the same
-   number and must stay so; `overflow: hidden` is the guarantee the cube can
-   never paint over the plate's padding again, whatever the camera. */
+/* The projection's own frame. 120px here and `CUBE_SIZE` there are the same
+   number and must stay so; `overflow: hidden` is the guarantee the gizmo can
+   never paint outside its own box, whatever the camera. It grew from 72 with
+   the axes: they reach past the cube now and were being clipped. */
 .scene {
   position: relative;
-  width: 72px;
-  height: 72px;
+  width: 120px;
+  height: 120px;
   overflow: hidden;
 }
 
@@ -64,16 +70,34 @@
   pointer-events: none;
 }
 
+/* A SOLID BLOCK (2026-09-20). The cube drew fifteen bevelled cells — six
+   faces, twelve edges, eight corners — each a separate hit target, which made
+   it read as a wireframe ball rather than an object. It is six faces now: the
+   edges and corners are struck as targets and as drawn cells, so what is left
+   is a plain cube you can point at, with the three axes beside it. */
 .cell {
-  stroke: var(--border-control);
+  stroke: var(--viewport-edge);
   stroke-width: 1px;
   stroke-linejoin: round;
 }
 
-/* §3.10's ladder read as depth: a face sits one rung above the bevel that
-   surrounds it, and both sit below the plate they are drawn on. */
+/*
+ * SHADED BY FACING (2026-09-20), and this is what makes it a solid.
+ *
+ * Every face took one fill, so three faces drawn edge-to-edge were a single
+ * dark hexagon with a white outline — and at an axis-aligned camera, where
+ * only ONE face is visible, it was a plain square. The operator's words:
+ * "the axis and cube are not in 3d rn, it's just a square". They were right,
+ * and no amount of outline fixes it: a solid is read from the BRIGHTNESS
+ * STEP between its faces, not from its silhouette.
+ *
+ * So the three face groups take three rungs of the same graphite, the way a
+ * lit cube would: the top catches most light, the two sides less, and the
+ * step between them is what the eye reads as a corner. One face alone is
+ * then still a shaded face rather than an outlined rectangle.
+ */
 .cellFace {
-  fill: var(--surface-control);
+  fill: var(--viewport-cube-side);
 }
 
 .cellEdge,
@@ -128,3 +152,63 @@
   background: var(--accent-quiet);
   color: var(--ink-strong);
 }
+
+/*
+ * The axes (rewritten 2026-09-20), in the cube's own basis.
+ *
+ * COLOURED, which the previous version of this comment argued against. Its
+ * reasoning was §3.11.6 — the viewport spends no status colour on decoration,
+ * because red here means `fail`. That holds for decoration and these are not
+ * decoration: red-green-blue for X-Y-Z is the convention the operator already
+ * reads in every other CAD tool, and this gizmo's whole job is to say which
+ * way each axis points. The hues are their OWN tokens (`--viewport-axis-*`),
+ * not the status ramp, precisely so nothing here can be mistaken for a
+ * verdict — see `tokens.css` for why the palette spends three hues here and
+ * nowhere else.
+ *
+ * An axis pointing AWAY from the viewer dims rather than disappearing: one
+ * that vanished at the halfway point would read as a broken indicator, and
+ * "pointing away" is exactly what a reader wants to know.
+ */
+.axes {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+
+/* Thicker IN PROPORTION to the block (2026-09-20). The cube dropped from 27
+   to 20 half-units, so a 2px arm that already read as thin now reads as a
+   hair. These are the gizmo's primary content, not its trim. */
+.axisLine {
+  stroke: currentcolor;
+  stroke-width: 4.2;
+  stroke-linecap: round;
+}
+
+.axisWord {
+  /* The same type role the face words take (§3.8) — the ramp owns the size. */
+  composes: eyebrow from "../../../system/type.module.css";
+  fill: currentcolor;
+  /* The letters scale WITH the arms. They name the axis, so at a stroke of
+     4.2 a letter drawn at the face-word size reads as a footnote on it. */
+  transform: scale(1.25);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.axisX { color: var(--viewport-axis-x); }
+.axisY { color: var(--viewport-axis-y); }
+.axisZ { color: var(--viewport-axis-z); }
+
+[data-axis-facing="away"] .axisLine,
+[data-axis-facing="away"] .axisWord {
+  opacity: 0.45;
+}
+
+/* The attribute is ON the cell, not on a wrapper — the polygon IS `.cellFace`,
+   so these are compound selectors and not descendant ones. */
+/* Top and bottom: the faces a light above the scene would catch. */
+.cellFace[data-cube-facing="z"] { fill: var(--viewport-cube-top); }
+/* The far side, turned away from that light. */
+.cellFace[data-cube-facing="y"] { fill: var(--viewport-cube-far); }

@@ -49,7 +49,16 @@ import {
 } from "./cameras";
 
 /** The scene box, in px. `ViewCube.module.css` declares the same number. */
-export const CUBE_SIZE = 72;
+/**
+ * The gizmo's frame, in px. 120 since 2026-09-20.
+ *
+ * It was 72 — the cube's own bounding box with almost nothing round it — and
+ * the axes now reach PAST the cube, so at 72 their arms and letters were
+ * clipped away by `.scene`'s `overflow: hidden` and the gizmo looked like a
+ * bare block. The cube itself is unchanged: `SCALE` still sizes it, and this
+ * only buys the room the arms need.
+ */
+export const CUBE_SIZE = 120;
 
 /**
  * The cube's half-extent in px.
@@ -59,16 +68,30 @@ export const CUBE_SIZE = 72;
  * half-box, and the tightest visible cell is still 52px² with a 5.5px minimum
  * bounding-box side — a real click target rather than a hairline.
  */
-const SCALE = 27;
+const SCALE = 20;
+// 20, not 27 (2026-09-20). The gizmo is a CUBE PLUS THREE AXES, and the axes
+// are the half that says which way the model is turned — a cube filling the
+// frame left them as short stubs poking out of it. Shrinking the block is
+// what lengthens the arms without growing the widget.
 
 /**
  * How much of a half-edge a face cell keeps; the rest is bevel.
  *
- * At 0.5 a face cell is half the face's width and the edge and corner cells
- * that surround it are a quarter of it each — the proportions of a Smith-style
- * cube, and the value that maximises the smallest hit region.
+ * ONE (2026-09-20), which is to say NO BEVEL: a face cell is the whole face
+ * and the edge and corner cells collapse to nothing.
+ *
+ * It was 0.5 — half the face, with the edge and corner cells taking a quarter
+ * each — which gave a bevelled ball of twenty-six targets. The gizmo is a
+ * plain cube now: `ViewCube.tsx` draws and hits the six faces alone, and with
+ * an inset the three visible ones stood apart as separate plates with gaps
+ * between them instead of meeting at the cube's own edges.
+ *
+ * The edge and corner geometry is left in place rather than deleted. It is
+ * the projection's own construction — `targetName` and `cameras.ts` still
+ * name every direction it can produce — and degenerate cells simply never
+ * reach the component, which filters to faces.
  */
-const INSET = 0.5;
+const INSET = 1;
 
 /** Facing-the-eye test. Above float noise, below any real cell (§5.5). */
 const FACING = 1e-6;
@@ -306,9 +329,26 @@ function faceFrame(
   view: { readonly right: Vec3; readonly up: Vec3 },
 ): readonly [number, number, number, number, number, number] {
   const face = screenBasis(direction);
-  const right = toScreen(face.right, view);
-  const up = toScreen(face.up, view);
+  let right = toScreen(face.right, view);
+  let up = toScreen(face.up, view);
   const centre = toScreen(direction, view);
+
+  // NEVER UPSIDE DOWN (2026-09-20). Each face's word is laid out in that
+  // face's OWN camera basis, which is the rule that makes "the word sits the
+  // way that face's camera would show it" one line instead of a table of six.
+  // It has one consequence the rule does not mention: from a camera above the
+  // model, the top face's own up-vector projects DOWNWARD on screen, and the
+  // word is drawn inverted — "Top" rendered as "doʇ".
+  //
+  // A word the reader has to tilt their head for is not a label. Where the
+  // frame would flip, both basis vectors are negated: that is a 180° turn of
+  // the same frame, so the word stays ON the face and in its plane, and only
+  // its reading direction changes.
+  if (up[1] > 0) {
+    right = [-right[0], -right[1]];
+    up = [-up[0], -up[1]];
+  }
+
   return [
     right[0] / SCALE,
     right[1] / SCALE,
@@ -317,4 +357,53 @@ function faceFrame(
     centre[0],
     centre[1],
   ];
+}
+
+/** One world axis, projected for the same camera the cube is drawn for. */
+export interface ProjectedAxis {
+  /** `X`, `Y` or `Z` — the letter drawn at the tip. */
+  readonly label: "X" | "Y" | "Z";
+  /** Tip position in screen px, `y` DOWN, origin at the scene centre. */
+  readonly tip: Vec2;
+  /** Where the letter sits — a little beyond the tip, so it clears the line. */
+  readonly text: Vec2;
+  /** Component along the view direction; negative is toward the viewer. */
+  readonly depth: number;
+}
+
+/**
+ * The three world axes for one camera.
+ *
+ * THE SAME BASIS THE CUBE USES, deliberately. An axis indicator drawn from its
+ * own projection is a second answer to "which way is +X", and the two drift the
+ * moment one of them is touched; sharing `screenBasis` makes agreement
+ * structural rather than something a test has to check.
+ *
+ * Monochrome, like the triad this replaces: §3.11.6's rule is that the viewport
+ * never spends a status colour on decoration, because red in this app means
+ * `fail`. Direction is carried by the LETTER and the line, which is what a
+ * reader needs from an axis indicator anyway.
+ */
+export function projectAxes(
+  azimuthDeg: number,
+  elevationDeg: number,
+  reach = 1,
+): readonly ProjectedAxis[] {
+  const eye = eyeDirection({ azimuth_deg: azimuthDeg, elevation_deg: elevationDeg });
+  const basis = screenBasis(eye);
+  const axes: readonly { readonly label: "X" | "Y" | "Z"; readonly vector: Vec3 }[] = [
+    { label: "X", vector: [1, 0, 0] },
+    { label: "Y", vector: [0, 1, 0] },
+    { label: "Z", vector: [0, 0, 1] },
+  ];
+
+  return axes.map(({ label, vector }): ProjectedAxis => {
+    const scaled: Vec3 = [vector[0] * reach, vector[1] * reach, vector[2] * reach];
+    const tip = toScreen(scaled, basis);
+    // The letter sits just beyond the tip. 1.12 rather than 1.28 since
+    // 2026-09-20: the arms are long enough now that the old overshoot pushed
+    // the letters outside the frame, where `.scene` clips them.
+    const over: Vec3 = [vector[0] * reach * 1.12, vector[1] * reach * 1.12, vector[2] * reach * 1.12];
+    return { label, tip, text: toScreen(over, basis), depth: dot(vector, eye) };
+  });
 }
