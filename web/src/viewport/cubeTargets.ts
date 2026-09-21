@@ -65,8 +65,15 @@ export const CUBE_SIZE = 120;
  *
  * Sized so the projected solid fits the scene box at EVERY camera: the widest
  * silhouette (a corner view) reaches 33.1px from the centre, inside the 36px
- * half-box, and the tightest visible cell is still 52px² with a 5.5px minimum
- * bounding-box side — a real click target rather than a hairline.
+ * half-box.
+ *
+ * THE CELL-SIZE HALF OF THIS NOTE IS STALE and is restated rather than left to
+ * be read as current: it was written at `SCALE = 27` with a half-face bevel,
+ * where the tightest visible cell measured 52px² with a 5.5px minimum side. At
+ * 20 with the fine chamfer below, the tightest is about 7x3px. That is the
+ * trade this pair of numbers makes — the arms need the room and a fine chamfer
+ * is what makes the block read as a cube — and 3px is the floor
+ * `test/cubeTargets.tsx` holds it to.
  */
 const SCALE = 20;
 // 20, not 27 (2026-09-20). The gizmo is a CUBE PLUS THREE AXES, and the axes
@@ -77,25 +84,30 @@ const SCALE = 20;
 /**
  * How much of a half-edge a face cell keeps; the rest is bevel.
  *
- * 0.5 (restored 2026-09-20): half the face, a quarter of the half-edge to each
- * neighbouring bevel. §5.2 closes the inventory at twenty-six, and this number
- * is what gives twenty of them any area at all — at 1 the edge and corner
- * cells collapse to nothing, which is a way of deleting them that leaves the
- * array the right length and every assertion about it passing.
+ * 0.7 (restored 2026-09-20): seven tenths of the face, and the rest split
+ * between the two bevels that border it. §5.2 closes the inventory at
+ * twenty-six, and this number is what gives twenty of them any area at all —
+ * at 1 the edge and corner cells collapse to nothing, which is a way of
+ * deleting them that leaves the array the right length and every assertion
+ * about it passing.
  *
- * It WAS set to 1 for a reason, and the reason is answered rather than
+ * It WAS set to 1 for a reason and the reason is answered rather than
  * dismissed. The complaint was that the three visible faces stood apart as
- * separate plates with gaps between them instead of meeting at the cube's own
- * edges — but the gap was the FILL, not the geometry: the bevel cells were
- * painted `--surface-raised`, a panel colour, so the chamfer read as chrome
- * showing through. `ViewCube.module.css` shades them from the cube's own
- * palette now and the block closes up.
+ * separate plates instead of meeting at the cube's own edges, and half of that
+ * was the FILL: the bevel cells were painted `--surface-raised`, a panel
+ * colour, so the chamfer read as chrome showing through.
+ * `ViewCube.module.css` shades them from the cube's own palette now. The other
+ * half was this number — at 0.5 the bevel is as wide as the face it borders
+ * and the solid reads as a faceted ball rather than a block, which is the
+ * reference's shape and not ours.
  *
- * The sizing note above is written for this value: the tightest visible cell
- * keeps a bounding-box side of about 5px at the current scale, which is a
- * target a pointer can find rather than a hairline.
+ * 0.7 is where the two meet, and the number is bounded on both sides rather
+ * than picked: drawn, it is a cube with a fine chamfer; hit, its tightest
+ * corner at iso measures 3.27px on its short side, over the 3px floor
+ * `test/cubeTargets.tsx` holds every drawn cell to. 0.75 measures 2.72 and
+ * fails that floor; 0.5 passes it easily and draws a faceted ball.
  */
-const INSET = 0.5;
+const INSET = 0.7;
 
 /** Facing-the-eye test. Above float noise, below any real cell (§5.5). */
 const FACING = 1e-6;
