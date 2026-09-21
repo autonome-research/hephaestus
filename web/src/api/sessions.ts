@@ -79,12 +79,18 @@ export function isLiveQuestions(value: unknown, sid: string, execution: Executio
   });
 }
 
+export interface ContextUsage {
+  readonly tokens: number | null;
+  readonly context_window: number;
+  readonly percent: number | null;
+}
 export interface SessionModelDocument {
   readonly live_questions?: LiveQuestions;
   readonly status: "ok";
   readonly session_id: string;
   readonly model_state: SessionModelState;
   readonly execution: ExecutionSnapshot;
+  readonly context_usage?: ContextUsage | null;
 }
 export interface SelectModelRequest {
   readonly model: ModelRef;
@@ -110,8 +116,13 @@ export function isExecutionSnapshot(value: unknown): value is ExecutionSnapshot 
       && typeof t["run_id"] === "string" && typeof t["terminal_id"] === "string" && typeof t["state"] === "string"));
 }
 function modelDocument(doc: SessionModelDocument, sid: string): SessionModelDocument {
+  const usage = doc?.context_usage;
+  const validUsage = usage === undefined || usage === null || (typeof usage === "object"
+    && (usage.tokens === null || Number.isFinite(usage.tokens))
+    && Number.isFinite(usage.context_window) && usage.context_window > 0
+    && (usage.percent === null || Number.isFinite(usage.percent)));
   if (doc?.status !== "ok" || typeof doc.session_id !== "string" || doc.session_id !== sid || !isSessionModelState(doc.model_state)
-    || !isExecutionSnapshot(doc.execution)
+    || !isExecutionSnapshot(doc.execution) || !validUsage
     || (doc.live_questions !== undefined && !isLiveQuestions(doc.live_questions, sid, doc.execution))) throw new Error("Invalid session model document");
   return doc;
 }
@@ -480,6 +491,21 @@ export interface CreatedSessionDocument {
 }
 
 /** `POST /sessions/{id}/prompt` — `run_prompt`'s projection (§2.3, §7A.6). */
+export const INTERACTION_MODES = ["modeling", "plan"] as const;
+export type InteractionMode = (typeof INTERACTION_MODES)[number];
+
+export const DFM_MODES = ["off", "general", "additive", "sheet_metal", "machining", "casting"] as const;
+export type DfmMode = (typeof DFM_MODES)[number];
+
+export const THINKING_LEVELS = ["low", "medium", "high"] as const;
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+
+export interface PromptOptions {
+  readonly interaction_mode: InteractionMode;
+  readonly dfm_mode: DfmMode;
+  readonly thinking_level: ThinkingLevel;
+}
+
 export interface PromptDocument {
   readonly status: "ok";
   readonly session_id: string;
@@ -561,11 +587,16 @@ export function sendPrompt(
   text: string,
   context: ContextEnvelope | null,
   expectedModelRevision: ModelRevision,
+  options: PromptOptions = {
+    interaction_mode: "modeling",
+    dfm_mode: "off",
+    thinking_level: "medium",
+  },
 ): Promise<PromptDocument> {
   return apiJson<PromptDocument>(sessionPath(sessionId, "/prompt"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, context, expected_model_revision: expectedModelRevision }),
+    body: JSON.stringify({ text, context, expected_model_revision: expectedModelRevision, ...options }),
   });
 }
 

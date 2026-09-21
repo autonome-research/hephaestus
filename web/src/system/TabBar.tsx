@@ -38,6 +38,8 @@ export interface TabSpec<Id extends string> {
    * Stage / Inspector tabs omit this and keep their visible label.
    */
   readonly ariaLabel?: string | undefined;
+  /** Disclosure state when a tab-shaped control opens an attached switcher. */
+  readonly expanded?: boolean | undefined;
   /** Per-tab layout (thread depth indent). */
   readonly style?: CSSProperties | undefined;
 }
@@ -124,6 +126,7 @@ export function TabBar<Id extends string>({
           title={tab.title}
           style={tab.style}
           {...(tab.ariaLabel === undefined ? {} : { "aria-label": tab.ariaLabel })}
+          {...(tab.expanded === undefined ? {} : { "aria-expanded": tab.expanded })}
           {...{ [attr]: tab.id }}
           {...(tab.attrs ?? {})}
           onClick={() => {

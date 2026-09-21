@@ -277,7 +277,7 @@ sequence" allocation is extended by that one item and by no other.
 | Coalescing, resting chip face, preamble notes | **§7.2** | C1-C5 |
 | Status line: page counter and stream badge | **§7.4**, **§8** | C6-C8 |
 | Header/session taxonomy stack | **§4.1**, **§7.1** | C9-C13 |
-| Context chips → one summary line | **§7A.3**, **§7A.10** | C14-C16 |
+| Context chips → one summary line | **§7A.3**, **§7A.10** | C14-C16 | **RETIRED 2026-09-20 (UI only).** The composer's context readout — the summary line, the chip list and the disclosure that previewed the composed block — was struck on operator request. The ENVELOPE is unchanged: `composerContext.ts` still builds it and every turn still carries it, and `web/test/stream/composerContext.test.ts` now holds the semantics C14-C16 covered. What is gone is the surface, and with it the only UI that could drop an individual member before sending; the eye toggle still governs the view/selection pair. `POST /context/preview` has no caller in the web client. |
 | Composer resting actions | **§7A.6**, **§7A.10** | C17-C20 |
 | Meta-copy length | **§7.4**, **§8**, **§7A.10** | C21-C22 |
 | Spec repairs (a) header contradiction, (b) unread count, (c) dead surface | **§4.1**, **§7.1**, **§7A.10** | C10, C12, C23-C26 |
@@ -5272,6 +5272,71 @@ typing is allowed whenever the stream is usable (`agent_unavailable` is the
 one reason that still turns the box off). **Testable:** with
 `data-disabled-reason="no_session"`, `[data-composer-input]` is not
 `disabled`; a click focuses it and it accepts text.
+
+### 7A.10A Compact agent window and turn controls
+
+**AMENDED 2026-09-12. This subsection supersedes the resting-layout and
+no-effort/no-mode prohibitions above; their historical rationale remains.**
+The agent window uses one compact header row, a transcript reading surface, and
+a bottom composer with two visual rows: textarea, then toolbar. The selected
+conversation title itself opens the thread switcher; scope stays in its
+accessible name and switcher metadata. New conversation and collapse remain
+trailing controls. No Arcade or equivalent feature exists.
+
+The toolbar contains the wired model selector, effort, Plan, manufacturing
+context, current-view context, context usage/details, and one trailing
+Send-or-Stop slot. Ordinary keyboard guidance and full identity are accessible
+copy and tooltips rather than permanent rows. `[data-composer-input-row]`
+contains no button; `[data-composer-toolbar]` contains `[data-composer-send]`, or
+`[data-composer-cancel]` while cancellation is authoritative. Existing form,
+context, delivery, model-revision, and question hooks remain stable.
+
+`POST /sessions/{id}/prompt` additionally accepts three required web-client
+members (private and older callers may omit them and receive these defaults):
+
+```typescript
+interaction_mode: "modeling" | "plan"; // default modeling
+dfm_mode: "off" | "general" | "additive" | "sheet_metal" | "machining" | "casting"; // default off
+thinking_level: "low" | "medium" | "high"; // default medium
+```
+
+All three are closed at HTTP and sidecar boundaries. Effort is applied through
+Pi's thinking-level API before the turn. Pi may clamp it to model capability.
+Plan mode is enforced before prompting by replacing the active tool set with a
+fail-closed inspection subset: `read_*`, `list_*`, `search_*`, `inspect_*`,
+`measure`, `compare_*`, `query_snapshot`, and `get_delegation_status` when the
+session profile already admits them. A new tool is therefore unavailable in
+Plan until deliberately classified. A short model instruction asks for an
+actionable plan, but tool narrowing—not that instruction—is the mutation guard.
+Every turn explicitly reapplies its full profile tools in Modeling mode.
+
+DFM selection adds manufacturing-review context to the model turn. It does not
+invoke `run_dfm`, change `[dfm] auto_run`, or replace the Inspector's explicit
+DFM controls. Process labels are Hephaestus copy, not imported branding.
+
+`GET /sessions/{id}/model` may add `context_usage`:
+
+```typescript
+{ tokens: number | null; context_window: number; percent: number | null } | null
+```
+
+The value is Pi's latest estimate. The context toolbar control reports the
+percentage when known and says unavailable when not; the browser never invents
+a token estimate. Its same disclosure continues to show the outgoing workspace
+context envelope, which is a separate quantity.
+
+The model menu opens above the composer, displays configured names compactly,
+retains complete provider/model identity for assistive technology, and presents
+Low/Medium/High effort beside models. Search is conditional on a long catalog.
+Escape, outside-click dismissal, focus restoration, and keyboard option
+navigation remain required. Popovers are bounded to the viewport.
+
+Ordinary operator prompts use a raised, inset transcript shape rather than a
+persistent speaker heading; the shape and accessible marker still distinguish
+them from agent prose. Tool, reasoning, provenance, error, and clarification
+contracts are unchanged. A live clarification renders one question and its
+choices without a second pending-status sentence; consequences and all settled
+or exceptional states remain visible.
 
 ### 7A.11 The read-refresh boundary — the turn's effect on the rest of the workspace
 

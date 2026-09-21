@@ -102,3 +102,24 @@ export function retains(plane: SectionPlaneSpec, point: readonly [number, number
   const coordinate = point[AXIS_INDEX[plane.axis]];
   return plane.sign * (coordinate - plane.offset) <= 0;
 }
+
+/**
+ * Does a rendered section plate own the viewport well? (§5.3, C19.)
+ *
+ * The plate is a picture of a camera the operator is NOT driving, so the four
+ * canvas-authoring overlays unmount behind it: the view cube, the appearance
+ * cluster, and — before they were struck — the axis triad and grid readout.
+ *
+ * SHARED (2026-09-20) because two components now need the answer and they sit
+ * in different subtrees: `Viewport` unmounts the cube, and `StageViewRail`, its
+ * SIBLING, draws the appearance cluster. Both inputs are workspace state and
+ * therefore in the URL, so each could derive this for itself — and that is
+ * exactly the drift worth refusing. One of them gaining a clause the other
+ * lacks is how a cluster comes to be painted over a plate.
+ */
+export function plateOwnsWell(
+  channelOverlay: string | null,
+  sectionPlane: string | null,
+): boolean {
+  return channelOverlay === "section" && sectionPlane !== null && parseSectionPlane(sectionPlane) !== null;
+}

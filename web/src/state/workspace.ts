@@ -75,25 +75,65 @@ export const INSPECTOR_TABS = [
 export type InspectorTab = (typeof INSPECTOR_TABS)[number];
 
 /**
- * Inspector tabs the drawer may show for a given stage tab.
+ * Inspector tabs the drawer may show, given where else Geometry is already
+ * drawn.
  *
- * When the stage is already Results, the Results inspector tab is omitted so
- * the same `ResultsPanel` is not mounted twice. Every other inspector tab
- * stays; the e2e still addresses them with `[data-inspector-tab]`.
+ * ONE READOUT, ONE PLACE. The same `ResultsPanel` can be reached three ways —
+ * the stage's `results` tab, the side panel's Geometry disclosure, and this
+ * drawer — and two of them on screen at once is the duplication the operator
+ * reported below the build area (2026-09-20). Whenever Geometry is showing
+ * somewhere else, this drawer drops its Results tab; every other tab stays and
+ * the e2e still addresses them with `[data-inspector-tab]`.
+ *
+ * `panelGeometry` is the side panel's expansion state, passed in rather than
+ * read here: this module is the workspace RECORD and the panel's disclosure is
+ * shell presentation, so the dependency points one way.
  */
-export function inspectorTabsFor(stage: StageTab): readonly InspectorTab[] {
-  return stage === "results" ? INSPECTOR_TABS.filter((tab) => tab !== "results") : INSPECTOR_TABS;
+/**
+ * PROVENANCE IS NOT IN THE STRIP (2026-09-20), on operator request.
+ *
+ * It was a peer tab that, until you selected geometry, showed one pinned-ref
+ * row and an empty state — most of the time it was a tab for nothing.
+ *
+ * It is dropped from the STRIP and not from the vocabulary, and the
+ * difference is deliberate:
+ *
+ *   * `INSPECTOR_TABS` is mirrored server-side in `http/context.py`
+ *     (`_INSPECTOR_TABS`) and validates the agent context envelope. Removing
+ *     the member here alone would make a URL the client itself wrote — or an
+ *     envelope a session already carries — fail validation.
+ *   * DFM findings offer "resolve this descriptor", which answers by opening
+ *     provenance. That action had nowhere else to go, and the operator asked
+ *     that nothing working be broken. It still opens the panel; the panel is
+ *     simply no longer something you browse to on a hunch.
+ *
+ * So: unreachable from the tab strip, still reachable from the question that
+ * makes it meaningful, and still a valid URL.
+ */
+export function inspectorTabsFor(
+  stage: StageTab,
+  panelGeometry = false,
+): readonly InspectorTab[] {
+  const listed = INSPECTOR_TABS.filter((tab) => tab !== "provenance");
+  return stage === "results" || panelGeometry
+    ? listed.filter((tab) => tab !== "results")
+    : listed;
 }
 
 /**
  * The inspector panel that actually mounts.
  *
  * A URL that carries `tab=results&itab=results` (the defaults stacked) must
- * not render two geometry lists. Properties is the next tab in the closed
- * inventory and is already a statement about the pinned artifact.
+ * not render two geometry lists, and neither must an expanded side-panel
+ * Geometry. Properties is the next tab in the closed inventory and is already
+ * a statement about the pinned artifact.
  */
-export function effectiveInspectorTab(stage: StageTab, tab: InspectorTab): InspectorTab {
-  return stage === "results" && tab === "results" ? "properties" : tab;
+export function effectiveInspectorTab(
+  stage: StageTab,
+  tab: InspectorTab,
+  panelGeometry = false,
+): InspectorTab {
+  return (stage === "results" || panelGeometry) && tab === "results" ? "properties" : tab;
 }
 
 export const PIN_MODES = ["current", "pinned"] as const;
