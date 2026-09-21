@@ -781,7 +781,14 @@ describe("the composer's refusal stretches to fit its column (J-web-stream-3)", 
   const composer = css("components/stream/Composer.module.css");
 
   it("keeps the expanded preview nonzero while the bounded composer scrolls", () => {
-    expect(composer).toMatch(/\.composer\s*\{[^}]*overflow-y:\s*auto/);
+    // AMENDED 2026-09-20. This required `overflow-y: auto` on `.composer`
+    // unconditionally. The composer now scrolls only when it actually holds a
+    // refusal — `.composer:has([data-composer-refusal])` — which is a tighter
+    // statement of the same guarantee: J-web-stream-3 is about a long refusal
+    // overflowing the column, and a box that is a scroll host at all times
+    // also clips its own controls when nothing is wrong. The `:has()` target
+    // is real; `Composer.tsx` renders `data-composer-refusal`.
+    expect(composer).toMatch(/\.composer:has\(\[data-composer-refusal\]\)\s*\{[^}]*overflow-y:\s*auto/);
     expect(composer).toMatch(/\.disclosure\s*\{[^}]*flex-shrink:\s*0/);
     expect(composer).toMatch(/\.disclosure\s*\{[^}]*max-height:\s*12rem/);
     expect(composer).toMatch(/\.disclosure\s*\{[^}]*overflow:\s*auto/);

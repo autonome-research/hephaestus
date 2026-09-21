@@ -37,7 +37,6 @@ import {
   applyVisibility,
   boundsAt,
   framingFor,
-  perspectiveFovDeg,
   indexSolidNodes,
   solidCentroids,
 } from "../src/viewport/scene";
@@ -407,13 +406,11 @@ describe("scene (§5.2, §5.4)", () => {
     expect(framingFor(bounds, "sideways", 1)).toBeNull();
   });
 
-  it("derives a perspective FOV from the same half-height the ortho camera uses", () => {
-    // A 50-unit half-height at 100 units of distance is 2*atan(0.5) degrees.
-    expect(perspectiveFovDeg(50, 100)).toBeCloseTo((2 * Math.atan(0.5) * 180) / Math.PI, 10);
-    expect(perspectiveFovDeg(0, 100)).toBe(0);
-    expect(perspectiveFovDeg(10, 0)).toBe(0);
-    expect(perspectiveFovDeg(Number.NaN, 10)).toBe(0);
-  });
+  // STRUCK WITH ITS SUBJECT (2026-09-20). `perspectiveFovDeg` solved for the
+  // field of view that reproduced an orthographic half-height at the target
+  // plane, and it was deleted when the perspective camera began fitting by
+  // DISTANCE instead — see the case below for why that change was needed.
+  // Nothing called it, and these four assertions only exercised itself.
 
   // REWRITTEN 2026-09-20. This asserted that the perspective camera sits on
   // the ORTHO EYE and solves for a `fov` that reproduces `halfHeight` at the

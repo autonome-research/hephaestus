@@ -3,17 +3,31 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { setup, SID, OTHER, RUN, execution, input, send } from "./fixture";
 
-for (const width of [1440, 1280, 1024, 843]) test(`refinement: expanded details preserve readable composition and no-write controls at ${width}`, async ({ page }) => {
+/*
+ * REWRITTEN 2026-09-20, because its operands were struck and its clause was
+ * not. The case used to open the context disclosure, expand "Full model
+ * identity", and check the composer's core controls stayed readable around
+ * the grown panel. The disclosure, the summary line and the composed-block
+ * preview were all removed from the composer on operator request.
+ *
+ * What it was protecting survives and still has a way to be provoked: a
+ * composer that GROWS must keep its controls inside the form, keep the input
+ * usable, leave the transcript room, and never overflow the page. A long
+ * multi-line draft grows it, which is what this now uses.
+ */
+for (const width of [1440, 1280, 1024, 843]) test(`refinement: a grown composer keeps readable composition and no-write controls at ${width}`, async ({ page }) => {
   await page.setViewportSize({ width, height: width === 1440 ? 1000 : 800 });
   const c = await setup(page);
   const draft = Array.from({ length: 8 }, (_, n) => `Line ${n + 1}: inspect the evidence; do not change the design.`).join("\n");
   await input(page).fill(draft);
-  await page.locator("[data-context-disclose]").click();
-  await page.getByText("Full model identity", { exact: true }).click();
-  const details = page.getByRole("region", { name: "Message details" });
   const checkCore = async () => {
     const form = (await page.locator("[data-composer]").boundingBox())!;
-    for (const selector of ["[data-model-button]", "[data-context-summary]", "[data-composer-input-row]", "[data-composer-send]", "[data-composer-hint]"]) {
+    // `[data-composer-hint]` is NOT in this list, and that is a finding rather
+    // than an omission. It is screen-reader-only now — `.hint` is the 1px
+    // clipped box `.srOnly` is — so `bounded()`'s "its text is not clipped
+    // inside it" check can never pass for it. The sentence is not lost: Send
+    // carries the same string on `title`. It is asserted below as what it is.
+    for (const selector of ["[data-model-button]", "[data-composer-input-row]", "[data-composer-send]"]) {
       await bounded(page.locator(selector), width, width === 1440 ? 1000 : 800);
       const box = (await page.locator(selector).boundingBox())!;
       expect(box.y).toBeGreaterThanOrEqual(form.y);
@@ -22,12 +36,17 @@ for (const width of [1440, 1280, 1024, 843]) test(`refinement: expanded details 
     expect((await input(page).boundingBox())!.height).toBeGreaterThan(65);
     expect((await page.locator("[data-transcript-scroll]").boundingBox())!.height).toBeGreaterThan(120);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    // The hint is present and reachable, and its sentence is on Send too.
+    await expect(page.locator("[data-composer-hint]")).toHaveCount(1);
+    expect(await page.locator("[data-composer-hint]").evaluate((el) => el.clientWidth)).toBeLessThan(4);
+    await expect(page.locator("[data-composer-send]")).toHaveAttribute("title", /./);
   };
   await checkCore();
-  await details.focus();
+  // Caret to the end of a long draft: the box scrolls its own text rather
+  // than growing past the column.
+  await input(page).focus();
   await page.keyboard.press("End");
   await checkCore();
-  await expect(page.locator("[data-context-block]")).toBeVisible();
   // A model/execution read is uncertain until reconciled, not an excuse to send.
   c.execution = execution(RUN);
   await c.frame("text_delta", { text: "Working on the explicit fixture task." }, 0);
@@ -41,8 +60,9 @@ for (const width of [1440, 1280, 1024, 843]) test(`refinement: expanded details 
   // C25 (2026-09-20): no collapse to hide and reveal through. The draft must
   // still be the composer's own state rather than something a reveal restores.
   await expect(input(page)).toHaveValue(draft);
-  await expect(page.locator("[data-context-summary]")).toContainText("Next message includes");
-  expect(c.mutations.filter(r => r.path !== "/context/preview")).toEqual([]);
+  // `/context/preview` had no caller left once the disclosure went, so the
+  // filter that used to excuse it would now hide a real mutation.
+  expect(c.mutations).toEqual([]);
   expect(c.faults).toEqual([]);
 });
 
