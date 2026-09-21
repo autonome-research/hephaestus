@@ -14,10 +14,17 @@
 
 .header {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  /* identity | subject | the collapsed Agent's reopen, at the trailing edge. */
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--gap-inline);
-  padding: 0 var(--space-3);
+  /* Taller on request (2026-09-20). The bar was a 44px strip that read as a
+     toolbar; §4.1 calls it "the most important element in the document", and
+     the extra rung of vertical padding is what lets the mark, the project name
+     and the build chip sit on one comfortable baseline instead of a cramped
+     one. Nothing inside it grew a fixed height, so the bar is still sized by
+     its contents and still collapses with them. */
+  padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
   background: var(--surface-panel);
   min-width: 0;
@@ -30,24 +37,35 @@
   gap: var(--gap-inline);
   min-width: 0;
   color: var(--ink-base);
+  /* 0.8cm of air between the product name and the build chip (2026-09-20).
+     They are different KINDS of thing — one names the document, the other
+     names the artifact you are looking at — and at a single gap they read as
+     one run of chrome. */
+  padding-inline-end: 30px;
 }
 
 /* A geometric mark, not an icon: it is the product's own glyph and it carries
    no meaning a reader has to decode, so it is not in the sprite (§3.12's
    vocabulary is closed and is about meaning). */
 .mark {
-  width: 10px;
-  height: 10px;
   flex: none;
+  display: block;
   /* §3.9 (C28), amended 2026-09-02: accent ink/fill renders only on interactive
      elements or the link recipe — "there is no third case". The product glyph
-     is inert, so it takes the strong ink, not the accent fill. */
-  background: var(--ink-strong);
-  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+     is inert, so it takes the strong ink, not the accent fill. The mark draws
+     with `currentColor`, so this one declaration serves both themes. */
+  color: var(--ink-strong);
 }
 
+/* The product name is the largest text in the bar (2026-09-20). It took the
+   `title` role, which is the same size as a panel heading — so the one thing
+   that names the whole document read at the same weight as "Parts". A size
+   step up the ramp is the fix, not a raw size: `display` is the rung above
+   `title` and already exists for exactly this — the one string on a surface
+   that names the whole of it. `heph/no-raw-type` is what stops the other
+   answer, and it is right to. */
 .project {
-  composes: title from "../system/type.module.css";
+  composes: display from "../system/type.module.css";
   color: var(--ink-strong);
   white-space: nowrap;
   overflow: hidden;
@@ -71,4 +89,121 @@
   min-width: 0;
   overflow: hidden;
   justify-self: start;
+}
+
+
+/* Only mounted while the Agent column is closed; its track is `auto`, so the
+   header's other two columns are unchanged when it is not there. */
+.trailing {
+  display: flex;
+  align-items: center;
+  justify-self: end;
+}
+
+/* The unit is a readout AND the control that cycles it. It keeps the readout's
+   ink and weight — a bordered pill here would claim more of the bar than a
+   five-state preference deserves — and earns its affordance on hover. */
+/*
+ * A CONTROL, DRAWN AS ONE (2026-09-20).
+ *
+ * It was `all: unset` plus a hover fill — bare muted text beside a bordered
+ * chip, which made the one control in the header that changes how every
+ * number reads look like a caption. It takes the same bordered square Script
+ * does, and the same ink: a control the operator is meant to press should not
+ * be quieter than the label next to it.
+ *
+ * `all: unset` stays, because the element is a `<button>` and the reset is
+ * what stops the UA's own chrome fighting these rules.
+ */
+.unit {
+  all: unset;
+  composes: data from "../system/type.module.css";
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+  padding-inline: var(--space-2);
+  cursor: pointer;
+  color: var(--ink-strong);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+}
+
+.unit:hover {
+  color: var(--ink-strong);
+  background: var(--surface-raised);
+  border-color: var(--border-strong);
+}
+
+.unit:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/*
+ * The agent's reopen control (2026-09-20) takes the SAME square the panel
+ * toggle does. It is the other half of the same idea — one button that brings
+ * a column back — and two controls doing one kind of job should not be two
+ * different shapes. Larger glyph for the same reason the strip's X and + got
+ * one: it carries no word beside it.
+ */
+.trailing button {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  justify-content: center;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink-base);
+}
+
+.trailing button:hover:not([aria-disabled="true"]) {
+  background: var(--surface-raised);
+  color: var(--ink-strong);
+}
+
+.trailing button svg {
+  width: 21px;
+  height: 21px;
+  stroke-width: 1.8;
+}
+
+/*
+ * ONE HEIGHT FOR THE HEADER'S CONTROLS (2026-09-20).
+ *
+ * They had four: the pin chip 40px, Hold 30, the unit and Script 34, the
+ * agent reopen 27. Nothing chose those — each was set where its own component
+ * was written — and a row of controls at four heights is the "inconsistent"
+ * the operator kept pointing at. 26px is the old 34 less the 0.2cm asked for,
+ * and it still clears §3.13.6's 24px minimum target.
+ *
+ * The chip is deliberately NOT one of them: it is a readout that CONTAINS a
+ * control, so it has to be taller than the control inside it.
+ */
+.header [data-display-unit],
+.header [data-stage-tab],
+.header [data-stream-toggle] {
+  height: 26px;
+  min-height: 26px;
+}
+
+.header [data-stage-tab],
+.header [data-stream-toggle] {
+  width: 26px;
+  min-width: 26px;
+}
+
+.header [data-pin-action] {
+  height: 24px;
+  min-height: 24px;
+  min-width: 24px;
+}
+
+.header [data-testid="artifact-pin"] {
+  padding-block: 2px;
 }

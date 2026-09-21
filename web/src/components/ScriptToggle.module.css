@@ -1,0 +1,37 @@
+/*
+ * Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * The Script control and its dirty marking, as one unit in the header.
+ */
+
+.slot {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+}
+
+/*
+ * A HEADER-SIZED TARGET (2026-09-20). It inherited the composer row's 34px
+ * default and sat next to a 30px Hold inside a bordered chip, which made the
+ * one control that switches what the STAGE shows the quietest thing on the
+ * bar. It takes the same square shape and glyph weight the task bar gave it,
+ * a rung larger than the chip's controls because it is not inside the chip.
+ */
+.slot button {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  justify-content: center;
+}
+
+.slot button svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 2;
+}
+
+.srOnly { composes: srOnly from "./stream/ModelPicker.module.css"; }

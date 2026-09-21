@@ -100,6 +100,9 @@ export function ArtifactPin({ build }: ArtifactPinProps): React.JSX.Element {
           : `${ref}. ${held ? banner : copy.header.unpinned}`
       }
     >
+      {/* `build: <digest>` — the kind and the separator both come from
+          `formatRef`, which already names the artifact kind. An extra label
+          here printed "build: build · d266f257". */}
       {ref === null ? null : (
         <Fact source="build.artifact_ref" value={ref} className={styles["ref"]}>
           {formatRef(ref, CHIP_REF_WIDTH)}
@@ -129,7 +132,7 @@ export function ArtifactPin({ build }: ArtifactPinProps): React.JSX.Element {
           the held path is what the first cut of this chip did, and it unmounted
           both fields on exactly the G5.5/G5.6 path they exist for. */}
       {state !== null ? (
-        <BuildStateBadge build={build} clipped={held} />
+        <BuildStateBadge build={build} clipped={held} compact />
       ) : ref === null && !held ? (
         // No ref, no build document, and not held: the workspace has nothing to
         // report about an artifact, and says which kind of nothing that is.
@@ -158,16 +161,21 @@ export function ArtifactPin({ build }: ArtifactPinProps): React.JSX.Element {
           </Button>
         )
       ) : ref === null ? null : (
+        /* ICON-ONLY (2026-09-20). Hold was a bordered word-button sitting in a
+           bordered chip — a box in a box for a control that is pressed rarely.
+           The word is not lost: it is the accessible name and the tooltip,
+           which is the same trade every other icon-only control in this
+           workspace makes. `pin` is the id, because that is the act. */
         <Button
-          variant="secondary"
-          title={copy.header.pinSplit}
+          variant="quiet"
+          icon="pin"
+          iconLabel={copy.header.hold}
+          title={`${copy.header.hold} — ${copy.header.pinSplit}`}
           onClick={() => {
             workspaceStore.hold(ref);
           }}
           data-pin-action="hold"
-        >
-          {copy.header.hold}
-        </Button>
+        />
       )}
     </div>
   );

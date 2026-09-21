@@ -65,3 +65,25 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* HOLD IS A CONTROL, NOT A HINT (2026-09-20).
+ *
+ * Going icon-only made it quiet in both senses: a 13px glyph in a `quiet`
+ * button, inside a chip that already has a border, read as decoration on the
+ * chip rather than as the one thing in the header you can press. It keeps the
+ * icon-only form — the word is its accessible name and its tooltip — and gets
+ * a real target and a visible edge back.
+ */
+[data-pin-action="hold"],
+[data-pin-action="follow"] {
+  min-width: 30px;
+  min-height: 30px;
+  border-color: var(--border-control);
+}
+
+[data-pin-action="hold"] svg,
+[data-pin-action="follow"] svg {
+  width: 17px;
+  height: 17px;
+  stroke-width: 1.9;
+}

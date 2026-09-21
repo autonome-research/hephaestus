@@ -23,3 +23,43 @@
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+/* ---------------------------------------------------------------------------
+ * The compact state mark (2026-09-20)
+ *
+ * Requested: "for up to date only have some green, and if it's outdated then
+ * something small and red". The word is what the badge above carries, and
+ * dropping it for a dot is the shape §3.13.2 forbids — status by colour alone,
+ * and green-versus-red is the single worst pair to pick for that.
+ *
+ * So the mark is small AND it is not colour alone. THREE carriers survive the
+ * shrink: the hue, the SHAPE (a filled disc for a build you can trust, a
+ * hollow ring for one you cannot), and the accessible name, which still spells
+ * the state in words for a screen reader and on hover. What is dropped is only
+ * the printed word, which is what was asked for.
+ */
+.dot {
+  /* `display` explicitly: the mark sits inside a `<Fact>`, which is an inline
+     span, and an inline child ignores width and height — which drew the mark
+     as a 2px sliver of its own border. */
+  display: inline-block;
+  vertical-align: middle;
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 2px solid currentcolor;
+}
+
+/* A build the workspace stands behind: solid. */
+.dot[data-build-mark="current"] {
+  color: var(--status-pass-ink);
+  background: currentcolor;
+}
+
+/* Everything else is an absence or a verdict against: hollow, so the two read
+   apart in a monochrome print and to a red-green reader. */
+.dot[data-build-mark="preview"] { color: var(--status-info-ink); }
+.dot[data-build-mark="stale"] { color: var(--status-error-ink); }
+.dot[data-build-mark="failed"] { color: var(--status-error-ink); }
+.dot[data-build-mark="not_built"] { color: var(--ink-muted); }

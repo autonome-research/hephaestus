@@ -91,8 +91,18 @@ export const BUILD_STATE_BADGE: Readonly<Record<BuildState, BadgeStatus>> = {
 export function BuildStateBadge({
   build,
   clipped = false,
+  compact = false,
 }: {
   readonly build: BuildDocument | undefined;
+  /**
+   * Draw the state as a 9px mark instead of an icon-and-word badge.
+   *
+   * The header asked for this (2026-09-20) and the inspector did not, so it is
+   * a prop rather than a rewrite: every other caller keeps the worded badge.
+   * See `.dot` in the stylesheet for why the mark still carries three signals
+   * after the word is dropped.
+   */
+  readonly compact?: boolean | undefined;
   /**
    * Mount the two build fields without drawing the badge.
    *
@@ -126,15 +136,30 @@ export function BuildStateBadge({
       </span>
     );
   }
+  const title =
+    state === "stale"
+      ? copy.header.buildStateStale(build.stale_inputs ?? [])
+      : copy.header.buildState;
+  if (compact) {
+    return (
+      <span className={styles["wrap"]} title={`${copy.buildState[state]} — ${title}`}>
+        <Fact source="build.status" value={build.status}>
+          <span
+            className={styles["dot"]}
+            data-build-mark={state}
+            role="img"
+            aria-label={copy.buildState[state]}
+          />
+        </Fact>
+        <Fact source="build.current" value={build.current} className={styles["hidden"]} silent />
+        {build.stale === undefined ? null : (
+          <Fact source="build.stale" value={build.stale} className={styles["hidden"]} silent />
+        )}
+      </span>
+    );
+  }
   return (
-    <span
-      className={styles["wrap"]}
-      title={
-        state === "stale"
-          ? copy.header.buildStateStale(build.stale_inputs ?? [])
-          : copy.header.buildState
-      }
-    >
+    <span className={styles["wrap"]} title={title}>
       <Badge status={BUILD_STATE_BADGE[state]}>
         <Fact source="build.status" value={build.status}>
           {copy.buildState[state]}
