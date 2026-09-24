@@ -612,13 +612,12 @@ gate, never by waiving it") applies directly.
 
 ### 5.3 The solve runs under the existing sandbox, with four additions
 
-The sandbox already permits an arbitrary argv:
-`SandboxSpec.worker_cmd` is `tuple[str, ...]`
-(`core/src/hephaestus/core/executor/sandbox/base.py:54`) and tests already
-run a non-Python binary (`core/tests/test_executor_failure.py:191`,
-`tests/stage0b/test_sandbox_denial.py:119`, both `worker_cmd=("true",)`).
-Three facts make an external solver a genuinely low-friction fit, and one
-makes it a problem.
+The sandbox already launches a Python worker that can supervise native tools:
+`SandboxSpec.worker_args` is the interpreter-independent argument tuple
+(`core/src/hephaestus/core/executor/sandbox/base.py`), and each backend
+prepends its own Python interpreter. The worker can then launch a solver
+inside the same confinement. Three facts make an external solver a genuinely
+low-friction fit, and one makes it a problem.
 
 Favourable, all verified:
 
@@ -725,13 +724,13 @@ The four additions Stage 15 makes:
    require confinement than executing a Python predicate. Stage 15 therefore
    adds a job-level refusal that does not route through `origin` at all.
 
-**Execution shape.** `worker_cmd` stays `(sys.executable, "-m",
-"hephaestus.core.fea.worker")` — the one-JSON-in/one-JSON-out protocol
-(`sandbox/base.py:1-14`) is preserved and the worker `subprocess`-execs
-`/usr/bin/gmsh` and `/usr/bin/ccx` *inside* the sandbox. The alternative —
-making the solver the `worker_cmd` directly — would need a second result
-framing, a second escape-suite, and would put deck writing and result parsing
-outside the confinement. The parent-side runner is
+**Execution shape.** `worker_args` is `("-m",
+"hephaestus.core.fea.worker")`; the backend prepends its own interpreter. The
+one-JSON-in/one-JSON-out protocol (`sandbox/base.py:1-14`) is preserved and
+the worker `subprocess`-execs `/usr/bin/gmsh` and `/usr/bin/ccx` *inside* the
+sandbox. Making the solver the direct sandbox command would need a second
+result framing, a second escape-suite, and would put deck writing and result
+parsing outside the confinement. The parent-side runner is
 `dfm/runner.py:119-186`'s shape with a different worker: stage inputs into a
 fresh scratch out dir, one sandboxed run, `shutil.rmtree` in `finally`
 (`:185-186`), `timed_out` ⇒ named refusal (`:174-178`), nonzero exit ⇒ named
@@ -1349,10 +1348,9 @@ omission as a defect in this document rather than as machinery to be assumed.
 18. Pinned `gmsh` and `ccx` lines in `docker/ci/Dockerfile`, a new image
     build/push, and every gate job repointed to the new digest.
 19. `SandboxSpec.extra_env` and its application in `build_bwrap_argv`
-    (`bwrap.py:262-300`), plus the escape-suite coverage that a non-Python
-    binary under bwrap is confined exactly as a Python worker is — the
-    existing suites prove confinement for `sys.executable` workers and
-    `("true",)`, not for a solver that opens files.
+    (`bwrap.py:262-300`), plus escape-suite coverage that a native solver
+    launched by the Python worker is confined exactly as the worker itself —
+    the existing suites do not exercise a solver that opens files.
 19a. **A fixed interior mount point for the writable bind** (§5.3 addition 2):
     `build_bwrap_argv` gains an optional interior path for the `--bind` /
     `--chdir` pair that is today the host path twice
@@ -1573,8 +1571,8 @@ are 15C machinery (§11 items 31, 33) and are gated at G15C.8 and G15C.14.
 `uv run pytest tests/stage15b -q` exits 0.
 
 1. **[image]** `gmsh` and `ccx` are present at the pinned versions inside the
-   sandbox, reached through `/usr/bin` with **no bind added** to
-   `worker_ro_binds()`.
+   sandbox, reached through `/usr/bin` with **no job-specific bind added** to
+   `SandboxSpec.ro_binds`.
 2. `solver_unavailable` is a named refusal, not a crash, when `ccx` is absent
    from the sandbox `PATH` (fault-injected).
 3. `fea_requires_sandbox`: an FEA job under the unsafe-local backend is

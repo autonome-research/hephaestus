@@ -71,12 +71,12 @@ class UnsafeLocalBackend:
             )
 
     def execute(self, spec: SandboxSpec, stdin_payload: bytes) -> ExecOutcome:
-        """Run the worker as a plain subprocess with a wall-clock kill."""
+        """Run ``worker_args`` with this backend's Python and a wall-clock kill."""
         self._refuse_registry(stdin_payload)
         print(UNSAFE_WARNING, file=sys.stderr)
         try:
             completed = subprocess.run(
-                list(spec.worker_cmd),
+                [sys.executable, *spec.worker_args],
                 input=stdin_payload,
                 capture_output=True,
                 timeout=spec.wall_clock_s,

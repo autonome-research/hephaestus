@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-import sys
 import tempfile
 import time
 from pathlib import Path
@@ -37,7 +36,6 @@ from hephaestus.core.executor.sandbox.bwrap import (
     BwrapBackend,
     build_bwrap_argv,
     describe_argv,
-    interpreter_ro_binds,
 )
 
 __all__ = [
@@ -161,8 +159,8 @@ def probe_bwrap(
         out_dir = Path(tmp) / "out"
         out_dir.mkdir()
         spec = SandboxSpec(
-            worker_cmd=(sys.executable, "-c", _PROBE_SOURCE),
-            ro_binds=interpreter_ro_binds(),
+            worker_args=("-c", _PROBE_SOURCE),
+            ro_binds=(),
             rw_out_dir=out_dir,
             rlimits=_PROBE_RLIMITS,
             wall_clock_s=_PROBE_WALL_CLOCK_S,

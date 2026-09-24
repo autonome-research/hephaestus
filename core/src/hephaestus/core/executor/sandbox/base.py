@@ -41,25 +41,28 @@ class Rlimits:
 
 @dataclass(frozen=True)
 class SandboxSpec:
-    """One worker invocation: command, filesystem view, limits, wall clock.
+    """One Python worker invocation: arguments, filesystem, and limits.
 
-    ``worker_cmd`` is the argv of the worker process (interpreter + worker
-    module). ``ro_binds`` are the directories the worker may read (project
-    dir, interpreter prefix/venv); ``rw_out_dir`` is the ONE writable
-    directory — the fresh per-build out dir where the worker writes BRep and
-    artifact files. ``rlimits`` bound cpu/memory/processes inside the
-    sandbox; ``wall_clock_s`` is the parent-enforced kill deadline.
+    ``worker_args`` are the arguments passed to the backend's Python
+    interpreter (for example ``("-m", "hephaestus.core.executor.worker")``).
+    They deliberately contain no host interpreter path, so a backend may use
+    its native or image-local Python. ``ro_binds`` are only job-specific host
+    inputs; each backend owns the runtime files needed by its interpreter.
+    ``rw_out_dir`` is the host artifact-staging directory. The backend exposes
+    it as the worker's current directory and sole persistent writable output
+    surface. ``rlimits`` bound cpu/memory/processes inside the sandbox;
+    ``wall_clock_s`` is the parent-enforced kill deadline.
     """
 
-    worker_cmd: tuple[str, ...]
+    worker_args: tuple[str, ...]
     ro_binds: tuple[Path, ...]
     rw_out_dir: Path
     rlimits: Rlimits
     wall_clock_s: float
 
     def __post_init__(self) -> None:
-        if not self.worker_cmd:
-            raise ValueError("worker_cmd must not be empty")
+        if not self.worker_args:
+            raise ValueError("worker_args must not be empty")
         if self.wall_clock_s <= 0:
             raise ValueError(f"wall_clock_s must be positive, got {self.wall_clock_s}")
 

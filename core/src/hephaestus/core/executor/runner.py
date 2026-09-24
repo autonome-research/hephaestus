@@ -13,7 +13,6 @@ content refs the store needs to install them.
 from __future__ import annotations
 
 import json
-import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -34,7 +33,6 @@ from hephaestus.core.executor.imports import (
     staged_key,
 )
 from hephaestus.core.executor.sandbox.base import ExecBackend, Rlimits, SandboxSpec
-from hephaestus.core.executor.sandbox.bwrap import interpreter_ro_binds
 from hephaestus.core.hashing import (
     consumed_hc_hash,
     effective_params_hash,
@@ -70,34 +68,9 @@ DEFAULT_WALL_CLOCK_S = 300.0
 BuildOrigin = Literal["local", "registry"]
 
 
-def worker_command() -> tuple[str, ...]:
-    """argv of the build worker: this interpreter running the worker module."""
-    return (sys.executable, "-m", "hephaestus.core.executor.worker")
-
-
-def worker_ro_binds() -> tuple[Path, ...]:
-    """Read-only binds a sandboxed worker needs to start.
-
-    The interpreter roots (venv prefix + the install root its symlinks target)
-    plus the import roots of the ``hephaestus``/``opstore`` packages —
-    editable installs resolve through ``.pth`` files to source trees OUTSIDE
-    the venv prefix, which must be identity-bound too or the worker dies with
-    ``ModuleNotFoundError`` inside the sandbox. Non-editable installs resolve
-    under the venv prefix and dedup away.
-    """
-    import hephaestus.core as _core_pkg
-
-    import opstore as _opstore_pkg
-
-    binds: list[Path] = list(interpreter_ro_binds())
-    for module in (_core_pkg, _opstore_pkg):
-        file = getattr(module, "__file__", None)
-        if not isinstance(file, str):  # pragma: no cover - namespace edge
-            continue
-        root = Path(file).resolve().parents[len(module.__name__.split("."))]
-        if root not in binds:
-            binds.append(root)
-    return tuple(binds)
+def worker_args() -> tuple[str, ...]:
+    """Interpreter-independent arguments selecting the build worker module."""
+    return ("-m", "hephaestus.core.executor.worker")
 
 
 @dataclass(frozen=True)
@@ -336,7 +309,10 @@ def run_build(
         "globals_source": request.globals_source,
         "part_overrides": {k: v for k, v in request.part_overrides.items()},
         "project_overrides": {k: v for k, v in request.project_overrides.items()},
-        "out_dir": str(out_dir),
+        # Backends expose the host staging directory as the worker cwd. Keep
+        # the protocol path relative so it is valid for native and image-based
+        # backends alike.
+        "out_dir": ".",
         "origin": request.origin,
         "mode": "build",
         "imports": cast("dict[str, JSONValue]", dict(staged)),
@@ -344,8 +320,8 @@ def run_build(
     }
     payload = json.dumps(job).encode("utf-8")
     spec = SandboxSpec(
-        worker_cmd=worker_command(),
-        ro_binds=worker_ro_binds(),
+        worker_args=worker_args(),
+        ro_binds=(),
         rw_out_dir=out_dir,
         rlimits=rlimits,
         wall_clock_s=request.wall_clock_s,

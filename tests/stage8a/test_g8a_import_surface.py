@@ -296,8 +296,7 @@ def test_the_secure_sandbox_builds_an_import_without_reaching_the_project(
         DEFAULT_RLIMITS,
         BuildRequest,
         run_build,
-        worker_command,
-        worker_ro_binds,
+        worker_args,
     )
     from hephaestus.core.executor.sandbox.base import SandboxSpec
     from hephaestus.core.executor.sandbox.bwrap import BwrapBackend, build_bwrap_argv, find_bwrap
@@ -333,8 +332,8 @@ def test_the_secure_sandbox_builds_an_import_without_reaching_the_project(
     assert built.result.metrics.volume_mm3 == pytest.approx(PLATE_VOLUME_MM3, abs=1e-6)
 
     spec = SandboxSpec(
-        worker_cmd=worker_command(),
-        ro_binds=worker_ro_binds(),
+        worker_args=worker_args(),
+        ro_binds=(),
         rw_out_dir=out_dir,
         rlimits=DEFAULT_RLIMITS,
         wall_clock_s=5.0,

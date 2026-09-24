@@ -50,8 +50,8 @@ def make_spec(
     out_dir = tmp_path / "out"
     out_dir.mkdir(exist_ok=True)
     return SandboxSpec(
-        worker_cmd=(sys.executable, "-c", code),
-        ro_binds=(*interpreter_ro_binds(), *extra_ro),
+        worker_args=("-c", code),
+        ro_binds=extra_ro,
         rw_out_dir=out_dir,
         rlimits=Rlimits(
             cpu_seconds=cpu_seconds,
@@ -300,8 +300,8 @@ class TestArgvConstruction:
         out_dir = tmp_path / "out"
         out_dir.mkdir()
         spec = SandboxSpec(
-            worker_cmd=(sys.executable, "-c", "print('hi')"),
-            ro_binds=(project, *interpreter_ro_binds()),
+            worker_args=("-c", "print('hi')"),
+            ro_binds=(project,),
             rw_out_dir=out_dir,
             rlimits=Rlimits(cpu_seconds=60, address_space_bytes=GIB, nproc=64),
             wall_clock_s=30.0,
@@ -324,7 +324,8 @@ class TestArgvConstruction:
         ro_pairs = [(argv[i + 1], argv[i + 2]) for i, a in enumerate(argv) if a == "--ro-bind"]
         for bind in (project.resolve(), *interpreter_ro_binds()):
             assert (str(bind), str(bind)) in ro_pairs
-        # remount-ro seals the root AFTER the binds; worker_cmd is the tail
+        # remount-ro seals the root AFTER the binds; the backend-selected
+        # interpreter and worker_args are the tail.
         assert argv.index("--remount-ro") > argv.index("--bind")
         assert argv[-3:] == (sys.executable, "-c", "print('hi')")
         # no host environment forwarded: only fixed --setenv pairs
@@ -333,8 +334,8 @@ class TestArgvConstruction:
 
     def test_missing_out_dir_rejected(self, tmp_path: Path) -> None:
         spec = SandboxSpec(
-            worker_cmd=(sys.executable, "-c", "pass"),
-            ro_binds=interpreter_ro_binds(),
+            worker_args=("-c", "pass"),
+            ro_binds=(),
             rw_out_dir=tmp_path / "does-not-exist",
             rlimits=Rlimits(cpu_seconds=60, address_space_bytes=GIB, nproc=64),
             wall_clock_s=30.0,
@@ -346,7 +347,7 @@ class TestArgvConstruction:
         out_dir = tmp_path / "out"
         out_dir.mkdir()
         spec = SandboxSpec(
-            worker_cmd=(sys.executable, "-c", "pass"),
+            worker_args=("-c", "pass"),
             ro_binds=(tmp_path / "gone",),
             rw_out_dir=out_dir,
             rlimits=Rlimits(cpu_seconds=60, address_space_bytes=GIB, nproc=64),
@@ -375,6 +376,21 @@ class TestInterpreterBinds:
             f"no bind exposes site-packages {purelib}: {binds}"
         )
 
+    def test_binds_cover_worker_package_import_roots(self) -> None:
+        import hephaestus.core as core_package
+
+        import opstore as opstore_package
+
+        binds = interpreter_ro_binds()
+        for module in (core_package, opstore_package):
+            module_file = module.__file__
+            assert module_file is not None
+            package_depth = len(module.__name__.split("."))
+            root = Path(module_file).resolve().parents[package_depth]
+            assert any(root == bind or bind in root.parents for bind in binds), (
+                f"no runtime bind exposes {module.__name__}'s import root {root}: {binds}"
+            )
+
     def test_binds_cover_every_hop_of_the_executable_chain(self) -> None:
         binds = interpreter_ro_binds()
         hop = Path(sys.executable)
@@ -401,7 +417,7 @@ class TestInterpreterBinds:
         assert pruned == (Path("/a"), Path("/z"))
 
     def test_argv_keeps_the_stated_form_of_a_symlinked_bind(self, tmp_path: Path) -> None:
-        """worker_cmd names STATED paths; binding only the resolved target
+        """Job inputs can name STATED paths; binding only the resolved target
         leaves the stated path dangling inside the sandbox."""
         real = tmp_path / "real"
         real.mkdir()
@@ -411,7 +427,7 @@ class TestInterpreterBinds:
         out_dir = tmp_path / "out"
         out_dir.mkdir()
         spec = SandboxSpec(
-            worker_cmd=(sys.executable, "-c", "pass"),
+            worker_args=("-c", "pass"),
             ro_binds=(link,),
             rw_out_dir=out_dir,
             rlimits=Rlimits(cpu_seconds=60, address_space_bytes=GIB, nproc=64),
@@ -483,8 +499,8 @@ class TestDiagnostics:
         out_dir = tmp_path / "out"
         out_dir.mkdir()
         spec = SandboxSpec(
-            worker_cmd=(sys.executable, "-c", "pass"),
-            ro_binds=interpreter_ro_binds(),
+            worker_args=("-c", "pass"),
+            ro_binds=(),
             rw_out_dir=out_dir,
             rlimits=Rlimits(cpu_seconds=60, address_space_bytes=GIB, nproc=64),
             wall_clock_s=30.0,

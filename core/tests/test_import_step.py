@@ -41,8 +41,7 @@ from hephaestus.core.executor.runner import (
     BuildRequest,
     UnpublishedBuild,
     run_build,
-    worker_command,
-    worker_ro_binds,
+    worker_args,
 )
 from hephaestus.core.executor.sandbox.base import SandboxSpec
 from hephaestus.core.executor.sandbox.bwrap import build_bwrap_argv
@@ -388,8 +387,8 @@ class TestImportedBuilds:
             out_dir=out_dir,
         )
         spec = SandboxSpec(
-            worker_cmd=worker_command(),
-            ro_binds=worker_ro_binds(),
+            worker_args=worker_args(),
+            ro_binds=(),
             rw_out_dir=out_dir,
             rlimits=DEFAULT_RLIMITS,
             wall_clock_s=5.0,

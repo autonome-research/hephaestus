@@ -22,6 +22,7 @@ namespace half of the denial is asserted everywhere.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -31,10 +32,15 @@ from hephaestus.core.dfm import (
     descriptors_from_source_map,
     findings_by_severity,
 )
-from hephaestus.core.dfm.runner import DfmRequest, evaluate_pack
+from hephaestus.core.dfm.runner import ARTIFACT_FILENAME, DfmRequest, evaluate_pack
 from hephaestus.core.dfm.types import DfmRuleOutcome
 from hephaestus.core.dfm.worker import evaluate_job
 from hephaestus.core.errors import ValidationError
+from hephaestus.core.executor.sandbox.base import (
+    CapabilityReport,
+    ExecOutcome,
+    SandboxSpec,
+)
 from hephaestus.core.executor.sandbox.bwrap import BwrapBackend, find_bwrap
 from hephaestus.core.executor.sandbox.unsafe import UnsafeLocalBackend
 from hephaestus.core.registry import (
@@ -677,6 +683,41 @@ def test_no_backend_is_a_typed_refusal_not_an_unsandboxed_run() -> None:
     with pytest.raises(RegistryError) as error:
         evaluate_pack(request, laser_pack(), backend=None)
     assert error.value.reason == "capability_not_available"
+
+
+def test_dfm_runner_uses_backend_neutral_worker_contract(tmp_path: Path) -> None:
+    class RecordingBackend:
+        def __init__(self) -> None:
+            self.invocation: tuple[SandboxSpec, bytes] | None = None
+
+        @property
+        def name(self) -> str:
+            return "recording"
+
+        def probe(self) -> CapabilityReport:
+            return CapabilityReport(backend=self.name, available=True)
+
+        def execute(self, spec: SandboxSpec, stdin_payload: bytes) -> ExecOutcome:
+            self.invocation = (spec, stdin_payload)
+            assert (spec.rw_out_dir / ARTIFACT_FILENAME).read_bytes() == b"staged-brep"
+            return ExecOutcome(exit_code=1, stdout=b"", stderr=b"expected test stop")
+
+    backend = RecordingBackend()
+    request = DfmRequest(
+        part="panel",
+        process="laser_cut",
+        brep=b"staged-brep",
+        source_artifact_ref="artifact:build:sha256:panel",
+    )
+    with pytest.raises(RegistryError, match="expected test stop"):
+        evaluate_pack(request, laser_pack(), backend=backend, scratch_root=tmp_path)
+
+    assert backend.invocation is not None
+    spec, payload = backend.invocation
+    assert spec.worker_args == ("-m", "hephaestus.core.dfm.worker")
+    assert spec.ro_binds == ()
+    assert json.loads(payload)["out_dir"] == "."
+    assert str(spec.rw_out_dir) not in payload.decode("utf-8")
 
 
 def test_the_unsafe_local_backend_refuses_dfm_jobs(tmp_path: Path) -> None:
