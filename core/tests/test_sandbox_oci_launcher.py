@@ -29,7 +29,7 @@ from hephaestus.core.executor.sandbox.oci_protocol import (
 
 def test_protocol_manifest_is_exact_and_canonical() -> None:
     assert PROTOCOL_NAME == "hephaestus.oci-executor"
-    assert PROTOCOL_VERSION == 1
+    assert PROTOCOL_VERSION == 2
     assert frozenset({BUILD_WORKER, DFM_WORKER, PROBE_WORKER}) == APPROVED_MODULES
     assert manifest_bytes() == manifest_bytes()
     assert manifest_bytes().endswith(b"\n") and manifest_bytes().count(b"\n") == 1
@@ -62,7 +62,7 @@ def test_worker_args_refuse_every_near_match(args: tuple[str, ...]) -> None:
 def test_diagnostic_is_one_canonical_line() -> None:
     assert diagnostic_bytes("worker_not_allowed") == (
         b'{"code":"worker_not_allowed","component":"oci_launcher",'
-        b'"diagnostic_version":1,"protocol_version":1}\n'
+        b'"diagnostic_version":1,"protocol_version":2}\n'
     )
 
 
@@ -70,7 +70,7 @@ def test_parse_exact_valid_run() -> None:
     parsed = launcher.parse_argv(
         (
             "run",
-            "1",
+            "2",
             BUILD_WORKER,
             str(MAX_CPU_SECONDS),
             str(MAX_ADDRESS_SPACE_BYTES),
@@ -92,7 +92,7 @@ def test_parse_exact_valid_run() -> None:
 )
 def test_limit_parser_refuses_noncanonical_values(value: str) -> None:
     with pytest.raises(ValueError):
-        launcher.parse_argv(("run", "1", BUILD_WORKER, value, "1", "1"))
+        launcher.parse_argv(("run", "2", BUILD_WORKER, value, "1", "1"))
 
 
 def test_limit_parser_refuses_values_above_caps() -> None:
@@ -101,7 +101,7 @@ def test_limit_parser_refuses_values_above_caps() -> None:
         (4, str(MAX_ADDRESS_SPACE_BYTES + 1)),
         (5, str(MAX_NPROC + 1)),
     ):
-        args = ["run", "1", BUILD_WORKER, "1", "1", "1"]
+        args = ["run", "2", BUILD_WORKER, "1", "1", "1"]
         args[position] = value
         with pytest.raises(ValueError):
             launcher.parse_argv(args)
@@ -110,7 +110,7 @@ def test_limit_parser_refuses_values_above_caps() -> None:
 def test_apply_rlimits_orders_core_first_and_never_relaxes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    request = launcher.LaunchRequest(1, BUILD_WORKER, 100, 1000, 100)
+    request = launcher.LaunchRequest(PROTOCOL_VERSION, BUILD_WORKER, 100, 1000, 100)
     calls: list[tuple[int, tuple[int, int]]] = []
     inherited = {
         launcher.resource.RLIMIT_CORE: (5, 5),
@@ -154,7 +154,7 @@ def test_limit_failure_prevents_exec_and_is_deterministic(
 
     monkeypatch.setattr(launcher, "apply_rlimits", fail_limits)
     monkeypatch.setattr(launcher, "exec_worker", mark_exec)
-    code = launcher.main(("run", "1", BUILD_WORKER, "1", "1", "1"))
+    code = launcher.main(("run", "2", BUILD_WORKER, "1", "1", "1"))
     captured = capsys.readouterr()
     assert code == launcher.EXIT_RLIMIT
     assert not executed
@@ -163,7 +163,7 @@ def test_limit_failure_prevents_exec_and_is_deterministic(
         "code": "resource_limit_failed",
         "component": "oci_launcher",
         "diagnostic_version": 1,
-        "protocol_version": 1,
+        "protocol_version": 2,
     }
     assert "attacker" not in captured.err
 
@@ -180,7 +180,7 @@ def test_exec_worker_uses_absolute_interpreter_and_fixed_environment(
 
     monkeypatch.setattr(launcher.os, "execve", fake_execve)
     with pytest.raises(OSError):
-        launcher.exec_worker(launcher.LaunchRequest(1, BUILD_WORKER, 1, 1, 1))
+        launcher.exec_worker(launcher.LaunchRequest(PROTOCOL_VERSION, BUILD_WORKER, 1, 1, 1))
     assert seen is not None
     assert seen == (
         sys.executable,
@@ -191,24 +191,28 @@ def test_exec_worker_uses_absolute_interpreter_and_fixed_environment(
 
 
 def test_launcher_refusal_codes(capsys: pytest.CaptureFixture[str]) -> None:
-    assert launcher.main(("run", "2", BUILD_WORKER, "1", "1", "1")) == 65
+    assert launcher.main(("run", "1", BUILD_WORKER, "1", "1", "1")) == 65
     assert json.loads(capsys.readouterr().err)["code"] == "protocol_version_mismatch"
-    assert launcher.main(("run", "1", "not.allowed", "1", "1", "1")) == 66
+    assert launcher.main(("run", "2", "not.allowed", "1", "1", "1")) == 66
     assert json.loads(capsys.readouterr().err)["code"] == "worker_not_allowed"
 
 
 def test_probe_schema_size_nonce_and_deterministic_response() -> None:
     nonce = "a" * 64
     request = probe.parse_request(
-        json.dumps({"nonce": nonce, "protocol_version": 1}).encode("ascii")
+        json.dumps({"nonce": nonce, "protocol_version": 2}).encode("ascii")
     )
     with pytest.raises(probe.ProbeRequestError):
         probe.parse_request(b"x" * 1025)
     with pytest.raises(probe.ProbeRequestError):
-        probe.parse_request(b'{"nonce":"a","protocol_version":1}')
+        probe.parse_request(b'{"nonce":"a","protocol_version":2}')
     with pytest.raises(probe.ProbeRequestError):
         probe.parse_request(
-            json.dumps({"nonce": nonce, "protocol_version": 1, "extra": 1}).encode()
+            f'{{"nonce":"{nonce}","nonce":"{nonce}","protocol_version":2}}'.encode()
+        )
+    with pytest.raises(probe.ProbeRequestError):
+        probe.parse_request(
+            json.dumps({"nonce": nonce, "protocol_version": 2, "extra": 1}).encode()
         )
 
     values = {
@@ -225,26 +229,160 @@ def test_probe_schema_size_nonce_and_deterministic_response() -> None:
             getrlimit=values.__getitem__,
             geteuid=lambda: 65532,
             getegid=lambda: 65532,
+            raw_observations={},
         )
     )
     assert result["effective_uid"] == 65532
     assert result["effective_gid"] == 65532
-    assert result["identity_matches"] is True
     assert result["kind"] == "hephaestus_executor_probe"
     assert result["nonce"] == nonce
-    assert result["non_root"] is True
-    assert result["protocol_version"] == 1
+    assert result["protocol_version"] == 2
+
+
+def test_probe_status_and_mountinfo_parsers_are_raw_and_strict() -> None:
+    status = """\
+CapInh:\t0000000000000000
+CapPrm:\t0000000000000000
+CapEff:\t0000000000000000
+CapBnd:\t0000000000000000
+CapAmb:\t0000000000000000
+NoNewPrivs:\t1
+"""
+    assert probe.parse_status(status) == {
+        "capabilities": {
+            "CapInh": "0000000000000000",
+            "CapPrm": "0000000000000000",
+            "CapEff": "0000000000000000",
+            "CapBnd": "0000000000000000",
+            "CapAmb": "0000000000000000",
+        },
+        "no_new_privs": 1,
+    }
+    with pytest.raises(RuntimeError):
+        probe.parse_status(status.replace("NoNewPrivs:\t1\n", ""))
+
+    mountinfo = """\
+1 0 0:1 / / ro,nosuid - overlay overlay ro
+2 1 0:2 / /work rw,nosuid,nodev - ext4 /dev/vda rw
+3 1 0:3 / /tmp rw,nosuid,nodev,noexec - tmpfs tmpfs rw,nosuid,nodev,noexec
+"""
+    mounts = probe.parse_mountinfo(mountinfo)
+    assert mounts["/"] == {
+        "fs_type": "overlay",
+        "mountpoint": "/",
+        "options": ["nosuid", "ro"],
+    }
+    assert mounts["/work"] == {
+        "fs_type": "ext4",
+        "mountpoint": "/work",
+        "options": ["nodev", "nosuid", "rw"],
+    }
+    assert mounts["/tmp"] == {
+        "fs_type": "tmpfs",
+        "mountpoint": "/tmp",
+        "options": ["nodev", "noexec", "nosuid", "rw"],
+    }
+
+
+def test_probe_cgroup_v2_parser_reports_limits() -> None:
+    values = {
+        "memory.max": 1024,
+        "memory.swap.max": 0,
+        "pids.max": 8,
+        "cpu.max": "100000 100000",
+    }
+    result = probe.parse_cgroup_observation(
+        "0::/executor\n",
+        "1 0 0:1 / /sys/fs/cgroup rw - cgroup2 cgroup rw\n",
+        read_limit=lambda path: values[path.name],
+    )
+    assert result == {
+        "version": 2,
+        "memory_max": 1024,
+        "memory_swap_max": 0,
+        "memory_swap_mode": "additional",
+        "pids_max": 8,
+        "cpu_quota": {"quota": 100000, "period": 100000},
+    }
+
+
+def test_probe_cgroup_v1_parser_reports_controller_limits() -> None:
+    values = {
+        "memory.limit_in_bytes": 2048,
+        "memory.memsw.limit_in_bytes": 2048,
+        "pids.max": 16,
+        "cpu.cfs_quota_us": 50000,
+        "cpu.cfs_period_us": 100000,
+    }
+    memberships = "5:memory:/executor\n4:pids:/executor\n3:cpu:/executor\n"
+    mounts = """\
+1 0 0:1 / /sys/fs/cgroup/memory rw - cgroup cgroup rw,memory
+2 0 0:2 / /sys/fs/cgroup/pids rw - cgroup cgroup rw,pids
+3 0 0:3 / /sys/fs/cgroup/cpu rw - cgroup cgroup rw,cpu
+"""
+    result = probe.parse_cgroup_observation(
+        memberships,
+        mounts,
+        read_limit=lambda path: values[path.name],
+    )
+    assert result["version"] == 1
+    assert result["memory_swap_mode"] == "total"
+    assert result["cpu_quota"] == {"quota": 50000, "period": 100000}
+
+
+def test_probe_cgroup_paths_honor_non_root_mount_roots() -> None:
+    values = {
+        "memory.max": 1024,
+        "memory.swap.max": 0,
+        "pids.max": 8,
+        "cpu.max": "100000 100000",
+        "memory.limit_in_bytes": 1024,
+        "memory.memsw.limit_in_bytes": 1024,
+        "cpu.cfs_quota_us": 100000,
+        "cpu.cfs_period_us": 100000,
+    }
+    observed: list[Path] = []
+
+    def read_limit(path: Path) -> int | str:
+        observed.append(path)
+        return values[path.name]
+
+    result = probe.parse_cgroup_observation(
+        "0::/tenant/executor\n",
+        "1 0 0:1 /tenant /sys/fs/cgroup rw - cgroup2 cgroup rw\n",
+        read_limit=read_limit,
+    )
+    assert result["version"] == 2
+    assert observed
+    assert all(str(path).startswith("/sys/fs/cgroup/executor/") for path in observed)
+    assert all("/tenant/" not in str(path) for path in observed)
+
+    observed.clear()
+    v1_mounts = """\
+1 0 0:1 /tenant /sys/fs/cgroup/memory rw - cgroup cgroup rw,memory
+2 0 0:2 /tenant /sys/fs/cgroup/pids rw - cgroup cgroup rw,pids
+3 0 0:3 /tenant /sys/fs/cgroup/cpu rw - cgroup cgroup rw,cpu
+"""
+    v1_memberships = "5:memory:/tenant/executor\n4:pids:/tenant/executor\n3:cpu:/tenant/executor\n"
+    result = probe.parse_cgroup_observation(
+        v1_memberships,
+        v1_mounts,
+        read_limit=read_limit,
+    )
+    assert result["version"] == 1
+    assert observed
+    assert all("/tenant/" not in str(path) for path in observed)
+    assert all("/executor/" in str(path) for path in observed)
 
 
 def test_probe_reports_wrong_numeric_identity() -> None:
-    request = probe.ProbeRequest(nonce="b" * 64, protocol_version=1)
+    request = probe.ProbeRequest(nonce="b" * 64, protocol_version=2)
     result = probe.probe_record(
         request,
         getrlimit=lambda _kind: (1, 1),
         geteuid=lambda: 501,
         getegid=lambda: 20,
+        raw_observations={},
     )
     assert result["effective_uid"] == 501
     assert result["effective_gid"] == 20
-    assert result["non_root"] is True
-    assert result["identity_matches"] is False
