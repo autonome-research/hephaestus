@@ -2,10 +2,9 @@
  * SPDX-License-Identifier: Apache-2.0 */
 .control { position: relative; min-width: 0; flex: 0 1 auto; }
 .button { max-width: 11rem; min-height: 34px; padding-inline: var(--space-2); }
-.button svg { width: 16px; height: 16px; }
 .button > span { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
 .identity { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.badge { flex-shrink: 0; white-space: nowrap; padding: var(--space-1); background: var(--surface-control); border-radius: var(--radius-control); }
+.cue { flex: 0 0 auto; color: var(--ink-muted); }
 .note { composes: label from "../../system/type.module.css"; margin: var(--space-1) 0; overflow-wrap: anywhere; }
 /*
  * THE OVERLAP DEFECT, AND WHY IT HAPPENED (2026-09-20).
@@ -140,9 +139,18 @@
   .identity { max-width: 6rem; }
 }
 
-/* §23's providers surface, below the model grid inside the one popover. It is
-   a whole panel, so it gets its own scroll rather than stretching the popover
-   past the column it opens in. */
+.providerActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-3);
+}
+.providerActions > button:first-child { flex: 1 1 8rem; }
+
+/* The legacy management surface remains available for advanced source/unlink
+   recovery, but is collapsed by default behind the compact add flow. */
 .providers {
   min-width: 0;
   /* `flex: none` for the same reason `.pickerGrid` has it: a flex item that

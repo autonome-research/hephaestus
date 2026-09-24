@@ -62,8 +62,8 @@ export const AUTH_HEALTH = [
 ] as const;
 export type AuthHealth = (typeof AUTH_HEALTH)[number];
 
-/** §23.4's two flows. `device_code` is the default: it opens no socket. */
-export const AUTH_FLOW_TYPES = ["device_code", "authorize_url"] as const;
+/** Two real flow shapes plus `auto`, which selects only from Pi-offered branches. */
+export const AUTH_FLOW_TYPES = ["auto", "device_code", "authorize_url"] as const;
 export type AuthFlowType = (typeof AUTH_FLOW_TYPES)[number];
 
 /** §23.5's three discoverable source kinds (Stage 10C). Closed. */
@@ -152,10 +152,24 @@ export interface ProvidersDocument {
   readonly providers: readonly ProviderRow[];
 }
 
-/** `GET /providers/catalog` — Pi's own catalog, live over the bridge (§23.1). */
+export const CATALOG_AUTH_METHODS = ["subscription", "api_key"] as const;
+export type CatalogAuthMethod = (typeof CATALOG_AUTH_METHODS)[number];
+
+/** `GET /providers/catalog` — Pi's runtime-owned auth + model metadata. */
+export interface CatalogProvider {
+  readonly id: string;
+  readonly name: string;
+  readonly auth_methods: readonly { readonly type: CatalogAuthMethod; readonly label: string }[];
+  readonly models: readonly {
+    readonly id: string;
+    readonly name: string;
+    readonly input: readonly ("text" | "image")[];
+    readonly reasoning: boolean;
+  }[];
+}
 export interface CatalogDocument {
   readonly status: "ok";
-  readonly catalog?: readonly { readonly id: string; readonly name: string }[];
+  readonly catalog: readonly CatalogProvider[];
 }
 
 /** Selector-specific runtime projection; declarations are not live identity. */
@@ -294,7 +308,23 @@ export function loadProviders(): Promise<ProvidersDocument> {
 
 /** `GET /providers/catalog`. Needs a sidecar: Pi *is* the catalog (§23.1). */
 export function loadCatalog(): Promise<CatalogDocument> {
-  return apiJson<CatalogDocument>("/providers/catalog");
+  return apiJson<CatalogDocument>("/providers/catalog", { cache: "no-store" });
+}
+
+/** Add one absent canonical provider without replacing existing declarations. */
+export function registerProvider(
+  providerId: string,
+  authType: CatalogAuthMethod,
+): Promise<{
+  readonly status: "ok";
+  readonly provider: { readonly id: string; readonly kind: "pi_native"; readonly models: readonly { readonly id: string }[] };
+  readonly auth_type: CatalogAuthMethod;
+}> {
+  return apiJson("/providers/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": uuid7() },
+    body: JSON.stringify({ provider_id: providerId, auth_type: authType }),
+  });
 }
 
 /**

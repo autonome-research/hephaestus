@@ -10,7 +10,7 @@ import { WorkspaceError } from "../../src/api/client";
 import { fetchSessionModel, selectSessionModel, sendPrompt, createSession, isSessionModelState, type SessionModelDocument } from "../../src/api/sessions";
 import type * as Sessions from "../../src/api/sessions";
 import type * as Providers from "../../src/api/providers";
-import { isModelRevision } from "../../src/api/providers";
+import { isModelRevision, loadCatalog, loadModels, loadProviders, registerProvider, submitKey, type ProviderRow, type ProvidersDocument } from "../../src/api/providers";
 import { canSelectModel, changeSessionModel, conversationStore, createConversationStore, currentTurn, readSessionModel } from "../../src/stream/conversation";
 import { filterModels, sameModel } from "../../src/stream/composerChrome";
 import { idleExecution, modelDoc, models, modelState, spark, vision } from "../fixtures/models";
@@ -18,7 +18,23 @@ import { idleExecution, modelDoc, models, modelState, spark, vision } from "../f
 vi.mock("../../src/api/sessions", async original => ({ ...await original<typeof Sessions>(),
   fetchSessionModel: vi.fn(), selectSessionModel: vi.fn(), sendPrompt: vi.fn(), createSession: vi.fn(),
 }));
-vi.mock("../../src/api/providers", async original => ({ ...await original<typeof Providers>(), loadModels: vi.fn(async () => models) }));
+vi.mock("../../src/api/providers", async original => ({
+  ...await original<typeof Providers>(),
+  loadModels: vi.fn(async () => models),
+  loadProviders: vi.fn(),
+  loadCatalog: vi.fn(),
+  registerProvider: vi.fn(),
+  submitKey: vi.fn(),
+}));
+let declaredProviders: ProviderRow[] = [];
+const providerDocument = (): ProvidersDocument => ({
+  status: "ok", config_path: "/project/.heph/providers.json", config_exists: declaredProviders.length > 0,
+  config_malformed: false, file_mode: declaredProviders.length > 0 ? "0600" : null,
+  file_mode_private: true, credential_allowlist: [], auth_source: null, auth_source_linked: false,
+  egress_acknowledged: [], adopted_sources: [], credential_sources: [],
+  attach: { attached: true, config_path: "/project/.heph/providers.json", generation: 1 },
+  providers: declaredProviders,
+});
 let teardown = () => {};
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -27,6 +43,29 @@ beforeEach(() => {
   vi.mocked(selectSessionModel).mockReset();
   vi.mocked(sendPrompt).mockReset();
   vi.mocked(createSession).mockReset();
+  declaredProviders = [];
+  vi.mocked(loadModels).mockClear();
+  vi.mocked(loadProviders).mockReset();
+  vi.mocked(loadCatalog).mockReset();
+  vi.mocked(registerProvider).mockReset();
+  vi.mocked(submitKey).mockReset();
+  vi.mocked(loadProviders).mockImplementation(async () => providerDocument());
+  vi.mocked(loadCatalog).mockResolvedValue({ status: "ok", catalog: [
+    { id: "anthropic", name: "Anthropic", auth_methods: [
+      { type: "subscription", label: "Claude Pro/Max subscription" },
+      { type: "api_key", label: "API key" },
+    ], models: [{ id: "claude-sonnet", name: "Claude Sonnet", input: ["text", "image"], reasoning: true }] },
+    { id: "xai", name: "xAI", auth_methods: [{ type: "api_key", label: "API key" }],
+      models: [{ id: "grok", name: "Grok", input: ["text"], reasoning: false }] },
+  ] });
+  vi.mocked(submitKey).mockResolvedValue({ status: "ok", provider_id: "xai", scope: "serve", replaced: "none" });
+  vi.mocked(registerProvider).mockImplementation(async (providerId, authType) => {
+    const provider: ProviderRow = { id: providerId, kind: "pi_native", name: "Anthropic",
+      models: [{ id: "claude-sonnet", name: "Claude Sonnet" }], source: "none", health: "unused",
+      last_observed_at: null, available: false, unavailable_reason: "provider_not_authenticated" };
+    declaredProviders = [...declaredProviders, provider];
+    return { status: "ok", provider: { id: providerId, kind: "pi_native", models: [{ id: "claude-sonnet" }] }, auth_type: authType };
+  });
 });
 afterEach(() => { act(teardown); document.body.replaceChildren(); conversationStore.reset(); });
 function ready(sid = "a") { conversationStore.modelSnapshot(sid, modelState, idleExecution, conversationStore.ticket()); }
@@ -50,6 +89,13 @@ function key(el: Element, value: string) {
   act(() => { el.dispatchEvent(new KeyboardEvent("keydown", { key: value, bubbles: true, cancelable: true })); });
 }
 function click(el: Element | null) { act(() => { (el as HTMLElement).click(); }); }
+function input(el: HTMLInputElement, value: string) {
+  act(() => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    setter?.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
 const switched = modelDoc("a", { ...modelState, revision: { ...modelState.revision, version: 2 }, current: vision,
   selected: { provider_id: vision.provider_id, model_id: vision.model_id } });
 
@@ -73,6 +119,15 @@ describe("model wire and shared state", () => {
     store.catalog({ ...models, proposed_default: spark, providers: [{ ...models.providers[0]!, models: [] }] });
     expect(store.get(null).proposal).toMatchObject({ model_id: vision.model_id, available: false });
     expect(store.get("a").model?.current).toEqual(spark);
+
+    // First-provider success can turn null into a server default. A refresh
+    // still cannot choose that model or consume the new-conversation draft.
+    const firstProvider = createConversationStore();
+    firstProvider.catalog({ ...models, providers: [], proposed_default: null });
+    firstProvider.draft(null, "keep the new-session draft");
+    firstProvider.catalog(models);
+    expect(firstProvider.get(null).proposal).toBeNull();
+    expect(firstProvider.get(null).draft.text).toBe("keep the new-session draft");
   });
   it("rejects pre-write, out-of-order, old-epoch reads and A→B→A old versions", () => {
     const store = createConversationStore();
@@ -117,8 +172,8 @@ describe("model wire and shared state", () => {
     expect(canSelectModel(conversationStore.get("a"))).toBe(true);
     const host = mount();
     const button = host.querySelector("[data-model-button]");
-    expect(button?.getAttribute("aria-label")).toContain("Saved selection (not active): local/fake/spark");
-    expect(button?.getAttribute("aria-label")).toContain("Capability unknown");
+    expect(button?.getAttribute("title")).toContain("Saved selection (not active): local/fake/spark");
+    expect(button?.getAttribute("title")).toContain("Capability unknown");
     expect(host.textContent).toContain("model_unknown");
   });
   it("does not confuse unavailable-model repair with unresolved execution ownership", () => {
@@ -165,9 +220,9 @@ describe("model control interaction", () => {
   it("shows Spark even when vision is first; arrows do not mutate, Enter confirms, Escape restores focus", async () => {
     ready(); const host = mount(); await act(async () => {});
     const button = host.querySelector<HTMLElement>("[data-model-button]")!;
-    expect(button.textContent).toBe("");
-    expect(button.getAttribute("aria-label")).toContain("local/fake/spark");
-    expect(button.getAttribute("aria-label")).toContain("Text only");
+    expect(button.textContent).toContain("Spark");
+    expect(button.getAttribute("title")).toContain("local/fake/spark");
+    expect(button.getAttribute("title")).toContain("Text only");
     button.focus(); click(button); await act(async () => {});
     expect(document.activeElement?.getAttribute("role")).toBe("option");
     expect(host.querySelector('[role="option"][aria-selected="true"]')?.textContent).toContain("Spark");
@@ -177,8 +232,68 @@ describe("model control interaction", () => {
     vi.mocked(selectSessionModel).mockResolvedValue(switched);
     key(document.activeElement!, "Enter"); await act(async () => {});
     expect(selectSessionModel).toHaveBeenCalledWith("a", { model: { provider_id: vision.provider_id, model_id: vision.model_id }, expected_model_revision: modelState.revision });
-    expect(button.getAttribute("aria-label")).toContain("Text + images"); expect(createSession).not.toHaveBeenCalled(); expect(sendPrompt).not.toHaveBeenCalled();
+    expect(button.getAttribute("title")).toContain("Text + images"); expect(createSession).not.toHaveBeenCalled(); expect(sendPrompt).not.toHaveBeenCalled();
   });
+  it("stages auth method before provider and never changes the model automatically", async () => {
+    ready(); const host = mount(); await act(async () => {});
+    click(host.querySelector("[data-model-button]"));
+    click(host.querySelector("[data-add-provider]"));
+    await act(async () => {});
+    expect(host.querySelector("[data-add-provider-methods]")).not.toBeNull();
+    expect(host.querySelector("[data-add-provider-option]")).toBeNull();
+    click(host.querySelector('[data-add-provider-method="subscription"]'));
+    expect(host.querySelector('[data-add-provider-option="anthropic"]')).not.toBeNull();
+    expect(host.querySelector('[data-add-provider-option="xai"]')).toBeNull();
+    expect(document.activeElement).toBe(host.querySelector('[data-add-provider-option="anthropic"]'));
+    click(host.querySelector('[data-add-provider-option="anthropic"]'));
+    await act(async () => {});
+    expect(registerProvider).toHaveBeenCalledWith("anthropic", "subscription");
+    expect(host.querySelector('[data-signin-begin="auto"]')).not.toBeNull();
+    expect(host.querySelector('[data-signin-mode="key"]')).toBeNull();
+    expect(selectSessionModel).not.toHaveBeenCalled();
+    expect(conversationStore.get("a").model?.current).toEqual(spark);
+  });
+
+  it("keeps model and draft on add failure; Back owns no auth flow", async () => {
+    ready(); conversationStore.draft("a", "preserve me");
+    vi.mocked(registerProvider).mockRejectedValueOnce(new WorkspaceError(409, "provider_already_registered", "collision"));
+    const host = mount(); await act(async () => {});
+    click(host.querySelector("[data-model-button]"));
+    click(host.querySelector("[data-add-provider]")); await act(async () => {});
+    click(host.querySelector('[data-add-provider-method="subscription"]'));
+    click(host.querySelector("[data-add-provider-back]"));
+    expect(host.querySelector("[data-add-provider-methods]")).not.toBeNull();
+    expect(document.activeElement).toBe(host.querySelector('[data-add-provider-method="subscription"]'));
+    expect(registerProvider).not.toHaveBeenCalled();
+    click(host.querySelector('[data-add-provider-method="subscription"]'));
+    click(host.querySelector('[data-add-provider-option="anthropic"]'));
+    await act(async () => {});
+    expect(host.querySelector("[data-add-provider-error]")).not.toBeNull();
+    expect(conversationStore.get("a").model?.current).toEqual(spark);
+    expect(conversationStore.get("a").draft.text).toBe("preserve me");
+    expect(selectSessionModel).not.toHaveBeenCalled();
+  });
+
+  it("refreshes after fake API-key success without choosing a model or consuming the draft", async () => {
+    ready(); conversationStore.draft("a", "still here");
+    const host = mount(); await act(async () => {});
+    const initialCatalogReads = vi.mocked(loadModels).mock.calls.length;
+    click(host.querySelector("[data-model-button]"));
+    click(host.querySelector("[data-add-provider]")); await act(async () => {});
+    click(host.querySelector('[data-add-provider-method="api_key"]'));
+    click(host.querySelector('[data-add-provider-option="xai"]'));
+    await act(async () => {});
+    input(host.querySelector<HTMLInputElement>("[data-signin-key]")!, "fake-loopback-key");
+    click(host.querySelector('[data-signin-scope="serve"]'));
+    click(host.querySelector("[data-signin-submit]"));
+    await act(async () => {});
+    expect(submitKey).toHaveBeenCalledWith("xai", "fake-loopback-key", "serve", false);
+    expect(vi.mocked(loadModels).mock.calls.length).toBeGreaterThan(initialCatalogReads);
+    expect(conversationStore.get("a").model?.current).toEqual(spark);
+    expect(conversationStore.get("a").draft.text).toBe("still here");
+    expect(selectSessionModel).not.toHaveBeenCalled();
+  });
+
   it("blocks Enter and form submit synchronously during the selection without erasing text", async () => {
     ready(); conversationStore.draft("a", "retain draft"); const host = mount(true);
     const wait = deferred<SessionModelDocument>(); vi.mocked(selectSessionModel).mockReturnValue(wait.promise);
@@ -206,8 +321,8 @@ describe("model control interaction", () => {
   it("selects a fresh choice locally with the server default visible, without creating or sending", async () => {
     const host = mount(false, null); await act(async () => {});
     const button = host.querySelector("[data-model-button]");
-    expect(button?.getAttribute("aria-label")).toContain("Proposed default");
-    expect(button?.getAttribute("aria-label")).toContain("Text + images");
+    expect(button?.getAttribute("title")).toContain("Proposed default");
+    expect(button?.getAttribute("title")).toContain("Text + images");
     click(host.querySelector("[data-model-button]")); await act(async () => {});
     click([...host.querySelectorAll('[role="option"]')].find(el => el.textContent?.includes("Spark"))!);
     expect(conversationStore.get(null).proposal?.model_id).toBe("spark");

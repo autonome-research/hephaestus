@@ -48,6 +48,8 @@ import {
   completeLogin,
   loginStatus,
   submitKey,
+  type AuthFlowType,
+  type CatalogAuthMethod,
   type CredentialScope,
   type FlowDocument,
   type ProviderRow,
@@ -67,6 +69,8 @@ export interface SignInDialogProps {
   readonly provider: ProviderRow;
   readonly open: boolean;
   readonly onClose: () => void;
+  /** Locks the approved add-provider path to its first-step choice. */
+  readonly method?: CatalogAuthMethod | undefined;
   /** Called after a credential actually landed, so the panel can re-read. */
   readonly onSignedIn: () => void;
 }
@@ -81,6 +85,15 @@ const FAILED_FLOW = new Set(["failed", "cancelled", "expired"]);
  * `slow_down` stay 200. Completion is `flow.state === "complete"` or the
  * status route flipping to `{type:"oauth"}`. A named failure stops the loop.
  */
+export function loginPollFailureReason(status: Record<string, unknown>): string {
+  const nested = status.flow;
+  if (nested !== null && typeof nested === "object") {
+    const code = (nested as { code?: unknown }).code;
+    if (typeof code === "string") return code;
+  }
+  return typeof status.reason === "string" ? status.reason : "authorization_expired";
+}
+
 export function loginPollOutcome(status: Record<string, unknown>): "pending" | "complete" | "failed" {
   const reason = typeof status.reason === "string" ? status.reason : null;
   if (reason === "authorization_pending" || reason === "slow_down") return "pending";
@@ -113,10 +126,13 @@ function pollIntervalMs(flow: FlowDocument, status: Record<string, unknown> | nu
 }
 
 export function SignInDialog(props: SignInDialogProps): React.JSX.Element {
-  const { provider, open, onClose, onSignedIn } = props;
-  const [mode, setMode] = useState<SignInMode>(
+  const { provider, open, onClose, onSignedIn, method } = props;
+  const forcedMode: SignInMode | null = method === "subscription" ? "subscription"
+    : method === "api_key" ? "key" : null;
+  const [selectedMode, setMode] = useState<SignInMode>(
     provider.kind === "pi_native" ? "subscription" : "key",
   );
+  const mode = forcedMode ?? selectedMode;
   const [key, setKey] = useState("");
   // NOT initialised to a scope. §23.2: "Omitting it is refused
   // `credential_scope_required`, **not defaulted**." `null` is that absence, and
@@ -129,10 +145,25 @@ export function SignInDialog(props: SignInDialogProps): React.JSX.Element {
   const [confirmRuns, setConfirmRuns] = useState<number | null>(null);
 
   const dismiss = useCallback((): void => {
-    // Idempotent: closing an unstarted dialog is a no-op on the sidecar.
-    void cancelLogin(provider.id);
-    onClose();
-  }, [provider.id, onClose]);
+    if (busy) return;
+    // Once Pi owns an active flow, the dialog remains its visible owner until
+    // cancellation is acknowledged. Closing optimistically on a failed relay
+    // strands that flow and makes the next begin refuse as already in progress.
+    if (flow === null) {
+      onClose();
+      return;
+    }
+    setBusy(true);
+    setRefusal(null);
+    void cancelLogin(provider.id).then(() => {
+      setFlow(null);
+      onClose();
+    }).catch((error: unknown) => {
+      setRefusal(refusalText(error));
+    }).finally(() => {
+      setBusy(false);
+    });
+  }, [busy, flow, provider.id, onClose]);
 
   useEffect(() => {
     if (!open || flow === null) return;
@@ -152,7 +183,7 @@ export function SignInDialog(props: SignInDialogProps): React.JSX.Element {
               return;
             }
             if (outcome === "failed") {
-              const reason = typeof status.reason === "string" ? status.reason : "authorization_expired";
+              const reason = loginPollFailureReason(status);
               const known = copy.providers.refusal as Readonly<Record<string, string>>;
               setRefusal(known[reason] ?? copy.errors.title);
               return;
@@ -160,9 +191,16 @@ export function SignInDialog(props: SignInDialogProps): React.JSX.Element {
           } catch (error) {
             if (cancelled) return;
             setRefusal(refusalText(error));
+            // OAuth may have completed while a turn is active. The server
+            // refuses to restart and preserves the completed flow; keep its UI
+            // owned and poll until applying it no longer ends live work.
+            if (error instanceof WorkspaceError && error.reason === "runs_in_flight") {
+              void tick(pollIntervalMs(flow, status));
+            }
             return;
           }
           if (cancelled) return;
+          setRefusal(null);
           void tick(pollIntervalMs(flow, status));
         })();
       }, waitMs);
@@ -203,7 +241,7 @@ export function SignInDialog(props: SignInDialogProps): React.JSX.Element {
     });
   };
 
-  const begin = (type: "device_code" | "authorize_url"): void => {
+  const begin = (type: AuthFlowType): void => {
     void run(async () => {
       setFlow(await beginLogin(provider.id, type));
     });
@@ -233,28 +271,16 @@ export function SignInDialog(props: SignInDialogProps): React.JSX.Element {
       <Panel label={copy.providers.dialog.title}>
         <PanelHeader title={copy.providers.dialog.title} eyebrow={provider.name} />
         <PanelBody>
-          <div className={styles["modes"]}>
-            <Button
-              variant="toggle"
-              pressed={mode === "key"}
-              onClick={() => {
-                setMode("key");
-              }}
-              data-signin-mode="key"
-            >
+          {forcedMode === null ? <div className={styles["modes"]}>
+            <Button variant="toggle" pressed={mode === "key"}
+              onClick={() => setMode("key")} data-signin-mode="key">
               {copy.providers.dialog.keyLabel}
             </Button>
-            <Button
-              variant="toggle"
-              pressed={mode === "subscription"}
-              onClick={() => {
-                setMode("subscription");
-              }}
-              data-signin-mode="subscription"
-            >
+            <Button variant="toggle" pressed={mode === "subscription"}
+              onClick={() => setMode("subscription")} data-signin-mode="subscription">
               {copy.providers.dialog.subscriptionTitle}
             </Button>
-          </div>
+          </div> : null}
 
           {mode === "key" ? (
             <KeyForm
@@ -272,6 +298,7 @@ export function SignInDialog(props: SignInDialogProps): React.JSX.Element {
               paste={paste}
               onPaste={setPaste}
               busy={busy}
+              automatic={forcedMode === "subscription"}
               onBegin={begin}
               onComplete={complete}
             />
@@ -360,12 +387,13 @@ interface SubscriptionFormProps {
   readonly paste: string;
   readonly onPaste: (value: string) => void;
   readonly busy: boolean;
-  readonly onBegin: (type: "device_code" | "authorize_url") => void;
+  readonly automatic: boolean;
+  readonly onBegin: (type: AuthFlowType) => void;
   readonly onComplete: () => void;
 }
 
 function SubscriptionForm(props: SubscriptionFormProps): React.JSX.Element {
-  const { flow, paste, onPaste, busy, onBegin, onComplete } = props;
+  const { flow, paste, onPaste, busy, automatic, onBegin, onComplete } = props;
   return (
     <>
       {/* Said before the operator clicks, not after they wonder (§23.4). */}
@@ -376,26 +404,15 @@ function SubscriptionForm(props: SubscriptionFormProps): React.JSX.Element {
             <Button variant="primary" disabled reason={copy.providers.dialog.waiting}>
               {copy.providers.dialog.submit}
             </Button>
-          ) : (
-            <Button
-              variant="primary"
-              onClick={() => {
-                onBegin("device_code");
-              }}
-              data-signin-begin="device_code"
-            >
-              {copy.providers.dialog.submit}
-            </Button>
-          )}
-          <Button
-            variant="secondary"
-            onClick={() => {
-              onBegin("authorize_url");
-            }}
-            data-signin-begin="authorize_url"
-          >
-            {copy.providers.dialog.pasteLabel}
-          </Button>
+          ) : automatic ? (
+            <Button variant="primary" onClick={() => onBegin("auto")}
+              data-signin-begin="auto">{copy.providers.dialog.submit}</Button>
+          ) : <>
+            <Button variant="primary" onClick={() => onBegin("device_code")}
+              data-signin-begin="device_code">{copy.providers.dialog.submit}</Button>
+            <Button variant="secondary" onClick={() => onBegin("authorize_url")}
+              data-signin-begin="authorize_url">{copy.providers.dialog.pasteLabel}</Button>
+          </>}
         </div>
       ) : null}
 

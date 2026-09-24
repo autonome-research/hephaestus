@@ -35,6 +35,7 @@ export const copy = {
     lost: "Model change was not confirmed. Checking state; the write will not be retried.",
     changed: "The session model changed. Review it before sending again.",
     currentLabel: "Model for this conversation", newLabel: "Model for this new conversation",
+    addProvider: "Add provider", manageProviders: "Manage providers",
     create: "Create conversation", createTitle: "New conversation", cancel: "Cancel", creating: "Creating conversation…",
     reasons: {
       model_unknown: "Not supported by the configured runtime",
@@ -1864,6 +1865,20 @@ export const copy = {
       "Some configured models are not supported by this bundled agent. Known models can still be used; unsupported models remain listed in configuration.",
     modelUnsupported: "Not supported by this bundled agent",
 
+    add: {
+      title: "Add provider",
+      methodFirst: "How do you want to connect? Choose this before choosing a provider.",
+      subscription: "Subscription",
+      apiKey: "API key",
+      chooseProvider: "Choose provider",
+      chooseSubscription: "Providers offering subscription sign-in",
+      chooseApiKey: "Providers accepting a pasted API key",
+      loading: "Loading providers from the agent runtime…",
+      none: "No unregistered provider offers this method in the current runtime.",
+      alreadyRegistered: "This provider is already in the project.",
+      back: "Back",
+    },
+
     signIn: "Sign in",
     signOut: "Sign out",
     rotate: "Replace key",
@@ -1959,6 +1974,8 @@ export const copy = {
       model_unknown: "The provider does not offer that model.",
       not_loopback: "Provider settings are only available when the server is bound to this machine.",
       path_not_web_writable: "This page cannot name a file for the server to read.",
+      provider_already_registered: "This provider is already in the project.",
+      provider_catalog_empty: "This provider has no models in the current runtime catalog.",
       provider_not_authenticated: "This provider has no credential yet.",
       provider_rate_limited: "The provider is rate limiting this account.",
       provider_unknown: "No such provider.",

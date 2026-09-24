@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useId, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { loadModels, type ModelOption } from "../../api/providers";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { loadModels, loadProviders, type CatalogAuthMethod, type ModelOption, type ProviderRow } from "../../api/providers";
 import type { ThinkingLevel } from "../../api/sessions";
 import { copy } from "../../copy";
+import { AddProviderDialog } from "../AddProviderDialog";
 import { ProvidersPanel } from "../ProvidersPanel";
+import { SignInDialog } from "../SignInDialog";
 import { Button, Popover } from "../../system";
 import { filterModels, modelCapability, modelIdentity, modelUnavailableReason, sameModel } from "../../stream/composerChrome";
 import { canSelectModel, changeSessionModel, conversationStore, readSessionModel, useConversation } from "../../stream/conversation";
@@ -30,7 +32,11 @@ export function ModelPicker({ sessionId, creation, effort = "medium", onEffort }
   readonly onEffort?: ((effort: ThinkingLevel) => void) | undefined;
 }): React.JSX.Element {
   const c = useConversation(sessionId);
+  const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
+  const [authTarget, setAuthTarget] = useState<{ row: ProviderRow; method: CatalogAuthMethod } | null>(null);
   const [search, setSearch] = useState("");
   const [active, setActive] = useState(0);
   const listId = useId();
@@ -42,6 +48,10 @@ export function ModelPicker({ sessionId, creation, effort = "medium", onEffort }
       if (creation === undefined) conversationStore.catalog(doc);
       return doc;
     },
+  });
+  const providerDocument = useQuery({
+    queryKey: ["providers"], queryFn: loadProviders, retry: false,
+    enabled: addOpen,
   });
   const model = creation ? creation.choice : sessionId === null ? c.proposal : c.model?.current ?? c.model?.selected ?? null;
   const input = creation ? creation.choice?.input : sessionId === null ? c.proposal?.input : c.model?.current?.input;
@@ -95,20 +105,16 @@ export function ModelPicker({ sessionId, creation, effort = "medium", onEffort }
     {creation ? <p className={styles["note"]}>{label}</p> : null}
     <Button
       variant="secondary"
-      icon="levels"
-      iconLabel={creation ? undefined : `${label}. ${prefix}: ${model === null ? copy.models.none : modelIdentity(model)} · ${capability}. ${copy.composer.effort}: ${effortLabel(effort)}`}
       onClick={show}
       className={styles["button"]}
       expanded={open}
       data-model-button=""
-      title={`${label}. ${prefix}: ${model === null ? copy.models.none : modelIdentity(model)}. ${copy.composer.effort}: ${effortLabel(effort)}.`}
+      title={`${label}. ${prefix}: ${model === null ? copy.models.none : modelIdentity(model)} · ${capability}. ${copy.composer.effort}: ${effortLabel(effort)}.`}
       {...(busy ? { disabled: true as const, reason } : {})}
     >
-      {creation ? <>
-        <span className={styles["srOnly"]}>{label}. {prefix}: {model === null ? copy.models.none : modelIdentity(model)} · {capability}. {copy.composer.effort}: {effortLabel(effort)}.</span>
-        <span aria-hidden="true" className={styles["identity"]}>{identity}</span>
-        <span className={styles["badge"]}>{capability}</span>
-      </> : undefined}
+      <span className={styles["identity"]}>{identity}</span>
+      <span aria-hidden="true" className={styles["cue"]}>⌄</span>
+      <span className={styles["srOnly"]}>. {copy.composer.effort}: {effortLabel(effort)}</span>
     </Button>
     <Popover open={open} onClose={() => setOpen(false)} label={copy.models.choose}
       className={creation ? `${styles["picker"]} ${styles["pickerBelow"]}` : styles["picker"]}>
@@ -134,6 +140,7 @@ export function ModelPicker({ sessionId, creation, effort = "medium", onEffort }
                   onClick={() => choose(option)}>
                   <span aria-hidden="true">{sameModel(model, option) ? "✓" : ""}</span>
                   <span>{option.name}</span>
+                  <small>{modelCapability(option.input)}</small>
                   {!option.available ? <small>{modelUnavailableReason(option.unavailable_reason)}</small> : null}
                 </button>;
               })}
@@ -147,17 +154,36 @@ export function ModelPicker({ sessionId, creation, effort = "medium", onEffort }
             onClick={() => onEffort(level)} data-effort-option={level}>{effortLabel(level)}</Button>)}
         </section> : null}
       </div>
-      {/* §23, amended 2026-09-20: the providers surface moved here from the
-          rail. It is the only place that signs in, adopts a discovered
-          credential and lists egress hosts — the list above only CHOOSES among
-          models a credential already makes available, so the two belong behind
-          one control rather than 600px apart. Closing the popover on attach
-          puts the composer back in front of the operator, which is §23.0's
-          success condition. */}
-      <div className={styles["providers"]} data-model-providers="">
-        <ProvidersPanel onAttached={() => { setOpen(false); }} />
+      <div className={styles["providerActions"]}>
+        <Button variant="secondary" onClick={() => { setOpen(false); setAddOpen(true); }}
+          data-add-provider="">+ {copy.models.addProvider}</Button>
+        <Button variant="quiet" expanded={manageOpen} onClick={() => setManageOpen(value => !value)}
+          data-manage-providers="">{copy.models.manageProviders}</Button>
       </div>
+      {manageOpen ? <div className={styles["providers"]} data-model-providers="">
+        <ProvidersPanel onAttached={() => {
+          void queryClient.invalidateQueries();
+          setManageOpen(false);
+          void catalog.refetch();
+        }} />
+      </div> : null}
     </Popover>
+    {addOpen ? <AddProviderDialog open providers={providerDocument.data ?? null}
+      onClose={() => { setAddOpen(false); setOpen(true); }}
+      onManage={() => { setAddOpen(false); setOpen(true); setManageOpen(true); }}
+      onRegistered={(row, method) => {
+        setAddOpen(false);
+        setAuthTarget({ row, method });
+      }} /> : null}
+    {authTarget === null ? null : <SignInDialog provider={authTarget.row} method={authTarget.method} open
+      onClose={() => { setAuthTarget(null); setOpen(true); void catalog.refetch(); }}
+      onSignedIn={() => {
+        setAuthTarget(null);
+        setOpen(true);
+        void queryClient.invalidateQueries();
+        void catalog.refetch();
+      }} />}
+
     {sessionId !== null && c.model?.state === "uncertain" ? <p className={styles["note"]} role="status">{copy.models.uncertain}</p> : null}
     {/* WHY A CHOICE IS REFUSED, ON BOTH SIDES (restored 2026-09-20). The
         session arm survived the picker rework and the CREATION arm did not, so

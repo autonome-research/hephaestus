@@ -811,9 +811,9 @@ describe("authoritative session model chrome (issue 120)", () => {
   it("shows live Spark, not the first configured model", () => {
     expect(models.providers[0]?.models[0]?.model_id).toBe(vision.model_id);
     const button = mount().querySelector("[data-model-button]");
-    expect(button?.textContent).toBe("");
-    expect(button?.getAttribute("aria-label")).toContain("local/fake/spark");
-    expect(button?.getAttribute("aria-label")).toContain("Text only");
+    expect(button?.textContent).toContain("Spark");
+    expect(button?.getAttribute("title")).toContain("local/fake/spark");
+    expect(button?.getAttribute("title")).toContain("Text only");
     expect(modelIdentity(vision)).toBe("local/fake/vision/image");
   });
 

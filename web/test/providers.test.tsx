@@ -123,8 +123,8 @@ describe("the §23 vocabularies are closed", () => {
     expect(isAuthHealth("green")).toBe(false);
   });
 
-  it("names the two flows and nothing else", () => {
-    expect([...AUTH_FLOW_TYPES]).toEqual(["device_code", "authorize_url"]);
+  it("names Pi-auto plus the two explicit compatibility flows and nothing else", () => {
+    expect([...AUTH_FLOW_TYPES]).toEqual(["auto", "device_code", "authorize_url"]);
   });
 });
 

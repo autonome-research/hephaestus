@@ -7,9 +7,10 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { WorkspaceError } from "../src/api/client";
 import type { FlowDocument, ProviderRow } from "../src/api/providers";
 import * as providers from "../src/api/providers";
-import { loginPollOutcome, SignInDialog } from "../src/components/SignInDialog";
+import { loginPollFailureReason, loginPollOutcome, SignInDialog } from "../src/components/SignInDialog";
 
 vi.mock("../src/api/providers", async (importOriginal) => {
   const actual = await importOriginal<typeof providers>();
@@ -89,9 +90,13 @@ describe("loginPollOutcome", () => {
     expect(loginPollOutcome({ status: "ok", state: "project", type: "oauth" })).toBe("complete");
   });
 
-  it("fails on a named flow failure", () => {
-    expect(loginPollOutcome({ status: "ok", flow: { state: "failed" } })).toBe("failed");
+  it("fails on a named flow failure and preserves its nested Pi reason", () => {
+    const rateLimited = { status: "ok", flow: { state: "failed", code: "provider_rate_limited" } };
+    expect(loginPollOutcome(rateLimited)).toBe("failed");
+    expect(loginPollFailureReason(rateLimited)).toBe("provider_rate_limited");
     expect(loginPollOutcome({ status: "error", reason: "authorization_expired" })).toBe("failed");
+    expect(loginPollFailureReason({ status: "error", reason: "provider_unreachable" }))
+      .toBe("provider_unreachable");
   });
 });
 
@@ -143,6 +148,39 @@ describe("SignInDialog polls and cancels (#76)", () => {
     }
   });
 
+  it("keeps polling a completed flow while applying it would end a live run", async () => {
+    vi.mocked(providers.beginLogin).mockResolvedValue(deviceFlow());
+    vi.mocked(providers.loginStatus)
+      .mockRejectedValueOnce(new WorkspaceError(409, "runs_in_flight", "run active", { count: 1 }))
+      .mockResolvedValueOnce({ status: "ok", state: "project", type: "oauth" });
+    const onClose = vi.fn();
+    const onSignedIn = vi.fn();
+    const mounted = live(
+      <SignInDialog provider={row()} open onClose={onClose} onSignedIn={onSignedIn} />,
+    );
+    try {
+      act(() => {
+        mounted.host.querySelector<HTMLButtonElement>('[data-signin-begin="device_code"]')?.click();
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(onClose).not.toHaveBeenCalled();
+      expect(mounted.host.querySelector("[data-signin-refusal]")?.textContent)
+        .toContain("turn is running");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(onSignedIn).toHaveBeenCalledTimes(1);
+      expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      drop(mounted);
+    }
+  });
+
   it("calls cancelLogin when the dialog is dismissed", async () => {
     vi.mocked(providers.beginLogin).mockResolvedValue(deviceFlow());
     vi.mocked(providers.loginStatus).mockResolvedValue({
@@ -165,7 +203,68 @@ describe("SignInDialog polls and cancels (#76)", () => {
         mounted.host.querySelector<HTMLElement>("[data-popover-scrim]")?.click();
       });
       expect(providers.cancelLogin).toHaveBeenCalledWith("heph-fake");
+      expect(onClose).not.toHaveBeenCalled();
+      await act(async () => {
+        await Promise.resolve();
+      });
       expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      drop(mounted);
+    }
+  });
+
+  it("keeps ownership visible when cancellation is refused", async () => {
+    vi.mocked(providers.beginLogin).mockResolvedValue(deviceFlow());
+    vi.mocked(providers.cancelLogin).mockRejectedValue(
+      new WorkspaceError(503, "agent_unavailable", "sidecar unavailable"),
+    );
+    const onClose = vi.fn();
+    const mounted = live(
+      <SignInDialog provider={row()} open onClose={onClose} onSignedIn={() => undefined} />,
+    );
+    try {
+      act(() => {
+        mounted.host.querySelector<HTMLButtonElement>('[data-signin-begin="device_code"]')?.click();
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      act(() => {
+        mounted.host.querySelector<HTMLElement>("[data-popover-scrim]")?.click();
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(onClose).not.toHaveBeenCalled();
+      expect(mounted.host.querySelector("[data-signin-dialog]")).not.toBeNull();
+      expect(mounted.host.querySelector("[data-signin-refusal]")?.textContent)
+        .toContain("no agent runtime");
+    } finally {
+      drop(mounted);
+    }
+  });
+
+  it("shows the actionable nested background failure", async () => {
+    vi.mocked(providers.beginLogin).mockResolvedValue(deviceFlow());
+    vi.mocked(providers.loginStatus).mockResolvedValue({
+      status: "ok",
+      flow: { state: "failed", code: "provider_rate_limited" },
+    });
+    const mounted = live(
+      <SignInDialog provider={row()} open onClose={() => undefined} onSignedIn={() => undefined} />,
+    );
+    try {
+      act(() => {
+        mounted.host.querySelector<HTMLButtonElement>('[data-signin-begin="device_code"]')?.click();
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(mounted.host.querySelector("[data-signin-refusal]")?.textContent)
+        .toContain("rate limiting");
     } finally {
       drop(mounted);
     }

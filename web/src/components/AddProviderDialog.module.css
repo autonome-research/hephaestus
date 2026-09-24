@@ -1,0 +1,28 @@
+/* Copyright 2026 The Hephaestus Authors
+ * SPDX-License-Identifier: Apache-2.0 */
+.body { display: flex; flex-direction: column; gap: var(--space-3); min-width: min(22rem, calc(100vw - 2 * var(--pad-overlay))); }
+.methods { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); }
+.back { display: flex; justify-content: flex-start; }
+.providers { display: flex; flex-direction: column; gap: var(--space-1); max-height: min(22rem, 55vh); overflow-y: auto; }
+.provider {
+  composes: body from "../system/type.module.css";
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  width: 100%;
+  padding: var(--space-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  color: var(--ink-base);
+  background: var(--surface-control);
+  text-align: start;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.provider:hover, .provider:focus-visible { border-color: var(--ink-muted); }
+.provider:disabled { cursor: wait; opacity: .65; }
+.provider small { color: var(--ink-muted); }
+.error { margin: 0; color: var(--status-error-ink); overflow-wrap: anywhere; }
+@media (max-width: 520px) { .methods { grid-template-columns: 1fr; } }
